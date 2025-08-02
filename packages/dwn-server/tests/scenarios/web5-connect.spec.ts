@@ -3,7 +3,7 @@ import sinon from 'sinon';
 import { config } from '../../src/config.js';
 import { DwnServer } from '../../src/dwn-server.js';
 import { expect } from 'chai';
-import { Poller } from '@tbd54566975/dwn-sdk-js';
+import { Poller } from '@enbox/dwn-sdk-js';
 import { useFakeTimers } from 'sinon';
 import { Web5ConnectServer } from '../../src/web5-connect/web5-connect-server.js';
 import { randomUUID, webcrypto } from 'node:crypto';

@@ -1,4 +1,4 @@
-import { Filter } from '@tbd54566975/dwn-sdk-js';
+import { Filter } from '@enbox/dwn-sdk-js';
 import { KeyValues } from '../types.js';
 
 export function extractTagsAndSanitizeIndexes(records: KeyValues): {

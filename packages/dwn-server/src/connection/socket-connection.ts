@@ -1,5 +1,5 @@
-import type { Dwn, GenericMessage, MessageEvent } from "@tbd54566975/dwn-sdk-js";
-import { DwnMethodName } from "@tbd54566975/dwn-sdk-js";
+import type { Dwn, GenericMessage, MessageEvent } from "@enbox/dwn-sdk-js";
+import { DwnMethodName } from "@enbox/dwn-sdk-js";
 
 import type { WebSocket } from "ws";
 import log from 'loglevel';

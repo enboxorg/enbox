@@ -8,7 +8,7 @@ import type { Web5PlatformAgent } from './types/agent.js';
 import { TENANT_SEPARATOR } from './utils-internal.js';
 import { getDataStoreTenant } from './utils-internal.js';
 import { DwnInterface, DwnMessageParams } from './types/dwn.js';
-import { ProtocolDefinition, RecordsReadReplyEntry } from '@tbd54566975/dwn-sdk-js';
+import { ProtocolDefinition, RecordsReadReplyEntry } from '@enbox/dwn-sdk-js';
 
 export type DataStoreTenantParams = {
   agent: Web5PlatformAgent;

@@ -1,4 +1,4 @@
-import type { TenantGate } from '@tbd54566975/dwn-sdk-js';
+import type { TenantGate } from '@enbox/dwn-sdk-js';
 
 import { getDialectFromUrl } from '../src/storage.js';
 import {
@@ -6,9 +6,9 @@ import {
   EventLogSql,
   MessageStoreSql,
   ResumableTaskStoreSql,
-} from '@tbd54566975/dwn-sql-store';
+} from '@enbox/dwn-sql-store';
 import { DidDht, DidIon, DidKey, UniversalResolver } from '@enbox/dids';
-import { Dwn, EventEmitterStream } from '@tbd54566975/dwn-sdk-js';
+import { Dwn, EventEmitterStream } from '@enbox/dwn-sdk-js';
 
 export async function getTestDwn(options: {
   tenantGate?: TenantGate,

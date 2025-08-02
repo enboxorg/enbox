@@ -10,7 +10,7 @@ import {
   Pagination,
   SortDirection,
   PaginationCursor,
-} from '@tbd54566975/dwn-sdk-js';
+} from '@enbox/dwn-sdk-js';
 
 import { Kysely, Transaction } from 'kysely';
 import { DwnDatabaseType, KeyValues } from './types.js';

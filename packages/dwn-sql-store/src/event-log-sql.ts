@@ -1,5 +1,5 @@
 import type { DwnDatabaseType, KeyValues } from './types.js';
-import type { EventLog, Filter, PaginationCursor } from '@tbd54566975/dwn-sdk-js';
+import type { EventLog, Filter, PaginationCursor } from '@enbox/dwn-sdk-js';
 
 import { Dialect } from './dialect/dialect.js';
 import { filterSelectQuery } from './utils/filter.js';

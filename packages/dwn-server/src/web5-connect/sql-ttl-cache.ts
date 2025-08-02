@@ -1,4 +1,4 @@
-import type { Dialect } from '@tbd54566975/dwn-sql-store';
+import type { Dialect } from '@enbox/dwn-sql-store';
 import { Kysely } from 'kysely';
 
 /**

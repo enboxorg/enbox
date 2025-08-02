@@ -3,7 +3,7 @@ import {
   RecordsWrite,
   Jws,
   TestDataGenerator,
-} from '@tbd54566975/dwn-sdk-js';
+} from '@enbox/dwn-sdk-js';
 
 import { expect } from 'chai';
 

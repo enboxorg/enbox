@@ -1,7 +1,7 @@
 
 import type {
   Dwn,
-} from '@tbd54566975/dwn-sdk-js';
+} from '@enbox/dwn-sdk-js';
 
 import type { Server } from 'http';
 

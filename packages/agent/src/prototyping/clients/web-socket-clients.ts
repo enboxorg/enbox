@@ -1,5 +1,5 @@
 import type { DwnRpc, DwnRpcRequest, DwnRpcResponse, DwnSubscriptionHandler } from './dwn-rpc-types.js';
-import type { GenericMessage, MessageSubscription, UnionMessageReply } from '@tbd54566975/dwn-sdk-js';
+import type { GenericMessage, MessageSubscription, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
 import { CryptoUtils } from '@enbox/crypto';
 import { createJsonRpcRequest, createJsonRpcSubscriptionRequest } from './json-rpc.js';

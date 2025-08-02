@@ -1,5 +1,5 @@
-import type { GenericMessage } from '@tbd54566975/dwn-sdk-js';
-import { DwnInterfaceName, DwnMethodName } from '@tbd54566975/dwn-sdk-js';
+import type { GenericMessage } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 import type { Readable as IsomorphicReadable } from 'readable-stream';
 import log from 'loglevel';

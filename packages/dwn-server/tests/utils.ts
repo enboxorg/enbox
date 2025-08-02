@@ -1,6 +1,6 @@
-import type { GenericMessage, Persona, UnionMessageReply } from '@tbd54566975/dwn-sdk-js';
+import type { GenericMessage, Persona, UnionMessageReply } from '@enbox/dwn-sdk-js';
 import type { Response } from 'node-fetch';
-import { Cid, DataStream, RecordsWrite } from '@tbd54566975/dwn-sdk-js';
+import { Cid, DataStream, RecordsWrite } from '@enbox/dwn-sdk-js';
 
 import fs from 'node:fs';
 import path from 'path';

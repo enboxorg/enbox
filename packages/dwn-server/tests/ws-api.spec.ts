@@ -1,6 +1,6 @@
 
-import type { Dwn, MessageEvent } from '@tbd54566975/dwn-sdk-js';
-import { DataStream, Message, TestDataGenerator } from '@tbd54566975/dwn-sdk-js';
+import type { Dwn, MessageEvent } from '@enbox/dwn-sdk-js';
+import { DataStream, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { expect } from 'chai';
 import { base64url } from 'multiformats/bases/base64';

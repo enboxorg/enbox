@@ -7,7 +7,7 @@ import type { RequestContext } from '../src/lib/json-rpc-router.js';
 import { JsonRpcErrorCodes, createJsonRpcRequest } from '../src/lib/json-rpc.js';
 import { getTestDwn } from './test-dwn.js';
 import { createRecordsWriteMessage } from './utils.js';
-import { DataStream, Jws, Message, MessagesRead, RecordsRead, TestDataGenerator } from '@tbd54566975/dwn-sdk-js';
+import { DataStream, Jws, Message, MessagesRead, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 describe('handleDwnProcessMessage', function () {
   it('returns a JSON RPC Success Response when DWN returns a 2XX status code', async function () {

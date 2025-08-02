@@ -1,4 +1,4 @@
-import type { ProtocolDefinition } from '@tbd54566975/dwn-sdk-js';
+import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 export const IdentityProtocolDefinition: ProtocolDefinition = {
   protocol  : 'http://identity.foundation/protocols/web5/identity-store',

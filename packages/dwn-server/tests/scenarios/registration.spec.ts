@@ -1,5 +1,5 @@
 import type { DwnServerConfig } from '../../src/config.js';
-import type { Persona } from '@tbd54566975/dwn-sdk-js';
+import type { Persona } from '@enbox/dwn-sdk-js';
 import type { ProofOfWorkChallengeModel } from '../../src/registration/proof-of-work-types.js';
 import type { RegistrationManager } from '../../src/registration/registration-manager.js';
 import type { JsonRpcRequest, JsonRpcResponse } from '../../src/lib/json-rpc.js';
@@ -19,7 +19,7 @@ import { readFileSync } from 'fs';
 import { useFakeTimers } from 'sinon';
 import { v4 as uuidv4 } from 'uuid';
 import { webcrypto } from 'node:crypto';
-import { DataStream, TestDataGenerator } from '@tbd54566975/dwn-sdk-js';
+import { DataStream, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { DidDht, DidKey, UniversalResolver } from '@enbox/dids';
 
 // node.js 18 and earlier,  needs globalThis.crypto polyfill

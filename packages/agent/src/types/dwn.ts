@@ -31,7 +31,7 @@ import type {
   MessagesQueryReply,
   MessagesReadReply,
   MessagesSubscribeReply,
-} from '@tbd54566975/dwn-sdk-js';
+} from '@enbox/dwn-sdk-js';
 
 import {
   RecordsRead,
@@ -46,7 +46,7 @@ import {
   MessagesQuery,
   MessagesRead,
   MessagesSubscribe,
-} from '@tbd54566975/dwn-sdk-js';
+} from '@enbox/dwn-sdk-js';
 
 /**
  * Represents a Decentralized Web Node (DWN) service in a DID Document.
@@ -275,4 +275,4 @@ export {
   RecordsPermissionScope as DwnRecordsPermissionScope,
   PermissionConditions as DwnPermissionConditions,
   PermissionScope as DwnPermissionScope,
-} from '@tbd54566975/dwn-sdk-js';
+} from '@enbox/dwn-sdk-js';

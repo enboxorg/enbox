@@ -1,4 +1,4 @@
-import { DataStore, DataStream, DataStoreGetResult, DataStorePutResult } from '@tbd54566975/dwn-sdk-js';
+import { DataStore, DataStream, DataStoreGetResult, DataStorePutResult } from '@enbox/dwn-sdk-js';
 import { Kysely } from 'kysely';
 import { Readable } from 'readable-stream';
 import { DwnDatabaseType } from './types.js';

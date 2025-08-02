@@ -1,5 +1,5 @@
 import type { DidResolver } from '@enbox/dids';
-import type { EventStream } from '@tbd54566975/dwn-sdk-js';
+import type { EventStream } from '@enbox/dwn-sdk-js';
 import type { ProcessHandlers } from './process-handlers.js';
 import type { Server } from 'http';
 import type { WebSocketServer } from 'ws';
@@ -14,7 +14,7 @@ import { HttpApi } from './http-api.js';
 import { PluginLoader } from './plugin-loader.js';
 import { RegistrationManager } from './registration/registration-manager.js';
 import { WsApi } from './ws-api.js';
-import { Dwn, EventEmitterStream } from '@tbd54566975/dwn-sdk-js';
+import { Dwn, EventEmitterStream } from '@enbox/dwn-sdk-js';
 import { removeProcessHandlers, setProcessHandlers } from './process-handlers.js';
 
 /**

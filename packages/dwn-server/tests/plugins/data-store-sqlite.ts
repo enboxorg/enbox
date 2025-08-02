@@ -1,5 +1,5 @@
-import type { DataStore } from "@tbd54566975/dwn-sdk-js";
-import { DataStoreSql } from "@tbd54566975/dwn-sql-store";
+import type { DataStore } from "@enbox/dwn-sdk-js";
+import { DataStoreSql } from "@enbox/dwn-sql-store";
 import { getDialectFromUrl } from "../../src/storage.js";
 
 /**

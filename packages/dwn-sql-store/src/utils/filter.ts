@@ -1,4 +1,4 @@
-import { Filter } from '@tbd54566975/dwn-sdk-js';
+import { Filter } from '@enbox/dwn-sdk-js';
 import { DynamicModule, ExpressionBuilder, OperandExpression, SelectQueryBuilder, SqlBool } from 'kysely';
 import { sanitizeFiltersAndSeparateTags, sanitizedValue } from './sanitize.js';
 import { DwnDatabaseType } from '../types.js';

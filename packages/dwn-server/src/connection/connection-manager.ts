@@ -1,4 +1,4 @@
-import type { Dwn } from "@tbd54566975/dwn-sdk-js";
+import type { Dwn } from "@enbox/dwn-sdk-js";
 
 import type { IncomingMessage } from "http";
 import type { WebSocket } from 'ws';

@@ -1,4 +1,4 @@
-import type { Dwn } from '@tbd54566975/dwn-sdk-js';
+import type { Dwn } from '@enbox/dwn-sdk-js';
 
 import chaiAsPromised from 'chai-as-promised';
 import chai, { expect } from 'chai';

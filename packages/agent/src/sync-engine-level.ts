@@ -6,7 +6,7 @@ import type {
   MessagesReadReply,
   PaginationCursor,
   UnionMessageReply,
-} from '@tbd54566975/dwn-sdk-js';
+} from '@enbox/dwn-sdk-js';
 
 import ms from 'ms';
 import { Level } from 'level';
@@ -15,7 +15,7 @@ import { NodeStream } from '@enbox/common';
 import {
   DwnInterfaceName,
   DwnMethodName,
-} from '@tbd54566975/dwn-sdk-js';
+} from '@enbox/dwn-sdk-js';
 
 import type { SyncEngine, SyncIdentityOptions } from './types/sync.js';
 import type { Web5Agent, Web5PlatformAgent } from './types/agent.js';
@@ -190,7 +190,7 @@ export class SyncEngineLevel implements SyncEngine {
         NodeStream.fromWebReadable({ readableStream: replyEntry.data as unknown as ReadableStream })
         : undefined;
 
-      const pullReply = await this.agent.dwn.node.processMessage(did, message, { dataStream });
+      const pullReply = await this.agent.dwn.node.processMessage(did, message, { dataStream: dataStream as any });
       if (SyncEngineLevel.syncMessageReplyIsSuccessful(pullReply)) {
         await this.addMessage(did, messageCid);
         deleteOperations.push({ type: 'del', key: key });

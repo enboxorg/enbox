@@ -10,7 +10,7 @@ import { pollWithTtl } from './utils.js';
 import { Convert, logger } from '@enbox/common';
 import { CryptoUtils } from '@enbox/crypto';
 import { DidJwk } from '@enbox/dids';
-import { DwnInterfaceName, DwnMethodName } from '@tbd54566975/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 /**
  * Initiates the wallet connect process. Used when a client wants to obtain

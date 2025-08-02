@@ -1,10 +1,10 @@
 import type { DidUrlDereferencer } from '@enbox/dids';
-import { Jws, PaginationCursor, RecordsDeleteMessage, RecordsWriteMessage } from '@tbd54566975/dwn-sdk-js';
+import { Jws, PaginationCursor, RecordsDeleteMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { Readable } from '@enbox/common';
 import { utils as didUtils } from '@enbox/dids';
 import { ReadableWebToNodeStream } from 'readable-web-to-node-stream';
-import { DateSort, DwnInterfaceName, DwnMethodName, Message, RecordsWrite } from '@tbd54566975/dwn-sdk-js';
+import { DateSort, DwnInterfaceName, DwnMethodName, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
 
 export function blobToIsomorphicNodeReadable(blob: Blob): Readable {
   return webReadableToIsomorphicNodeReadable(blob.stream() as ReadableStream<any>);

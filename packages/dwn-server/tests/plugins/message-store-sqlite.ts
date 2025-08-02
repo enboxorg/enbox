@@ -1,5 +1,5 @@
-import type { MessageStore } from "@tbd54566975/dwn-sdk-js";
-import { MessageStoreSql } from "@tbd54566975/dwn-sql-store";
+import type { MessageStore } from "@enbox/dwn-sdk-js";
+import { MessageStoreSql } from "@enbox/dwn-sql-store";
 import { getDialectFromUrl } from "../../src/storage.js";
 
 /**

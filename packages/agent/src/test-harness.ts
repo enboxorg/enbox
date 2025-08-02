@@ -3,7 +3,7 @@ import type { AbstractLevel } from 'abstract-level';
 
 import { Level } from 'level';
 import { LevelStore, MemoryStore } from '@enbox/common';
-import { DataStoreLevel, Dwn, EventEmitterStream, EventLogLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@tbd54566975/dwn-sdk-js';
+import { DataStoreLevel, Dwn, EventEmitterStream, EventLogLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js';
 import { DidDht, DidJwk, DidResolutionResult, DidResolverCache } from '@enbox/dids';
 
 import type { Web5PlatformAgent } from './types/agent.js';

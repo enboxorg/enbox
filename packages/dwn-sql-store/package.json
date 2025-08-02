@@ -21,8 +21,8 @@
   },
   "react-native": "./dist/esm/src/main.js",
   "dependencies": {
-    "@ipld/dag-cbor": "9.0.5",
     "@enbox/dwn-sdk-js": "workspace:*",
+    "@ipld/dag-cbor": "9.0.5",
     "kysely": "0.26.3",
     "multiformats": "12.0.1",
     "readable-stream": "4.4.2"

@@ -1,5 +1,5 @@
-import type { ResumableTaskStore } from "@tbd54566975/dwn-sdk-js";
-import { ResumableTaskStoreSql } from "@tbd54566975/dwn-sql-store";
+import type { ResumableTaskStore } from "@enbox/dwn-sdk-js";
+import { ResumableTaskStoreSql } from "@enbox/dwn-sql-store";
 import { getDialectFromUrl } from "../../src/storage.js";
 
 /**

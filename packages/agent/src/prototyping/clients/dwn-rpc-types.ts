@@ -1,4 +1,4 @@
-import type { RecordsReadReply, UnionMessageReply, MessageSubscriptionHandler, RecordSubscriptionHandler } from '@tbd54566975/dwn-sdk-js';
+import type { RecordsReadReply, UnionMessageReply, MessageSubscriptionHandler, RecordSubscriptionHandler } from '@enbox/dwn-sdk-js';
 
 export interface SerializableDwnMessage {
   toJSON(): string;

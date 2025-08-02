@@ -1,4 +1,4 @@
-import type { Dwn, MessageSubscriptionHandler } from '@tbd54566975/dwn-sdk-js';
+import type { Dwn, MessageSubscriptionHandler } from '@enbox/dwn-sdk-js';
 
 import type { Readable } from 'node:stream';
 

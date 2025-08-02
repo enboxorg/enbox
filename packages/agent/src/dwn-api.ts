@@ -13,7 +13,7 @@ import {
   Message,
   MessageStoreLevel,
   ResumableTaskStoreLevel
-} from '@tbd54566975/dwn-sdk-js';
+} from '@enbox/dwn-sdk-js';
 
 import { NodeStream } from '@enbox/common';
 import { CryptoUtils } from '@enbox/crypto';
@@ -178,7 +178,7 @@ export class AgentDwnApi {
     // - If `store` is set to false, it immediately returns a simulated 'accepted' status without
     //   storing the message/data in the DWN node.
     const reply: DwnMessageReply[T] = (request.store !== false)
-      ? await this._dwn.processMessage(request.target, message, { dataStream, subscriptionHandler })
+      ? await this._dwn.processMessage(request.target, message, { dataStream: dataStream as any, subscriptionHandler })
       : { status: { code: 202, detail: 'Accepted' } };
 
     // Returns an object containing the reply from processing the message, the original message,

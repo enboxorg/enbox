@@ -1,5 +1,5 @@
-import type { EventLog } from "@tbd54566975/dwn-sdk-js";
-import { EventLogSql } from "@tbd54566975/dwn-sql-store";
+import type { EventLog } from "@enbox/dwn-sdk-js";
+import { EventLogSql } from "@enbox/dwn-sql-store";
 import { getDialectFromUrl } from "../../src/storage.js";
 
 /**

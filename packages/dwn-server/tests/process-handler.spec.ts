@@ -1,11 +1,11 @@
-import type { Dwn } from '@tbd54566975/dwn-sdk-js';
+import type { Dwn } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { config } from '../src/config.js';
 import { DwnServer } from '../src/dwn-server.js';
 import { expect } from 'chai';
 import { getTestDwn } from './test-dwn.js';
-import { Poller } from '@tbd54566975/dwn-sdk-js';
+import { Poller } from '@enbox/dwn-sdk-js';
 
 describe('Process Handlers', function () {
   let dwn: Dwn;

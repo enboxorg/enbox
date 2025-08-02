@@ -7,8 +7,8 @@ import type {
   MessageStore,
   ResumableTaskStore,
   TenantGate,
-} from '@tbd54566975/dwn-sdk-js';
-import type { Dialect } from '@tbd54566975/dwn-sql-store';
+} from '@enbox/dwn-sdk-js';
+import type { Dialect } from '@enbox/dwn-sql-store';
 import type { DwnServerConfig } from './config.js';
 
 import * as fs from 'fs';
@@ -23,7 +23,7 @@ import {
   EventLogLevel,
   MessageStoreLevel,
   ResumableTaskStoreLevel,
-} from '@tbd54566975/dwn-sdk-js';
+} from '@enbox/dwn-sdk-js';
 import {
   DataStoreSql,
   EventLogSql,
@@ -32,7 +32,7 @@ import {
   PostgresDialect,
   ResumableTaskStoreSql,
   SqliteDialect,
-} from '@tbd54566975/dwn-sql-store';
+} from '@enbox/dwn-sql-store';
 
 export enum StoreType {
   DataStore,

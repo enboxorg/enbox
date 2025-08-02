@@ -5,7 +5,7 @@ import { Level } from 'level';
 
 export type CreateLevelDatabaseOptions<V> = AbstractDatabaseOptions<string, V>;
 
-export type LevelDatabase<V> = AbstractLevel<string | Buffer | Uint8Array, string, V>;
+export type LevelDatabase<V> = Level<string, V>;
 
 export async function createLevelDatabase<V>(location: string, options?: CreateLevelDatabaseOptions<V>): Promise<LevelDatabase<V>> {
   // Only import `'level'` when it's actually necessary (i.e. only when the default `createLevelDatabase` is used).
@@ -17,7 +17,7 @@ export interface LevelWrapperOptions {
   signal?: AbortSignal;
 }
 
-export type LevelWrapperBatchOperation<V> = AbstractBatchOperation<LevelDatabase<V>, string, V>;
+export type LevelWrapperBatchOperation<V> = AbstractBatchOperation<Level<string, V>, string, V>;
 
 export type LevelWrapperIteratorOptions<V> = AbstractIteratorOptions<string, V>;
 
@@ -113,7 +113,7 @@ export class LevelWrapper<V> {
   async partition(name: string): Promise<LevelWrapper<V>> {
     await this.createLevelDatabase();
 
-    return new LevelWrapper(this.config, this.db.sublevel(name, {
+    return new LevelWrapper(this.config, (this.db as any).sublevel(name, {
       keyEncoding   : 'utf8',
       valueEncoding : this.config.valueEncoding
     }));
@@ -209,7 +209,7 @@ export class LevelWrapper<V> {
    * Wraps the given LevelWrapperBatchOperation as an operation for the specified partition.
    */
   createPartitionOperation(partitionName: string, operation: LevelWrapperBatchOperation<V>): LevelWrapperBatchOperation<V> {
-    return { ...operation, sublevel: this.db.sublevel(partitionName, {
+    return { ...operation, sublevel: (this.db as any).sublevel(partitionName, {
       keyEncoding   : 'utf8',
       valueEncoding : this.config.valueEncoding
     }) };

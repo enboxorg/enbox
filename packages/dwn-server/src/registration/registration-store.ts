@@ -1,6 +1,6 @@
 import { Kysely } from 'kysely';
 import type { RegistrationData } from './registration-types.js';
-import type { Dialect } from '@tbd54566975/dwn-sql-store';
+import type { Dialect } from '@enbox/dwn-sql-store';
 
 /**
  * The RegistrationStore is responsible for storing and retrieving tenant registration information.

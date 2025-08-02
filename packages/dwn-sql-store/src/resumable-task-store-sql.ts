@@ -2,7 +2,7 @@ import { DwnDatabaseType } from './types.js';
 import { Dialect } from './dialect/dialect.js';
 import { executeWithRetryIfDatabaseIsLocked } from './utils/transaction.js';
 import { Kysely } from 'kysely';
-import { Cid, ManagedResumableTask, ResumableTaskStore } from '@tbd54566975/dwn-sdk-js';
+import { Cid, ManagedResumableTask, ResumableTaskStore } from '@enbox/dwn-sdk-js';
 
 export class ResumableTaskStoreSql implements ResumableTaskStore {
   private static readonly taskTimeoutInSeconds = 60;

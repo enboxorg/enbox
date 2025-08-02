@@ -4,7 +4,7 @@ import { RegistrationStore } from "./registration-store.js";
 import type { RegistrationData, RegistrationRequest } from "./registration-types.js";
 import type { ProofOfWorkChallengeModel } from "./proof-of-work-types.js";
 import { DwnServerError, DwnServerErrorCode } from "../dwn-error.js";
-import type { ActiveTenantCheckResult, TenantGate } from "@tbd54566975/dwn-sdk-js";
+import type { ActiveTenantCheckResult, TenantGate } from "@enbox/dwn-sdk-js";
 import { getDialectFromUrl } from "../storage.js";
 import { readFileSync } from "fs";
 

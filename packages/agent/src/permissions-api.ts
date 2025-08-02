@@ -1,4 +1,4 @@
-import { PermissionGrant, PermissionGrantData, PermissionRequestData, PermissionRevocationData, PermissionsProtocol } from '@tbd54566975/dwn-sdk-js';
+import { PermissionGrant, PermissionGrantData, PermissionRequestData, PermissionRevocationData, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 import { Web5Agent } from './types/agent.js';
 import { DwnDataEncodedRecordsWriteMessage, DwnInterface, DwnMessageParams, DwnMessagesPermissionScope, DwnPermissionGrant, DwnPermissionRequest, DwnPermissionScope, DwnProtocolPermissionScope, DwnRecordsPermissionScope, ProcessDwnRequest } from './types/dwn.js';
 import { Convert, TtlCache } from '@enbox/common';

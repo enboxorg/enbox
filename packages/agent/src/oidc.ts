@@ -16,7 +16,7 @@ import { DwnDataEncodedRecordsWriteMessage, DwnInterface, DwnPermissionScope, Dw
 import { AgentPermissionsApi } from './permissions-api.js';
 import type { Web5Agent } from './types/agent.js';
 import { isRecordPermissionScope } from './dwn-api.js';
-import { DwnInterfaceName, DwnMethodName } from '@tbd54566975/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 /**
  * Sent to an OIDC server to authorize a client. Allows clients

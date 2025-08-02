@@ -1,5 +1,5 @@
-import type { RecordsReadReply } from '@tbd54566975/dwn-sdk-js';
-import { type Dwn, DateSort, RecordsRead, RecordsQuery, ProtocolsQuery } from '@tbd54566975/dwn-sdk-js';
+import type { RecordsReadReply } from '@enbox/dwn-sdk-js';
+import { type Dwn, DateSort, RecordsRead, RecordsQuery, ProtocolsQuery } from '@enbox/dwn-sdk-js';
 
 import cors from 'cors';
 import type { Express, Request, Response } from 'express';
@@ -49,7 +49,7 @@ export class HttpApi {
       // We populate the `version` and `sdkVersion` properties from the `package.json` file.
       const packageJson = JSON.parse(readFileSync(config.packageJsonPath).toString());
       httpApi.#packageInfo.version = packageJson.version;
-      httpApi.#packageInfo.sdkVersion = packageJson.dependencies ? packageJson.dependencies['@tbd54566975/dwn-sdk-js'] : undefined;
+      httpApi.#packageInfo.sdkVersion = packageJson.dependencies ? packageJson.dependencies['@enbox/dwn-sdk-js'] : undefined;
     } catch (error: any) {
       log.info('could not read `package.json` for version info', error);
     }

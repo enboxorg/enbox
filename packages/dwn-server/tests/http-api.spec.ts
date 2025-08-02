@@ -7,8 +7,8 @@ import {
   RecordsQuery,
   TestDataGenerator,
   Time,
-} from '@tbd54566975/dwn-sdk-js';
-import type { Dwn, DwnError, Persona, ProtocolsConfigureMessage, RecordsQueryReply } from '@tbd54566975/dwn-sdk-js';
+} from '@enbox/dwn-sdk-js';
+import type { Dwn, DwnError, Persona, ProtocolsConfigureMessage, RecordsQueryReply } from '@enbox/dwn-sdk-js';
 
 import { expect } from 'chai';
 import fetch from 'node-fetch';
