@@ -1,0 +1,88 @@
+{
+  "name": "@enbox/dwn-sql-store",
+  "version": "0.6.9",
+  "description": "SQL backed implementations of DWN MessageStore, DataStore, and EventLog",
+  "type": "module",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/dwn-sql-store#readme",
+  "bugs": "https://github.com/enboxorg/enbox/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enboxorg/enbox.git",
+    "directory": "packages/dwn-sql-store"
+  },
+  "main": "./dist/cjs/main.js",
+  "module": "./dist/esm/src/main.js",
+  "types": "./dist/types/src/main.d.ts",
+  "exports": {
+    "import": "./dist/esm/src/main.js",
+    "require": "./dist/cjs/main.js",
+    "types": "./dist/types/src/main.d.ts"
+  },
+  "react-native": "./dist/esm/src/main.js",
+  "dependencies": {
+    "@ipld/dag-cbor": "9.0.5",
+    "@enbox/dwn-sdk-js": "workspace:*",
+    "kysely": "0.26.3",
+    "multiformats": "12.0.1",
+    "readable-stream": "4.4.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "7.6.4",
+    "@types/chai": "4.3.4",
+    "@types/chai-as-promised": "7.1.5",
+    "@types/express": "4.17.17",
+    "@types/mocha": "10.0.1",
+    "@types/node": "20.3.1",
+    "@types/pg": "8.10.2",
+    "@types/pg-cursor": "2.7.0",
+    "@types/readable-stream": "4.0.6",
+    "@types/supertest": "2.0.12",
+    "@typescript-eslint/eslint-plugin": "5.59.11",
+    "@typescript-eslint/parser": "5.59.11",
+    "better-sqlite3": "8.4.0",
+    "c8": "8.0.0",
+    "chai": "4.3.6",
+    "chai-as-promised": "7.1.1",
+    "esbuild": "^0.19.3",
+    "eslint": "8.42.0",
+    "mocha": "10.2.0",
+    "mysql2": "3.9.8",
+    "pg": "8.11.1",
+    "pg-cursor": "2.10.1",
+    "rimraf": "5.0.1",
+    "sinon": "^18.0.1",
+    "typescript": "5.0.4"
+  },
+  "scripts": {
+    "build:esm": "npm run clean & tsc",
+    "build:cjs": "npm run build:esm && node build/create-cjs-bundle.cjs && echo '{\"type\": \"commonjs\"}' > ./dist/cjs/package.json",
+    "build": "npm run clean && npm run build:esm && npm run build:cjs",
+    "clean": "rimraf dist compiled",
+    "lint": "eslint . --ext .ts --max-warnings 0",
+    "lint:fix": "eslint . --ext .ts --fix",
+    "test": "rimraf compiled && tsc -p tests/tsconfig.json && mocha",
+    "test-coverage": "rimraf compiled && tsc -p tests/tsconfig.json && c8 mocha"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "contributors": [
+    {
+      "name": "Adam Mika",
+      "url": "https://github.com/amika-sq"
+    },
+    {
+      "name": "Moe Jangda",
+      "url": "https://github.com/mistermoe"
+    },
+    {
+      "name": "Liran Cohen",
+      "url": "https://github.com/lirancohen"
+    }
+  ]
+}

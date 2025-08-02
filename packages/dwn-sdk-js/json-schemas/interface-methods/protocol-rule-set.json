@@ -1,0 +1,174 @@
+{
+  "$id": "https://identity.foundation/dwn/json-schemas/protocol-rule-set.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$encryption": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rootKeyId": {
+          "type": "string"
+        },
+        "publicKeyJwk": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
+        }
+      },
+      "required": [
+        "rootKeyId",
+        "publicKeyJwk"
+      ]
+    },
+    "$actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "oneOf": [
+          {
+            "required": [
+              "who",
+              "can"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "who": {
+                "type": "string",
+                "enum": [
+                  "anyone",
+                  "author",
+                  "recipient"
+                ]
+              },
+              "of": {
+                "type": "string"
+              },
+              "can": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "co-delete",
+                    "co-prune",
+                    "co-update",
+                    "create",
+                    "delete",
+                    "prune",
+                    "read",
+                    "update"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "required": [
+              "role",
+              "can"
+            ],
+            "properties": {
+              "role": {
+                "$comment": "Must be the protocol path of a role record type",
+                "type": "string"
+              },
+              "can": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "co-delete",
+                    "co-update",
+                    "create",
+                    "delete",
+                    "query",
+                    "subscribe",
+                    "read",
+                    "update"
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "$role": {
+      "$comment": "When `true`, this turns a record into `role` that may be used within a context/sub-context",
+      "type": "boolean"
+    },
+    "$size": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min": {
+          "type": "number",
+          "minimum": 0
+        },
+        "max": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "$tags": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "$requiredTags": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        },
+        "$allowUndefinedTags": {
+            "type": "boolean"
+        }
+      },
+      "patternProperties": {
+        "^(?!\\$requiredTags$|\\$allowUndefinedTags$).*$": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": ["string", "number", "integer", "boolean", "array"]
+            },
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "enum": ["string", "number", "integer"]
+                }
+              },
+              "patternProperties": {
+                "^(enum|minimum|maximum|exclusiveMinimum|exclusiveMaximum|minLength|maxLength)$": {}
+              }
+            },
+            "contains": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "enum": ["string", "number", "integer"]
+                }
+              },
+              "patternProperties": {
+                "^(enum|minimum|maximum|exclusiveMinimum|exclusiveMaximum|minLength|maxLength)$": {}
+              }
+            }
+          },
+          "patternProperties": {
+            "^(enum|minimum|maximum|exclusiveMinimum|exclusiveMaximum|minLength|maxLength|minItems|maxItems|uniqueItems|minContains|maxContains)$": {
+            }
+          }
+        }
+      }
+    }
+  },
+  "patternProperties": {
+    "^[^$].*$": {
+      "$ref": "https://identity.foundation/dwn/json-schemas/protocol-rule-set.json"
+    }
+  }
+}

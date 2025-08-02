@@ -1,0 +1,264 @@
+
+import type { DataStore } from './types/data-store.js';
+import type { DidResolver } from '@enbox/dids';
+import type { EventLog } from './types/event-log.js';
+import type { EventStream } from './types/subscriptions.js';
+import type { MessageStore } from './types/message-store.js';
+import type { MethodHandler } from './types/method-handler.js';
+import type { Readable } from 'readable-stream';
+import type { ResumableTaskStore } from './types/resumable-task-store.js';
+import type { TenantGate } from './core/tenant-gate.js';
+import type { UnionMessageReply } from './core/message-reply.js';
+import type { GenericMessage, GenericMessageReply } from './types/message-types.js';
+import type { MessagesQueryMessage, MessagesQueryReply, MessagesReadMessage, MessagesReadReply, MessagesSubscribeMessage, MessagesSubscribeMessageOptions, MessagesSubscribeReply, MessageSubscriptionHandler } from './types/messages-types.js';
+import type { ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply } from './types/protocols-types.js';
+import type { RecordsDeleteMessage, RecordsQueryMessage, RecordsQueryReply, RecordsReadMessage, RecordsReadReply, RecordsSubscribeMessage, RecordsSubscribeMessageOptions, RecordsSubscribeReply, RecordSubscriptionHandler, RecordsWriteMessage, RecordsWriteMessageOptions } from './types/records-types.js';
+
+import { AllowAllTenantGate } from './core/tenant-gate.js';
+import { Message } from './core/message.js';
+import { messageReplyFromError } from './core/message-reply.js';
+import { MessagesQueryHandler } from './handlers/messages-query.js';
+import { MessagesReadHandler } from './handlers/messages-read.js';
+import { MessagesSubscribeHandler } from './handlers/messages-subscribe.js';
+import { ProtocolsConfigureHandler } from './handlers/protocols-configure.js';
+import { ProtocolsQueryHandler } from './handlers/protocols-query.js';
+import { RecordsDeleteHandler } from './handlers/records-delete.js';
+import { RecordsQueryHandler } from './handlers/records-query.js';
+import { RecordsReadHandler } from './handlers/records-read.js';
+import { RecordsSubscribeHandler } from './handlers/records-subscribe.js';
+import { RecordsWriteHandler } from './handlers/records-write.js';
+import { ResumableTaskManager } from './core/resumable-task-manager.js';
+import { StorageController } from './store/storage-controller.js';
+import { DidDht, DidJwk, DidKey, DidResolverCacheLevel, DidWeb, UniversalResolver } from '@enbox/dids';
+import { DwnInterfaceName, DwnMethodName } from './enums/dwn-interface-method.js';
+
+export class Dwn {
+  private methodHandlers: { [key:string]: MethodHandler };
+  private didResolver: DidResolver;
+  private messageStore: MessageStore;
+  private dataStore: DataStore;
+  private resumableTaskStore: ResumableTaskStore;
+  private eventLog: EventLog;
+  private tenantGate: TenantGate;
+  private eventStream?: EventStream;
+  private storageController: StorageController;
+  private resumableTaskManager: ResumableTaskManager;
+
+  private constructor(config: DwnConfig) {
+    this.didResolver = config.didResolver!;
+    this.tenantGate = config.tenantGate!;
+    this.eventStream = config.eventStream!;
+    this.messageStore = config.messageStore;
+    this.dataStore = config.dataStore;
+    this.resumableTaskStore = config.resumableTaskStore;
+    this.eventLog = config.eventLog;
+    this.eventStream = config.eventStream;
+    this.storageController = new StorageController({
+      messageStore : this.messageStore,
+      dataStore    : this.dataStore,
+      eventLog     : this.eventLog,
+      eventStream  : this.eventStream
+    });
+    this.resumableTaskManager = new ResumableTaskManager(
+      config.resumableTaskStore,
+      this.storageController
+    );
+
+    this.methodHandlers = {
+      [DwnInterfaceName.Messages + DwnMethodName.Query]: new MessagesQueryHandler(
+        this.didResolver,
+        this.messageStore,
+        this.eventLog,
+      ),
+      [DwnInterfaceName.Messages + DwnMethodName.Read]: new MessagesReadHandler(
+        this.didResolver,
+        this.messageStore,
+        this.dataStore,
+      ),
+      [DwnInterfaceName.Messages + DwnMethodName.Subscribe]: new MessagesSubscribeHandler(
+        this.didResolver,
+        this.messageStore,
+        this.eventStream,
+      ),
+      [DwnInterfaceName.Protocols + DwnMethodName.Configure]: new ProtocolsConfigureHandler(
+        this.didResolver,
+        this.messageStore,
+        this.eventLog,
+        this.eventStream
+      ),
+      [DwnInterfaceName.Protocols + DwnMethodName.Query]: new ProtocolsQueryHandler(
+        this.didResolver,
+        this.messageStore,
+        this.dataStore
+      ),
+      [DwnInterfaceName.Records + DwnMethodName.Delete]: new RecordsDeleteHandler(
+        this.didResolver,
+        this.messageStore,
+        this.resumableTaskManager
+      ),
+      [DwnInterfaceName.Records + DwnMethodName.Query]: new RecordsQueryHandler(
+        this.didResolver,
+        this.messageStore,
+        this.dataStore
+      ),
+      [DwnInterfaceName.Records + DwnMethodName.Read]: new RecordsReadHandler(
+        this.didResolver,
+        this.messageStore,
+        this.dataStore
+      ),
+      [DwnInterfaceName.Records + DwnMethodName.Subscribe]: new RecordsSubscribeHandler(
+        this.didResolver,
+        this.messageStore,
+        this.eventStream
+      ),
+      [DwnInterfaceName.Records + DwnMethodName.Write]: new RecordsWriteHandler(
+        this.didResolver,
+        this.messageStore,
+        this.dataStore,
+        this.eventLog,
+        this.eventStream
+      )
+    };
+  }
+
+  /**
+   * Creates an instance of the DWN.
+   */
+  public static async create(config: DwnConfig): Promise<Dwn> {
+    config.didResolver ??= new UniversalResolver({
+      didResolvers : [ DidDht, DidJwk, DidKey, DidWeb ],
+      cache        : new DidResolverCacheLevel({ location: 'RESOLVERCACHE' }),
+    });
+    config.tenantGate ??= new AllowAllTenantGate();
+
+    const dwn = new Dwn(config);
+    await dwn.open();
+    return dwn;
+  }
+
+  /**
+   * Initializes the DWN instance and opens the connection to it.
+   */
+  public async open(): Promise<void> {
+    await this.messageStore.open();
+    await this.dataStore.open();
+    await this.resumableTaskStore.open();
+    await this.eventLog.open();
+    await this.eventStream?.open();
+
+    await this.resumableTaskManager.resumeTasksAndWaitForCompletion();
+  }
+
+  public async close(): Promise<void> {
+    await this.eventStream?.close();
+    await this.messageStore.close();
+    await this.dataStore.close();
+    await this.resumableTaskStore.close();
+    await this.eventLog.close();
+  }
+
+  /**
+   * Processes the given DWN message and returns with a reply.
+   * @param tenant The tenant DID to route the given message to.
+   */
+  public async processMessage(tenant: string, rawMessage: MessagesQueryMessage): Promise<MessagesQueryReply>;
+  public async processMessage(
+    tenant: string, rawMessage: MessagesSubscribeMessage, options?: MessagesSubscribeMessageOptions): Promise<MessagesSubscribeReply>;
+  public async processMessage(tenant: string, rawMessage: MessagesReadMessage): Promise<MessagesReadReply>;
+  public async processMessage(tenant: string, rawMessage: ProtocolsConfigureMessage): Promise<GenericMessageReply>;
+  public async processMessage(tenant: string, rawMessage: ProtocolsQueryMessage): Promise<ProtocolsQueryReply>;
+  public async processMessage(tenant: string, rawMessage: RecordsDeleteMessage): Promise<GenericMessageReply>;
+  public async processMessage(tenant: string, rawMessage: RecordsQueryMessage): Promise<RecordsQueryReply>;
+  public async processMessage(
+    tenant: string, rawMessage: RecordsSubscribeMessage, options: RecordsSubscribeMessageOptions): Promise<RecordsSubscribeReply>;
+  public async processMessage(tenant: string, rawMessage: RecordsReadMessage): Promise<RecordsReadReply>;
+  public async processMessage(tenant: string, rawMessage: RecordsWriteMessage, options?: RecordsWriteMessageOptions): Promise<GenericMessageReply>;
+  public async processMessage(tenant: string, rawMessage: unknown, options?: MessageOptions): Promise<UnionMessageReply>;
+  public async processMessage(tenant: string, rawMessage: GenericMessage, options: MessageOptions = {}): Promise<UnionMessageReply> {
+    const errorMessageReply = await this.validateTenant(tenant) ?? await this.validateMessageIntegrity(rawMessage);
+    if (errorMessageReply !== undefined) {
+      return errorMessageReply;
+    }
+
+    const { dataStream, subscriptionHandler } = options;
+
+    const handlerKey = rawMessage.descriptor.interface + rawMessage.descriptor.method;
+    const methodHandlerReply = await this.methodHandlers[handlerKey].handle({
+      tenant,
+      message: rawMessage as GenericMessage,
+      dataStream,
+      subscriptionHandler
+    });
+
+    return methodHandlerReply;
+  }
+
+  /**
+   * Checks tenant gate to see if tenant is allowed.
+   * @param tenant The tenant DID to route the given message to.
+   * @returns GenericMessageReply if the message has an integrity error, otherwise undefined.
+   */
+  public async validateTenant(tenant: string): Promise<GenericMessageReply | undefined> {
+    const result = await this.tenantGate.isActiveTenant(tenant);
+    if (!result.isActiveTenant) {
+      const detail = result.detail ?? `DID ${tenant} is not an active tenant.`;
+      return {
+        status: { code: 401, detail }
+      };
+    }
+  }
+
+  /**
+   * Validates structure of DWN message
+   * @param tenant The tenant DID to route the given message to.
+   * @param dwnMessageInterface The interface of DWN message.
+   * @param dwnMessageMethod The interface of DWN message.
+
+   * @returns GenericMessageReply if the message has an integrity error, otherwise undefined.
+   */
+  public async validateMessageIntegrity(
+    rawMessage: any,
+  ): Promise<GenericMessageReply | undefined> {
+    // Verify interface and method
+    const dwnInterface = rawMessage?.descriptor?.interface;
+    const dwnMethod = rawMessage?.descriptor?.method;
+
+    if (dwnInterface === undefined || dwnMethod === undefined) {
+      return {
+        status: { code: 400, detail: `Both interface and method must be present, interface: ${dwnInterface}, method: ${dwnMethod}` }
+      };
+    }
+
+    // validate message structure
+    try {
+      // consider to push this down to individual handlers
+      Message.validateJsonSchema(rawMessage);
+    } catch (error) {
+      return messageReplyFromError(error, 400);
+    }
+  }
+};
+
+/**
+ *  MessageOptions that are used when processing a message.
+ */
+export interface MessageOptions {
+  dataStream?: Readable;
+  subscriptionHandler?: MessageSubscriptionHandler | RecordSubscriptionHandler;
+};
+
+/**
+ * DWN configuration.
+ */
+export type DwnConfig = {
+  didResolver?: DidResolver;
+  tenantGate?: TenantGate;
+
+  // event stream is optional if a DWN does not wish to provide subscription services.
+  eventStream?: EventStream;
+
+  messageStore: MessageStore;
+  dataStore: DataStore;
+  eventLog: EventLog;
+  resumableTaskStore: ResumableTaskStore;
+};

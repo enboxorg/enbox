@@ -1,0 +1,13 @@
+#!/bin/bash
+
+# This script drops you into a postgres shell.
+
+THIS_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source $THIS_DIR/common
+
+if [ -n "$RUNNING_CONTAINER" ]; then 
+  echo "Using $CONTAINER_NAME"
+  docker exec -it $CONTAINER_NAME psql -U $DB_USER -d $DB_NAME
+else
+  echo "$CONTAINER_NAME is not currently running, use the start-postgres command first"
+fi

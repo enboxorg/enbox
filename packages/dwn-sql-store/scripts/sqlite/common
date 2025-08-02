@@ -1,0 +1,5 @@
+#!/bin/bash
+
+# This script contains variables used in all of the other scripts in this directory
+
+DB_FILE="dwn.sqlite"

@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "lib": [
+      "DOM",
+      "ES2022",
+    ],
+    "allowJs": false,
+    "strict": true,
+    "declaration": true,
+    "declarationMap": true,
+    "target": "ES6",
+    "module": "NodeNext", // Required for enabling JavaScript import assertion support
+    "sourceMap": true,
+    // `NodeNext` will throw compilation errors if relative import paths are missing file extension
+    // reference: https://devblogs.microsoft.com/typescript/announcing-typescript-4-7/#ecmascript-module-support-in-node-js
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "NodeNext",
+    "skipLibCheck": true
+  },
+  "exclude": ["eslint.config.cjs", "data", "bin", "web5-spec", "node_modules"]
+}

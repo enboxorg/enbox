@@ -1,0 +1,242 @@
+{
+  "published": true,
+  "protocol": "https://slack.app",
+  "types": {
+    "community": {
+      "dataFormats": [
+        "application/json"
+      ]
+    },
+    "openChannel": {
+      "dataFormats": [
+        "application/json"
+      ]
+    },
+    "gatedChannel": {
+      "dataFormats": [
+        "application/json"
+      ]
+    },
+    "message": {
+      "dataFormats": [
+        "application/json"
+      ]
+    },
+    "media": {
+      "dataFormats": [
+        "image/gif",
+        "image/png",
+        "image/jpeg",
+        "video/mp4"
+      ]
+    },
+    "reaction": {
+      "dataFormats": [
+        "application/json"
+      ]
+    },
+    "admin": {
+      "dataFormats": [
+        "application/json"
+      ]
+    },
+    "member": {
+      "dataFormats": [
+        "application/json"
+      ]
+    },
+    "participant": {
+      "dataFormats": [
+        "application/json"
+      ]
+    }
+  },
+  "structure": {
+    "community": {
+      "$actions": [
+        {
+          "role": "community/admin",
+          "can": [
+            "read", "query", "subscribe"
+          ]
+        }
+      ],
+      "admin": {
+        "$role": true,
+        "$actions": [
+          {
+            "who": "author",
+            "of": "community",
+            "can": [
+              "create",
+              "co-delete"
+            ]
+          },
+          {
+            "role": "community/admin",
+            "can": [
+              "create",
+              "co-delete"
+            ]
+          }
+        ]
+      },
+      "member": {
+        "$role": true,
+        "$actions": [
+          {
+            "role": "community/admin",
+            "can": [
+              "create",
+              "co-delete"
+            ]
+          }
+        ]
+      },
+      "openChannel": {
+        "$actions": [
+          {
+            "role": "community/admin",
+            "can": [
+              "create",
+              "update",
+              "co-delete"
+            ]
+          }
+        ],
+        "message": {
+          "$actions": [
+            {
+              "who": "recipient",
+              "of": "community/openChannel/message",
+              "can": [
+                "create",
+                "update"
+              ]
+            },
+            {
+              "role": "community/member",
+              "can": [
+                "create",
+                "update",
+                "co-delete"
+              ]
+            }
+          ],
+          "media": {
+            "$actions": [
+              {
+                "who": "author",
+                "of": "community/openChannel/message",
+                "can": [
+                  "create",
+                  "update"
+                ]
+              }
+            ]
+          },
+          "reaction": {
+            "$actions": [
+              {
+                "role": "community/member",
+                "can": [
+                  "create",
+                  "update",
+                  "co-delete"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "gatedChannel": {
+        "$actions": [
+          {
+            "role": "community/admin",
+            "can": [
+              "create",
+              "update",
+              "read",
+              "query",
+              "subscribe",
+              "co-delete"
+            ]
+          },
+          {
+            "role": "community/gatedChannel/participant",
+            "can": [
+              "read", "query", "subscribe"
+            ]
+          }
+        ],
+        "participant": {
+          "$role": true,
+          "$actions": [
+            {
+              "who": "author",
+              "of": "community/gatedChannel",
+              "can": [
+                "create",
+                "co-delete"
+              ]
+            },
+            {
+              "role": "community/gatedChannel/participant",
+              "can": [
+                "create",
+                "co-delete"
+              ]
+            }
+          ]
+        },
+        "message": {
+          "$actions": [
+            {
+              "who": "recipient",
+              "of": "community/gatedChannel/message",
+              "can": [
+                "create",
+                "update"
+              ]
+            },
+            {
+              "role": "community/gatedChannel/participant",
+              "can": [
+                "create",
+                "update",
+                "query",
+                "read",
+                "subscribe",
+                "co-delete"
+              ]
+            }
+          ],
+          "media": {
+            "$actions": [
+              {
+                "who": "author",
+                "of": "community/gatedChannel/message",
+                "can": [
+                  "create",
+                  "update"
+                ]
+              }
+            ]
+          },
+          "reaction": {
+            "$actions": [
+              {
+                "role": "community/gatedChannel/participant",
+                "can": [
+                  "create",
+                  "update",
+                  "co-delete"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

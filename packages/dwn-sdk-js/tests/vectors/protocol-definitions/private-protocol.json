@@ -1,0 +1,15 @@
+{
+  "protocol": "http://private-protocol.xyz",
+  "published": false,
+  "types": {
+    "privateNote": {
+      "schema": "private-note",
+      "dataFormats": [
+        "text/plain"
+      ]
+    }
+  },
+  "structure": {
+    "privateNote": {}
+  }
+}

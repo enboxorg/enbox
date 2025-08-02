@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://identity.foundation/dwn/json-schemas/messages-subscribe.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "descriptor",
+    "authorization"
+  ],
+  "properties": {
+    "authorization": {
+      "$ref": "https://identity.foundation/dwn/json-schemas/authorization.json"
+    },
+    "descriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interface",
+        "method",
+        "messageTimestamp",
+        "filters"
+      ],
+      "properties": {
+        "interface": {
+          "enum": [
+            "Messages"
+          ],
+          "type": "string"
+        },
+        "method": {
+          "enum": [
+            "Subscribe"
+          ],
+          "type": "string"
+        },
+        "messageTimestamp": {
+          "type": "string"
+        },
+        "filters": {
+          "type": "array",
+          "items": {
+            "$ref": "https://identity.foundation/dwn/json-schemas/messages-filter.json"
+          }
+        }
+      }
+    }
+  }
+}

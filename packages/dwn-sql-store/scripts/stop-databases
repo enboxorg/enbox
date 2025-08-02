@@ -1,0 +1,6 @@
+#!/bin/bash
+
+THIS_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+sh $THIS_DIR/mysql/stop-mysql
+sh $THIS_DIR/postgres/stop-postgres

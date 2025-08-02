@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://identity.foundation/dwn/json-schemas/records-delete.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "authorization",
+    "descriptor"
+  ],
+  "properties": {
+    "authorization": {
+      "$ref": "https://identity.foundation/dwn/json-schemas/authorization-delegated-grant.json"
+    },
+    "descriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interface",
+        "method",
+        "messageTimestamp",
+        "recordId",
+        "prune"
+      ],
+      "properties": {
+        "interface": {
+          "enum": [
+            "Records"
+          ],
+          "type": "string"
+        },
+        "method": {
+          "enum": [
+            "Delete"
+          ],
+          "type": "string"
+        },
+        "messageTimestamp": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
+        },
+        "recordId": {
+          "type": "string"
+        },
+        "prune": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

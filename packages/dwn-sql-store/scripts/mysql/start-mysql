@@ -1,0 +1,21 @@
+#! /bin/bash
+
+# this script starts dockerized mysql if it isn't already running.
+
+THIS_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source $THIS_DIR/common
+
+if [ -n "$RUNNING_CONTAINER" ]; then
+  echo "Container $CONTAINER_NAME is already running"
+elif [ -n "$STOPPED_CONTAINER" ]; then
+  echo "Starting $CONTAINER_NAME"
+  docker start $CONTAINER_NAME
+else
+  echo "Creating & starting $CONTAINER_NAME"
+  docker run --detach \
+    --name $CONTAINER_NAME \
+    --env MYSQL_DATABASE=$DB_NAME \
+    --env MYSQL_ROOT_PASSWORD=$DB_PASSWORD \
+    --publish $DB_PORT:$DB_PORT \
+    mysql:8.0.32
+fi

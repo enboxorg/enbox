@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://identity.foundation/dwn/json-schemas/permissions/scopes.json",
+  "type": "object",
+  "$defs": {
+    "messages-query-scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required" : [
+        "interface",
+        "method"
+      ],
+      "properties": {
+        "interface": {
+          "const": "Messages"
+        },
+        "method": {
+          "const": "Query"
+        },
+        "protocol": {
+          "type": "string"
+        }
+      }
+    },
+    "messages-read-scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interface",
+        "method"
+      ],
+      "properties": {
+        "interface": {
+          "const": "Messages"
+        },
+        "method": {
+          "const": "Read"
+        },
+        "protocol": {
+          "type": "string"
+        }
+      }
+    },
+    "messages-subscribe-scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required" : [
+        "interface",
+        "method"
+      ],
+      "properties": {
+        "interface": {
+          "const": "Messages"
+        },
+        "method": {
+          "const": "Subscribe"
+        },
+        "protocol": {
+          "type": "string"
+        }
+      }
+    },
+    "protocols-configure-scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interface",
+        "method"
+      ],
+      "properties": {
+        "interface": {
+          "const": "Protocols"
+        },
+        "method": {
+          "const": "Configure"
+        },
+        "protocol": {
+          "type": "string"
+        }
+      }
+    },
+    "protocols-query-scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interface",
+        "method"
+      ],
+      "properties": {
+        "interface": {
+          "const": "Protocols"
+        },
+        "method": {
+          "const": "Query"
+        },
+        "protocol": {
+          "type": "string"
+        }
+      }
+    },
+    "records-delete-scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interface",
+        "method"
+      ],
+      "properties": {
+        "interface": {
+          "const": "Records"
+        },
+        "method": {
+          "const": "Delete"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "contextId": {
+          "type": "string"
+        },
+        "protocolPath": {
+          "type": "string"
+        }
+      }
+    },
+    "records-read-scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interface",
+        "method"
+      ],
+      "properties": {
+        "interface": {
+          "const": "Records"
+        },
+        "method": {
+          "const": "Read"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "contextId": {
+          "type": "string"
+        },
+        "protocolPath": {
+          "type": "string"
+        }
+      }
+    },
+    "records-write-scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interface",
+        "method"
+      ],
+      "properties": {
+        "interface": {
+          "const": "Records"
+        },
+        "method": {
+          "const": "Write"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "contextId": {
+          "type": "string"
+        },
+        "protocolPath": {
+          "type": "string"
+        }
+      }
+    },
+    "records-query-scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interface",
+        "method"
+      ],
+      "properties": {
+        "interface": {
+          "const": "Records"
+        },
+        "method": {
+          "const": "Query"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "contextId": {
+          "type": "string"
+        },
+        "protocolPath": {
+          "type": "string"
+        }
+      }
+    },
+    "records-subscribe-scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interface",
+        "method"
+      ],
+      "properties": {
+        "interface": {
+          "const": "Records"
+        },
+        "method": {
+          "const": "Subscribe"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "contextId": {
+          "type": "string"
+        },
+        "protocolPath": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

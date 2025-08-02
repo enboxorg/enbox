@@ -1,0 +1,13 @@
+#!/bin/bash
+
+# This script creates an empty sqlite database file if it doesn't already exist.
+
+THIS_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source $THIS_DIR/common
+
+if [ -f "$DB_FILE" ]; then
+  echo "Database file $DB_FILE already exists"
+else
+  echo "Creating $DB_FILE"
+  sqlite3 $DB_FILE ".databases"
+fi

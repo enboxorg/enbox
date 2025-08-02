@@ -1,0 +1,14 @@
+#!/bin/bash
+
+# This script contains variables used in all of the other scripts in this directory
+
+CONTAINER_NAME=dwn-mysql
+RUNNING_CONTAINER=$(docker ps -aq --filter name=$CONTAINER_NAME --filter status=running)
+STOPPED_CONTAINER=$(docker ps -aq --filter name=$CONTAINER_NAME --filter status=exited)
+
+# variables with defaults. these are overridden by our deployment infra in staging and prod
+: ${DB_USER:="root"}
+: ${DB_PASSWORD:="dwn"}
+: ${DB_HOST:="localhost"}
+: ${DB_PORT:="3306"}
+: ${DB_NAME:="dwn"}

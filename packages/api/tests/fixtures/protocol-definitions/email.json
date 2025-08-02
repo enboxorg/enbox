@@ -1,0 +1,70 @@
+{
+  "protocol": "http://email-protocol.xyz",
+  "published": true,
+  "types": {
+    "thread": {
+      "schema": "http://email-protocol.xyz/schema/thread",
+      "dataFormats": [
+        "text/plain",
+        "application/json"
+      ]
+    },
+    "email": {
+      "schema": "http://email-protocol.xyz/schema/email",
+      "dataFormats": [
+        "text/plain"
+      ]
+    }
+  },
+  "structure": {
+    "thread": {
+      "$actions": [
+        {
+          "who": "anyone",
+          "can": [
+            "create", "update"
+          ]
+        },
+        {
+          "who": "author",
+          "of": "thread",
+          "can": [
+            "read"
+          ]
+        },
+        {
+          "who": "recipient",
+          "of": "thread",
+          "can": [
+            "read"
+          ]
+        }
+      ],
+      "email": {
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "thread",
+            "can": [
+              "create", "update"
+            ]
+          },
+          {
+            "who": "author",
+            "of": "thread/email",
+            "can": [
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "of": "thread/email",
+            "can": [
+              "read"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

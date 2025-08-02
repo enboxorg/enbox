@@ -1,0 +1,57 @@
+# Runs linter, audits third party depedencies, tests compilation, runs tests, and uploads codecov report
+name: Integrity Checks
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  test:
+    defaults:
+      run:
+        shell: bash
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 20]
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@8f152de45cc393bb48ce5d89d36b731f54556e65 # v4.0.0
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Report known vulnerabilities
+        run: npm run lint
+
+      - name: Run audit checks
+        run: npm audit
+
+      - name: Test build
+        run: npm run build
+
+      - name: start containerized dbs
+        run: |
+          sudo apt update
+          sudo apt install sqlite3
+          ./scripts/start-databases
+
+      - name: Run tests
+        run: npm run test-coverage
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@eaaf4bedf32dbdc6b720b63067d99c4d77d6047d # v3.1.4
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

@@ -1,0 +1,10 @@
+#!/bin/bash
+
+THIS_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+sh $THIS_DIR/mysql/stop-mysql -rm
+sh $THIS_DIR/postgres/stop-postgres -rm
+
+echo "Deleting SQLite database file..."
+rm -f $THIS_DIR/../dwn.sqlite
+echo "SQLite database file deleted."

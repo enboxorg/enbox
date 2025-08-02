@@ -1,0 +1,7 @@
+#!/bin/bash
+
+THIS_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+$THIS_DIR/mysql/start-mysql
+$THIS_DIR/postgres/start-postgres
+$THIS_DIR/sqlite/start-sqlite

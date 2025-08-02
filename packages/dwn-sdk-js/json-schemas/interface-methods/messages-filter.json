@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://identity.foundation/dwn/json-schemas/messages-filter.json",
+  "type": "object",
+  "additionalProperties": false,
+  "minProperties": 1,
+  "properties": {
+    "interface": {
+      "enum": [
+        "Protocols",
+        "Records"
+      ],
+      "type": "string"
+    },
+    "method": {
+      "enum": [
+        "Configure",
+        "Delete",
+        "Write"
+      ],
+      "type": "string"
+    },
+    "protocol": {
+      "type": "string"
+    },
+    "messageTimestamp": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
+        },
+        "to": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
+        }
+      }
+    }
+  }
+}

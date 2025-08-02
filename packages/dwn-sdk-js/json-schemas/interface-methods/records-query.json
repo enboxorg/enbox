@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://identity.foundation/dwn/json-schemas/records-query.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "descriptor"
+  ],
+  "properties": {
+    "authorization": {
+      "$ref": "https://identity.foundation/dwn/json-schemas/authorization-delegated-grant.json"
+    },
+    "descriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interface",
+        "method",
+        "messageTimestamp",
+        "filter"
+      ],
+      "properties": {
+        "interface": {
+          "enum": [
+            "Records"
+          ],
+          "type": "string"
+        },
+        "method": {
+          "enum": [
+            "Query"
+          ],
+          "type": "string"
+        },
+        "messageTimestamp": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
+        },
+        "filter": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/records-filter.json"
+        },
+        "pagination": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "limit": {
+              "type": "number",
+              "minimum": 1
+            },
+            "cursor": {
+              "$ref": "https://identity.foundation/dwn/json-schemas/pagination-cursor.json"
+            }
+          }
+        },
+        "dateSort": {
+          "enum": [
+            "createdAscending",
+            "createdDescending",
+            "publishedAscending",
+            "publishedDescending"
+          ],
+          "type": "string"
+        }
+      }
+    }
+  }
+}

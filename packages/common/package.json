@@ -1,0 +1,102 @@
+{
+  "name": "@enbox/common",
+  "version": "1.1.0",
+  "type": "module",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/types/index.d.ts",
+  "scripts": {
+    "clean": "rimraf dist coverage tests/compiled",
+    "build:esm": "rimraf dist/esm dist/types && pnpm tsc -p tsconfig.json",
+    "build:cjs": "rimraf dist/cjs && node build/cjs-bundle.js && echo '{\"type\": \"commonjs\"}' > ./dist/cjs/package.json",
+    "build:browser": "rimraf dist/browser.mjs dist/browser.js && node build/bundles.js",
+    "build:tests:node": "rimraf tests/compiled && pnpm tsc -p tests/tsconfig.json",
+    "build:tests:browser": "rimraf tests/compiled && node build/esbuild-tests.cjs",
+    "build": "pnpm clean && pnpm build:esm && pnpm build:cjs && pnpm build:browser",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "test:node": "pnpm build:tests:node && pnpm c8 mocha",
+    "test:browser": "pnpm build:tests:browser && web-test-runner"
+  },
+  "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/common#readme",
+  "bugs": "https://github.com/enboxorg/enbox/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enboxorg/enbox.git",
+    "directory": "packages/common"
+  },
+  "license": "Apache-2.0",
+  "contributors": [
+    {
+      "name": "Daniel Buchner",
+      "url": "https://github.com/csuwildcat"
+    },
+    {
+      "name": "Frank Hinek",
+      "url": "https://github.com/frankhinek"
+    },
+    {
+      "name": "Moe Jangda",
+      "url": "https://github.com/mistermoe"
+    }
+  ],
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js"
+    }
+  },
+  "react-native": "./dist/esm/index.js",
+  "keywords": [
+    "decentralized",
+    "decentralized-applications",
+    "decentralized-identity",
+    "decentralized-web",
+    "vcs",
+    "verifiable credentials",
+    "web5"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@isaacs/ttlcache": "1.4.1",
+    "level": "8.0.1",
+    "multiformats": "13.1.0",
+    "readable-stream": "4.5.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.45.3",
+    "@types/chai": "4.3.16",
+    "@types/chai-as-promised": "7.1.8",
+    "@types/eslint": "9.6.0",
+    "@types/mocha": "10.0.6",
+    "@types/node": "20.14.8",
+    "@types/readable-stream": "4.0.14",
+    "@typescript-eslint/eslint-plugin": "7.14.1",
+    "@typescript-eslint/parser": "7.14.1",
+    "@web/test-runner": "0.18.2",
+    "@web/test-runner-playwright": "0.11.0",
+    "abstract-level": "1.0.4",
+    "c8": "9.1.0",
+    "chai": "5.1.1",
+    "chai-as-promised": "8.0.0",
+    "esbuild": "0.23.0",
+    "eslint": "9.7.0",
+    "eslint-plugin-mocha": "10.4.3",
+    "mocha": "10.4.0",
+    "mocha-junit-reporter": "2.2.1",
+    "playwright": "1.45.3",
+    "rimraf": "5.0.7",
+    "typescript": "5.5.3"
+  }
+}

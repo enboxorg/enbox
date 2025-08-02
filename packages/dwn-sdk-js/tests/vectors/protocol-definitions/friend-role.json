@@ -1,0 +1,48 @@
+{
+  "protocol": "http://minimal.xyz",
+  "published": false,
+  "types": {
+    "friend": {},
+    "admin": {},
+    "chat": {},
+    "fan": {}
+  },
+  "structure": {
+    "admin": {
+      "$role": true
+    },
+    "friend": {
+      "$role": true
+    },
+    "fan": {
+      "$role": true
+    },
+    "chat": {
+      "$actions": [
+        {
+          "role": "fan",
+          "can": [
+            "read", "query", "subscribe"
+          ]
+        },
+        {
+          "role": "friend",
+          "can": [
+            "create",
+            "update",
+            "read",
+            "query",
+            "subscribe"
+          ]
+        },
+        {
+          "role": "admin",
+          "can": [
+            "co-update",
+            "co-delete"
+          ]
+        }
+      ]
+    }
+  }
+}
