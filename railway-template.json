@@ -1,14 +1,14 @@
 {
-  "name": "DWN Server with PostgreSQL",
-  "description": "Decentralized Web Node (DWN) server with managed PostgreSQL database for Web5 applications",
-  "repository": "https://github.com/enboxorg/enbox",
+  "$schema": "https://railway.app/railway.schema.json",
+  "name": "Enbox - DWN Server with Web Wallet and Demo App",
+  "description": "Deploy a complete DWN (Decentralized Web Node) server with web wallet and demo applications",
+  "icon": "🔐",
   "services": [
     {
       "name": "dwn-server",
       "source": {
-        "type": "repo",
-        "repo": "enboxorg/enbox",
-        "branch": "main"
+        "type": "github",
+        "repo": "enboxorg/enbox"
       },
       "build": {
         "builder": "dockerfile",
@@ -16,25 +16,84 @@
       },
       "deploy": {
         "numReplicas": 1,
-        "sleepApplication": false,
-        "restartPolicyType": "on_failure"
+        "restartPolicyType": "ON_FAILURE"
       },
       "envVars": {
-        "DS_PORT": "$PORT",
-        "DWN_BASE_URL": "https://$RAILWAY_SERVICE_NAME-$RAILWAY_ENVIRONMENT.railway.app",
-        "DWN_TTL_CACHE_URL": "$DATABASE_URL",
-        "DWN_STORAGE_MESSAGES": "$DATABASE_URL",
-        "DWN_STORAGE_DATA": "$DATABASE_URL",
-        "DWN_STORAGE_EVENTS": "$DATABASE_URL", 
-        "DWN_STORAGE_RESUMABLE_TASKS": "$DATABASE_URL",
+        "DS_PORT": {
+          "type": "reference",
+          "value": "${{PORT}}"
+        },
+        "DWN_BASE_URL": {
+          "type": "reference", 
+          "value": "https://${{RAILWAY_PUBLIC_DOMAIN}}"
+        },
+        "DWN_TTL_CACHE_URL": {
+          "type": "reference",
+          "value": "${{postgres.DATABASE_URL}}"
+        },
+        "DWN_STORAGE_MESSAGES": {
+          "type": "reference",
+          "value": "${{postgres.DATABASE_URL}}"
+        },
+        "DWN_STORAGE_DATA": {
+          "type": "reference",
+          "value": "${{postgres.DATABASE_URL}}"
+        },
+        "DWN_STORAGE_EVENTS": {
+          "type": "reference",
+          "value": "${{postgres.DATABASE_URL}}"
+        },
+        "DWN_STORAGE_RESUMABLE_TASKS": {
+          "type": "reference",
+          "value": "${{postgres.DATABASE_URL}}"
+        },
         "DS_WEBSOCKET_SERVER": "on",
         "MAX_RECORD_DATA_SIZE": "1gb",
         "DWN_SERVER_LOG_LEVEL": "info"
+      }
+    },
+    {
+      "name": "web-wallet",
+      "source": {
+        "type": "github",
+        "repo": "enboxorg/enbox"
       },
-      "healthcheck": {
-        "path": "/info",
-        "intervalSeconds": 30,
-        "timeoutSeconds": 10
+      "build": {
+        "builder": "nixpacks",
+        "buildCommand": "cd examples/web-wallet && npm install && npm run build"
+      },
+      "deploy": {
+        "numReplicas": 1,
+        "restartPolicyType": "ON_FAILURE",
+        "staticPublishPath": "examples/web-wallet/dist"
+      },
+      "envVars": {
+        "VITE_DWN_URL": {
+          "type": "reference",
+          "value": "https://${{dwn-server.RAILWAY_PUBLIC_DOMAIN}}"
+        }
+      }
+    },
+    {
+      "name": "dapp-demo",
+      "source": {
+        "type": "github",
+        "repo": "enboxorg/enbox"
+      },
+      "build": {
+        "builder": "nixpacks",
+        "buildCommand": "cd examples/dapp-demo && npm install && npm run build"
+      },
+      "deploy": {
+        "numReplicas": 1,
+        "restartPolicyType": "ON_FAILURE",
+        "staticPublishPath": "examples/dapp-demo/dist"
+      },
+      "envVars": {
+        "VITE_DWN_URL": {
+          "type": "reference",
+          "value": "https://${{dwn-server.RAILWAY_PUBLIC_DOMAIN}}"
+        }
       }
     },
     {
@@ -45,13 +104,17 @@
       },
       "envVars": {
         "POSTGRES_DB": "dwn",
-        "POSTGRES_USER": "dwn_user", 
-        "POSTGRES_PASSWORD": "$POSTGRES_PASSWORD"
+        "POSTGRES_USER": "dwn_user",
+        "POSTGRES_PASSWORD": {
+          "type": "secret"
+        }
       },
-      "volume": {
-        "name": "postgres_data",
-        "path": "/var/lib/postgresql/data"
-      }
+      "volumes": [
+        {
+          "mountPath": "/var/lib/postgresql/data",
+          "name": "postgres_data"
+        }
+      ]
     }
   ]
 }

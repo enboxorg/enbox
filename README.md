@@ -1,6 +1,16 @@
 # Enbox
 
-A comprehensive toolkit for decentralized identity and data management.
+An open source, decentralized, personal data platform.
+
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/enbox?referralCode=YOUR_REFERRAL_CODE)
+
+## Quick Deploy
+
+Click the button above to deploy the entire Enbox platform to Railway with one click. This will deploy:
+- **DWN Server** - The core Decentralized Web Node server
+- **Web Wallet** - A web-based wallet interface
+- **Demo App** - A demonstration application
+- **PostgreSQL** - Database for the DWN server
 
 ## 🏗️ **Architecture Overview**
 
