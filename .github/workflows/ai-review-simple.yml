@@ -1,0 +1,29 @@
+name: Simple AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ai-review:
+    runs-on: ubuntu-latest
+    name: Quick AI Review
+    steps:
+      - name: AI Code Review
+        uses: anc95/ChatGPT-CodeReview@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # Optional: Use GPT-3.5 for lower costs
+          # OPENAI_API_MODEL: "gpt-3.5-turbo"
+          OPENAI_API_MODEL: "gpt-4-turbo-preview"
+          top_p: 1
+          temperature: 0.7
+          max_tokens: 2048
+          # Review mode: 'files' or 'diff'
+          mode: "files"
+          language: "en"

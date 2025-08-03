@@ -1,0 +1,208 @@
+name: AI Test Suggestions
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  test-suggestions:
+    runs-on: ubuntu-latest
+    name: AI Test Generation & Coverage
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Get Changed Files
+        id: changed-files
+        uses: tj-actions/changed-files@v40
+        with:
+          files: |
+            **/*.js
+            **/*.ts
+            **/*.jsx
+            **/*.tsx
+          files_ignore: |
+            **/*.test.js
+            **/*.test.ts
+            **/*.spec.js
+            **/*.spec.ts
+            **/*.test.jsx
+            **/*.test.tsx
+            **/*.spec.jsx
+            **/*.spec.tsx
+            **/node_modules/**
+
+      - name: Generate Test Suggestions
+        if: steps.changed-files.outputs.any_changed == 'true'
+        uses: actions/github-script@v7
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const { Configuration, OpenAIApi } = require('openai');
+            
+            // Initialize OpenAI
+            const configuration = new Configuration({
+              apiKey: process.env.OPENAI_API_KEY,
+            });
+            const openai = new OpenAIApi(configuration);
+            
+            const changedFiles = '${{ steps.changed-files.outputs.all_changed_files }}'.split(' ');
+            let testSuggestions = '## 🧪 AI Test Suggestions\n\n';
+            
+            for (const file of changedFiles) {
+              if (!file || !fs.existsSync(file)) continue;
+              
+              const content = fs.readFileSync(file, 'utf8');
+              const fileName = path.basename(file);
+              
+              // Skip if file is too large
+              if (content.length > 10000) {
+                testSuggestions += `### ${file}\n⚠️ File too large for analysis\n\n`;
+                continue;
+              }
+              
+              try {
+                const prompt = `Analyze this code and suggest important test cases that should be written. Focus on edge cases, error handling, and critical functionality.
+                
+                File: ${fileName}
+                Code:
+                ${content}
+                
+                Provide:
+                1. List of test cases that should be written
+                2. Example test code for the most critical test case
+                3. Coverage gaps that need attention
+                
+                Format as markdown.`;
+                
+                const response = await openai.createChatCompletion({
+                  model: 'gpt-4-turbo-preview',
+                  messages: [{ role: 'user', content: prompt }],
+                  max_tokens: 1000,
+                  temperature: 0.7,
+                });
+                
+                testSuggestions += `### ${file}\n${response.data.choices[0].message.content}\n\n`;
+              } catch (error) {
+                console.error(`Error analyzing ${file}:`, error.message);
+                testSuggestions += `### ${file}\n⚠️ Error during analysis\n\n`;
+              }
+            }
+            
+            // Post suggestions as PR comment
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: testSuggestions
+            });
+
+      - name: Coverage Analysis
+        run: |
+          # Install coverage tools
+          npm install -g nyc c8
+          
+          echo "## Test Coverage Analysis" > coverage_report.md
+          echo "" >> coverage_report.md
+          
+          # Try to run existing tests with coverage
+          if [ -f "package.json" ]; then
+            # Check if test script exists
+            if grep -q '"test"' package.json; then
+              echo "Running tests with coverage..." >> coverage_report.md
+              npx c8 --reporter=json --reporter=text npm test || true
+              
+              if [ -f "coverage/coverage-summary.json" ]; then
+                echo "### Coverage Summary" >> coverage_report.md
+                cat coverage/coverage-summary.json | jq -r '.total | "- Statements: \(.statements.pct)%\n- Branches: \(.branches.pct)%\n- Functions: \(.functions.pct)%\n- Lines: \(.lines.pct)%"' >> coverage_report.md
+              fi
+            fi
+          fi
+          
+          # Identify untested files
+          echo "### Files Without Tests" >> coverage_report.md
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            if [ -f "$file" ]; then
+              base_name=$(basename "$file" | sed 's/\.[^.]*$//')
+              dir_name=$(dirname "$file")
+              
+              # Check for corresponding test file
+              test_found=false
+              for ext in test spec; do
+                for test_ext in js ts jsx tsx; do
+                  if [ -f "$dir_name/$base_name.$ext.$test_ext" ] || [ -f "$dir_name/__tests__/$base_name.$ext.$test_ext" ]; then
+                    test_found=true
+                    break 2
+                  fi
+                done
+              done
+              
+              if [ "$test_found" = false ]; then
+                echo "- ⚠️ $file" >> coverage_report.md
+              fi
+            fi
+          done
+
+      - name: Post Coverage Report
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            if (fs.existsSync('coverage_report.md')) {
+              const report = fs.readFileSync('coverage_report.md', 'utf8');
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: report
+              });
+            }
+
+  mutation-testing:
+    runs-on: ubuntu-latest
+    name: Mutation Testing Analysis
+    if: github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'master'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run Stryker Mutation Testing
+        continue-on-error: true
+        run: |
+          npm install -g @stryker-mutator/core @stryker-mutator/typescript-checker @stryker-mutator/jest-runner
+          
+          # Create basic Stryker config if not exists
+          if [ ! -f "stryker.conf.json" ]; then
+            echo '{
+              "packageManager": "npm",
+              "reporters": ["html", "clear-text", "progress"],
+              "testRunner": "jest",
+              "coverageAnalysis": "perTest",
+              "mutate": ["src/**/*.{js,ts,jsx,tsx}", "!src/**/*.{test,spec}.{js,ts,jsx,tsx}"]
+            }' > stryker.conf.json
+          fi
+          
+          # Run mutation testing on changed files only
+          npx stryker run --mutate "${{ steps.changed-files.outputs.all_changed_files }}"

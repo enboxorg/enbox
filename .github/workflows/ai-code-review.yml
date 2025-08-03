@@ -1,0 +1,326 @@
+name: AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  ai-review:
+    runs-on: ubuntu-latest
+    name: AI Code Review
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Get Changed Files
+        id: changed-files
+        uses: tj-actions/changed-files@v40
+        with:
+          separator: ","
+          quotepath: false
+
+      # OpenAI-based Code Review
+      - name: OpenAI Code Review
+        uses: anc95/ChatGPT-CodeReview@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_MODEL: "gpt-4-turbo-preview"
+          top_p: 1
+          temperature: 0.7
+          max_tokens: 4096
+          mode: "files"
+          language: "en"
+
+      # PR Agent for comprehensive review
+      - name: PR Agent Review
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: Codium-ai/pr-agent@main
+        env:
+          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_REVIEWER.EXTRA_INSTRUCTIONS: |
+            Focus on:
+            - Security vulnerabilities and potential exploits
+            - Performance issues and optimization opportunities
+            - Code quality, maintainability, and best practices
+            - Test coverage and edge cases
+            - Documentation completeness
+            - Error handling and edge cases
+            - Dependency security and updates
+          PR_REVIEWER.ENABLE_REVIEW: true
+          PR_REVIEWER.ENABLE_IMPROVE: true
+          PR_REVIEWER.ENABLE_DESCRIBE: true
+          
+      # Code Quality Metrics
+      - name: Code Complexity Analysis
+        run: |
+          npm install -g complexity-report
+          echo "## Code Complexity Report" >> complexity_report.md
+          echo "" >> complexity_report.md
+          
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            if [[ $file == *.js || $file == *.ts || $file == *.jsx || $file == *.tsx ]]; then
+              echo "### $file" >> complexity_report.md
+              cr --format json "$file" | jq -r '.reports[0] | "- Cyclomatic Complexity: \(.aggregate.cyclomatic)\n- Maintainability Index: \(.maintainability)"' >> complexity_report.md || true
+              echo "" >> complexity_report.md
+            fi
+          done
+
+      - name: Post Complexity Report
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            if (fs.existsSync('complexity_report.md')) {
+              const report = fs.readFileSync('complexity_report.md', 'utf8');
+              if (report.trim().split('\n').length > 2) {
+                github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: report
+                });
+              }
+            }
+
+  security-review:
+    runs-on: ubuntu-latest
+    name: Security & Vulnerability Review
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Dependency vulnerability scanning
+      - name: Run Snyk Security Scan
+        uses: snyk/actions/node@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=medium
+
+      # Code security scanning
+      - name: Run Semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/secrets
+            p/owasp-top-ten
+            p/typescript
+            p/javascript
+            p/react
+          generateSarif: true
+
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+
+      # GitLeaks for secret scanning
+      - name: Secret Scanning
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  performance-review:
+    runs-on: ubuntu-latest
+    name: Performance & Best Practices Review
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: |
+          npm install -g bundlephobia-cli
+          npm install -g size-limit @size-limit/preset-app
+
+      - name: Bundle Size Analysis
+        id: bundle-analysis
+        run: |
+          echo "## Bundle Size Analysis" > bundle_report.md
+          echo "" >> bundle_report.md
+          
+          # Check package.json files for new dependencies
+          for pkg in $(find . -name "package.json" -not -path "*/node_modules/*"); do
+            dir=$(dirname "$pkg")
+            echo "### $dir" >> bundle_report.md
+            
+            if [ -f "$pkg" ]; then
+              # Extract new dependencies
+              deps=$(git diff origin/${{ github.base_ref }}..HEAD -- "$pkg" | grep '^\+.*"' | grep -E '"[^"]+":' | sed 's/.*"\([^"]*\)".*/\1/' | grep -v '^$')
+              
+              if [ ! -z "$deps" ]; then
+                echo "New dependencies:" >> bundle_report.md
+                for dep in $deps; do
+                  size=$(npx bundlephobia $dep 2>/dev/null | grep -E 'minified:|gzipped:' | head -2 || echo "Size data unavailable")
+                  echo "- **$dep**" >> bundle_report.md
+                  echo "  $size" >> bundle_report.md
+                done
+              fi
+            fi
+            echo "" >> bundle_report.md
+          done
+
+      - name: Post Performance Report
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            if (fs.existsSync('bundle_report.md')) {
+              const report = fs.readFileSync('bundle_report.md', 'utf8');
+              if (report.trim().split('\n').length > 2) {
+                github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: report
+                });
+              }
+            }
+
+  documentation-review:
+    runs-on: ubuntu-latest
+    name: Documentation & Comments Review
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Documentation Coverage Check
+        run: |
+          echo "## Documentation Review" > doc_report.md
+          echo "" >> doc_report.md
+          
+          # Check for missing JSDoc/TSDoc in changed files
+          changed_files=$(git diff --name-only origin/${{ github.base_ref }}..HEAD | grep -E '\.(js|ts|jsx|tsx)$' || true)
+          
+          if [ ! -z "$changed_files" ]; then
+            echo "### Files Missing Documentation:" >> doc_report.md
+            for file in $changed_files; do
+              if [ -f "$file" ]; then
+                # Check for functions/classes without documentation
+                undocumented=$(grep -n -E '(export\s+(async\s+)?function|export\s+class|export\s+const\s+\w+\s*=\s*(async\s*)?\()' "$file" | while read -r line; do
+                  line_num=$(echo "$line" | cut -d: -f1)
+                  prev_line_num=$((line_num - 1))
+                  if [ $prev_line_num -gt 0 ]; then
+                    prev_line=$(sed -n "${prev_line_num}p" "$file")
+                    if ! echo "$prev_line" | grep -qE '(\*/|\*\s|///)'; then
+                      echo "$line"
+                    fi
+                  fi
+                done)
+                
+                if [ ! -z "$undocumented" ]; then
+                  echo "- **$file**" >> doc_report.md
+                  echo "$undocumented" | while read -r line; do
+                    echo "  - Line $(echo "$line" | cut -d: -f1): \`$(echo "$line" | cut -d: -f2-)\`" >> doc_report.md
+                  done
+                fi
+              fi
+            done
+          fi
+
+      - name: Post Documentation Report
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            if (fs.existsSync('doc_report.md')) {
+              const report = fs.readFileSync('doc_report.md', 'utf8');
+              if (report.trim().split('\n').length > 2) {
+                github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: report
+                });
+              }
+            }
+
+  summary:
+    runs-on: ubuntu-latest
+    needs: [ai-review, security-review, performance-review, documentation-review]
+    if: always()
+    name: Review Summary
+    steps:
+      - name: Post Summary Comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const jobs = ['ai-review', 'security-review', 'performance-review', 'documentation-review'];
+            const statuses = {};
+            
+            for (const job of jobs) {
+              const runs = await github.rest.actions.listJobsForWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: context.runId
+              });
+              
+              const jobRun = runs.data.jobs.find(j => j.name.includes(job));
+              if (jobRun) {
+                statuses[job] = jobRun.conclusion || 'in_progress';
+              }
+            }
+            
+            const statusEmoji = (status) => {
+              switch(status) {
+                case 'success': return '✅';
+                case 'failure': return '❌';
+                case 'cancelled': return '🚫';
+                case 'skipped': return '⏭️';
+                default: return '⏳';
+              }
+            };
+            
+            const summary = `## 🤖 AI Code Review Summary
+            
+            | Review Type | Status |
+            |-------------|--------|
+            | AI Code Review | ${statusEmoji(statuses['ai-review'])} |
+            | Security Review | ${statusEmoji(statuses['security-review'])} |
+            | Performance Review | ${statusEmoji(statuses['performance-review'])} |
+            | Documentation Review | ${statusEmoji(statuses['documentation-review'])} |
+            
+            ---
+            *Review completed at ${new Date().toISOString()}*`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
