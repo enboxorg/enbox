@@ -45,7 +45,7 @@ export interface TenantDetails extends Tenant {
 
 // Component Props Types
 export interface LoginFormProps {
-  onLogin: (token: string) => Promise<void>;
+  onLogin: (secret: string, serverUrl?: string) => Promise<boolean>;
 }
 
 export interface ServerStatsProps {
@@ -66,6 +66,7 @@ export interface TenantDetailsModalProps {
 
 export interface DashboardProps {
   apiClient: AdminApiClient;
+  onLogout: () => void;
 }
 
 // Import the actual AdminApiClient class

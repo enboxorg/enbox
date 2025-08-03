@@ -1,5 +1,5 @@
 import * as esbuild from 'esbuild';
-import { copyFileSync, mkdirSync, writeFileSync } from 'fs';
+import { copyFileSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -32,17 +32,10 @@ const buildOptions = {
     '.ts': 'ts',
   },
   jsx: 'automatic',
+  define: {
+    'process.env.NODE_ENV': isWatch ? '"development"' : '"production"'
+  }
 };
-
-// Create index.js that exports the dist directory path
-const indexContent = `import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-export const adminUIPath = join(__dirname, 'dist');
-`;
 
 async function build() {
   if (isWatch) {
@@ -50,14 +43,11 @@ async function build() {
     const context = await esbuild.context(buildOptions);
     await context.watch();
     console.log('Watching for changes...');
+    console.log('Admin UI available at http://localhost:5173');
   } else {
     // Build once
     try {
       await esbuild.build(buildOptions);
-      
-      // Create index.js
-      writeFileSync(join(distDir, 'index.js'), indexContent);
-      
       console.log('Build completed successfully');
     } catch (error) {
       console.error('Build failed:', error);

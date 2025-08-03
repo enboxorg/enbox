@@ -103,38 +103,12 @@ export class HttpApi {
     // This is necessary for the endpoints used by the Web5 Connect Server/OIDC flow.
     this.#api.use(express.urlencoded({ extended: true }));
     
-    // Serve admin UI static files
-    if (this.#config.adminApiEnabled) {
-      try {
-        // Try to load the admin UI package
-        const adminUI = await import('@enbox/dwn-server-admin');
-        const adminUiPath = adminUI.adminUIPath;
-        this.#api.use('/admin-ui', express.static(adminUiPath));
-        
-        // Redirect /admin to /admin-ui/
-        this.#api.get('/admin', (_req, res) => {
-          res.redirect('/admin-ui/');
-        });
-        
-        log.info('Admin UI loaded successfully');
-      } catch (error) {
-        log.warn('Admin UI package not found - admin interface will not be available');
-        log.debug('To enable admin UI, install @enbox/dwn-server-admin package');
-      }
-    }
-    
     this.#api.use(
       responseTime((req: Request, res: Response, time) => {
-        const url = req.url === '/' ? '/jsonrpc' : req.url;
-        const route = (req.method + url)
-          .toLowerCase()
-          .replace(/[:.]/g, '')
-          .replace(/\//g, '_');
-
+        const route = req.route ? `${req.method} ${req.baseUrl}${req.route.path}` : 'unknown';
         const statusCode = res.statusCode.toString();
         responseHistogram.labels(route, statusCode).observe(time);
-        log.info(req.method, decodeURI(req.url), res.statusCode);
-      }),
+      })
     );
   }
 

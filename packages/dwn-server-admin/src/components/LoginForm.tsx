@@ -1,74 +1,82 @@
 import React, { useState, FormEvent } from 'react';
 import type { LoginFormProps } from '../types.js';
 
-export function LoginForm({ onLogin }: LoginFormProps): JSX.Element {
-  const [token, setToken] = useState('');
+export const LoginForm: React.FC<LoginFormProps & { defaultServerUrl: string }> = ({ onLogin, defaultServerUrl }) => {
+  const [secret, setSecret] = useState('');
+  const [serverUrl, setServerUrl] = useState(defaultServerUrl);
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: FormEvent<HTMLFormElement>): void => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!token.trim()) {
-      setError('Please enter an admin token');
-      return;
+    setError('');
+    setIsLoading(true);
+
+    try {
+      const success = await onLogin(secret, serverUrl);
+      if (!success) {
+        setError('Invalid admin secret');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Login failed');
+    } finally {
+      setIsLoading(false);
     }
-    onLogin(token.trim()).catch((err: Error) => {
-      setError(err.message);
-    });
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="max-w-md w-full space-y-8">
-        <div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            DWN Server Admin Dashboard
-          </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            Enter your admin token to access the dashboard
-          </p>
-        </div>
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          <div className="rounded-md shadow-sm -space-y-px">
-            <div>
-              <label htmlFor="token" className="sr-only">Admin Token</label>
-              <input
-                id="token"
-                name="token"
-                type="password"
-                autoComplete="current-password"
-                required
-                className="appearance-none rounded-md relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-                placeholder="Admin Token (SHA256 hash of DWN_ADMIN_API_SECRET)"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-              />
-            </div>
+    <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+      <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+        <h1 className="text-2xl font-bold mb-6 text-center">DWN Server Admin</h1>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label htmlFor="serverUrl" className="block text-sm font-medium text-gray-700 mb-1">
+              Server URL
+            </label>
+            <input
+              type="url"
+              id="serverUrl"
+              value={serverUrl}
+              onChange={(e) => setServerUrl(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="http://localhost:3000"
+              required
+            />
+          </div>
+
+          <div>
+            <label htmlFor="secret" className="block text-sm font-medium text-gray-700 mb-1">
+              Admin Secret
+            </label>
+            <input
+              type="password"
+              id="secret"
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Enter admin secret"
+              required
+            />
           </div>
 
           {error && (
-            <div className="rounded-md bg-red-50 p-4">
-              <p className="text-sm text-red-800">{error}</p>
-            </div>
+            <div className="text-red-600 text-sm">{error}</div>
           )}
 
-          <div>
-            <button
-              type="submit"
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-            >
-              Sign in
-            </button>
-          </div>
-          
-          <div className="text-sm text-gray-600">
-            <p><strong>Note:</strong> The admin token is the SHA256 hash of your DWN_ADMIN_API_SECRET environment variable.</p>
-            <p className="mt-2">If you haven't set one, the default token is:</p>
-            <code className="block mt-1 p-2 bg-gray-100 rounded text-xs break-all">
-              7c2b7b05359e25e3b0ecee0171d129e377ca27608c303585155511e363b10c07
-            </code>
-          </div>
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+          >
+            {isLoading ? 'Logging in...' : 'Login'}
+          </button>
         </form>
+
+        <div className="mt-4 text-sm text-gray-600 text-center">
+          Set the DWN_ADMIN_API_SECRET environment variable on your server
+        </div>
       </div>
     </div>
   );
-}
+};

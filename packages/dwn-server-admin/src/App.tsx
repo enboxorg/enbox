@@ -1,66 +1,80 @@
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import { AdminApiClient } from './api-client.js';
-import { LoginForm } from './components/LoginForm.js';
-import { Dashboard } from './components/Dashboard.js';
+import { Dashboard, LoginForm } from './components/index.js';
 
-function App(): JSX.Element {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem('adminToken'));
+const App: React.FC = () => {
   const [apiClient, setApiClient] = useState<AdminApiClient | null>(null);
-
-  const handleLogin = async (adminToken: string): Promise<void> => {
-    const client = new AdminApiClient(window.location.origin, adminToken);
-    
-    try {
-      // Test the token by making a request
-      await client.getStats();
-      
-      // Token is valid, save it
-      localStorage.setItem('adminToken', adminToken);
-      setToken(adminToken);
-      setApiClient(client);
-    } catch (err: any) {
-      throw new Error(`Login failed: ${err.message}`);
-    }
-  };
-
-  const handleLogout = (): void => {
-    localStorage.removeItem('adminToken');
-    setToken(null);
-    setApiClient(null);
-  };
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [serverUrl, setServerUrl] = useState('http://localhost:3000');
 
   useEffect(() => {
-    if (token && !apiClient) {
-      void handleLogin(token).catch(() => {
-        // Invalid token, clear it
-        handleLogout();
-      });
+    // Check if there's a saved server URL in localStorage
+    const savedUrl = localStorage.getItem('dwn-admin-server-url');
+    if (savedUrl) {
+      setServerUrl(savedUrl);
     }
-  }, [token, apiClient]);
 
-  if (!apiClient) {
-    return <LoginForm onLogin={handleLogin} />;
+    // Initialize API client
+    const client = new AdminApiClient(savedUrl || serverUrl);
+    setApiClient(client);
+
+    // Check if there's a saved token
+    const savedToken = localStorage.getItem('dwn-admin-token');
+    if (savedToken && savedUrl) {
+      // Try to validate the saved token by making a test request
+      client.getStats()
+        .then(() => setIsAuthenticated(true))
+        .catch(() => {
+          localStorage.removeItem('dwn-admin-token');
+        });
+    }
+  }, []);
+
+  const handleLogin = async (secret: string, url?: string) => {
+    if (url && url !== serverUrl) {
+      setServerUrl(url);
+      localStorage.setItem('dwn-admin-server-url', url);
+      const newClient = new AdminApiClient(url);
+      setApiClient(newClient);
+      
+      const success = await newClient.authenticate(secret);
+      if (success) {
+        localStorage.setItem('dwn-admin-token', 'authenticated');
+        setIsAuthenticated(true);
+      }
+      return success;
+    }
+
+    if (!apiClient) return false;
+
+    const success = await apiClient.authenticate(secret);
+    if (success) {
+      localStorage.setItem('dwn-admin-token', 'authenticated');
+      setIsAuthenticated(true);
+    }
+    return success;
+  };
+
+  const handleLogout = () => {
+    if (apiClient) {
+      apiClient.clearToken();
+    }
+    localStorage.removeItem('dwn-admin-token');
+    setIsAuthenticated(false);
+  };
+
+  if (!isAuthenticated || !apiClient) {
+    return <LoginForm onLogin={handleLogin} defaultServerUrl={serverUrl} />;
   }
 
-  return (
-    <>
-      <Dashboard apiClient={apiClient} />
-      <button
-        onClick={handleLogout}
-        className="fixed bottom-4 right-4 bg-gray-600 text-white py-2 px-4 rounded-md hover:bg-gray-700"
-      >
-        Logout
-      </button>
-    </>
-  );
-}
+  return <Dashboard apiClient={apiClient} onLogout={handleLogout} />;
+};
 
-// Render the app
-const rootElement = document.getElementById('root');
-if (!rootElement) {
-  throw new Error('Root element not found');
-}
-
-const root = ReactDOM.createRoot(rootElement);
-root.render(<App />);
+// Mount the app
+const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
