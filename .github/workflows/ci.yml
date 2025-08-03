@@ -59,22 +59,8 @@ jobs:
       
     - name: Run tests with coverage
       run: |
-        # Run tests for each package and generate coverage reports
-        for dir in packages/*; do
-          if [ -d "$dir" ] && [ -f "$dir/package.json" ]; then
-            pkg=$(basename "$dir")
-            echo "Running tests for $pkg"
-            cd "$dir"
-            if npm run | grep -q "test:node"; then
-              echo "Running test:node for $pkg"
-              npm run test:node || exit 1
-            elif npm run | grep -q "test-coverage"; then
-              echo "Running test-coverage for $pkg"
-              npm run test-coverage || exit 1
-            fi
-            cd ../..
-          fi
-        done
+        # Run tests for all packages using pnpm from root
+        pnpm test:node
         
     - name: Upload coverage reports
       uses: actions/upload-artifact@v4

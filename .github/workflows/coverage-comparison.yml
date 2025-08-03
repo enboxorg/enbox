@@ -47,27 +47,15 @@ jobs:
       run: |
         mkdir -p coverage-pr
         
-        # Generate coverage for each package
+        # Run tests for all packages using pnpm
+        pnpm test:node || true
+        
+        # Copy coverage reports from each package
         for dir in packages/*; do
-          if [ -d "$dir" ] && [ -f "$dir/package.json" ]; then
+          if [ -d "$dir" ] && [ -d "$dir/coverage" ]; then
             pkg=$(basename "$dir")
-            echo "Generating coverage for $pkg"
-            cd "$dir"
-            
-            # Check which test command to use
-            if npm run | grep -q "test:node"; then
-              npm run test:node || true
-            elif npm run | grep -q "test-coverage"; then
-              npm run test-coverage || true
-            fi
-            
-            # Copy coverage reports if they exist
-            if [ -d "coverage" ]; then
-              mkdir -p "../../coverage-pr/$pkg"
-              cp -r coverage/* "../../coverage-pr/$pkg/" || true
-            fi
-            
-            cd ../..
+            mkdir -p "coverage-pr/$pkg"
+            cp -r "$dir/coverage/"* "coverage-pr/$pkg/" || true
           fi
         done
         
@@ -86,27 +74,15 @@ jobs:
       run: |
         mkdir -p coverage-base
         
-        # Generate coverage for each package
+        # Run tests for all packages using pnpm
+        pnpm test:node || true
+        
+        # Copy coverage reports from each package
         for dir in packages/*; do
-          if [ -d "$dir" ] && [ -f "$dir/package.json" ]; then
+          if [ -d "$dir" ] && [ -d "$dir/coverage" ]; then
             pkg=$(basename "$dir")
-            echo "Generating base coverage for $pkg"
-            cd "$dir"
-            
-            # Check which test command to use
-            if npm run | grep -q "test:node"; then
-              npm run test:node || true
-            elif npm run | grep -q "test-coverage"; then
-              npm run test-coverage || true
-            fi
-            
-            # Copy coverage reports if they exist
-            if [ -d "coverage" ]; then
-              mkdir -p "../../coverage-base/$pkg"
-              cp -r coverage/* "../../coverage-base/$pkg/" || true
-            fi
-            
-            cd ../..
+            mkdir -p "coverage-base/$pkg"
+            cp -r "$dir/coverage/"* "coverage-base/$pkg/" || true
           fi
         done
         
