@@ -1,0 +1,7 @@
+version: "3"
+
+services:
+  dwn-server:
+    image: ghcr.io/enboxorg/dwn-server:latest
+    ports:
+      - "3000:3000"

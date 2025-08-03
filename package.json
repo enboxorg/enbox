@@ -14,10 +14,12 @@
     "packages/browser",
     "packages/dwn-sdk-js",
     "packages/dwn-sql-store",
-    "packages/dwn-server"
+    "packages/dwn-server",
+    "examples/web-wallet",
+    "examples/dapp-demo"
   ],
   "scripts": {
-    "clean": "pnpm npkill -d $(pwd)/packages -t dist && pnpm npkill -d $(pwd) -t node_modules",
+    "clean": "./scripts/clean.sh",
     "build": "pnpm --recursive --stream build",
     "test:node": "pnpm --recursive test:node",
     "lint": "pnpm --recursive lint",
