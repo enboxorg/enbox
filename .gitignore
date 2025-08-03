@@ -7,8 +7,8 @@ pnpm-debug.log*
 
 # Build outputs
 dist/
-build/
 *.tsbuildinfo
+# Note: packages/*/build/ contains build scripts, not outputs
 
 # Coverage
 coverage/
