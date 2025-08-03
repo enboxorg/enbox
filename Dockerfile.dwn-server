@@ -1,0 +1,96 @@
+# Stage 1: Builder - Build the entire monorepo
+FROM node:20.10.0-bookworm-slim AS builder
+
+WORKDIR /app
+
+# Enable corepack for pnpm
+RUN corepack enable
+
+# Copy only essential files first (for better layer caching)
+COPY pnpm-lock.yaml ./
+COPY pnpm-workspace.yaml ./
+COPY package.json ./
+COPY tsconfig.json ./
+
+# Copy packages selectively to reduce context
+COPY packages/dwn-server/package.json ./packages/dwn-server/
+COPY packages/agent/package.json ./packages/agent/
+COPY packages/api/package.json ./packages/api/
+COPY packages/common/package.json ./packages/common/
+COPY packages/crypto/package.json ./packages/crypto/
+COPY packages/crypto-aws-kms/package.json ./packages/crypto-aws-kms/
+COPY packages/dids/package.json ./packages/dids/
+COPY packages/dwn-sdk-js/package.json ./packages/dwn-sdk-js/
+COPY packages/identity-agent/package.json ./packages/identity-agent/
+COPY packages/protocol/package.json ./packages/protocol/
+COPY packages/user-agent/package.json ./packages/user-agent/
+
+# Install dependencies with reduced memory usage
+RUN --mount=type=cache,target=/root/.pnpm-store \
+    pnpm install --frozen-lockfile --prefer-offline
+
+# Copy source files
+COPY packages/ ./packages/
+
+# Build all packages
+RUN pnpm --recursive --stream build
+
+# Stage 2: Runtime preparation
+FROM node:20.10.0-bookworm-slim AS runtime-prep
+
+# Install runtime dependencies separately to reduce memory usage
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Stage 3: Native modules builder
+FROM node:20.10.0-bookworm-slim AS native-builder
+
+# Install build tools separately
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    python3-minimal \
+    make \
+    g++ \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build better-sqlite3 separately
+WORKDIR /tmp/sqlite-build
+RUN npm init -y && \
+    npm install better-sqlite3@8.7.0 --build-from-source
+
+# Stage 4: Final runtime image
+FROM runtime-prep AS runner
+
+ARG DS_PORT
+ENV DS_PORT=${DS_PORT:-3000}
+
+WORKDIR /app
+
+# Copy built application
+COPY --from=builder /app ./
+
+# Copy pre-built native modules
+COPY --from=native-builder /tmp/sqlite-build/node_modules/better-sqlite3 /app/node_modules/better-sqlite3
+
+# Set working directory to dwn-server
+WORKDIR /app/packages/dwn-server
+
+# Copy and setup entrypoint script
+COPY packages/dwn-server/entrypoint.sh ./
+RUN chmod +x entrypoint.sh
+
+# Create required directories
+RUN mkdir -p data /dwn-server
+
+# Copy package.json for /info endpoint
+RUN cp package.json /dwn-server/package.json
+
+# Expose port
+EXPOSE ${DS_PORT}
+
+# Start the server
+ENTRYPOINT ["./entrypoint.sh"]
