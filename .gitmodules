@@ -1,0 +1,3 @@
+[submodule "examples/web-wallet"]
+	path = examples/web-wallet
+	url = https://github.com/TBD54566975/web5-wallet
