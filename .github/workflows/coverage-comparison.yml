@@ -9,6 +9,50 @@ jobs:
     name: Compare Coverage
     runs-on: ubuntu-latest
     
+    services:
+      postgres:
+        image: postgres:13.3
+        env:
+          POSTGRES_DB: dwn
+          POSTGRES_USER: root
+          POSTGRES_PASSWORD: dwn
+          POSTGRES_INITDB_ARGS: '--lc-collate=C --lc-ctype=C'
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          
+      postgres-dwn-server:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: dwn
+          POSTGRES_USER: dwn_user
+          POSTGRES_PASSWORD: dwn_password
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: dwn
+          MYSQL_DATABASE: dwn
+          MYSQL_ALLOW_EMPTY_PASSWORD: true
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+    
     steps:
     - name: Checkout PR branch
       uses: actions/checkout@v4
@@ -43,9 +87,46 @@ jobs:
     - name: Build packages
       run: pnpm build
       
+    - name: Start dwn-server for PR tests
+      run: |
+        cd packages/dwn-server
+        npm run build || true
+        
+        export DS_PORT=3000
+        export DWN_BASE_URL=http://localhost:3000
+        export DWN_TTL_CACHE_URL=postgres://dwn_user:dwn_password@localhost:5433/dwn
+        export DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@localhost:5433/dwn
+        export DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@localhost:5433/dwn
+        export DWN_STORAGE_EVENTS=postgres://dwn_user:dwn_password@localhost:5433/dwn
+        export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
+        
+        npm start &
+        echo "DWN_SERVER_PID=$!" >> $GITHUB_ENV
+        
+        for i in {1..30}; do
+          if curl -f http://localhost:3000/info >/dev/null 2>&1; then
+            break
+          fi
+          sleep 2
+        done
+        
+        cd ../..
+      
     - name: Generate PR coverage
       run: |
         mkdir -p coverage-pr
+        
+        # Set environment variables for database connections
+        export DB_HOST=localhost
+        export DB_PORT=5432
+        export DB_USER=root
+        export DB_PASSWORD=dwn
+        export DB_NAME=dwn
+        export MYSQL_HOST=localhost
+        export MYSQL_PORT=3306
+        export MYSQL_USER=root
+        export MYSQL_PASSWORD=dwn
+        export MYSQL_DATABASE=dwn
         
         # Run tests for all packages using pnpm
         pnpm test:node || true
@@ -70,9 +151,52 @@ jobs:
     - name: Build base packages
       run: pnpm build
       
+    - name: Stop previous dwn-server
+      run: |
+        if [ ! -z "$DWN_SERVER_PID" ]; then
+          kill $DWN_SERVER_PID || true
+        fi
+        
+    - name: Start dwn-server for base tests
+      run: |
+        cd packages/dwn-server
+        npm run build || true
+        
+        export DS_PORT=3000
+        export DWN_BASE_URL=http://localhost:3000
+        export DWN_TTL_CACHE_URL=postgres://dwn_user:dwn_password@localhost:5433/dwn
+        export DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@localhost:5433/dwn
+        export DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@localhost:5433/dwn
+        export DWN_STORAGE_EVENTS=postgres://dwn_user:dwn_password@localhost:5433/dwn
+        export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
+        
+        npm start &
+        echo "DWN_SERVER_BASE_PID=$!" >> $GITHUB_ENV
+        
+        for i in {1..30}; do
+          if curl -f http://localhost:3000/info >/dev/null 2>&1; then
+            break
+          fi
+          sleep 2
+        done
+        
+        cd ../..
+      
     - name: Generate base coverage
       run: |
         mkdir -p coverage-base
+        
+        # Set environment variables for database connections
+        export DB_HOST=localhost
+        export DB_PORT=5432
+        export DB_USER=root
+        export DB_PASSWORD=dwn
+        export DB_NAME=dwn
+        export MYSQL_HOST=localhost
+        export MYSQL_PORT=3306
+        export MYSQL_USER=root
+        export MYSQL_PASSWORD=dwn
+        export MYSQL_DATABASE=dwn
         
         # Run tests for all packages using pnpm
         pnpm test:node || true
@@ -197,3 +321,10 @@ except:
               body: coverageReport
             });
           }
+          
+    - name: Cleanup dwn-server
+      if: always()
+      run: |
+        if [ ! -z "$DWN_SERVER_BASE_PID" ]; then
+          kill $DWN_SERVER_BASE_PID || true
+        fi

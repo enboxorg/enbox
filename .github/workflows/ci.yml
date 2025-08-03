@@ -20,6 +20,50 @@ jobs:
       matrix:
         node-version: [20.x]
     
+    services:
+      postgres:
+        image: postgres:13.3
+        env:
+          POSTGRES_DB: dwn
+          POSTGRES_USER: root
+          POSTGRES_PASSWORD: dwn
+          POSTGRES_INITDB_ARGS: '--lc-collate=C --lc-ctype=C'
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          
+      postgres-dwn-server:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: dwn
+          POSTGRES_USER: dwn_user
+          POSTGRES_PASSWORD: dwn_password
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: dwn
+          MYSQL_DATABASE: dwn
+          MYSQL_ALLOW_EMPTY_PASSWORD: true
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+    
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -57,10 +101,70 @@ jobs:
     - name: Build packages
       run: pnpm build
       
+    - name: Setup dwn-server database
+      run: |
+        # Create the init script for dwn-server database
+        echo "CREATE DATABASE IF NOT EXISTS dwn;" > init-db.sql
+        echo "GRANT ALL PRIVILEGES ON DATABASE dwn TO dwn_user;" >> init-db.sql
+        
+    - name: Start dwn-server
+      run: |
+        # Build and start dwn-server in the background
+        cd packages/dwn-server
+        npm run build || true
+        
+        # Start the server with environment variables
+        export DS_PORT=3000
+        export DWN_BASE_URL=http://localhost:3000
+        export DWN_TTL_CACHE_URL=postgres://dwn_user:dwn_password@localhost:5433/dwn
+        export DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@localhost:5433/dwn
+        export DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@localhost:5433/dwn
+        export DWN_STORAGE_EVENTS=postgres://dwn_user:dwn_password@localhost:5433/dwn
+        export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
+        
+        # Start server in background
+        npm start &
+        DWN_SERVER_PID=$!
+        echo "DWN_SERVER_PID=$DWN_SERVER_PID" >> $GITHUB_ENV
+        
+        # Wait for server to be ready
+        echo "Waiting for dwn-server to be ready..."
+        for i in {1..30}; do
+          if curl -f http://localhost:3000/info >/dev/null 2>&1; then
+            echo "dwn-server is ready!"
+            break
+          fi
+          echo "Waiting for dwn-server... attempt $i/30"
+          sleep 2
+        done
+        
+        cd ../..
+      
     - name: Run tests with coverage
       run: |
+        # Set environment variables for database connections
+        export DB_HOST=localhost
+        export DB_PORT=5432
+        export DB_USER=root
+        export DB_PASSWORD=dwn
+        export DB_NAME=dwn
+        
+        # MySQL connection
+        export MYSQL_HOST=localhost
+        export MYSQL_PORT=3306
+        export MYSQL_USER=root
+        export MYSQL_PASSWORD=dwn
+        export MYSQL_DATABASE=dwn
+        
         # Run tests for all packages using pnpm from root
         pnpm test:node
+        
+    - name: Stop dwn-server
+      if: always()
+      run: |
+        if [ ! -z "$DWN_SERVER_PID" ]; then
+          kill $DWN_SERVER_PID || true
+        fi
         
     - name: Upload coverage reports
       uses: actions/upload-artifact@v4
