@@ -1,312 +1,463 @@
-# Enbox DWN System Architecture
+# Personal Data Store Architecture
 
 ## Overview
 
-Enbox is a decentralized web node (DWN) system that enables users to maintain control over their personal data while interacting with decentralized applications (dapps). The architecture supports multi-tenant personal data stores, decentralized identity management, and fine-grained permission controls.
+This system enables users to own and control their personal data through distributed personal data stores. Users maintain sovereignty over their data while enabling rich multi-user interactions through a protocol-based permission system. The architecture supports true data portability - users can use multiple service providers or self-host their data stores.
 
 ## Core Concepts
 
-### Decentralized Web Nodes (DWN)
-- **Multi-tenant personal data stores** that service providers run using `dwn-server`
-- Users can subscribe to multiple service providers or run their own DWN server
-- Each DWN acts as a personal data vault with protocol-based access control
+### Personal Data Stores
+- **Multi-tenant data stores** where each user's data is isolated and encrypted
+- Users can have their data replicated across multiple service providers
+- Automatic synchronization ensures data consistency across providers
+- Each store maintains complete audit logs and event streams
 
-### User Experience
-1. **Wallet**: Users have a wallet application (e.g., web-wallet example) to manage their identity and data
-2. **Identity Management**: Each user has a decentralized identifier (DID) that represents their identity
-3. **Data Sovereignty**: Users control where their data is stored and who can access it
-4. **Permission Grants**: Users explicitly grant permissions to dapps to access specific data
+### User Identity & Control
+1. **Digital Wallet**: A specialized application that manages user identity and cryptographic keys
+2. **Decentralized Identifiers (DIDs)**: Cryptographically verifiable identities independent of any service provider
+3. **Data Sovereignty**: Users retain ownership and can move data between providers
+4. **Permission Management**: Fine-grained control over who can access what data
 
-### Developer Experience
-1. **Protocol Definitions**: Developers define protocols that describe data schemas and access patterns
-2. **Permission Requests**: Dapps request permissions from users through a standardized flow
-3. **Data Operations**: Standard CRUD operations on records with protocol-based filtering
-4. **Real-time Subscriptions**: Subscribe to data changes through event streams
+### Application Development Model
+1. **Protocol-Based Data Schemas**: Applications define structured data models with built-in access rules
+2. **Permission Requests**: Applications request specific data access from users
+3. **Cross-User Interactions**: Protocols enable secure data sharing between users
+4. **Real-time Updates**: Applications can subscribe to data changes
 
 ## System Architecture
 
-### Core Packages
+### Core Components
 
-#### 1. `@enbox/dwn-sdk-js` (Core Business Logic)
-**Responsibilities:**
-- Core DWN implementation with message handling
-- Protocol configuration and validation
-- Record storage and retrieval
-- Event streaming and subscriptions
-- Permission enforcement
+#### 1. Personal Data Store SDK (Core Business Logic)
+**Purpose**: Implements the data store logic, message processing, and access control
 
-**Key Components:**
-- `Dwn`: Main orchestrator for all DWN operations
-- Method Handlers: Process different types of messages (Records, Protocols, Messages)
-- Storage Controller: Manages data persistence across stores
-- Tenant Gate: Controls access to multi-tenant DWN instances
+**Key Responsibilities:**
+- Message validation and processing (Records, Protocols, Permissions)
+- Protocol-based access control enforcement
+- Data persistence across multiple storage backends
+- Event streaming for real-time updates
+- Cryptographic verification of all operations
 
-#### 2. `@enbox/dwn-server` (Multi-tenant Server)
-**Responsibilities:**
-- HTTP/WebSocket API endpoints
-- Multi-tenant request routing
-- Registration management for new tenants
-- Server lifecycle management
+**Core Subsystems:**
+- **Message Handlers**: Process different operation types (create, read, update, delete, query, subscribe)
+- **Protocol Engine**: Validates data against protocol definitions and enforces access rules
+- **Storage Controller**: Abstracts storage operations across message store, data store, and event log
+- **Tenant Gate**: Ensures data isolation in multi-tenant deployments
+
+#### 2. Personal Data Store Server (Multi-tenant Infrastructure)
+**Purpose**: Provides network-accessible personal data stores for multiple users
 
 **Key Features:**
-- RESTful HTTP API for DWN operations
+- HTTP API for synchronous operations
 - WebSocket support for real-time subscriptions
-- Configurable storage backends
-- Plugin system for extensibility
+- Multi-tenant request routing and isolation
+- Optional user registration and terms of service
+- Pluggable storage backends (PostgreSQL, SQLite, etc.)
 
-#### 3. `@enbox/api` (Client SDK)
-**Responsibilities:**
-- High-level API for dapp developers
-- Web5 connection management
-- Simplified interfaces for DWN operations
-- Wallet connection flow
+#### 3. Application SDK (Developer Interface)
+**Purpose**: High-level APIs for building applications that interact with personal data stores
 
 **Key APIs:**
-- `Web5.connect()`: Establishes connection to user's DWN
-- `DwnApi`: Interface for records, protocols, and permissions
-- `DidApi`: DID resolution and management
-- `VcApi`: Verifiable credentials operations
+- **Connection Management**: Establish secure connections to user's data stores
+- **Data Operations**: Simplified CRUD operations with automatic permission handling
+- **Protocol Management**: Install and configure data protocols
+- **Identity Resolution**: Resolve and verify user identities
 
-#### 4. `@enbox/agent` (Identity & Permission Management)
-**Responsibilities:**
-- Identity management and key storage
-- Permission grant creation and validation
-- DWN request processing and routing
-- Cryptographic operations
+#### 4. Identity & Permission Agent
+**Purpose**: Manages user identities, keys, and permission grants
 
-**Key Components:**
-- `Web5Agent`: Core agent interface
-- `PermissionsApi`: Permission grant/request/revocation
-- `IdentityApi`: Identity creation and management
-- `KeyManager`: Cryptographic key management
+**Core Functions:**
+- **Identity Vault**: Secure storage of cryptographic keys
+- **Permission Negotiation**: Handle permission requests and grants between apps and users
+- **Delegation**: Enable applications to act on behalf of users
+- **Sync Orchestration**: Coordinate data synchronization across multiple providers
 
-#### 5. Storage Packages
-- **`@enbox/dwn-sql-store`**: SQL-based implementations of MessageStore, DataStore, and EventLog
-- **PostgreSQL**: Default production database for persistence
+### Data Flow Patterns
 
-#### 6. Supporting Packages
-- **`@enbox/dids`**: DID method implementations and resolution
-- **`@enbox/crypto`**: Cryptographic primitives and JOSE operations
-- **`@enbox/common`**: Shared utilities and types
-
-### Data Flow
-
-#### 1. Initial Connection Flow
-```
-User → Wallet → Web5.connect() → Agent → DWN Server
-                                    ↓
-                              Create/Load DID
-                                    ↓
-                              Establish Session
-```
-
-#### 2. Permission Request Flow
-```
-Dapp → Request Permissions → Wallet → User Approval
-                                ↓
-                          Grant Creation
-                                ↓
-                          Store in DWN
-                                ↓
-                    Return to Dapp with Access
+#### 1. Multi-Provider Sync Flow
+```mermaid
+sequenceDiagram
+    participant User
+    participant LocalAgent as Local Agent
+    participant Provider1 as Provider 1<br/>(Primary)
+    participant Provider2 as Provider 2<br/>(Backup)
+    participant Provider3 as Provider 3<br/>(Self-hosted)
+    
+    User->>LocalAgent: Write Data
+    LocalAgent->>LocalAgent: Store Locally
+    
+    Note over LocalAgent: Sync Process (every 15s)
+    
+    LocalAgent->>Provider1: Push Changes
+    LocalAgent->>Provider2: Push Changes
+    LocalAgent->>Provider3: Push Changes
+    
+    Provider1-->>LocalAgent: Pull Remote Changes
+    Provider2-->>LocalAgent: Pull Remote Changes
+    Provider3-->>LocalAgent: Pull Remote Changes
+    
+    LocalAgent->>LocalAgent: Resolve Conflicts
+    LocalAgent->>User: Updated Data
 ```
 
-#### 3. Data Operation Flow
-```
-Dapp → DwnApi → Agent → Process Request
-                   ↓
-            Validate Permissions
-                   ↓
-            Route to DWN
-                   ↓
-        Execute Operation
-                   ↓
-         Return Response
+#### 2. Cross-User Data Sharing Flow
+```mermaid
+sequenceDiagram
+    participant Alice
+    participant AliceStore as Alice's Store
+    participant BobStore as Bob's Store
+    participant Bob
+    
+    Note over Alice,Bob: Setup: Both users have chat protocol installed
+    
+    Alice->>AliceStore: Create chat thread
+    AliceStore->>AliceStore: Assign Bob as participant
+    
+    Alice->>AliceStore: Write message
+    AliceStore->>AliceStore: Encrypt with thread key
+    
+    Alice->>BobStore: Send thread invitation<br/>(includes encrypted key)
+    
+    Bob->>BobStore: Query invitations
+    BobStore-->>Bob: Return invitation
+    
+    Bob->>AliceStore: Fetch thread data<br/>(using participant role)
+    AliceStore-->>Bob: Return messages
+    
+    Bob->>BobStore: Write reply
+    BobStore->>AliceStore: Sync reply<br/>(using participant permission)
 ```
 
-#### 4. Sync Flow
-```
-Local Agent ← → Sync Manager ← → Remote DWN(s)
-     ↓               ↓                ↓
-Local Store    Conflict Res.    Remote Store
+#### 3. Application Permission Flow
+```mermaid
+sequenceDiagram
+    participant User
+    participant Wallet
+    participant DApp
+    participant Agent
+    participant Store
+    
+    DApp->>Wallet: Request Connection<br/>(with protocol definition)
+    Wallet->>User: Show Permission Request
+    User->>Wallet: Approve Permissions
+    
+    Wallet->>Agent: Create Permission Grant
+    Agent->>Store: Store Grant Record
+    
+    Wallet-->>DApp: Return Connection<br/>(with delegated DID)
+    
+    Note over DApp,Store: Subsequent Operations
+    
+    DApp->>Agent: Read/Write Data<br/>(with grant ID)
+    Agent->>Agent: Verify Grant
+    Agent->>Store: Execute Operation
+    Store-->>DApp: Return Result
 ```
 
-## Service Interaction Diagram
+### Protocol-Based Permissions
+
+Protocols define both data schemas and access rules. Here's how multi-user permissions work:
+
+```mermaid
+graph TD
+    subgraph "Social Media Protocol"
+        A[Message Record]
+        B[Reply Record]
+        C[Image Record]
+        D[Caption Record]
+        
+        A -->|recipient can create| B
+        C -->|author can create| D
+        C -->|anyone can read| D
+    end
+    
+    subgraph "Chat Protocol"
+        E[Thread Record]
+        F[Participant Role]
+        G[Admin Role]
+        H[Chat Message]
+        
+        E -->|contains| F
+        E -->|contains| G
+        F -->|can create/read| H
+        G -->|can delete| H
+    end
+    
+    subgraph "Access Rules"
+        I[Author: Full control]
+        J[Recipient: Protocol-defined actions]
+        K[Role Holder: Role-specific permissions]
+        L[Anyone: Public actions only]
+    end
+```
+
+### Example Protocol Definition
+
+```typescript
+{
+  protocol: "https://example.com/protocols/task-manager",
+  published: true,
+  types: {
+    list: {
+      schema: "https://example.com/schemas/task-list",
+      dataFormats: ["application/json"]
+    },
+    task: {
+      schema: "https://example.com/schemas/task",
+      dataFormats: ["application/json"]
+    },
+    collaborator: {}
+  },
+  structure: {
+    list: {
+      $actions: [
+        {
+          who: "author",
+          can: ["create", "update", "delete"]
+        }
+      ],
+      collaborator: {
+        $role: true,
+        $actions: [
+          {
+            role: "list/collaborator",
+            can: ["create", "update"]
+          }
+        ]
+      },
+      task: {
+        $actions: [
+          {
+            who: "author",
+            of: "list",
+            can: ["create", "update", "delete"]
+          },
+          {
+            role: "list/collaborator",
+            can: ["create", "update"]
+          },
+          {
+            who: "recipient",
+            of: "task",
+            can: ["update"]
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+### System Deployment Architecture
 
 ```mermaid
 graph TB
-    subgraph "User Space"
-        U[User]
-        W[Wallet App]
-        U --> W
+    subgraph "User Devices"
+        W1[Web Wallet]
+        W2[Mobile Wallet]
+        D1[Task App]
+        D2[Social App]
+        D3[Notes App]
     end
     
-    subgraph "Dapp Space"
-        D[Dapp]
-        D2[Another Dapp]
+    subgraph "Local Storage"
+        LA[Local Agent]
+        LS[(Local Store)]
+        LA <--> LS
     end
     
-    subgraph "Client SDK"
-        API[Web5 API]
-        AGENT[User Agent]
-        LOCAL[Local DWN]
+    subgraph "Service Provider A"
+        LB1[Load Balancer]
+        S1[Server 1]
+        S2[Server 2]
+        DB1[(PostgreSQL<br/>User Data)]
         
-        API --> AGENT
-        AGENT --> LOCAL
+        LB1 --> S1
+        LB1 --> S2
+        S1 --> DB1
+        S2 --> DB1
     end
     
-    subgraph "Service Provider Infrastructure"
-        LB[Load Balancer]
+    subgraph "Service Provider B"
+        LB2[Load Balancer]
+        S3[Server 3]
+        S4[Server 4]
+        DB2[(PostgreSQL<br/>User Data)]
         
-        subgraph "DWN Servers"
-            DWN1[DWN Server 1]
-            DWN2[DWN Server 2]
-        end
-        
-        subgraph "Storage Layer"
-            PG[(PostgreSQL)]
-            DS[Data Store]
-        end
-        
-        LB --> DWN1
-        LB --> DWN2
-        DWN1 --> PG
-        DWN2 --> PG
-        DWN1 --> DS
-        DWN2 --> DS
+        LB2 --> S3
+        LB2 --> S4
+        S3 --> DB2
+        S4 --> DB2
     end
     
-    W <--> API
-    D <--> API
-    D2 <--> API
+    subgraph "Self-Hosted"
+        S5[Personal Server]
+        DB3[(SQLite)]
+        S5 --> DB3
+    end
     
-    AGENT <--> LB
+    W1 <--> LA
+    W2 <--> LA
+    D1 <--> LA
+    D2 <--> LA
+    D3 <--> LA
     
-    W -.->|Grants Permissions| D
-    W -.->|Grants Permissions| D2
+    LA <-.->|Sync| LB1
+    LA <-.->|Sync| LB2
+    LA <-.->|Sync| S5
     
-    LOCAL <-.->|Sync| DWN1
-    LOCAL <-.->|Sync| DWN2
+    LB1 <-.->|Cross-user<br/>data exchange| LB2
 ```
 
-## Key Architectural Patterns
+## Multi-User Interaction Patterns
 
-### 1. Protocol-Based Data Model
-- All data is organized by protocols that define schemas and access patterns
-- Protocols enable semantic interoperability between dapps
-- Each protocol defines roles, record types, and actions
+### 1. Direct Messaging
+Users can send messages directly to other users' stores:
+- Sender writes a record with `recipient` field set to receiver's DID
+- Receiver's store accepts the message based on protocol rules
+- No central server required for message routing
 
-### 2. Permission-Based Access Control
-- Fine-grained permissions at the protocol and record level
-- Delegated permissions allow dapps to act on behalf of users
-- Revocable grants ensure users maintain control
+### 2. Shared Workspaces
+Multiple users collaborate on shared data:
+- Creator establishes a workspace record
+- Creator assigns roles (admin, editor, viewer) to other users
+- Role holders can perform actions defined in the protocol
+- All changes sync to all participants' stores
 
-### 3. Multi-Tenant Architecture
-- Single DWN server instance can host multiple user tenants
-- Tenant isolation ensures data privacy
-- Efficient resource utilization for service providers
+### 3. Social Interactions
+Public and private social features:
+- Public posts: Anyone can read, specific users can comment
+- Private groups: Only members can read and write
+- Reactions: Recipients of content can add reactions
+- Moderation: Content owners and admins can remove content
 
-### 4. Event-Driven Architecture
-- Event streams enable real-time subscriptions
-- Event log provides audit trail and sync capabilities
-- Resumable tasks ensure reliability
+### 4. Delegated Actions
+Applications acting on behalf of users:
+- User grants specific permissions to an application
+- Application receives a delegated DID for signing operations
+- All actions are traceable back to the authorizing user
+- Permissions can be revoked at any time
 
-### 5. Cryptographic Security
-- All messages are signed with user's DID keys
-- Optional encryption for sensitive data
-- Verifiable data integrity
+## Security Architecture
 
-## Developer Workflow
+### Cryptographic Foundation
+- **Identity**: Ed25519 keys for DID authentication
+- **Signatures**: Every message is signed by its author
+- **Encryption**: Optional end-to-end encryption for sensitive data
+- **Integrity**: Content-addressed storage ensures data hasn't been tampered with
 
-### 1. Define Protocol
+### Access Control Layers
+1. **Transport**: TLS encryption for all network communication
+2. **Authentication**: DID-based authentication for all requests
+3. **Authorization**: Protocol rules determine allowed actions
+4. **Delegation**: Scoped permissions for third-party access
+5. **Audit**: Complete log of all operations
+
+### Data Privacy
+- **Isolation**: Each user's data is cryptographically separated
+- **Encryption at Rest**: Optional encryption of stored data
+- **Selective Disclosure**: Users control what data to share
+- **Right to Delete**: Users can permanently remove their data
+
+## Developer Experience
+
+### Building a Collaborative App
+
 ```typescript
-const protocolDefinition = {
-  protocol: "https://example.com/protocol",
-  published: true,
+// 1. Define your protocol
+const taskProtocol = {
+  protocol: "https://myapp.com/protocols/tasks",
   types: {
-    task: {
-      dataFormats: ["application/json"],
-      schema: "https://example.com/schemas/task"
-    }
+    project: { schema: "...", dataFormats: ["application/json"] },
+    task: { schema: "...", dataFormats: ["application/json"] },
+    member: {}
   },
   structure: {
-    task: {
-      $tags: {
-        $requiredTags: ["status"],
-        status: { type: "string" }
+    project: {
+      member: {
+        $role: true,
+        $actions: [{ role: "project/member", can: ["create", "read", "update"] }]
+      },
+      task: {
+        $actions: [
+          { who: "author", of: "project", can: ["create", "update", "delete"] },
+          { role: "project/member", can: ["create", "update"] },
+          { who: "recipient", of: "task", can: ["update"] }
+        ]
       }
     }
   }
 };
-```
 
-### 2. Connect to User's DWN
-```typescript
+// 2. Connect to user's personal data store
 const { web5, did } = await Web5.connect({
   walletConnectOptions: {
-    displayName: "My Dapp",
+    displayName: "Task Manager Pro",
     permissionRequests: [{
-      protocolDefinition,
-      permissions: ["read", "write"]
+      protocolDefinition: taskProtocol,
+      permissions: ["read", "write", "delete"]
     }]
   }
 });
-```
 
-### 3. Interact with Data
-```typescript
-// Write data
-const { record } = await web5.dwn.records.create({
-  data: { title: "My Task", status: "pending" },
+// 3. Create a project and invite collaborators
+const { record: project } = await web5.dwn.records.create({
+  data: { name: "Q4 Planning", description: "..." },
   message: {
-    protocol: protocolDefinition.protocol,
-    protocolPath: "task",
+    protocol: taskProtocol.protocol,
+    protocolPath: "project",
     dataFormat: "application/json"
   }
 });
 
-// Query data
-const { records } = await web5.dwn.records.query({
+// 4. Add team members
+await web5.dwn.records.create({
+  data: { did: "did:example:alice", name: "Alice" },
+  message: {
+    protocol: taskProtocol.protocol,
+    protocolPath: "project/member",
+    parentContextId: project.contextId,
+    dataFormat: "application/json"
+  }
+});
+
+// 5. Create a task assigned to Alice
+await web5.dwn.records.create({
+  data: { 
+    title: "Review Q3 metrics",
+    assignee: "did:example:alice",
+    status: "pending"
+  },
+  message: {
+    protocol: taskProtocol.protocol,
+    protocolPath: "project/task",
+    parentContextId: project.contextId,
+    recipient: "did:example:alice",  // Alice can now update this task
+    dataFormat: "application/json"
+  }
+});
+
+// 6. Subscribe to real-time updates
+await web5.dwn.records.subscribe({
   message: {
     filter: {
-      protocol: protocolDefinition.protocol,
-      protocolPath: "task",
-      tags: { status: "pending" }
+      protocol: taskProtocol.protocol,
+      protocolPath: "project/task"
     }
+  },
+  handler: (record) => {
+    console.log("Task updated:", record);
   }
 });
 ```
 
-## Security Considerations
-
-1. **Identity Security**: Private keys stored in encrypted vaults
-2. **Transport Security**: TLS for all network communications
-3. **Data Security**: Encryption at rest and in transit
-4. **Access Control**: Cryptographic verification of all permissions
-5. **Audit Trail**: Complete event log of all operations
-
-## Deployment Architecture
-
-### Development
-- Docker Compose for local development
-- In-memory stores for testing
-- Hot reload support
-
-### Production
-- Kubernetes or Railway for orchestration
-- PostgreSQL for data persistence
-- Redis for caching and sessions
-- CDN for static assets
-- Load balancing for high availability
-
-## Scalability Considerations
-
-1. **Horizontal Scaling**: DWN servers are stateless and can be scaled out
-2. **Database Sharding**: Tenant-based sharding for large deployments
-3. **Caching**: Multiple cache layers for performance
-4. **Event Streaming**: Kafka or similar for high-volume event processing
-5. **Storage Tiering**: Hot/cold storage based on access patterns
-
 ## Summary
 
-The Enbox DWN architecture provides a robust foundation for decentralized applications that respect user sovereignty while enabling rich functionality. The modular design allows developers to build sophisticated applications while users maintain control over their personal data stores. The multi-tenant architecture enables efficient service provider operations while maintaining strong isolation between users.
+This architecture enables a new model of application development where:
+- Users truly own their data across multiple providers
+- Applications are permission-based views into user data
+- Multi-user collaboration happens through cryptographically secure protocols
+- No vendor lock-in - users can switch providers while keeping their data
+- Privacy and security are built-in, not added on
+
+The personal data store model represents a fundamental shift from application-centric to user-centric data architecture, enabling true data portability and user sovereignty while maintaining the rich features users expect from modern applications.
