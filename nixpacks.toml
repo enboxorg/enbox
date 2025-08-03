@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["nodejs-20_x", "python3", "gcc", "gnumake"]
+
+[phases.install]
+cmds = ["corepack enable", "pnpm install --frozen-lockfile"]
+
+[phases.build]
+cmds = ["pnpm --recursive --stream build"]
+
+[start]
+cmd = "cd packages/dwn-server && ./entrypoint.sh"

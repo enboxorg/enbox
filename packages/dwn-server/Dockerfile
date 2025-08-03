@@ -25,13 +25,13 @@ RUN pnpm --recursive --stream build
 FROM node:20.10.0-bookworm-slim AS runner
 
 # Install build tools needed for native module rebuilding
-# Split installation to reduce memory usage and add --no-install-recommends
+# Using DEBIAN_FRONTEND and --no-install-recommends to reduce memory usage
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3 && \
-    apt-get install -y --no-install-recommends make && \
-    apt-get install -y --no-install-recommends g++ && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
 
 ARG DS_PORT
 ENV DS_PORT=${DS_PORT:-3000}

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "NIXPACKS",
+    "buildCommand": "pnpm install --frozen-lockfile && pnpm --recursive --stream build",
+    "watchPatterns": [
+      "packages/dwn-server/**",
+      "packages/agent/**",
+      "packages/api/**",
+      "packages/common/**",
+      "packages/crypto/**",
+      "packages/crypto-aws-kms/**",
+      "packages/dids/**",
+      "packages/dwn-sdk-js/**",
+      "packages/identity-agent/**",
+      "packages/protocol/**",
+      "packages/user-agent/**",
+      "pnpm-lock.yaml",
+      "pnpm-workspace.yaml",
+      "package.json",
+      "tsconfig.json"
+    ]
+  },
+  "deploy": {
+    "startCommand": "cd packages/dwn-server && ./entrypoint.sh",
+    "numReplicas": 1,
+    "sleepApplication": false,
+    "restartPolicyType": "ON_FAILURE"
+  },
+  "providers": [
+    "node"
+  ]
+}

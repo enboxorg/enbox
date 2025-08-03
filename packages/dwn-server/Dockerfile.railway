@@ -1,0 +1,63 @@
+# Stage 1: Builder - Build the entire monorepo
+FROM node:20.10.0-bookworm-slim AS builder
+
+WORKDIR /app
+
+# Enable corepack for pnpm
+RUN corepack enable
+
+# Copy monorepo configuration files
+COPY pnpm-lock.yaml ./
+COPY pnpm-workspace.yaml ./
+COPY package.json ./
+COPY tsconfig.json ./
+
+# Copy all packages (since dwn-server depends on other packages in the monorepo)
+COPY packages/ ./packages/
+
+# Install all dependencies with reduced memory usage
+RUN pnpm install --frozen-lockfile --prefer-offline
+
+# Build all packages
+RUN pnpm --recursive --stream build
+
+# Stage 2: Runner - Minimal runtime image
+FROM node:20.10.0-bookworm-slim AS runner
+
+ARG DS_PORT
+ENV DS_PORT=${DS_PORT:-3000}
+
+WORKDIR /app
+
+# Copy the entire built monorepo
+COPY --from=builder /app ./
+
+# Install only essential runtime dependencies
+# Skip build tools and use prebuilt better-sqlite3
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Try to use prebuilt better-sqlite3 binary
+RUN cd /app/node_modules/better-sqlite3 && \
+    npm run download || echo "Using existing binary"
+
+# Set working directory to dwn-server
+WORKDIR /app/packages/dwn-server
+
+# Copy and setup entrypoint script
+COPY packages/dwn-server/entrypoint.sh ./
+RUN chmod +x entrypoint.sh
+
+# Create required directories
+RUN mkdir -p data /dwn-server
+
+# Copy package.json for /info endpoint
+RUN cp package.json /dwn-server/package.json
+
+# Expose port
+EXPOSE ${DS_PORT}
+
+# Start the server
+ENTRYPOINT ["./entrypoint.sh"]
