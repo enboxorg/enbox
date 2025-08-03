@@ -4,7 +4,7 @@ import type { PortableDid } from '../../src/types/portable-did.js';
 import type { UnwrapPromise } from '@enbox/common';
 
 import chaiAsPromised from 'chai-as-promised';
-import DidJwkResolveTestVector from '../../../../web5-spec/test-vectors/did_jwk/resolve.json' assert { type: 'json' };
+import DidJwkResolveTestVector from '../fixtures/web5-spec-vectors/did_jwk/resolve.json' assert { type: 'json' };
 
 import { DidErrorCode } from '../../src/did-error.js';
 import { DidJwk } from '../../src/methods/did-jwk.js';

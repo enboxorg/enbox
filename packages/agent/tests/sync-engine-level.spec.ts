@@ -1,7 +1,7 @@
 import sinon from 'sinon';
 import { expect } from 'chai';
 import { CryptoUtils } from '@enbox/crypto';
-import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, ProtocolDefinition, Time } from '@tbd54566975/dwn-sdk-js';
+import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, ProtocolDefinition, Time } from '@enbox/dwn-sdk-js';
 
 import type { BearerIdentity } from '../src/bearer-identity.js';
 

@@ -90,4 +90,63 @@ tmp/
 temp/
 
 # Generated files
-generated/ 
+generated/
+
+# DWN-specific files and directories
+# LevelDB data stores
+DATASTORE
+MESSAGESTORE
+EVENTLOG
+RESOLVERCACHE
+RESUMABLE-TASK-STORE
+INDEX
+
+# Test-specific data stores
+TEST-DATASTORE
+TEST-MESSAGESTORE
+TEST-EVENTLOG
+TEST-RESUMABLE-TASK-STORE
+TEST-INDEX
+BENCHMARK-INDEX
+BENCHMARK-BLOCK
+
+# DWN server data
+data/
+data-test/
+
+# SQLite database files
+*.sqlite
+*.db
+dwn.db
+
+# Bundle metadata
+bundle-metadata.json
+
+# License reports
+license-report.json
+
+# Playground files
+try.ts
+try.js
+
+# Test data directories
+DATA/
+__TESTDATA__/
+**/compiled/
+tests/compiled/
+
+# Test fixtures that may be generated
+test-vectors/
+# Note: Keep web5-spec-vectors fixtures as they are critical test data
+# fixtures/web5-spec-vectors/
+
+# Browser build artifacts
+*.tgz
+web5.js
+web5.min.js
+web5.polyfill.js
+web5.polyfill.min.js
+
+# Coverage reports
+.nyc_output/
+coverage/ 

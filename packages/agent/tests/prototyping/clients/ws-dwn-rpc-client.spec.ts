@@ -1,10 +1,10 @@
-import type { Persona, RecordSubscriptionHandler, RecordsWriteMessage } from '@tbd54566975/dwn-sdk-js';
+import type { Persona, RecordSubscriptionHandler, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
 import { expect } from 'chai';
 
-import { DwnInterfaceName, DwnMethodName, RecordsRead, TestDataGenerator } from '@tbd54566975/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { WebSocketDwnRpcClient } from '../../../src/prototyping/clients/web-socket-clients.js';
 
 import { testDwnUrl } from '../../utils/test-config.js';

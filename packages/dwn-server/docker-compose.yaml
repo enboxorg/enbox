@@ -4,8 +4,11 @@ services:
 
   dwn-server:
     container_name: dwn-server
-    image: ghcr.io/tbd54566975/dwn-server:main
+    build: .
     ports:
       - ${DWN_SERVER_PORT:-3000}:3000
     volumes:
       - ./dwn-server:/dwn-server/data
+    environment:
+      - DWN_REGISTRATION_STORE_URL=
+      - DWN_STORAGE=

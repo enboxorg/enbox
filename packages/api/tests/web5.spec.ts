@@ -13,7 +13,7 @@ import {
 } from '@enbox/agent';
 
 import { Web5 } from '../src/web5.js';
-import { DwnInterfaceName, DwnMethodName, Jws, Time } from '@tbd54566975/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Jws, Time } from '@enbox/dwn-sdk-js';
 import { testDwnUrl } from './utils/test-config.js';
 import { DidJwk } from '@enbox/dids';
 import { Convert } from '@enbox/common';

@@ -4,7 +4,7 @@ import chaiAsPromised from 'chai-as-promised';
 import { DwnDatabaseType } from '../src/types.js';
 import { executeWithRetryIfDatabaseIsLocked } from '../src/utils/transaction.js';
 import { Kysely } from 'kysely';
-import { TestDataGenerator } from '@tbd54566975/dwn-sdk-js';
+import { TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { testMysqlDialect, testPostgresDialect, testSqliteDialect } from './test-dialects.js';
 
 chai.use(chaiAsPromised);

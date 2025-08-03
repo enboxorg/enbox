@@ -2,7 +2,7 @@ import type { PortableDid } from '../../src/types/portable-did.js';
 
 import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
-import resolveTestVectors from '../../../../web5-spec/test-vectors/did_dht/resolve.json' assert { type: 'json' };
+import resolveTestVectors from '../fixtures/web5-spec-vectors/did_dht/resolve.json' assert { type: 'json' };
 import officialTestVector1 from '../fixtures/test-vectors/did-dht/vector-1.json' assert { type: 'json' };
 import officialTestVector2 from '../fixtures/test-vectors/did-dht/vector-2.json' assert { type: 'json' };
 import officialTestVector3 from '../fixtures/test-vectors/did-dht/vector-3.json' assert { type: 'json' };

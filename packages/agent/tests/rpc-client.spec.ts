@@ -6,7 +6,7 @@ import { CryptoUtils } from '@enbox/crypto';
 import { DidRpcMethod, HttpWeb5RpcClient, Web5RpcClient, WebSocketWeb5RpcClient } from '../src/rpc-client.js';
 import { DwnServerInfoCacheMemory } from '../src/prototyping/clients/dwn-server-info-cache-memory.js';
 import { HttpDwnRpcClient } from '../src/prototyping/clients/http-dwn-rpc-client.js';
-import { Persona, TestDataGenerator } from '@tbd54566975/dwn-sdk-js';
+import { Persona, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { JsonRpcErrorCodes, createJsonRpcErrorResponse, createJsonRpcSuccessResponse } from '../src/prototyping/clients/json-rpc.js';
 
 describe('RPC Clients', () => {

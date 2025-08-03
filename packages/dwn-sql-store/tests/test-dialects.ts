@@ -31,7 +31,7 @@ export const testSqliteDialect = new SqliteDialect({
   database: async () => new Database(
     'dwn.sqlite',
     {
-      fileMustExist : true,
+      fileMustExist : false, // Changed from true to false so we can create the file if needed
       // IMPORTANT: denotes how long to wait before attempting to execute a query when database is locked, and throws an error if it is still locked
       // The default is 5 seconds, see https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md#new-databasepath-options
       // NOTE: this is also equivalent to setting the pragma "busy_timeout" directly: database.pragma('busy_timeout = 100');

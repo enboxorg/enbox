@@ -9,7 +9,7 @@ import { testDwnUrl } from './utils/test-config.js';
 // Remove when we move off of node.js v18 to v20, earliest possible time would be Oct 2023: https://github.com/nodejs/release#release-schedule
 import { webcrypto } from 'node:crypto';
 import { PlatformAgentTestHarness } from '@enbox/agent';
-import { DwnInterfaceName, DwnMethodName, TestDataGenerator, Time } from '@tbd54566975/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 import { PermissionGrant } from '../src/permission-grant.js';
 import { DwnApi } from '../src/dwn-api.js';
 // @ts-ignore

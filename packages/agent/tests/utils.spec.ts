@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 
-import { DateSort, Jws, Message, TestDataGenerator } from '@tbd54566975/dwn-sdk-js';
+import { DateSort, Jws, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { getPaginationCursor, getRecordAuthor, getRecordMessageCid, getRecordProtocolRole } from '../src/utils.js';
 
 describe('Utils', () => {

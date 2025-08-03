@@ -1,9 +1,9 @@
 import type { Readable } from '@enbox/common';
-import type { Dwn, MessageEvent, RecordsWriteMessage } from '@tbd54566975/dwn-sdk-js';
+import type { Dwn, MessageEvent, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { DidDht } from '@enbox/dids';
 import { Convert, NodeStream, Stream } from '@enbox/common';
-import { DwnInterfaceName, DwnMethodName, Message, ProtocolDefinition, TestDataGenerator, Time } from '@tbd54566975/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Message, ProtocolDefinition, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 

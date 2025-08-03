@@ -13,7 +13,7 @@ import { Web5PlatformAgent } from '../src/types/agent.js';
 import { isPortableDid } from '../src/prototyping/dids/utils.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { DwnDataStore, InMemoryDataStore } from '../src/store-data.js';
-import { ProtocolDefinition, RecordsDeleteMessage, RecordsWriteMessage } from '@tbd54566975/dwn-sdk-js';
+import { ProtocolDefinition, RecordsDeleteMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 class DwnTestStore extends DwnDataStore<PortableDid> implements AgentDataStore<PortableDid> {
   protected name = 'DwnTestStore';

@@ -5,7 +5,7 @@ import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { BearerDid } from '@enbox/dids';
 
-import { DwnInterfaceName, DwnMethodName, Time } from '@tbd54566975/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Time } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant, DwnPermissionScope, Web5PlatformAgent } from '../src/index.js';
 import { Convert } from '@enbox/common';
 

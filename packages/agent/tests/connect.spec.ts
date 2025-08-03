@@ -12,8 +12,8 @@ import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { BearerIdentity, DwnInterface, DwnMessage, DwnProtocolDefinition,  WalletConnect } from '../src/index.js';
-import { RecordsPermissionScope } from '@tbd54566975/dwn-sdk-js';
-import { DwnInterfaceName, DwnMethodName } from '@tbd54566975/dwn-sdk-js';
+import { RecordsPermissionScope } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 describe('web5 connect', function () {
   this.timeout(20000);

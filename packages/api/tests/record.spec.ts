@@ -18,7 +18,7 @@ import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json'
 // NOTE: @noble/secp256k1 requires globalThis.crypto polyfill for node.js <=18: https://github.com/paulmillr/noble-secp256k1/blob/main/README.md#usage
 // Remove when we move off of node.js v18 to v20, earliest possible time would be Oct 2023: https://github.com/nodejs/release#release-schedule
 import { webcrypto } from 'node:crypto';
-import { Jws, Message, Poller, RecordsWrite } from '@tbd54566975/dwn-sdk-js';
+import { Jws, Message, Poller, RecordsWrite } from '@enbox/dwn-sdk-js';
 import { Web5 } from '../src/web5.js';
 // @ts-ignore
 if (!globalThis.crypto) globalThis.crypto = webcrypto;

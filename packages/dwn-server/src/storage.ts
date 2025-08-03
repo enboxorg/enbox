@@ -180,8 +180,11 @@ export function getDialectFromUrl(connectionUrl: URL): Dialect {
         fs.mkdirSync(connectionUrl.host, { recursive: true });
       }
 
+      // Use in-memory database if no path is provided (for tests)
+      const dbPath = path || ':memory:';
+
       return new SqliteDialect({
-        database: async () => new Database(path),
+        database: async () => new Database(dbPath),
       });
     case BackendTypes.MYSQL:
       return new MysqlDialect({

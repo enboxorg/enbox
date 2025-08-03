@@ -27,11 +27,11 @@
     "url": "https://github.com/enboxorg/enbox/issues"
   },
   "dependencies": {
-    "@enbox/dwn-sdk-js": "workspace:*",
-    "@enbox/dwn-sql-store": "workspace:*",
     "@enbox/common": "workspace:*",
     "@enbox/crypto": "workspace:*",
     "@enbox/dids": "workspace:*",
+    "@enbox/dwn-sdk-js": "workspace:*",
+    "@enbox/dwn-sql-store": "workspace:*",
     "better-sqlite3": "^8.5.0",
     "body-parser": "^1.20.2",
     "bytes": "3.1.2",
@@ -95,8 +95,7 @@
     "lint": "eslint . --ext .ts --max-warnings 0",
     "lint:fix": "eslint . --ext .ts --fix",
     "test": "npm run build:esm && cp -R tests/fixtures dist/esm/tests && c8 mocha",
-    "server": "npm run build:esm && node dist/esm/src/main.js",
-    "prepare": "husky install"
+    "server": "npm run build:esm && node dist/esm/src/main.js"
   },
   "husky": {
     "hooks": {

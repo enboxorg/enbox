@@ -2,7 +2,7 @@ import { DataStoreSql } from '../src/data-store-sql.js';
 import { EventLogSql } from '../src/event-log-sql.js';
 import { MessageStoreSql } from '../src/message-store-sql.js';
 import { ResumableTaskStoreSql } from '../src/resumable-task-store-sql.js';
-import { TestSuite } from '@tbd54566975/dwn-sdk-js/tests';
+import { TestSuite } from '@enbox/dwn-sdk-js/tests';
 import { testMysqlDialect, testPostgresDialect, testSqliteDialect } from './test-dialects.js';
 
 // Remove when we Node.js v18 is no longer supported by this project.

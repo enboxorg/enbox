@@ -6,7 +6,7 @@ import { JsonRpcSocket } from '../../../src/prototyping/clients/json-rpc-socket.
 import { CryptoUtils } from '@enbox/crypto';
 import { JsonRpcErrorCodes, JsonRpcResponse, createJsonRpcErrorResponse, createJsonRpcRequest, createJsonRpcSubscriptionRequest, createJsonRpcSuccessResponse } from '../../../src/prototyping/clients/json-rpc.js';
 import { testDwnUrl } from '../../utils/test-config.js';
-import { Persona, TestDataGenerator } from '@tbd54566975/dwn-sdk-js';
+import { Persona, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 /** helper method to sleep while waiting for events to process/arrive */
 async function sleepWhileWaitingForEvents(override?: number):Promise<void> {
