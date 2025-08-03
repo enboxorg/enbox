@@ -25,7 +25,9 @@ RUN pnpm --recursive --stream build
 FROM node:20.10.0-bookworm-slim AS runner
 
 # Install build tools needed for native module rebuilding
-RUN apt-get update && apt-get install -y \
+# Using DEBIAN_FRONTEND and --no-install-recommends to reduce memory usage
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     python3 \
     make \
     g++ \
