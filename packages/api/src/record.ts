@@ -24,7 +24,8 @@ import {
   getRecordProtocolRole
 } from '@enbox/agent';
 
-import { Convert, isEmptyObject, NodeStream, removeUndefinedProperties, Stream } from '@enbox/common';
+import { isEmptyObject, NodeStream, removeUndefinedProperties, Stream } from '@enbox/common';
+import { Convert } from './convert.js';
 
 import { dataToBlob, SendCache } from './utils.js';
 import { PermissionGrant } from './permission-grant.js';

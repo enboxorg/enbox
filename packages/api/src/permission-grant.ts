@@ -7,7 +7,7 @@ import type {
   Web5Agent
 } from '@enbox/agent';
 
-import { Convert } from '@enbox/common';
+import { Convert } from './convert.js';
 import {
   AgentPermissionsApi,
   DwnInterface,

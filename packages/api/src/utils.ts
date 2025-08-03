@@ -1,4 +1,14 @@
-import { Convert, universalTypeOf } from '@enbox/common';
+import { Convert } from './convert.js';
+
+/**
+ * Helper function to determine the type of an object.
+ */
+function universalTypeOf(obj: any): string {
+  if (obj === null) return 'null';
+  if (obj === undefined) return 'undefined';
+  if (obj.constructor && obj.constructor.name) return obj.constructor.name;
+  return typeof obj;
+}
 
 /**
  * Converts various data types to a `Blob` object, automatically detecting the data type or using

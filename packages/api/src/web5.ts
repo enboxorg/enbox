@@ -13,11 +13,9 @@ import type {
   HdIdentityVault,
   Permission,
   WalletConnectOptions,
-  Web5Agent,
 } from '@enbox/agent';
 
-import { Web5UserAgent } from '@enbox/user-agent';
-import { DwnInterface, DwnRegistrar, WalletConnect } from '@enbox/agent';
+import { Web5Agent, DwnInterface, DwnRegistrar, WalletConnect } from '@enbox/agent';
 
 import { DidApi } from './did-api.js';
 import { DwnApi } from './dwn-api.js';
@@ -78,7 +76,7 @@ export type Web5ConnectOptions = {
 
   /**
    * Provide a {@link Web5Agent} implementation. Defaults to creating a local
-   * {@link Web5UserAgent} if one isn't provided
+   * {@link Web5Agent} if one isn't provided
    **/
   agent?: Web5Agent;
 
@@ -240,7 +238,7 @@ export class Web5 {
   }
 
   /**
-   * Connects to a {@link Web5Agent}. Defaults to creating a local {@link Web5UserAgent} if one
+   * Connects to a {@link Web5Agent}. Defaults to creating a local {@link Web5Agent} if one
    * isn't provided.
    *
    * If `walletConnectOptions` are provided, a WalletConnect flow will be initiated to import a delegated DID from an external wallet.
@@ -266,7 +264,7 @@ export class Web5 {
     if (agent === undefined) {
       let registerSync = false;
       // A custom Web5Agent implementation was not specified, so use default managed user agent.
-      const userAgent = await Web5UserAgent.create({ agentVault });
+      const userAgent = await Web5Agent.create({ agentVault });
       agent = userAgent;
 
       // Warn the developer and application user of the security risks of using a static password.
@@ -462,7 +460,7 @@ export class Web5 {
    */
   private static async cleanUpIdentity({ identity, userAgent }:{
     identity: BearerIdentity,
-    userAgent: Web5UserAgent
+    userAgent: Web5Agent
   }): Promise<void> {
     try {
       // Delete the DID and the Associated Keys

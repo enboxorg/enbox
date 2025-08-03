@@ -1,6 +1,6 @@
 import { AgentPermissionsApi, DwnDataEncodedRecordsWriteMessage, DwnResponseStatus, getRecordAuthor, SendDwnRequest, Web5Agent } from '@enbox/agent';
 import { DwnInterface } from '@enbox/agent';
-import { Convert } from '@enbox/common';
+import { Convert } from './convert.js';
 
 /**
  * Represents the structured data model of a GrantRevocation record, encapsulating the essential fields that define.

@@ -21,6 +21,7 @@
  * @packageDocumentation
  */
 
+export * from './convert.js';
 export * from './did-api.js';
 export * from './dwn-api.js';
 export * from './grant-revocation.js';

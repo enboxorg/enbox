@@ -1,6 +1,6 @@
 import { AgentPermissionsApi, DwnDataEncodedRecordsWriteMessage, DwnPermissionConditions, DwnPermissionRequest, DwnPermissionScope, DwnResponseStatus, SendDwnRequest, Web5Agent } from '@enbox/agent';
 import { DwnInterface } from '@enbox/agent';
-import { Convert } from '@enbox/common';
+import { Convert } from './convert.js';
 import { PermissionGrant } from './permission-grant.js';
 
 /**
