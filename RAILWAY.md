@@ -18,15 +18,36 @@ cd enbox
 1. Visit [railway.app](https://railway.app) and sign up/login
 2. Create **New Project** → **Deploy from GitHub repo**
 3. Select your forked `enbox` repository
-4. Railway will automatically detect the `railway.json` configuration
+4. Railway will create a project with your first service (dwn-server)
 
-### 3. Add PostgreSQL Database
-1. In your Railway project dashboard, click **"New Service"**
+### 3. Deploy Multiple Services
+Since this is a monorepo with multiple services, you need to add each service manually:
+
+#### dwn-server (already created)
+- **Dockerfile Path**: `packages/dwn-server/Dockerfile`
+- Configure environment variables as shown below
+
+#### web-wallet (Static Site)
+1. Click **"+ New"** → **"GitHub Repo"**
+2. Select the same repository
+3. Configure:
+   - **Build Command**: `cd examples/web-wallet && npm install && npm run build`
+   - **Static Files Path**: `examples/web-wallet/dist`
+
+#### dapp-demo (Static Site)
+1. Click **"+ New"** → **"GitHub Repo"**
+2. Select the same repository
+3. Configure:
+   - **Build Command**: `cd examples/dapp-demo && npm install && npm run build`
+   - **Static Files Path**: `examples/dapp-demo/dist`
+
+### 4. Add PostgreSQL Database
+1. In your Railway project dashboard, click **"+ New"**
 2. Select **"Database"** → **"PostgreSQL"**
 3. Railway automatically creates and connects the database
 4. `DATABASE_URL` will be available as an environment variable
 
-### 4. Configure Environment Variables
+### 5. Configure Environment Variables
 **CRITICAL**: You must manually set these environment variables in Railway dashboard:
 
 Go to your DWN service → **Variables** tab and add these variables **exactly**:
@@ -47,7 +68,7 @@ MAX_RECORD_DATA_SIZE = 1gb
 DWN_SERVER_LOG_LEVEL = info
 ```
 
-### 5. Deploy & Verify
+### 6. Deploy & Verify
 - Railway automatically builds and deploys your service
 - Check the **Deployments** tab for build progress
 - Visit your service URL to verify deployment

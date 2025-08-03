@@ -8,85 +8,65 @@ Since web-wallet and dapp-demo have been moved from separate repositories into t
 
 ## Step 1: Clean Up Old Deployments
 
-If you have existing Railway projects for web-wallet and dapp-demo from their old repositories:
+If you have existing Railway services for web-wallet and dapp-demo from their old repositories:
 
 1. Go to [Railway Dashboard](https://railway.app/dashboard)
-2. For each old project (web-wallet and dapp-demo):
-   - Click on the project
-   - Go to Settings → Danger Zone
-   - Click "Delete Project"
+2. Navigate to your project
+3. For each old service (web-wallet and dapp-demo):
+   - Click on the service
+   - Go to Settings → Delete Service
+   - Confirm deletion
 
-## Step 2: Set Up Multi-Service Deployment
+## Step 2: Add New Services to Your Existing Project
 
-Railway supports multiple services in a monorepo. Here's how to set it up:
+Railway doesn't automatically detect multiple services in a monorepo. You need to manually add each one to your existing project:
 
-### Option A: Using Railway UI (Recommended)
+### Service 1: dwn-server (Docker-based)
 
-1. **Create New Project**
-   - Go to Railway Dashboard
-   - Click "New Project"
-   - Choose "Deploy from GitHub repo"
-   - Select your `enbox` repository
+1. In your Railway project, click **"+ New"** → **"GitHub Repo"**
+2. Select your monorepo repository
+3. Configure the service:
+   - **Service Name**: `dwn-server`
+   - **Root Directory**: `/` (leave empty/default)
+   - **Build Command**: (leave empty - uses Dockerfile)
+   - **Start Command**: (leave empty - uses Dockerfile)
+   - **Dockerfile Path**: `packages/dwn-server/Dockerfile`
+   - **Watch Paths**: `packages/dwn-server/**,packages/common/**,packages/agent/**` (if you want auto-deploy on changes)
 
-2. **Add Services Manually**
-   
-   In your Railway project, you'll need to create three separate services:
+### Service 2: web-wallet (Static React App)
 
-   **Service 1: dwn-server**
-   - Click "New Service" → "GitHub Repo"
-   - Select the same repository
-   - In service settings:
-     - Service Name: `dwn-server`
-     - Root Directory: `/` (leave empty)
-     - Build Command: (leave empty - uses Dockerfile)
-     - Start Command: (leave empty - uses Dockerfile)
-   - In Build settings:
-     - Builder: Dockerfile
-     - Dockerfile Path: `packages/dwn-server/Dockerfile`
+1. Click **"+ New"** → **"GitHub Repo"**
+2. Select the same monorepo repository
+3. Configure the service:
+   - **Service Name**: `web-wallet`
+   - **Root Directory**: `/` (leave empty/default)
+   - **Build Command**: `cd examples/web-wallet && npm install && npm run build`
+   - **Start Command**: (leave empty)
+   - **Nixpacks Build Plan**: (leave default)
+   - **Watch Paths**: `examples/web-wallet/**` (if you want auto-deploy on changes)
+4. In the **Settings** tab after creation:
+   - Set **Build Command**: `cd examples/web-wallet && npm install && npm run build`
+   - Set **Static Files Path**: `examples/web-wallet/dist`
 
-   **Service 2: web-wallet**
-   - Click "New Service" → "GitHub Repo"
-   - Select the same repository
-   - In service settings:
-     - Service Name: `web-wallet`
-     - Root Directory: `/`
-     - Build Command: `pnpm install && cd examples/web-wallet && pnpm build`
-     - Start Command: (leave empty)
-   - In Deploy settings:
-     - Static Publish Path: `examples/web-wallet/dist`
+### Service 3: dapp-demo (Static React App)
 
-   **Service 3: dapp-demo**
-   - Click "New Service" → "GitHub Repo"
-   - Select the same repository
-   - In service settings:
-     - Service Name: `dapp-demo`
-     - Root Directory: `/`
-     - Build Command: `pnpm install && cd examples/dapp-demo && pnpm build`
-     - Start Command: (leave empty)
-   - In Deploy settings:
-     - Static Publish Path: `examples/dapp-demo/dist`
-
-### Option B: Using Railway CLI
-
-```bash
-# Install Railway CLI
-npm install -g @railway/cli
-
-# Login
-railway login
-
-# Create project and link
-railway init
-railway link
-
-# The services need to be created manually in the UI as described above
-# Railway CLI doesn't support creating multiple services from a monorepo yet
-```
+1. Click **"+ New"** → **"GitHub Repo"**
+2. Select the same monorepo repository
+3. Configure the service:
+   - **Service Name**: `dapp-demo`
+   - **Root Directory**: `/` (leave empty/default)
+   - **Build Command**: `cd examples/dapp-demo && npm install && npm run build`
+   - **Start Command**: (leave empty)
+   - **Nixpacks Build Plan**: (leave default)
+   - **Watch Paths**: `examples/dapp-demo/**` (if you want auto-deploy on changes)
+4. In the **Settings** tab after creation:
+   - Set **Build Command**: `cd examples/dapp-demo && npm install && npm run build`
+   - Set **Static Files Path**: `examples/dapp-demo/dist`
 
 ## Step 3: Configure Environment Variables
 
 ### For dwn-server:
-Follow the existing setup from RAILWAY.md:
+Add the required environment variables as described in RAILWAY.md:
 
 ```bash
 DS_PORT = ${{PORT}}
@@ -102,72 +82,66 @@ DWN_SERVER_LOG_LEVEL = info
 ```
 
 ### For web-wallet and dapp-demo:
-Add any required environment variables such as:
+If your apps need to connect to the dwn-server, add:
 - `VITE_DWN_URL` = `https://${{dwn-server.RAILWAY_PUBLIC_DOMAIN}}`
-- Any other app-specific variables
+- Any other app-specific environment variables
 
-## Step 4: Set Up PostgreSQL
+## Step 4: Configure PostgreSQL (if not already done)
 
-1. In your Railway project, click "New Service"
-2. Select "Database" → "PostgreSQL"
-3. Railway will automatically set up the database and provide `DATABASE_URL`
+Your existing PostgreSQL database should work as-is. If you need a new one:
 
-## Step 5: Connect Services
+1. In your Railway project, click **"+ New"** → **"Database"** → **"PostgreSQL"**
+2. Railway will automatically set up the database and provide `DATABASE_URL`
 
-To allow web-wallet and dapp-demo to communicate with dwn-server:
+## Step 5: Deploy and Verify
 
-1. Use Railway's internal networking by referencing service names
-2. Or use the public URLs: `https://${{dwn-server.RAILWAY_PUBLIC_DOMAIN}}`
+1. Once all services are configured, they will automatically deploy
+2. Each service will build independently using the configuration you provided
+3. Check the deployment logs for each service to ensure successful builds
 
-## Step 6: Deploy
+## Important Notes
 
-Once everything is configured:
+### Static Site Deployment
+- Railway automatically serves static files when you specify a `Static Files Path`
+- No need for additional server configuration or nginx
+- Railway handles all the routing and serving
 
-1. Railway will automatically deploy when you push to your GitHub repository
-2. Each service will be built and deployed independently
-3. Check the deployment logs for each service
+### Monorepo Considerations
+- All services share the same Git repository
+- Changes to shared code will trigger rebuilds of affected services
+- Use **Watch Paths** to control which file changes trigger deployments
 
-## Deployment Structure
-
-```
-Your Railway Project
-├── dwn-server (Dockerfile-based backend service)
-├── web-wallet (Static React app)
-├── dapp-demo (Static React app)
-└── postgres (Database)
-```
-
-## Monitoring
-
-- Each service has its own logs and metrics
-- Access via Railway Dashboard → Select Service → Logs/Metrics
-- Set up health checks for dwn-server at `/info`
+### Service URLs
+Each service gets its own URL:
+- `dwn-server`: `https://dwn-server-<project-name>.up.railway.app`
+- `web-wallet`: `https://web-wallet-<project-name>.up.railway.app`
+- `dapp-demo`: `https://dapp-demo-<project-name>.up.railway.app`
 
 ## Troubleshooting
 
 ### Build Failures
-- Check that pnpm workspace is properly configured
-- Ensure all dependencies are listed in the respective package.json files
-- Verify build commands work locally
+- Check that the build commands work locally first
+- Ensure all dependencies are properly listed in package.json files
+- Verify that the build output directories match what you configured
 
-### Static Site Issues
-- Confirm the build output directory matches `staticPublishPath`
-- Check that the build command produces files in the expected location
+### Path Issues
+- Railway runs all commands from the repository root
+- Always use `cd` to navigate to the correct directory in build commands
+- Static file paths should be relative to the repository root
 
-### Service Communication
-- Use Railway's internal DNS for service-to-service communication
-- Ensure environment variables are properly referencing other services
+### Environment Variables
+- Use Railway's template syntax to reference other services
+- `${{service-name.RAILWAY_PUBLIC_DOMAIN}}` for inter-service communication
+- `${{PORT}}` is automatically provided by Railway
 
-## Best Practices
+## Example Build Commands
 
-1. **Use Environment Variables**: Reference other services using Railway's template variables
-2. **Monitor Resources**: Each service has its own resource allocation
-3. **Set Up Staging**: Create separate environments for staging and production
-4. **Enable Auto-Deploy**: Set up automatic deployments from specific branches
+If you're using pnpm in your monorepo:
+- **web-wallet**: `pnpm install && cd examples/web-wallet && pnpm build`
+- **dapp-demo**: `pnpm install && cd examples/dapp-demo && pnpm build`
 
-## Cost Considerations
+If the examples have their own package.json with all dependencies:
+- **web-wallet**: `cd examples/web-wallet && npm install && npm run build`
+- **dapp-demo**: `cd examples/dapp-demo && npm install && npm run build`
 
-- Each service counts towards your Railway usage
-- Static sites (web-wallet, dapp-demo) typically use minimal resources
-- dwn-server and PostgreSQL will be the main resource consumers
-- Consider using Railway's sleep feature for development environments
+Choose the appropriate command based on your monorepo structure.

@@ -1,8 +1,3 @@
-[build]
-builder = "dockerfile"
-dockerfilePath = "packages/dwn-server/Dockerfile"
-
-[deploy]
-numReplicas = 1
-sleepApplication = false
-restartPolicyType = "on_failure"
+# This file is intentionally minimal.
+# Service-specific configurations are handled through Railway's UI
+# when setting up multiple services from this monorepo.
