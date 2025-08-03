@@ -109,8 +109,13 @@ export class HttpApi {
     if (this.#config.adminApiEnabled) {
       const __filename = fileURLToPath(import.meta.url);
       const __dirname = path.dirname(__filename);
-      const adminUiPath = path.join(__dirname, 'admin-ui');
+      const adminUiPath = path.join(__dirname, 'admin-ui', 'dist');
       this.#api.use('/admin-ui', express.static(adminUiPath));
+      
+      // Redirect /admin to /admin-ui/
+      this.#api.get('/admin', (_req, res) => {
+        res.redirect('/admin-ui/');
+      });
     }
     
     this.#api.use(

@@ -8,6 +8,7 @@ The DWN Server Admin Interface provides a web-based dashboard for server operato
 - **Tenant Management**: View registered tenants, check their status, and manage tenant data
 - **Data Management**: Ability to remove specific tenant data or clear all server data
 - **Secure Access**: Token-based authentication to ensure only authorized operators can access the interface
+- **TypeScript**: Fully typed React application for better development experience and reliability
 
 ## Accessing the Admin Interface
 
@@ -131,6 +132,38 @@ curl -X POST \
 - Tenant deletion is not fully implemented yet - it requires extending the DWN store interfaces
 - Some statistics (like message count per tenant) are placeholders pending store interface updates
 - The admin UI requires JavaScript to be enabled in the browser
+
+## Development
+
+### Building the Admin UI
+
+The admin UI is built with TypeScript and React. To build it:
+
+```bash
+cd packages/dwn-server
+npm run build:admin-ui
+```
+
+For development with hot reload:
+```bash
+cd packages/dwn-server/src/admin-ui
+npm run dev
+```
+
+### Project Structure
+
+```
+src/admin-ui/
+├── src/
+│   ├── components/      # React components
+│   ├── api-client.ts    # API client implementation
+│   ├── types.ts         # TypeScript type definitions
+│   └── App.tsx          # Main application entry
+├── public/              # Static assets
+├── dist/                # Compiled output
+├── build.js             # Build script
+└── tsconfig.json        # TypeScript configuration
+```
 
 ## Future Enhancements
 
