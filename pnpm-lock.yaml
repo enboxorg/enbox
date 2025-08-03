@@ -849,18 +849,9 @@ importers:
       prom-client:
         specifier: 14.2.0
         version: 14.2.0
-      react:
-        specifier: ^18.2.0
-        version: 18.3.1
-      react-dom:
-        specifier: ^18.2.0
-        version: 18.3.1(react@18.3.1)
       readable-stream:
         specifier: 4.4.2
         version: 4.4.2
-      recharts:
-        specifier: ^2.5.0
-        version: 2.15.4(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       response-time:
         specifier: 2.3.2
         version: 2.3.2
@@ -889,12 +880,6 @@ importers:
       '@types/node':
         specifier: 18.11.18
         version: 18.11.18
-      '@types/react':
-        specifier: ^18.2.0
-        version: 18.3.23
-      '@types/react-dom':
-        specifier: ^18.2.0
-        version: 18.3.7(@types/react@18.3.23)
       '@types/readable-stream':
         specifier: 4.0.6
         version: 4.0.6
@@ -979,6 +964,41 @@ importers:
       supertest:
         specifier: 6.3.3
         version: 6.3.3
+      typescript:
+        specifier: ^5.1.6
+        version: 5.5.4
+    optionalDependencies:
+      '@enbox/dwn-server-admin':
+        specifier: workspace:*
+        version: link:../dwn-server-admin
+
+  packages/dwn-server-admin:
+    dependencies:
+      '@enbox/dwn-server':
+        specifier: workspace:*
+        version: link:../dwn-server
+      react:
+        specifier: ^18.2.0
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.2.0
+        version: 18.3.1(react@18.3.1)
+      recharts:
+        specifier: ^2.5.0
+        version: 2.15.4(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+    devDependencies:
+      '@types/react':
+        specifier: ^18.2.0
+        version: 18.3.23
+      '@types/react-dom':
+        specifier: ^18.2.0
+        version: 18.3.7(@types/react@18.3.23)
+      esbuild:
+        specifier: ^0.19.0
+        version: 0.19.8
+      rimraf:
+        specifier: ^5.0.0
+        version: 5.0.7
       typescript:
         specifier: ^5.1.6
         version: 5.5.4

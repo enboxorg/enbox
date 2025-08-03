@@ -10,8 +10,6 @@ import log from 'loglevel';
 import { register } from 'prom-client';
 import responseTime from 'response-time';
 import { v4 as uuidv4 } from 'uuid';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
 import type { RequestContext } from './lib/json-rpc-router.js';
 import type { JsonRpcRequest } from './lib/json-rpc.js';
@@ -72,7 +70,7 @@ export class HttpApi {
       sqlTtlCacheUrl: config.ttlCacheUrl,
     });
 
-    httpApi.#setupMiddleware();
+    await httpApi.#setupMiddleware();
     httpApi.#setupRoutes();
 
     // Setup Admin API if enabled
@@ -97,7 +95,7 @@ export class HttpApi {
     return this.#api;
   }
 
-  #setupMiddleware(): void {
+  async #setupMiddleware(): Promise<void> {
     this.#api.use(cors({ exposedHeaders: 'dwn-response' }));
     this.#api.use(express.json());
 
@@ -107,15 +105,22 @@ export class HttpApi {
     
     // Serve admin UI static files
     if (this.#config.adminApiEnabled) {
-      const __filename = fileURLToPath(import.meta.url);
-      const __dirname = path.dirname(__filename);
-      const adminUiPath = path.join(__dirname, 'admin-ui', 'dist');
-      this.#api.use('/admin-ui', express.static(adminUiPath));
-      
-      // Redirect /admin to /admin-ui/
-      this.#api.get('/admin', (_req, res) => {
-        res.redirect('/admin-ui/');
-      });
+      try {
+        // Try to load the admin UI package
+        const adminUI = await import('@enbox/dwn-server-admin');
+        const adminUiPath = adminUI.adminUIPath;
+        this.#api.use('/admin-ui', express.static(adminUiPath));
+        
+        // Redirect /admin to /admin-ui/
+        this.#api.get('/admin', (_req, res) => {
+          res.redirect('/admin-ui/');
+        });
+        
+        log.info('Admin UI loaded successfully');
+      } catch (error) {
+        log.warn('Admin UI package not found - admin interface will not be available');
+        log.debug('To enable admin UI, install @enbox/dwn-server-admin package');
+      }
     }
     
     this.#api.use(

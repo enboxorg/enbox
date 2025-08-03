@@ -1,0 +1,46 @@
+{
+  "name": "@enbox/dwn-server-admin",
+  "version": "0.0.1",
+  "description": "Admin UI for DWN Server",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js"
+    },
+    "./dist/*": "./dist/*"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "pnpm clean && node build.js",
+    "clean": "rimraf dist",
+    "dev": "node build.js --watch"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "recharts": "^2.5.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "esbuild": "^0.19.0",
+    "rimraf": "^5.0.0",
+    "typescript": "^5.1.6"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/enboxorg/enbox.git",
+    "directory": "packages/dwn-server-admin"
+  },
+  "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/dwn-server-admin#readme",
+  "bugs": {
+    "url": "https://github.com/enboxorg/enbox/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
