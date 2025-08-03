@@ -68,4 +68,8 @@ export const config = {
 
   // log level - trace/debug/info/warn/error
   logLevel: process.env.DWN_SERVER_LOG_LEVEL || 'INFO',
+
+  // Admin API configuration
+  adminApiEnabled: process.env.DWN_ADMIN_API_ENABLED === 'true' || true,
+  adminApiSecret: process.env.DWN_ADMIN_API_SECRET,
 };
