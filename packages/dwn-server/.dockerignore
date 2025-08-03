@@ -1,6 +1,33 @@
-BLOCKSTORE
-browser-test
-etc
-INDEX
-node_modules
-tmp
+# Development files we don't need in Docker
+.git/
+.github/
+.vscode/
+*.md
+.env*
+
+# Test and coverage files
+**/tests/
+**/coverage/
+**/__tests__/
+**/*.test.js
+**/*.spec.js
+
+# Build artifacts we'll generate during build
+**/node_modules/
+**/dist/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock

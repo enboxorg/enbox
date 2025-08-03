@@ -1,0 +1,22 @@
+# Railway Deployment Metadata
+# This file helps Railway understand the project structure
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "packages/dwn-server/Dockerfile"
+
+[deploy]
+healthcheckPath = "/info"
+restartPolicyType = "on_failure"
+
+[env]
+# Template variables for Railway deployment
+DWN_BASE_URL = "https://$RAILWAY_SERVICE_NAME-$RAILWAY_ENVIRONMENT.railway.app"
+DS_PORT = "$PORT"
+DWN_TTL_CACHE_URL = "$DATABASE_URL"
+DWN_STORAGE_MESSAGES = "$DATABASE_URL"
+DWN_STORAGE_DATA = "$DATABASE_URL"
+DWN_STORAGE_EVENTS = "$DATABASE_URL"
+DWN_STORAGE_RESUMABLE_TASKS = "$DATABASE_URL"
+DS_WEBSOCKET_SERVER = "on"
+MAX_RECORD_DATA_SIZE = "1gb"

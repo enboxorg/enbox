@@ -1,5 +1,4 @@
-#! /bin/bash
+#!/bin/bash
 
-cd /dwn-server
-
-exec node /dwn-server/dist/esm/src/main.js
+# We're already in the correct directory (/app/packages/dwn-server)
+exec node dist/esm/src/main.js

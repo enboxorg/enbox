@@ -1,0 +1,68 @@
+services:
+  dwn-server-postgres:
+    image: postgres:15-alpine
+    container_name: dwn-server-postgres
+    environment:
+      POSTGRES_DB: dwn
+      POSTGRES_USER: dwn_user
+      POSTGRES_PASSWORD: dwn_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dwn_user -d dwn"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  dwn-server:
+    build:
+      context: .
+      dockerfile: packages/dwn-server/Dockerfile
+    container_name: dwn-server
+    ports:
+      - "${DWN_SERVER_PORT:-3000}:3000"
+    environment:
+      # Server configuration
+      - DS_PORT=3000
+      - DWN_BASE_URL=${DWN_BASE_URL:-http://localhost:3000}
+      
+      # PostgreSQL configuration - use individual storage variables (no DWN_STORAGE to avoid registration fallback)
+      - DWN_TTL_CACHE_URL=postgres://dwn_user:dwn_password@dwn-server-postgres:5432/dwn
+      - DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@dwn-server-postgres:5432/dwn
+      - DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@dwn-server-postgres:5432/dwn
+      - DWN_STORAGE_EVENTS=postgres://dwn_user:dwn_password@dwn-server-postgres:5432/dwn
+      - DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@dwn-server-postgres:5432/dwn
+      
+      # Disable tenant registration for open server (DWN_REGISTRATION_STORE_URL will be undefined)
+      
+      # Optional: Enable WebSocket support
+      - DWN_WS_PORT=3001
+      - DS_WEBSOCKET_SERVER=on
+      
+      # Optional: Set max record data size
+      - MAX_RECORD_DATA_SIZE=1gb
+    volumes:
+      - dwn_data:/app/packages/dwn-server/data
+    depends_on:
+      dwn-server-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/info"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:
+    driver: local
+  dwn_data:
+    driver: local
+
+networks:
+  default:
+    name: dwn-network

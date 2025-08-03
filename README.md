@@ -51,6 +51,77 @@ pnpm install
 pnpm build
 ```
 
+## 🐳 **Docker Setup**
+
+The easiest way to get started with the DWN server is using Docker Compose, which sets up both the DWN server and PostgreSQL database.
+
+### Quick Start with Docker
+```bash
+# Start the DWN server with PostgreSQL
+docker-compose up -d
+
+# View logs
+docker-compose logs -f dwn-server
+
+# Stop services
+docker-compose down
+```
+
+The DWN server will be available at `http://localhost:3000` with the following endpoints:
+- `/info` - Server information
+- `/` - DWN protocol endpoints
+
+### Customizing the Setup
+Copy `docker.env.example` to `.env` and customize the configuration:
+```bash
+cp docker.env.example .env
+# Edit .env with your preferred settings
+```
+
+### Data Persistence
+Both PostgreSQL data and DWN data are persisted in Docker volumes:
+- `postgres_data` - PostgreSQL database files (accessible on port 5433)
+- `dwn_data` - DWN server data files
+
+### Port Configuration
+- **DWN Server**: `http://localhost:3000`
+- **PostgreSQL**: `localhost:5433` (avoids conflicts with package-level testing)
+
+### Production Considerations
+For production deployments:
+1. Change default passwords in `.env`
+2. Use external PostgreSQL service for better scalability
+3. Set up SSL/TLS termination (reverse proxy)
+4. Configure backup strategies
+5. Set resource limits for containers
+
+## 🚄 **Railway Deployment**
+
+Deploy the DWN server to Railway (Platform-as-a-Service) with managed PostgreSQL in minutes:
+
+### One-Click Deploy
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/dwn-server?referralCode=enbox)
+
+### Manual Setup
+See the complete [Railway Deployment Guide](./RAILWAY.md) for detailed instructions.
+
+**Quick summary:**
+1. Fork this repository
+2. Connect to Railway and create project from your fork
+3. Add PostgreSQL database service
+4. Configure environment variables
+5. Deploy automatically
+
+### Railway Benefits
+- ✅ **Managed PostgreSQL** with automatic backups
+- ✅ **Auto-scaling** based on traffic  
+- ✅ **SSL certificates** automatically managed
+- ✅ **Git-based deployments** with instant rollbacks
+- ✅ **Environment management** (staging/production)
+- ✅ **Monitoring & logs** built-in
+
+For complete Railway deployment instructions, troubleshooting, and production tips, see **[RAILWAY.md](./RAILWAY.md)**.
+
 ### Development
 ```bash
 # Run tests
