@@ -10,6 +10,8 @@ import log from 'loglevel';
 import { register } from 'prom-client';
 import responseTime from 'response-time';
 import { v4 as uuidv4 } from 'uuid';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 import type { RequestContext } from './lib/json-rpc-router.js';
 import type { JsonRpcRequest } from './lib/json-rpc.js';
@@ -23,6 +25,7 @@ import { Web5ConnectServer } from './web5-connect/web5-connect-server.js';
 import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from './lib/json-rpc.js';
 import { requestCounter, responseHistogram } from './metrics.js';
 import { Convert } from '@enbox/common';
+import { AdminApi } from './admin/admin-api.js';
 
 
 export class HttpApi {
@@ -72,6 +75,17 @@ export class HttpApi {
     httpApi.#setupMiddleware();
     httpApi.#setupRoutes();
 
+    // Setup Admin API if enabled
+    if (config.adminApiEnabled) {
+      const adminApi = new AdminApi({
+        config,
+        dwn,
+        registrationManager,
+      });
+      adminApi.registerRoutes(httpApi.#api);
+      log.info('Admin API enabled');
+    }
+
     return httpApi;
   }
 
@@ -90,6 +104,15 @@ export class HttpApi {
     // We enable the formData middleware to handle multipart/form-data requests.
     // This is necessary for the endpoints used by the Web5 Connect Server/OIDC flow.
     this.#api.use(express.urlencoded({ extended: true }));
+    
+    // Serve admin UI static files
+    if (this.#config.adminApiEnabled) {
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = path.dirname(__filename);
+      const adminUiPath = path.join(__dirname, 'admin-ui');
+      this.#api.use('/admin-ui', express.static(adminUiPath));
+    }
+    
     this.#api.use(
       responseTime((req: Request, res: Response, time) => {
         const url = req.url === '/' ? '/jsonrpc' : req.url;
