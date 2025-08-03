@@ -1,5 +1,5 @@
 import esbuild from 'esbuild';
-import packageJson from '../package.json' assert { type: 'json' };
+import packageJson from '../package.json' with { type: 'json' };
 
 // list of dependencies that _dont_ ship cjs
 const includeList = new Set([

@@ -49,7 +49,7 @@ If you prefer other tools:
 
 ## Verified Versions
 
-- **Node.js**: 20.3.0
+- **Node.js**: 20.10.0
 - **pnpm**: 8.15.0
 
 These versions are automatically used when Volta is installed.
