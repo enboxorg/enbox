@@ -141,9 +141,9 @@ importers:
       '@enbox/dids':
         specifier: workspace:*
         version: link:../dids
-      '@enbox/user-agent':
-        specifier: workspace:*
-        version: link:../user-agent
+      multiformats:
+        specifier: ^13.1.0
+        version: 13.1.0
     devDependencies:
       '@enbox/dwn-sdk-js':
         specifier: workspace:*

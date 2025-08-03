@@ -1,4 +1,8 @@
-export type * from './types/agent.js';
+export type { 
+  ResponseStatus,
+  Web5Agent as Web5AgentInterface,
+  Web5PlatformAgent
+} from './types/agent.js';
 export * from './types/dwn.js';
 export type * from './types/identity.js';
 export type * from './types/identity-vault.js';
@@ -28,4 +32,9 @@ export * from  './test-harness.js';
 export * from './utils.js';
 export * from './connect.js';
 export * from './oidc.js';
-export * from './web5-agent.js';
+export { 
+  Web5Agent,
+  type AgentInitializeParams,
+  type AgentStartParams,
+  type AgentParams
+} from './web5-agent.js';

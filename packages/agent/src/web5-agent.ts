@@ -1,24 +1,29 @@
-import {
-  Web5Rpc,
-  DidRequest,
-  VcResponse,
-  DidResponse,
-  DwnResponse,
-  DidInterface,
-  DwnInterface,
-  SendVcRequest,
-  SendDwnRequest,
-  ProcessVcRequest,
-  ProcessDwnRequest,
+import type {
   Web5PlatformAgent,
 } from './types/agent.js';
+
+import type {
+  DwnResponse,
+  ProcessDwnRequest,
+  SendDwnRequest,
+} from './types/dwn.js';
+
+import type {
+  ProcessVcRequest,
+  SendVcRequest,
+  VcResponse,
+} from './types/vc.js';
+
+import type { Web5Rpc } from './rpc-client.js';
+import type { DidRequest, DidResponse } from './did-api.js';
 
 import { LevelStore } from '@enbox/common';
 import { BearerDid, DidDht, DidJwk, DidResolverCacheLevel } from '@enbox/dids';
 import { AgentDidResolverCache } from './agent-did-resolver-cache.js';
 import { BearerIdentity } from './bearer-identity.js';
-import { AgentDidApi } from './did-api.js';
+import { AgentDidApi, DidInterface } from './did-api.js';
 import { AgentDwnApi } from './dwn-api.js';
+import { DwnInterface } from './types/dwn.js';
 import { DwnDidStore } from './store-did.js';
 import { DwnKeyStore } from './store-key.js';
 import { AgentSyncApi } from './sync-api.js';
@@ -148,19 +153,22 @@ export class Web5Agent<TKeyManager extends AgentKeyManager = LocalKeyManager> im
    */
   static async create(options: { agentVault?: HdIdentityVault, dataPath?: string } = {}): Promise<Web5Agent> {
     const { dataPath = 'DATA', agentVault } = options;
+    
+    // Initialize DID resolver with cache
+    const didResolverCache = new DidResolverCacheLevel({
+      location: `${dataPath}/DID_RESOLVERCACHE`
+    });
     const didApi = new AgentDidApi({
-      didResolvers: [DidDht, DidJwk],
-      resolverCache: new DidResolverCacheLevel({
-        location: `${dataPath}/DID_RESOLVERCACHE`
-      })
+      didMethods: [DidDht, DidJwk],
+      resolverCache: didResolverCache
     });
 
-    const identityApi = new AgentIdentityApi({ store: new DwnIdentityStore() });
     const keyManager = new LocalKeyManager({ keyStore: new DwnKeyStore() });
-    const cryptoApi = new AgentCryptoApi({ keyManager });
+    const identityApi = new AgentIdentityApi<LocalKeyManager>({ store: new DwnIdentityStore() });
+    const cryptoApi = new AgentCryptoApi();
     const syncApi = new AgentSyncApi({ syncEngine: new SyncEngineLevel({ dataPath }) });
     const rpcClient = new Web5RpcClient();
-    const dwnApi = new AgentDwnApi({ dwn: await AgentDwnApi.createDwn({ dataPath, didResolver: didApi }) });
+    const dwnApi = new AgentDwnApi({ dwn: await AgentDwnApi.createDwn({ dataPath }) });
     const permissionsApi = new AgentPermissionsApi();
 
     const vault = agentVault ?? new HdIdentityVault({
@@ -169,7 +177,7 @@ export class Web5Agent<TKeyManager extends AgentKeyManager = LocalKeyManager> im
     });
 
     // Instantiate the Web5Agent.
-    const agent = new Web5Agent({
+    const agent = new Web5Agent<LocalKeyManager>({
       agentVault: vault,
       cryptoApi,
       dataPath,
@@ -186,64 +194,15 @@ export class Web5Agent<TKeyManager extends AgentKeyManager = LocalKeyManager> im
   }
 
   async firstLaunch(): Promise<boolean> {
-    return this.vault.firstLaunch();
+    // Check whether data vault is already initialized
+    return await this.vault.isInitialized() === false;
   }
 
   async initialize({ password, recoveryPhrase, dwnEndpoints }: AgentInitializeParams): Promise<string> {
-    if (await this.vault.isInitialized()) {
-      throw new Error('Web5Agent: Agent vault is already initialized.');
-    }
+    // Initialize the Agent vault.
+    recoveryPhrase = await this.vault.initialize({ password, recoveryPhrase, dwnEndpoints });
 
-    // Generate recovery phrase if not provided.
-    const vault = recoveryPhrase
-      ? await HdIdentityVault.create({
-        password,
-        recoveryPhrase,
-        store: this.vault.store,
-        keyDerivationWorkFactor: this.vault.keyDerivationWorkFactor
-      })
-      : await HdIdentityVault.create({
-        password,
-        store: this.vault.store,
-        keyDerivationWorkFactor: this.vault.keyDerivationWorkFactor
-      });
-
-    // Store the vault in the agent.
-    this.vault = vault;
-
-    // Retrieve the Agent's DID from the vault.
-    const portableIdentity = await vault.getStoredIdentity({ didUri: vault.getDid() });
-    if (!portableIdentity) {
-      throw new Error('Web5Agent: Agent DID not found in vault after initialization.');
-    }
-
-    // Import the Agent's DID to the Agent's DID store.
-    const bearerDid = await this.did.import({ portableIdentity });
-    this.agentDid = bearerDid;
-
-    // Set the Agent's DID in the Agent's DWN, Key Manager, and Identity Manager.
-    this.dwn.node.setTenant(bearerDid.uri);
-    this.keyManager.setAgent(this);
-    this.identity.setTenant({ agent: this, tenant: bearerDid.uri });
-    this.sync.setAgent(this);
-
-    // If dwnEndpoints are provided, update the Agent's DID Document with the endpoints.
-    if (dwnEndpoints && dwnEndpoints.length > 0) {
-      const services: any = [{
-        id: 'dwn',
-        type: 'DecentralizedWebNode',
-        serviceEndpoint: dwnEndpoints,
-        enc: '#enc',
-        sig: '#sig'
-      }];
-
-      await this.did.update({
-        portableIdentity: await bearerDid.export(),
-        didDocument: { id: bearerDid.uri, service: services }
-      });
-    }
-
-    return vault.recoveryPhrase!;
+    return recoveryPhrase;
   }
 
   async processDidRequest<T extends DidInterface>(request: DidRequest<T>): Promise<DidResponse<T>> {
@@ -273,25 +232,12 @@ export class Web5Agent<TKeyManager extends AgentKeyManager = LocalKeyManager> im
   }
 
   async start({ password }: AgentStartParams): Promise<void> {
-    if (await this.vault.isLocked()) {
+    // If the Agent vault is locked, unlock it.
+    if (this.vault.isLocked()) {
       await this.vault.unlock({ password });
     }
 
-    // Retrieve the Agent's DID from the vault.
-    const storedDid = this.vault.getDid();
-    const portableIdentity = await this.vault.getStoredIdentity({ didUri: storedDid });
-    if (!portableIdentity) {
-      throw new Error('Web5Agent: Agent DID not found in vault after initialization.');
-    }
-
-    // Import the Agent's DID to the Agent's DID store.
-    const bearerDid = await this.did.import({ portableIdentity });
-    this.agentDid = bearerDid;
-
-    // Set the Agent's DID in the Agent's DWN, Key Manager, and Identity Manager.
-    this.dwn.node.setTenant(bearerDid.uri);
-    this.keyManager.setAgent(this);
-    this.identity.setTenant({ agent: this, tenant: bearerDid.uri });
-    this.sync.setAgent(this);
+    // Set the Agent's DID.
+    this.agentDid = await this.vault.getDid();
   }
 }
