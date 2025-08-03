@@ -1,0 +1,231 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+# Cancel in-progress runs when a new run is triggered on the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test and Coverage
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [20.x]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        
+    - name: Install pnpm
+      uses: pnpm/action-setup@v2
+      with:
+        version: 8.15.0
+        
+    - name: Get pnpm store directory
+      id: pnpm-cache
+      shell: bash
+      run: |
+        echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+        
+    - name: Setup pnpm cache
+      uses: actions/cache@v3
+      with:
+        path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-pnpm-store-
+          
+    - name: Install dependencies
+      run: pnpm install --frozen-lockfile
+      
+    - name: Run linting
+      run: pnpm lint
+      
+    - name: Build packages
+      run: pnpm build
+      
+    - name: Run tests with coverage
+      run: |
+        # Run tests for each package and generate coverage reports
+        for dir in packages/*; do
+          if [ -d "$dir" ] && [ -f "$dir/package.json" ]; then
+            pkg=$(basename "$dir")
+            echo "Running tests for $pkg"
+            cd "$dir"
+            if npm run | grep -q "test:node"; then
+              echo "Running test:node for $pkg"
+              npm run test:node || exit 1
+            elif npm run | grep -q "test-coverage"; then
+              echo "Running test-coverage for $pkg"
+              npm run test-coverage || exit 1
+            fi
+            cd ../..
+          fi
+        done
+        
+    - name: Upload coverage reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-reports
+        path: |
+          packages/*/coverage/
+          packages/*/.nyc_output/
+        retention-days: 7
+
+  coverage-check:
+    name: Coverage Check
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for comparison
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20.x
+        
+    - name: Install pnpm
+      uses: pnpm/action-setup@v2
+      with:
+        version: 8.15.0
+        
+    - name: Download coverage reports
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-reports
+        path: coverage-artifacts
+        
+    - name: Check coverage thresholds
+      run: |
+        # This script will check if coverage has decreased
+        # You can customize the thresholds as needed
+        
+        echo "Checking coverage thresholds..."
+        
+        # For now, we'll set up a basic check
+        # In a real scenario, you'd compare against base branch coverage
+        
+        for report in coverage-artifacts/packages/*/coverage/cobertura-coverage.xml; do
+          if [ -f "$report" ]; then
+            pkg_dir=$(dirname $(dirname "$report"))
+            pkg_name=$(basename $(dirname "$pkg_dir"))
+            echo "Checking coverage for $pkg_name"
+            
+            # Extract coverage percentage from cobertura report
+            if command -v python3 &> /dev/null; then
+              coverage=$(python3 -c "
+import xml.etree.ElementTree as ET
+try:
+    tree = ET.parse('$report')
+    root = tree.getroot()
+    line_rate = float(root.get('line-rate', 0))
+    print(f'{line_rate * 100:.2f}')
+except:
+    print('0.00')
+")
+              echo "Coverage for $pkg_name: $coverage%"
+              
+              # Fail if coverage is below threshold (customize as needed)
+              if (( $(echo "$coverage < 80" | bc -l) )); then
+                echo "❌ Coverage for $pkg_name is below 80% threshold"
+                exit 1
+              fi
+            fi
+          fi
+        done
+        
+        echo "✅ All coverage checks passed"
+        
+    - name: Comment PR with coverage
+      uses: actions/github-script@v7
+      if: github.event_name == 'pull_request'
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          
+          let coverageReport = '## 📊 Coverage Report\n\n';
+          coverageReport += '| Package | Coverage |\n';
+          coverageReport += '|---------|----------|\n';
+          
+          // Parse coverage reports and build comment
+          const coverageDir = 'coverage-artifacts/packages';
+          if (fs.existsSync(coverageDir)) {
+            const packages = fs.readdirSync(coverageDir);
+            
+            for (const pkg of packages) {
+              const coberturaPath = path.join(coverageDir, pkg, 'coverage', 'cobertura-coverage.xml');
+              if (fs.existsSync(coberturaPath)) {
+                // For simplicity, we'll just note that coverage was generated
+                // In practice, you'd parse the XML to get actual percentages
+                coverageReport += `| ${pkg} | ✅ Coverage generated |\n`;
+              }
+            }
+          }
+          
+          // Find and update or create comment
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+          
+          const botComment = comments.find(comment => 
+            comment.user.type === 'Bot' && comment.body.includes('Coverage Report')
+          );
+          
+          if (botComment) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: botComment.id,
+              body: coverageReport
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: coverageReport
+            });
+          }
+
+  # This job ensures all required checks pass
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: [test, coverage-check]
+    if: always()
+    steps:
+      - name: Check if all jobs succeeded
+        run: |
+          if [[ "${{ needs.test.result }}" != "success" ]]; then
+            echo "Test job failed"
+            exit 1
+          fi
+          
+          # Only check coverage-check for PRs
+          if [[ "${{ github.event_name }}" == "pull_request" ]] && [[ "${{ needs.coverage-check.result }}" != "success" ]]; then
+            echo "Coverage check job failed"
+            exit 1
+          fi
+          
+          echo "✅ All CI checks passed!"

@@ -1,0 +1,223 @@
+name: Coverage Comparison
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  coverage-comparison:
+    name: Compare Coverage
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout PR branch
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20.x
+        
+    - name: Install pnpm
+      uses: pnpm/action-setup@v2
+      with:
+        version: 8.15.0
+        
+    - name: Get pnpm store directory
+      id: pnpm-cache
+      shell: bash
+      run: |
+        echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+        
+    - name: Setup pnpm cache
+      uses: actions/cache@v3
+      with:
+        path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-pnpm-store-
+          
+    - name: Install dependencies
+      run: pnpm install --frozen-lockfile
+      
+    - name: Build packages
+      run: pnpm build
+      
+    - name: Generate PR coverage
+      run: |
+        mkdir -p coverage-pr
+        
+        # Generate coverage for each package
+        for dir in packages/*; do
+          if [ -d "$dir" ] && [ -f "$dir/package.json" ]; then
+            pkg=$(basename "$dir")
+            echo "Generating coverage for $pkg"
+            cd "$dir"
+            
+            # Check which test command to use
+            if npm run | grep -q "test:node"; then
+              npm run test:node || true
+            elif npm run | grep -q "test-coverage"; then
+              npm run test-coverage || true
+            fi
+            
+            # Copy coverage reports if they exist
+            if [ -d "coverage" ]; then
+              mkdir -p "../../coverage-pr/$pkg"
+              cp -r coverage/* "../../coverage-pr/$pkg/" || true
+            fi
+            
+            cd ../..
+          fi
+        done
+        
+    - name: Checkout base branch
+      run: |
+        git fetch origin ${{ github.base_ref }}
+        git checkout origin/${{ github.base_ref }}
+        
+    - name: Install base dependencies
+      run: pnpm install --frozen-lockfile
+      
+    - name: Build base packages
+      run: pnpm build
+      
+    - name: Generate base coverage
+      run: |
+        mkdir -p coverage-base
+        
+        # Generate coverage for each package
+        for dir in packages/*; do
+          if [ -d "$dir" ] && [ -f "$dir/package.json" ]; then
+            pkg=$(basename "$dir")
+            echo "Generating base coverage for $pkg"
+            cd "$dir"
+            
+            # Check which test command to use
+            if npm run | grep -q "test:node"; then
+              npm run test:node || true
+            elif npm run | grep -q "test-coverage"; then
+              npm run test-coverage || true
+            fi
+            
+            # Copy coverage reports if they exist
+            if [ -d "coverage" ]; then
+              mkdir -p "../../coverage-base/$pkg"
+              cp -r coverage/* "../../coverage-base/$pkg/" || true
+            fi
+            
+            cd ../..
+          fi
+        done
+        
+    - name: Compare coverage
+      id: coverage-compare
+      run: |
+        echo "# Coverage Comparison Report" > coverage-report.md
+        echo "" >> coverage-report.md
+        echo "| Package | Base Coverage | PR Coverage | Change |" >> coverage-report.md
+        echo "|---------|---------------|-------------|---------|" >> coverage-report.md
+        
+        failed=false
+        
+        for dir in packages/*; do
+          if [ -d "$dir" ]; then
+            pkg=$(basename "$dir")
+            
+            base_report="coverage-base/$pkg/cobertura-coverage.xml"
+            pr_report="coverage-pr/$pkg/cobertura-coverage.xml"
+            
+            if [ -f "$pr_report" ]; then
+              # Extract coverage from PR
+              pr_coverage=$(python3 -c "
+import xml.etree.ElementTree as ET
+try:
+    tree = ET.parse('$pr_report')
+    root = tree.getroot()
+    line_rate = float(root.get('line-rate', 0))
+    print(f'{line_rate * 100:.2f}')
+except:
+    print('0.00')
+")
+              
+              # Extract coverage from base
+              if [ -f "$base_report" ]; then
+                base_coverage=$(python3 -c "
+import xml.etree.ElementTree as ET
+try:
+    tree = ET.parse('$base_report')
+    root = tree.getroot()
+    line_rate = float(root.get('line-rate', 0))
+    print(f'{line_rate * 100:.2f}')
+except:
+    print('0.00')
+")
+              else
+                base_coverage="N/A"
+              fi
+              
+              # Calculate change
+              if [ "$base_coverage" != "N/A" ]; then
+                change=$(python3 -c "print(f'{float($pr_coverage) - float($base_coverage):+.2f}')")
+                
+                # Check if coverage decreased
+                if (( $(echo "$pr_coverage < $base_coverage" | bc -l) )); then
+                  echo "| $pkg | $base_coverage% | $pr_coverage% | 🔴 $change% |" >> coverage-report.md
+                  echo "::error::Coverage decreased for $pkg: $base_coverage% → $pr_coverage%"
+                  failed=true
+                else
+                  echo "| $pkg | $base_coverage% | $pr_coverage% | 🟢 $change% |" >> coverage-report.md
+                fi
+              else
+                echo "| $pkg | $base_coverage | $pr_coverage% | 🆕 New |" >> coverage-report.md
+              fi
+            fi
+          fi
+        done
+        
+        # Set output for PR comment
+        echo "report<<EOF" >> $GITHUB_OUTPUT
+        cat coverage-report.md >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+        if [ "$failed" = true ]; then
+          echo "❌ Coverage check failed: Coverage decreased in one or more packages" >> coverage-report.md
+          exit 1
+        else
+          echo "" >> coverage-report.md
+          echo "✅ Coverage check passed: No coverage decrease detected" >> coverage-report.md
+        fi
+        
+    - name: Comment PR
+      uses: actions/github-script@v7
+      if: always()
+      with:
+        script: |
+          const coverageReport = `${{ steps.coverage-compare.outputs.report }}`;
+          
+          // Find existing comment
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+          
+          const botComment = comments.find(comment => 
+            comment.user.type === 'Bot' && comment.body.includes('Coverage Comparison Report')
+          );
+          
+          if (botComment) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: botComment.id,
+              body: coverageReport
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: coverageReport
+            });
+          }
