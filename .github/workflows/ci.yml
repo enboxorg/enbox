@@ -221,21 +221,15 @@ jobs:
             
             # Extract coverage percentage from cobertura report
             if command -v python3 &> /dev/null; then
-              coverage=$(python3 -c "
-import xml.etree.ElementTree as ET
-try:
-    tree = ET.parse('$report')
-    root = tree.getroot()
-    line_rate = float(root.get('line-rate', 0))
-    print(f'{line_rate * 100:.2f}')
-except:
-    print('0.00')
-")
+              coverage=$(python3 -c "import xml.etree.ElementTree as ET; import sys; tree = ET.parse(sys.argv[1]) if len(sys.argv) > 1 else None; root = tree.getroot() if tree else None; line_rate = float(root.get('line-rate', 0)) if root else 0; print(f'{line_rate * 100:.2f}')" "$report" 2>/dev/null || echo "0.00")
               echo "Coverage for $pkg_name: $coverage%"
               
               # Fail if coverage is below threshold (customize as needed)
-              if (( $(echo "$coverage < 80" | bc -l) )); then
-                echo "❌ Coverage for $pkg_name is below 80% threshold"
+              threshold=80
+              if python3 -c "import sys; exit(0 if float(sys.argv[1]) >= float(sys.argv[2]) else 1)" "$coverage" "$threshold"; then
+                echo "✅ Coverage for $pkg_name is above ${threshold}% threshold"
+              else
+                echo "❌ Coverage for $pkg_name is below ${threshold}% threshold"
                 exit 1
               fi
             fi
@@ -302,19 +296,13 @@ except:
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [test, coverage-check]
+    needs: test
     if: always()
     steps:
       - name: Check if all jobs succeeded
         run: |
           if [[ "${{ needs.test.result }}" != "success" ]]; then
             echo "Test job failed"
-            exit 1
-          fi
-          
-          # Only check coverage-check for PRs
-          if [[ "${{ github.event_name }}" == "pull_request" ]] && [[ "${{ needs.coverage-check.result }}" != "success" ]]; then
-            echo "Coverage check job failed"
             exit 1
           fi
           

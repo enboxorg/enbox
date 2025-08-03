@@ -229,44 +229,26 @@ jobs:
             
             if [ -f "$pr_report" ]; then
               # Extract coverage from PR
-              pr_coverage=$(python3 -c "
-import xml.etree.ElementTree as ET
-try:
-    tree = ET.parse('$pr_report')
-    root = tree.getroot()
-    line_rate = float(root.get('line-rate', 0))
-    print(f'{line_rate * 100:.2f}')
-except:
-    print('0.00')
-")
+              pr_coverage=$(python3 -c "import xml.etree.ElementTree as ET; import sys; tree = ET.parse(sys.argv[1]) if len(sys.argv) > 1 else None; root = tree.getroot() if tree else None; line_rate = float(root.get('line-rate', 0)) if root else 0; print(f'{line_rate * 100:.2f}')" "$pr_report" 2>/dev/null || echo "0.00")
               
               # Extract coverage from base
               if [ -f "$base_report" ]; then
-                base_coverage=$(python3 -c "
-import xml.etree.ElementTree as ET
-try:
-    tree = ET.parse('$base_report')
-    root = tree.getroot()
-    line_rate = float(root.get('line-rate', 0))
-    print(f'{line_rate * 100:.2f}')
-except:
-    print('0.00')
-")
+                base_coverage=$(python3 -c "import xml.etree.ElementTree as ET; import sys; tree = ET.parse(sys.argv[1]) if len(sys.argv) > 1 else None; root = tree.getroot() if tree else None; line_rate = float(root.get('line-rate', 0)) if root else 0; print(f'{line_rate * 100:.2f}')" "$base_report" 2>/dev/null || echo "0.00")
               else
                 base_coverage="N/A"
               fi
               
               # Calculate change
               if [ "$base_coverage" != "N/A" ]; then
-                change=$(python3 -c "print(f'{float($pr_coverage) - float($base_coverage):+.2f}')")
+                change=$(python3 -c "import sys; print(f'{float(sys.argv[1]) - float(sys.argv[2]):+.2f}')" "$pr_coverage" "$base_coverage")
                 
                 # Check if coverage decreased
-                if (( $(echo "$pr_coverage < $base_coverage" | bc -l) )); then
+                if python3 -c "import sys; exit(0 if float(sys.argv[1]) >= float(sys.argv[2]) else 1)" "$pr_coverage" "$base_coverage"; then
+                  echo "| $pkg | $base_coverage% | $pr_coverage% | 🟢 $change% |" >> coverage-report.md
+                else
                   echo "| $pkg | $base_coverage% | $pr_coverage% | 🔴 $change% |" >> coverage-report.md
                   echo "::error::Coverage decreased for $pkg: $base_coverage% → $pr_coverage%"
                   failed=true
-                else
-                  echo "| $pkg | $base_coverage% | $pr_coverage% | 🟢 $change% |" >> coverage-report.md
                 fi
               else
                 echo "| $pkg | $base_coverage | $pr_coverage% | 🆕 New |" >> coverage-report.md
