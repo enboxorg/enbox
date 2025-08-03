@@ -5,4 +5,4 @@ dockerfilePath = "packages/dwn-server/Dockerfile"
 [deploy]
 numReplicas = 1
 sleepApplication = false
-restartPolicyType = "on_failure"
+restartPolicyType = "ON_FAILURE"

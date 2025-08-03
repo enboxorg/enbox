@@ -2,12 +2,12 @@
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "pnpm install && pnpm build"
+    "buildCommand": "cd examples/web-wallet && npm install && npm run build"
   },
   "deploy": {
     "numReplicas": 1,
     "sleepApplication": false,
     "restartPolicyType": "ON_FAILURE",
-    "staticPublishPath": "dist"
+    "staticPublishPath": "examples/web-wallet/dist"
   }
 }

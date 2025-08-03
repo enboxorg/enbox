@@ -18,7 +18,7 @@ cd enbox
 1. Visit [railway.app](https://railway.app) and sign up/login
 2. Create **New Project** → **Deploy from GitHub repo**
 3. Select your forked `enbox` repository
-4. Railway will automatically detect the `railway.json` configuration
+4. Railway will create a project with your first service (dwn-server)
 
 ### 3. Add PostgreSQL Database
 1. In your Railway project dashboard, click **"New Service"**
