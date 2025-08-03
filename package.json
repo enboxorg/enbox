@@ -21,7 +21,11 @@
     "build": "pnpm --recursive --stream build",
     "test:node": "pnpm --recursive test:node",
     "lint": "pnpm --recursive lint",
-    "lint:fix": "pnpm --recursive lint:fix"
+    "lint:fix": "pnpm --recursive lint:fix",
+    "changeset": "changeset",
+    "version": "changeset version && pnpm install --no-frozen-lockfile",
+    "release": "pnpm build && changeset publish",
+    "changeset:status": "changeset status --verbose"
   },
   "engines": {
     "node": ">=20.10.0",
@@ -37,6 +41,7 @@
   },
   "license": "Apache-2.0",
   "devDependencies": {
+    "@changesets/cli": "^2.29.5",
     "npkill": "^0.12.2"
   }
 }

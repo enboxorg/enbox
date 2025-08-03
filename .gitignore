@@ -21,6 +21,11 @@ coverage/
 .env.test.local
 .env.production.local
 
+# Changesets
+.changeset/*.md
+!.changeset/README.md
+!.changeset/config.json
+
 # IDE
 .vscode/
 .idea/

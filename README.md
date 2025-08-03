@@ -51,6 +51,154 @@ pnpm install
 pnpm build
 ```
 
+## 📦 **Managing Releases with Changesets**
+
+This monorepo uses [Changesets](https://github.com/changesets/changesets) to manage versioning and publishing of packages. Changesets automate the process of versioning, changelog generation, and releasing packages to npm.
+
+### How Changesets Work
+
+1. **Creating Changesets**: When you make changes to any package(s), create a changeset describing what changed
+2. **Version Updates**: Changesets automatically determine version bumps based on the type of change
+3. **Changelog Generation**: Changelogs are automatically generated from changeset descriptions
+4. **Publishing**: All packages are published together in a coordinated release
+
+### Creating a Changeset
+
+After making changes to one or more packages:
+
+```bash
+# Create a new changeset
+pnpm changeset
+
+# This will prompt you to:
+# 1. Select which packages have changed
+# 2. Choose the type of change (major/minor/patch)
+# 3. Write a summary of the changes
+```
+
+### Changeset Types
+
+- **Major**: Breaking changes (e.g., removing APIs, changing function signatures)
+- **Minor**: New features that don't break existing functionality
+- **Patch**: Bug fixes and small improvements
+
+### Example Workflow
+
+```bash
+# 1. Make your changes to packages
+# 2. Create a changeset
+pnpm changeset
+
+# 3. Commit the changeset file along with your changes
+git add .
+git commit -m "feat: add new feature to @enbox/api"
+
+# 4. Push to your branch and create a PR
+git push origin feature-branch
+```
+
+### Releasing Packages (Maintainers)
+
+```bash
+# 1. Check current changeset status
+pnpm changeset:status
+
+# 2. Update versions based on changesets
+pnpm version
+
+# 3. Review the version bumps and changelogs
+# 4. Commit the version updates
+git add .
+git commit -m "chore: version packages"
+
+# 5. Build and publish all packages
+pnpm release
+
+# 6. Push tags and commits
+git push --follow-tags
+```
+
+### Best Practices
+
+1. **Always create a changeset** when modifying public APIs or fixing bugs
+2. **Write clear changeset descriptions** - these become your changelog entries
+3. **Group related changes** in a single changeset when they affect multiple packages
+4. **Don't commit generated files** - version updates are handled during release
+
+### Changeset File Example
+
+Changesets are stored in `.changeset/` as markdown files:
+
+```markdown
+---
+"@enbox/api": minor
+"@enbox/agent": patch
+---
+
+Added new authentication method to API and fixed related issue in agent
+```
+
+### CI/CD Integration
+
+For automated releases, you can use the Changesets GitHub Action:
+
+1. It creates a PR with all version updates when changesets are merged
+2. Merging the PR triggers automatic publishing to npm
+3. Tags are created for each published version
+
+#### GitHub Actions Setup
+
+The repository includes a release workflow (`.github/workflows/release.yml`) that:
+
+1. **Runs on push to main**: Triggers when changes are merged
+2. **Creates Version PRs**: Automatically creates PRs with version updates
+3. **Publishes to npm**: When version PRs are merged, packages are published
+4. **Generates prereleases**: Creates alpha versions for testing
+
+#### Required Secrets
+
+Add these secrets to your GitHub repository:
+
+- `NPM_TOKEN`: npm authentication token with publish permissions
+- `GITHUB_TOKEN`: Automatically provided by GitHub Actions
+
+#### Workflow Process
+
+```mermaid
+graph LR
+    A[Push to main] --> B{Changesets exist?}
+    B -->|Yes| C[Create Version PR]
+    B -->|No| D[Create Alpha Release]
+    C --> E[Merge Version PR]
+    E --> F[Publish to npm]
+    F --> G[Create Git Tags]
+```
+
+### Common Commands
+
+```bash
+# Create a changeset
+pnpm changeset
+
+# Add a changeset with specific packages (skip prompts)
+pnpm changeset add --packages @enbox/api,@enbox/agent
+
+# Check what will be released
+pnpm changeset:status
+
+# Version packages (without publishing)
+pnpm version
+
+# Build and publish packages
+pnpm release
+```
+
+### Troubleshooting
+
+- **No changesets found**: Run `pnpm changeset` to create one
+- **Version conflicts**: Ensure `pnpm install` runs after version updates
+- **Publishing fails**: Check npm authentication and package access rights
+
 ## 🐳 **Docker Setup**
 
 The easiest way to get started with the DWN server is using Docker Compose, which sets up both the DWN server and PostgreSQL database.
