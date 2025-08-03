@@ -62,7 +62,44 @@ export class AdminApi {
   public registerRoutes(app: Express): void {
     const adminRouter = express.Router();
     
-    // Apply authentication to all admin routes
+    // Add CORS for admin routes to allow cross-origin requests from the admin UI
+    adminRouter.use((req: Request, res: Response, next: NextFunction) => {
+      res.header('Access-Control-Allow-Origin', '*');
+      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+      
+      // Handle preflight requests
+      if (req.method === 'OPTIONS') {
+        res.sendStatus(200);
+        return;
+      }
+      
+      next();
+    });
+    
+    // Auth endpoint - doesn't require authentication middleware
+    adminRouter.post('/auth', async (req: Request, res: Response) => {
+      const { secret } = req.body;
+      
+      if (!secret) {
+        res.status(400).json({ error: 'Secret is required' });
+        return;
+      }
+      
+      // Generate token from the provided secret
+      const providedToken = createHash('sha256').update(secret).digest('hex');
+      
+      if (providedToken === this.adminToken) {
+        res.json({ 
+          token: this.adminToken,
+          message: 'Authentication successful' 
+        });
+      } else {
+        res.status(401).json({ error: 'Invalid secret' });
+      }
+    });
+    
+    // Apply authentication to all other admin routes
     adminRouter.use(this.authenticate.bind(this));
 
     // Server statistics endpoint
