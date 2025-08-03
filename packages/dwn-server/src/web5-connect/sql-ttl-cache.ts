@@ -39,7 +39,7 @@ export class SqlTtlCache {
         // 512 chars to accommodate potentially large `state` in Web5 Connect flow
         .addColumn('key', 'varchar(512)', (column) => column.primaryKey())
         .addColumn('value', 'text', (column) => column.notNull())
-        .addColumn('expiry', 'integer', (column) => column.notNull())
+        .addColumn('expiry', 'bigint', (column) => column.notNull())
         .execute();
   
       await this.db.schema
@@ -97,7 +97,8 @@ export class SqlTtlCache {
     const entry = result[0];
 
     // if the entry is expired, don't return it and delete it
-    if (Date.now() >= entry.expiry) {
+    const expiry = typeof entry.expiry === 'string' ? parseInt(entry.expiry, 10) : entry.expiry;
+    if (Date.now() >= expiry) {
       this.delete(key); // no need to await
       return undefined;
     }
@@ -129,7 +130,7 @@ export class SqlTtlCache {
 interface CacheEntry {
   key: string;
   value: string;
-  expiry: number;
+  expiry: number | string; // bigint is returned as string by PostgreSQL driver
 }
 
 interface CacheDatabase {
