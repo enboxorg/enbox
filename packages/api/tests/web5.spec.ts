@@ -282,7 +282,7 @@ describe('web5 api', () => {
       expect(did2).to.equal(did);
     });
 
-    it('defaults to `https://dwn.tbddev.org/beta` as the single DWN Service endpoint if non is provided', async () => {
+    it('defaults to `https://enbox-production.up.railway.app` as the single DWN Service endpoint if non is provided', async () => {
       sinon
         .stub(Web5UserAgent, 'create')
         .resolves(testHarness.agent as Web5UserAgent);
@@ -295,7 +295,7 @@ describe('web5 api', () => {
       const serviceEndpoints = (
         identityApiSpy.firstCall.args[0].didOptions as any
       ).services[0].serviceEndpoint;
-      expect(serviceEndpoints).to.deep.equal(['https://dwn.tbddev.org/beta']);
+      expect(serviceEndpoints).to.deep.equal(['https://enbox-production.up.railway.app']);
     });
 
     describe('walletConnectOptions', () => {

@@ -99,10 +99,7 @@ For production deployments:
 
 Deploy the DWN server to Railway (Platform-as-a-Service) with managed PostgreSQL in minutes:
 
-### One-Click Deploy
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/dwn-server?referralCode=enbox)
-
-### Manual Setup
+### Setup
 See the complete [Railway Deployment Guide](./RAILWAY.md) for detailed instructions.
 
 **Quick summary:**

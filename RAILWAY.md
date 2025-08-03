@@ -14,10 +14,7 @@ cd enbox
 
 ### 2. Deploy to Railway
 
-#### Option A: Deploy Button (Fastest)
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/dwn-server?referralCode=enbox)
-
-#### Option B: Manual Setup
+#### Manual Setup
 1. Visit [railway.app](https://railway.app) and sign up/login
 2. Create **New Project** → **Deploy from GitHub repo**
 3. Select your forked `enbox` repository
@@ -30,22 +27,24 @@ cd enbox
 4. `DATABASE_URL` will be available as an environment variable
 
 ### 4. Configure Environment Variables
-In Railway dashboard, go to your service → **Variables** tab:
+**CRITICAL**: You must manually set these environment variables in Railway dashboard:
+
+Go to your DWN service → **Variables** tab and add these variables **exactly**:
 
 ```bash
-# Required Variables
-DS_PORT=$PORT                                      # Auto-provided by Railway
-DWN_BASE_URL=https://your-service-name.railway.app # Update with your actual URL
-DWN_TTL_CACHE_URL=$DATABASE_URL
-DWN_STORAGE_MESSAGES=$DATABASE_URL
-DWN_STORAGE_DATA=$DATABASE_URL  
-DWN_STORAGE_EVENTS=$DATABASE_URL
-DWN_STORAGE_RESUMABLE_TASKS=$DATABASE_URL
+# Required Variables (use Railway service reference syntax)
+DS_PORT = ${{PORT}}
+DWN_BASE_URL = https://your-service-name.up.railway.app
+DWN_TTL_CACHE_URL = ${{Postgres.DATABASE_URL}}
+DWN_STORAGE_MESSAGES = ${{Postgres.DATABASE_URL}}
+DWN_STORAGE_DATA = ${{Postgres.DATABASE_URL}}
+DWN_STORAGE_EVENTS = ${{Postgres.DATABASE_URL}}
+DWN_STORAGE_RESUMABLE_TASKS = ${{Postgres.DATABASE_URL}}
 
 # Optional Variables
-DS_WEBSOCKET_SERVER=on
-MAX_RECORD_DATA_SIZE=1gb
-DWN_SERVER_LOG_LEVEL=info
+DS_WEBSOCKET_SERVER = on
+MAX_RECORD_DATA_SIZE = 1gb
+DWN_SERVER_LOG_LEVEL = info
 ```
 
 ### 5. Deploy & Verify

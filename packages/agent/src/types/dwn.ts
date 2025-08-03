@@ -64,7 +64,7 @@ import {
  * const service: DwnDidService = {
  *   id: 'did:example:123#dwn',
  *   type: 'DecentralizedWebNode',
- *   serviceEndpoint: 'https://dwn.tbddev.org/dwn0',
+ *   serviceEndpoint: 'https://enbox-production.up.railway.app',
  *   enc: 'did:example:123#key-1',
  *   sig: 'did:example:123#key-2'
  * }
