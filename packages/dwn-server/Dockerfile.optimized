@@ -21,32 +21,36 @@ RUN pnpm install --frozen-lockfile
 # Build all packages
 RUN pnpm --recursive --stream build
 
-# Stage 2: Runner - Keep the monorepo structure but run dwn-server
-FROM node:20.10.0-bookworm-slim AS runner
+# Stage 2: Native builder - Build native dependencies separately
+FROM node:20.10.0-bookworm-slim AS native-builder
 
-# Install build tools needed for native module rebuilding
-# Split installation to reduce memory usage and add --no-install-recommends
+# Install build tools with minimal dependencies
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3 && \
-    apt-get install -y --no-install-recommends make && \
-    apt-get install -y --no-install-recommends g++ && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    python3-minimal \
+    make \
+    g++ \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build better-sqlite3 separately
+WORKDIR /tmp/sqlite-build
+RUN npm init -y && \
+    npm install better-sqlite3@8.7.0 --build-from-source
+
+# Stage 3: Runner - Minimal runtime image
+FROM node:20.10.0-bookworm-slim AS runner
 
 ARG DS_PORT
 ENV DS_PORT=${DS_PORT:-3000}
 
 WORKDIR /app
 
-# Copy the entire built monorepo (simpler and avoids module resolution issues)
+# Copy the entire built monorepo
 COPY --from=builder /app ./
 
-# Install better-sqlite3 in a clean environment with proper native bindings
-RUN mkdir -p /tmp/sqlite-build && cd /tmp/sqlite-build && \
-    npm init -y && \
-    npm install better-sqlite3@8.7.0 && \
-    cp -r node_modules/better-sqlite3 /app/node_modules/ && \
-    rm -rf /tmp/sqlite-build
+# Copy pre-built native modules
+COPY --from=native-builder /tmp/sqlite-build/node_modules/better-sqlite3 /app/node_modules/better-sqlite3
 
 # Set working directory to dwn-server for the entrypoint
 WORKDIR /app/packages/dwn-server
