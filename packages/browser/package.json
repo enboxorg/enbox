@@ -1,6 +1,6 @@
 {
   "name": "@enbox/browser",
-  "version": "0.0.3",
+  "version": "0.0.2",
   "description": "Web5 tools and features to use in the browser",
   "type": "module",
   "main": "./dist/esm/index.js",
@@ -52,8 +52,7 @@
     "tools"
   ],
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "dependencies": {
     "@enbox/dids": "workspace:*"

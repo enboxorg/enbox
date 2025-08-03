@@ -1,6 +1,6 @@
 {
   "name": "@enbox/crypto",
-  "version": "1.0.6",
+  "version": "0.0.2",
   "description": "Web5 cryptographic library",
   "type": "module",
   "main": "./dist/cjs/index.js",
@@ -63,8 +63,7 @@
     "web5"
   ],
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "engines": {
     "node": ">=18.0.0"

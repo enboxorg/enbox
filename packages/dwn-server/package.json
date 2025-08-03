@@ -1,7 +1,7 @@
 {
   "name": "@enbox/dwn-server",
   "type": "module",
-  "version": "0.6.1",
+  "version": "0.0.2",
   "files": [
     "dist",
     "src"
@@ -25,6 +25,9 @@
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/dwn-server#readme",
   "bugs": {
     "url": "https://github.com/enboxorg/enbox/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@enbox/common": "workspace:*",

@@ -1,6 +1,6 @@
 {
   "name": "@enbox/user-agent",
-  "version": "0.7.1",
+  "version": "0.0.2",
   "type": "module",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
@@ -62,8 +62,7 @@
     "web5"
   ],
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "engines": {
     "node": ">=18.0.0"

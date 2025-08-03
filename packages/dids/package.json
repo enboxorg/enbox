@@ -1,6 +1,6 @@
 {
   "name": "@enbox/dids",
-  "version": "1.2.0",
+  "version": "0.0.2",
   "description": "TBD DIDs library",
   "type": "module",
   "main": "./dist/cjs/index.js",
@@ -69,8 +69,7 @@
     "web5"
   ],
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "engines": {
     "node": ">=18.0.0"

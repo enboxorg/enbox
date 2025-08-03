@@ -1,6 +1,6 @@
 {
   "name": "@enbox/dwn-sql-store",
-  "version": "0.6.9",
+  "version": "0.0.2",
   "description": "SQL backed implementations of DWN MessageStore, DataStore, and EventLog",
   "type": "module",
   "license": "Apache-2.0",
@@ -10,6 +10,9 @@
     "type": "git",
     "url": "git+https://github.com/enboxorg/enbox.git",
     "directory": "packages/dwn-sql-store"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "main": "./dist/cjs/main.js",
   "module": "./dist/esm/src/main.js",
