@@ -11,8 +11,8 @@ Installing this chart requires [having helm installed locally](https://helm.sh/d
 Once Kubernetes and Helm are ready:
 
 ```bash
-git clone https://github.com/enboxorg/enbox/dwn-server.git
-cd dwn-server/charts
+git clone https://github.com/enboxorg/enbox.git
+cd enbox/packages/dwn-server/charts
 helm upgrade --install --namespace dwn-server dwn-server .
 ```
 
@@ -30,7 +30,7 @@ You can then, in another terminal window, confirm everything is working by runni
 curl localhost:3000
 ```
 
-Which should return the message "please use a web5 client"
+Which should return the message "please use an enbox client"
 
 ## Chart Values
 
@@ -38,7 +38,7 @@ Which should return the message "please use a web5 client"
 | ----------------------------- | ------ | ------------------------------------------------------------------------- | -------------------------------------------- |
 | `replicaCount`                | int    | `1`                                                                       | Number of replicas                           |
 | `fullnameOverride`            | string | `""`                                                                      | Override the fullname of the resources       |
-| `image.repository`            | string | `"ghcr.io/enboxorg/enbox/dwn-server"`                                        | Image repository                             |
+| `image.repository`            | string | `"ghcr.io/enboxorg/dwn-server"`                                           | Image repository                             |
 | `image.tag`                   | string | `"main"`                                                                  | Image tag                                    |
 | `image.pullPolicy`            | string | `"IfNotPresent"`                                                          | Image pull policy                            |
 | `service.type`                | string | `"ClusterIP"`                                                             | Service type                                 |

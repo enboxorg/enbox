@@ -18,7 +18,7 @@ export class ProofOfWorkManager {
   };
 
   // There is opportunity to improve implementation here.
-  // TODO: https://github.com/TBD54566975/dwn-server/issues/101
+  // TODO: https://github.com/enboxorg/enbox/issues/101
   private proofOfWorkOfLastMinute: Map<string, number> = new Map(); // proofOfWorkId -> timestamp of proof-of-work
 
   // Seed to generate the challenge nonce from, this allows all DWN instances in a cluster to generate the same challenge.

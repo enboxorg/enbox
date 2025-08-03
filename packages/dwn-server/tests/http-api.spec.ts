@@ -52,7 +52,7 @@ describe('http api', function () {
 
   before(async function () {
     clock = useFakeTimers({ shouldAdvanceTime: true });
-    // TODO: Remove direct use of default config to avoid changes bleed/pollute between tests - https://github.com/TBD54566975/dwn-server/issues/144
+    // TODO: Remove direct use of default config to avoid changes bleed/pollute between tests - https://github.com/enboxorg/enbox/issues/144
     config.registrationStoreUrl = 'sqlite://';
     config.registrationProofOfWorkEnabled = true;
     config.termsOfServiceFilePath = './tests/fixtures/terms-of-service.txt';
@@ -156,7 +156,7 @@ describe('http api', function () {
       // that have CORS enabled to read and parse DWeb Messages that are returned as Response headers, particularly
       // in the case of RecordsRead messages.
 
-      // TODO: github.com/TBD54566975/dwn-server/issues/50
+      // TODO: github.com/enboxorg/enbox/issues/50
       // Consider replacing this test with a more robust method of testing, such as writing Playwright tests
       // that run in a browser to verify that the `dwn-response` header can be read from the `fetch()` response
       // when CORS mode is enabled.

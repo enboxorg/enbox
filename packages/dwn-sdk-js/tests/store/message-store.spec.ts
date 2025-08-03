@@ -48,7 +48,7 @@ export function testMessageStore(): void {
         expect(resultCid).to.equal(expectedCid);
       });
 
-      // https://github.com/TBD54566975/dwn-sdk-js/issues/170
+      // https://github.com/enboxorg/enbox/issues/170
       it('#170 - should be able to update (delete and insert new) indexes to an existing message', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 

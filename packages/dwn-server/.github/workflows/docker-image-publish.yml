@@ -49,11 +49,11 @@ jobs:
           dwn_server_version=$(jq -r '.version' package.json)
 
           # extract the DWN SDK version from the package.json
-          dwn_sdk_version=$(jq -r '.dependencies."@tbd54566975/dwn-sdk-js"' package.json)
+          dwn_sdk_version=$(jq -r '.dependencies."@enbox/dwn-sdk-js"' package.json)
 
           # construct a image tag names using DWN server & DWN SDK versions
-          # (e.g. ghcr.io/tbd54566975/dwn-server:0.4.3)
-          # (e.g. ghcr.io/tbd54566975/dwn-server:dwn-sdk-0.4.4)
+          # (e.g. ghcr.io/enboxorg/dwn-server:0.4.3)
+          # (e.g. ghcr.io/enboxorg/dwn-server:dwn-sdk-0.4.4)
           dwn_server_version_tag_name=${{ env.REGISTRY }}/${IMAGE_NAME,,}:$dwn_server_version
           dwn_sdk_version_tag_name=${{ env.REGISTRY }}/${IMAGE_NAME,,}:dwn-sdk-$dwn_sdk_version
 

@@ -2272,7 +2272,7 @@ export function testRecordsQueryHandler(): void {
         expect(bobSorted.every((m, i) => compareRecordId(bobRetrieved.at(i)!, m)));
       });
 
-      // https://github.com/TBD54566975/dwn-sdk-js/issues/170
+      // https://github.com/enboxorg/enbox/issues/170
       it('#170 - should treat records with `published` explicitly set to `false` as unpublished', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();

@@ -5,12 +5,12 @@ import { SqlTtlCache } from "./sql-ttl-cache.js";
 /**
  * The Web5 Connect Request object.
  */
-export type Web5ConnectRequest = any; // TODO: define type in common repo for reuse (https://github.com/TBD54566975/dwn-server/issues/138)
+export type Web5ConnectRequest = any; // TODO: define type in common repo for reuse (https://github.com/enboxorg/enbox/issues/138)
 
 /**
  * The Web5 Connect Response object, which is also an OIDC ID token
  */
-export type Web5ConnectResponse = any; // TODO: define type in common repo for reuse (https://github.com/TBD54566975/dwn-server/issues/138)
+export type Web5ConnectResponse = any; // TODO: define type in common repo for reuse (https://github.com/enboxorg/enbox/issues/138)
 
 /**
  * The result of the setWeb5ConnectRequest() method.

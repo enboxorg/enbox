@@ -1,4 +1,4 @@
-# DWN Server <!-- omit in toc -->
+# DWN Server
 
 Exposes a multi-tenanted DWN (aka Decentralized Web Node) through a JSON-RPC API over `http:` and `ws:`
 
@@ -32,7 +32,7 @@ See more in [Storage Options](#storage-options)
 
 Interested in contributing instantly? You can make your updates directly without cloning in the running CodeSandbox environment.
 
-[![Button to click and edit the code in CodeSandbox](https://assets.codesandbox.io/github/button-edit-lime.svg)](https://codesandbox.io/p/github/enboxorg/enbox/dwn-server/main)
+[![Button to click and edit the code in CodeSandbox](https://assets.codesandbox.io/github/button-edit-lime.svg)](https://codesandbox.io/p/github/enboxorg/enbox/main)
 
 ## Installation
 
@@ -54,23 +54,23 @@ server.start();
 
 ### Running via docker
 
-`docker run -p 3000:3000 -v myvolume:/dwn-server/data ghcr.io/enboxorg/enbox/dwn-server:main`
+`docker run -p 3000:3000 -v myvolume:/dwn-server/data ghcr.io/enboxorg/dwn-server:main`
 
 This can run on services like AWS, GCP, VPS, home server (with ngrok or cloudflare), fly.io, render.com etc.
 Ideally the volume is persistent so that data is kept (or has to be synced back from another DWN instance).
 
 ### Running a specific version
 
-Running the command above will run the latest version at the time the image is pulled. If you need to run a specific version (and in many cases this is recommended) [you can see the list published images here](https://github.com/enboxorg/enbox/dwn-server/pkgs/container/dwn-server/versions)
+Running the command above will run the latest version at the time the image is pulled. If you need to run a specific version (and in many cases this is recommended) [you can see the list published images here](https://github.com/enboxorg/enbox/pkgs/container/dwn-server/versions)
 
 To run a specific image:
-`docker pull ghcr.io/enboxorg/enbox/dwn-server@sha256:870e0f0f12016e6607060a81ea31458443f7439522fab2688d7a6706ab366c58`
+`docker pull ghcr.io/enboxorg/dwn-server@sha256:870e0f0f12016e6607060a81ea31458443f7439522fab2688d7a6706ab366c58`
 
 ### Running Locally for Development
 
 ```bash
-git clone https://github.com/enboxorg/enbox/dwn-server.git
-cd dwn-server
+git clone https://github.com/enboxorg/enbox.git
+cd enbox/packages/dwn-server
 npm install
 npm run server
 ```
@@ -200,7 +200,7 @@ Examples can be found in the `examples` directory.
 
 ## Hosting your own DWN-server
 
-By default, when you call `web5.connect()` there will be some bootstrap DWN nodes included which allow people to reach you via your DID.
+By default, when you call `Enbox.connect()` there will be some bootstrap DWN nodes included which allow people to reach you via your DID.
 
 You may want to run a DWN server just for you, or as a public service for you and your friends and family.
 DWNs can be as simple as a docker image or a node process running somewhere.
@@ -229,7 +229,7 @@ First, install [ngrok](https://ngrok.com/download)
 Then run:
 
 ```bash
-docker run -p 3000:3000 -v myvolume:/dwn-server/data ghcr.io/enboxorg/enbox/dwn-server:main
+docker run -p 3000:3000 -v myvolume:/dwn-server/data ghcr.io/enboxorg/dwn-server:main
 
 ## in another terminal:
 ngrok http 3000
@@ -243,8 +243,8 @@ Cloudflare has a tunnel service that you can use to expose your DWN server to th
 With [cloudflared](https://github.com/cloudflare/cloudflared) installed, run the following commands:
 
 ```bash
-git clone https://github.com/enboxorg/enbox/dwn-server.git
-cd dwn-server
+git clone https://github.com/enboxorg/enbox.git
+cd enbox/packages/dwn-server
 npm install
 npm run server
 
@@ -281,7 +281,7 @@ Configuration can be set using environment variables
 | `DS_PORT`                                         | Port that the server listens on                                                                                                | `3000`                 |
 | `DS_MAX_RECORD_DATA_SIZE`                         | Maximum size for `RecordsWrite` data. use `b`, `kb`, `mb`, `gb` for value                                                      | `1gb`                  |
 | `DS_WEBSOCKET_SERVER`                             | Whether to enable listening over `ws:`. values: `on`,`off`                                                                     | `on`                   |
-| `DWN_BASE_URL`                                    | Base external URL of this DWN. Used to construct URL paths such as the `Request URI` for the Web5 Connect flow.                | `http://localhost`     |
+| `DWN_BASE_URL`                                    | Base external URL of this DWN. Used to construct URL paths such as the `Request URI` for the Enbox Connect flow.              | `http://localhost`     |
 | `DWN_EVENT_STREAM_PLUGIN_PATH`                    | Path to DWN Event Stream plugin to use. Default single-node implementation will be used if left empty.                         | unset                  |
 | `DWN_REGISTRATION_STORE_URL`                      | URL to use for storage of registered DIDs. Leave unset to if DWN does not require registration (ie. open for all)              | unset                  |
 | `DWN_REGISTRATION_PROOF_OF_WORK_SEED`             | Optional seed to generate the challenge nonce from, this allows all DWN instances in a cluster to generate the same challenge. | unset                  |

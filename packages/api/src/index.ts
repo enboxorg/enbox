@@ -16,7 +16,7 @@
  * in the lead up to 1.0 final, and modifications will be made to address
  * issues and community feedback.
  *
- * [Link to GitHub Repo](https://github.com/TBD54566975/web5-js)
+ * [Link to GitHub Repo](https://github.com/enboxorg/enbox)
  *
  * @packageDocumentation
  */

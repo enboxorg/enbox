@@ -1,7 +1,7 @@
-# Web5 Crypto API
+# Enbox Crypto API
 
-| A cryptography and JOSE library for building secure Web5 applications |
-| --------------------------------------------------------------------- |
+| A cryptography and JOSE library for building secure decentralized applications |
+| ------------------------------------------------------------------------------ |
 
 [![NPM Package][crypto-npm-badge]][crypto-npm-link]
 [![NPM Downloads][crypto-downloads-badge]][crypto-npm-link]
@@ -12,7 +12,7 @@
 
 ---
 
-- [Web5 Crypto API](#web5-crypto-api)
+- [Enbox Crypto API](#enbox-crypto-api)
   - [Supported Algorithms \& Key Types](#supported-algorithms--key-types)
   - [Extensions](#extensions)
   - [Getting Started](#getting-started)
@@ -46,7 +46,7 @@
 
 <a id="introduction"></a>
 
-The Web5 Crypto API is a core component of the [Web5 JS](https://github.com/enboxorg/enbox/enbox)
+The Enbox Crypto API is a core component of the [Enbox](https://github.com/enboxorg/enbox)
 ecosystem, providing the cryptography and JSON Object Signing and Encryption (JOSE) capabilities
 essential for building secure applications and services with Decentralized Identifiers
 ([DID](https://www.w3.org/TR/did-core/)) and Verifiable Credentials
@@ -56,7 +56,7 @@ This JavaScript library was designed for modern development runtimes, including 
 browsers, and React Native. It provides cryptographic functionality for cipher, hash, and signature
 algorithms and basic JOSE support for JSON Web Key (JWK). Additionally, it includes the crypto
 interfaces and local Key Management System (KMS) implementation that are used by
-[other libraries](https://github.com/enboxorg/enbox/enbox) in this monorepo.
+[other libraries](https://github.com/enboxorg/enbox) in this monorepo.
 
 ### Supported Algorithms & Key Types
 
@@ -81,7 +81,7 @@ Packages that extend the functionality of the `@enbox/crypto` library:
 
 ## Getting Started
 
-The Web5 Crypto API is distributed as `@enbox/crypto` via [npmjs.com][crypto-npm-link],
+The Enbox Crypto API is distributed as `@enbox/crypto` via [npmjs.com][crypto-npm-link],
 [jsdelivr.com][crypto-jsdelivr-link], [unpkg.com][crypto-unpkg-link], and
 [github.com][crypto-repo-link].
 
@@ -153,19 +153,19 @@ We welcome you to join our open source community. Whether you're new to open sou
 contributor, there's a place for you here. From coding to documentation, every contribution matters.
 Check out our [contribution guide][contributing-link] for ways to get started.
 
-For help, discussion about best practices, or to chat with others building on Web5 join our
+For help, discussion about best practices, or to chat with others building on Enbox join our
 [Discord Server][discord-link]:
 
 [![discord-badge]][discord-link]
 
 Remember, contributing is not just about code; it's about building together. Join us in shaping the
-future of the Web!
+future of decentralized applications!
 
 ## Core Concepts
 
 ### Key URIs
 
-One of the core design principles for the SDKs in the Web5 ecosystem is the protection of private
+One of the core design principles for the SDKs in the Enbox ecosystem is the protection of private
 key material. Instead of directly handling sensitive key information, our SDKs interact with
 cryptographic keys through Key Management Systems (KMS) referenced by a unique identifier called a
 **Key URI**. This approach ensures that private keys remain secure, while still allowing for
@@ -182,7 +182,7 @@ a prefix. The following table shows the format of supported **Key URIs**:
 All cryptographic keys are represented in JSON Web Key
 ([JWK](https://datatracker.ietf.org/doc/html/rfc7517)) format and the `jwk-thumbprint`, a
 [standardized](https://datatracker.ietf.org/doc/html/rfc7638), deterministic, and unique hash of the
-key, acts as a fingerprint, enabling consistent key referencing across all Web5 libraries without
+key, acts as a fingerprint, enabling consistent key referencing across all Enbox libraries without
 exposing private key information.
 
 ### Using a Local KMS
@@ -203,7 +203,7 @@ const kms = new LocalKeyManager();
 ```
 
 An ephemeral, in-memory key store is used by default but any persistent store that implements the
-[`KeyValueStore`](https://github.com/enboxorg/enbox/enbox/blob/5f364bc0d859e28f1388524ebe8ef152a71727c4/packages/common/src/types.ts#L4-L43)
+[`KeyValueStore`](https://github.com/enboxorg/enbox/blob/main/packages/common/src/types.ts)
 interface can also be passed. See the [Persistent Key Store](#persistent-key-store) customization
 for an example.
 
@@ -262,57 +262,11 @@ console.log(isValid);
 // Output: true
 ```
 
-Export the private key:
-
-```ts
-const privateKey = await kms.exportKey({ keyUri });
-console.log(privateKey);
-// Output:
-// {
-//   kty: "OKP",
-//   crv: "Ed25519",
-//   alg: "EdDSA",
-//   kid: "8DaTzHZcvQXUVvl8ezQKgGQHza1hiOZlPkdrB55Vt6Q",
-//   x: "6alAHg28tLuqWtaj0YOg7d5ySM4ERwPqQrLoy2pwdZk",
-//   d: "0xLuQyXFaWjrqp2o0orhwvwhtYhp2Z7KeRcioIs78CY"
-// }
-```
-
-Import a private key generated by another library:
-
-```ts
-import type { Jwk } from "@enbox/crypto";
-
-const privateKey: Jwk = {
-  kty: "OKP",
-  crv: "Ed25519",
-  x: "0thnrEFw6MVSs1XFgd4OD-Yn05XGQv24hvskmGajtKQ",
-  d: "0xLuQyXFaWjrqp2o0orhwvwhtYhp2Z7KeRcioIs78CY",
-};
-
-const keyUri = await kms.importKey({ key: privateKey });
-```
-
-Compute the hash digest of arbitrary data:
-
-```ts
-const data = new TextEncoder().encode("Message");
-const hash = await kms.digest({ algorithm: "SHA-256", data });
-console.log(hash);
-// Output:
-// Uint8Array(32) [
-//     8, 187,  94,  93, 110, 170, 193,  4,
-//   158, 222,   8, 147, 211,  14, 208, 34,
-//   177, 164, 217, 181, 180, 141, 180, 20,
-//   135,  31,  81, 201, 203,  53,  40, 61
-// ]
-```
-
 ### JSON Web Key (JWK)
 
 A JSON Web Key (JWK) is a [standardized](https://datatracker.ietf.org/doc/html/rfc7517) format for
 representing cryptographic keys in a JSON data structure. The JWK format is used by all
-[Web5 SDKs](https://github.com/enboxorg/enbox/sdk-development) to promote portability and
+[Enbox SDKs](https://github.com/enboxorg/enbox) to promote portability and
 interoperability.
 
 Defining a JWK:
@@ -339,19 +293,6 @@ console.log(thumbprint);
 // Output: VhWyK5rpk2u_51_KniJxjRhwTUOsL8BLuKJaqpNYuEA
 ```
 
-The provided type guard functions can be used for type narrowing or to perform runtime verification
-of a specific JWK key type:
-
-```ts
-isPublicJwk(publicKey); // true
-isPrivateJwk(publicKey); // false
-isOkpPublicJwk(publicKey); // true
-isOkpPrivateJwk(publicKey); // false
-isOctPrivateJwk(publicKey); // false
-isEcPublicJwk(publicKey); // false
-isEcPrivateJwk(publicKey); // false
-```
-
 ### Random Number Generation
 
 Cryptographically strong random number generation is vital in cryptography. The unpredictability of
@@ -359,7 +300,7 @@ these random numbers is crucial for creating secure cryptographic keys, initiali
 nonces (numbers used once). Their strength lies in their resistance to being guessed or replicated,
 making them foundational to maintaining the integrity and confidentiality of cryptographic systems.
 
-The Web5 Crypto API includes two utility functions for random number generation:
+The Enbox Crypto API includes two utility functions for random number generation:
 
 #### `randomBytes()`
 
@@ -411,7 +352,7 @@ const uuid = CryptoUtils.randomUuid();
 
 By default, `LocalKeyManager` uses an in-memory key store to simplify prototyping and testing.
 To persist keys that are generated or imported, an implementation of the
-[`KeyValueStore`](https://github.com/enboxorg/enbox/enbox/blob/5f364bc0d859e28f1388524ebe8ef152a71727c4/packages/common/src/types.ts#L4-L43)
+[`KeyValueStore`](https://github.com/enboxorg/enbox/blob/main/packages/common/src/types.ts)
 interface can be passed.
 
 For example, to use the [LevelDB](https://github.com/Level/level)-backed store from `@enbox/common`:
@@ -687,22 +628,22 @@ const decryptedData = await XChaCha20Poly1305.decrypt({
 [crypto-npm-badge]: https://img.shields.io/npm/v/@enbox/crypto.svg?style=flat&color=blue&santize=true
 [crypto-npm-link]: https://www.npmjs.com/package/@enbox/crypto
 [crypto-downloads-badge]: https://img.shields.io/npm/dt/@enbox/crypto?&color=blue
-[crypto-build-badge]: https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/enbox/tests-ci.yml?branch=main&label=build
-[crypto-build-link]: https://github.com/enboxorg/enbox/enbox/actions/workflows/tests-ci.yml
-[crypto-coverage-badge]: https://img.shields.io/codecov/c/gh/enboxorg/enbox/enbox/main?style=flat&token=YI87CKF1LI
-[crypto-coverage-link]: https://app.codecov.io/github/enboxorg/enbox/enbox/tree/main/packages%2Fcrypto
-[crypto-issues-badge]: https://img.shields.io/github/issues/enboxorg/enbox/enbox/package:%20crypto?label=issues
-[crypto-issues-link]: https://github.com/enboxorg/enbox/enbox/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+crypto"
-[crypto-aws-kms-repo-link]: https://github.com/enboxorg/enbox/enbox/tree/main/packages/crypto-aws-kms
-[crypto-repo-link]: https://github.com/enboxorg/enbox/enbox/tree/main/packages/crypto
+[crypto-build-badge]: https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/tests-ci.yml?branch=main&label=build
+[crypto-build-link]: https://github.com/enboxorg/enbox/actions/workflows/tests-ci.yml
+[crypto-coverage-badge]: https://img.shields.io/codecov/c/gh/enboxorg/enbox/main?style=flat&token=YI87CKF1LI
+[crypto-coverage-link]: https://app.codecov.io/github/enboxorg/enbox/tree/main/packages%2Fcrypto
+[crypto-issues-badge]: https://img.shields.io/github/issues/enboxorg/enbox/package:%20crypto?label=issues
+[crypto-issues-link]: https://github.com/enboxorg/enbox/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+crypto"
+[crypto-aws-kms-repo-link]: https://github.com/enboxorg/enbox/tree/main/packages/crypto-aws-kms
+[crypto-repo-link]: https://github.com/enboxorg/enbox/tree/main/packages/crypto
 [crypto-jsdelivr-link]: https://www.jsdelivr.com/package/npm/@enbox/crypto
 [crypto-jsdelivr-browser]: https://cdn.jsdelivr.net/npm/@enbox/crypto/dist/browser.mjs
 [crypto-unpkg-link]: https://unpkg.com/@enbox/crypto
 [crypto-unpkg-browser]: https://unpkg.com/@enbox/crypto/dist/browser.mjs
-[codeowners-link]: https://github.com/enboxorg/enbox/enbox/blob/main/CODEOWNERS
-[code-of-conduct-link]: https://github.com/enboxorg/enbox/enbox/blob/main/CODE_OF_CONDUCT.md
-[contributing-link]: https://github.com/enboxorg/enbox/enbox/blob/main/CONTRIBUTING.md
-[governance-link]: https://github.com/enboxorg/enbox/enbox/blob/main/GOVERNANCE.md
-[license-link]: https://github.com/enboxorg/enbox/enbox/blob/main/LICENSE
+[codeowners-link]: https://github.com/enboxorg/enbox/blob/main/CODEOWNERS
+[code-of-conduct-link]: https://github.com/enboxorg/enbox/blob/main/CODE_OF_CONDUCT.md
+[contributing-link]: https://github.com/enboxorg/enbox/blob/main/CONTRIBUTING.md
+[governance-link]: https://github.com/enboxorg/enbox/blob/main/GOVERNANCE.md
+[license-link]: https://github.com/enboxorg/enbox/blob/main/LICENSE
 [discord-badge]: https://img.shields.io/discord/937858703112155166?color=5865F2&logo=discord&logoColor=white
 [discord-link]: https://discord.com/channels/937858703112155166/969272658501976117

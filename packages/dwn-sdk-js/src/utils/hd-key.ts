@@ -82,7 +82,7 @@ export class HdKey {
 
   /**
    * Derives a key using  HMAC-based Extract-and-Expand Key Derivation Function (HKDF) as defined in RFC 5869.
-   * TODO: Consolidate HKDF implementation and usage with web5-js - https://github.com/TBD54566975/dwn-sdk-js/issues/742
+   * TODO: Consolidate HKDF implementation and usage with web5-js - https://github.com/enboxorg/enbox/issues/742
    */
   public static async deriveKeyUsingHkdf(params: {
     hashAlgorithm: 'SHA-256' | 'SHA-384' | 'SHA-512',

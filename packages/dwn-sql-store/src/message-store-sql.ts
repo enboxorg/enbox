@@ -88,7 +88,7 @@ export class MessageStoreSql implements MessageStore {
         ['tenant', 'protocol', 'published', 'messageTimestamp'], // index used for basically every external query.
         ['tenant', 'interface'], // mainly for fast fetch of ProtocolsConfigure for authorization, not needed if protocol was a DWN Record
         ['tenant', 'contextId', 'messageTimestamp'], // expected to be used for common query pattern
-        ['tenant', 'permissionGrantId'], // for deleting grant-authorized messages though pending https://github.com/TBD54566975/dwn-sdk-js/issues/716
+        ['tenant', 'permissionGrantId'], // for deleting grant-authorized messages though pending https://github.com/enboxorg/enbox/issues/716
         // other potential indexes
         // ['tenant', 'author'],
         // ['tenant', 'recipient'],
@@ -299,7 +299,7 @@ export class MessageStoreSql implements MessageStore {
 
     if(pagination?.cursor !== undefined) {
       // currently the sort property is explicitly either `dateCreated` | `messageTimestamp` | `datePublished` which are all strings
-      // TODO: https://github.com/TBD54566975/dwn-sdk-js/issues/664 to handle the edge case
+      // TODO: https://github.com/enboxorg/enbox/issues/664 to handle the edge case
       const cursorValue = pagination.cursor.value as string;
       const cursorMessageId = pagination.cursor.messageCid;
 
@@ -382,7 +382,7 @@ export class MessageStoreSql implements MessageStore {
     const message = decodedBlock.value as GenericMessage;
     // If encodedData is stored within the MessageStore we include it in the response.
     // We store encodedData when the data is below a certain threshold.
-    // https://github.com/TBD54566975/dwn-sdk-js/pull/456
+    // https://github.com/enboxorg/enbox/pull/456
     if (message !== undefined && encodedData !== undefined && encodedData !== null) {
       (message as any).encodedData = encodedData;
     }

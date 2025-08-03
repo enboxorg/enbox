@@ -16,7 +16,7 @@ export class Time {
 
   /**
    * We must sleep for at least 2ms to avoid timestamp collisions during testing.
-   * https://github.com/TBD54566975/dwn-sdk-js/issues/481
+   * https://github.com/enboxorg/enbox/issues/481
    */
   public static async minimalSleep(): Promise<void> {
     await Time.sleep(2);

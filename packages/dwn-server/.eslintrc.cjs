@@ -6,7 +6,7 @@ module.exports = {
   },
   plugins: [
     '@typescript-eslint',
-    'todo-plz', // for enforcing TODO formatting to require "github.com/TBD54566975/dwn-server/issues/"
+    'todo-plz', // for enforcing TODO formatting to require "github.com/enboxorg/enbox/issues/"
   ],
   env: {
     node: true, // Enable Node.js global variables
@@ -34,7 +34,7 @@ module.exports = {
     // enforce github issue reference for every TO-DO comment
     'todo-plz/ticket-ref': [
       'error',
-      { commentPattern: '.*github.com/TBD54566975/dwn-server/issues/.*' },
+      { commentPattern: '.*github.com/enboxorg/enbox/issues/.*' },
     ],
   },
 };

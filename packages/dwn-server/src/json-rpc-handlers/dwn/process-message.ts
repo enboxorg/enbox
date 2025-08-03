@@ -28,7 +28,7 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
 
   try {
     // RecordsWrite is only supported on 'http' to support data stream for large data
-    // TODO: https://github.com/TBD54566975/dwn-server/issues/108
+    // TODO: https://github.com/enboxorg/enbox/issues/108
     if (
       transport !== 'http' &&
       message.descriptor.interface === DwnInterfaceName.Records &&

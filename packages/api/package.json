@@ -29,6 +29,10 @@
   "license": "Apache-2.0",
   "contributors": [
     {
+      "name": "Liran Cohen",
+      "url": "https://github.com/LiranCohen"
+    },
+    {
       "name": "Daniel Buchner",
       "url": "https://github.com/csuwildcat"
     },

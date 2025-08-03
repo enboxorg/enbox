@@ -75,7 +75,7 @@ export type RecordsWriteOptions = {
 };
 
 /**
- * Input that describes how data is encrypted as spec-ed in TP18 (https://github.com/TBD54566975/technical-proposals/pull/6).
+ * Input that describes how data is encrypted as spec-ed in TP18.
  */
 export type EncryptionInput = {
   /**
@@ -696,7 +696,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       return;
     }
 
-    // TODO: multi-attesters to be unblocked by #205 - Revisit database interfaces (https://github.com/TBD54566975/dwn-sdk-js/issues/205)
+    // TODO: multi-attesters to be unblocked by #205 - Revisit database interfaces (https://github.com/enboxorg/enbox/issues/205)
     if (message.attestation.signatures.length !== 1) {
       throw new DwnError(
         DwnErrorCode.RecordsWriteAttestationIntegrityMoreThanOneSignature,
@@ -783,7 +783,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     }
 
     // add additional indexes to optional values if given
-    // TODO: index multi-attesters to be unblocked by #205 - Revisit database interfaces (https://github.com/TBD54566975/dwn-sdk-js/issues/205)
+    // TODO: index multi-attesters to be unblocked by #205 - Revisit database interfaces (https://github.com/enboxorg/enbox/issues/205)
     if (this.attesters.length > 0) { indexes.attester = this.attesters[0]; }
     if (message.contextId !== undefined) { indexes.contextId = message.contextId; }
 

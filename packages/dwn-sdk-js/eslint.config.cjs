@@ -14,7 +14,7 @@ module.exports = [{
   },
   plugins: {
     "@typescript-eslint": tsPlugin,
-    'todo-plz': todoPlzPlugin // for enforcing TODO formatting to require "github.com/TBD54566975/dwn-sdk-js/issues/"
+    'todo-plz': todoPlzPlugin // for enforcing TODO formatting to require "github.com/enboxorg/enbox/issues/"
   },
   files: [
     '**/*.ts'
@@ -81,7 +81,7 @@ module.exports = [{
       'allowSeparatedGroups'  : true
     }],
     // enforce github issue reference for every TO-DO comment
-    'todo-plz/ticket-ref': ['error', { 'commentPattern': '.*github\.com\/TBD54566975\/dwn-sdk-js\/issues\/.*' }],
+    'todo-plz/ticket-ref': ['error', { 'commentPattern': '.*github\.com\/enboxorg\/enbox\/issues\/.*' }],
   }
 }, {
   ignores: [

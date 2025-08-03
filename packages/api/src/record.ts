@@ -1,6 +1,6 @@
 /**
  * NOTE: Added reference types here to avoid a `pnpm` bug during build.
- * https://github.com/TBD54566975/web5-js/pull/507
+ * https://github.com/enboxorg/enbox/pull/507
  */
 /// <reference types="@enbox/dwn-sdk-js" />
 
@@ -1046,7 +1046,7 @@ export class Record implements RecordModel {
       //
       // NOTE: When a read-only Record class is implemented, callers would have that returned instead when they don't have an explicit permission.
       // This should fail if a permission is not found, although it should not happen in practice.
-      // TODO: https://github.com/TBD54566975/web5-js/issues/898
+      // TODO: https://github.com/enboxorg/enbox/issues/898
       try {
         const { message: delegatedGrant } = await this._permissionsApi.getPermissionForRequest({
           connectedDid : this._connectedDid,

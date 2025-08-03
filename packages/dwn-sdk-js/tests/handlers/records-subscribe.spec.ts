@@ -500,7 +500,7 @@ export function testRecordsSubscribeHandler(): void {
             expect([ ...recordIds ]).to.have.members([ chatRecordForBob.message.recordId, ...chatRecordIds ]);
           });
 
-          // TODO: https://github.com/TBD54566975/dwn-sdk-js/issues/759
+          // TODO: https://github.com/enboxorg/enbox/issues/759
           //      When `RecordsSubscribeHandler` builds up the matchFilters there are no matching filters for a delete within a context
           //      so the delete event is not being captured by the subscription handler. This is likely due to some of the filters including
           //      `published: false` which is a mutable property and not included with the delete event

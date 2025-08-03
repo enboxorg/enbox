@@ -113,7 +113,7 @@ export class RecordsWriteHandler implements MethodHandler {
       // This would allow an initial write to be written to the DB without data, but having it not queryable,
       // because query implementation filters on `isLatestBaseState` being `true`
       // thus preventing a user's attempt to gain authorized access to data by referencing the dataCid of a private data in their initial writes,
-      // See: https://github.com/TBD54566975/dwn-sdk-js/issues/359 for more info
+      // See: https://github.com/enboxorg/enbox/issues/359 for more info
       let isLatestBaseState = false;
       let messageWithOptionalEncodedData = message as RecordsQueryReplyEntry;
 
@@ -162,7 +162,7 @@ export class RecordsWriteHandler implements MethodHandler {
 
     const messageReply = {
       // In order to discern between something that was accepted as a queryable write and something that was accepted
-      // as an initial state we use separate response codes. See https://github.com/TBD54566975/dwn-sdk-js/issues/695
+      // as an initial state we use separate response codes. See https://github.com/enboxorg/enbox/issues/695
       // for more details.
       status: (newMessageIsInitialWrite && dataStream === undefined) ?
         { code: 204, detail: 'No Content' } :
@@ -220,7 +220,7 @@ export class RecordsWriteHandler implements MethodHandler {
    */
   private async postProcessingForCoreRecordsWrite(tenant: string, recordsWrite: RecordsWrite): Promise<void> {
     // If this message is a Permission revocation, we need to delete all grant-authorized messages with timestamp after revocation
-    // TODO: https://github.com/TBD54566975/dwn-sdk-js/issues/716
+    // TODO: https://github.com/enboxorg/enbox/issues/716
     // This code is a direct copy and paste from the original PermissionsRevokeHandler (no longer exists),
     // but it appears that there was no test for it and it does not look like the code worked:
     // - not seeing `permissionGrantId` being an index
@@ -303,7 +303,7 @@ export class RecordsWriteHandler implements MethodHandler {
     // Since incoming message is not an initial write, and no dataStream is provided, we first check integrity against newest existing write.
     // we preform the dataCid check in case a user attempts to gain access to data by referencing a different known dataCid,
     // so we insure that the data is already associated with the existing newest message
-    // See: https://github.com/TBD54566975/dwn-sdk-js/issues/359 for more info
+    // See: https://github.com/enboxorg/enbox/issues/359 for more info
     RecordsWriteHandler.validateDataIntegrity(dataCid, dataSize, newestExistingWrite.descriptor.dataCid, newestExistingWrite.descriptor.dataSize);
 
     if (dataSize <= DwnConstant.maxDataSizeAllowedToBeEncoded) {

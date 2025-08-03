@@ -1,14 +1,14 @@
-# Web5 JS SDK
+# Enbox API SDK
 
 [![NPM](https://img.shields.io/npm/v/@enbox/api.svg?style=flat-square&logo=npm&logoColor=FFFFFF&color=FFEC19&santize=true)](https://www.npmjs.com/package/@enbox/api)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/enbox/tests-ci.yml?branch=main&logo=github&label=ci&logoColor=FFFFFF&style=flat-square)](https://github.com/enboxorg/enbox/enbox/actions/workflows/tests-ci.yml)
-[![Coverage](https://img.shields.io/codecov/c/gh/enboxorg/enbox/enbox/main?logo=codecov&logoColor=FFFFFF&style=flat-square&token=YI87CKF1LI)](https://codecov.io/github/enboxorg/enbox/enbox)
-[![License](https://img.shields.io/npm/l/@enbox/api.svg?style=flat-square&color=24f2ff&logo=apache&logoColor=FFFFFF&santize=true)](https://github.com/enboxorg/enbox/enbox/blob/main/LICENSE)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/tests-ci.yml?branch=main&logo=github&label=ci&logoColor=FFFFFF&style=flat-square)](https://github.com/enboxorg/enbox/actions/workflows/tests-ci.yml)
+[![Coverage](https://img.shields.io/codecov/c/gh/enboxorg/enbox/main?logo=codecov&logoColor=FFFFFF&style=flat-square&token=YI87CKF1LI)](https://codecov.io/github/enboxorg/enbox)
+[![License](https://img.shields.io/npm/l/@enbox/api.svg?style=flat-square&color=24f2ff&logo=apache&logoColor=FFFFFF&santize=true)](https://github.com/enboxorg/enbox/blob/main/LICENSE)
 [![Chat](https://img.shields.io/badge/chat-on%20discord-7289da.svg?style=flat-square&color=9a1aff&logo=discord&logoColor=FFFFFF&sanitize=true)](https://discord.com/channels/937858703112155166/969272658501976117)
 
-Making developing with Web5 components at least 5 times easier to work with.
+A comprehensive SDK for building decentralized applications with identity and data management.
 
-> ⚠️ WEB5 JS SDK IS CURRENTLY IN TECH PREVIEW ⚠️
+> ⚠️ ENBOX API SDK IS CURRENTLY IN TECH PREVIEW ⚠️
 
 The SDK is currently still under active development, but having entered the Tech Preview phase there is now a drive to avoid unnecessary changes unless backwards compatibility is provided. Additional functionality will be added in the lead up to 1.0 final, and modifications will be made to address issues and community feedback.
 
@@ -18,21 +18,21 @@ The SDK is currently still under active development, but having entered the Tech
 - [Installation](#installation)
 - [Usage](#usage)
 - [API Documentation](#api-documentation)
-  - [Web5.connect](#web5connectoptions)
-  - [web5.dwn.records.query](#web5dwnrecordsqueryrequest)
-  - [web5.dwn.records.subscribe](#web5dwnrecordssubscriberequest)
-  - [web5.dwn.records.create](#web5dwnrecordscreaterequest)
-  - [web5.dwn.records.write](#web5dwnrecordswriterequest)
-  - [web5.dwn.records.read](#web5dwnrecordsreadrequest)
-  - [web5.dwn.records.delete](#web5dwnrecordsdeleterequest)
-  - [web5.dwn.protocols.configure](#web5dwnprotocolsconfigurerequest)
-  - [web5.dwn.protocols.query](#web5dwnprotocolsqueryrequest)
-  - [web5.did.create](#web5didcreatemethod-options)
+  - [Enbox.connect](#enboxconnectoptions)
+  - [enbox.dwn.records.query](#enboxdwnrecordsqueryrequest)
+  - [enbox.dwn.records.subscribe](#enboxdwnrecordssubscriberequest)
+  - [enbox.dwn.records.create](#enboxdwnrecordscreaterequest)
+  - [enbox.dwn.records.write](#enboxdwnrecordswriterequest)
+  - [enbox.dwn.records.read](#enboxdwnrecordsreadrequest)
+  - [enbox.dwn.records.delete](#enboxdwnrecordsdeleterequest)
+  - [enbox.dwn.protocols.configure](#enboxdwnprotocolsconfigurerequest)
+  - [enbox.dwn.protocols.query](#enboxdwnprotocolsqueryrequest)
+  - [enbox.did.create](#enboxdidcreatemethod-options)
 - [Project Resources](#project-resources)
 
 ## Introduction
 
-Web5 consists of the following components:
+Enbox consists of the following components:
 
 - Decentralized Identifiers
 - Verifiable Credentials
@@ -65,13 +65,13 @@ https://cdn.jsdelivr.net/npm/@enbox/api@0.8.4/dist/browser.mjs
 ### Importing the SDK
 
 ```javascript
-import { Web5 } from "@enbox/api";
+import { Enbox } from "@enbox/api";
 ```
 
 or
 
 ```javascript
-import { Web5 } from CDN_LINK_HERE;
+import { Enbox } from CDN_LINK_HERE;
 ```
 
 ### Additional Steps
@@ -108,21 +108,21 @@ secp.etc.hmacSha256Async = (k, ...m) =>
 
 ## API Documentation
 
-### **`Web5.connect(options)`**
+### **`Enbox.connect(options)`**
 
 Enables an app to request connection to a user's local identity app (like a desktop or mobile agent - work is underway for reference apps of each), or generate an in-app DID to represent the user (e.g. if the user does not have an identity app).
 
 > **NOTE:** The outputs of this method invocation will be used throughout the other API methods below.
 
 ```javascript
-const { web5, did: myDid } = await Web5.connect();
+const { enbox, did: myDid } = await Enbox.connect();
 ```
 
 #### **`options`** _(optional)_
 
 An object which may specify any of the following properties:
 
-- **`agent`** - _`Web5Agent instance`_ _(optional)_: an instance of a `Web5Agent` implementation. Defaults to creating a local `Web5UserAgent` if not provided.
+- **`agent`** - _`EnboxAgent instance`_ _(optional)_: an instance of a `EnboxAgent` implementation. Defaults to creating a local `EnboxUserAgent` if not provided.
 
 - **`appData`** - _`AppDataStore instance`_ _(optional)_: an instance of an `AppDataStore` implementation. Defaults to a LevelDB-backed store with an insecure, static unlock passphrase if not provided. To allow the end user to enter a secure passphrase of their choosing, provide an initialized `AppDataVault`.
 
@@ -130,27 +130,25 @@ An object which may specify any of the following properties:
 
 - **`sync`** - _`string`_ _(optional)_: enable or disable synchronization of DWN records between local and remote DWNs. Sync defaults to running every 2 minutes and can be set to any value accepted by [`ms`](https://www.npmjs.com/package/ms). To disable sync set to `'off'`.
 
-- **`techPreview`** - _`object`_ _(optional)_: an object that specifies configuration parameters that are relevant during the Tech Preview period of Web5 JS and may be deprecated in the future with advance notice.
+- **`techPreview`** - _`object`_ _(optional)_: an object that specifies configuration parameters that are relevant during the Tech Preview period of Enbox API and may be deprecated in the future with advance notice.
 
-  - **`dwnEndpoints`** - _`array`_ _(optional)_: a list of DWeb Node endpoints to define in the DID created and returned by `Web5.connect()`. If this property is omitted, during the Tech Preview the default endpoint will be used (e.g., `['https://enbox-production.up.railway.app']`).
+  - **`dwnEndpoints`** - _`array`_ _(optional)_: a list of DWeb Node endpoints to define in the DID created and returned by `Enbox.connect()`. If this property is omitted, during the Tech Preview the default endpoint will be used (e.g., `['https://enbox-production.up.railway.app']`).
 
   For example:
 
   ```typescript
-  const { web5, did: myDid } = await Web5.connect({
+  const { enbox, did: myDid } = await Enbox.connect({
     techPreview: {
       dwnEndpoints: ["https://dwn.your-domain.org/"],
     },
   });
   ```
 
-<!-- > NOTE: This method **_MUST_** be invoked within the scope of a 'trusted user action' (something enforced by the OS/browser) if the desire is to connect to a local identity app. For browsers this is generally some direct user action, like clicking a link or button. -->
-
 #### **Response**
 
-An invocation of `Web5.connect()` produces the following items in response:
+An invocation of `Enbox.connect()` produces the following items in response:
 
-- **`web5`** - _`Web5 instance`_: A class instance that enables access to a locally running DWeb Node, DID interaction methods, and other capabilities related to the connected DID.
+- **`enbox`** - _`Enbox instance`_: A class instance that enables access to a locally running DWeb Node, DID interaction methods, and other capabilities related to the connected DID.
 - **`did`** - _`string`_: The DID that was created or attained connection to.
 
 ### **`Record` instances from responses**
@@ -172,13 +170,13 @@ Each `Record` instance has the following instance methods:
 - **`send`** - _`function`_: sends the record the instance represents to the DWeb Node endpoints of a provided DID.
 - **`update`** - _`function`_: takes in a new request object matching the expected method signature of a `write` and overwrites the record. This is a convenience method that allows you to easily overwrite records with less verbosity.
 
-### **`web5.dwn.records.query(request)`**
+### **`enbox.dwn.records.query(request)`**
 
 Method for querying either the locally connected DWeb Node or any remote DWeb Node specified in the `from` property.
 
 ```javascript
 // This invocation will query the user's own DWeb Nodes
-const { records } = await web5.dwn.records.query({
+const { records } = await enbox.dwn.records.query({
   message: {
     filter: {
       schema: "https://schema.org/Playlist",
@@ -190,7 +188,7 @@ const { records } = await web5.dwn.records.query({
 console.log(records); // an array of record entries from Bob's DWeb Nodes
 
 // This invocation will query Bob's DWeb Nodes
-const { records } = await web5.dwn.records.query({
+const { records } = await enbox.dwn.records.query({
   from: "did:example:bob",
   message: {
     filter: {
@@ -234,7 +232,7 @@ The query `response` contains the following properties:
 - **`records`** - _`Records array`_ (_optional_): the array of `Records` returned if the request was successful.
 - **`cursor`** - _`messageCid string`_ (_optional_): the `messageCid` of the last message returned in the results if there are exist additional records beyond the specified `limit` in the `query`.
 
-### **`web5.dwn.records.subscribe(request)`**
+### **`enbox.dwn.records.subscribe(request)`**
 
 Method for subscribing to either the locally connected DWeb Node or any remote DWeb Node specified in the `from` property.
 
@@ -245,7 +243,7 @@ const subscriptionHandler = (record) => {
   console.log("received", record);
 };
 
-const { status } = await web5.dwn.records.subscribe({
+const { status } = await enbox.dwn.records.subscribe({
   message: {
     filter: {
       protocol: "https://schema.org/protocols/social",
@@ -257,7 +255,7 @@ const { status } = await web5.dwn.records.subscribe({
 console.log(status.code === 200); // successful subscription
 
 // This invocation will query Bob's DWeb Nodes
-const { status } = await web5.dwn.records.query({
+const { status } = await enbox.dwn.records.query({
   from: "did:example:bob",
   message: {
     filter: {
@@ -287,13 +285,13 @@ The query `request` contains the following properties:
     - **`dataFormat`** - _`Media Type string`_ (_optional_): the IANA string corresponding with the format of the data to filter for. See IANA's Media Type list here: https://www.iana.org/assignments/media-types/media-types.xhtml
   - **`subscriptionHandler`** - _`function`_: The handler function which emits a `Record` object when any matching records arrive.
 
-### **`web5.dwn.records.create(request)`**
+### **`enbox.dwn.records.create(request)`**
 
 Method for creating a new record and storing it in the user's local DWeb Node, remote DWeb Nodes, or another party's DWeb Nodes (if permitted).
 
 ```javascript
 // this creates a record and stores it in the user's local DWeb Node
-const { record } = await web5.dwn.records.create({
+const { record } = await enbox.dwn.records.create({
   data: "Hello World!",
   message: {
     dataFormat: "text/plain",
@@ -305,7 +303,7 @@ const { status } = await record.send(myDid); // send the record to the user's re
 const { status } = await record.send("did:example:bob"); // send the newly generated record to Bob's DWeb Nodes
 
 // this creates a record, but does not store it in the user's local DWeb Node
-const { record } = await web5.dwn.records.create({
+const { record } = await enbox.dwn.records.create({
   store: false,
   data: "Hello again, World!",
   message: {
@@ -327,17 +325,17 @@ The `create` request object is composed as follows:
   - **`schema`** - _`URI string`_ (_optional_): the URI of the schema under which the record will be bucketed.
   - **`dataFormat`** - _`Media Type string`_ (_optional_): the IANA string corresponding with the format of the data the record will be bucketed. See IANA's Media Type list here: https://www.iana.org/assignments/media-types/media-types.xhtml
 
-### **`web5.dwn.records.write(request)`**
+### **`enbox.dwn.records.write(request)`**
 
 The `create()` method is an alias for `write()` and both can take the same request object properties.
 
-### **`web5.dwn.records.read(request)`**
+### **`enbox.dwn.records.read(request)`**
 
 Method for reading a record stored in the user's local DWeb Node, remote DWeb Nodes, or another party's DWeb Nodes (if permitted). The request takes a filter; if there is exactly one record matching the filter, the record and its data are returned. The most common filter is by `recordId`, but it is also useful to filter by `protocol`, `contextId`, and `protocolPath`.
 
 ```javascript
 // Reads the indicated record from the user's DWeb Nodes
-const { record } = await web5.dwn.records.read({
+const { record } = await enbox.dwn.records.read({
   message: {
     filter: {
       recordId: "bfw35evr6e54c4cqa4c589h4cq3v7w4nc534c9w7h5",
@@ -348,7 +346,7 @@ const { record } = await web5.dwn.records.read({
 console.log(await record.data.text()); // assuming the record is a text payload, logs the text
 
 // Reads the indicated record from Bob's DWeb Nodes
-const { record } = await web5.dwn.records.read({
+const { record } = await enbox.dwn.records.read({
   from: "did:example:bob",
   message: {
     filter: {
@@ -376,20 +374,20 @@ The `read` request object is composed as follows:
     - **`schema`** - _`URI string`_ (_optional_): the URI of the schema bucket in which to query.
     - **`dataFormat`** - _`Media Type string`_ (_optional_): the IANA string corresponding with the format of the data to filter for. See IANA's Media Type list here: https://www.iana.org/assignments/media-types/media-types.xhtml
 
-### **`web5.dwn.records.delete(request)`**
+### **`enbox.dwn.records.delete(request)`**
 
 Method for deleting a record stored in the user's local DWeb Node, remote DWeb Nodes, or another party's DWeb Nodes (if permitted).
 
 ```javascript
 // Deletes the indicated record from the user's DWeb Node
-const { record } = await web5.dwn.records.delete({
+const { record } = await enbox.dwn.records.delete({
   message: {
     recordId: "bfw35evr6e54c4cqa4c589h4cq3v7w4nc534c9w7h5",
   },
 });
 
 // Deletes the indicated record from Bob's DWeb Node
-const { record } = await web5.dwn.records.delete({
+const { record } = await enbox.dwn.records.delete({
   from: "did:example:bob",
   message: {
     recordId: "bfw35evr6e54c4cqa4c589h4cq3v7w4nc534c9w7h5",
@@ -405,12 +403,12 @@ The `delete` request object is composed as follows:
 - **`message`** - _`object`_: The properties of the DWeb Node Message Descriptor that will be used to construct a valid DWeb Node message.
   - **`recordId`** - _`string`_: the required record ID string that identifies the record being deleted.
 
-### **`web5.dwn.protocols.configure(request)`**
+### **`enbox.dwn.protocols.configure(request)`**
 
 Method for configuring a protocol definition in the DWeb Node of the user's local DWeb Node, remote DWeb Nodes, or another party's DWeb Nodes (if permitted).
 
 ```javascript
-const { protocol } = await web5.dwn.protocols.configure({
+const { protocol } = await enbox.dwn.protocols.configure({
   message: {
     definition: {
       protocol: "https://photos.org/protocol",
@@ -478,12 +476,12 @@ The `configure` request object is composed as follows:
         - **`of`** - _`string`_: the protocol path that refers to the record subject. Using the above example protocol, the protocol path to `binaryImage` would be `photo/binaryImage`.
         - **`can`** - _`string`_: the action being permitted by the rule.
 
-### **`web5.dwn.protocols.query(request)`**
+### **`enbox.dwn.protocols.query(request)`**
 
 Method for querying a DID's DWeb Nodes for the presence of a protocol. This method is useful in detecting what protocols a given DID has installed to enable interaction over the protocol.
 
 ```javascript
-const { protocols } = await web5.dwn.protocols.query({
+const { protocols } = await enbox.dwn.protocols.query({
   message: {
     filter: {
       protocol: "https://music.org/protocol",
@@ -493,7 +491,7 @@ const { protocols } = await web5.dwn.protocols.query({
 
 console.log(protocols); // logs an array of protocol configurations installed on the user's own DWeb Node
 
-const { protocols } = await web5.dwn.protocols.query({
+const { protocols } = await enbox.dwn.protocols.query({
   from: "did:example:bob",
   message: {
     filter: {
@@ -514,7 +512,7 @@ The `query` request object must contain the following:
   - **`filter`** - _`object`_ (_optional_): properties against which results of the query will be filtered:
     - **`protocol`** - _`URI string`_ (_optional_): the URI of the protocol bucket in which to query.
 
-### **`web5.did.create(request)`**
+### **`enbox.did.create(request)`**
 
 The `create` method under the `did` object enables generation of DIDs for a supported set of DID Methods ('dht'|'jwk').
 The output is method-specific, and handles things like key generation and assembly of DID Documents that can be
@@ -523,7 +521,7 @@ published to DID networks.
 #### **Usage**
 
 ```javascript
-const myDid = await web5.did.create("dht");
+const myDid = await enbox.did.create("dht");
 ```
 
 #### **Parameters**
@@ -539,10 +537,10 @@ The `create` request object must contain the following parameters:
 
 #### **Notes**
 
-- Typically developers will not manually invoke this method as the more common approach is to use the `Web5.connect()`
+- Typically developers will not manually invoke this method as the more common approach is to use the `Enbox.connect()`
   method to acquire a DID for the user (either by direct creation or connection to an identity agent app).
 
-### **`web5.did.resolve(didUri, options)`**
+### **`enbox.did.resolve(didUri, options)`**
 
 The `resolve` method under the `did` object enables the resolution of a Decentralized Identifier (DID) to its
 corresponding DID Document. This operation allows applications to fetch the public keys, service endpoints, and other
@@ -551,7 +549,7 @@ metadata associated with a DID.
 #### **Usage**
 
 ```javascript
-const { didDocument } = await web5.did.resolve(
+const { didDocument } = await enbox.did.resolve(
   "did:dht:qftx7z968xcpfy1a1diu75pg5meap3gdtg6ezagaw849wdh6oubo"
 );
 ```
@@ -576,10 +574,8 @@ The method returns a DID resolution result as a JavaScript object. The structure
 
 ## Project Resources
 
-| Resource                                                                                  | Description                                                                   |
-| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| [CODEOWNERS](https://github.com/enboxorg/enbox/enbox/blob/main/CODEOWNERS)                 | Outlines the project lead(s)                                                  |
-| [CODE_OF_CONDUCT.md](https://github.com/enboxorg/enbox/enbox/blob/main/CODE_OF_CONDUCT.md) | Expected behavior for project contributors, promoting a welcoming environment |
-| [CONTRIBUTING.md](https://github.com/enboxorg/enbox/enbox/blob/main/CONTRIBUTING.md)       | Developer guide to build, test, run, access CI, chat, discuss, file issues    |
-| [GOVERNANCE.md](https://github.com/enboxorg/enbox/enbox/blob/main/GOVERNANCE.md)           | Project governance                                                            |
+| Resource                                                                                    | Description                                                                   |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [CODEOWNERS](https://github.com/enboxorg/enbox/blob/main/CODEOWNERS)                      | Outlines the project lead(s)                                                 |
+| [CONTRIBUTING.md](https://github.com/enboxorg/enbox/blob/main/CONTRIBUTING.md)            | Developer guide to build, test, run, access CI, chat, discuss, file issues   |
 | [LICENSE](./LICENSE)                                                                      | Apache License, Version 2.0                                                   |

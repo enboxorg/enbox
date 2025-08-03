@@ -54,7 +54,7 @@ describe('Dynamic DWN plugin loading', function () {
     // 1. Configure DWN to load a custom data store plugin.
     const dwnServerConfigCopy = { ...config }; // not touching the original config
 
-    // TODO: remove below after https://github.com/TBD54566975/dwn-server/issues/144 is resolved
+    // TODO: remove below after https://github.com/enboxorg/enbox/issues/144 is resolved
     // The default config is not reliable because other tests modify it.
     dwnServerConfigCopy.registrationStoreUrl = undefined; // allow all traffic
 

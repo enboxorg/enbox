@@ -1,6 +1,6 @@
 /**
  * NOTE: Added reference types here to avoid a `pnpm` bug during build.
- * https://github.com/TBD54566975/web5-js/pull/507
+ * https://github.com/enboxorg/enbox/pull/507
  */
 /// <reference types="@enbox/dwn-sdk-js" />
 
@@ -643,7 +643,7 @@ export class DwnApi {
           //
           // NOTE: When a read-only DwnApi is implemented, callers should use that instead when they don't have an explicit permission.
           // This should fail if a permission is not found.
-          // TODO: https://github.com/TBD54566975/web5-js/issues/898
+          // TODO: https://github.com/enboxorg/enbox/issues/898
           try {
             const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
               connectedDid : this.connectedDid,
@@ -734,7 +734,7 @@ export class DwnApi {
           //
           // NOTE: When a read-only DwnApi is implemented, callers should use that instead when they don't have an explicit permission.
           // This should fail if a permission is not found.
-          // TODO: https://github.com/TBD54566975/web5-js/issues/898
+          // TODO: https://github.com/enboxorg/enbox/issues/898
 
           try {
             const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
@@ -841,7 +841,7 @@ export class DwnApi {
           //
           // NOTE: When a read-only DwnApi is implemented, callers should use that instead when they don't have an explicit permission.
           // This should fail if a permission is not found.
-          // TODO: https://github.com/TBD54566975/web5-js/issues/898
+          // TODO: https://github.com/enboxorg/enbox/issues/898
           try {
             const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
               connectedDid : this.connectedDid,

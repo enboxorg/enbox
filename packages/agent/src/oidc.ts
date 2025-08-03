@@ -46,7 +46,7 @@ export type PushedAuthResponse = {
  * Used in decentralized apps. The SIOPv2 Auth Request is created by a client relying party (RP)
  * often a web service or an app who wants to obtain information from a provider
  * The contents of this are inserted into a JWT inside of the {@link PushedAuthRequest}.
- * @see {@link https://github.com/TBD54566975/known-customer-credential | TBD OIDC Documentation for SIOPv2 }
+ * @see {@link https://github.com/enboxorg/enbox | Enbox OIDC Documentation for SIOPv2 }
  */
 export type SIOPv2AuthRequest = {
   /** The DID of the client (RP) */
@@ -630,7 +630,7 @@ async function createPermissionGrants(
 ) {
   const permissionsApi = new AgentPermissionsApi({ agent });
 
-  // TODO: cleanup all grants if one fails by deleting them from the DWN: https://github.com/TBD54566975/web5-js/issues/849
+  // TODO: cleanup all grants if one fails by deleting them from the DWN: https://github.com/enboxorg/enbox/issues/849
   logger.log(`Creating permission grants for ${scopes.length} scopes given...`);
   const permissionGrants = await Promise.all(
     scopes.map((scope) => {

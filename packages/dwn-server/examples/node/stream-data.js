@@ -1,4 +1,4 @@
-import { RecordsRead, DidKeyResolver } from '@tbd54566975/dwn-sdk-js';
+import { RecordsRead, DidKeyResolver } from '@enbox/dwn-sdk-js';
 
 import fetch from 'node-fetch';
 import { v4 as uuidv4 } from 'uuid';

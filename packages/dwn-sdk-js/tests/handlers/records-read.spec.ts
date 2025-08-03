@@ -1586,7 +1586,7 @@ export function testRecordsReadHandler(): void {
           const encryptedDataBytes = await DataStream.toBytes(encryptedDataStream);
 
 
-          // TODO: #450 - Should not require a root key to specify the derivation scheme (https://github.com/TBD54566975/dwn-sdk-js/issues/450)
+          // TODO: #450 - Should not require a root key to specify the derivation scheme (https://github.com/enboxorg/enbox/issues/450)
           const rootPrivateKeyWithSchemasScheme: DerivedPrivateJwk = {
             rootKeyId         : alice.keyId,
             derivationScheme  : KeyDerivationScheme.Schemas,
@@ -1690,7 +1690,7 @@ export function testRecordsReadHandler(): void {
           const encryptedDataStream = await Encryption.aes256CtrEncrypt(dataEncryptionKey, dataEncryptionInitializationVector, originalDataStream);
           const encryptedDataBytes = await DataStream.toBytes(encryptedDataStream);
 
-          // TODO: #450 - Should not require a root key to specify the derivation scheme (https://github.com/TBD54566975/dwn-sdk-js/issues/450)
+          // TODO: #450 - Should not require a root key to specify the derivation scheme (https://github.com/enboxorg/enbox/issues/450)
           const rootPrivateKeyWithDataFormatsScheme: DerivedPrivateJwk = {
             rootKeyId         : alice.keyId,
             derivationScheme  : KeyDerivationScheme.DataFormats,

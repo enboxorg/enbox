@@ -1,7 +1,7 @@
-# Web5 Identity Agent
+# Enbox Identity Agent
 
-| A library for building Web5 identity management applications |
-| ------------------------------------------------------------ |
+| A library for building decentralized identity management applications |
+| -------------------------------------------------------------------- |
 
 [![NPM Package][identity-agent-npm-badge]][identity-agent-npm-link]
 [![NPM Downloads][identity-agent-downloads-badge]][identity-agent-npm-link]
@@ -29,8 +29,8 @@
 <a id="introduction"></a>
 
 The Identity Agent SDK is a component of the
-[Web5 JS](https://github.com/enboxorg/enbox/enbox) platform, created to simplify the development of
-applications that manage multiple Web5 identities on behalf of a single entity. Identity agents,
+[Enbox](https://github.com/enboxorg/enbox) platform, created to simplify the development of
+applications that manage multiple decentralized identities on behalf of a single entity. Identity agents,
 sometimes called "wallets", are typically
 native desktop (e.g., [Electron](https://www.electronjs.org)) or
 mobile (e.g, [React Native](https://reactnative.dev)) apps that are installed by end users to
@@ -57,13 +57,13 @@ npm install @enbox/identity-agent
 Example ESM import:
 
 ```js
-import { Ed25519 } from "@enbox/identity-agent";
+import { EnboxIdentityAgent } from "@enbox/identity-agent";
 ```
 
 Example CJS require:
 
 ```js
-const { Ed25519 } = require("@enbox/identity-agent");
+const { EnboxIdentityAgent } = require("@enbox/identity-agent");
 ```
 
 ### Web Browsers
@@ -77,7 +77,7 @@ A polyfilled distribution is published to [jsdelivr.com][identity-agent-jsdelivr
   <body>
     <script type="module">
       // Example import from JSDELIVR
-      import { Web5IdentityAgent } from "https://cdn.jsdelivr.net/npm/@enbox/identity-agent/dist/browser.mjs";
+      import { EnboxIdentityAgent } from "https://cdn.jsdelivr.net/npm/@enbox/identity-agent/dist/browser.mjs";
     </script>
   </body>
 </html>
@@ -111,19 +111,19 @@ We welcome you to join our open source community. Whether you're new to open sou
 contributor, there's a place for you here. From coding to documentation, every contribution matters.
 Check out our [contribution guide][contributing-link] for ways to get started.
 
-For help, discussion about best practices, or to chat with others building on Web5 join our
+For help, discussion about best practices, or to chat with others building on Enbox join our
 [Discord Server][discord-link]:
 
 [![discord-badge]][discord-link]
 
 Remember, contributing is not just about code; it's about building together. Join us in shaping the
-future of the Web!
+future of decentralized applications!
 
 ## Core Concepts
 
 ### Launching an Identity Agent
 
-An [agent](https://developer.tbd.website/docs/web5/learn/agents) is software that acts on behalf of
+An agent is software that acts on behalf of
 a user to manage identity, public or private data, and interactions with other apps or services in a
 network. Identity Agents are a specific type of agent focused on simplifying the management of a
 person's online identities, since they often have several.
@@ -131,10 +131,10 @@ person's online identities, since they often have several.
 Many people already use multiple personas when interacting with others online depending on
 whether the context is family, career, or social. This might take the form of a work issued email
 that you use for career apps and a personal email that you use when interacting with family and
-friends. The same is true with Web5 identities except that the unique identifier is a
-[Decentralized Identifier (DID)](https://developer.tbd.website/docs/web5/learn/decentralized-identifiers)
+friends. The same is true with decentralized identities except that the unique identifier is a
+[Decentralized Identifier (DID)](https://www.w3.org/TR/did-core/)
 rather than an email address. Developers can create identity management apps, sometimes called
-"wallets", that focus on making it easy to connect Web5 apps to one or more identities and keep track
+"wallets", that focus on making it easy to connect decentralized apps to one or more identities and keep track
 of which apps have access to your data.
 
 Every time an Identity Agent app runs on a computing device, whether desktop or mobile, the
@@ -147,10 +147,10 @@ following should occur:
 An example implementation of these steps would be:
 
 ```ts
-import { Web5IdentityAgent } from '@enbox/identity-agent'
+import { EnboxIdentityAgent } from '@enbox/identity-agent'
 
-// Create a Web5 Identity Agent instance.
-const agent = await Web5IdentityAgent.create();
+// Create an Enbox Identity Agent instance.
+const agent = await EnboxIdentityAgent.create();
 
 // Prompt the end user to enter a password, which prevents unauthorized access to the encrypted
 // identity vault that secures the Agent's DID and cryptographic keys.
@@ -173,8 +173,8 @@ await userAgent.start({ password });
 
 ### Creating an End User Identity
 
-In Web5 apps, a user’s unique identifier - like an email address - is called a
-[Decentralized Identifier (DID)](https://developer.tbd.website/docs/web5/learn/decentralized-identifiers).
+In decentralized apps, a user's unique identifier - like an email address - is called a
+[Decentralized Identifier (DID)](https://www.w3.org/TR/did-core/).
 You can think of an Identity as an isolated space uniquely identified by a DID that stores and
 manages the data relevant to a particular context or use case.
 
@@ -188,11 +188,11 @@ different parties, depending on the context and level of trust.
 
 The follow code example walks through how to create a new identity, manage it with the Identity
 Agent, and store data in the
-[Decentralized Web Node (DWN)](https://developer.tbd.website/docs/web5/learn/decentralized-web-nodes/)
+[Decentralized Web Node (DWN)](https://identity.foundation/decentralized-web-node/spec/)
 data store controlled by the newly created identity.
 
 ```ts
-import { getTechPreviewDwnEndpoints, Web5 } from "@enbox/api";
+import { getTechPreviewDwnEndpoints, Enbox } from "@enbox/api";
 
 // Retrieve publicly addressable DWNs that other network participants can use to exchange messages
 // and data with the new Identity.
@@ -230,17 +230,17 @@ const careerIdentity = await agent.identity.create({
 
 ### Writing Data to an Identity's Data Store
 
-The [Web5 API](https://github.com/enboxorg/enbox/enbox/tree/main/packages/api) makes it simple to
+The [Enbox API](https://github.com/enboxorg/enbox/tree/main/packages/api) makes it simple to
 store data in an identity's DWN data store by handling all of the message and data preparation and
 processing steps. Using the `careerIdentity` created earlier, a simple message payload can be
 written as follows:
 
 ```ts
-// Instantiate a Web5 instance with the "Career" Identity.
-const web5Career = new Web5({ agent, connectedDid: careerIdentity.did.uri });
+// Instantiate an Enbox instance with the "Career" Identity.
+const enboxCareer = new Enbox({ agent, connectedDid: careerIdentity.did.uri });
 
 // Write a simple text record.
-const { record, status } = await web5Career.dwn.records.write({
+const { record, status } = await enboxCareer.dwn.records.write({
   data: "Message",
   message: {
     dataFormat: "text/plain",
@@ -257,12 +257,12 @@ console.log(recordData); // Output: Message
 
 ### Using Non-default Data Stores
 
-By default, `Web5IdentityAgent` uses a [LevelDB](https://github.com/Level/level) store for both the
+By default, `EnboxIdentityAgent` uses a [LevelDB](https://github.com/Level/level) store for both the
 agent's identity vault and the DID resolver cache. For testing and prototyping purposes it may be
 desirable to use an in-memory store that doesn't persist data. There are also runtime environments,
 such as React Native, that don't support using the [level](https://www.npmjs.com/package/level)
 package. Any implementation of the
-[`KeyValueStore`](https://github.com/enboxorg/enbox/enbox/blob/5f364bc0d859e28f1388524ebe8ef152a71727c4/packages/common/src/types.ts#L4-L43)
+[`KeyValueStore`](https://github.com/enboxorg/enbox/blob/main/packages/common/src/types.ts)
 interface can be substituted for the default identity vault and DID resolver cache.
 
 For example, to use the in-memory `KeyValueStore` implementation from `@enbox/common`:
@@ -270,7 +270,7 @@ For example, to use the in-memory `KeyValueStore` implementation from `@enbox/co
 ```ts
 import { MemoryStore } from "@enbox/common";
 import { DidDht, DidJwk } from "@enbox/dids";
-import { Web5IdentityAgent } from "@enbox/identity-agent";
+import { EnboxIdentityAgent } from "@enbox/identity-agent";
 import { AgentDidApi, DidResolverCacheLevel, DwnDidStore } from "@enbox/agent";
 
 // Instantiate Identity Vault with an in-memory store.
@@ -286,8 +286,8 @@ const didApi = new AgentDidApi({
   store: new DwnDidStore(),
 });
 
-// Create a Web5 Identity Agent instance.
-const agent = await Web5IdentityAgent.create({ agentVault, didApi });
+// Create an Enbox Identity Agent instance.
+const agent = await EnboxIdentityAgent.create({ agentVault, didApi });
 ```
 
 ## Project Resources
@@ -303,21 +303,21 @@ const agent = await Web5IdentityAgent.create({ agentVault, didApi });
 [identity-agent-npm-badge]: https://img.shields.io/npm/v/@enbox/identity-agent.svg?style=flat&color=blue&santize=true
 [identity-agent-npm-link]: https://www.npmjs.com/package/@enbox/identity-agent
 [identity-agent-downloads-badge]: https://img.shields.io/npm/dt/@enbox/identity-agent?&color=blue
-[identity-agent-build-badge]: https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/enbox/tests-ci.yml?branch=main&label=build
-[identity-agent-build-link]: https://github.com/enboxorg/enbox/enbox/actions/workflows/tests-ci.yml
-[identity-agent-coverage-badge]: https://img.shields.io/codecov/c/gh/enboxorg/enbox/enbox/main?style=flat&token=YI87CKF1LI
-[identity-agent-coverage-link]: https://app.codecov.io/github/enboxorg/enbox/enbox/tree/main/packages%2Fcrypto-aws-kms
-[identity-agent-issues-badge]: https://img.shields.io/github/issues/enboxorg/enbox/enbox/package:%20identity-agent?label=issues
-[identity-agent-issues-link]: https://github.com/enboxorg/enbox/enbox/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+identity-agent"
-[identity-agent-repo-link]: https://github.com/enboxorg/enbox/enbox/tree/main/packages/identity-agent
+[identity-agent-build-badge]: https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/tests-ci.yml?branch=main&label=build
+[identity-agent-build-link]: https://github.com/enboxorg/enbox/actions/workflows/tests-ci.yml
+[identity-agent-coverage-badge]: https://img.shields.io/codecov/c/gh/enboxorg/enbox/main?style=flat&token=YI87CKF1LI
+[identity-agent-coverage-link]: https://app.codecov.io/github/enboxorg/enbox/tree/main/packages%2Fcrypto-aws-kms
+[identity-agent-issues-badge]: https://img.shields.io/github/issues/enboxorg/enbox/package:%20identity-agent?label=issues
+[identity-agent-issues-link]: https://github.com/enboxorg/enbox/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+identity-agent"
+[identity-agent-repo-link]: https://github.com/enboxorg/enbox/tree/main/packages/identity-agent
 [identity-agent-jsdelivr-link]: https://www.jsdelivr.com/package/npm/@enbox/identity-agent
 [identity-agent-jsdelivr-browser]: https://cdn.jsdelivr.net/npm/@enbox/identity-agent/dist/browser.mjs
 [identity-agent-unpkg-link]: https://unpkg.com/@enbox/identity-agent
 [identity-agent-unpkg-browser]: https://unpkg.com/@enbox/identity-agent/dist/browser.mjs
-[codeowners-link]: https://github.com/enboxorg/enbox/enbox/blob/main/CODEOWNERS
-[code-of-conduct-link]: https://github.com/enboxorg/enbox/enbox/blob/main/CODE_OF_CONDUCT.md
-[contributing-link]: https://github.com/enboxorg/enbox/enbox/blob/main/CONTRIBUTING.md
-[governance-link]: https://github.com/enboxorg/enbox/enbox/blob/main/GOVERNANCE.md
-[license-link]: https://github.com/enboxorg/enbox/enbox/blob/main/LICENSE
+[codeowners-link]: https://github.com/enboxorg/enbox/blob/main/CODEOWNERS
+[code-of-conduct-link]: https://github.com/enboxorg/enbox/blob/main/CODE_OF_CONDUCT.md
+[contributing-link]: https://github.com/enboxorg/enbox/blob/main/CONTRIBUTING.md
+[governance-link]: https://github.com/enboxorg/enbox/blob/main/GOVERNANCE.md
+[license-link]: https://github.com/enboxorg/enbox/blob/main/LICENSE
 [discord-badge]: https://img.shields.io/discord/937858703112155166?color=5865F2&logo=discord&logoColor=white
 [discord-link]: https://discord.com/channels/937858703112155166/969272658501976117

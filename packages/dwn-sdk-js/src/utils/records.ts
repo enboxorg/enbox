@@ -162,7 +162,7 @@ export class Records {
       );
     }
 
-    // TODO: issue #683 -Extend key derivation support to include the full contextId (https://github.com/TBD54566975/dwn-sdk-js/issues/683)
+    // TODO: issue #683 -Extend key derivation support to include the full contextId (https://github.com/enboxorg/enbox/issues/683)
     const firstContextSegment = contextId.split('/')[0];
 
     const fullDerivationPath = [

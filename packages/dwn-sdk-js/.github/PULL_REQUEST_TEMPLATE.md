@@ -6,8 +6,8 @@
   commits if your PR already received reviews or comments.
   
   Before submitting a Pull Request, please ensure you've done the following:
-  - 📖 Read the TBD Developer Website Contributing Guide: https://github.com/TBD54566975/developer.tbd.website/blob/main/CONTRIBUTING.md.
-  - 📖 Read the TBD Developer Website Code of Conduct: https://github.com/TBD54566975/developer.tbd.website/blob/main/CODE_OF_CONDUCT.md.
+  - 📖 Read the Enbox Contributing Guide: https://github.com/enboxorg/enbox/blob/main/packages/dwn-sdk-js/CONTRIBUTING.md.
+  - 📖 Read the Enbox Code of Conduct: https://github.com/enboxorg/enbox/blob/main/packages/dwn-sdk-js/CODE_OF_CONDUCT.md.
   - 👷‍♀️ Create small PRs. In most cases, this will be possible.
   - ✅ Provide tests for your changes.
   - 📝 Use descriptive commit messages.

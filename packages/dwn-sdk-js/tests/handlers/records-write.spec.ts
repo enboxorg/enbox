@@ -4380,7 +4380,7 @@ export function testRecordsWriteHandler(): void {
     describe('unknown error', () => {
       it('should throw if `recordsWriteHandler.processMessageWithoutDataStream()` throws unknown error', async () => {
         // simulate an initial write to test non-data path, as initial writes without data are always accepted (bot not readable)
-        // https://github.com/TBD54566975/dwn-sdk-js/issues/628
+        // https://github.com/enboxorg/enbox/issues/628
         const { author, message: initialWriteMessage, recordsWrite: initialWrite } = await TestDataGenerator.generateRecordsWrite();
         await Time.minimalSleep();
 

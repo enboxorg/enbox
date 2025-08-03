@@ -288,7 +288,7 @@ export class HttpApi {
     this.#api.get('/', (_req, res) => {
       // return a plain text string
       res.setHeader('content-type', 'text/plain');
-      return res.send('please use a web5 client, for example: https://github.com/TBD54566975/web5-js ');
+      return res.send('please use am enbox client, for example: https://github.com/enboxorg/enbox ');
     });
 
     this.#api.post('/', async (req: Request, res) => {
@@ -412,8 +412,8 @@ export class HttpApi {
     this.#api.post('/connect/par', async (req, res) => {
       log.info('Storing Pushed Authorization Request (PAR) request...');
 
-    // TODO: Add validation for request too large HTTP 413: https://github.com/TBD54566975/dwn-server/issues/146
-    // TODO: Add validation for too many requests HTTP 429: https://github.com/TBD54566975/dwn-server/issues/147
+    // TODO: Add validation for request too large HTTP 413: https://github.com/enboxorg/enbox/issues/146
+    // TODO: Add validation for too many requests HTTP 429: https://github.com/enboxorg/enbox/issues/147
 
       if (!req.body.request) {
         return res.status(400).json({

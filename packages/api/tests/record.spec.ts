@@ -3115,7 +3115,7 @@ describe('Record', () => {
 
       // Alice must also configure the protocol to make updates.
       // NOTE: This is not desireable and there is an issue to address this:
-      // https://github.com/TBD54566975/web5-js/issues/955
+      // https://github.com/enboxorg/enbox/issues/955
       const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
         message: {
           definition: protocol
@@ -3197,7 +3197,7 @@ describe('Record', () => {
       expect(coAuthorNote).to.not.be.undefined;
 
       // Alice must import the record to be able to update it
-      // NOTE this should be removed after: https://github.com/TBD54566975/web5-js/issues/955
+      // NOTE this should be removed after: https://github.com/enboxorg/enbox/issues/955
       const { status: importStatus } = await coAuthorNote.import();
       expect(importStatus.code).to.equal(202);
 
@@ -3827,7 +3827,7 @@ describe('Record', () => {
 
       // Alice must also configure the protocol to make updates.
       // NOTE: This is not desireable and there is an issue to address this:
-      // https://github.com/TBD54566975/web5-js/issues/955
+      // https://github.com/enboxorg/enbox/issues/955
       const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
         message: {
           definition: protocol

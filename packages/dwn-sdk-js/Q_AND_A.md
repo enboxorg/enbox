@@ -115,7 +115,7 @@
 
   Currently if a subscription is no longer authorized but it is still active, the subscriber will still receive updates until they close the subscription themselves. If they try to re-subscribe after that, it will be rejected with a 401.
 
-  This will be addressed in a future upgrade and we've created an issue to track it. https://github.com/TBD54566975/dwn-sdk-js/issues/668 - last updated (2024/01/22)
+  This will be addressed in a future upgrade and we've created an issue to track it. https://github.com/enboxorg/enbox/issues/668 - last updated (2024/01/22)
 
 - Why are we not notifying deletes in a subscription that uses mutable property as a filter (e.g. `published`, `dataFormat`).
 

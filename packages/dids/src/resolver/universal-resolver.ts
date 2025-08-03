@@ -153,7 +153,7 @@ export class UniversalResolver implements DidResolver, DidUrlDereferencer {
    * More information on DID URL dereferencing can be found in the
    * {@link https://www.w3.org/TR/did-core/#did-url-dereferencing | DID Core specification}.
    *
-   * TODO: This is a partial implementation and does not fully implement DID URL dereferencing. (https://github.com/TBD54566975/web5-js/issues/387)
+   * TODO: This is a partial implementation and does not fully implement DID URL dereferencing. (https://github.com/enboxorg/enbox/issues/387)
    *
    * @param didUrl - The DID URL string to dereference.
    * @param [_options] - Input options to the dereference function. Optional.

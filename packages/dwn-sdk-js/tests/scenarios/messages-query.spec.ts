@@ -253,7 +253,7 @@ export function testMessagesQueryScenarios(): void {
       //       Additionally this will return permission-protocol `RecordsWrite` messages that are associated with the protocol.
 
       //       `RecordsDelete` messages associated with requests/grants/revocations are not yet indexed.
-      //       TODO: https://github.com/TBD54566975/dwn-sdk-js/issues/768
+      //       TODO: https://github.com/enboxorg/enbox/issues/768
 
       // scenario:
       //    alice configures two different protocols (proto1, proto2)

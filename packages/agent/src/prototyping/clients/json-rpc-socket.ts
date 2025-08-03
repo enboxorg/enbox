@@ -20,7 +20,7 @@ export interface JsonRpcSocketOptions {
 /**
  * JSON RPC Socket Client for WebSocket request/response and long-running subscriptions.
  *
- * NOTE: This is temporarily copied over from https://github.com/TBD54566975/dwn-server/blob/main/src/json-rpc-socket.ts
+ * NOTE: This is temporarily copied over from https://github.com/enboxorg/enbox/blob/main/packages/dwn-server/src/json-rpc-socket.ts
  * This was done in order to avoid taking a dependency on the `dwn-server`, until a future time when there will be a `clients` package.
  */
 export class JsonRpcSocket {

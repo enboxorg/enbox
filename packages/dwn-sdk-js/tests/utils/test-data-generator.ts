@@ -895,7 +895,7 @@ export class TestDataGenerator {
           controller   : persona.did,
           id           : persona.keyId,
           type         : 'JsonWebKey2020',
-          // TODO: #672 - port and use type from @enbox/crypto - https://github.com/TBD54566975/dwn-sdk-js/issues/672
+          // TODO: #672 - port and use type from @enbox/crypto - https://github.com/enboxorg/enbox/issues/672
           publicKeyJwk : persona.keyPair.publicJwk as any
         }]
       },
@@ -913,7 +913,7 @@ export class TestDataGenerator {
     const keyId = signingMethod.id;
     const portableDid = await did.export();
     const keyPair = {
-      // TODO: #672 - port and use type from @enbox/crypto - https://github.com/TBD54566975/dwn-sdk-js/issues/672
+      // TODO: #672 - port and use type from @enbox/crypto - https://github.com/enboxorg/enbox/issues/672
       publicJwk  : signingMethod.publicKeyJwk as PublicJwk,
       privateJwk : portableDid.privateKeys![0] as PrivateJwk,
     };

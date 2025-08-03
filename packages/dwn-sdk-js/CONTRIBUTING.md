@@ -16,7 +16,7 @@ As we work our way towards a beta release, we'll be creating more focused issues
 - `good first issue`
 - `help wanted`
 
-These issues are excellent candidates for contribution, and we'd be thrilled to get all the help we can get! You can take a look at all the issues that match the labels above [on the Issues tab](https://github.com/TBD54566975/dwn-sdk-js/issues?q=is%3Aopen+label%3A%22help+wanted%22%2C%22good+first+issue%22%2C%22documentation%22%2C%22bug%22+).
+These issues are excellent candidates for contribution, and we'd be thrilled to get all the help we can get! You can take a look at all the issues that match the labels above [on the Issues tab](https://github.com/enboxorg/enbox/issues?q=is%3Aopen+label%3A%22help+wanted%22%2C%22good+first+issue%22%2C%22documentation%22%2C%22bug%22+).
 
 We suggest the following process when picking up one of these issues:
 - Check to see if anyone is already working on the issue by looking for a `WIP` tag. 
@@ -32,8 +32,8 @@ We suggest the following process when picking up one of these issues:
 `dwn-sdk-js` is participating in Hacktoberfest 2024! We’re excited for your contributions and have created a wide variety of issues so that anyone can contribute. Whether you're a seasoned developer or a first-time open-source contributor, there's something for everyone.
 
 ### Here's how you can get started:
-1. Read the [code of conduct](https://github.com/TBD54566975/dwn-sdk-js/blob/main/CODE_OF_CONDUCT.md).
-2. Choose a task from this project's Hacktoberfest issues in our [Project Hub](https://github.com/TBD54566975/dwn-sdk-js/issues/806). Each issue has the 🏷️ `hacktoberfest` label.
+1. Read the [code of conduct](https://github.com/enboxorg/enbox/blob/main/packages/dwn-sdk-js/CODE_OF_CONDUCT.md).
+2. Choose a task from this project's Hacktoberfest issues in our [Project Hub](https://github.com/enboxorg/enbox/issues/806). Each issue has the 🏷️ `hacktoberfest` label.
 3. Comment ".take" on the corresponding issue to get assigned the task.
 4. Fork the repository and create a new branch for your work.
 5. Make your changes and submit a pull request.
@@ -84,7 +84,7 @@ Here is a guide on how to develop and test a custom implementation of the backen
 
 Example code:
 ```ts
-import { TestSuite } from '@tbd54566975/dwn-sdk-js/tests';
+import { TestSuite } from '@enbox/dwn-sdk-js/tests';
 import { yourMessageStore, yourDataStore, yourEventLog } from 'your-custom-stores';
 
 describe('Custom data store implementation', () => {
@@ -105,7 +105,7 @@ Note that some benchmarks require that `npm run build` has been run beforehand.
 Any dependencies needed by benchmarks should be in `devDependencies` (e.g., `index-store` for `node benchmarks/store/index/index-store.js`).
 
 ### Code Style
-Our preferred code style has been codified into `eslint` rules. Feel free to take a look [at the relevant `.eslintrc` file](https://github.com/TBD54566975/dwn-sdk-js/blob/main/.eslintrc.cjs). Running `npm run lint` will auto-format as much as `eslint` can. Everything it wasn't able to format will be printed out as errors or warnings. Please make sure to run `npm run lint` before switching your PR to ready for review! We hope to have this automated via a GitHub action very soon.
+Our preferred code style has been codified into `eslint` rules. Feel free to take a look [at the relevant ESLint config file](https://github.com/enboxorg/enbox/blob/main/packages/dwn-sdk-js/eslint.config.cjs). Running `npm run lint` will auto-format as much as `eslint` can. Everything it wasn't able to format will be printed out as errors or warnings. Please make sure to run `npm run lint` before switching your PR to ready for review! We hope to have this automated via a GitHub action very soon.
 
 ### Code Guidelines
 1. A `TODO` comment must always link to a GitHub issue.

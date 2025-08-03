@@ -365,7 +365,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * stopSync currently awaits the completion of the current sync operation before stopping the sync interval.
-   * TODO: implement a signal to gracefully stop sync immediately https://github.com/TBD54566975/web5-js/issues/890
+   * TODO: implement a signal to gracefully stop sync immediately https://github.com/enboxorg/enbox/issues/890
    */
   public async stopSync(timeout: number = 2000): Promise<void> {
     let elapsedTimeout = 0;
@@ -395,7 +395,7 @@ export class SyncEngineLevel implements SyncEngine {
     return reply.status.code === 202 ||
       // a 204 status code is returned when the message was accepted without any data.
       // This is the case for an initial RecordsWrite messages for records that have been updated.
-      // For context: https://github.com/TBD54566975/dwn-sdk-js/issues/695
+      // For context: https://github.com/enboxorg/enbox/issues/695
       reply.status.code === 204 ||
       reply.status.code === 409 ||
       (

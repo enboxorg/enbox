@@ -7,7 +7,7 @@ export interface SerializableDwnMessage {
 export type DwnSubscriptionHandler = MessageSubscriptionHandler | RecordSubscriptionHandler;
 
 /**
- * Interface for communicating with {@link https://github.com/TBD54566975/dwn-server | DWN Servers}
+ * Interface for communicating with {@link https://github.com/enboxorg/enbox | DWN Servers}
  * via JSON-RPC, supporting operations like sending DWN requests.
  */
 export interface DwnRpc {

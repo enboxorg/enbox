@@ -204,7 +204,7 @@ export function testEndToEndScenarios(): void {
       expect(threadReadReply.entry!.recordsWrite).to.exist;
 
       // Test Bob can invoke his 'participant' role to read the chat message
-      // TODO: #555 - We currently lack role-authorized RecordsQuery for a realistic scenario (https://github.com/TBD54566975/dwn-sdk-js/issues/555)
+      // TODO: #555 - We currently lack role-authorized RecordsQuery for a realistic scenario (https://github.com/enboxorg/enbox/issues/555)
       const chatRead = await RecordsRead.create({
         signer : Jws.createSigner(bob),
         filter : {

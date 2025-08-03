@@ -1,12 +1,10 @@
-<!-- @format -->
-# Decentralized Web Node (DWN) SDK <!-- omit in toc -->
+# Decentralized Web Node (DWN) SDK
 
 [![NPM](https://img.shields.io/npm/v/@enbox/dwn-sdk-js.svg?logo=npm)](https://www.npmjs.com/package/@enbox/dwn-sdk-js)
-[![codecov](https://codecov.io/github/enboxorg/enbox/dwn-sdk-js/graphs/badge.svg)](https://codecov.io/github/enboxorg/enbox/dwn-sdk-js)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/dwn-sdk-js/npm-publish-unstable.yml?branch=main&logo=github)](https://github.com/enboxorg/enbox/dwn-sdk-js/actions/workflows/npm-publish-unstable.yml)
-[![License](https://img.shields.io/npm/l/@enbox/dwn-sdk-js.svg?logo=apache)](https://github.com/enboxorg/enbox/dwn-sdk-js/blob/main/LICENSE)
+[![codecov](https://codecov.io/github/enboxorg/enbox/graphs/badge.svg)](https://codecov.io/github/enboxorg/enbox)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/npm-publish-unstable.yml?branch=main&logo=github)](https://github.com/enboxorg/enbox/actions/workflows/npm-publish-unstable.yml)
+[![License](https://img.shields.io/npm/l/@enbox/dwn-sdk-js.svg?logo=apache)](https://github.com/enboxorg/enbox/blob/main/LICENSE)
 [![Chat](https://img.shields.io/badge/chat-on%20discord-7289da.svg?logo=discord)](https://discord.com/channels/937858703112155166/1068273971432280196)
-
 
 - [Introduction](#introduction)
 - [Installation](#installation)
@@ -28,12 +26,12 @@
 
 ## 🎉 Hacktoberfest 2024 🎉
 
-`dwn-sdk-js` is a participating project in Hacktoberfest 2024! We’re so excited for your contributions, and have created a wide variety of issues so that anyone can contribute. Whether you're a seasoned developer or a first-time open source contributor, there's something for everyone.
+`dwn-sdk-js` is a participating project in Hacktoberfest 2024! We're so excited for your contributions, and have created a wide variety of issues so that anyone can contribute. Whether you're a seasoned developer or a first-time open source contributor, there's something for everyone.
 
 ### To get started:
-1. Read the [contributing guide](https://github.com/enboxorg/enbox/dwn-sdk-js/blob/main/CONTRIBUTING.md).
-2. Read the [code of conduct](https://github.com/enboxorg/enbox/dwn-sdk-js/blob/main/CODE_OF_CONDUCT.md).
-3. Choose a task from this project's Hacktoberfest issues in our [Project Hub](https://github.com/enboxorg/enbox/dwn-sdk-js/issues/806) and follow the instructions. Each issue has the 🏷️ `hacktoberfest` label.
+1. Read the [contributing guide](https://github.com/enboxorg/enbox/blob/main/CONTRIBUTING.md).
+2. Read the [code of conduct](https://github.com/enboxorg/enbox/blob/main/CODE_OF_CONDUCT.md).
+3. Choose a task from this project's Hacktoberfest issues in our [Project Hub](https://github.com/enboxorg/enbox/issues/806) and follow the instructions. Each issue has the 🏷️ `hacktoberfest` label.
 
 Have questions? Connecting with us in our [Discord community](https://discord.gg/tbd) in the `#hacktoberfest` project channel.
 
@@ -51,11 +49,11 @@ Proposals and issues for the specification itself should be submitted as pull re
 
 Interested in contributing instantly? You can make your updates directly without cloning in the running CodeSandbox environment.
 
-[![Button to click to edit code in CodeSandbox](https://assets.codesandbox.io/github/button-edit-lime.svg)](https://codesandbox.io/p/github/enboxorg/enbox/dwn-sdk-js/main)
+[![Button to click to edit code in CodeSandbox](https://assets.codesandbox.io/github/button-edit-lime.svg)](https://codesandbox.io/p/github/enboxorg/enbox/main)
 
 ## Installation
 
-If you are interested in using DWNs and web5 in your web app, you probably want to look at enbox, instead of this repository. Head on over here: https://github.com/enboxorg/enbox/enbox.
+If you are interested in using DWNs and decentralized identity in your web app, you probably want to look at the Enbox toolkit instead of this repository. Head on over here: https://github.com/enboxorg/enbox.
 
 For advanced users wishing to use this repo directly:
 
@@ -77,7 +75,7 @@ if (!globalThis.crypto) globalThis.crypto = webcrypto;
 ```
 
 ### React Native
-Usage of DWN SDK in react native requires a bit of set up at the moment. To simplify, we've [published an npm package](https://www.npmjs.com/package/@enbox/web5-react-native-polyfills) that can be used to set everything up. Follow the instructions to get started.
+Usage of DWN SDK in react native requires a bit of set up at the moment. To simplify, we've [published an npm package](https://www.npmjs.com/package/@enbox/react-native-polyfills) that can be used to set everything up. Follow the instructions to get started.
 
 ### Usage in Browser:
 
@@ -197,7 +195,7 @@ esbuild.build({
 
 ## Usage
 
-[API docs](https://enboxorg/enbox.github.io/dwn-sdk-js/)
+[API docs](https://enboxorg.github.io/enbox/)
 
 ```ts
 
@@ -238,7 +236,7 @@ console.log(result.status);
 With a web wallet installed:
 
 ```javascript
-const result = await window.web5.dwn.processMessage({
+const result = await window.enbox.dwn.processMessage({
   method: "RecordsQuery",
   message: {
     filter: {
@@ -329,10 +327,10 @@ An example version string:
 
 ## Some projects that use this library:
 
-- [Web5 JS SDK](https://github.com/enboxorg/enbox/enbox)
-- [Example CLI](https://github.com/enboxorg/enbox/dwn-cli)
-- [Example with a web wallet](https://github.com/enboxorg/enbox/incubating-web5-labs/)
-- [Server side aggregator](https://github.com/enboxorg/enbox/dwn-server)
+- [Enbox API SDK](https://github.com/enboxorg/enbox)
+- [Example CLI](https://github.com/enboxorg/enbox/tree/main/examples/cli)
+- [Example with a web wallet](https://github.com/enboxorg/enbox/tree/main/examples/web-wallet)
+- [Server side aggregator](https://github.com/enboxorg/enbox/tree/main/packages/dwn-server)
 
 ## Architecture
 
@@ -342,11 +340,11 @@ An example version string:
 
 ## Project Resources
 
-| Resource                                                                                     | Description                                                                   |
-| -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| [CODEOWNERS](https://github.com/enboxorg/enbox/dwn-sdk-js/blob/main/CODEOWNERS)                 | Outlines the project lead(s)                                                  |
-| [CODE_OF_CONDUCT.md](https://github.com/enboxorg/enbox/dwn-sdk-js/blob/main/CODE_OF_CONDUCT.md) | Expected behavior for project contributors, promoting a welcoming environment |
-| [CONTRIBUTING.md](https://github.com/enboxorg/enbox/dwn-sdk-js/blob/main/CONTRIBUTING.md)       | Developer guide to build, test, run, access CI, chat, discuss, file issues    |
-| [GOVERNANCE.md](https://github.com/enboxorg/enbox/dwn-sdk-js/blob/main/GOVERNANCE.md)           | Project governance                                                            |
-| [LICENSE](https://github.com/enboxorg/enbox/dwn-sdk-js/blob/main/LICENSE)                       | Apache License, Version 2.0                                                   |
-| [Q_AND_A.md](https://github.com/enboxorg/enbox/dwn-sdk-js/blob/main/Q_AND_A.md)                 | Questions and answers on DWN                                                  |
+| Resource                                                                                       | Description                                                                   |
+| ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [CODEOWNERS](https://github.com/enboxorg/enbox/blob/main/CODEOWNERS)                         | Outlines the project lead(s)                                                 |
+| [CODE_OF_CONDUCT.md](https://github.com/enboxorg/enbox/blob/main/CODE_OF_CONDUCT.md)         | Expected behavior for project contributors, promoting a welcoming environment |
+| [CONTRIBUTING.md](https://github.com/enboxorg/enbox/blob/main/CONTRIBUTING.md)               | Developer guide to build, test, run, access CI, chat, discuss, file issues   |
+| [GOVERNANCE.md](https://github.com/enboxorg/enbox/blob/main/GOVERNANCE.md)                   | Project governance                                                            |
+| [LICENSE](https://github.com/enboxorg/enbox/blob/main/LICENSE)                               | Apache License, Version 2.0                                                   |
+| [Q_AND_A.md](https://github.com/enboxorg/enbox/blob/main/Q_AND_A.md)                         | Questions and answers on DWN                                                  |

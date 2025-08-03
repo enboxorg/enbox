@@ -1,9 +1,9 @@
-# DWN SQL Stores <!-- omit in toc -->
+# DWN SQL Stores
 
 [![NPM](https://img.shields.io/npm/v/@enbox/dwn-sql-store.svg?style=flat-square&logo=npm&logoColor=FFFFFF&color=FFEC19&santize=true)](https://www.npmjs.com/package/@enbox/dwn-sql-store)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/dwn-sql-store/integrity-checks.yml?branch=main&logo=github&label=ci&logoColor=FFFFFF&style=flat-square)](https://github.com/enboxorg/enbox/dwn-sql-store/actions/workflows/integrity-checks.yml)
-[![Coverage](https://img.shields.io/codecov/c/gh/enboxorg/enbox/dwn-sql-store/main?logo=codecov&logoColor=FFFFFF&style=flat-square&token=YI87CKF1LI)](https://codecov.io/github/enboxorg/enbox/dwn-sql-store)
-[![License](https://img.shields.io/npm/l/@enbox/dwn-sql-store.svg?style=flat-square&color=24f2ff&logo=apache&logoColor=FFFFFF&santize=true)](https://github.com/enboxorg/enbox/dwn-sql-store/blob/main/LICENSE)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/integrity-checks.yml?branch=main&logo=github&label=ci&logoColor=FFFFFF&style=flat-square)](https://github.com/enboxorg/enbox/actions/workflows/integrity-checks.yml)
+[![Coverage](https://img.shields.io/codecov/c/gh/enboxorg/enbox/main?logo=codecov&logoColor=FFFFFF&style=flat-square&token=YI87CKF1LI)](https://codecov.io/github/enboxorg/enbox)
+[![License](https://img.shields.io/npm/l/@enbox/dwn-sql-store.svg?style=flat-square&color=24f2ff&logo=apache&logoColor=FFFFFF&santize=true)](https://github.com/enboxorg/enbox/blob/main/LICENSE)
 [![Chat](https://img.shields.io/badge/chat-on%20discord-7289da.svg?style=flat-square&color=9a1aff&logo=discord&logoColor=FFFFFF&sanitize=true)](https://discord.com/channels/937858703112155166/969272658501976117)
 
 
@@ -175,4 +175,4 @@ Docker is used to spin up a local containerized DBs for testing purposes. Docker
 | `npm run lint`          | runs linter                                 |
 | `npm run lint:fix`      | runs linter and fixes auto-fixable problems |
 
-[codeowners-link]: https://github.com/enboxorg/enbox/enbox/blob/main/sql-dialect-variations.md
+[codeowners-link]: https://github.com/enboxorg/enbox/blob/main/sql-dialect-variations.md

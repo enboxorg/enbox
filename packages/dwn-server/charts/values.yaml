@@ -3,7 +3,7 @@ nameOverride: ''
 fullnameOverride: ''
 
 image:
-  repository: ghcr.io/tbd54566975/dwn-server
+  repository: ghcr.io/enboxorg/dwn-server
   tag: main
   pullPolicy: IfNotPresent
 

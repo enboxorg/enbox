@@ -69,7 +69,7 @@ module.exports = [
       "@typescript-eslint/no-non-null-assertion": "off",
       "@typescript-eslint/ban-ts-comment": "off",
       "@typescript-eslint/no-unused-vars": "off",
-      // TODO: Revisit new default mocha rules that were disabled in #579 - https://github.com/TBD54566975/web5-js/issues/580
+      // TODO: Revisit new default mocha rules that were disabled in #579 - https://github.com/enboxorg/enbox/issues/580
       "mocha/no-exclusive-tests": "warn",
       "mocha/no-setup-in-describe": "off",
       "mocha/no-mocha-arrows": "off",

@@ -1,6 +1,6 @@
 # Enbox
 
-A comprehensive monorepo containing all the packages needed for decentralized identity and data management.
+A comprehensive toolkit for decentralized identity and data management.
 
 ## 🏗️ **Architecture Overview**
 
@@ -11,14 +11,14 @@ This monorepo contains the following packages under the `@enbox` namespace:
 - **`@enbox/dwn-sql-store`** - SQL-backed implementations of DWN MessageStore, DataStore, and EventLog
 - **`@enbox/dwn-server`** - Express.js server implementation for DWN
 
-### Web5 SDK Packages
-- **`@enbox/api`** - Main entry point for Web5 SDK
+### SDK Packages
+- **`@enbox/api`** - Main API entry point for building decentralized applications
 - **`@enbox/agent`** - Agent implementation for decentralized identity management
 - **`@enbox/identity-agent`** - Identity agent for credential management
 - **`@enbox/user-agent`** - User agent for decentralized applications
 - **`@enbox/proxy-agent`** - Proxy agent for secure communication
 - **`@enbox/common`** - Shared utilities and common functionality
-- **`@enbox/crypto`** - Cryptographic library
+- **`@enbox/crypto`** - Cryptographic library and JOSE implementation
 - **`@enbox/crypto-aws-kms`** - AWS KMS integration for cryptography
 - **`@enbox/dids`** - Decentralized Identifiers (DID) library
 - **`@enbox/credentials`** - Verifiable Credentials implementation
@@ -156,7 +156,7 @@ enbox/
     ├── dwn-sdk-js/        # Core DWN SDK
     ├── dwn-sql-store/     # SQL implementations
     ├── dwn-server/        # Express server
-    ├── api/               # Main Web5 entry point
+    ├── api/               # Main API entry point
     ├── agent/             # Agent implementation
     ├── identity-agent/    # Identity agent
     ├── user-agent/        # User agent
@@ -174,7 +174,7 @@ enbox/
 This repository consolidates packages from the decentralized identity ecosystem. For detailed contribution guidelines, see the original repositories:
 
 - [dwn-sdk-js Contributing](https://github.com/decentralized-identity/dwn-sdk-js/blob/main/CONTRIBUTING.md)
-- [web5-js Contributing](https://github.com/decentralized-identity/web5-js/blob/main/CONTRIBUTING.md)
+- [decentralized-identity Contributing](https://github.com/decentralized-identity/web5-js/blob/main/CONTRIBUTING.md)
 
 ## 📄 **License**
 
@@ -183,9 +183,8 @@ MIT
 ## 🔗 **Related Resources**
 
 - [Decentralized Web Node Specification](https://identity.foundation/decentralized-web-node/spec/)
-- [Web5 Documentation](https://developer.tbd.website/)
 - [DID Specification](https://www.w3.org/TR/did-core/)
 
 ---
 
-*This monorepo consolidates packages from the [decentralized-identity](https://github.com/decentralized-identity) organization, including [dwn-sdk-js](https://github.com/decentralized-identity/dwn-sdk-js), [dwn-server](https://github.com/decentralized-identity/dwn-server), [dwn-sql-store](https://github.com/decentralized-identity/dwn-sql-store), and [web5-js](https://github.com/decentralized-identity/web5-js).* 
+*This monorepo consolidates packages from the [decentralized-identity](https://github.com/decentralized-identity) organization, including [dwn-sdk-js](https://github.com/decentralized-identity/dwn-sdk-js), [dwn-server](https://github.com/decentralized-identity/dwn-server), [dwn-sql-store](https://github.com/decentralized-identity/dwn-sql-store), and the web5-js monorepo.*

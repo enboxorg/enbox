@@ -16,7 +16,7 @@ Given that we're still in early stages of development, this contribution guide w
 
 ## Code of Conduct
 
-We take our open-source community seriously. Please adhere to our [Code of Conduct](https://github.com/TBD54566975/dwn-server/blob/main/CODE_OF_CONDUCT.md).
+We take our open-source community seriously. Please adhere to our [Code of Conduct](https://github.com/enboxorg/enbox/blob/main/packages/dwn-server/CODE_OF_CONDUCT.md).
 
 ## Getting Started
 
@@ -24,7 +24,7 @@ We take our open-source community seriously. Please adhere to our [Code of Condu
 
 - Feel free to open issues for any reason as long as you make it clear what the issue pertains to.
 - Before opening new issues, please search to check if there is an existing issue.
-- Existing issues with labels `bug`, `documentation`, `good first issue`, `help wanted` are excellent candidates for contribution, and we'd be thrilled to get all the help we can get. You can take a look at all the Issues that match the these labels [here](https://github.com/TBD54566975/dwn-server/issues?q=is%3Aopen+label%3A%22help+wanted%22%2C%22good+first+issue%22%2C%22documentation%22%2C%22bug%22+)
+- Existing issues with labels `bug`, `documentation`, `good first issue`, `help wanted` are excellent candidates for contribution, and we'd be thrilled to get all the help we can get. You can take a look at all the Issues that match the these labels [here](https://github.com/enboxorg/enbox/issues?q=is%3Aopen+label%3A%22help+wanted%22%2C%22good+first+issue%22%2C%22documentation%22%2C%22bug%22+)
 - If planning to work on non-trivial issue involving major/significant changes please check with us first on the implementation approach
   - Leave explanation of the approach and tag both @adam4leos and @finn-tbd in the issue
   - Good idea to also post link to the issue in our [dwn discord channel](https://discord.com/channels/937858703112155166/1068273971432280196) to initiate discussion with more people
@@ -55,7 +55,7 @@ We take our open-source community seriously. Please adhere to our [Code of Condu
 
 ### Test Coverage
 
-- [Codecov](https://app.codecov.io/github/TBD54566975/dwn-server) is used to track
+- [Codecov](https://app.codecov.io/github/enboxorg/enbox) is used to track
   the coverage of our tests and will automatically comment on every pull request
   showing the impact to overall coverage.
 - If your pull request introduces new features or changes existing logic, please
@@ -71,10 +71,10 @@ We take our open-source community seriously. Please adhere to our [Code of Condu
 ### Code Style
 
 - Our preferred code style has been codified into `eslint`.
-  - Feel free to take a look onto [eslint config](https://github.com/TBD54566975/dwn-server/blob/main/.eslintrc.cjs).
+  - Feel free to take a look onto [eslint config](https://github.com/enboxorg/enbox/blob/main/packages/dwn-server/.eslintrc.cjs).
 - Running `npm run lint:fix` will auto-format as much they can. Everything they weren't able to will be printed out as errors or warnings.
 - We have a pre-commit hook which would run both commands with attempt to autofix problems
-  - It runs by [husky](https://github.com/TBD54566975/dwn-server/blob/main/.husky/pre-commit) and executes [lint-staged command](https://github.com/TBD54566975/dwn-server/blob/main/package.json#L89)
+  - It runs by [husky](https://github.com/enboxorg/enbox/blob/main/packages/dwn-server/.husky/pre-commit) and executes [lint-staged command](https://github.com/enboxorg/enbox/blob/main/packages/dwn-server/package.json#L89)
 - Make sure that no errors/warnings are introduced in your PR
 
 ### Code Guidelines

@@ -80,7 +80,7 @@ export class PermissionRequest implements PermissionRequestModel {
     agent: Web5Agent;
     message: DwnDataEncodedRecordsWriteMessage;
   }): Promise<PermissionRequest> {
-    //TODO: this does not have to be async https://github.com/TBD54566975/web5-js/pull/831/files
+    //TODO: this does not have to be async https://github.com/enboxorg/enbox/pull/831/files
     const request = await DwnPermissionRequest.parse(message);
     const api = new AgentPermissionsApi({ agent });
     return new PermissionRequest({ api, connectedDid, message, request });
