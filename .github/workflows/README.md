@@ -35,6 +35,7 @@ Add these secrets to your repository (Settings → Secrets and variables → Act
 
 - **`OPENAI_API_KEY`** (Required) - Your OpenAI API key for AI-powered reviews
 - **`SNYK_TOKEN`** (Optional) - For Snyk security scanning
+- **`SEMGREP_APP_TOKEN`** (Optional) - For enhanced Semgrep scanning
 - **`GITHUB_TOKEN`** (Provided) - Automatically available in workflows
 
 ### 2. Workflow Permissions

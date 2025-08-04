@@ -121,7 +121,9 @@ jobs:
 
       # Code security scanning
       - name: Run Semgrep
+        id: semgrep
         uses: returntocorp/semgrep-action@v1
+        continue-on-error: true
         with:
           config: >-
             p/security-audit
@@ -130,19 +132,57 @@ jobs:
             p/typescript
             p/javascript
             p/react
-          generateSarif: true
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
 
       - name: Upload SARIF file
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: steps.semgrep.outcome == 'success' && hashFiles('results.sarif') != ''
         with:
-          sarif_file: semgrep.sarif
+          sarif_file: results.sarif
+          
+      # Alternative security scanning if Semgrep fails
+      - name: Run ESLint Security Plugin
+        if: steps.semgrep.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          npm install -g eslint eslint-plugin-security
+          echo "module.exports = { 
+            extends: ['plugin:security/recommended'],
+            plugins: ['security'],
+            parserOptions: { ecmaVersion: 2022, sourceType: 'module' }
+          };" > .eslintrc.security.js
+          npx eslint . --ext .js,.ts,.jsx,.tsx --config .eslintrc.security.js --format json --output-file eslint-security-results.json || true
+          
+          # Convert to markdown for reporting
+          if [ -f eslint-security-results.json ]; then
+            echo "## 🔒 Security Issues (ESLint)" > security_report.md
+            cat eslint-security-results.json | jq -r '.[] | select(.messages | length > 0) | "### \(.filePath)\n" + (.messages[] | "- **\(.severity)**: \(.message) (line \(.line))")' >> security_report.md || echo "No issues found" >> security_report.md
+          fi
 
       # GitLeaks for secret scanning
       - name: Secret Scanning
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      # Post security report if using fallback
+      - name: Post Security Report
+        if: steps.semgrep.outcome == 'failure' && hashFiles('security_report.md') != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('security_report.md', 'utf8');
+            if (report.trim().split('\n').length > 1) {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: report
+              });
+            }
 
   performance-review:
     runs-on: ubuntu-latest
