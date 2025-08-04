@@ -13,7 +13,17 @@ jobs:
   claude-review:
     runs-on: ubuntu-latest
     name: Claude AI Review
+    # Skip bot PRs if needed
+    # if: github.actor != 'dependabot[bot]' && github.actor != 'cursor[bot]'
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # This ensures we have the full PR context
+          fetch-depth: 0
+          # Use the PR head ref
+          ref: ${{ github.event.pull_request.head.sha }}
+
       - uses: anthropics/claude-code-action@beta
         name: Claude Code Review
         with:
