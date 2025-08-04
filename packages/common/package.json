@@ -2,21 +2,17 @@
   "name": "@enbox/common",
   "version": "0.0.2",
   "type": "module",
-  "main": "./dist/cjs/index.js",
-  "module": "./dist/esm/index.js",
-  "types": "./dist/types/index.d.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "scripts": {
-    "clean": "rimraf dist coverage tests/compiled",
-    "build:esm": "rimraf dist/esm dist/types && pnpm tsc -p tsconfig.json",
-    "build:cjs": "rimraf dist/cjs && node build/cjs-bundle.js && echo '{\"type\": \"commonjs\"}' > ./dist/cjs/package.json",
-    "build:browser": "rimraf dist/browser.mjs dist/browser.js && node build/bundles.js",
-    "build:tests:node": "rimraf tests/compiled && pnpm tsc -p tests/tsconfig.json",
-    "build:tests:browser": "rimraf tests/compiled && node build/esbuild-tests.cjs",
-    "build": "pnpm clean && pnpm build:esm && pnpm build:cjs && pnpm build:browser",
+    "clean": "rm -rf dist coverage tests/compiled",
+    "build": "bun run build:lib && bun run build:browser",
+    "build:lib": "tsc -p tsconfig.json",
+    "build:browser": "bun build ./src/index.ts --outdir dist --format esm --minify --target browser --outfile dist/browser.js",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
-    "test:node": "pnpm build:tests:node && pnpm c8 mocha",
-    "test:browser": "pnpm build:tests:browser && web-test-runner"
+    "test": "bun test"
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/common#readme",
   "bugs": "https://github.com/enboxorg/enbox/issues",
@@ -50,12 +46,12 @@
   ],
   "exports": {
     ".": {
-      "types": "./dist/types/index.d.ts",
-      "import": "./dist/esm/index.js",
-      "require": "./dist/cjs/index.js"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "browser": "./dist/browser.js"
     }
   },
-  "react-native": "./dist/esm/index.js",
+  "react-native": "./dist/index.js",
   "keywords": [
     "decentralized",
     "decentralized-applications",

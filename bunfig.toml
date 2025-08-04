@@ -1,0 +1,25 @@
+# Bun configuration
+
+[install]
+# Use the workspace feature similar to pnpm
+auto = "hardlinks"
+
+# Install peer dependencies automatically
+peer = false
+
+# Production install by default (no devDependencies)
+production = false
+
+[install.cache]
+# Use a global cache directory
+dir = "~/.bun/install/cache"
+
+[test]
+# Configure test runner
+root = "./packages"
+coverage = true
+coverageThreshold = 80
+
+[run]
+# Enable source maps for better debugging
+sourcemap = "external"
