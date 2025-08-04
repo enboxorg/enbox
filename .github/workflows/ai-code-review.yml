@@ -7,6 +7,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  id-token: write  # Required by Claude Code Action for internal authentication
 
 jobs:
   claude-review:
