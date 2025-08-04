@@ -76,7 +76,7 @@ jobs:
     - name: Install pnpm
       uses: pnpm/action-setup@v2
       with:
-        version: 8.15.0
+        version: 10.x
         
     - name: Get pnpm store directory
       id: pnpm-cache
@@ -195,7 +195,7 @@ jobs:
     - name: Install pnpm
       uses: pnpm/action-setup@v2
       with:
-        version: 8.15.0
+        version: 10.x
         
     - name: Download coverage reports
       uses: actions/download-artifact@v4
