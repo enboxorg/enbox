@@ -1,8 +1,8 @@
 # Bun configuration
 
 [install]
-# Use the workspace feature similar to pnpm
-auto = "hardlinks"
+# Auto install when encountering unknown imports
+auto = false
 
 # Install peer dependencies automatically
 peer = false
