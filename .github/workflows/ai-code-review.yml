@@ -158,8 +158,9 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          npm install -g bundlephobia-cli
-          npm install -g size-limit @size-limit/preset-app
+          npm install -g npm-size
+          npm install -g cost-of-modules
+          npm install -g bundle-phobia-cli
 
       - name: Bundle Size Analysis
         id: bundle-analysis
@@ -179,14 +180,36 @@ jobs:
               if [ ! -z "$deps" ]; then
                 echo "New dependencies:" >> bundle_report.md
                 for dep in $deps; do
-                  size=$(npx bundlephobia $dep 2>/dev/null | grep -E 'minified:|gzipped:' | head -2 || echo "Size data unavailable")
+                  # Try multiple methods to get size
                   echo "- **$dep**" >> bundle_report.md
-                  echo "  $size" >> bundle_report.md
+                  
+                  # Method 1: npm-size
+                  size_info=$(npx npm-size $dep 2>/dev/null | grep -E 'Package size|Unpacked' | head -2 || true)
+                  if [ ! -z "$size_info" ]; then
+                    echo "  $size_info" >> bundle_report.md
+                  else
+                    # Method 2: Use npm view
+                    unpacked=$(npm view $dep dist.unpackedSize 2>/dev/null || echo "0")
+                    if [ "$unpacked" != "0" ]; then
+                      size_mb=$(echo "scale=2; $unpacked / 1024 / 1024" | bc 2>/dev/null || echo "N/A")
+                      echo "  Unpacked size: ${size_mb}MB" >> bundle_report.md
+                    else
+                      echo "  Size data unavailable" >> bundle_report.md
+                    fi
+                  fi
                 done
               fi
             fi
             echo "" >> bundle_report.md
           done
+          
+          # Additional analysis with cost-of-modules for existing packages
+          if [ -f "package.json" ] && [ -d "node_modules" ]; then
+            echo "### Module Cost Analysis" >> bundle_report.md
+            echo '```' >> bundle_report.md
+            npx cost-of-modules --less --no-install 2>/dev/null | head -20 >> bundle_report.md || echo "Cost analysis unavailable" >> bundle_report.md
+            echo '```' >> bundle_report.md
+          fi
 
       - name: Post Performance Report
         if: always()
