@@ -1,4 +1,4 @@
-name: Simple AI Code Review
+name: Simple Claude AI Code Review
 
 on:
   pull_request:
@@ -11,19 +11,88 @@ permissions:
 jobs:
   ai-review:
     runs-on: ubuntu-latest
-    name: Quick AI Review
+    name: Quick Claude Review
     steps:
-      - name: AI Code Review
-        uses: anc95/ChatGPT-CodeReview@main
+      - name: Claude AI Code Review
+        uses: actions/github-script@v7
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # Optional: Use GPT-3.5 for lower costs
-          # OPENAI_API_MODEL: "gpt-3.5-turbo"
-          OPENAI_API_MODEL: "gpt-4-turbo-preview"
-          top_p: 1
-          temperature: 0.7
-          max_tokens: 2048
-          # Review mode: 'files' or 'diff'
-          mode: "files"
-          language: "en"
+          CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
+        with:
+          script: |
+            const https = require('https');
+            
+            // Get PR diff
+            const { data: diff } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              mediaType: {
+                format: 'diff'
+              }
+            });
+            
+            // Prepare prompt
+            const prompt = `You are Claude, an expert code reviewer. Review this pull request diff and provide helpful feedback.
+            
+            Focus on:
+            - Code quality and best practices
+            - Potential bugs or issues
+            - Security concerns
+            - Performance improvements
+            - Suggestions for better implementation
+            
+            Here's the diff:
+            ${diff.substring(0, 8000)} // Limit to 8000 chars for API
+            
+            Provide a concise but thorough review.`;
+            
+            const requestData = JSON.stringify({
+              model: 'claude-3-sonnet-20240229', // Using Sonnet for cost efficiency
+              max_tokens: 2048,
+              temperature: 0.7,
+              messages: [{
+                role: 'user',
+                content: prompt
+              }]
+            });
+            
+            const options = {
+              hostname: 'api.anthropic.com',
+              path: '/v1/messages',
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': process.env.CLAUDE_API_KEY,
+                'anthropic-version': '2023-06-01'
+              }
+            };
+            
+            try {
+              const response = await new Promise((resolve, reject) => {
+                const req = https.request(options, (res) => {
+                  let data = '';
+                  res.on('data', (chunk) => data += chunk);
+                  res.on('end', () => resolve(JSON.parse(data)));
+                });
+                req.on('error', reject);
+                req.write(requestData);
+                req.end();
+              });
+              
+              if (response.content && response.content[0]) {
+                await github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: `## 🤖 Claude AI Code Review\n\n${response.content[0].text}`
+                });
+              }
+            } catch (error) {
+              console.error('Error:', error);
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## ❌ Claude Review Error\n\nFailed to generate review: ${error.message}`
+              });
+            }

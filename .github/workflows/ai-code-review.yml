@@ -34,38 +34,151 @@ jobs:
           separator: ","
           quotepath: false
 
-      # OpenAI-based Code Review
-      - name: OpenAI Code Review
-        uses: anc95/ChatGPT-CodeReview@main
+      # Claude-based Code Review
+      - name: Claude Code Review
+        uses: actions/github-script@v7
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_API_MODEL: "gpt-4-turbo-preview"
-          top_p: 1
-          temperature: 0.7
-          max_tokens: 4096
-          mode: "files"
-          language: "en"
-
-      # PR Agent for comprehensive review
-      - name: PR Agent Review
-        if: ${{ github.event_name == 'pull_request' }}
-        uses: Codium-ai/pr-agent@main
-        env:
-          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_REVIEWER.EXTRA_INSTRUCTIONS: |
-            Focus on:
-            - Security vulnerabilities and potential exploits
-            - Performance issues and optimization opportunities
-            - Code quality, maintainability, and best practices
-            - Test coverage and edge cases
-            - Documentation completeness
-            - Error handling and edge cases
-            - Dependency security and updates
-          PR_REVIEWER.ENABLE_REVIEW: true
-          PR_REVIEWER.ENABLE_IMPROVE: true
-          PR_REVIEWER.ENABLE_DESCRIBE: true
+          CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
+        with:
+          script: |
+            const fs = require('fs');
+            const https = require('https');
+            
+            // Get changed files
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            
+            const reviewComments = [];
+            
+            for (const file of files) {
+              if (file.patch && file.status !== 'removed') {
+                const prompt = `You are an expert code reviewer. Review this code change and provide constructive feedback.
+                
+                File: ${file.filename}
+                Status: ${file.status}
+                
+                Patch:
+                ${file.patch}
+                
+                Please analyze:
+                1. Security vulnerabilities
+                2. Performance issues
+                3. Code quality and best practices
+                4. Potential bugs
+                5. Suggestions for improvement
+                
+                Format your response as a concise review comment.`;
+                
+                const requestData = JSON.stringify({
+                  model: 'claude-3-opus-20240229',
+                  max_tokens: 1024,
+                  temperature: 0.7,
+                  messages: [{
+                    role: 'user',
+                    content: prompt
+                  }]
+                });
+                
+                const options = {
+                  hostname: 'api.anthropic.com',
+                  path: '/v1/messages',
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': process.env.CLAUDE_API_KEY,
+                    'anthropic-version': '2023-06-01'
+                  }
+                };
+                
+                try {
+                  const response = await new Promise((resolve, reject) => {
+                    const req = https.request(options, (res) => {
+                      let data = '';
+                      res.on('data', (chunk) => data += chunk);
+                      res.on('end', () => resolve(JSON.parse(data)));
+                    });
+                    req.on('error', reject);
+                    req.write(requestData);
+                    req.end();
+                  });
+                  
+                  if (response.content && response.content[0]) {
+                    const review = response.content[0].text;
+                    
+                    // Post review comment on the file
+                    const position = file.patch.split('\n').length - 1;
+                    await github.rest.pulls.createReviewComment({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      pull_number: context.issue.number,
+                      body: `🤖 **Claude Review**\n\n${review}`,
+                      path: file.filename,
+                      position: position > 0 ? position : 1,
+                      commit_id: context.payload.pull_request.head.sha
+                    });
+                  }
+                } catch (error) {
+                  console.error(`Error reviewing ${file.filename}:`, error.message);
+                }
+              }
+            }
+            
+            // Post general PR summary
+            const prSummaryPrompt = `Summarize the key changes in this pull request and provide an overall assessment.
+            
+            Files changed: ${files.map(f => f.filename).join(', ')}
+            Additions: ${files.reduce((sum, f) => sum + f.additions, 0)} lines
+            Deletions: ${files.reduce((sum, f) => sum + f.deletions, 0)} lines
+            
+            Provide a brief summary and overall recommendations.`;
+            
+            const summaryRequest = JSON.stringify({
+              model: 'claude-3-opus-20240229',
+              max_tokens: 1024,
+              temperature: 0.7,
+              messages: [{
+                role: 'user',
+                content: prSummaryPrompt
+              }]
+            });
+            
+            try {
+              const summaryOptions = {
+                hostname: 'api.anthropic.com',
+                path: '/v1/messages',
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'x-api-key': process.env.CLAUDE_API_KEY,
+                  'anthropic-version': '2023-06-01'
+                }
+              };
+              
+              const summaryResponse = await new Promise((resolve, reject) => {
+                const req = https.request(summaryOptions, (res) => {
+                  let data = '';
+                  res.on('data', (chunk) => data += chunk);
+                  res.on('end', () => resolve(JSON.parse(data)));
+                });
+                req.on('error', reject);
+                req.write(summaryRequest);
+                req.end();
+              });
+              
+              if (summaryResponse.content && summaryResponse.content[0]) {
+                await github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: `## 🤖 Claude AI Review Summary\n\n${summaryResponse.content[0].text}`
+                });
+              }
+            } catch (error) {
+              console.error('Error creating summary:', error.message);
+            }
           
       # Code Quality Metrics
       - name: Code Complexity Analysis

@@ -48,21 +48,15 @@ jobs:
         if: steps.changed-files.outputs.any_changed == 'true'
         uses: actions/github-script@v7
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
         with:
           script: |
             const fs = require('fs');
             const path = require('path');
-            const { Configuration, OpenAIApi } = require('openai');
-            
-            // Initialize OpenAI
-            const configuration = new Configuration({
-              apiKey: process.env.OPENAI_API_KEY,
-            });
-            const openai = new OpenAIApi(configuration);
+            const https = require('https');
             
             const changedFiles = '${{ steps.changed-files.outputs.all_changed_files }}'.split(' ');
-            let testSuggestions = '## 🧪 AI Test Suggestions\n\n';
+            let testSuggestions = '## 🧪 Claude AI Test Suggestions\n\n';
             
             for (const file of changedFiles) {
               if (!file || !fs.existsSync(file)) continue;
@@ -77,30 +71,60 @@ jobs:
               }
               
               try {
-                const prompt = `Analyze this code and suggest important test cases that should be written. Focus on edge cases, error handling, and critical functionality.
+                const prompt = `You are an expert test engineer. Analyze this code and suggest comprehensive test cases.
                 
                 File: ${fileName}
                 Code:
                 ${content}
                 
                 Provide:
-                1. List of test cases that should be written
+                1. List of test cases that should be written (including edge cases and error scenarios)
                 2. Example test code for the most critical test case
                 3. Coverage gaps that need attention
+                4. Potential bugs that tests should catch
                 
-                Format as markdown.`;
+                Format your response as markdown with clear sections.`;
                 
-                const response = await openai.createChatCompletion({
-                  model: 'gpt-4-turbo-preview',
-                  messages: [{ role: 'user', content: prompt }],
-                  max_tokens: 1000,
+                const requestData = JSON.stringify({
+                  model: 'claude-3-opus-20240229',
+                  max_tokens: 1500,
                   temperature: 0.7,
+                  messages: [{
+                    role: 'user',
+                    content: prompt
+                  }]
                 });
                 
-                testSuggestions += `### ${file}\n${response.data.choices[0].message.content}\n\n`;
+                const options = {
+                  hostname: 'api.anthropic.com',
+                  path: '/v1/messages',
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': process.env.CLAUDE_API_KEY,
+                    'anthropic-version': '2023-06-01'
+                  }
+                };
+                
+                const response = await new Promise((resolve, reject) => {
+                  const req = https.request(options, (res) => {
+                    let data = '';
+                    res.on('data', (chunk) => data += chunk);
+                    res.on('end', () => resolve(JSON.parse(data)));
+                  });
+                  req.on('error', reject);
+                  req.write(requestData);
+                  req.end();
+                });
+                
+                if (response.content && response.content[0]) {
+                  testSuggestions += `### ${file}\n${response.content[0].text}\n\n`;
+                } else {
+                  testSuggestions += `### ${file}\n⚠️ No suggestions generated\n\n`;
+                }
               } catch (error) {
                 console.error(`Error analyzing ${file}:`, error.message);
-                testSuggestions += `### ${file}\n⚠️ Error during analysis\n\n`;
+                testSuggestions += `### ${file}\n⚠️ Error during analysis: ${error.message}\n\n`;
               }
             }
             

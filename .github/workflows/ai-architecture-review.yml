@@ -104,16 +104,11 @@ jobs:
       - name: AI Design Pattern Analysis
         uses: actions/github-script@v7
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
         with:
           script: |
             const fs = require('fs');
-            const { Configuration, OpenAIApi } = require('openai');
-            
-            const configuration = new Configuration({
-              apiKey: process.env.OPENAI_API_KEY,
-            });
-            const openai = new OpenAIApi(configuration);
+            const https = require('https');
             
             // Get changed files
             const { data: files } = await github.rest.pulls.listFiles({
@@ -127,33 +122,63 @@ jobs:
               f.status !== 'removed'
             );
             
-            let designReport = '## 🎨 Design Patterns & Architecture Review\n\n';
+            let designReport = '## 🎨 Claude Architecture & Design Review\n\n';
             
             // Analyze overall structure
             if (codeFiles.length > 0) {
               const fileStructure = codeFiles.map(f => f.filename).join('\n');
               
-              const structurePrompt = `Analyze the following file structure from a pull request and identify:
-              1. Design patterns being used or violated
-              2. Architecture concerns (coupling, cohesion, separation of concerns)
-              3. SOLID principles adherence
-              4. Potential code smells
-              5. Suggestions for improvement
+              const structurePrompt = `You are a senior software architect. Analyze this pull request's file structure and provide architectural insights.
               
               Files changed:
               ${fileStructure}
               
-              Provide a concise analysis in markdown format.`;
+              Please analyze:
+              1. Design patterns being used or violated
+              2. Architecture concerns (coupling, cohesion, separation of concerns)
+              3. SOLID principles adherence
+              4. Potential code smells
+              5. Scalability and maintainability concerns
+              6. Suggestions for improvement
+              
+              Provide a concise but thorough analysis in markdown format.`;
               
               try {
-                const response = await openai.createChatCompletion({
-                  model: 'gpt-4-turbo-preview',
-                  messages: [{ role: 'user', content: structurePrompt }],
-                  max_tokens: 1500,
+                const requestData = JSON.stringify({
+                  model: 'claude-3-opus-20240229',
+                  max_tokens: 2000,
                   temperature: 0.7,
+                  messages: [{
+                    role: 'user',
+                    content: structurePrompt
+                  }]
                 });
                 
-                designReport += response.data.choices[0].message.content + '\n\n';
+                const options = {
+                  hostname: 'api.anthropic.com',
+                  path: '/v1/messages',
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': process.env.CLAUDE_API_KEY,
+                    'anthropic-version': '2023-06-01'
+                  }
+                };
+                
+                const response = await new Promise((resolve, reject) => {
+                  const req = https.request(options, (res) => {
+                    let data = '';
+                    res.on('data', (chunk) => data += chunk);
+                    res.on('end', () => resolve(JSON.parse(data)));
+                  });
+                  req.on('error', reject);
+                  req.write(requestData);
+                  req.end();
+                });
+                
+                if (response.content && response.content[0]) {
+                  designReport += response.content[0].text + '\n\n';
+                }
               } catch (error) {
                 console.error('Error in architecture analysis:', error.message);
                 designReport += '⚠️ Error analyzing architecture patterns\n\n';
@@ -172,27 +197,56 @@ jobs:
                     
                     const code = Buffer.from(content.content, 'base64').toString();
                     
-                    const patternPrompt = `Analyze this code for design patterns and architectural issues:
+                    const patternPrompt = `Analyze this code for design patterns, architectural issues, and code quality.
                     
                     File: ${file.filename}
-                    Code snippet (first 100 lines):
-                    ${code.split('\n').slice(0, 100).join('\n')}
+                    Code snippet (first 150 lines):
+                    ${code.split('\n').slice(0, 150).join('\n')}
                     
                     Identify:
                     1. Design patterns used
                     2. Anti-patterns present
-                    3. Suggestions for improvement
+                    3. Code smells
+                    4. Performance concerns
+                    5. Specific suggestions for improvement
                     
-                    Be concise and specific.`;
+                    Be specific and actionable in your recommendations.`;
                     
-                    const patternResponse = await openai.createChatCompletion({
-                      model: 'gpt-4-turbo-preview',
-                      messages: [{ role: 'user', content: patternPrompt }],
-                      max_tokens: 800,
+                    const patternRequestData = JSON.stringify({
+                      model: 'claude-3-opus-20240229',
+                      max_tokens: 1200,
                       temperature: 0.7,
+                      messages: [{
+                        role: 'user',
+                        content: patternPrompt
+                      }]
                     });
                     
-                    designReport += `### ${file.filename}\n${patternResponse.data.choices[0].message.content}\n\n`;
+                    const patternOptions = {
+                      hostname: 'api.anthropic.com',
+                      path: '/v1/messages',
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': process.env.CLAUDE_API_KEY,
+                        'anthropic-version': '2023-06-01'
+                      }
+                    };
+                    
+                    const patternResponse = await new Promise((resolve, reject) => {
+                      const req = https.request(patternOptions, (res) => {
+                        let data = '';
+                        res.on('data', (chunk) => data += chunk);
+                        res.on('end', () => resolve(JSON.parse(data)));
+                      });
+                      req.on('error', reject);
+                      req.write(patternRequestData);
+                      req.end();
+                    });
+                    
+                    if (patternResponse.content && patternResponse.content[0]) {
+                      designReport += `### ${file.filename}\n${patternResponse.content[0].text}\n\n`;
+                    }
                   } catch (error) {
                     console.error(`Error analyzing ${file.filename}:`, error.message);
                   }
