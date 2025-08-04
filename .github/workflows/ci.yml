@@ -36,20 +36,6 @@ jobs:
           --health-timeout 5s
           --health-retries 5
           
-      postgres-dwn-server:
-        image: postgres:15-alpine
-        env:
-          POSTGRES_DB: dwn
-          POSTGRES_USER: dwn_user
-          POSTGRES_PASSWORD: dwn_password
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-          
       mysql:
         image: mysql:8.0
         env:
@@ -101,26 +87,15 @@ jobs:
     - name: Build packages
       run: pnpm build
       
-    - name: Setup dwn-server database
-      run: |
-        # Create the init script for dwn-server database
-        echo "CREATE DATABASE IF NOT EXISTS dwn;" > init-db.sql
-        echo "GRANT ALL PRIVILEGES ON DATABASE dwn TO dwn_user;" >> init-db.sql
-        
     - name: Start dwn-server
       run: |
         # Build and start dwn-server in the background
         cd packages/dwn-server
         npm run build || true
         
-        # Start the server with environment variables
+        # Start the server with default configuration (uses LevelDB)
         export DS_PORT=3000
         export DWN_BASE_URL=http://localhost:3000
-        export DWN_TTL_CACHE_URL=postgres://dwn_user:dwn_password@localhost:5433/dwn
-        export DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@localhost:5433/dwn
-        export DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@localhost:5433/dwn
-        export DWN_STORAGE_EVENTS=postgres://dwn_user:dwn_password@localhost:5433/dwn
-        export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
         
         # Start server in background
         npm start &

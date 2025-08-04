@@ -25,20 +25,6 @@ jobs:
           --health-timeout 5s
           --health-retries 5
           
-      postgres-dwn-server:
-        image: postgres:15-alpine
-        env:
-          POSTGRES_DB: dwn
-          POSTGRES_USER: dwn_user
-          POSTGRES_PASSWORD: dwn_password
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-          
       mysql:
         image: mysql:8.0
         env:
@@ -94,11 +80,6 @@ jobs:
         
         export DS_PORT=3000
         export DWN_BASE_URL=http://localhost:3000
-        export DWN_TTL_CACHE_URL=postgres://dwn_user:dwn_password@localhost:5433/dwn
-        export DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@localhost:5433/dwn
-        export DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@localhost:5433/dwn
-        export DWN_STORAGE_EVENTS=postgres://dwn_user:dwn_password@localhost:5433/dwn
-        export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
         
         npm start &
         echo "DWN_SERVER_PID=$!" >> $GITHUB_ENV
@@ -164,11 +145,6 @@ jobs:
         
         export DS_PORT=3000
         export DWN_BASE_URL=http://localhost:3000
-        export DWN_TTL_CACHE_URL=postgres://dwn_user:dwn_password@localhost:5433/dwn
-        export DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@localhost:5433/dwn
-        export DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@localhost:5433/dwn
-        export DWN_STORAGE_EVENTS=postgres://dwn_user:dwn_password@localhost:5433/dwn
-        export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
         
         npm start &
         echo "DWN_SERVER_BASE_PID=$!" >> $GITHUB_ENV
