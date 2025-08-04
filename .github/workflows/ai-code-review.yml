@@ -64,7 +64,9 @@ jobs:
               }
             } catch (e) {}
             
-            core.setOutput('context', codebaseContext.substring(0, 50000)); // Limit context size
+            // Save context to a file to avoid issues with special characters
+            await fs.writeFile('codebase-context.txt', codebaseContext.substring(0, 50000));
+            console.log('Codebase context saved to file');
 
       - name: Get PR Details
         id: pr-details
@@ -85,7 +87,10 @@ jobs:
               return reviewableExts.includes(ext) && file.status !== 'removed';
             });
             
-            core.setOutput('files', JSON.stringify(reviewableFiles));
+            // Save files data to avoid interpolation issues
+            const fs = require('fs').promises;
+            await fs.writeFile('pr-files.json', JSON.stringify(reviewableFiles));
+            
             core.setOutput('file_count', reviewableFiles.length);
             core.setOutput('pr_title', pr.title);
             core.setOutput('pr_body', pr.body || '');
@@ -95,11 +100,16 @@ jobs:
         uses: actions/github-script@v7
         env:
           CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
+          PR_TITLE: ${{ steps.pr-details.outputs.pr_title }}
+          PR_BODY: ${{ steps.pr-details.outputs.pr_body }}
         with:
           script: |
             const https = require('https');
-            const files = JSON.parse('${{ steps.pr-details.outputs.files }}');
-            const codebaseContext = `${{ steps.codebase-context.outputs.context }}`;
+            const fs = require('fs').promises;
+            
+            // Read saved data
+            const files = JSON.parse(await fs.readFile('pr-files.json', 'utf8'));
+            const codebaseContext = await fs.readFile('codebase-context.txt', 'utf8');
             
             // Helper function to call Claude API
             async function callClaude(prompt) {
@@ -165,8 +175,8 @@ jobs:
                 ${codebaseContext}
 
                 ## Current PR Context
-                PR Title: ${{ steps.pr-details.outputs.pr_title }}
-                PR Description: ${{ steps.pr-details.outputs.pr_body }}
+                PR Title: ${process.env.PR_TITLE}
+                PR Description: ${process.env.PR_BODY}
 
                 ## File Under Review
                 File: ${file.filename}
@@ -265,7 +275,10 @@ jobs:
         with:
           script: |
             const https = require('https');
-            const codebaseContext = `${{ steps.codebase-context.outputs.context }}`;
+            const fs = require('fs').promises;
+            
+            // Read codebase context
+            const codebaseContext = await fs.readFile('codebase-context.txt', 'utf8');
             
             // Get PR info
             const pr = context.payload.pull_request;
