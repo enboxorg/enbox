@@ -3,150 +3,66 @@ name: AI Code Review
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-  pull_request_target:
-    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
   pull-requests: write
-  issues: write
 
 jobs:
-  ai-review:
+  claude-review:
     runs-on: ubuntu-latest
-    name: AI Code Review
+    name: Claude AI Review
     steps:
-      - name: Checkout PR
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Get PR Details
+        id: pr-details
+        uses: actions/github-script@v7
         with:
-          node-version: '20'
+          script: |
+            const pr = context.payload.pull_request;
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+            });
+            
+            // Filter for reviewable files
+            const reviewableFiles = files.filter(file => {
+              const ext = file.filename.split('.').pop();
+              const reviewableExts = ['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'rb', 'php', 'cs', 'cpp', 'c', 'h', 'swift', 'kt'];
+              return reviewableExts.includes(ext) && file.status !== 'removed';
+            });
+            
+            core.setOutput('files', JSON.stringify(reviewableFiles));
+            core.setOutput('file_count', reviewableFiles.length);
 
-      - name: Get Changed Files
-        id: changed-files
-        uses: tj-actions/changed-files@v40
-        with:
-          separator: ","
-          quotepath: false
-
-      # Claude-based Code Review
-      - name: Claude Code Review
+      - name: Review Changed Files
+        if: steps.pr-details.outputs.file_count > 0
         uses: actions/github-script@v7
         env:
           CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
         with:
           script: |
-            const fs = require('fs');
             const https = require('https');
+            const files = JSON.parse('${{ steps.pr-details.outputs.files }}');
             
-            // Get changed files
-            const { data: files } = await github.rest.pulls.listFiles({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number,
-            });
-            
-            const reviewComments = [];
-            
-            for (const file of files) {
-              if (file.patch && file.status !== 'removed') {
-                const prompt = `You are an expert code reviewer. Review this code change and provide constructive feedback.
-                
-                File: ${file.filename}
-                Status: ${file.status}
-                
-                Patch:
-                ${file.patch}
-                
-                Please analyze:
-                1. Security vulnerabilities
-                2. Performance issues
-                3. Code quality and best practices
-                4. Potential bugs
-                5. Suggestions for improvement
-                
-                Format your response as a concise review comment.`;
-                
-                const requestData = JSON.stringify({
-                  model: 'claude-3-opus-20240229',
-                  max_tokens: 1024,
-                  temperature: 0.7,
-                  messages: [{
-                    role: 'user',
-                    content: prompt
-                  }]
-                });
-                
-                const options = {
-                  hostname: 'api.anthropic.com',
-                  path: '/v1/messages',
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'x-api-key': process.env.CLAUDE_API_KEY,
-                    'anthropic-version': '2023-06-01'
-                  }
-                };
-                
-                try {
-                  const response = await new Promise((resolve, reject) => {
-                    const req = https.request(options, (res) => {
-                      let data = '';
-                      res.on('data', (chunk) => data += chunk);
-                      res.on('end', () => resolve(JSON.parse(data)));
-                    });
-                    req.on('error', reject);
-                    req.write(requestData);
-                    req.end();
-                  });
-                  
-                  if (response.content && response.content[0]) {
-                    const review = response.content[0].text;
-                    
-                    // Post review comment on the file
-                    const position = file.patch.split('\n').length - 1;
-                    await github.rest.pulls.createReviewComment({
-                      owner: context.repo.owner,
-                      repo: context.repo.repo,
-                      pull_number: context.issue.number,
-                      body: `🤖 **Claude Review**\n\n${review}`,
-                      path: file.filename,
-                      position: position > 0 ? position : 1,
-                      commit_id: context.payload.pull_request.head.sha
-                    });
-                  }
-                } catch (error) {
-                  console.error(`Error reviewing ${file.filename}:`, error.message);
-                }
-              }
-            }
-            
-            // Post general PR summary
-            const prSummaryPrompt = `Summarize the key changes in this pull request and provide an overall assessment.
-            
-            Files changed: ${files.map(f => f.filename).join(', ')}
-            Additions: ${files.reduce((sum, f) => sum + f.additions, 0)} lines
-            Deletions: ${files.reduce((sum, f) => sum + f.deletions, 0)} lines
-            
-            Provide a brief summary and overall recommendations.`;
-            
-            const summaryRequest = JSON.stringify({
-              model: 'claude-3-opus-20240229',
-              max_tokens: 1024,
-              temperature: 0.7,
-              messages: [{
-                role: 'user',
-                content: prSummaryPrompt
-              }]
-            });
-            
-            try {
-              const summaryOptions = {
+            // Helper function to call Claude API
+            async function callClaude(prompt) {
+              const requestData = JSON.stringify({
+                model: 'claude-3-opus-20240229',
+                max_tokens: 4000,
+                temperature: 0.7,
+                messages: [{
+                  role: 'user',
+                  content: prompt
+                }]
+              });
+              
+              const options = {
                 hostname: 'api.anthropic.com',
                 path: '/v1/messages',
                 method: 'POST',
@@ -157,346 +73,180 @@ jobs:
                 }
               };
               
-              const summaryResponse = await new Promise((resolve, reject) => {
-                const req = https.request(summaryOptions, (res) => {
+              return new Promise((resolve, reject) => {
+                const req = https.request(options, (res) => {
+                  let data = '';
+                  res.on('data', (chunk) => data += chunk);
+                  res.on('end', () => {
+                    try {
+                      const response = JSON.parse(data);
+                      resolve(response);
+                    } catch (e) {
+                      reject(new Error(`Failed to parse response: ${e.message}`));
+                    }
+                  });
+                });
+                req.on('error', reject);
+                req.write(requestData);
+                req.end();
+              });
+            }
+            
+            // Review each file
+            const reviews = [];
+            for (const file of files.slice(0, 10)) { // Limit to 10 files to avoid timeout
+              try {
+                console.log(`Reviewing ${file.filename}...`);
+                
+                // Get file content with context
+                const { data: prFile } = await github.rest.repos.getContent({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  path: file.filename,
+                  ref: context.payload.pull_request.head.sha
+                });
+                
+                const content = Buffer.from(prFile.content, 'base64').toString('utf8');
+                
+                const prompt = `You are an expert code reviewer. Review this code and its changes.
+
+                File: ${file.filename}
+                Status: ${file.status}
+                Additions: ${file.additions} lines
+                Deletions: ${file.deletions} lines
+
+                Patch (changes):
+                ${file.patch || 'No patch available'}
+
+                Full file content (for context):
+                ${content.slice(0, 10000)} ${content.length > 10000 ? '... (truncated)' : ''}
+
+                Please provide:
+                1. A summary of what this change does
+                2. Any bugs, issues, or concerns you notice
+                3. Suggestions for improvement
+                4. Security considerations if applicable
+                5. Code quality and best practices feedback
+
+                Be specific and actionable. If the code looks good, say so. Focus on the most important issues.`;
+
+                const response = await callClaude(prompt);
+                
+                if (response.content && response.content[0]) {
+                  reviews.push({
+                    file: file.filename,
+                    review: response.content[0].text
+                  });
+                }
+              } catch (error) {
+                console.error(`Error reviewing ${file.filename}:`, error.message);
+                reviews.push({
+                  file: file.filename,
+                  review: `⚠️ Error during review: ${error.message}`
+                });
+              }
+            }
+            
+            // Create a comprehensive review comment
+            if (reviews.length > 0) {
+              let comment = `## 🤖 Claude AI Code Review\n\n`;
+              comment += `I've reviewed **${reviews.length}** file(s) in this PR. `;
+              comment += `Here's my analysis:\n\n`;
+              
+              for (const review of reviews) {
+                comment += `### 📄 ${review.file}\n\n`;
+                comment += `${review.review}\n\n`;
+                comment += `---\n\n`;
+              }
+              
+              // Post the review
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            }
+
+      - name: PR Summary
+        uses: actions/github-script@v7
+        env:
+          CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
+        with:
+          script: |
+            const https = require('https');
+            
+            // Get PR info
+            const pr = context.payload.pull_request;
+            const { data: diff } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              mediaType: {
+                format: 'diff'
+              }
+            });
+            
+            const prompt = `You are reviewing a pull request. Provide a high-level summary and assessment.
+
+            PR Title: ${pr.title}
+            PR Description: ${pr.body || 'No description provided'}
+            
+            Diff (first 15000 chars):
+            ${diff.substring(0, 15000)}
+
+            Please provide:
+            1. A concise summary of what this PR accomplishes
+            2. The overall quality assessment
+            3. Key risks or concerns
+            4. Whether this PR is ready to merge or needs work
+            5. Any architectural or design feedback
+
+            Keep it concise but thorough. This is the overview that will help reviewers understand the PR quickly.`;
+
+            const requestData = JSON.stringify({
+              model: 'claude-3-opus-20240229',
+              max_tokens: 2000,
+              temperature: 0.7,
+              messages: [{
+                role: 'user',
+                content: prompt
+              }]
+            });
+            
+            const options = {
+              hostname: 'api.anthropic.com',
+              path: '/v1/messages',
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': process.env.CLAUDE_API_KEY,
+                'anthropic-version': '2023-06-01'
+              }
+            };
+            
+            try {
+              const response = await new Promise((resolve, reject) => {
+                const req = https.request(options, (res) => {
                   let data = '';
                   res.on('data', (chunk) => data += chunk);
                   res.on('end', () => resolve(JSON.parse(data)));
                 });
                 req.on('error', reject);
-                req.write(summaryRequest);
+                req.write(requestData);
                 req.end();
               });
               
-              if (summaryResponse.content && summaryResponse.content[0]) {
+              if (response.content && response.content[0]) {
+                const summaryComment = `## 🎯 PR Summary by Claude\n\n${response.content[0].text}\n\n---\n*This is an AI-generated summary. Please verify all suggestions and feedback.*`;
+                
                 await github.rest.issues.createComment({
                   issue_number: context.issue.number,
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  body: `## 🤖 Claude AI Review Summary\n\n${summaryResponse.content[0].text}`
+                  body: summaryComment
                 });
               }
             } catch (error) {
               console.error('Error creating summary:', error.message);
             }
-          
-      # Code Quality Metrics
-      - name: Code Complexity Analysis
-        run: |
-          npm install -g complexity-report
-          echo "## Code Complexity Report" >> complexity_report.md
-          echo "" >> complexity_report.md
-          
-          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
-            if [[ $file == *.js || $file == *.ts || $file == *.jsx || $file == *.tsx ]]; then
-              echo "### $file" >> complexity_report.md
-              cr --format json "$file" | jq -r '.reports[0] | "- Cyclomatic Complexity: \(.aggregate.cyclomatic)\n- Maintainability Index: \(.maintainability)"' >> complexity_report.md || true
-              echo "" >> complexity_report.md
-            fi
-          done
-
-      - name: Post Complexity Report
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            if (fs.existsSync('complexity_report.md')) {
-              const report = fs.readFileSync('complexity_report.md', 'utf8');
-              if (report.trim().split('\n').length > 2) {
-                github.rest.issues.createComment({
-                  issue_number: context.issue.number,
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  body: report
-                });
-              }
-            }
-
-  security-review:
-    runs-on: ubuntu-latest
-    name: Security & Vulnerability Review
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      # Dependency vulnerability scanning
-      - name: Run Snyk Security Scan
-        uses: snyk/actions/node@master
-        continue-on-error: true
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          args: --severity-threshold=medium
-
-      # Code security scanning
-      - name: Run Semgrep
-        id: semgrep
-        uses: returntocorp/semgrep-action@v1
-        continue-on-error: true
-        with:
-          config: >-
-            p/security-audit
-            p/secrets
-            p/owasp-top-ten
-            p/typescript
-            p/javascript
-            p/react
-        env:
-          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
-
-      - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@v3
-        if: steps.semgrep.outcome == 'success' && hashFiles('results.sarif') != ''
-        with:
-          sarif_file: results.sarif
-          
-      # Alternative security scanning if Semgrep fails
-      - name: Run ESLint Security Plugin
-        if: steps.semgrep.outcome == 'failure'
-        continue-on-error: true
-        run: |
-          npm install -g eslint eslint-plugin-security
-          echo "module.exports = { 
-            extends: ['plugin:security/recommended'],
-            plugins: ['security'],
-            parserOptions: { ecmaVersion: 2022, sourceType: 'module' }
-          };" > .eslintrc.security.js
-          npx eslint . --ext .js,.ts,.jsx,.tsx --config .eslintrc.security.js --format json --output-file eslint-security-results.json || true
-          
-          # Convert to markdown for reporting
-          if [ -f eslint-security-results.json ]; then
-            echo "## 🔒 Security Issues (ESLint)" > security_report.md
-            cat eslint-security-results.json | jq -r '.[] | select(.messages | length > 0) | "### \(.filePath)\n" + (.messages[] | "- **\(.severity)**: \(.message) (line \(.line))")' >> security_report.md || echo "No issues found" >> security_report.md
-          fi
-
-      # GitLeaks for secret scanning
-      - name: Secret Scanning
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
-      # Post security report if using fallback
-      - name: Post Security Report
-        if: steps.semgrep.outcome == 'failure' && hashFiles('security_report.md') != ''
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            const report = fs.readFileSync('security_report.md', 'utf8');
-            if (report.trim().split('\n').length > 1) {
-              github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: report
-              });
-            }
-
-  performance-review:
-    runs-on: ubuntu-latest
-    name: Performance & Best Practices Review
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install Dependencies
-        run: |
-          npm install -g npm-size
-          npm install -g cost-of-modules
-          npm install -g bundle-phobia-cli
-
-      - name: Bundle Size Analysis
-        id: bundle-analysis
-        run: |
-          echo "## Bundle Size Analysis" > bundle_report.md
-          echo "" >> bundle_report.md
-          
-          # Check package.json files for new dependencies
-          for pkg in $(find . -name "package.json" -not -path "*/node_modules/*"); do
-            dir=$(dirname "$pkg")
-            echo "### $dir" >> bundle_report.md
-            
-            if [ -f "$pkg" ]; then
-              # Extract new dependencies
-              deps=$(git diff origin/${{ github.base_ref }}..HEAD -- "$pkg" | grep '^\+.*"' | grep -E '"[^"]+":' | sed 's/.*"\([^"]*\)".*/\1/' | grep -v '^$')
-              
-              if [ ! -z "$deps" ]; then
-                echo "New dependencies:" >> bundle_report.md
-                for dep in $deps; do
-                  # Try multiple methods to get size
-                  echo "- **$dep**" >> bundle_report.md
-                  
-                  # Method 1: npm-size
-                  size_info=$(npx npm-size $dep 2>/dev/null | grep -E 'Package size|Unpacked' | head -2 || true)
-                  if [ ! -z "$size_info" ]; then
-                    echo "  $size_info" >> bundle_report.md
-                  else
-                    # Method 2: Use npm view
-                    unpacked=$(npm view $dep dist.unpackedSize 2>/dev/null || echo "0")
-                    if [ "$unpacked" != "0" ]; then
-                      size_mb=$(echo "scale=2; $unpacked / 1024 / 1024" | bc 2>/dev/null || echo "N/A")
-                      echo "  Unpacked size: ${size_mb}MB" >> bundle_report.md
-                    else
-                      echo "  Size data unavailable" >> bundle_report.md
-                    fi
-                  fi
-                done
-              fi
-            fi
-            echo "" >> bundle_report.md
-          done
-          
-          # Additional analysis with cost-of-modules for existing packages
-          if [ -f "package.json" ] && [ -d "node_modules" ]; then
-            echo "### Module Cost Analysis" >> bundle_report.md
-            echo '```' >> bundle_report.md
-            npx cost-of-modules --less --no-install 2>/dev/null | head -20 >> bundle_report.md || echo "Cost analysis unavailable" >> bundle_report.md
-            echo '```' >> bundle_report.md
-          fi
-
-      - name: Post Performance Report
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            if (fs.existsSync('bundle_report.md')) {
-              const report = fs.readFileSync('bundle_report.md', 'utf8');
-              if (report.trim().split('\n').length > 2) {
-                github.rest.issues.createComment({
-                  issue_number: context.issue.number,
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  body: report
-                });
-              }
-            }
-
-  documentation-review:
-    runs-on: ubuntu-latest
-    name: Documentation & Comments Review
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Documentation Coverage Check
-        run: |
-          echo "## Documentation Review" > doc_report.md
-          echo "" >> doc_report.md
-          
-          # Check for missing JSDoc/TSDoc in changed files
-          changed_files=$(git diff --name-only origin/${{ github.base_ref }}..HEAD | grep -E '\.(js|ts|jsx|tsx)$' || true)
-          
-          if [ ! -z "$changed_files" ]; then
-            echo "### Files Missing Documentation:" >> doc_report.md
-            for file in $changed_files; do
-              if [ -f "$file" ]; then
-                # Check for functions/classes without documentation
-                undocumented=$(grep -n -E '(export\s+(async\s+)?function|export\s+class|export\s+const\s+\w+\s*=\s*(async\s*)?\()' "$file" | while read -r line; do
-                  line_num=$(echo "$line" | cut -d: -f1)
-                  prev_line_num=$((line_num - 1))
-                  if [ $prev_line_num -gt 0 ]; then
-                    prev_line=$(sed -n "${prev_line_num}p" "$file")
-                    if ! echo "$prev_line" | grep -qE '(\*/|\*\s|///)'; then
-                      echo "$line"
-                    fi
-                  fi
-                done)
-                
-                if [ ! -z "$undocumented" ]; then
-                  echo "- **$file**" >> doc_report.md
-                  echo "$undocumented" | while read -r line; do
-                    echo "  - Line $(echo "$line" | cut -d: -f1): \`$(echo "$line" | cut -d: -f2-)\`" >> doc_report.md
-                  done
-                fi
-              fi
-            done
-          fi
-
-      - name: Post Documentation Report
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            if (fs.existsSync('doc_report.md')) {
-              const report = fs.readFileSync('doc_report.md', 'utf8');
-              if (report.trim().split('\n').length > 2) {
-                github.rest.issues.createComment({
-                  issue_number: context.issue.number,
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  body: report
-                });
-              }
-            }
-
-  summary:
-    runs-on: ubuntu-latest
-    needs: [ai-review, security-review, performance-review, documentation-review]
-    if: always()
-    name: Review Summary
-    steps:
-      - name: Post Summary Comment
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const jobs = ['ai-review', 'security-review', 'performance-review', 'documentation-review'];
-            const statuses = {};
-            
-            for (const job of jobs) {
-              const runs = await github.rest.actions.listJobsForWorkflowRun({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                run_id: context.runId
-              });
-              
-              const jobRun = runs.data.jobs.find(j => j.name.includes(job));
-              if (jobRun) {
-                statuses[job] = jobRun.conclusion || 'in_progress';
-              }
-            }
-            
-            const statusEmoji = (status) => {
-              switch(status) {
-                case 'success': return '✅';
-                case 'failure': return '❌';
-                case 'cancelled': return '🚫';
-                case 'skipped': return '⏭️';
-                default: return '⏳';
-              }
-            };
-            
-            const summary = `## 🤖 AI Code Review Summary
-            
-            | Review Type | Status |
-            |-------------|--------|
-            | AI Code Review | ${statusEmoji(statuses['ai-review'])} |
-            | Security Review | ${statusEmoji(statuses['security-review'])} |
-            | Performance Review | ${statusEmoji(statuses['performance-review'])} |
-            | Documentation Review | ${statusEmoji(statuses['documentation-review'])} |
-            
-            ---
-            *Review completed at ${new Date().toISOString()}*`;
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: summary
-            });

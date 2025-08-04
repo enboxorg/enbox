@@ -1,159 +1,131 @@
-# Claude AI Code Review Workflows
+# Claude AI Code Review
 
-This directory contains comprehensive GitHub Actions workflows for automated AI-powered code reviews using Claude (Anthropic) on pull requests.
+A streamlined GitHub Actions workflow for AI-powered code reviews using Claude on pull requests.
 
-## Workflows Overview
+## Overview
 
-### 1. `ai-code-review.yml`
-The main AI code review workflow that provides:
-- **Claude-based code review** - Uses Claude Opus to analyze code changes for bugs, improvements, and best practices
-- **Inline PR comments** - Posts review feedback directly on changed files
-- **Code complexity analysis** - Measures cyclomatic complexity and maintainability index
-- **Security scanning** - Uses Snyk, Semgrep, and Gitleaks for vulnerability detection
-- **Performance analysis** - Bundle size checking and dependency analysis
-- **Documentation review** - Checks for missing JSDoc/TSDoc comments
+This workflow uses Claude (Anthropic's AI) to automatically review code changes in pull requests. It provides:
 
-### 2. `ai-test-suggestions.yml`
-Automated test generation and coverage analysis:
-- **Claude-powered test suggestions** - Uses Claude to generate comprehensive test cases for changed files
-- **Coverage analysis** - Runs existing tests and reports coverage metrics
-- **Missing test detection** - Identifies files without corresponding test files
-- **Mutation testing** - Uses Stryker to assess test quality
+- **Intelligent code analysis** - Claude reviews each changed file for bugs, improvements, and best practices
+- **File-by-file feedback** - Detailed review comments for each modified file
+- **PR summary** - High-level assessment of the entire pull request
+- **Support for multiple languages** - JavaScript, TypeScript, Python, Java, Go, Rust, and more
 
-### 3. `ai-architecture-review.yml`
-Architecture and design pattern analysis:
-- **Design pattern detection** - Claude analyzes patterns and anti-patterns
-- **SOLID principles analysis** - Checks adherence to software design principles
-- **Dependency analysis** - Detects circular dependencies and architectural issues
-- **Code metrics** - Lines of code, file distribution, and complexity metrics
+## How It Works
 
-## Setup Instructions
+When a pull request is opened or updated, the workflow:
 
-### 1. Required Secrets
+1. Identifies reviewable code files
+2. Sends each file with its changes to Claude for analysis
+3. Posts a comprehensive review comment with feedback for each file
+4. Provides an overall PR summary with merge readiness assessment
 
-Add these secrets to your repository (Settings → Secrets and variables → Actions):
+## Setup
 
-- **`CLAUDE_API_KEY`** (Required) - Your Anthropic API key for Claude-powered reviews
-- **`SNYK_TOKEN`** (Optional) - For Snyk security scanning
-- **`SEMGREP_APP_TOKEN`** (Optional) - For enhanced Semgrep scanning
-- **`GITHUB_TOKEN`** (Provided) - Automatically available in workflows
+### 1. Add Claude API Key
 
-### 2. Workflow Permissions
+1. Get your API key from [Anthropic Console](https://console.anthropic.com/)
+2. Go to your repo Settings → Secrets and variables → Actions
+3. Add a new secret named `CLAUDE_API_KEY` with your API key
 
-Ensure your repository has the following permissions enabled:
-- Go to Settings → Actions → General
-- Under "Workflow permissions", select "Read and write permissions"
-- Check "Allow GitHub Actions to create and approve pull requests"
+### 2. Enable Workflow Permissions
 
-### 3. Optional Configuration
+1. Go to Settings → Actions → General
+2. Under "Workflow permissions", select "Read and write permissions"
 
-#### Customize AI Review Instructions
-Edit the `PR_REVIEWER.EXTRA_INSTRUCTIONS` in `ai-code-review.yml` to focus on your specific needs.
+That's it! The workflow will automatically run on all new pull requests.
 
-#### Adjust File Filters
-Modify the `paths` section in workflows to target specific file types or directories.
+## Configuration
 
-#### Configure Complexity Thresholds
-Adjust complexity analysis thresholds in the workflow scripts as needed.
+### Model Selection
 
-## Usage
+The workflow uses Claude 3 Opus by default for the highest quality reviews. You can change the model by editing the workflow:
 
-Once configured, the workflows will automatically trigger on:
-- New pull requests
-- Updates to existing pull requests
-- Synchronization events
+```javascript
+model: 'claude-3-opus-20240229',  // Highest quality
+// model: 'claude-3-sonnet-20240229',  // Good balance
+// model: 'claude-3-haiku-20240307',   // Fastest & cheapest
+```
 
-The AI will post detailed comments on the PR with:
-- Code review feedback
-- Security vulnerabilities
-- Performance concerns
-- Test suggestions
-- Architecture recommendations
-- Documentation gaps
+### File Limits
+
+By default, the workflow reviews up to 10 files per PR to avoid timeouts. You can adjust this in the workflow:
+
+```javascript
+for (const file of files.slice(0, 10)) { // Change 10 to your preferred limit
+```
+
+### Supported File Types
+
+The workflow reviews files with these extensions:
+- JavaScript/TypeScript: `.js`, `.jsx`, `.ts`, `.tsx`
+- Python: `.py`
+- Java: `.java`
+- Go: `.go`
+- Rust: `.rs`
+- Ruby: `.rb`
+- PHP: `.php`
+- C#: `.cs`
+- C/C++: `.c`, `.cpp`, `.h`
+- Swift: `.swift`
+- Kotlin: `.kt`
+
+## Example Output
+
+The workflow posts two types of comments:
+
+### 1. Detailed File Reviews
+```
+## 🤖 Claude AI Code Review
+
+I've reviewed 5 file(s) in this PR. Here's my analysis:
+
+### 📄 src/api/users.js
+
+The changes implement a new user authentication endpoint...
+[Detailed feedback for each file]
+```
+
+### 2. PR Summary
+```
+## 🎯 PR Summary by Claude
+
+This PR implements user authentication with JWT tokens...
+[Overall assessment and merge readiness]
+```
 
 ## Cost Considerations
 
-These workflows use Claude API calls which incur costs. To manage expenses:
-- Limit the number of files analyzed per PR
-- Use path filters to focus on critical code
-- Consider using Claude Sonnet instead of Claude Opus for lower costs
-- Monitor your Anthropic usage dashboard
-- Claude models available:
-  - **Claude 3 Opus** - Most capable, highest quality reviews (used by default)
-  - **Claude 3 Sonnet** - Good balance of capability and cost (used in simple workflow)
-  - **Claude 3 Haiku** - Fastest and most cost-effective for basic reviews
+- Claude API calls are billed per token
+- Opus model is most expensive but provides best results
+- Consider using Sonnet or Haiku for routine PRs
+- Large files are truncated to 10,000 characters to manage costs
 
 ## Troubleshooting
 
 ### Common Issues
 
 1. **"Claude API key not found"**
-   - Ensure `CLAUDE_API_KEY` secret is properly set
-   - Get your API key from https://console.anthropic.com/
+   - Verify `CLAUDE_API_KEY` secret is set correctly
 
-2. **"Resource not accessible by integration"**
-   - Check workflow permissions are set to read/write
+2. **Timeout errors**
+   - Reduce the number of files reviewed per PR
+   - Use a faster model (Sonnet or Haiku)
 
-3. **Rate limiting**
-   - Claude has rate limits; the workflows include error handling
-   - Reduce the number of files analyzed simultaneously
-   - Consider using Claude Sonnet or Haiku for higher rate limits
+3. **No review posted**
+   - Check the Actions tab for error logs
+   - Ensure PR contains supported file types
 
-4. **Large PR timeouts**
-   - Break down large PRs into smaller ones
-   - Increase workflow timeout limits
-   - Use file filters to reduce scope
-   - Claude has a 200k token context window, so very large files are handled well
+## Privacy & Security
 
-## Customization
-
-### Adding New Analysis Tools
-
-To add new analysis tools:
-
-1. Create a new job in the appropriate workflow
-2. Install required tools in the setup steps
-3. Run analysis and save results to a markdown file
-4. Use the GitHub Script action to post results as PR comments
-
-### Switching Claude Models
-
-To use different Claude models for different purposes:
-
-1. **Claude 3 Opus** (`claude-3-opus-20240229`) - Best for complex analysis
-2. **Claude 3 Sonnet** (`claude-3-sonnet-20240229`) - Good balance of cost/performance
-3. **Claude 3 Haiku** (`claude-3-haiku-20240307`) - Fastest, most economical
-
-Simply replace the model name in the workflow scripts:
-```javascript
-model: 'claude-3-sonnet-20240229', // Change this line
-```
-
-### Integrating Other AI Providers
-
-To switch back to OpenAI or use other providers:
-
-1. Replace the Anthropic API calls with your provider's format
-2. Update environment variables and secrets
-3. Adjust prompt formats as needed
-4. Update endpoint URLs and headers
-
-## Best Practices
-
-1. **Start with a subset** - Enable one workflow at a time to understand the output
-2. **Tune the prompts** - Customize AI prompts for your team's coding standards
-3. **Set expectations** - Inform your team that AI suggestions are advisory
-4. **Regular updates** - Keep action versions and dependencies updated
-5. **Monitor costs** - Track API usage to avoid unexpected charges
+- Code is sent to Anthropic's API for analysis
+- Only changed files are sent, not the entire codebase
+- Review the [Anthropic Privacy Policy](https://www.anthropic.com/privacy)
+- Consider using self-hosted alternatives for sensitive code
 
 ## Support
 
 For issues or questions:
-1. Check the [Actions tab](../../actions) for workflow run logs
-2. Review GitHub Actions documentation
-3. Check the documentation for specific tools (OpenAI, Semgrep, etc.)
-4. Open an issue in this repository
-
-## License
-
-These workflows are provided as-is under the same license as the repository.
+1. Check the Actions tab for detailed logs
+2. Review [Anthropic's documentation](https://docs.anthropic.com/)
+3. Open an issue in this repository
