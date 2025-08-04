@@ -293,9 +293,9 @@ jobs:
         package-name: dwn-server
         test-command: test
 
-  # Summary job to ensure all tests pass
+  # Summary job to ensure all tests pass and create test report
   ci-success:
-    name: CI Success
+    name: CI Summary
     runs-on: ubuntu-latest
     needs: [
       build,
@@ -313,52 +313,127 @@ jobs:
     ]
     if: always()
     steps:
-      - name: Check if all jobs succeeded
+      - name: Create Test Summary Report
         run: |
-          # Check build job
-          if [[ "${{ needs.build.result }}" != "success" ]]; then
-            echo "Build job failed"
-            exit 1
+          echo "# 📊 CI Test Results Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Build status
+          if [[ "${{ needs.build.result }}" == "success" ]]; then
+            echo "## 🏗️ Build: ✅ Passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## 🏗️ Build: ❌ Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Test results table
+          echo "## 🧪 Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          # Individual test results
+          test_failed=false
+          
+          # Common
+          if [[ "${{ needs.test-common.result }}" == "success" ]]; then
+            echo "| @enbox/common | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| @enbox/common | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+            test_failed=true
           fi
           
-          # Check all test jobs
-          test_jobs=(
-            "test-common"
-            "test-crypto"
-            "test-dids"
-            "test-dwn-sdk-js"
-            "test-dwn-sql-store"
-            "test-agent"
-            "test-api"
-            "test-identity-agent"
-            "test-proxy-agent"
-            "test-user-agent"
-            "test-dwn-server"
-          )
+          # Crypto
+          if [[ "${{ needs.test-crypto.result }}" == "success" ]]; then
+            echo "| @enbox/crypto | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| @enbox/crypto | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+            test_failed=true
+          fi
           
-          for job in "${test_jobs[@]}"; do
-            job_var="needs.${job//-/_}.result"
-            job_result="${!job_var}"
-            
-            # Use GitHub Actions expression syntax
-            case "$job" in
-              test-common) result="${{ needs.test-common.result }}" ;;
-              test-crypto) result="${{ needs.test-crypto.result }}" ;;
-              test-dids) result="${{ needs.test-dids.result }}" ;;
-              test-dwn-sdk-js) result="${{ needs.test-dwn-sdk-js.result }}" ;;
-              test-dwn-sql-store) result="${{ needs.test-dwn-sql-store.result }}" ;;
-              test-agent) result="${{ needs.test-agent.result }}" ;;
-              test-api) result="${{ needs.test-api.result }}" ;;
-              test-identity-agent) result="${{ needs.test-identity-agent.result }}" ;;
-              test-proxy-agent) result="${{ needs.test-proxy-agent.result }}" ;;
-              test-user-agent) result="${{ needs.test-user-agent.result }}" ;;
-              test-dwn-server) result="${{ needs.test-dwn-server.result }}" ;;
-            esac
-            
-            if [[ "$result" != "success" ]]; then
-              echo "$job job failed with result: $result"
-              exit 1
-            fi
-          done
+          # DIDs
+          if [[ "${{ needs.test-dids.result }}" == "success" ]]; then
+            echo "| @enbox/dids | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| @enbox/dids | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+            test_failed=true
+          fi
           
-          echo "✅ All CI checks passed!"
+          # DWN SDK JS
+          if [[ "${{ needs.test-dwn-sdk-js.result }}" == "success" ]]; then
+            echo "| @enbox/dwn-sdk-js | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| @enbox/dwn-sdk-js | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+            test_failed=true
+          fi
+          
+          # DWN SQL Store
+          if [[ "${{ needs.test-dwn-sql-store.result }}" == "success" ]]; then
+            echo "| @enbox/dwn-sql-store | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| @enbox/dwn-sql-store | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+            test_failed=true
+          fi
+          
+          # Agent
+          if [[ "${{ needs.test-agent.result }}" == "success" ]]; then
+            echo "| @enbox/agent | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| @enbox/agent | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+            test_failed=true
+          fi
+          
+          # API
+          if [[ "${{ needs.test-api.result }}" == "success" ]]; then
+            echo "| @enbox/api | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| @enbox/api | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+            test_failed=true
+          fi
+          
+          # Identity Agent
+          if [[ "${{ needs.test-identity-agent.result }}" == "success" ]]; then
+            echo "| @enbox/identity-agent | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| @enbox/identity-agent | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+            test_failed=true
+          fi
+          
+          # Proxy Agent
+          if [[ "${{ needs.test-proxy-agent.result }}" == "success" ]]; then
+            echo "| @enbox/proxy-agent | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| @enbox/proxy-agent | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+            test_failed=true
+          fi
+          
+          # User Agent
+          if [[ "${{ needs.test-user-agent.result }}" == "success" ]]; then
+            echo "| @enbox/user-agent | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| @enbox/user-agent | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+            test_failed=true
+          fi
+          
+          # DWN Server
+          if [[ "${{ needs.test-dwn-server.result }}" == "success" ]]; then
+            echo "| @enbox/dwn-server | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| @enbox/dwn-server | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+            test_failed=true
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Overall status
+          if [[ "${{ needs.build.result }}" != "success" ]]; then
+            echo "## ❌ CI Failed: Build failed" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          elif [[ "$test_failed" == "true" ]]; then
+            echo "## ❌ CI Failed: One or more tests failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Check the individual test jobs above for details." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "## ✅ All CI checks passed!" >> $GITHUB_STEP_SUMMARY
+          fi

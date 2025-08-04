@@ -65,10 +65,52 @@ runs:
         done
         
     - name: Run tests
+      id: test
       shell: bash
       run: |
         cd packages/${{ inputs.package-name }}
-        pnpm ${{ inputs.test-command }}
+        
+        # Create test results directory
+        mkdir -p test-results
+        
+        echo "::group::📦 Testing @enbox/${{ inputs.package-name }}"
+        echo "Running: pnpm ${{ inputs.test-command }}"
+        echo "::endgroup::"
+        
+        # Run tests and capture exit code
+        set +e
+        pnpm ${{ inputs.test-command }} 2>&1 | tee test-results/output.log
+        TEST_EXIT_CODE=${PIPESTATUS[0]}
+        set -e
+        
+        # Create summary
+        if [ $TEST_EXIT_CODE -eq 0 ]; then
+          echo "✅ Tests passed for @enbox/${{ inputs.package-name }}" >> $GITHUB_STEP_SUMMARY
+          echo "test_status=passed" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Tests failed for @enbox/${{ inputs.package-name }}" >> $GITHUB_STEP_SUMMARY
+          echo "test_status=failed" >> $GITHUB_OUTPUT
+          
+          # Extract and display failed tests
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "<details><summary>Failed test output</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -100 test-results/output.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Exit with the original test exit code
+        exit $TEST_EXIT_CODE
+        
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-${{ inputs.package-name }}
+        path: packages/${{ inputs.package-name }}/test-results/
+        retention-days: 7
         
     - name: Stop dwn-server
       if: inputs.needs-dwn-server == 'true' && always()
