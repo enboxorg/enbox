@@ -13,135 +13,128 @@ jobs:
     runs-on: ubuntu-latest
     name: Claude AI Review
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Get Codebase Context
-        id: codebase-context
+      - name: Get PR diff
+        id: get-diff
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+          DIFF=$(git diff origin/${{ github.event.pull_request.base.ref }}..HEAD)
+          # Save diff to file to avoid issues with special characters
+          echo "$DIFF" > pr_diff.txt
+          echo "diff_file=pr_diff.txt" >> $GITHUB_OUTPUT
+
+      - name: Get changed files
+        id: changed-files
+        run: |
+          FILES=$(git diff --name-only origin/${{ github.event.pull_request.base.ref }}..HEAD | head -20)
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Review with Claude
+        id: claude-review
         uses: actions/github-script@v7
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
           script: |
-            const fs = require('fs').promises;
-            const path = require('path');
+            const fs = require('fs');
+            const https = require('https');
             
-            // Read important context files
-            const contextFiles = [
-              'README.md',
-              'AGENT_CONTEXT.md',
-              'GETTING_STARTED.md',
-              'packages/README.md',
-              '.github/README.md',
-              'docs/README.md'
-            ];
+            // Read PR diff
+            const diff = fs.readFileSync('pr_diff.txt', 'utf8');
+            const files = `${{ steps.changed-files.outputs.files }}`;
             
-            let codebaseContext = '';
-            
+            // Read context files if they exist
+            let contextContent = '';
+            const contextFiles = ['README.md', 'AGENT_CONTEXT.md'];
             for (const file of contextFiles) {
               try {
-                const content = await fs.readFile(file, 'utf8');
-                codebaseContext += `\n### ${file}\n${content}\n`;
+                const content = fs.readFileSync(file, 'utf8');
+                contextContent += `\n### ${file}\n${content}\n`;
               } catch (e) {
                 // File doesn't exist, skip
               }
             }
             
-            // Read package.json files to understand project structure
-            try {
-              const rootPackage = await fs.readFile('package.json', 'utf8');
-              codebaseContext += `\n### Root package.json\n${rootPackage}\n`;
-            } catch (e) {}
-            
-            // Find and read workspace packages
-            try {
-              const packagesDir = await fs.readdir('packages');
-              for (const pkg of packagesDir) {
-                try {
-                  const pkgJson = await fs.readFile(path.join('packages', pkg, 'package.json'), 'utf8');
-                  codebaseContext += `\n### packages/${pkg}/package.json\n${pkgJson}\n`;
-                } catch (e) {}
+            const prompt = `You are a Principal Engineer reviewing a pull request. Analyze the changes and provide a comprehensive technical review.
+
+            ## Repository Context
+            ${contextContent}
+
+            ## PR Information
+            Title: ${{ github.event.pull_request.title }}
+            Description: ${{ github.event.pull_request.body || 'No description provided' }}
+            Author: ${{ github.event.pull_request.user.login }}
+
+            ## Changed Files
+            ${files}
+
+            ## Diff (truncated if too large)
+            ${diff.substring(0, 30000)}
+
+            ## Review Guidelines
+
+            Provide a technical assessment covering:
+
+            1. **Summary**: What does this PR do in 2-3 sentences?
+
+            2. **Code Quality** (A/B/C/D/F rating):
+               - Readability and maintainability
+               - Following established patterns
+               - Appropriate abstractions
+
+            3. **Issues Found**:
+               - List specific problems with file and line references
+               - Security vulnerabilities
+               - Performance concerns
+               - Logic errors
+
+            4. **Suggestions**:
+               - Specific improvements with examples
+               - Better approaches if applicable
+
+            5. **Merge Recommendation**:
+               - APPROVE: Ready to merge
+               - REQUEST CHANGES: Needs fixes (list blockers)
+               - COMMENT: Minor suggestions, can merge
+
+            Be direct and specific. Focus on significant issues that impact functionality, security, or maintainability.`;
+
+            // Call Claude API
+            const requestData = JSON.stringify({
+              model: 'claude-3-opus-20240229',
+              max_tokens: 4000,
+              temperature: 0.3,
+              messages: [{
+                role: 'user',
+                content: prompt
+              }]
+            });
+
+            const options = {
+              hostname: 'api.anthropic.com',
+              path: '/v1/messages',
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': process.env.ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01'
               }
-            } catch (e) {}
-            
-            // Save context to a file to avoid issues with special characters
-            await fs.writeFile('codebase-context.txt', codebaseContext.substring(0, 50000));
-            console.log('Codebase context saved to file');
+            };
 
-      - name: Get PR Details
-        id: pr-details
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const pr = context.payload.pull_request;
-            const { data: files } = await github.rest.pulls.listFiles({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: pr.number,
-            });
-            
-            // Filter for reviewable files
-            const reviewableFiles = files.filter(file => {
-              const ext = file.filename.split('.').pop();
-              const reviewableExts = ['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'rb', 'php', 'cs', 'cpp', 'c', 'h', 'swift', 'kt'];
-              return reviewableExts.includes(ext) && file.status !== 'removed';
-            });
-            
-            // Save files data to avoid interpolation issues
-            const fs = require('fs').promises;
-            await fs.writeFile('pr-files.json', JSON.stringify(reviewableFiles));
-            
-            core.setOutput('file_count', reviewableFiles.length);
-            core.setOutput('pr_title', pr.title);
-            core.setOutput('pr_body', pr.body || '');
-
-      - name: Review Changed Files
-        if: steps.pr-details.outputs.file_count > 0
-        uses: actions/github-script@v7
-        env:
-          CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
-          PR_TITLE: ${{ steps.pr-details.outputs.pr_title }}
-          PR_BODY: ${{ steps.pr-details.outputs.pr_body }}
-        with:
-          script: |
-            const https = require('https');
-            const fs = require('fs').promises;
-            
-            // Read saved data
-            const files = JSON.parse(await fs.readFile('pr-files.json', 'utf8'));
-            const codebaseContext = await fs.readFile('codebase-context.txt', 'utf8');
-            
-            // Helper function to call Claude API
-            async function callClaude(prompt) {
-              const requestData = JSON.stringify({
-                model: 'claude-3-opus-20240229',
-                max_tokens: 4000,
-                temperature: 0.3, // Lower temperature for more consistent technical analysis
-                messages: [{
-                  role: 'user',
-                  content: prompt
-                }]
-              });
-              
-              const options = {
-                hostname: 'api.anthropic.com',
-                path: '/v1/messages',
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'x-api-key': process.env.CLAUDE_API_KEY,
-                  'anthropic-version': '2023-06-01'
-                }
-              };
-              
-              return new Promise((resolve, reject) => {
+            try {
+              const response = await new Promise((resolve, reject) => {
                 const req = https.request(options, (res) => {
                   let data = '';
                   res.on('data', (chunk) => data += chunk);
                   res.on('end', () => {
                     try {
-                      const response = JSON.parse(data);
-                      resolve(response);
+                      resolve(JSON.parse(data));
                     } catch (e) {
                       reject(new Error(`Failed to parse response: ${e.message}`));
                     }
@@ -151,282 +144,30 @@ jobs:
                 req.write(requestData);
                 req.end();
               });
-            }
-            
-            // Review each file
-            const reviews = [];
-            for (const file of files.slice(0, 10)) { // Limit to 10 files to avoid timeout
-              try {
-                console.log(`Reviewing ${file.filename}...`);
+
+              if (response.content && response.content[0]) {
+                const review = response.content[0].text;
                 
-                // Get file content with context
-                const { data: prFile } = await github.rest.repos.getContent({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  path: file.filename,
-                  ref: context.payload.pull_request.head.sha
-                });
-                
-                const content = Buffer.from(prFile.content, 'base64').toString('utf8');
-                
-                const prompt = `You are a Principal Engineer reviewing this code with deep knowledge of the codebase's architecture and standards. Focus on technical excellence and preventing scope creep.
-
-                ## Codebase Context
-                ${codebaseContext}
-
-                ## Current PR
-                Title: ${process.env.PR_TITLE}
-                Description: ${process.env.PR_BODY}
-
-                ## File Under Review
-                File: ${file.filename}
-                Status: ${file.status}
-                Changes: +${file.additions} -${file.deletions} lines
-
-                ## Diff
-                ${file.patch || 'No patch available'}
-
-                ## Full File Content
-                ${content.slice(0, 15000)} ${content.length > 15000 ? '... (truncated)' : ''}
-
-                ## Review Focus Areas
-
-                1. **Scope Creep Prevention**:
-                   - Is this change doing ONLY what it's supposed to do?
-                   - Are there unrelated changes mixed in?
-                   - Is functionality being added that wasn't in the original scope?
-                   - Are we solving problems that don't need solving right now?
-
-                2. **Code Quality Standards**:
-                   - Does this match our existing patterns and conventions?
-                   - Is the complexity justified or over-engineered?
-                   - Are abstractions appropriate or premature?
-                   - Is this the simplest solution that works?
-
-                3. **Technical Debt & Maintenance**:
-                   - What debt is this introducing?
-                   - Will this be a pain to maintain?
-                   - Are we painting ourselves into a corner?
-                   - Is this making the codebase harder to understand?
-
-                4. **Architecture Integrity**:
-                   - Does this respect our existing boundaries and layers?
-                   - Is it putting code in the right place?
-                   - Are we breaking established patterns?
-                   - Will this decision haunt us later?
-
-                5. **Performance & Resource Usage**:
-                   - Is this efficient with resources?
-                   - Are there obvious performance problems?
-                   - Is the complexity worth the performance gain?
-
-                6. **Security & Error Handling**:
-                   - Are errors handled properly?
-                   - Are there security implications?
-                   - Is input validated appropriately?
-
-                Be direct and specific. Call out scope creep immediately. Focus on what will cause problems in 6 months, not what's theoretically imperfect. If it's good code that solves the problem simply, say so.`;
-
-                const response = await callClaude(prompt);
-                
-                if (response.content && response.content[0]) {
-                  reviews.push({
-                    file: file.filename,
-                    review: response.content[0].text
-                  });
-                }
-              } catch (error) {
-                console.error(`Error reviewing ${file.filename}:`, error.message);
-                reviews.push({
-                  file: file.filename,
-                  review: `⚠️ Error during review: ${error.message}`
-                });
-              }
-            }
-            
-            // Create or update the comprehensive review comment
-            if (reviews.length > 0) {
-              const uniqueId = '<!-- ai-code-review-file-analysis -->';
-              let comment = `${uniqueId}\n## 🔍 Technical Review\n\n`;
-              comment += `Reviewed **${reviews.length}** file(s) focusing on code quality, scope creep, and maintainability.\n\n`;
-              
-              for (const review of reviews) {
-                comment += `### 📄 ${review.file}\n\n`;
-                comment += `${review.review}\n\n`;
-                comment += `---\n\n`;
-              }
-              
-              // Find existing comment with our unique identifier
-              const { data: comments } = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-              });
-              
-              const existingComment = comments.find(comment => 
-                comment.body.includes(uniqueId) && 
-                comment.user.type === 'Bot'
-              );
-              
-              if (existingComment) {
-                // Update existing comment
-                await github.rest.issues.updateComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: existingComment.id,
-                  body: comment
-                });
-                console.log('Updated existing file review comment');
-              } else {
-                // Create new comment
+                // Post review comment
                 await github.rest.issues.createComment({
                   issue_number: context.issue.number,
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  body: comment
-                });
-                console.log('Created new file review comment');
-              }
-            }
-
-      - name: PR Summary
-        uses: actions/github-script@v7
-        env:
-          CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
-        with:
-          script: |
-            const https = require('https');
-            const fs = require('fs').promises;
-            
-            // Read codebase context
-            const codebaseContext = await fs.readFile('codebase-context.txt', 'utf8');
-            
-            // Get PR info
-            const pr = context.payload.pull_request;
-            const { data: diff } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: pr.number,
-              mediaType: {
-                format: 'diff'
-              }
-            });
-            
-            const prompt = `You are a Principal Engineer who has deep expertise in this codebase. Provide a technical assessment of this pull request focused on code quality and scope management.
-
-            ## Codebase Context
-            ${codebaseContext}
-
-            ## Pull Request
-            Title: ${pr.title}
-            Description: ${pr.body || 'No description provided'}
-            Author: ${pr.user.login}
-            
-            ## Diff Overview
-            ${diff.substring(0, 20000)}
-
-            ## Technical Assessment Required
-
-            1. **Scope Analysis**:
-               - Is this PR doing what it claims and ONLY what it claims?
-               - Are there hidden features or unrelated changes?
-               - Is the scope appropriately sized or should it be split?
-               - Are we fixing things that aren't broken?
-
-            2. **Code Quality Assessment**:
-               - Rate the code quality objectively (A/B/C/D/F)
-               - What are the main quality issues if any?
-               - Is this following our established patterns?
-               - Is the solution appropriately simple or over-engineered?
-
-            3. **Technical Debt Impact**:
-               - What debt is being created?
-               - What debt is being paid down?
-               - Net impact on codebase maintainability?
-               - Will we regret this in 6 months?
-
-            4. **Risk Assessment**:
-               - Production risks (be specific)
-               - Security concerns
-               - Performance implications
-               - Breaking changes or compatibility issues
-
-            5. **Merge Decision**:
-               - READY TO MERGE or NOT READY (no maybe)
-               - If not ready, list specific blockers
-               - Are the blockers must-fix or nice-to-have?
-
-            Be technically precise and direct. Focus on what matters for long-term codebase health. Skip the fluff - just facts and actionable feedback.`;
-
-            const requestData = JSON.stringify({
-              model: 'claude-3-opus-20240229',
-              max_tokens: 3000,
-              temperature: 0.3,
-              messages: [{
-                role: 'user',
-                content: prompt
-              }]
-            });
-            
-            const options = {
-              hostname: 'api.anthropic.com',
-              path: '/v1/messages',
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': process.env.CLAUDE_API_KEY,
-                'anthropic-version': '2023-06-01'
-              }
-            };
-            
-            try {
-              const response = await new Promise((resolve, reject) => {
-                const req = https.request(options, (res) => {
-                  let data = '';
-                  res.on('data', (chunk) => data += chunk);
-                  res.on('end', () => resolve(JSON.parse(data)));
-                });
-                req.on('error', reject);
-                req.write(requestData);
-                req.end();
-              });
-              
-              if (response.content && response.content[0]) {
-                const uniqueId = '<!-- ai-code-review-technical-assessment -->';
-                const summaryComment = `${uniqueId}\n## 📊 Technical Assessment\n\n${response.content[0].text}`;
-                
-                // Find existing comment with our unique identifier
-                const { data: comments } = await github.rest.issues.listComments({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: context.issue.number,
+                  body: `## 🤖 Claude AI Code Review\n\n${review}`
                 });
                 
-                const existingComment = comments.find(comment => 
-                  comment.body.includes(uniqueId) && 
-                  comment.user.type === 'Bot'
-                );
-                
-                if (existingComment) {
-                  // Update existing comment
-                  await github.rest.issues.updateComment({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    comment_id: existingComment.id,
-                    body: summaryComment
-                  });
-                  console.log('Updated existing technical assessment comment');
-                } else {
-                  // Create new comment
-                  await github.rest.issues.createComment({
-                    issue_number: context.issue.number,
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    body: summaryComment
-                  });
-                  console.log('Created new technical assessment comment');
-                }
+                console.log('Review posted successfully');
+              } else {
+                throw new Error('No content in Claude response');
               }
             } catch (error) {
-              console.error('Error creating summary:', error.message);
+              console.error('Error:', error);
+              
+              // Post error comment
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## ❌ AI Review Error\n\nFailed to generate code review. Please check the action logs for details.`
+              });
             }
