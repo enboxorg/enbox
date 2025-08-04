@@ -89,18 +89,16 @@ jobs:
       
     - name: Start dwn-server
       run: |
-        # Build and start dwn-server in the background
-        cd packages/dwn-server
-        npm run build || true
-        
         # Start the server with default configuration (uses LevelDB)
         export DS_PORT=3000
         export DWN_BASE_URL=http://localhost:3000
         
         # Start server in background
-        npm start &
+        cd packages/dwn-server
+        pnpm server &
         DWN_SERVER_PID=$!
         echo "DWN_SERVER_PID=$DWN_SERVER_PID" >> $GITHUB_ENV
+        cd ../..
         
         # Wait for server to be ready
         echo "Waiting for dwn-server to be ready..."
@@ -112,8 +110,6 @@ jobs:
           echo "Waiting for dwn-server... attempt $i/30"
           sleep 2
         done
-        
-        cd ../..
       
     - name: Run tests with coverage
       run: |

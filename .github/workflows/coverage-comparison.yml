@@ -75,23 +75,23 @@ jobs:
       
     - name: Start dwn-server for PR tests
       run: |
-        cd packages/dwn-server
-        npm run build || true
-        
         export DS_PORT=3000
         export DWN_BASE_URL=http://localhost:3000
         
-        npm start &
+        cd packages/dwn-server
+        pnpm server &
         echo "DWN_SERVER_PID=$!" >> $GITHUB_ENV
+        cd ../..
         
+        echo "Waiting for dwn-server to be ready..."
         for i in {1..30}; do
           if curl -f http://localhost:3000/info >/dev/null 2>&1; then
+            echo "dwn-server is ready!"
             break
           fi
+          echo "Waiting for dwn-server... attempt $i/30"
           sleep 2
         done
-        
-        cd ../..
       
     - name: Generate PR coverage
       run: |
@@ -140,23 +140,23 @@ jobs:
         
     - name: Start dwn-server for base tests
       run: |
-        cd packages/dwn-server
-        npm run build || true
-        
         export DS_PORT=3000
         export DWN_BASE_URL=http://localhost:3000
         
-        npm start &
+        cd packages/dwn-server
+        pnpm server &
         echo "DWN_SERVER_BASE_PID=$!" >> $GITHUB_ENV
+        cd ../..
         
+        echo "Waiting for dwn-server to be ready..."
         for i in {1..30}; do
           if curl -f http://localhost:3000/info >/dev/null 2>&1; then
+            echo "dwn-server is ready!"
             break
           fi
+          echo "Waiting for dwn-server... attempt $i/30"
           sleep 2
         done
-        
-        cd ../..
       
     - name: Generate base coverage
       run: |
