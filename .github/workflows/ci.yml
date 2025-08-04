@@ -12,13 +12,112 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Test and Coverage
+  build:
+    name: Build All Packages
     runs-on: ubuntu-latest
     
-    strategy:
-      matrix:
-        node-version: [20.x]
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20.x
+        
+    - name: Install pnpm
+      uses: pnpm/action-setup@v2
+      with:
+        version: 10.x
+        
+    - name: Get pnpm store directory
+      id: pnpm-cache
+      shell: bash
+      run: |
+        echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+        
+    - name: Setup pnpm cache
+      uses: actions/cache@v3
+      with:
+        path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-pnpm-store-
+          
+    - name: Install dependencies with native builds
+      run: |
+        # Install dependencies without running scripts first
+        pnpm install --frozen-lockfile --ignore-scripts
+        
+        # Now rebuild native dependencies
+        # This will build better-sqlite3 and other native deps
+        pnpm rebuild better-sqlite3 --config.build-from-source=true
+        pnpm rebuild
+        
+    - name: Run linting
+      run: pnpm lint
+      
+    - name: Build packages
+      run: pnpm build
+      
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-artifacts
+        path: |
+          packages/*/dist/
+          packages/*/build/
+          packages/*/generated/
+          node_modules/.pnpm/better-sqlite3*/
+        retention-days: 1
+
+  # Test jobs - each package gets its own job for parallel execution
+  test-common:
+    name: Test @enbox/common
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup test environment
+      uses: ./.github/actions/setup-test-env
+      with:
+        package-name: common
+
+  test-crypto:
+    name: Test @enbox/crypto
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup test environment
+      uses: ./.github/actions/setup-test-env
+      with:
+        package-name: crypto
+
+  test-dids:
+    name: Test @enbox/dids
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup test environment
+      uses: ./.github/actions/setup-test-env
+      with:
+        package-name: dids
+
+  test-dwn-sdk-js:
+    name: Test @enbox/dwn-sdk-js
+    runs-on: ubuntu-latest
+    needs: build
     
     services:
       postgres:
@@ -54,227 +153,212 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Setup Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v4
+    - name: Setup test environment
+      uses: ./.github/actions/setup-test-env
       with:
-        node-version: ${{ matrix.node-version }}
-        
-    - name: Install pnpm
-      uses: pnpm/action-setup@v2
-      with:
-        version: 10.x
-        
-    - name: Get pnpm store directory
-      id: pnpm-cache
-      shell: bash
-      run: |
-        echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
-        
-    - name: Setup pnpm cache
-      uses: actions/cache@v3
-      with:
-        path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
-        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-        restore-keys: |
-          ${{ runner.os }}-pnpm-store-
-          
-    - name: Install dependencies
-      run: pnpm install --frozen-lockfile
-      
-    - name: Run linting
-      run: pnpm lint
-      
-    - name: Build packages
-      run: pnpm build
-      
-    - name: Start dwn-server
-      run: |
-        # Start the server with default configuration (uses LevelDB)
-        export DS_PORT=3000
-        export DWN_BASE_URL=http://localhost:3000
-        
-        # Start server in background
-        cd packages/dwn-server
-        pnpm server &
-        DWN_SERVER_PID=$!
-        echo "DWN_SERVER_PID=$DWN_SERVER_PID" >> $GITHUB_ENV
-        cd ../..
-        
-        # Wait for server to be ready
-        echo "Waiting for dwn-server to be ready..."
-        for i in {1..30}; do
-          if curl -f http://localhost:3000/info >/dev/null 2>&1; then
-            echo "dwn-server is ready!"
-            break
-          fi
-          echo "Waiting for dwn-server... attempt $i/30"
-          sleep 2
-        done
-      
-    - name: Run tests with coverage
-      run: |
-        # Set environment variables for database connections
-        export DB_HOST=localhost
-        export DB_PORT=5432
-        export DB_USER=root
-        export DB_PASSWORD=dwn
-        export DB_NAME=dwn
-        
-        # MySQL connection
-        export MYSQL_HOST=localhost
-        export MYSQL_PORT=3306
-        export MYSQL_USER=root
-        export MYSQL_PASSWORD=dwn
-        export MYSQL_DATABASE=dwn
-        
-        # Run tests for all packages using pnpm from root
-        pnpm test:node
-        
-    - name: Stop dwn-server
-      if: always()
-      run: |
-        if [ ! -z "$DWN_SERVER_PID" ]; then
-          kill $DWN_SERVER_PID || true
-        fi
-        
-    - name: Upload coverage reports
-      uses: actions/upload-artifact@v4
-      with:
-        name: coverage-reports
-        path: |
-          packages/*/coverage/
-          packages/*/.nyc_output/
-        retention-days: 7
+        package-name: dwn-sdk-js
 
-  coverage-check:
-    name: Coverage Check
+  test-dwn-sql-store:
+    name: Test @enbox/dwn-sql-store
     runs-on: ubuntu-latest
-    needs: test
-    if: github.event_name == 'pull_request'
+    needs: build
+    
+    services:
+      postgres:
+        image: postgres:13.3
+        env:
+          POSTGRES_DB: dwn
+          POSTGRES_USER: root
+          POSTGRES_PASSWORD: dwn
+          POSTGRES_INITDB_ARGS: '--lc-collate=C --lc-ctype=C'
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: dwn
+          MYSQL_DATABASE: dwn
+          MYSQL_ALLOW_EMPTY_PASSWORD: true
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      
+    - name: Setup test environment
+      uses: ./.github/actions/setup-test-env
       with:
-        fetch-depth: 0  # Fetch all history for comparison
-        
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: 20.x
-        
-    - name: Install pnpm
-      uses: pnpm/action-setup@v2
-      with:
-        version: 10.x
-        
-    - name: Download coverage reports
-      uses: actions/download-artifact@v4
-      with:
-        name: coverage-reports
-        path: coverage-artifacts
-        
-    - name: Check coverage thresholds
-      run: |
-        # This script will check if coverage has decreased
-        # You can customize the thresholds as needed
-        
-        echo "Checking coverage thresholds..."
-        
-        # For now, we'll set up a basic check
-        # In a real scenario, you'd compare against base branch coverage
-        
-        for report in coverage-artifacts/packages/*/coverage/cobertura-coverage.xml; do
-          if [ -f "$report" ]; then
-            pkg_dir=$(dirname $(dirname "$report"))
-            pkg_name=$(basename $(dirname "$pkg_dir"))
-            echo "Checking coverage for $pkg_name"
-            
-            # Extract coverage percentage from cobertura report
-            if command -v python3 &> /dev/null; then
-              coverage=$(python3 -c "import xml.etree.ElementTree as ET; import sys; tree = ET.parse(sys.argv[1]) if len(sys.argv) > 1 else None; root = tree.getroot() if tree else None; line_rate = float(root.get('line-rate', 0)) if root else 0; print(f'{line_rate * 100:.2f}')" "$report" 2>/dev/null || echo "0.00")
-              echo "Coverage for $pkg_name: $coverage%"
-              
-              # Fail if coverage is below threshold (customize as needed)
-              threshold=80
-              if python3 -c "import sys; exit(0 if float(sys.argv[1]) >= float(sys.argv[2]) else 1)" "$coverage" "$threshold"; then
-                echo "✅ Coverage for $pkg_name is above ${threshold}% threshold"
-              else
-                echo "❌ Coverage for $pkg_name is below ${threshold}% threshold"
-                exit 1
-              fi
-            fi
-          fi
-        done
-        
-        echo "✅ All coverage checks passed"
-        
-    - name: Comment PR with coverage
-      uses: actions/github-script@v7
-      if: github.event_name == 'pull_request'
-      with:
-        script: |
-          const fs = require('fs');
-          const path = require('path');
-          
-          let coverageReport = '## 📊 Coverage Report\n\n';
-          coverageReport += '| Package | Coverage |\n';
-          coverageReport += '|---------|----------|\n';
-          
-          // Parse coverage reports and build comment
-          const coverageDir = 'coverage-artifacts/packages';
-          if (fs.existsSync(coverageDir)) {
-            const packages = fs.readdirSync(coverageDir);
-            
-            for (const pkg of packages) {
-              const coberturaPath = path.join(coverageDir, pkg, 'coverage', 'cobertura-coverage.xml');
-              if (fs.existsSync(coberturaPath)) {
-                // For simplicity, we'll just note that coverage was generated
-                // In practice, you'd parse the XML to get actual percentages
-                coverageReport += `| ${pkg} | ✅ Coverage generated |\n`;
-              }
-            }
-          }
-          
-          // Find and update or create comment
-          const { data: comments } = await github.rest.issues.listComments({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: context.issue.number,
-          });
-          
-          const botComment = comments.find(comment => 
-            comment.user.type === 'Bot' && comment.body.includes('Coverage Report')
-          );
-          
-          if (botComment) {
-            await github.rest.issues.updateComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: botComment.id,
-              body: coverageReport
-            });
-          } else {
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: coverageReport
-            });
-          }
+        package-name: dwn-sql-store
+        test-command: test
 
-  # This job ensures all required checks pass
+  test-agent:
+    name: Test @enbox/agent
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup test environment
+      uses: ./.github/actions/setup-test-env
+      with:
+        package-name: agent
+        needs-dwn-server: true
+
+  test-api:
+    name: Test @enbox/api
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup test environment
+      uses: ./.github/actions/setup-test-env
+      with:
+        package-name: api
+        needs-dwn-server: true
+
+  test-identity-agent:
+    name: Test @enbox/identity-agent
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup test environment
+      uses: ./.github/actions/setup-test-env
+      with:
+        package-name: identity-agent
+        needs-dwn-server: true
+
+  test-proxy-agent:
+    name: Test @enbox/proxy-agent
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup test environment
+      uses: ./.github/actions/setup-test-env
+      with:
+        package-name: proxy-agent
+        needs-dwn-server: true
+
+  test-user-agent:
+    name: Test @enbox/user-agent
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup test environment
+      uses: ./.github/actions/setup-test-env
+      with:
+        package-name: user-agent
+        needs-dwn-server: true
+
+  test-dwn-server:
+    name: Test @enbox/dwn-server
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup test environment
+      uses: ./.github/actions/setup-test-env
+      with:
+        package-name: dwn-server
+        test-command: test
+
+  # Summary job to ensure all tests pass
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: test
+    needs: [
+      build,
+      test-common,
+      test-crypto,
+      test-dids,
+      test-dwn-sdk-js,
+      test-dwn-sql-store,
+      test-agent,
+      test-api,
+      test-identity-agent,
+      test-proxy-agent,
+      test-user-agent,
+      test-dwn-server
+    ]
     if: always()
     steps:
       - name: Check if all jobs succeeded
         run: |
-          if [[ "${{ needs.test.result }}" != "success" ]]; then
-            echo "Test job failed"
+          # Check build job
+          if [[ "${{ needs.build.result }}" != "success" ]]; then
+            echo "Build job failed"
             exit 1
           fi
+          
+          # Check all test jobs
+          test_jobs=(
+            "test-common"
+            "test-crypto"
+            "test-dids"
+            "test-dwn-sdk-js"
+            "test-dwn-sql-store"
+            "test-agent"
+            "test-api"
+            "test-identity-agent"
+            "test-proxy-agent"
+            "test-user-agent"
+            "test-dwn-server"
+          )
+          
+          for job in "${test_jobs[@]}"; do
+            job_var="needs.${job//-/_}.result"
+            job_result="${!job_var}"
+            
+            # Use GitHub Actions expression syntax
+            case "$job" in
+              test-common) result="${{ needs.test-common.result }}" ;;
+              test-crypto) result="${{ needs.test-crypto.result }}" ;;
+              test-dids) result="${{ needs.test-dids.result }}" ;;
+              test-dwn-sdk-js) result="${{ needs.test-dwn-sdk-js.result }}" ;;
+              test-dwn-sql-store) result="${{ needs.test-dwn-sql-store.result }}" ;;
+              test-agent) result="${{ needs.test-agent.result }}" ;;
+              test-api) result="${{ needs.test-api.result }}" ;;
+              test-identity-agent) result="${{ needs.test-identity-agent.result }}" ;;
+              test-proxy-agent) result="${{ needs.test-proxy-agent.result }}" ;;
+              test-user-agent) result="${{ needs.test-user-agent.result }}" ;;
+              test-dwn-server) result="${{ needs.test-dwn-server.result }}" ;;
+            esac
+            
+            if [[ "$result" != "success" ]]; then
+              echo "$job job failed with result: $result"
+              exit 1
+            fi
+          done
           
           echo "✅ All CI checks passed!"

@@ -1,0 +1,79 @@
+name: 'Setup Test Environment'
+description: 'Setup Node.js, pnpm, and dependencies for testing'
+
+inputs:
+  package-name:
+    description: 'Name of the package to test'
+    required: true
+  needs-dwn-server:
+    description: 'Whether this test needs dwn-server running'
+    required: false
+    default: 'false'
+  test-command:
+    description: 'Test command to run (default: test:node)'
+    required: false
+    default: 'test:node'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20.x
+        
+    - name: Install pnpm
+      uses: pnpm/action-setup@v2
+      with:
+        version: 10.x
+        
+    - name: Install dependencies
+      shell: bash
+      run: |
+        # Install dependencies without running scripts first
+        pnpm install --frozen-lockfile --ignore-scripts
+        
+        # Now rebuild to ensure native dependencies are built
+        pnpm rebuild
+        
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: build-artifacts
+        
+    - name: Start dwn-server
+      if: inputs.needs-dwn-server == 'true'
+      shell: bash
+      run: |
+        export DS_PORT=3000
+        export DWN_BASE_URL=http://localhost:3000
+        
+        cd packages/dwn-server
+        pnpm server &
+        DWN_SERVER_PID=$!
+        echo "DWN_SERVER_PID=$DWN_SERVER_PID" >> $GITHUB_ENV
+        cd ../..
+        
+        echo "Waiting for dwn-server to be ready..."
+        for i in {1..30}; do
+          if curl -f http://localhost:3000/info >/dev/null 2>&1; then
+            echo "dwn-server is ready!"
+            break
+          fi
+          echo "Waiting for dwn-server... attempt $i/30"
+          sleep 2
+        done
+        
+    - name: Run tests
+      shell: bash
+      run: |
+        cd packages/${{ inputs.package-name }}
+        pnpm ${{ inputs.test-command }}
+        
+    - name: Stop dwn-server
+      if: inputs.needs-dwn-server == 'true' && always()
+      shell: bash
+      run: |
+        if [ ! -z "$DWN_SERVER_PID" ]; then
+          kill $DWN_SERVER_PID || true
+        fi
