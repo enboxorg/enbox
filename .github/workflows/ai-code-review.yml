@@ -17,6 +17,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          # Use PAT for checkout to ensure proper permissions
+          token: ${{ secrets.CLAUDE_REVIEW_TOKEN }}
           # This ensures we have the full PR context
           fetch-depth: 0
           # Use the PR head ref
