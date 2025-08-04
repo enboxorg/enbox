@@ -7,7 +7,6 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  id-token: write  # Required by Claude Code Action for internal authentication
 
 jobs:
   claude-review:
@@ -17,97 +16,158 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          # Use PAT for checkout to ensure proper permissions
-          token: ${{ secrets.CLAUDE_REVIEW_TOKEN }}
-          # This ensures we have the full PR context
           fetch-depth: 0
-          # Use the PR head ref
-          ref: ${{ github.event.pull_request.head.sha }}
 
-      - uses: anthropics/claude-code-action@beta
-        name: Claude Code Review
+      - name: Get PR diff
+        id: get-diff
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+          DIFF=$(git diff origin/${{ github.event.pull_request.base.ref }}..HEAD)
+          # Save diff to file to avoid issues with special characters
+          echo "$DIFF" > pr_diff.txt
+          echo "diff_file=pr_diff.txt" >> $GITHUB_OUTPUT
+
+      - name: Get changed files
+        id: changed-files
+        run: |
+          FILES=$(git diff --name-only origin/${{ github.event.pull_request.base.ref }}..HEAD | head -20)
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Review with Claude
+        id: claude-review
+        uses: actions/github-script@v7
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github_token: ${{ secrets.CLAUDE_REVIEW_TOKEN }}  # Use PAT for all PRs including bot PRs
-          model: "claude-opus-4-20250514"
-          max_tokens: 8192
-          temperature: 0.3
-          context_size_chars: 30000
-          disable_send_context: false
-          settings: |
-            {
-              "env": {
-                "REVIEW_TYPE": "principal-engineer"
-              },
-              "permissions": {
-                "allow": ["Read", "Bash"],
-                "deny": ["WebFetch", "Write"]
-              },
-              "hooks": {
-                "PreToolUse": [{
-                  "matcher": "Read",
-                  "hooks": [{
-                    "type": "log",
-                    "message": "Reading file for code review..."
-                  }]
-                }]
+          script: |
+            const fs = require('fs');
+            const https = require('https');
+            
+            // Read PR diff
+            const diff = fs.readFileSync('pr_diff.txt', 'utf8');
+            const files = `${{ steps.changed-files.outputs.files }}`;
+            
+            // Read context files if they exist
+            let contextContent = '';
+            const contextFiles = ['README.md', 'AGENT_CONTEXT.md'];
+            for (const file of contextFiles) {
+              try {
+                const content = fs.readFileSync(file, 'utf8');
+                contextContent += `\n### ${file}\n${content}\n`;
+              } catch (e) {
+                // File doesn't exist, skip
               }
             }
-          prompt: |
-            You are a Principal Engineer reviewing this pull request. Provide a comprehensive technical assessment focused on code quality, architecture, and scope management.
+            
+            const prompt = `You are a Principal Engineer reviewing a pull request. Analyze the changes and provide a comprehensive technical review.
 
-            ## Context Files to Read First
+            ## Repository Context
+            ${contextContent}
 
-            Please read these files to understand the codebase context:
-            - README.md
-            - AGENT_CONTEXT.md (if exists)
-            - GETTING_STARTED.md (if exists)
-            - Any package.json files in the root and packages/* directories
+            ## PR Information
+            Title: ${{ github.event.pull_request.title }}
+            Description: ${{ github.event.pull_request.body || 'No description provided' }}
+            Author: ${{ github.event.pull_request.user.login }}
 
-            ## Review Process
+            ## Changed Files
+            ${files}
 
-            1. **Understand the Codebase**: Start by reading the context files above to understand the project structure, patterns, and standards.
+            ## Diff (truncated if too large)
+            ${diff.substring(0, 30000)}
 
-            2. **Analyze the PR**: Review all changed files in this pull request.
+            ## Review Guidelines
 
-            3. **File-by-File Review**: For each significant file change, provide:
-               - Pattern adherence analysis
-               - Code quality assessment
-               - Architecture fit evaluation
-               - Potential issues or improvements
-               - Security and performance considerations
+            Provide a technical assessment covering:
 
-            4. **Overall Assessment**: Provide a technical assessment covering:
-               
-               **Scope Analysis**:
-               - Is this PR doing what it claims and ONLY what it claims?
-               - Are there hidden features or unrelated changes?
-               - Is the scope appropriately sized or should it be split?
-               - Are we fixing things that aren't broken?
+            1. **Summary**: What does this PR do in 2-3 sentences?
 
-               **Code Quality Assessment**:
-               - Rate the code quality objectively (A/B/C/D/F)
-               - What are the main quality issues if any?
-               - Is this following established patterns?
-               - Is the solution appropriately simple or over-engineered?
+            2. **Code Quality** (A/B/C/D/F rating):
+               - Readability and maintainability
+               - Following established patterns
+               - Appropriate abstractions
 
-               **Technical Debt Impact**:
-               - What debt is being created?
-               - What debt is being paid down?
-               - Net impact on codebase maintainability?
-               - Will we regret this in 6 months?
+            3. **Issues Found**:
+               - List specific problems with file and line references
+               - Security vulnerabilities
+               - Performance concerns
+               - Logic errors
 
-               **Risk Assessment**:
-               - Production risks (be specific)
-               - Security concerns
-               - Performance implications
-               - Breaking changes or compatibility issues
+            4. **Suggestions**:
+               - Specific improvements with examples
+               - Better approaches if applicable
 
-               **Merge Decision**:
-               - READY TO MERGE or NOT READY (no maybe)
-               - If not ready, list specific blockers
-               - Are the blockers must-fix or nice-to-have?
+            5. **Merge Recommendation**:
+               - APPROVE: Ready to merge
+               - REQUEST CHANGES: Needs fixes (list blockers)
+               - COMMENT: Minor suggestions, can merge
 
-            Be technically precise and direct. Focus on what matters for long-term codebase health. Call out scope creep immediately. If it's good code that solves the problem simply, say so.
+            Be direct and specific. Focus on significant issues that impact functionality, security, or maintainability.`;
 
-            Format your response as a PR comment with clear sections and actionable feedback.
+            // Call Claude API
+            const requestData = JSON.stringify({
+              model: 'claude-3-opus-20240229',
+              max_tokens: 4000,
+              temperature: 0.3,
+              messages: [{
+                role: 'user',
+                content: prompt
+              }]
+            });
+
+            const options = {
+              hostname: 'api.anthropic.com',
+              path: '/v1/messages',
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': process.env.ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01'
+              }
+            };
+
+            try {
+              const response = await new Promise((resolve, reject) => {
+                const req = https.request(options, (res) => {
+                  let data = '';
+                  res.on('data', (chunk) => data += chunk);
+                  res.on('end', () => {
+                    try {
+                      resolve(JSON.parse(data));
+                    } catch (e) {
+                      reject(new Error(`Failed to parse response: ${e.message}`));
+                    }
+                  });
+                });
+                req.on('error', reject);
+                req.write(requestData);
+                req.end();
+              });
+
+              if (response.content && response.content[0]) {
+                const review = response.content[0].text;
+                
+                // Post review comment
+                await github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: `## 🤖 Claude AI Code Review\n\n${review}`
+                });
+                
+                console.log('Review posted successfully');
+              } else {
+                throw new Error('No content in Claude response');
+              }
+            } catch (error) {
+              console.error('Error:', error);
+              
+              // Post error comment
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## ❌ AI Review Error\n\nFailed to generate code review. Please check the action logs for details.`
+              });
+            }
