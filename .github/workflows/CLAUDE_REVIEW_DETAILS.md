@@ -8,7 +8,7 @@ This document contains detailed information about the Claude AI Code Review work
 
 When a pull request is opened or updated, the workflow:
 
-1. **Authenticates with GitHub** - Uses a GitHub App for secure, scoped access to your repository
+1. **Authenticates with Anthropic** - Uses your API key to access Claude
 2. **Learns your codebase** - Claude reads README.md, AGENT_CONTEXT.md, package.json files, and other documentation
 3. **Understands the context** - Analyzes your project structure, dependencies, and architectural patterns  
 4. **Reviews like a principal engineer** - Evaluates each file against your established standards and patterns
@@ -27,25 +27,24 @@ Unlike generic AI code reviews, this workflow:
 
 ## Setup Requirements
 
-### 1. GitHub App Installation
+### 1. Add Anthropic API Key
 
-1. Visit [github.com/apps/claude-code](https://github.com/apps/claude-code)
-2. Click "Install" and select your repository
-3. Note the App ID shown after installation
+1. Go to [console.anthropic.com](https://console.anthropic.com)
+2. Generate an API key
+3. Add it as `ANTHROPIC_API_KEY` secret in your repository:
+   - Go to Settings → Secrets and variables → Actions
+   - Click "New repository secret"
+   - Name: `ANTHROPIC_API_KEY`
+   - Value: Your API key
 
-### 2. Generate App Private Key
+### 2. Enable Workflow Permissions
 
-1. Go to your GitHub App settings
-2. Generate a new private key
-3. Save the downloaded `.pem` file securely
+1. Go to Settings → Actions → General
+2. Scroll to "Workflow permissions"
+3. Select "Read and write permissions"
+4. Save
 
-### 3. Add Repository Secrets
-
-Add these secrets to your repository:
-
-- `CLAUDE_CODE_APP_ID`: The App ID from step 1
-- `CLAUDE_CODE_APP_PRIVATE_KEY`: The contents of the `.pem` file from step 2
-- `ANTHROPIC_API_KEY`: Your Anthropic API key from [console.anthropic.com](https://console.anthropic.com)
+That's it! No GitHub App required.
 
 ## Context Files Used
 
@@ -186,13 +185,24 @@ use_vertex: "true"
 model: "claude-3-7-sonnet@20250219"
 ```
 
+### GitHub App Authentication (Optional)
+
+If you prefer to use GitHub App authentication for better security:
+
+1. Install the [Claude Code GitHub App](https://github.com/apps/claude-code)
+2. Add these secrets:
+   - `CLAUDE_CODE_APP_ID`: Your app ID
+   - `CLAUDE_CODE_APP_PRIVATE_KEY`: Your app's private key
+3. Update the workflow to use the app token (see examples in the action's documentation)
+
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Authentication Errors**: Ensure your GitHub App has the correct permissions
-2. **API Rate Limits**: Consider using a less powerful model for high-volume PRs
-3. **Timeout Issues**: Large PRs may timeout; consider splitting them
+1. **API Key Errors**: Ensure your `ANTHROPIC_API_KEY` secret is set correctly
+2. **Permission Denied**: Check that workflow permissions are set to "Read and write"
+3. **Rate Limits**: Consider using a less powerful model for high-volume PRs
+4. **Timeout Issues**: Large PRs may timeout; consider splitting them
 
 ### Debug Mode
 
@@ -217,6 +227,18 @@ settings: |
 ## Security Considerations
 
 - All reviews are read-only; Claude cannot modify your code
-- The GitHub App token is short-lived and scoped to your repository
 - API keys are stored as encrypted secrets
 - No data is retained by the action after the review completes
+- Consider using GitHub App authentication for additional security
+
+## Cost Estimation
+
+- **Opus 4**: ~$0.10-0.50 per PR depending on size
+- **Sonnet**: ~$0.05-0.25 per PR
+- **Haiku**: ~$0.02-0.10 per PR
+
+Factors affecting cost:
+- Number of files changed
+- Size of context files
+- Length of PR description
+- Model choice

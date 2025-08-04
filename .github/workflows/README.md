@@ -4,19 +4,15 @@ A GitHub Actions workflow that provides principal engineer-level code reviews us
 
 ## Quick Start
 
-1. **Create a GitHub App for authentication**:
-   - Go to [github.com/apps/claude-code](https://github.com/apps/claude-code) and install the Claude Code GitHub App
-   - Generate a private key for the app
-   - Add `CLAUDE_CODE_APP_ID` and `CLAUDE_CODE_APP_PRIVATE_KEY` as repository secrets
-
-2. **Add your Anthropic API key**:
+1. **Add your Anthropic API key**:
    - Add `ANTHROPIC_API_KEY` secret to your repository
    - Get your API key from [console.anthropic.com](https://console.anthropic.com)
 
-3. **Enable permissions**:
-   - The workflow will automatically request necessary permissions
+2. **Enable permissions**:
+   - Go to Settings → Actions → General
+   - Under "Workflow permissions", enable "Read and write permissions"
 
-4. Claude will automatically review all new PRs!
+3. Claude will automatically review all new PRs!
 
 ## What It Does
 
