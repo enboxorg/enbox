@@ -41,28 +41,118 @@ runs:
       with:
         name: build-artifacts
         
+    - name: Restore native modules
+      shell: bash
+      run: |
+        echo "::group::Restoring native modules"
+        # Find and list all .node files from artifacts
+        find . -name "*.node" -type f | head -20
+        
+        # Ensure better-sqlite3 binding is in the right place
+        if [ -d "node_modules/.pnpm" ]; then
+          echo "Found .pnpm directory, checking for better-sqlite3..."
+          find node_modules/.pnpm -name "better_sqlite3.node" -type f | while read -r node_file; do
+            echo "Found native module: $node_file"
+            # Ensure the directory exists
+            dir=$(dirname "$node_file")
+            if [ ! -d "$dir" ]; then
+              mkdir -p "$dir"
+            fi
+          done
+        fi
+        
+        # Rebuild if necessary (in case artifacts are incomplete)
+        if ! find node_modules/.pnpm -name "better_sqlite3.node" -type f | grep -q .; then
+          echo "Native modules not found in artifacts, rebuilding..."
+          pnpm rebuild better-sqlite3 || true
+          pnpm rebuild || true
+        fi
+        echo "::endgroup::"
+        
     - name: Start dwn-server
       if: inputs.needs-dwn-server == 'true'
       shell: bash
       run: |
+        echo "::group::Starting dwn-server"
         export DS_PORT=3000
         export DWN_BASE_URL=http://localhost:3000
         
         cd packages/dwn-server
-        pnpm server &
+        
+        # Check if the server script exists
+        if [ ! -f "dist/esm/src/main.js" ]; then
+          echo "dwn-server not built, building now..."
+          pnpm build:esm
+        fi
+        
+        # Start server with explicit output
+        echo "Starting dwn-server on port 3000..."
+        pnpm server > ../../dwn-server.log 2>&1 &
         DWN_SERVER_PID=$!
         echo "DWN_SERVER_PID=$DWN_SERVER_PID" >> $GITHUB_ENV
+        
+        # Store PID for cleanup
+        echo $DWN_SERVER_PID > ../../dwn-server.pid
+        
         cd ../..
         
+        # Wait for server to be ready with timeout
         echo "Waiting for dwn-server to be ready..."
-        for i in {1..30}; do
-          if curl -f http://localhost:3000/info >/dev/null 2>&1; then
-            echo "dwn-server is ready!"
+        TIMEOUT=60
+        ELAPSED=0
+        
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          if curl -f -s http://localhost:3000/info >/dev/null 2>&1; then
+            echo "✅ dwn-server is ready!"
+            curl -s http://localhost:3000/info | jq . || true
+            echo "::endgroup::"
             break
           fi
-          echo "Waiting for dwn-server... attempt $i/30"
+          
+          # Check if process is still running
+          if ! kill -0 $DWN_SERVER_PID 2>/dev/null; then
+            echo "❌ dwn-server process died!"
+            echo "Last 50 lines of dwn-server.log:"
+            tail -50 dwn-server.log
+            echo "::endgroup::"
+            exit 1
+          fi
+          
+          echo "Waiting for dwn-server... ($ELAPSED/$TIMEOUT seconds)"
           sleep 2
+          ELAPSED=$((ELAPSED + 2))
         done
+        
+        if [ $ELAPSED -ge $TIMEOUT ]; then
+          echo "❌ Timeout waiting for dwn-server!"
+          echo "dwn-server.log contents:"
+          cat dwn-server.log
+          echo "::endgroup::"
+          exit 1
+        fi
+        
+    - name: Verify test environment
+      shell: bash
+      run: |
+        echo "::group::Test environment verification"
+        echo "Current directory: $(pwd)"
+        echo "Node version: $(node --version)"
+        echo "pnpm version: $(pnpm --version)"
+        
+        if [ "${{ inputs.needs-dwn-server }}" == "true" ]; then
+          echo "dwn-server status:"
+          if [ -f dwn-server.pid ]; then
+            PID=$(cat dwn-server.pid)
+            if kill -0 $PID 2>/dev/null; then
+              echo "✅ dwn-server is running (PID: $PID)"
+            else
+              echo "❌ dwn-server is not running"
+            fi
+          else
+            echo "❌ dwn-server.pid not found"
+          fi
+        fi
+        echo "::endgroup::"
         
     - name: Run tests
       id: test
@@ -99,6 +189,17 @@ runs:
           tail -100 test-results/output.log >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "</details>" >> $GITHUB_STEP_SUMMARY
+          
+          # If dwn-server was needed, show its logs too
+          if [ "${{ inputs.needs-dwn-server }}" == "true" ] && [ -f ../../dwn-server.log ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "<details><summary>dwn-server logs</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            tail -50 ../../dwn-server.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+          fi
         fi
         
         # Exit with the original test exit code
@@ -109,13 +210,33 @@ runs:
       uses: actions/upload-artifact@v4
       with:
         name: test-results-${{ inputs.package-name }}
-        path: packages/${{ inputs.package-name }}/test-results/
+        path: |
+          packages/${{ inputs.package-name }}/test-results/
+          dwn-server.log
         retention-days: 7
         
     - name: Stop dwn-server
       if: inputs.needs-dwn-server == 'true' && always()
       shell: bash
       run: |
-        if [ ! -z "$DWN_SERVER_PID" ]; then
-          kill $DWN_SERVER_PID || true
+        echo "::group::Stopping dwn-server"
+        if [ -f dwn-server.pid ]; then
+          PID=$(cat dwn-server.pid)
+          if kill -0 $PID 2>/dev/null; then
+            echo "Stopping dwn-server (PID: $PID)..."
+            kill $PID || true
+            sleep 2
+            # Force kill if still running
+            if kill -0 $PID 2>/dev/null; then
+              echo "Force killing dwn-server..."
+              kill -9 $PID || true
+            fi
+          fi
+          rm -f dwn-server.pid
         fi
+        
+        # Also try the environment variable
+        if [ ! -z "$DWN_SERVER_PID" ]; then
+          kill $DWN_SERVER_PID 2>/dev/null || true
+        fi
+        echo "::endgroup::"
