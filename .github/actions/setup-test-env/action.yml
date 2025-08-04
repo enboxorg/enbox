@@ -32,119 +32,28 @@ runs:
       uses: pnpm/action-setup@v2
       with:
         version: 10.x
-        
-    - name: Get pnpm store directory
-      id: pnpm-cache
-      shell: bash
-      run: |
-        echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
-        
-    - name: Setup pnpm cache
-      uses: actions/cache@v3
-      with:
-        path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
-        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-        restore-keys: |
-          ${{ runner.os }}-pnpm-store-
           
-    - name: Cache node_modules
-      id: cache-node-modules
-      uses: actions/cache@v3
-      with:
-        path: |
-          node_modules
-          packages/*/node_modules
-        key: ${{ runner.os }}-node-modules-${{ hashFiles('**/pnpm-lock.yaml') }}
-        restore-keys: |
-          ${{ runner.os }}-node-modules-
-        
-    - name: Install dependencies
-      shell: bash
-      run: |
-        # Set environment to allow building native modules
-        export npm_config_build_from_source=true
-        export JOBS=max
-        
-        # If cache hit, just verify installation
-        if [ "${{ steps.cache-node-modules.outputs.cache-hit }}" == "true" ]; then
-          echo "::group::Using cached node_modules"
-          echo "node_modules restored from cache"
-          
-          # Verify installation is intact
-          pnpm install --frozen-lockfile --prefer-offline
-          
-          # Check native modules
-          echo "Checking for native modules..."
-          find node_modules/.pnpm -name "*.node" -type f | head -10
-          echo "::endgroup::"
-        else
-          echo "::group::Installing dependencies"
-          # Fresh install with native module builds
-          pnpm install --frozen-lockfile
-          echo "::endgroup::"
-        fi
-        
-        # Verify better-sqlite3 is available
-        echo "::group::Verifying better-sqlite3"
-        if find node_modules/.pnpm -name "better_sqlite3.node" -type f | grep -q .; then
-          echo "✅ better-sqlite3 native module found"
-          find node_modules/.pnpm -name "better_sqlite3.node" -type f | head -5
-        else
-          echo "⚠️ better-sqlite3 native module not found, attempting rebuild..."
-          
-          # Try multiple approaches to rebuild
-          export npm_config_build_from_source=true
-          export FORCE_BUILD=true
-          
-          # Approach 1: Rebuild from root
-          echo "Attempting rebuild from root..."
-          pnpm rebuild better-sqlite3 || true
-          
-          # Approach 2: Rebuild from package directory
-          if [ -d "packages/${{ inputs.package-name }}" ]; then
-            echo "Attempting rebuild from package directory..."
-            cd packages/${{ inputs.package-name }}
-            pnpm rebuild better-sqlite3 || true
-            cd ../..
-          fi
-          
-          # Approach 3: Force reinstall just better-sqlite3
-          if ! find node_modules/.pnpm -name "better_sqlite3.node" -type f | grep -q .; then
-            echo "Force reinstalling better-sqlite3..."
-            pnpm add -D better-sqlite3@8.7.0 --force || true
-          fi
-          
-          # Final check
-          if find node_modules/.pnpm -name "better_sqlite3.node" -type f | grep -q .; then
-            echo "✅ better-sqlite3 native module rebuilt successfully"
-          else
-            echo "❌ Failed to build better-sqlite3 native module"
-            echo "Checking better-sqlite3 directories:"
-            find node_modules/.pnpm -name "better-sqlite3" -type d | head -10
-            echo "Contents of better-sqlite3 build directories:"
-            find node_modules/.pnpm/better-sqlite3*/node_modules/better-sqlite3 -name "build" -type d -exec ls -la {} \; 2>/dev/null || true
-          fi
-        fi
-        echo "::endgroup::"
-        
     - name: Download build artifacts
       uses: actions/download-artifact@v4
       with:
         name: build-artifacts
         
-    - name: Restore workspace links
+    - name: Verify workspace state
       shell: bash
       run: |
-        echo "::group::Restoring workspace package links"
-        # The build artifacts contain the dist folders, but we need to ensure
-        # workspace links are properly set up for TypeScript resolution
+        echo "::group::Verifying workspace state"
+        
+        # Check if node_modules exists
+        if [ -d "node_modules" ]; then
+          echo "✅ node_modules directory exists"
+        else
+          echo "❌ node_modules directory missing!"
+        fi
         
         # List workspace packages
+        echo ""
         echo "Workspace packages:"
         pnpm ls -r --depth -1 | grep "^@enbox" || true
-        
-        # Ensure workspace links are created
-        pnpm install --frozen-lockfile --filter "@enbox/*" --prefer-offline
         
         # Verify dist folders exist
         echo ""
@@ -157,12 +66,34 @@ runs:
           fi
         done
         
-        # For dwn-server, also ensure test fixtures are copied
+        # Check workspace links
+        echo ""
+        echo "Checking workspace links in node_modules:"
+        for pkg in common crypto dids dwn-sdk-js dwn-sql-store dwn-server; do
+          if [ -L "node_modules/@enbox/$pkg" ]; then
+            echo "✅ @enbox/$pkg is linked"
+            ls -la "node_modules/@enbox/$pkg" | grep -E "->|→" || true
+          else
+            echo "❌ @enbox/$pkg is not linked"
+          fi
+        done
+        
+        # For dwn-server tests, ensure test fixtures are copied
         if [ "${{ inputs.package-name }}" == "dwn-server" ] && [ -d "packages/dwn-server/dist" ]; then
           echo ""
           echo "Copying dwn-server test fixtures..."
           cp -R packages/dwn-server/tests/fixtures packages/dwn-server/dist/esm/tests/ || true
         fi
+        
+        # Check for native modules
+        echo ""
+        echo "Checking for native modules:"
+        if find node_modules/.pnpm -name "better_sqlite3.node" -type f | grep -q .; then
+          echo "✅ better-sqlite3 native module found"
+        else
+          echo "⚠️ better-sqlite3 native module not found"
+        fi
+        
         echo "::endgroup::"
         
     - name: Start dwn-server
