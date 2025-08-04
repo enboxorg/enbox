@@ -244,9 +244,10 @@ jobs:
               }
             }
             
-            // Create a comprehensive review comment
+            // Create or update the comprehensive review comment
             if (reviews.length > 0) {
-              let comment = `## 🔍 Technical Review\n\n`;
+              const uniqueId = '<!-- ai-code-review-file-analysis -->';
+              let comment = `${uniqueId}\n## 🔍 Technical Review\n\n`;
               comment += `Reviewed **${reviews.length}** file(s) focusing on code quality, scope creep, and maintainability.\n\n`;
               
               for (const review of reviews) {
@@ -255,13 +256,37 @@ jobs:
                 comment += `---\n\n`;
               }
               
-              // Post the review
-              await github.rest.issues.createComment({
-                issue_number: context.issue.number,
+              // Find existing comment with our unique identifier
+              const { data: comments } = await github.rest.issues.listComments({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                body: comment
+                issue_number: context.issue.number,
               });
+              
+              const existingComment = comments.find(comment => 
+                comment.body.includes(uniqueId) && 
+                comment.user.type === 'Bot'
+              );
+              
+              if (existingComment) {
+                // Update existing comment
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existingComment.id,
+                  body: comment
+                });
+                console.log('Updated existing file review comment');
+              } else {
+                // Create new comment
+                await github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: comment
+                });
+                console.log('Created new file review comment');
+              }
             }
 
       - name: PR Summary
@@ -367,14 +392,40 @@ jobs:
               });
               
               if (response.content && response.content[0]) {
-                const summaryComment = `## 📊 Technical Assessment\n\n${response.content[0].text}`;
+                const uniqueId = '<!-- ai-code-review-technical-assessment -->';
+                const summaryComment = `${uniqueId}\n## 📊 Technical Assessment\n\n${response.content[0].text}`;
                 
-                await github.rest.issues.createComment({
-                  issue_number: context.issue.number,
+                // Find existing comment with our unique identifier
+                const { data: comments } = await github.rest.issues.listComments({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  body: summaryComment
+                  issue_number: context.issue.number,
                 });
+                
+                const existingComment = comments.find(comment => 
+                  comment.body.includes(uniqueId) && 
+                  comment.user.type === 'Bot'
+                );
+                
+                if (existingComment) {
+                  // Update existing comment
+                  await github.rest.issues.updateComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    comment_id: existingComment.id,
+                    body: summaryComment
+                  });
+                  console.log('Updated existing technical assessment comment');
+                } else {
+                  // Create new comment
+                  await github.rest.issues.createComment({
+                    issue_number: context.issue.number,
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    body: summaryComment
+                  });
+                  console.log('Created new technical assessment comment');
+                }
               }
             } catch (error) {
               console.error('Error creating summary:', error.message);
