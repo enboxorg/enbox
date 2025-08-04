@@ -2,17 +2,18 @@
 
 ## Overview
 
-This document contains detailed information about the Claude AI Code Review workflow that provides principal engineer-level code reviews.
+This document contains detailed information about the Claude AI Code Review workflow that provides principal engineer-level code reviews using the official Claude Code Action.
 
 ## How It Works
 
 When a pull request is opened or updated, the workflow:
 
-1. **Learns your codebase** - Reads README.md, AGENT_CONTEXT.md, package.json files, and other documentation
-2. **Understands the context** - Analyzes your project structure, dependencies, and architectural patterns  
-3. **Reviews like a principal engineer** - Evaluates each file against your established standards and patterns
-4. **Provides strategic assessment** - Delivers both tactical code feedback and strategic architectural guidance
-5. **Makes a recommendation** - Clear merge decision with specific conditions and follow-up items
+1. **Authenticates with GitHub** - Uses a GitHub App for secure, scoped access to your repository
+2. **Learns your codebase** - Claude reads README.md, AGENT_CONTEXT.md, package.json files, and other documentation
+3. **Understands the context** - Analyzes your project structure, dependencies, and architectural patterns  
+4. **Reviews like a principal engineer** - Evaluates each file against your established standards and patterns
+5. **Provides strategic assessment** - Delivers both tactical code feedback and strategic architectural guidance
+6. **Makes a recommendation** - Clear merge decision with specific conditions and follow-up items
 
 ## What Makes This Different
 
@@ -22,6 +23,29 @@ Unlike generic AI code reviews, this workflow:
 - **Maintains standards** - Enforces YOUR team's patterns, conventions, and quality bar
 - **Thinks long-term** - Considers technical debt, scalability, and architectural evolution
 - **Reviews holistically** - Understands how changes fit into the larger monorepo structure
+- **Uses official action** - Leverages Anthropic's official GitHub Action for reliability and updates
+
+## Setup Requirements
+
+### 1. GitHub App Installation
+
+1. Visit [github.com/apps/claude-code](https://github.com/apps/claude-code)
+2. Click "Install" and select your repository
+3. Note the App ID shown after installation
+
+### 2. Generate App Private Key
+
+1. Go to your GitHub App settings
+2. Generate a new private key
+3. Save the downloaded `.pem` file securely
+
+### 3. Add Repository Secrets
+
+Add these secrets to your repository:
+
+- `CLAUDE_CODE_APP_ID`: The App ID from step 1
+- `CLAUDE_CODE_APP_PRIVATE_KEY`: The contents of the `.pem` file from step 2
+- `ANTHROPIC_API_KEY`: Your Anthropic API key from [console.anthropic.com](https://console.anthropic.com)
 
 ## Context Files Used
 
@@ -37,40 +61,50 @@ The workflow reads these files to understand your codebase:
 
 ### Model Selection
 
-The workflow uses Claude 3 Opus by default for principal engineer-level analysis:
+The workflow uses Claude Opus 4 by default for principal engineer-level analysis:
 
-```javascript
-model: 'claude-3-opus-20240229',     // Principal engineer-level reviews
-// model: 'claude-3-sonnet-20240229',  // Senior engineer-level
-// model: 'claude-3-haiku-20240307',   // Quick code checks
+```yaml
+model: "claude-opus-4-20250514"  # Latest Opus model for best analysis
+# model: "claude-3-7-sonnet-20250219-beta:0"  # Faster, still excellent
+# model: "claude-3-5-haiku-20241022"  # Quick code checks
 ```
 
 ### Temperature Setting
 
 The workflow uses a low temperature (0.3) for consistent, analytical reviews. This ensures Claude provides thoughtful, precise feedback rather than creative interpretations.
 
-### File Limits
+### Settings Configuration
 
-By default, the workflow reviews up to 10 files per PR to avoid timeouts. You can adjust this in the workflow:
+The workflow uses advanced settings to control Claude's behavior:
 
-```javascript
-for (const file of files.slice(0, 10)) { // Change 10 to your preferred limit
+```yaml
+settings: |
+  {
+    "env": {
+      "REVIEW_TYPE": "principal-engineer"
+    },
+    "permissions": {
+      "allow": ["Read", "Bash"],
+      "deny": ["WebFetch", "Write"]
+    },
+    "hooks": {
+      "PreToolUse": [{
+        "matcher": "Read",
+        "hooks": [{
+          "type": "log",
+          "message": "Reading file for code review..."
+        }]
+      }]
+    }
+  }
 ```
 
-### Supported File Types
+### Permissions Explained
 
-The workflow reviews files with these extensions:
-- JavaScript/TypeScript: `.js`, `.jsx`, `.ts`, `.tsx`
-- Python: `.py`
-- Java: `.java`
-- Go: `.go`
-- Rust: `.rs`
-- Ruby: `.rb`
-- PHP: `.php`
-- C#: `.cs`
-- C/C++: `.c`, `.cpp`, `.h`
-- Swift: `.swift`
-- Kotlin: `.kt`
+- **Read**: Allows Claude to read files in your repository
+- **Bash**: Allows running read-only commands like `git diff`
+- **WebFetch**: Denied to prevent external API calls
+- **Write**: Denied to ensure reviews are read-only
 
 ## Example Output
 
@@ -102,58 +136,87 @@ This PR introduces OAuth2 integration, which aligns with our Q4 roadmap for thir
 - **Code Quality**: B+ - Well-structured but misses some established patterns
 - **Architecture Fit**: Mostly aligned, with exceptions noted below
 - **Technical Debt**: Introduces minor debt in error handling that should be addressed
+- **Risk Level**: Low - No critical issues, but needs the pattern fixes before merge
 
-### Risk Analysis
-- **Primary Risk**: The new OAuth flow bypasses our rate limiting middleware
-- **Security**: Token storage needs encryption (HIGH PRIORITY)
-- **Production Impact**: Low risk if above issues are addressed
+### Merge Recommendation: NOT READY
 
-### Recommendation
-**NOT READY TO MERGE** - Two must-fix items:
-1. Implement rate limiting for OAuth endpoints
-2. Encrypt refresh tokens in storage
+**Blockers (Must Fix)**:
+1. Replace direct Redis calls with CacheService abstraction
+2. Implement token encryption for refresh tokens
+3. Add rate limiting to OAuth callback endpoint
 
-### Follow-up Work
-- Add integration tests for the OAuth flow
-- Update API documentation
-- Consider extracting OAuth logic into a dedicated service (future PR)
+**Nice to Have**:
+- Consider extracting OAuth provider logic to a strategy pattern
+- Add metrics collection for OAuth success/failure rates
+
+Once the blockers are addressed, this will be a solid addition to our auth system.
 ```
 
-## Maximizing Review Quality
+## Advanced Features
 
-To get the best principal engineer-level reviews:
+### Using Different Models
 
-1. **Keep your context files updated** - Especially AGENT_CONTEXT.md and README.md
-2. **Document your patterns** - The more Claude knows about your standards, the better
-3. **Be specific in PR descriptions** - Help Claude understand the strategic intent
-4. **Define your architecture** - Document your architectural decisions and principles
+You can switch between models based on your needs:
 
-## Cost Considerations
+- **claude-opus-4-20250514**: Best for thorough, principal-level reviews
+- **claude-3-7-sonnet-20250219-beta:0**: Excellent balance of speed and quality
+- **claude-3-5-haiku-20241022**: Fast reviews for smaller changes
 
-- Claude API calls are billed per token
-- Opus provides principal engineer-level analysis but costs more
-- Context files add tokens but dramatically improve review quality
-- Large files are truncated to 15,000 characters
-- Budget approximately $0.10-0.50 per PR depending on size
+### Custom Review Prompts
+
+You can customize the review focus by modifying the `prompt` parameter:
+
+```yaml
+prompt: |
+  Focus on security implications and performance bottlenecks in this PR.
+  Pay special attention to SQL queries and API endpoint authorization.
+```
+
+### Using with Cloud Providers
+
+The action supports AWS Bedrock and Google Vertex AI:
+
+```yaml
+# For AWS Bedrock
+use_bedrock: "true"
+model: "anthropic.claude-3-7-sonnet-20250219-beta:0"
+
+# For Google Vertex AI
+use_vertex: "true"
+model: "claude-3-7-sonnet@20250219"
+```
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **"Claude API key not found"**
-   - Verify `CLAUDE_API_KEY` secret is set correctly
+1. **Authentication Errors**: Ensure your GitHub App has the correct permissions
+2. **API Rate Limits**: Consider using a less powerful model for high-volume PRs
+3. **Timeout Issues**: Large PRs may timeout; consider splitting them
 
-2. **Timeout errors**
-   - Reduce the number of files reviewed per PR
-   - Use a faster model (Sonnet or Haiku)
+### Debug Mode
 
-3. **No review posted**
-   - Check the Actions tab for error logs
-   - Ensure PR contains supported file types
+Enable debug logging by adding to your settings:
 
-## Privacy & Security
+```yaml
+settings: |
+  {
+    "env": {
+      "DEBUG": "true"
+    }
+  }
+```
 
-- Code is sent to Anthropic's API for analysis
-- Only changed files are sent, not the entire codebase
-- Review the [Anthropic Privacy Policy](https://www.anthropic.com/privacy)
-- Consider using self-hosted alternatives for sensitive code
+## Best Practices
+
+1. **Keep PRs Focused**: Smaller, focused PRs get better reviews
+2. **Update Context Files**: Keep README and AGENT_CONTEXT files current
+3. **Iterate on Feedback**: Use Claude's feedback to improve your code before merging
+4. **Monitor Usage**: Track API usage to manage costs effectively
+
+## Security Considerations
+
+- All reviews are read-only; Claude cannot modify your code
+- The GitHub App token is short-lived and scoped to your repository
+- API keys are stored as encrypted secrets
+- No data is retained by the action after the review completes
