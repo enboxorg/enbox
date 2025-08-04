@@ -49,18 +49,36 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-pnpm-store-
           
-    - name: Install dependencies with native builds
+    - name: Cache node_modules
+      id: cache-node-modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          node_modules
+          packages/*/node_modules
+        key: ${{ runner.os }}-node-modules-${{ hashFiles('**/pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-node-modules-
+          
+    - name: Install dependencies
       run: |
-        # Install dependencies without running scripts first
-        pnpm install --frozen-lockfile --ignore-scripts
+        # Set environment to allow building native modules
+        export npm_config_build_from_source=true
+        export JOBS=max
+        export FORCE_BUILD=true
         
-        # Now rebuild native dependencies
-        # This will build better-sqlite3 and other native deps
-        pnpm rebuild better-sqlite3 --config.build-from-source=true
+        # Install with native module builds enabled
+        pnpm install --frozen-lockfile --no-prefer-frozen-lockfile
+        
+        # Explicitly rebuild native modules
         pnpm rebuild
         
         # Verify better-sqlite3 was built
+        echo "Checking for better-sqlite3 native module..."
         find node_modules/.pnpm -name "better_sqlite3.node" -type f | head -10
+        
+        # Also check the specific path
+        ls -la node_modules/.pnpm/better-sqlite3*/node_modules/better-sqlite3/build/ || true
         
     - name: Run linting
       run: pnpm lint
@@ -76,8 +94,6 @@ jobs:
           packages/*/dist/
           packages/*/build/
           packages/*/generated/
-          node_modules/.pnpm/better-sqlite3*/**/*.node
-          node_modules/.pnpm/classic-level*/**/*.node
         retention-days: 1
 
   # Test jobs - each package gets its own job for parallel execution
