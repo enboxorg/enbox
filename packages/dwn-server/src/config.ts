@@ -46,7 +46,7 @@ export const config = {
   maxRecordDataSize: bytes(process.env.MAX_RECORD_DATA_SIZE || '1gb'),
 
   // whether to enable 'ws:'
-  webSocketSupport: { on: true, off: false }[process.env.DS_WEBSOCKET_SERVER] ?? true,
+  webSocketSupport: process.env.DS_WEBSOCKET_SERVER ? { on: true, off: false }[process.env.DS_WEBSOCKET_SERVER] : true,
 
   /**
    * Path to DWN Event Stream plugin to use. Default single-node implementation will be used if left empty.

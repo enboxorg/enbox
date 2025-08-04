@@ -32,7 +32,7 @@ export class InMemoryConnectionManager implements ConnectionManager {
   }
 
   async closeAll(): Promise<void> {
-    const closePromises = [];
+    const closePromises: Promise<void>[] = [];
     this.connections.forEach(connection => closePromises.push(connection.close()));
     await Promise.all(closePromises);
   }

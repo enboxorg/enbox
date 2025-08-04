@@ -85,7 +85,9 @@ export class SocketConnection {
     }
 
     const connection = this.subscriptions.get(id);
-    await connection.close();
+    if (connection) {
+      await connection.close();
+    }
     this.subscriptions.delete(id);
   }
 
