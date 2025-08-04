@@ -4,7 +4,6 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "types": ["bun-types"],
     "allowJs": false,
     "strict": true,
     "declaration": true,
