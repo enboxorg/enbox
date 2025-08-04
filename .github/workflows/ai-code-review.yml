@@ -18,6 +18,54 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Get Codebase Context
+        id: codebase-context
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs').promises;
+            const path = require('path');
+            
+            // Read important context files
+            const contextFiles = [
+              'README.md',
+              'AGENT_CONTEXT.md',
+              'GETTING_STARTED.md',
+              'packages/README.md',
+              '.github/README.md',
+              'docs/README.md'
+            ];
+            
+            let codebaseContext = '';
+            
+            for (const file of contextFiles) {
+              try {
+                const content = await fs.readFile(file, 'utf8');
+                codebaseContext += `\n### ${file}\n${content}\n`;
+              } catch (e) {
+                // File doesn't exist, skip
+              }
+            }
+            
+            // Read package.json files to understand project structure
+            try {
+              const rootPackage = await fs.readFile('package.json', 'utf8');
+              codebaseContext += `\n### Root package.json\n${rootPackage}\n`;
+            } catch (e) {}
+            
+            // Find and read workspace packages
+            try {
+              const packagesDir = await fs.readdir('packages');
+              for (const pkg of packagesDir) {
+                try {
+                  const pkgJson = await fs.readFile(path.join('packages', pkg, 'package.json'), 'utf8');
+                  codebaseContext += `\n### packages/${pkg}/package.json\n${pkgJson}\n`;
+                } catch (e) {}
+              }
+            } catch (e) {}
+            
+            core.setOutput('context', codebaseContext.substring(0, 50000)); // Limit context size
+
       - name: Get PR Details
         id: pr-details
         uses: actions/github-script@v7
@@ -39,6 +87,8 @@ jobs:
             
             core.setOutput('files', JSON.stringify(reviewableFiles));
             core.setOutput('file_count', reviewableFiles.length);
+            core.setOutput('pr_title', pr.title);
+            core.setOutput('pr_body', pr.body || '');
 
       - name: Review Changed Files
         if: steps.pr-details.outputs.file_count > 0
@@ -49,13 +99,14 @@ jobs:
           script: |
             const https = require('https');
             const files = JSON.parse('${{ steps.pr-details.outputs.files }}');
+            const codebaseContext = `${{ steps.codebase-context.outputs.context }}`;
             
             // Helper function to call Claude API
             async function callClaude(prompt) {
               const requestData = JSON.stringify({
                 model: 'claude-3-opus-20240229',
                 max_tokens: 4000,
-                temperature: 0.7,
+                temperature: 0.3, // Lower temperature for more consistent technical analysis
                 messages: [{
                   role: 'user',
                   content: prompt
@@ -108,27 +159,65 @@ jobs:
                 
                 const content = Buffer.from(prFile.content, 'base64').toString('utf8');
                 
-                const prompt = `You are an expert code reviewer. Review this code and its changes.
+                const prompt = `You are a Principal Engineer who has been working on this codebase for years. You have deep knowledge of its architecture, patterns, and mission. Review this code change with the expertise and attention to detail expected of a senior technical leader.
 
+                ## Codebase Context
+                ${codebaseContext}
+
+                ## Current PR Context
+                PR Title: ${{ steps.pr-details.outputs.pr_title }}
+                PR Description: ${{ steps.pr-details.outputs.pr_body }}
+
+                ## File Under Review
                 File: ${file.filename}
                 Status: ${file.status}
                 Additions: ${file.additions} lines
                 Deletions: ${file.deletions} lines
 
-                Patch (changes):
+                ## Changes (Patch)
                 ${file.patch || 'No patch available'}
 
-                Full file content (for context):
-                ${content.slice(0, 10000)} ${content.length > 10000 ? '... (truncated)' : ''}
+                ## Full File Content
+                ${content.slice(0, 15000)} ${content.length > 15000 ? '... (truncated)' : ''}
 
-                Please provide:
-                1. A summary of what this change does
-                2. Any bugs, issues, or concerns you notice
-                3. Suggestions for improvement
-                4. Security considerations if applicable
-                5. Code quality and best practices feedback
+                ## Your Review Task
 
-                Be specific and actionable. If the code looks good, say so. Focus on the most important issues.`;
+                As a Principal Engineer who deeply understands this codebase, provide a thorough review focusing on:
+
+                1. **Alignment with Codebase Mission**: Does this change support the project's goals and architecture as described in the documentation?
+                
+                2. **Code Quality & Standards**: 
+                   - Does it follow the established patterns in this codebase?
+                   - Are the naming conventions consistent with the rest of the project?
+                   - Is the code at the quality level expected for this codebase?
+                
+                3. **Architecture & Design**:
+                   - Does this fit well within the existing architecture?
+                   - Are there any violations of established patterns or principles?
+                   - Will this scale with the project's growth?
+                
+                4. **Technical Concerns**:
+                   - Security implications
+                   - Performance impact
+                   - Error handling completeness
+                   - Edge cases coverage
+                
+                5. **Maintainability**:
+                   - Is this code easy for other team members to understand and modify?
+                   - Are there adequate comments for complex logic?
+                   - Does it add technical debt?
+                
+                6. **Testing & Reliability**:
+                   - Are the changes properly testable?
+                   - What test cases should accompany this change?
+                
+                7. **Integration Impact**:
+                   - How does this affect other parts of the monorepo?
+                   - Are there any breaking changes?
+                
+                Provide specific, actionable feedback. Reference specific line numbers when possible. If the code is excellent, acknowledge that. Your review should reflect the high standards of a principal engineer who cares deeply about code quality and the long-term health of this codebase.
+
+                Be direct but constructive. Focus on the most important issues first.`;
 
                 const response = await callClaude(prompt);
                 
@@ -149,15 +238,16 @@ jobs:
             
             // Create a comprehensive review comment
             if (reviews.length > 0) {
-              let comment = `## 🤖 Claude AI Code Review\n\n`;
-              comment += `I've reviewed **${reviews.length}** file(s) in this PR. `;
-              comment += `Here's my analysis:\n\n`;
+              let comment = `## 🏗️ Principal Engineer Review by Claude\n\n`;
+              comment += `I've conducted a thorough review of **${reviews.length}** file(s) in this PR, analyzing them against our codebase standards and architectural principles.\n\n`;
               
               for (const review of reviews) {
                 comment += `### 📄 ${review.file}\n\n`;
                 comment += `${review.review}\n\n`;
                 comment += `---\n\n`;
               }
+              
+              comment += `*This review was conducted with deep knowledge of the codebase context, architecture, and established patterns.*`;
               
               // Post the review
               await github.rest.issues.createComment({
@@ -175,6 +265,7 @@ jobs:
         with:
           script: |
             const https = require('https');
+            const codebaseContext = `${{ steps.codebase-context.outputs.context }}`;
             
             // Get PR info
             const pr = context.payload.pull_request;
@@ -187,27 +278,62 @@ jobs:
               }
             });
             
-            const prompt = `You are reviewing a pull request. Provide a high-level summary and assessment.
+            const prompt = `You are a Principal Engineer and technical leader who has been stewarding this codebase for years. You understand its mission, architecture, and the high standards we maintain. Provide an executive summary of this pull request.
 
-            PR Title: ${pr.title}
-            PR Description: ${pr.body || 'No description provided'}
+            ## Codebase Context
+            ${codebaseContext}
+
+            ## Pull Request Details
+            Title: ${pr.title}
+            Description: ${pr.body || 'No description provided'}
+            Author: ${pr.user.login}
             
-            Diff (first 15000 chars):
-            ${diff.substring(0, 15000)}
+            ## Changes Overview (Diff)
+            ${diff.substring(0, 20000)}
 
-            Please provide:
-            1. A concise summary of what this PR accomplishes
-            2. The overall quality assessment
-            3. Key risks or concerns
-            4. Whether this PR is ready to merge or needs work
-            5. Any architectural or design feedback
+            ## Your Executive Summary Task
 
-            Keep it concise but thorough. This is the overview that will help reviewers understand the PR quickly.`;
+            As a Principal Engineer, provide a comprehensive summary that includes:
+
+            1. **Strategic Assessment**:
+               - How does this PR align with our project's mission and roadmap?
+               - Does it move us in the right architectural direction?
+               - What is the strategic value of these changes?
+
+            2. **Technical Leadership Perspective**:
+               - Overall code quality assessment (be specific)
+               - Architectural implications and considerations
+               - Technical debt introduced or addressed
+               - Performance and scalability impacts
+
+            3. **Risk Analysis**:
+               - What are the primary risks of this change?
+               - Are there any security concerns?
+               - What could break in production?
+               - Integration risks with other parts of the monorepo
+
+            4. **Team & Process Considerations**:
+               - Is this PR at the quality bar we expect?
+               - Does it follow our established patterns and conventions?
+               - Are there knowledge sharing opportunities here?
+               - What would you teach a junior engineer reviewing this?
+
+            5. **Recommendation**:
+               - Is this PR ready to merge? (Clear YES/NO with conditions)
+               - If not, what are the must-fix items?
+               - What follow-up work should be planned?
+
+            6. **Outstanding Concerns**:
+               - Any architectural decisions that need team discussion?
+               - Technical debt that should be tracked?
+               - Documentation that needs updating?
+
+            Write this summary as if you're briefing the CTO and the engineering team. Be thorough but concise. Your assessment carries weight - make it count.`;
 
             const requestData = JSON.stringify({
               model: 'claude-3-opus-20240229',
-              max_tokens: 2000,
-              temperature: 0.7,
+              max_tokens: 3000,
+              temperature: 0.3,
               messages: [{
                 role: 'user',
                 content: prompt
@@ -238,7 +364,7 @@ jobs:
               });
               
               if (response.content && response.content[0]) {
-                const summaryComment = `## 🎯 PR Summary by Claude\n\n${response.content[0].text}\n\n---\n*This is an AI-generated summary. Please verify all suggestions and feedback.*`;
+                const summaryComment = `## 🎯 Principal Engineer Executive Summary\n\n${response.content[0].text}\n\n---\n*This assessment was made with comprehensive knowledge of our codebase architecture, standards, and strategic direction.*`;
                 
                 await github.rest.issues.createComment({
                   issue_number: context.issue.number,

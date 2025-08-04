@@ -1,24 +1,34 @@
-# Claude AI Code Review
+# Claude AI Code Review - Principal Engineer Level
 
-A streamlined GitHub Actions workflow for AI-powered code reviews using Claude on pull requests.
+A sophisticated GitHub Actions workflow that provides principal engineer-level code reviews using Claude, with deep understanding of your codebase context and standards.
 
 ## Overview
 
-This workflow uses Claude (Anthropic's AI) to automatically review code changes in pull requests. It provides:
+This workflow empowers Claude to review PRs like a principal engineer who has worked on your codebase for years. It:
 
-- **Intelligent code analysis** - Claude reviews each changed file for bugs, improvements, and best practices
-- **File-by-file feedback** - Detailed review comments for each modified file
-- **PR summary** - High-level assessment of the entire pull request
-- **Support for multiple languages** - JavaScript, TypeScript, Python, Java, Go, Rust, and more
+- **Understands your codebase** - Reads README files, agent context, and package structures before reviewing
+- **Reviews with authority** - Provides principal engineer-level analysis focused on architecture, standards, and strategic alignment
+- **Maintains high standards** - Enforces the quality bar expected of your codebase
+- **Thinks strategically** - Evaluates changes against your project's mission and long-term goals
 
 ## How It Works
 
 When a pull request is opened or updated, the workflow:
 
-1. Identifies reviewable code files
-2. Sends each file with its changes to Claude for analysis
-3. Posts a comprehensive review comment with feedback for each file
-4. Provides an overall PR summary with merge readiness assessment
+1. **Learns your codebase** - Reads README.md, AGENT_CONTEXT.md, package.json files, and other documentation
+2. **Understands the context** - Analyzes your project structure, dependencies, and architectural patterns  
+3. **Reviews like a principal engineer** - Evaluates each file against your established standards and patterns
+4. **Provides strategic assessment** - Delivers both tactical code feedback and strategic architectural guidance
+5. **Makes a recommendation** - Clear merge decision with specific conditions and follow-up items
+
+## What Makes This Different
+
+Unlike generic AI code reviews, this workflow:
+
+- **Has context** - Claude understands your specific codebase, not just general best practices
+- **Maintains standards** - Enforces YOUR team's patterns, conventions, and quality bar
+- **Thinks long-term** - Considers technical debt, scalability, and architectural evolution
+- **Reviews holistically** - Understands how changes fit into the larger monorepo structure
 
 ## Setup
 
@@ -39,13 +49,17 @@ That's it! The workflow will automatically run on all new pull requests.
 
 ### Model Selection
 
-The workflow uses Claude 3 Opus by default for the highest quality reviews. You can change the model by editing the workflow:
+The workflow uses Claude 3 Opus by default for principal engineer-level analysis:
 
 ```javascript
-model: 'claude-3-opus-20240229',  // Highest quality
-// model: 'claude-3-sonnet-20240229',  // Good balance
-// model: 'claude-3-haiku-20240307',   // Fastest & cheapest
+model: 'claude-3-opus-20240229',     // Principal engineer-level reviews
+// model: 'claude-3-sonnet-20240229',  // Senior engineer-level
+// model: 'claude-3-haiku-20240307',   // Quick code checks
 ```
+
+### Temperature Setting
+
+The workflow uses a low temperature (0.3) for consistent, analytical reviews. This ensures Claude provides thoughtful, precise feedback rather than creative interpretations.
 
 ### File Limits
 
@@ -70,36 +84,79 @@ The workflow reviews files with these extensions:
 - Swift: `.swift`
 - Kotlin: `.kt`
 
+## Context Files Used
+
+The workflow reads these files to understand your codebase:
+
+- `README.md` - Project overview and goals
+- `AGENT_CONTEXT.md` - Specific context for AI agents
+- `GETTING_STARTED.md` - Development patterns and setup
+- `package.json` files - Dependencies and project structure
+- Package-specific READMEs in the monorepo
+
 ## Example Output
 
-The workflow posts two types of comments:
-
-### 1. Detailed File Reviews
+### 1. Principal Engineer File Review
 ```
-## 🤖 Claude AI Code Review
+## 🏗️ Principal Engineer Review by Claude
 
-I've reviewed 5 file(s) in this PR. Here's my analysis:
+I've conducted a thorough review of 5 file(s) in this PR, analyzing them against our codebase standards and architectural principles.
 
-### 📄 src/api/users.js
+### 📄 packages/core/src/auth/authenticator.ts
 
-The changes implement a new user authentication endpoint...
-[Detailed feedback for each file]
+This implementation aligns well with our microservices architecture. However, I have concerns about the session management approach:
+
+1. **Pattern Violation**: The direct Redis calls here break our established data access layer pattern. All cache operations should go through the CacheService interface we established in packages/core/src/services/cache.
+
+2. **Security Consideration**: The JWT refresh token is stored without encryption. Given our security requirements outlined in AGENT_CONTEXT.md, all tokens should be encrypted at rest...
+
+[Specific line-by-line feedback with architectural context]
 ```
 
-### 2. PR Summary
+### 2. Executive Summary
 ```
-## 🎯 PR Summary by Claude
+## 🎯 Principal Engineer Executive Summary
 
-This PR implements user authentication with JWT tokens...
-[Overall assessment and merge readiness]
+### Strategic Assessment
+This PR introduces OAuth2 integration, which aligns with our Q4 roadmap for third-party integrations. The implementation is solid but needs refinement to meet our architectural standards.
+
+### Technical Leadership Perspective
+- **Code Quality**: B+ - Well-structured but misses some established patterns
+- **Architecture Fit**: Mostly aligned, with exceptions noted below
+- **Technical Debt**: Introduces minor debt in error handling that should be addressed
+
+### Risk Analysis
+- **Primary Risk**: The new OAuth flow bypasses our rate limiting middleware
+- **Security**: Token storage needs encryption (HIGH PRIORITY)
+- **Production Impact**: Low risk if above issues are addressed
+
+### Recommendation
+**NOT READY TO MERGE** - Two must-fix items:
+1. Implement rate limiting for OAuth endpoints
+2. Encrypt refresh tokens in storage
+
+### Follow-up Work
+- Add integration tests for the OAuth flow
+- Update API documentation
+- Consider extracting OAuth logic into a dedicated service (future PR)
 ```
+
+## Maximizing Review Quality
+
+To get the best principal engineer-level reviews:
+
+1. **Keep your context files updated** - Especially AGENT_CONTEXT.md and README.md
+2. **Document your patterns** - The more Claude knows about your standards, the better
+3. **Be specific in PR descriptions** - Help Claude understand the strategic intent
+4. **Define your architecture** - Document your architectural decisions and principles
 
 ## Cost Considerations
 
 - Claude API calls are billed per token
-- Opus model is most expensive but provides best results
-- Consider using Sonnet or Haiku for routine PRs
-- Large files are truncated to 10,000 characters to manage costs
+- Opus provides principal engineer-level analysis but costs more
+- Context files add tokens but dramatically improve review quality
+- Large files are truncated to 15,000 characters
+- Budget approximately $0.10-0.50 per PR depending on size
 
 ## Troubleshooting
 
