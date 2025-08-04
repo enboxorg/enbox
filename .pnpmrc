@@ -1,2 +1,10 @@
 engine-strict=true
 use-node-version=20.10.0
+# Allow postinstall scripts to run
+enable-pre-post-scripts=true
+# Auto-install peers (helps with CI)
+auto-install-peers=true
+# Strict peer dependencies
+strict-peer-dependencies=false
+# Allow specific packages to run build scripts
+onlyBuiltDependencies=[]

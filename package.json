@@ -17,8 +17,14 @@
     "packages/dwn-server"
   ],
   "scripts": {
-    "clean": "pnpm npkill -d $(pwd)/packages -t dist && pnpm npkill -d $(pwd) -t node_modules",
+    "clean": "pnpm clean:modules && pnpm clean:data && pnpm --recursive run clean",
+    "clean:modules": "find . -name 'node_modules' -type d -prune -exec rm -rf '{}' +",
+    "clean:data": "rm -rf data/ data-test/ __TESTDATA__/ TEST-DATASTORE TEST-MESSAGESTORE TEST-EVENTLOG TEST-RESUMABLE-TASK-STORE TEST-INDEX BENCHMARK-INDEX BENCHMARK-BLOCK DATASTORE MESSAGESTORE EVENTLOG RESOLVERCACHE RESUMABLE-TASK-STORE INDEX DATA/ && find . -name '*.sqlite' -o -name '*.db' -o -name 'dwn.db' | xargs rm -f",
+    "postinstall": "node scripts/rebuild-native-if-needed.cjs",
+    "rebuild:native": "pnpm config set build.onlyBuiltDependencies '[]' && cd packages/dwn-server && pnpm rebuild better-sqlite3 && cd ../dwn-sql-store && pnpm rebuild better-sqlite3 && cd ../..",
+    "prebuild": "pnpm rebuild:native",
     "build": "pnpm --recursive --stream build",
+    "build:ci": "./scripts/ci-setup.sh",
     "test:node": "pnpm --recursive test:node",
     "lint": "pnpm --recursive lint",
     "lint:fix": "pnpm --recursive lint:fix"
