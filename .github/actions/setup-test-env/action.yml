@@ -132,6 +132,39 @@ runs:
       with:
         name: build-artifacts
         
+    - name: Restore workspace links
+      shell: bash
+      run: |
+        echo "::group::Restoring workspace package links"
+        # The build artifacts contain the dist folders, but we need to ensure
+        # workspace links are properly set up for TypeScript resolution
+        
+        # List workspace packages
+        echo "Workspace packages:"
+        pnpm ls -r --depth -1 | grep "^@enbox" || true
+        
+        # Ensure workspace links are created
+        pnpm install --frozen-lockfile --filter "@enbox/*" --prefer-offline
+        
+        # Verify dist folders exist
+        echo ""
+        echo "Checking dist folders:"
+        for pkg in common crypto dids dwn-sdk-js dwn-sql-store dwn-server; do
+          if [ -d "packages/$pkg/dist" ]; then
+            echo "✅ packages/$pkg/dist exists"
+          else
+            echo "❌ packages/$pkg/dist missing"
+          fi
+        done
+        
+        # For dwn-server, also ensure test fixtures are copied
+        if [ "${{ inputs.package-name }}" == "dwn-server" ] && [ -d "packages/dwn-server/dist" ]; then
+          echo ""
+          echo "Copying dwn-server test fixtures..."
+          cp -R packages/dwn-server/tests/fixtures packages/dwn-server/dist/esm/tests/ || true
+        fi
+        echo "::endgroup::"
+        
     - name: Start dwn-server
       if: inputs.needs-dwn-server == 'true'
       shell: bash
@@ -144,13 +177,17 @@ runs:
         
         # Check if the server script exists
         if [ ! -f "dist/esm/src/main.js" ]; then
-          echo "dwn-server not built, building now..."
-          pnpm build:esm
+          echo "❌ dwn-server not built! dist/esm/src/main.js not found"
+          echo "Contents of dwn-server directory:"
+          ls -la
+          echo "Contents of dist directory (if exists):"
+          ls -la dist/ || echo "dist directory not found"
+          exit 1
         fi
         
-        # Start server with explicit output
+        # Start server directly (without rebuilding)
         echo "Starting dwn-server on port 3000..."
-        pnpm server > ../../dwn-server.log 2>&1 &
+        node dist/esm/src/main.js > ../../dwn-server.log 2>&1 &
         DWN_SERVER_PID=$!
         echo "DWN_SERVER_PID=$DWN_SERVER_PID" >> $GITHUB_ENV
         

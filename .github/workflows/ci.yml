@@ -84,7 +84,14 @@ jobs:
       run: pnpm lint
       
     - name: Build packages
-      run: pnpm build
+      run: |
+        # Build all packages
+        pnpm build
+        
+        # Also build dwn-server specifically to ensure it's ready
+        cd packages/dwn-server
+        pnpm build:esm
+        cd ../..
       
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
@@ -94,6 +101,8 @@ jobs:
           packages/*/dist/
           packages/*/build/
           packages/*/generated/
+          packages/*/src/
+          packages/*/tests/
         retention-days: 1
 
   # Test jobs - each package gets its own job for parallel execution
