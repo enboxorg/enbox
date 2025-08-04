@@ -13,8 +13,8 @@ jobs:
   claude-review:
     runs-on: ubuntu-latest
     name: Claude AI Review
-    # Skip bot PRs if needed
-    # if: github.actor != 'dependabot[bot]' && github.actor != 'cursor[bot]'
+    # Skip bot PRs since they don't have write permissions
+    if: github.actor != 'dependabot[bot]' && github.actor != 'cursor[bot]' && !endsWith(github.actor, '[bot]')
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
