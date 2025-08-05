@@ -27,7 +27,11 @@
     "build:ci": "./scripts/ci-setup.sh",
     "test:node": "pnpm --recursive test:node",
     "lint": "pnpm --recursive lint",
-    "lint:fix": "pnpm --recursive lint:fix"
+    "lint:fix": "pnpm --recursive lint:fix",
+    "setup": "git submodule update --init --recursive && pnpm install",
+    "setup:examples": "git submodule update --init --recursive && cd examples/web-wallet && pnpm install --ignore-workspace && cd ../dapp-demo && pnpm install --ignore-workspace",
+    "dev:web-wallet": "cd examples/web-wallet && ./start-dev.sh",
+    "dev:dapp-demo": "cd examples/dapp-demo && pnpm run dev"
   },
   "engines": {
     "node": ">=20.10.0",
