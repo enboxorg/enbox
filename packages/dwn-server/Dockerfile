@@ -12,6 +12,9 @@ COPY pnpm-workspace.yaml ./
 COPY package.json ./
 COPY tsconfig.json ./
 
+# Copy scripts directory (needed for postinstall)
+COPY scripts/ ./scripts/
+
 # Copy all packages (since dwn-server depends on other packages in the monorepo)
 COPY packages/ ./packages/
 
