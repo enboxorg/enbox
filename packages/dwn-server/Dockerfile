@@ -35,10 +35,11 @@ WORKDIR /app
 # Copy the entire built monorepo (simpler and avoids module resolution issues)
 COPY --from=builder /app ./
 
-# Install better-sqlite3 in a clean environment with proper native bindings
-# Using the full node image means we don't need to install build tools
-RUN cd /app/node_modules && \
-    npm rebuild better-sqlite3 --build-from-source
+# Enable corepack for pnpm in runner stage
+RUN corepack enable
+
+# Rebuild native modules using pnpm
+RUN cd /app && pnpm rebuild --recursive
 
 # Set working directory to dwn-server for the entrypoint
 WORKDIR /app/packages/dwn-server
