@@ -1,5 +1,5 @@
 # Stage 1: Builder - Build the entire monorepo
-FROM node:20.10.0-bookworm-slim AS builder
+FROM node:20.10.0-bookworm AS builder
 
 WORKDIR /app
 
@@ -21,15 +21,8 @@ RUN pnpm install --frozen-lockfile
 # Build all packages
 RUN pnpm --recursive --stream build
 
-# Stage 2: Runner - Keep the monorepo structure but run dwn-server
-FROM node:20.10.0-bookworm-slim AS runner
-
-# Install build tools needed for native module rebuilding
-RUN apt-get update && apt-get install -y \
-    python3 \
-    make \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
+# Stage 2: Runner - Use full node image to avoid installing build tools
+FROM node:20.10.0-bookworm AS runner
 
 ARG DS_PORT
 ENV DS_PORT=${DS_PORT:-3000}
@@ -40,11 +33,9 @@ WORKDIR /app
 COPY --from=builder /app ./
 
 # Install better-sqlite3 in a clean environment with proper native bindings
-RUN mkdir -p /tmp/sqlite-build && cd /tmp/sqlite-build && \
-    npm init -y && \
-    npm install better-sqlite3@8.7.0 && \
-    cp -r node_modules/better-sqlite3 /app/node_modules/ && \
-    rm -rf /tmp/sqlite-build
+# Using the full node image means we don't need to install build tools
+RUN cd /app/node_modules && \
+    npm rebuild better-sqlite3 --build-from-source
 
 # Set working directory to dwn-server for the entrypoint
 WORKDIR /app/packages/dwn-server
