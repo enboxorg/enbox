@@ -11,13 +11,8 @@ pnpm clean || true
 echo "📦 Installing dependencies..."
 pnpm install --frozen-lockfile
 
-# Rebuild native modules explicitly
-echo "🔨 Rebuilding native modules..."
-pnpm rebuild:native
-
-# Additional rebuild for safety (sometimes needed in CI)
-echo "🔨 Running additional native module rebuild..."
-pnpm rebuild better-sqlite3 --recursive || true
+# No native modules to rebuild
+echo "🔨 Skipping native module rebuilds..."
 
 # Build all packages
 echo "🏗️  Building packages..."

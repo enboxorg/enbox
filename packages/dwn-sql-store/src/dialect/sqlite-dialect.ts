@@ -8,11 +8,11 @@ import {
   InsertQueryBuilder,
   SelectExpression,
   Selection,
-  SqliteDialect as KyselySqliteDialect,
   Transaction,
 } from 'kysely';
+import { LibsqlDialect as KyselyLibsqlDialect } from '@libsql/kysely-libsql';
 
-export class SqliteDialect extends KyselySqliteDialect implements Dialect {
+export class SqliteDialect extends KyselyLibsqlDialect implements Dialect {
   name = 'SQLite';
   isStreamingSupported = false;
 

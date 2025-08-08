@@ -26,12 +26,13 @@
   "dependencies": {
     "@enbox/dwn-sdk-js": "workspace:*",
     "@ipld/dag-cbor": "9.0.5",
+    "@libsql/client": "^0.7.0",
+    "@libsql/kysely-libsql": "^0.4.1",
     "kysely": "0.26.3",
     "multiformats": "12.0.1",
     "readable-stream": "4.4.2"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "7.6.4",
     "@types/chai": "4.3.4",
     "@types/chai-as-promised": "7.1.5",
     "@types/express": "4.17.17",
@@ -43,7 +44,6 @@
     "@types/supertest": "2.0.12",
     "@typescript-eslint/eslint-plugin": "5.59.11",
     "@typescript-eslint/parser": "5.59.11",
-    "better-sqlite3": "8.4.0",
     "c8": "8.0.0",
     "chai": "4.3.6",
     "chai-as-promised": "7.1.1",

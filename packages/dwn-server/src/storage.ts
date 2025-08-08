@@ -13,7 +13,6 @@ import type { DwnServerConfig } from './config.js';
 
 import * as fs from 'fs';
 import Cursor from 'pg-cursor';
-import Database from 'better-sqlite3';
 import pg from 'pg';
 import { createPool as MySQLCreatePool } from 'mysql2';
 import { PluginLoader } from './plugin-loader.js';
@@ -33,6 +32,7 @@ import {
   ResumableTaskStoreSql,
   SqliteDialect,
 } from '@enbox/dwn-sql-store';
+
 
 export enum StoreType {
   DataStore,
@@ -181,11 +181,12 @@ export function getDialectFromUrl(connectionUrl: URL): Dialect {
       }
 
       // Use in-memory database if no path is provided (for tests)
-      const dbPath = path || ':memory:';
+      const dbPath = path || 'dwn.sqlite';
+      const url = `file:${dbPath}`;
 
       return new SqliteDialect({
-        database: async () => new Database(dbPath),
-      });
+        url,
+      } as any);
     case BackendTypes.MYSQL:
       return new MysqlDialect({
         pool: async () => MySQLCreatePool(connectionUrl.toString()),

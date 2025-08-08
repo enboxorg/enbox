@@ -42,7 +42,7 @@ npm install @enbox/dwn-sql-store
 ## SQLite
 
 ```typescript
-import Database from 'better-sqlite3';
+import { LibsqlDialect } from '@libsql/kysely-libsql';
 
 import { Dwn } from '@enbox/dwn-sdk-js'
 import { SqliteDialect, MessageStoreSql, DataStoreSql, EventLogSql } from '@enbox/dwn-sql-store';
