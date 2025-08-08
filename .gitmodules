@@ -1,6 +1,6 @@
 [submodule "examples/web-wallet"]
 	path = examples/web-wallet
-	url = https://github.com/enboxorg/web-wallet.git
+	url = git@github.com:enboxorg/web-wallet.git
 [submodule "examples/dapp-demo"]
 	path = examples/dapp-demo
 	url = git@github.com:enboxorg/dapp-demo.git
