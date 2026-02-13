@@ -5,7 +5,7 @@ import sinon from 'sinon';
 import { expect } from 'chai';
 import { NodeStream } from '@enbox/common';
 import { utils as didUtils } from '@enbox/dids';
-import { Web5UserAgent } from '@enbox/user-agent';
+import { Web5UserAgent } from '@enbox/agent';
 import { DwnConstant, DwnDateSort, DwnEncryptionAlgorithm, DwnInterface, DwnKeyDerivationScheme, dwnMessageConstructors, getRecordAuthor, getRecordProtocolRole, Oidc, PlatformAgentTestHarness, WalletConnect } from '@enbox/agent';
 import { Record } from '../src/record.js';
 import { DwnApi } from '../src/dwn-api.js';

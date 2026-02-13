@@ -2,7 +2,7 @@ import type { BearerDid } from '@enbox/dids';
 
 import sinon from 'sinon';
 import { expect } from 'chai';
-import { Web5UserAgent } from '@enbox/user-agent';
+import { Web5UserAgent } from '@enbox/agent';
 import { testDwnUrl } from './utils/test-config.js';
 
 // NOTE: @noble/secp256k1 requires globalThis.crypto polyfill for node.js <=18: https://github.com/paulmillr/noble-secp256k1/blob/main/README.md#usage

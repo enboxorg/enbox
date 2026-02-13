@@ -221,7 +221,7 @@ export type PreviousDidProof = {
  * The default DID DHT Gateway or Pkarr Relay server to use when publishing and resolving DID
  * documents.
  */
-const DEFAULT_GATEWAY_URI = 'https://did-dht-production.up.railway.app';
+const DEFAULT_GATEWAY_URI = process.env.DID_DHT_GATEWAY_URI || 'https://diddht.tbddev.org';
 
 /**
  * The version of the DID DHT specification that is implemented by this library.

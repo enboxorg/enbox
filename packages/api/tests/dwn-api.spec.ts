@@ -2,7 +2,7 @@ import type { BearerDid } from '@enbox/dids';
 
 import sinon from 'sinon';
 import { expect } from 'chai';
-import { Web5UserAgent } from '@enbox/user-agent';
+import { Web5UserAgent } from '@enbox/agent';
 import { AgentPermissionsApi, DwnDateSort, DwnInterface, DwnProtocolDefinition, getRecordAuthor, Oidc, PlatformAgentTestHarness, ProcessDwnRequest, WalletConnect } from '@enbox/agent';
 
 import { DwnApi } from '../src/dwn-api.js';

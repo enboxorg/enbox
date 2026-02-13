@@ -1,12 +1,15 @@
-import type { BearerIdentity, PortableIdentity } from '@enbox/agent';
+import type { BearerIdentity } from '../src/bearer-identity.js';
+import type { PortableIdentity } from '../src/types/identity.js';
 
 import { expect } from 'chai';
 import { DidDht } from '@enbox/dids';
 import { Convert } from '@enbox/common';
-import { DidInterface, DwnInterface, PlatformAgentTestHarness } from '@enbox/agent';
+import { DidInterface } from '../src/did-api.js';
+import { DwnInterface } from '../src/types/dwn.js';
+import { PlatformAgentTestHarness } from '../src/test-harness.js';
 
 import { testDwnUrl } from './utils/test-config.js';
-import { Web5ProxyAgent } from '../src/proxy-agent.js';
+import { Web5UserAgent } from '../src/web5-user-agent.js';
 
 // NOTE: @noble/secp256k1 requires globalThis.crypto polyfill for node.js <=18: https://github.com/paulmillr/noble-secp256k1/blob/main/README.md#usage
 // Remove when we move off of node.js v18 to v20, earliest possible time would be Oct 2023: https://github.com/nodejs/release#release-schedule
@@ -18,12 +21,12 @@ if (!globalThis.crypto) globalThis.crypto = webcrypto;
 
 let testDwnUrls: string[] = [testDwnUrl];
 
-describe('Web5ProxyAgent', () => {
+describe('Web5UserAgent', () => {
 
   describe('agentDid', () => {
     it('throws an error if accessed before the Agent is initialized', async () => {
       // @ts-expect-error - Initializing with empty object to test error.
-      const userAgent = new Web5ProxyAgent({ didApi: {}, dwnApi: {}, identityApi: {}, keyManager: {}, permissionsApi: {}, syncApi: {} });
+      const userAgent = new Web5UserAgent({ didApi: {}, dwnApi: {}, identityApi: {}, keyManager: {}, permissionsApi: {}, syncApi: {} });
       try {
         userAgent.agentDid;
         throw new Error('Expected an error');
@@ -35,9 +38,9 @@ describe('Web5ProxyAgent', () => {
 
   describe('create()', () => {
     it('should create an instance with default parameters when none are provided', async () => {
-      const userAgent = await Web5ProxyAgent.create({ dataPath: '__TESTDATA__/USERAGENT' });
+      const userAgent = await Web5UserAgent.create({ dataPath: '__TESTDATA__/USERAGENT' });
 
-      expect(userAgent).to.be.an.instanceof(Web5ProxyAgent);
+      expect(userAgent).to.be.an.instanceof(Web5UserAgent);
       expect(userAgent.crypto).to.exist;
       expect(userAgent.did).to.exist;
       expect(userAgent.dwn).to.exist;
@@ -57,7 +60,7 @@ describe('Web5ProxyAgent', () => {
 
       before(async () => {
         testHarness = await PlatformAgentTestHarness.setup({
-          agentClass  : Web5ProxyAgent,
+          agentClass  : Web5UserAgent,
           agentStores : agentStoreType
         });
       });
@@ -399,7 +402,7 @@ describe('Web5ProxyAgent', () => {
             // Simulate terminating and restarting an app.
             await testHarness.closeStorage();
             testHarness = await PlatformAgentTestHarness.setup({
-              agentClass  : Web5ProxyAgent,
+              agentClass  : Web5UserAgent,
               agentStores : 'dwn'
             });
             await testHarness.agent.start({ password: 'test' });

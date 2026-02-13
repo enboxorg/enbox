@@ -1,37 +1,27 @@
-import {
-  Web5Rpc,
-  DidRequest,
-  VcResponse,
-  DidResponse,
-  DwnResponse,
-  DidInterface,
-  DwnInterface,
-  SendVcRequest,
-  SendDwnRequest,
-  ProcessVcRequest,
-  ProcessDwnRequest,
-  Web5PlatformAgent,
-  AgentPermissionsApi,
-  AgentDidResolverCache,
-} from '@enbox/agent';
-
 import { LevelStore } from '@enbox/common';
-import { BearerDid, DidDht, DidJwk, DidResolverCacheLevel } from '@enbox/dids';
-import {
-  AgentDidApi,
-  AgentDwnApi,
-  DwnDidStore,
-  DwnKeyStore,
-  AgentSyncApi,
-  Web5RpcClient,
-  AgentCryptoApi,
-  AgentKeyManager,
-  HdIdentityVault,
-  LocalKeyManager,
-  SyncEngineLevel,
-  AgentIdentityApi,
-  DwnIdentityStore,
-} from '@enbox/agent';
+import { BearerDid, DidDht, DidJwk } from '@enbox/dids';
+
+import type { Web5Rpc } from './rpc-client.js';
+import type { DidRequest, DidResponse, DidInterface } from './did-api.js';
+import type { VcResponse, SendVcRequest, ProcessVcRequest } from './types/vc.js';
+import type { DwnResponse, DwnInterface, SendDwnRequest, ProcessDwnRequest } from './types/dwn.js';
+import type { Web5PlatformAgent } from './types/agent.js';
+import type { AgentKeyManager } from './types/key-manager.js';
+
+import { AgentPermissionsApi } from './permissions-api.js';
+import { AgentDidResolverCache } from './agent-did-resolver-cache.js';
+import { AgentDidApi } from './did-api.js';
+import { AgentDwnApi } from './dwn-api.js';
+import { DwnDidStore } from './store-did.js';
+import { DwnKeyStore } from './store-key.js';
+import { AgentSyncApi } from './sync-api.js';
+import { Web5RpcClient } from './rpc-client.js';
+import { AgentCryptoApi } from './crypto-api.js';
+import { HdIdentityVault } from './hd-identity-vault.js';
+import { LocalKeyManager } from './local-key-manager.js';
+import { SyncEngineLevel } from './sync-engine-level.js';
+import { AgentIdentityApi } from './identity-api.js';
+import { DwnIdentityStore } from './store-identity.js';
 
 /**
  * Initialization parameters for {@link Web5UserAgent}, including an optional recovery phrase that
