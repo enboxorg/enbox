@@ -1144,9 +1144,11 @@ describe('AgentDwnApi', () => {
     });
 
     it('handles MessagesQuery', async () => {
+      // Note: cursor value must be numeric because the SQL event log uses an
+      // auto-incrementing integer watermark column for pagination.
       const testCursor = {
         messageCid : 'foo',
-        value      : 'bar'
+        value      : 0
       };
 
       const testFilters = [{ protocol: 'http://protocol1' }];
