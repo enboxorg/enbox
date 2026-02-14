@@ -1083,7 +1083,7 @@ describe('SyncEngineLevel', () => {
 
       it('synchronizes records with data larger than the `encodedData` limit within the `RecordsQuery` response', async function () {
         this.timeout(10_000); // large data sync can be slow in CI
-      // larger than the size of data returned in a RecordsQuery
+        // larger than the size of data returned in a RecordsQuery
         const LARGE_DATA_SIZE = 1_000 + DwnConstant.maxDataSizeAllowedToBeEncoded;
 
         // register alice

@@ -861,7 +861,7 @@ export class DwnApi {
             // if a grant is not found, we should author the request as the delegated DID to get public records
             agentRequest.author = this.delegateDid;
           }
-        };
+        }
 
         let agentResponse: DwnResponse<DwnInterface.RecordsSubscribe>;
 
@@ -917,7 +917,7 @@ export class DwnApi {
             delegatedGrant
           };
           dwnRequestParams.granteeDid = this.delegateDid;
-        };
+        }
 
         const agentResponse = await this.agent.processDwnRequest(dwnRequestParams);
 
