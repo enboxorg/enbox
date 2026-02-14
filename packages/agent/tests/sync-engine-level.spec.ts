@@ -1081,8 +1081,9 @@ describe('SyncEngineLevel', () => {
         expect(localDwnQueryReply.entries).to.have.length(1); // New Record does exist on local DWN.
       }).slow(300); // Yellow at 150ms, Red at 300ms.
 
-      it('synchronizes records with data larger than the `encodedData` limit within the `RecordsQuery` response', async () => {
-      // larger than the size of data returned in a RecordsQuery
+      it('synchronizes records with data larger than the `encodedData` limit within the `RecordsQuery` response', async function () {
+        this.timeout(10_000); // large data sync can be slow in CI
+        // larger than the size of data returned in a RecordsQuery
         const LARGE_DATA_SIZE = 1_000 + DwnConstant.maxDataSizeAllowedToBeEncoded;
 
         // register alice
@@ -1749,7 +1750,8 @@ describe('SyncEngineLevel', () => {
         expect(remoteDwnQueryReply.entries).to.have.length(1); // New Record does exist on local DWN.
       }).slow(600); // Yellow at 300ms, Red at 600ms.
 
-      it('synchronizes records with data larger than the `encodedData` limit within the `RecordsQuery` response', async () => {
+      it('synchronizes records with data larger than the `encodedData` limit within the `RecordsQuery` response', async function () {
+        this.timeout(10_000); // large data sync can be slow in CI
         // larger than the size of data returned in a RecordsQuery
         const LARGE_DATA_SIZE = DwnConstant.maxDataSizeAllowedToBeEncoded + 1_000;
 

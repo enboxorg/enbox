@@ -65,7 +65,7 @@ export class SyncEngineLevel implements SyncEngine {
   /**
    * An instance of the `AgentPermissionsApi` that is used to interact with permissions grants used during sync
    */
-  private _permissionsApi: PermissionsApi;;
+  private _permissionsApi: PermissionsApi;
 
   private _db: AbstractLevel<string | Buffer | Uint8Array>;
   private _syncIntervalId?: ReturnType<typeof setInterval>;

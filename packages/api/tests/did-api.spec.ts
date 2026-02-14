@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { Web5UserAgent } from '@enbox/user-agent';
+import { Web5UserAgent } from '@enbox/agent';
 import { PlatformAgentTestHarness } from '@enbox/agent';
 import sinon from 'sinon';
 

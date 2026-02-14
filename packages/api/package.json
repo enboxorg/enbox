@@ -83,8 +83,7 @@
     "@enbox/agent": "workspace:*",
     "@enbox/common": "workspace:*",
     "@enbox/crypto": "workspace:*",
-    "@enbox/dids": "workspace:*",
-    "@enbox/user-agent": "workspace:*"
+    "@enbox/dids": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "1.45.3",

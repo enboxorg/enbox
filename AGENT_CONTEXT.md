@@ -28,7 +28,6 @@ User Application
     ↓
 @enbox/api (main entry point)
     ↓
-@enbox/agent + @enbox/user-agent + @enbox/identity-agent
     ↓
 @enbox/dwn-sdk-js (client/server compatible)
     ↓
@@ -55,18 +54,14 @@ SQL Database
 
 #### **Web5 SDK Packages**
 - **`@enbox/api`**: Main entry point for Web5 SDK
-  - Depends on: `@enbox/agent`, `@enbox/common`, `@enbox/crypto`, `@enbox/dids`, `@enbox/user-agent` (all workspace:*)
 
 - **`@enbox/agent`**: Agent implementation for decentralized identity
   - Depends on: `@enbox/dwn-sdk-js`, `@enbox/common`, `@enbox/crypto`, `@enbox/dids` (all workspace:*)
 
-- **`@enbox/identity-agent`**: Identity agent for credential management
   - Depends on: `@enbox/agent`, `@enbox/common`, `@enbox/crypto`, `@enbox/dids` (all workspace:*)
 
-- **`@enbox/user-agent`**: User agent for decentralized applications
   - Depends on: `@enbox/agent`, `@enbox/common`, `@enbox/crypto`, `@enbox/dids` (all workspace:*)
 
-- **`@enbox/proxy-agent`**: Proxy agent for secure communication
   - Depends on: `@enbox/agent`, `@enbox/common`, `@enbox/crypto`, `@enbox/dids` (all workspace:*)
 
 #### **Foundation Packages**
@@ -117,9 +112,6 @@ enbox/
     ├── dwn-server/        # Express server
     ├── api/               # Main Web5 entry point
     ├── agent/             # Agent implementation
-    ├── identity-agent/    # Identity agent
-    ├── user-agent/        # User agent
-    ├── proxy-agent/       # Proxy agent
     ├── common/            # Shared utilities
     ├── crypto/            # Cryptographic library
     ├── crypto-aws-kms/    # AWS KMS integration

@@ -16,7 +16,7 @@ import type {
   Web5Agent,
 } from '@enbox/agent';
 
-import { Web5UserAgent } from '@enbox/user-agent';
+import { Web5UserAgent } from '@enbox/agent';
 import { DwnInterface, DwnRegistrar, WalletConnect } from '@enbox/agent';
 
 import { DidApi } from './did-api.js';

@@ -1,7 +1,7 @@
 import { expect } from 'chai';
-import { PlatformAgentTestHarness } from '@enbox/agent';
+import { PlatformAgentTestHarness } from '../src/test-harness.js';
 
-import { Web5IdentityAgent } from '../src/identity-agent.js';
+import { Web5UserAgent } from '../src/web5-user-agent.js';
 
 // NOTE: @noble/secp256k1 requires globalThis.crypto polyfill for node.js <=18: https://github.com/paulmillr/noble-secp256k1/blob/main/README.md#usage
 // Remove when we move off of node.js v18 to v20, earliest possible time would be Oct 2023: https://github.com/nodejs/release#release-schedule
@@ -19,7 +19,7 @@ describe('Managing Identities', () => {
 
       before(async () => {
         testHarness = await PlatformAgentTestHarness.setup({
-          agentClass  : Web5IdentityAgent,
+          agentClass  : Web5UserAgent,
           agentStores : agentStoreType
         });
       });

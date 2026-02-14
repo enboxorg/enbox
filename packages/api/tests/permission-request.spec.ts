@@ -6,7 +6,7 @@ import { testDwnUrl } from './utils/test-config.js';
 import { BearerDid } from '@enbox/dids';
 import { DwnApi } from '../src/dwn-api.js';
 import { PlatformAgentTestHarness } from '@enbox/agent';
-import { Web5UserAgent } from '@enbox/user-agent';
+import { Web5UserAgent } from '@enbox/agent';
 import { DwnInterfaceName, DwnMethodName, Time } from '@enbox/dwn-sdk-js';
 import { PermissionRequest } from '../src/permission-request.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
