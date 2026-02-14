@@ -1,4 +1,4 @@
-import type { AbstractBatchOperation, AbstractDatabaseOptions, AbstractIteratorOptions, AbstractLevel } from 'abstract-level';
+import type { AbstractBatchOperation, AbstractDatabaseOptions, AbstractIteratorOptions } from 'abstract-level';
 
 import { executeUnlessAborted } from '../utils/abort.js';
 import { Level } from 'level';
