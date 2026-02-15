@@ -59,42 +59,31 @@ jobs:
           --health-timeout=5s
           --health-retries=3
 
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: 20.x
+          bun-version: latest
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - name: Get pnpm store directory
-        id: pnpm-cache
-        shell: bash
-        run: echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
-
-      - name: Setup pnpm cache
+      - name: Setup bun cache
         uses: actions/cache@v4
         with:
-          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lockb') }}
           restore-keys: |
-            ${{ runner.os }}-pnpm-store-
+            ${{ runner.os }}-bun-store-
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Lint
-        run: pnpm lint
+        run: bun run lint
 
       - name: Build
-        run: pnpm --recursive --stream --filter='./packages/*' build
+        run: bun run build
 
       - name: Start Pkarr relay
         run: |
@@ -121,7 +110,7 @@ jobs:
           export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DID_DHT_GATEWAY_URI=http://localhost:7527
 
-          node dist/esm/src/main.js &
+          bun dist/esm/src/main.js &
           echo "DWN_SERVER_PID=$!" >> $GITHUB_ENV
 
           echo "Waiting for dwn-server..."
@@ -149,7 +138,7 @@ jobs:
           export MYSQL_DATABASE=dwn
           export DID_DHT_GATEWAY_URI=http://localhost:7527
 
-          pnpm --recursive --stream --no-bail --filter='./packages/*' test:node
+          bun run test:node
 
       - name: Stop dwn-server
         if: always()
@@ -266,7 +255,7 @@ jobs:
               });
             }
 
-  # Gate job for branch protection — require this to pass before merging
+  # Gate job for branch protection -- require this to pass before merging
   ci-passed:
     name: CI Passed
     runs-on: ubuntu-latest

@@ -8,13 +8,13 @@
   "types": "./dist/types/index.d.ts",
   "scripts": {
     "clean": "rimraf dist coverage tests/compiled",
-    "build:tests": "rimraf tests/compiled && node build/esbuild-tests.cjs",
-    "build:esm": "rimraf dist/esm dist/types && pnpm tsc -p tsconfig.json",
-    "build:browser": "pnpm build:esm",
-    "build": "pnpm clean && pnpm build:esm",
+    "build:tests": "rimraf tests/compiled && bun build/esbuild-tests.cjs",
+    "build:esm": "rimraf dist/esm dist/types && bun tsc -p tsconfig.json",
+    "build:browser": "bun run build:esm",
+    "build": "bun run clean && bun run build:esm",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
-    "test:browser": "pnpm build:tests && web-test-runner"
+    "test:browser": "bun run build:tests && bunx web-test-runner"
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/browser#readme",
   "bugs": "https://github.com/enboxorg/enbox/issues",

@@ -3,11 +3,8 @@
 # This script handles the publishing of the current 
 # commits as an npm based unstable package
 
-# Add dev dependencies to current path
-export PATH="$PATH:node_modules/.bin"
-
 # Fetch the current version from the package.json
-new_version=$(node -pe "require('./package.json').version")
+new_version=$(bun -pe "require('./package.json').version")
 
 # Generate the new unstable version
 new_unstable_version=$new_version"-unstable-$(date +'%Y-%m-%d-%M-%S')-$(git rev-parse --short HEAD)"
@@ -20,4 +17,3 @@ npm publish --tag unstable --no-git-tag-version
 
 # Reset changes to the package.json
 git checkout -- package.json
-git checkout -- package-lock.json

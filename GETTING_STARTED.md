@@ -2,16 +2,16 @@
 
 ## Prerequisites
 
-This project uses **Volta** to manage Node.js and pnpm versions automatically.
+This project uses [Bun](https://bun.sh) as its runtime and package manager.
 
-### Install Volta (one-time setup)
+### Install Bun (one-time setup)
 
 ```bash
 # macOS/Linux
-curl https://get.volta.sh | bash
+curl -fsSL https://bun.sh/install | bash
 
 # Windows
-winget install Volta.Volta
+powershell -c "irm bun.sh/install.ps1 | iex"
 ```
 
 ### Quick Start
@@ -22,34 +22,29 @@ winget install Volta.Volta
    cd enbox
    ```
 
-2. **Volta will automatically install the correct Node.js and pnpm versions** when you enter the directory for the first time.
-
-3. **Install dependencies:**
+2. **Install dependencies:**
    ```bash
-   pnpm install
+   bun install
    ```
 
-4. **Build all packages:**
+3. **Build all packages:**
    ```bash
-   pnpm build
+   bun run build
    ```
 
-5. **Run tests:**
+4. **Run tests:**
    ```bash
-   pnpm test:node
+   bun run test:node
    ```
 
 ## Alternative Version Managers
 
-If you prefer other tools:
+If you use a version manager:
 
-- **nvm**: `nvm use` (reads `.nvmrc`)
-- **asdf**: `asdf install` (reads `.tool-versions`)  
-- **pnpm only**: The `.pnpmrc` enforces Node version requirements
+- **asdf**: `asdf install` (reads `.tool-versions`)
 
 ## Verified Versions
 
-- **Node.js**: 20.10.0
-- **pnpm**: 8.15.0
+- **Bun**: >= 1.0.0
 
-These versions are automatically used when Volta is installed.
+The `.tool-versions` file pins the exact Bun version used by this project.

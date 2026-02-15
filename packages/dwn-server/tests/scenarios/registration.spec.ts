@@ -5,7 +5,6 @@ import type { RegistrationManager } from '../../src/registration/registration-ma
 import type { JsonRpcRequest, JsonRpcResponse } from '../../src/lib/json-rpc.js';
 import type { RegistrationData, RegistrationRequest } from '../../src/registration/registration-types.js';
 
-import fetch from 'node-fetch';
 import { config } from '../../src/config.js';
 import { createJsonRpcRequest} from '../../src/lib/json-rpc.js';
 import { createRecordsWriteMessage } from '../utils.js';

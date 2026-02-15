@@ -4,8 +4,6 @@ import type { Readable } from 'readable-stream';
 
 import chaiAsPromised from 'chai-as-promised';
 import chai, { expect } from 'chai';
-import fetch from 'node-fetch';
-
 import { createJsonRpcRequest } from '../src/lib/json-rpc.js';
 import { getFileAsReadStream } from './utils.js';
 import { v4 as uuidv4 } from 'uuid';

@@ -13,7 +13,7 @@ import type { DwnServerConfig } from './config.js';
 
 import * as fs from 'fs';
 import Cursor from 'pg-cursor';
-import Database from 'better-sqlite3';
+import { createBunSqliteDatabase } from '@enbox/dwn-sql-store';
 import pg from 'pg';
 import { createPool as MySQLCreatePool } from 'mysql2';
 import { PluginLoader } from './plugin-loader.js';
@@ -184,7 +184,7 @@ export function getDialectFromUrl(connectionUrl: URL): Dialect {
       const dbPath = path || ':memory:';
 
       return new SqliteDialect({
-        database: async () => new Database(dbPath),
+        database: async () => createBunSqliteDatabase(dbPath),
       });
     case BackendTypes.MYSQL:
       return new MysqlDialect({

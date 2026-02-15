@@ -5,11 +5,8 @@ export type DwnServerConfig = typeof config;
 export const config = {
   /**
    * Used to populate the `server` property returned by the `/info` endpoint.
-   *
-   * If running using `npm` the `process.env.npm_package_name` variable exists and we use that,
-   * otherwise we fall back on the use defined `DWN_SERVER_PACKAGE_NAME` or `@enbox/dwn-server`.
    */
-  serverName: process.env.npm_package_name || process.env.DWN_SERVER_PACKAGE_NAME || '@enbox/dwn-server',
+  serverName: process.env.DWN_SERVER_PACKAGE_NAME || '@enbox/dwn-server',
 
   /**
    * The base external URL of this DWN.
@@ -37,11 +34,10 @@ export const config = {
    * Used to populate the `version` and `sdkVersion` properties returned by the `/info` endpoint.
    *
    * The `version` and `sdkVersion` are pulled from `package.json` at runtime.
-   * If running using `npm` the `process.env.npm_package_json` variable exists as the filepath, so we use that.
-   * Otherwise we check to see if a specific `DWN_SERVER_PACKAGE_JSON` exists, if it does we use that.
-   * Finally if both of those options don't exist we resort to the path within the docker server image, located at `/dwn-server/package.json`
+   * If `DWN_SERVER_PACKAGE_JSON` is set, we use that path.
+   * Otherwise we resort to the path within the docker server image, located at `/dwn-server/package.json`.
    */
-  packageJsonPath:  process.env.npm_package_json ||  process.env.DWN_SERVER_PACKAGE_JSON || '/dwn-server/package.json',
+  packageJsonPath: process.env.DWN_SERVER_PACKAGE_JSON || '/dwn-server/package.json',
   // max size of data that can be provided with a RecordsWrite
   maxRecordDataSize: bytes(process.env.MAX_RECORD_DATA_SIZE || '1gb'),
 

@@ -1,11 +1,9 @@
 import type { GenericMessage, Persona, UnionMessageReply } from '@enbox/dwn-sdk-js';
-import type { Response } from 'node-fetch';
 import { Cid, DataStream, RecordsWrite } from '@enbox/dwn-sdk-js';
 
 import fs from 'node:fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import fetch from 'node-fetch';
 import type { Readable } from 'readable-stream';
 import { fileURLToPath } from 'url';
 import { WebSocket } from 'ws';

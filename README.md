@@ -2,7 +2,7 @@
 
 A comprehensive toolkit for decentralized identity and data management.
 
-## 🏗️ **Architecture Overview**
+## Architecture Overview
 
 This monorepo contains the following packages under the `@enbox` namespace:
 
@@ -16,12 +16,10 @@ This monorepo contains the following packages under the `@enbox` namespace:
 - **`@enbox/agent`** - Agent implementation for decentralized identity management
 - **`@enbox/common`** - Shared utilities and common functionality
 - **`@enbox/crypto`** - Cryptographic library and JOSE implementation
-- **`@enbox/crypto-aws-kms`** - AWS KMS integration for cryptography
 - **`@enbox/dids`** - Decentralized Identifiers (DID) library
-- **`@enbox/credentials`** - Verifiable Credentials implementation
 - **`@enbox/browser`** - Browser-specific tools and features
 
-## 🔄 **System Flow**
+## System Flow
 
 The system is designed to work as follows:
 
@@ -29,11 +27,10 @@ The system is designed to work as follows:
 2. **Client Integration**: Import `@enbox/api` in frontend applications
 3. **Communication**: The API uses `@enbox/dwn-sdk-js` + agents to communicate with the DWN server
 
-## 🚀 **Quick Start**
+## Quick Start
 
 ### Prerequisites
-- Node.js >= 18
-- pnpm
+- [Bun](https://bun.sh) >= 1.0
 
 ### Installation
 ```bash
@@ -42,13 +39,26 @@ git clone https://github.com/enboxorg/enbox.git
 cd enbox
 
 # Install dependencies
-pnpm install
+bun install
 
 # Build all packages
-pnpm build
+bun run build
 ```
 
-## 🐳 **Docker Setup**
+### Development
+```bash
+# Run tests
+bun run test:node
+
+# Lint code
+bun run lint
+bun run lint:fix
+
+# Clean build artifacts
+bun run clean
+```
+
+## Docker Setup
 
 The easiest way to get started with the DWN server is using Docker Compose, which sets up both the DWN server and PostgreSQL database.
 
@@ -92,7 +102,7 @@ For production deployments:
 4. Configure backup strategies
 5. Set resource limits for containers
 
-## 🚄 **Railway Deployment**
+## Railway Deployment
 
 Deploy the DWN server to Railway (Platform-as-a-Service) with managed PostgreSQL in minutes:
 
@@ -106,30 +116,9 @@ See the complete [Railway Deployment Guide](./RAILWAY.md) for detailed instructi
 4. Configure environment variables
 5. Deploy automatically
 
-### Railway Benefits
-- ✅ **Managed PostgreSQL** with automatic backups
-- ✅ **Auto-scaling** based on traffic  
-- ✅ **SSL certificates** automatically managed
-- ✅ **Git-based deployments** with instant rollbacks
-- ✅ **Environment management** (staging/production)
-- ✅ **Monitoring & logs** built-in
-
 For complete Railway deployment instructions, troubleshooting, and production tips, see **[RAILWAY.md](./RAILWAY.md)**.
 
-### Development
-```bash
-# Run tests
-pnpm test:node
-
-# Lint code
-pnpm lint
-pnpm lint:fix
-
-# Clean build artifacts
-pnpm clean
-```
-
-## 📦 **Package Dependencies**
+## Package Dependencies
 
 ### Internal Dependencies
 - `@enbox/dwn-sql-store` depends on `@enbox/dwn-sdk-js`
@@ -138,12 +127,12 @@ pnpm clean
 - `@enbox/agent` depends on `@enbox/dwn-sdk-js`, `@enbox/common`, `@enbox/crypto`, `@enbox/dids`
 - All packages use workspace dependencies for internal packages
 
-## 📁 **Repository Structure**
+## Repository Structure
 
 ```
 enbox/
 ├── package.json              # Root monorepo configuration
-├── pnpm-workspace.yaml      # Workspace configuration
+├── bunfig.toml              # Bun configuration
 ├── tsconfig.json            # TypeScript configuration
 ├── eslint.config.cjs        # ESLint configuration
 ├── README.md                # This file
@@ -157,24 +146,22 @@ enbox/
     ├── agent/             # Agent implementation
     ├── common/            # Shared utilities
     ├── crypto/            # Cryptographic library
-    ├── crypto-aws-kms/    # AWS KMS integration
     ├── dids/              # DID library
-    ├── credentials/       # Verifiable credentials
     └── browser/           # Browser tools
 ```
 
-## 🤝 **Contributing**
+## Contributing
 
 This repository consolidates packages from the decentralized identity ecosystem. For detailed contribution guidelines, see the original repositories:
 
 - [dwn-sdk-js Contributing](https://github.com/decentralized-identity/dwn-sdk-js/blob/main/CONTRIBUTING.md)
 - [decentralized-identity Contributing](https://github.com/decentralized-identity/web5-js/blob/main/CONTRIBUTING.md)
 
-## 📄 **License**
+## License
 
-MIT
+Apache-2.0
 
-## 🔗 **Related Resources**
+## Related Resources
 
 - [Decentralized Web Node Specification](https://identity.foundation/decentralized-web-node/spec/)
 - [DID Specification](https://www.w3.org/TR/did-core/)

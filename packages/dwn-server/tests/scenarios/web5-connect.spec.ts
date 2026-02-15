@@ -1,4 +1,3 @@
-import fetch from 'node-fetch';
 import sinon from 'sinon';
 import { config } from '../../src/config.js';
 import { DwnServer } from '../../src/dwn-server.js';

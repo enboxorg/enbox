@@ -1,0 +1,6 @@
+[install]
+peer = true
+
+[install.scopes]
+# Allow all packages to run lifecycle scripts
+"@enbox" = { }

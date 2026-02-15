@@ -11,7 +11,6 @@ import {
 import type { Dwn, DwnError, Persona, ProtocolsConfigureMessage, RecordsQueryReply } from '@enbox/dwn-sdk-js';
 
 import { expect } from 'chai';
-import fetch from 'node-fetch';
 import { webcrypto } from 'node:crypto';
 import { useFakeTimers } from 'sinon';
 import request from 'supertest';
