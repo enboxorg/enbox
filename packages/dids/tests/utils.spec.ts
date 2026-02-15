@@ -16,9 +16,9 @@ import {
   getVerificationRelationshipsById,
 } from '../src/utils.js';
 
-import DidUtilsgetVerificationMethodsTestVector from './fixtures/test-vectors/utils/get-verification-methods.json' with { type: 'json' };
-import DidUtilsGetVerificationMethodTypesTestVector from './fixtures/test-vectors/utils/get-verification-method-types.json' with { type: 'json' };
-import DidUtilsGetVerificationMethodByKeyTestVector from './fixtures/test-vectors/utils/get-verification-method-by-key.json' with { type: 'json' };
+import DidUtilsgetVerificationMethodsTestVector from './fixtures/test-vectors/utils/get-verification-methods.json' assert { type: 'json' };
+import DidUtilsGetVerificationMethodTypesTestVector from './fixtures/test-vectors/utils/get-verification-method-types.json' assert { type: 'json' };
+import DidUtilsGetVerificationMethodByKeyTestVector from './fixtures/test-vectors/utils/get-verification-method-by-key.json' assert { type: 'json' };
 
 describe('DID Utils', () => {
   describe('extractDidFragment()', () => {

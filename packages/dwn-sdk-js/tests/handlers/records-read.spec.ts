@@ -8,14 +8,14 @@ import { DataStoreLevel, DwnConstant, MessageStoreLevel, PermissionsProtocol, Ti
 import { DwnInterfaceName, DwnMethodName } from '../../src/index.js';
 
 import chaiAsPromised from 'chai-as-promised';
-import chatProtocolDefinition from '../vectors/protocol-definitions/chat.json' with { type: 'json' };
-import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' with { type: 'json' };
-import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
-import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
-import nestedProtocol from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
+import chatProtocolDefinition from '../vectors/protocol-definitions/chat.json' assert { type: 'json' };
+import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' assert { type: 'json' };
+import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' assert { type: 'json' };
+import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' assert { type: 'json' };
+import nestedProtocol from '../vectors/protocol-definitions/nested.json' assert { type: 'json' };
 import sinon from 'sinon';
-import socialMediaProtocolDefinition from '../vectors/protocol-definitions/social-media.json' with { type: 'json' };
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import socialMediaProtocolDefinition from '../vectors/protocol-definitions/social-media.json' assert { type: 'json' };
+import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' assert { type: 'json' };
 
 import chai, { expect } from 'chai';
 

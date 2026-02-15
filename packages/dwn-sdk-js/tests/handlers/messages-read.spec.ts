@@ -11,7 +11,7 @@ import type {
 import { expect } from 'chai';
 import { GeneralJwsVerifier } from '../../src/jose/jws/general/verifier.js';
 import { Message } from '../../src/core/message.js';
-import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
+import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' assert { type: 'json' };
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';

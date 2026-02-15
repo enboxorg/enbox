@@ -4,13 +4,13 @@ import chaiAsPromised from 'chai-as-promised';
 
 import type { Jwk, JwkParamsEcPrivate } from '../../src/jose/jwk.js';
 
-import secp256r1GetCurvePoints from '../fixtures/test-vectors/secp256r1/get-curve-points.json' with { type: 'json' };
-import secp256r1BytesToPublicKey from '../fixtures/test-vectors/secp256r1/bytes-to-public-key.json' with { type: 'json' };
-import secp256r1PublicKeyToBytes from '../fixtures/test-vectors/secp256r1/public-key-to-bytes.json' with { type: 'json' };
-import secp256r1ValidatePublicKey from '../fixtures/test-vectors/secp256r1/validate-public-key.json' with { type: 'json' };
-import secp256r1BytesToPrivateKey from '../fixtures/test-vectors/secp256r1/bytes-to-private-key.json' with { type: 'json' };
-import secp256r1PrivateKeyToBytes from '../fixtures/test-vectors/secp256r1/private-key-to-bytes.json' with { type: 'json' };
-import secp256r1ValidatePrivateKey from '../fixtures/test-vectors/secp256r1/validate-private-key.json' with { type: 'json' };
+import secp256r1GetCurvePoints from '../fixtures/test-vectors/secp256r1/get-curve-points.json' assert { type: 'json' };
+import secp256r1BytesToPublicKey from '../fixtures/test-vectors/secp256r1/bytes-to-public-key.json' assert { type: 'json' };
+import secp256r1PublicKeyToBytes from '../fixtures/test-vectors/secp256r1/public-key-to-bytes.json' assert { type: 'json' };
+import secp256r1ValidatePublicKey from '../fixtures/test-vectors/secp256r1/validate-public-key.json' assert { type: 'json' };
+import secp256r1BytesToPrivateKey from '../fixtures/test-vectors/secp256r1/bytes-to-private-key.json' assert { type: 'json' };
+import secp256r1PrivateKeyToBytes from '../fixtures/test-vectors/secp256r1/private-key-to-bytes.json' assert { type: 'json' };
+import secp256r1ValidatePrivateKey from '../fixtures/test-vectors/secp256r1/validate-private-key.json' assert { type: 'json' };
 
 import { Secp256r1 } from '../../src/primitives/secp256r1.js';
 

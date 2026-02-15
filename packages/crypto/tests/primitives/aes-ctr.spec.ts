@@ -6,8 +6,8 @@ import type { Jwk, JwkParamsOctPrivate } from '../../src/jose/jwk.js';
 
 import { isChrome } from '../utils/runtimes.js';
 import { AesCtr } from '../../src/primitives/aes-ctr.js';
-import AesCtrDecryptTestVector from '../fixtures/test-vectors/aes-ctr/decrypt.json' with { type: 'json' };
-import AesCtrEncryptTestVector from '../fixtures/test-vectors/aes-ctr/encrypt.json' with { type: 'json' };
+import AesCtrDecryptTestVector from '../fixtures/test-vectors/aes-ctr/decrypt.json' assert { type: 'json' };
+import AesCtrEncryptTestVector from '../fixtures/test-vectors/aes-ctr/encrypt.json' assert { type: 'json' };
 
 use(chaiAsPromised);
 

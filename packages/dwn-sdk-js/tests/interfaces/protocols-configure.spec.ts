@@ -3,7 +3,7 @@ import chai, { expect } from 'chai';
 
 import type { ProtocolDefinition, ProtocolsConfigureDescriptor, ProtocolsConfigureMessage } from '../../src/index.js';
 
-import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
+import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' assert { type: 'json' };
 import { Jws } from '../../src/utils/jws.js';
 import { ProtocolAction } from '../../src/types/protocols-types.js';
 import { ProtocolsConfigure } from '../../src/interfaces/protocols-configure.js';

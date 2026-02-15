@@ -5,7 +5,7 @@ import type { DataStore, EventLog, MessageStore, ResumableTaskStore } from '../.
 
 import chaiAsPromised from 'chai-as-promised';
 import EventEmitter from 'events';
-import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
+import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' assert { type: 'json' };
 import sinon from 'sinon';
 import chai, { expect } from 'chai';
 

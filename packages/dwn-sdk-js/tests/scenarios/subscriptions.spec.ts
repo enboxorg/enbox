@@ -9,8 +9,8 @@ import type {
   ResumableTaskStore,
 } from '../../src/index.js';
 
-import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
-import threadProtocol from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import freeForAll from '../vectors/protocol-definitions/free-for-all.json' assert { type: 'json' };
+import threadProtocol from '../vectors/protocol-definitions/thread-role.json' assert { type: 'json' };
 
 import { Poller } from '../utils/poller.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';

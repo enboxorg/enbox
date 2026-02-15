@@ -7,9 +7,9 @@ import { AgentPermissionsApi, DwnDateSort, DwnInterface, DwnProtocolDefinition, 
 
 import { DwnApi } from '../src/dwn-api.js';
 import { testDwnUrl } from './utils/test-config.js';
-import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
-import photosProtocolDefinition from './fixtures/protocol-definitions/photos.json' with { type: 'json' };
-import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json' with { type: 'json' };
+import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' assert { type: 'json' };
+import photosProtocolDefinition from './fixtures/protocol-definitions/photos.json' assert { type: 'json' };
+import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json' assert { type: 'json' };
 import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, PermissionsProtocol, Poller, Time } from '@enbox/dwn-sdk-js';
 import { PermissionGrant } from '../src/permission-grant.js';
 import { Record } from '../src/record.js';

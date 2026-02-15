@@ -4,10 +4,10 @@ import type { DataStore, EventLog, MessageStore, PermissionScope, ResumableTaskS
 import type { RecordEvent, RecordsWriteMessage } from '../../src/types/records-types.js';
 
 import chaiAsPromised from 'chai-as-promised';
-import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' with { type: 'json' };
-import messageProtocolDefinition from '../vectors/protocol-definitions/message.json' with { type: 'json' };
+import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' assert { type: 'json' };
+import messageProtocolDefinition from '../vectors/protocol-definitions/message.json' assert { type: 'json' };
 import sinon from 'sinon';
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' assert { type: 'json' };
 
 import chai, { expect } from 'chai';
 

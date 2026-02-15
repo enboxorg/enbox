@@ -8,7 +8,7 @@ import type { DidResource } from '../../src/types/did-core.js';
 import { DidJwk } from '../../src/methods/did-jwk.js';
 import { isDidVerificationMethod } from '../../src/utils.js';
 import { UniversalResolver } from '../../src/resolver/universal-resolver.js';
-import DidJwkResolveTestVector from '../fixtures/web5-spec-vectors/did_jwk/resolve.json' with { type: 'json' };
+import DidJwkResolveTestVector from '../fixtures/web5-spec-vectors/did_jwk/resolve.json' assert { type: 'json' };
 
 describe('UniversalResolver', () => {
   describe('resolve()', () => {

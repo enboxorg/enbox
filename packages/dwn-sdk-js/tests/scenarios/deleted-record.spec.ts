@@ -3,7 +3,7 @@ import type { EventStream } from '../../src/types/subscriptions.js';
 import type { DataStore, EventLog, MessageStore, ResumableTaskStore } from '../../src/index.js';
 
 import chaiAsPromised from 'chai-as-promised';
-import freeForAllProtocolDefinition from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
+import freeForAllProtocolDefinition from '../vectors/protocol-definitions/free-for-all.json' assert { type: 'json' };
 import sinon from 'sinon';
 
 import { TestDataGenerator } from '../utils/test-data-generator.js';

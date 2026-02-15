@@ -7,8 +7,8 @@ import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
 import chai, { expect } from 'chai';
 
-import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' assert { type: 'json' };
+import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' assert { type: 'json' };
 
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';

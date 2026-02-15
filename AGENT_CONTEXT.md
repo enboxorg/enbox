@@ -162,8 +162,9 @@ When working on this repository:
 1. **Always use workspace dependencies** for internal packages
 2. **Maintain the dependency flow** described above
 3. **Update both package.json and source imports** when changing namespaces
-4. **Test the full build** after making changes (`bun run build`)
+4. **Always run lint and build before committing**: `bun run lint` and `bun run build` (or `bun run --filter '*' lint` / `bun run --filter '*' build` from root). Fix any errors before pushing.
 5. **Consider the monorepo structure** when adding new packages
 6. **Run scripts with `bun run`**, not `npm run` or `pnpm`
+7. **Import attributes**: Use `assert { type: 'json' }` (not `with`) for JSON imports — `@typescript-eslint/parser` v7.x cannot parse the `with` keyword. Migration to `with` requires upgrading to `@typescript-eslint` v8.
 
 This repository represents a successful consolidation of a previously broken, scattered architecture into a unified, maintainable monorepo structure.

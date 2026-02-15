@@ -12,8 +12,8 @@ import { DwnApi } from '../src/dwn-api.js';
 import { dataToBlob } from '../src/utils.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
-import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
-import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json' with { type: 'json' };
+import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' assert { type: 'json' };
+import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json' assert { type: 'json' };
 
 // NOTE: @noble/secp256k1 requires globalThis.crypto polyfill for node.js <=18: https://github.com/paulmillr/noble-secp256k1/blob/main/README.md#usage
 // Remove when we move off of node.js v18 to v20, earliest possible time would be Oct 2023: https://github.com/nodejs/release#release-schedule

@@ -3,7 +3,7 @@ import chai, { expect } from 'chai';
 
 import type { ProtocolsQueryMessage } from '../../src/index.js';
 
-import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
+import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' assert { type: 'json' };
 import { Jws } from '../../src/index.js';
 import { ProtocolsQuery } from '../../src/interfaces/protocols-query.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';

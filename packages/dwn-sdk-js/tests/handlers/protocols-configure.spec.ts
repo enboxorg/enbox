@@ -14,8 +14,8 @@ import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
 import chai, { expect } from 'chai';
 
-import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
-import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
+import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' assert { type: 'json' };
+import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' assert { type: 'json' };
 
 import { GeneralJwsBuilder } from '../../src/jose/jws/general/builder.js';
 import { lexicographicalCompare } from '../../src/utils/string.js';
