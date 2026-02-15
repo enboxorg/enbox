@@ -1,6 +1,6 @@
 import type { EciesEncryptionOutput } from '../utils/encryption.js';
-import type { PublicJwk } from './jose-types.js';
 import type { KeyDerivationScheme } from '../utils/hd-key.js';
+import type { PublicJwk } from './jose-types.js';
 
 /**
  * A callback interface for deriving HD public encryption keys.

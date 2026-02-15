@@ -55,7 +55,7 @@ export class Protocols {
             const currentPath = [...parentPath, key];
             const publicKeyJwk = await keyDeriver.derivePublicKey(currentPath);
             ruleSet[key].$encryption = {
-              rootKeyId  : keyDeriver.rootKeyId,
+              rootKeyId: keyDeriver.rootKeyId,
               publicKeyJwk,
             };
             await injectKeysViaCallback(ruleSet[key], currentPath);
