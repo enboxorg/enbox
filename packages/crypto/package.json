@@ -3,21 +3,20 @@
   "version": "0.0.2",
   "description": "Web5 cryptographic library",
   "type": "module",
-  "main": "./dist/cjs/index.js",
+  "main": "./dist/esm/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/types/index.d.ts",
   "scripts": {
     "clean": "rimraf dist tests/compiled",
-    "build:esm": "rimraf dist/esm dist/types && pnpm tsc -p tsconfig.json",
-    "build:cjs": "rimraf dist/cjs && pnpm tsc -p tsconfig.cjs.json && echo '{\"type\": \"commonjs\"}' > ./dist/cjs/package.json",
-    "build:browser": "rimraf dist/browser.mjs dist/browser.js && node build/bundles.js",
-    "build:tests:node": "rimraf tests/compiled && pnpm tsc -p tests/tsconfig.json",
-    "build:tests:browser": "rimraf tests/compiled && node build/esbuild-tests.cjs",
-    "build": "pnpm clean && pnpm build:esm && pnpm build:cjs && pnpm build:browser",
+    "build:esm": "rimraf dist/esm dist/types && bun tsc -p tsconfig.json",
+    "build:browser": "rimraf dist/browser.mjs dist/browser.js && bun build/bundles.js",
+    "build:tests:node": "rimraf tests/compiled && bun tsc -p tests/tsconfig.json",
+    "build:tests:browser": "rimraf tests/compiled && bun build/esbuild-tests.cjs",
+    "build": "bun run clean && bun run build:esm && bun run build:browser",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
-    "test:node": "pnpm build:tests:node && pnpm c8 mocha",
-    "test:browser": "pnpm build:tests:browser && web-test-runner"
+    "test:node": "bun run build:tests:node && bunx c8 mocha",
+    "test:browser": "bun run build:tests:browser && bunx web-test-runner"
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/crypto#readme",
   "bugs": "https://github.com/enboxorg/enbox/issues",
@@ -52,8 +51,7 @@
   "exports": {
     ".": {
       "types": "./dist/types/index.d.ts",
-      "import": "./dist/esm/index.js",
-      "require": "./dist/cjs/index.js"
+      "import": "./dist/esm/index.js"
     }
   },
   "browser": {
@@ -70,7 +68,7 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "bun": ">=1.0.0"
   },
   "dependencies": {
     "@noble/ciphers": "0.5.3",
@@ -86,8 +84,8 @@
     "@types/mocha": "10.0.6",
     "@types/node": "20.14.8",
     "@types/sinon": "17.0.3",
-    "@typescript-eslint/eslint-plugin": "7.14.1",
-    "@typescript-eslint/parser": "7.14.1",
+    "@typescript-eslint/eslint-plugin": "7.18.0",
+    "@typescript-eslint/parser": "7.18.0",
     "@web/test-runner": "0.18.2",
     "@web/test-runner-playwright": "0.11.0",
     "c8": "10.1.2",

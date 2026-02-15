@@ -13,17 +13,19 @@ jobs:
     steps:
       - name: checkout repository
         uses: actions/checkout@v4
-      - name: setup node.js
-        uses: actions/setup-node@v4
+      - name: setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
 
       - name: install dependencies
         run: |
-          npm clean-install
-          npm i -d @types/node
-      - run: npm run build
+          bun install
+          bun add -d @types/node
+      - run: bun run build
       - name: build typedoc site
         run: |
-          npx typedoc
+          bunx typedoc
       - name: make git repo to push to github actions
         run: |
           cd documentation

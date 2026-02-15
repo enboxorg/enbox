@@ -13,7 +13,8 @@
     "declarationDir": "./dist/types",
     "resolveJsonModule": true,
     "esModuleInterop": true,
-    "strictNullChecks": true
+    "strictNullChecks": true,
+    "skipLibCheck": true
   },
   "include": [
     "./src"

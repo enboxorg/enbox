@@ -44,18 +44,17 @@
     "src"
   ],
   "engines": {
-    "node": ">= 18"
+    "bun": ">= 1.0"
   },
   "publishConfig": {
     "access": "public"
   },
-  "main": "./dist/cjs/index.js",
+  "main": "./dist/esm/src/index.js",
   "module": "./dist/esm/src/index.js",
   "types": "./dist/types/src/index.d.ts",
   "exports": {
     ".": {
       "import": "./dist/esm/src/index.js",
-      "require": "./dist/cjs/index.js",
       "types": "./dist/types/src/index.d.ts"
     },
     "./tests": {
@@ -75,7 +74,7 @@
     "abstract-level": "1.0.3",
     "ajv": "8.12.0",
     "blockstore-core": "4.2.0",
-    "cross-fetch": "4.0.0",
+
     "eciesjs": "0.4.5",
     "interface-blockstore": "5.2.3",
     "interface-store": "5.1.2",
@@ -149,19 +148,18 @@
   },
   "scripts": {
     "build:esm": "tsc",
-    "build:cjs": "npm run build:esm && node build/create-cjs-bundle.cjs && echo '{\"type\": \"commonjs\"}' > ./dist/cjs/package.json",
-    "build": "npm run clean && npm run compile-validators && npm run build:esm && npm run build:cjs && npm run bundle",
-    "bundle": "node ./build/create-browser-bundle.cjs",
+    "build": "bun run clean && bun run compile-validators && bun run build:esm && bun run bundle",
+    "bundle": "bun ./build/create-browser-bundle.cjs",
     "clean": "rimraf dist && rimraf generated/*",
-    "compile-validators": "node ./build/compile-validators.js",
+    "compile-validators": "bun ./build/compile-validators.js",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "circular-dependency-check": "depcruise src",
-    "test:node": "npm run compile-validators && tsc && c8 npx mocha \"dist/esm/tests/**/*.spec.js\"",
-    "test:node-grep": "npm run compile-validators && tsc && c8 npx mocha \"dist/esm/tests/**/*.spec.js\" -- --grep $npm_config_grep",
-    "test:browser": "npm run compile-validators && cross-env karma start karma.conf.cjs",
-    "test:browser-debug": "npm run compile-validators && cross-env karma start karma.conf.debug.cjs",
-    "license-check": "license-report --only=prod > license-report.json && node ./build/license-check.cjs",
+    "test:node": "bun run compile-validators && tsc && bunx c8 mocha \"dist/esm/tests/**/*.spec.js\"",
+    "test:node-grep": "bun run compile-validators && tsc && bunx mocha \"dist/esm/tests/**/*.spec.js\" --grep $GREP",
+    "test:browser": "bun run compile-validators && cross-env karma start karma.conf.cjs",
+    "test:browser-debug": "bun run compile-validators && cross-env karma start karma.conf.debug.cjs",
+    "license-check": "license-report --only=prod > license-report.json && bun ./build/license-check.cjs",
     "publish:unstable": "./build/publish-unstable.sh"
   }
 }

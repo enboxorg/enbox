@@ -14,12 +14,11 @@
   "publishConfig": {
     "access": "public"
   },
-  "main": "./dist/cjs/main.js",
+  "main": "./dist/esm/src/main.js",
   "module": "./dist/esm/src/main.js",
   "types": "./dist/types/src/main.d.ts",
   "exports": {
     "import": "./dist/esm/src/main.js",
-    "require": "./dist/cjs/main.js",
     "types": "./dist/types/src/main.d.ts"
   },
   "react-native": "./dist/esm/src/main.js",
@@ -31,7 +30,7 @@
     "readable-stream": "4.4.2"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "7.6.4",
+    "@types/bun": "latest",
     "@types/chai": "4.3.4",
     "@types/chai-as-promised": "7.1.5",
     "@types/express": "4.17.17",
@@ -43,7 +42,6 @@
     "@types/supertest": "2.0.12",
     "@typescript-eslint/eslint-plugin": "5.59.11",
     "@typescript-eslint/parser": "5.59.11",
-    "better-sqlite3": "8.4.0",
     "c8": "8.0.0",
     "chai": "4.3.6",
     "chai-as-promised": "7.1.1",
@@ -58,21 +56,20 @@
     "typescript": "5.0.4"
   },
   "scripts": {
-    "build:esm": "pnpm clean & tsc",
-    "build:cjs": "pnpm build:esm && node build/create-cjs-bundle.cjs && echo '{\"type\": \"commonjs\"}' > ./dist/cjs/package.json",
-    "build": "pnpm clean && pnpm build:esm && pnpm build:cjs",
+    "build:esm": "bun run clean && tsc",
+    "build": "bun run clean && bun run build:esm",
     "clean": "rimraf dist compiled",
     "lint": "eslint . --ext .ts --max-warnings 0",
     "lint:fix": "eslint . --ext .ts --fix",
-    "test": "rimraf compiled && tsc -p tests/tsconfig.json && mocha",
-    "test-coverage": "rimraf compiled && tsc -p tests/tsconfig.json && c8 mocha"
+    "test": "rimraf compiled && tsc -p tests/tsconfig.json && bunx mocha",
+    "test-coverage": "rimraf compiled && tsc -p tests/tsconfig.json && bunx c8 mocha"
   },
   "files": [
     "dist",
     "src"
   ],
   "engines": {
-    "node": ">=18"
+    "bun": ">=1.0.0"
   },
   "contributors": [
     {

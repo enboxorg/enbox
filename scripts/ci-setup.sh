@@ -1,26 +1,18 @@
 #!/bin/bash
 set -e
 
-echo "🔧 Setting up CI environment..."
+echo "Setting up CI environment..."
 
 # Clean everything first
-echo "🧹 Cleaning workspace..."
-pnpm clean || true
+echo "Cleaning workspace..."
+bun run clean || true
 
 # Install dependencies
-echo "📦 Installing dependencies..."
-pnpm install --frozen-lockfile
-
-# Rebuild native modules explicitly
-echo "🔨 Rebuilding native modules..."
-pnpm rebuild:native
-
-# Additional rebuild for safety (sometimes needed in CI)
-echo "🔨 Running additional native module rebuild..."
-pnpm rebuild better-sqlite3 --recursive || true
+echo "Installing dependencies..."
+bun install --frozen-lockfile
 
 # Build all packages
-echo "🏗️  Building packages..."
-pnpm build
+echo "Building packages..."
+bun run build
 
-echo "✅ CI setup complete!"
+echo "CI setup complete!"
