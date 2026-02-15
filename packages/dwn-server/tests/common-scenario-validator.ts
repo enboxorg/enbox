@@ -89,7 +89,7 @@ export default class CommonScenarioValidator {
       headers: {
         'dwn-request': JSON.stringify(recordsWriteRequest),
       },
-      body: stream
+      body: stream as any
     });
     const recordsWriteResponseBody = await recordsWriteResponse.json() as JsonRpcSuccessResponse;
 
@@ -134,7 +134,7 @@ export default class CommonScenarioValidator {
     expect(recordsReadJsonRpcResponse.result.reply.entry.recordsWrite).to.exist;
 
     // can't get response as stream from supertest :(
-    const cid = await Cid.computeDagPbCidFromStream(recordsReadResponse.body as Readable);
+    const cid = await Cid.computeDagPbCidFromStream(recordsReadResponse.body as unknown as Readable);
     expect(cid).to.equal(dataCid);
   }
 }

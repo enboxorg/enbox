@@ -58,14 +58,14 @@ export function createBunSqliteDatabase(
         },
 
         all(parameters: ReadonlyArray<unknown>): unknown[] {
-          return stmt.all(...parameters);
+          return stmt.all(...(parameters as any[]));
         },
 
         run(parameters: ReadonlyArray<unknown>): {
           changes: number | bigint;
           lastInsertRowid: number | bigint;
         } {
-          return stmt.run(...parameters) as {
+          return stmt.run(...(parameters as any[])) as {
             changes: number | bigint;
             lastInsertRowid: number | bigint;
           };
