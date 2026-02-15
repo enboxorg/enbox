@@ -13,7 +13,7 @@ import type { PortableIdentity } from '../src/types/identity.js';
 
 import { DwnInterface, DwnPermissionScope } from '../src/types/dwn.js';
 import { BearerIdentity } from '../src/bearer-identity.js';
-import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' assert { type: 'json' };
+import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';

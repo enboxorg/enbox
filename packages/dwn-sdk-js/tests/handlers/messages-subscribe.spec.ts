@@ -4,7 +4,7 @@ import type { EventStream, MessageEvent } from '../../src/types/subscriptions.js
 
 import { Dwn } from '../../src/dwn.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
-import freeForAll from '../vectors/protocol-definitions/free-for-all.json' assert { type: 'json' };
+import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
 import { MessagesSubscribe } from '../../src/interfaces/messages-subscribe.js';

@@ -6,8 +6,8 @@ import type { Jwk, JwkParamsOctPrivate } from '../../src/jose/jwk.js';
 
 import { isChrome } from '../utils/runtimes.js';
 import { AesGcm, AES_GCM_TAG_LENGTHS } from '../../src/primitives/aes-gcm.js';
-import AesGcmDecryptTestVector from '../fixtures/test-vectors/aes-gcm/decrypt.json' assert { type: 'json' };
-import AesGcmEncryptTestVector from '../fixtures/test-vectors/aes-gcm/encrypt.json' assert { type: 'json' };
+import AesGcmDecryptTestVector from '../fixtures/test-vectors/aes-gcm/decrypt.json' with { type: 'json' };
+import AesGcmEncryptTestVector from '../fixtures/test-vectors/aes-gcm/encrypt.json' with { type: 'json' };
 
 use(chaiAsPromised);
 

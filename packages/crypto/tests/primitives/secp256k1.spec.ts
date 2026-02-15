@@ -4,15 +4,15 @@ import chaiAsPromised from 'chai-as-promised';
 
 import type { Jwk, JwkParamsEcPrivate } from '../../src/jose/jwk.js';
 
-import CryptoEs256kSignTestVector from '../fixtures/web5-spec-vectors/crypto_es256k/sign.json' assert { type: 'json' };
-import CryptoEs256kVerifyTestVector from '../fixtures/web5-spec-vectors/crypto_es256k/verify.json' assert { type: 'json' };
-import secp256k1GetCurvePoints from '../fixtures/test-vectors/secp256k1/get-curve-points.json' assert { type: 'json' };
-import secp256k1BytesToPublicKey from '../fixtures/test-vectors/secp256k1/bytes-to-public-key.json' assert { type: 'json' };
-import secp256k1PublicKeyToBytes from '../fixtures/test-vectors/secp256k1/public-key-to-bytes.json' assert { type: 'json' };
-import secp256k1ValidatePublicKey from '../fixtures/test-vectors/secp256k1/validate-public-key.json' assert { type: 'json' };
-import secp256k1BytesToPrivateKey from '../fixtures/test-vectors/secp256k1/bytes-to-private-key.json' assert { type: 'json' };
-import secp256k1PrivateKeyToBytes from '../fixtures/test-vectors/secp256k1/private-key-to-bytes.json' assert { type: 'json' };
-import secp256k1ValidatePrivateKey from '../fixtures/test-vectors/secp256k1/validate-private-key.json' assert { type: 'json' };
+import CryptoEs256kSignTestVector from '../fixtures/web5-spec-vectors/crypto_es256k/sign.json' with { type: 'json' };
+import CryptoEs256kVerifyTestVector from '../fixtures/web5-spec-vectors/crypto_es256k/verify.json' with { type: 'json' };
+import secp256k1GetCurvePoints from '../fixtures/test-vectors/secp256k1/get-curve-points.json' with { type: 'json' };
+import secp256k1BytesToPublicKey from '../fixtures/test-vectors/secp256k1/bytes-to-public-key.json' with { type: 'json' };
+import secp256k1PublicKeyToBytes from '../fixtures/test-vectors/secp256k1/public-key-to-bytes.json' with { type: 'json' };
+import secp256k1ValidatePublicKey from '../fixtures/test-vectors/secp256k1/validate-public-key.json' with { type: 'json' };
+import secp256k1BytesToPrivateKey from '../fixtures/test-vectors/secp256k1/bytes-to-private-key.json' with { type: 'json' };
+import secp256k1PrivateKeyToBytes from '../fixtures/test-vectors/secp256k1/private-key-to-bytes.json' with { type: 'json' };
+import secp256k1ValidatePrivateKey from '../fixtures/test-vectors/secp256k1/validate-private-key.json' with { type: 'json' };
 
 import { Secp256k1 } from '../../src/primitives/secp256k1.js';
 

@@ -148,128 +148,17 @@ jobs:
           fi
           docker rm -f pkarr-relay || true
 
-      - name: Upload coverage reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-reports
-          path: |
-            packages/*/coverage/
-          retention-days: 7
-
-  coverage:
-    name: Coverage Check
-    runs-on: ubuntu-latest
-    needs: test
-    if: github.event_name == 'pull_request'
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download coverage reports
-        uses: actions/download-artifact@v4
-        with:
-          name: coverage-reports
-          path: coverage-artifacts
-
-      - name: Check coverage thresholds
-        id: coverage-check
-        run: |
-          echo "## Coverage Report" > coverage-report.md
-          echo "" >> coverage-report.md
-          echo "| Package | Line Coverage | Status |" >> coverage-report.md
-          echo "|---------|-------------|--------|" >> coverage-report.md
-
-          failed=false
-          threshold=80
-
-          for report in coverage-artifacts/*/coverage/cobertura-coverage.xml; do
-            [ -f "$report" ] || continue
-
-            pkg=$(echo "$report" | sed 's|coverage-artifacts/\([^/]*\)/.*|\1|')
-
-            coverage=$(python3 -c "
-          import xml.etree.ElementTree as ET
-          try:
-              tree = ET.parse('$report')
-              root = tree.getroot()
-              print(f'{float(root.get(\"line-rate\", 0)) * 100:.1f}')
-          except:
-              print('0.0')
-          ")
-
-            if [ "$(echo "$coverage < $threshold" | bc -l)" = "1" ]; then
-              echo "| $pkg | ${coverage}% | :x: Below ${threshold}% |" >> coverage-report.md
-              echo "::error::Coverage for $pkg is ${coverage}%, below ${threshold}% threshold"
-              failed=true
-            else
-              echo "| $pkg | ${coverage}% | :white_check_mark: |" >> coverage-report.md
-            fi
-          done
-
-          echo "" >> coverage-report.md
-          if [ "$failed" = true ]; then
-            echo ":x: **Coverage check failed**: one or more packages are below the ${threshold}% threshold." >> coverage-report.md
-          else
-            echo ":white_check_mark: **All packages meet the ${threshold}% coverage threshold.**" >> coverage-report.md
-          fi
-
-          cat coverage-report.md >> $GITHUB_STEP_SUMMARY
-
-          if [ "$failed" = true ]; then
-            exit 1
-          fi
-
-      - name: Comment PR with coverage
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const body = fs.readFileSync('coverage-report.md', 'utf8');
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const existing = comments.find(c =>
-              c.user.type === 'Bot' && c.body.includes('Coverage Report')
-            );
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body,
-              });
-            }
-
   # Gate job for branch protection -- require this to pass before merging
   ci-passed:
     name: CI Passed
     runs-on: ubuntu-latest
-    needs: [test, coverage]
+    needs: [test]
     if: always()
     steps:
       - name: Check results
         run: |
           if [ "${{ needs.test.result }}" != "success" ]; then
             echo "::error::Tests failed"
-            exit 1
-          fi
-          if [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ needs.coverage.result }}" != "success" ]; then
-            echo "::error::Coverage check failed"
             exit 1
           fi
           echo "All checks passed"

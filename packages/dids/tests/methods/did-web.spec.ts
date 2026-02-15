@@ -4,7 +4,7 @@ import sinon from 'sinon';
 import { expect } from 'chai';
 
 import { DidWeb } from '../../src/methods/did-web.js';
-import DidWebResolveTestVector from '../fixtures/web5-spec-vectors/did_web/resolve.json' assert { type: 'json' };
+import DidWebResolveTestVector from '../fixtures/web5-spec-vectors/did_web/resolve.json' with { type: 'json' };
 
 // Helper function to create a mocked fetch response that fails and returns a 404 Not Found.
 const fetchNotFoundResponse = () => ({
