@@ -227,12 +227,7 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const reportPath = 'coverage-report.md';
-            if (!fs.existsSync(reportPath)) {
-              console.log('No coverage report found, skipping PR comment');
-              return;
-            }
-            const body = fs.readFileSync(reportPath, 'utf8');
+            const body = fs.readFileSync('coverage-report.md', 'utf8');
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
