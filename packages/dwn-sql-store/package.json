@@ -62,7 +62,7 @@
     "lint": "eslint . --ext .ts --max-warnings 0",
     "lint:fix": "eslint . --ext .ts --fix",
     "test": "rimraf compiled && tsc -p tests/tsconfig.json && bunx mocha",
-    "test-coverage": "rimraf compiled && tsc -p tests/tsconfig.json && bunx mocha"
+    "test-coverage": "rimraf compiled && tsc -p tests/tsconfig.json && bunx c8 mocha"
   },
   "files": [
     "dist",
