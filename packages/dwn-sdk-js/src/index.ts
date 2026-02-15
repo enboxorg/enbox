@@ -48,6 +48,7 @@ export { Secp256k1 } from './utils/secp256k1.js';
 export { Secp256r1 } from './utils/secp256r1.js';
 export { Signer } from './types/signer.js';
 export { SortDirection } from './types/query-types.js';
+export type { EncryptionKeyDeriver, KeyDecrypter } from './types/encryption-types.js';
 export { Time } from './utils/time.js';
 export * from './types/permission-types.js';
 export * from './types/records-types.js';
