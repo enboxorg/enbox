@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventStream } from '../../src/types/subscriptions.js';
-import type { DataStore, EventLog, MessageStore, RecordsWriteMessage, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, EventLog, MessageStore, ProtocolDefinition, RecordsWriteMessage, ResumableTaskStore } from '../../src/index.js';
 import type { RecordEvent, RecordsFilter, RecordSubscriptionHandler } from '../../src/types/records-types.js';
 
 import chaiAsPromised from 'chai-as-promised';
@@ -804,6 +804,223 @@ export function testRecordsSubscribeHandler(): void {
           expect(chatSubscribeReply.status.code).to.eq(401);
           expect(chatSubscribeReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
           expect(chatSubscribeReply.subscription).to.not.exist;
+        });
+
+        describe('who-based query/subscribe action rules', () => {
+          const whoSubscribeProtocol: ProtocolDefinition = {
+            published : true,
+            protocol  : 'http://who-subscribe-test.xyz',
+            types     : {
+              message: {
+                dataFormats: ['text/plain'],
+              },
+            },
+            structure: {
+              message: {
+                $actions: [
+                  { who: 'anyone', can: ['create'] },
+                  { who: 'author', of: 'message', can: ['read', 'query', 'subscribe'] },
+                  { who: 'recipient', of: 'message', can: ['read', 'query', 'subscribe'] },
+                ],
+              },
+            },
+          };
+
+          it('recipient receives only events for records addressed to them', async () => {
+            // scenario: Bob and Carol each subscribe to Alice's DWN. Alice writes messages
+            //           to Bob and Carol. Each subscriber only receives their own messages.
+            //           Dave subscribes and receives nothing.
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+            const bob = await TestDataGenerator.generateDidKeyPersona();
+            const carol = await TestDataGenerator.generateDidKeyPersona();
+            const dave = await TestDataGenerator.generateDidKeyPersona();
+
+            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              author             : alice,
+              protocolDefinition : whoSubscribeProtocol,
+            });
+            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+            expect(protocolsConfigureReply.status.code).to.equal(202);
+
+            // Bob subscribes — no role
+            const bobRecordIds: Set<string> = new Set();
+            const bobHandler: RecordSubscriptionHandler = async (event): Promise<void> => {
+              const { message } = event;
+              if (message.descriptor.method === DwnMethodName.Write) {
+                bobRecordIds.add((message as RecordsWriteMessage).recordId);
+              }
+            };
+
+            const bobSub = await TestDataGenerator.generateRecordsSubscribe({
+              author : bob,
+              filter : {
+                published : false,
+                protocol  : whoSubscribeProtocol.protocol,
+              },
+            });
+            const bobSubReply = await dwn.processMessage(alice.did, bobSub.message, { subscriptionHandler: bobHandler });
+            expect(bobSubReply.status.code).to.equal(200);
+
+            // Carol subscribes — no role
+            const carolRecordIds: Set<string> = new Set();
+            const carolHandler: RecordSubscriptionHandler = async (event): Promise<void> => {
+              const { message } = event;
+              if (message.descriptor.method === DwnMethodName.Write) {
+                carolRecordIds.add((message as RecordsWriteMessage).recordId);
+              }
+            };
+
+            const carolSub = await TestDataGenerator.generateRecordsSubscribe({
+              author : carol,
+              filter : {
+                published : false,
+                protocol  : whoSubscribeProtocol.protocol,
+              },
+            });
+            const carolSubReply = await dwn.processMessage(alice.did, carolSub.message, { subscriptionHandler: carolHandler });
+            expect(carolSubReply.status.code).to.equal(200);
+
+            // Dave subscribes — no role, not a participant at all
+            const daveRecordIds: Set<string> = new Set();
+            const daveHandler: RecordSubscriptionHandler = async (event): Promise<void> => {
+              const { message } = event;
+              if (message.descriptor.method === DwnMethodName.Write) {
+                daveRecordIds.add((message as RecordsWriteMessage).recordId);
+              }
+            };
+
+            const daveSub = await TestDataGenerator.generateRecordsSubscribe({
+              author : dave,
+              filter : {
+                published : false,
+                protocol  : whoSubscribeProtocol.protocol,
+              },
+            });
+            const daveSubReply = await dwn.processMessage(alice.did, daveSub.message, { subscriptionHandler: daveHandler });
+            expect(daveSubReply.status.code).to.equal(200);
+
+            // Alice writes 2 messages for Bob
+            const expectedBobIds: string[] = [];
+            for (let i = 0; i < 2; i++) {
+              const msg = await TestDataGenerator.generateRecordsWrite({
+                author       : alice,
+                recipient    : bob.did,
+                protocol     : whoSubscribeProtocol.protocol,
+                protocolPath : 'message',
+                published    : false,
+                dataFormat   : 'text/plain',
+                data         : new TextEncoder().encode(`for bob ${i}`),
+              });
+              const reply = await dwn.processMessage(alice.did, msg.message, { dataStream: msg.dataStream });
+              expect(reply.status.code).to.equal(202);
+              expectedBobIds.push(msg.message.recordId);
+            }
+
+            // Alice writes 1 message for Carol
+            const carolMsg = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              recipient    : carol.did,
+              protocol     : whoSubscribeProtocol.protocol,
+              protocolPath : 'message',
+              published    : false,
+              dataFormat   : 'text/plain',
+              data         : new TextEncoder().encode('for carol'),
+            });
+            const carolWriteReply = await dwn.processMessage(alice.did, carolMsg.message, { dataStream: carolMsg.dataStream });
+            expect(carolWriteReply.status.code).to.equal(202);
+
+            // Alice writes 1 message addressed to herself (nobody else should see it)
+            const aliceMsg = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              recipient    : alice.did,
+              protocol     : whoSubscribeProtocol.protocol,
+              protocolPath : 'message',
+              published    : false,
+              dataFormat   : 'text/plain',
+              data         : new TextEncoder().encode('private'),
+            });
+            const aliceWriteReply = await dwn.processMessage(alice.did, aliceMsg.message, { dataStream: aliceMsg.dataStream });
+            expect(aliceWriteReply.status.code).to.equal(202);
+
+            // Bob should receive exactly 2 events
+            await Poller.pollUntilSuccessOrTimeout(async () => {
+              expect(bobRecordIds.size).to.equal(2);
+              expect([...bobRecordIds]).to.have.members(expectedBobIds);
+            });
+
+            // Carol should receive exactly 1 event
+            await Poller.pollUntilSuccessOrTimeout(async () => {
+              expect(carolRecordIds.size).to.equal(1);
+              expect([...carolRecordIds]).to.have.members([carolMsg.message.recordId]);
+            });
+
+            // Dave should receive zero events
+            // Give a small window for any stray events to arrive, then assert empty
+            await Time.sleep(200);
+            expect(daveRecordIds.size).to.equal(0);
+          });
+
+          it('who-based subscribe rules do not grant role-like broad access', async () => {
+            // scenario: Dave tries to invoke a protocolRole on a protocol with who-based
+            //           subscribe rules. Should be rejected because he has no role record.
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+            const dave = await TestDataGenerator.generateDidKeyPersona();
+
+            const mixedProtocol: ProtocolDefinition = {
+              published : true,
+              protocol  : 'http://mixed-sub-test.xyz',
+              types     : {
+                thread      : {},
+                participant : {},
+                chat        : { dataFormats: ['text/plain'] },
+              },
+              structure: {
+                thread: {
+                  participant: {
+                    $role: true,
+                  },
+                  chat: {
+                    $actions: [
+                      { who: 'anyone', can: ['create'] },
+                      { who: 'recipient', of: 'thread/chat', can: ['read', 'query', 'subscribe'] },
+                      { role: 'thread/participant', can: ['read', 'query', 'subscribe'] },
+                    ],
+                  },
+                },
+              },
+            };
+
+            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              author             : alice,
+              protocolDefinition : mixedProtocol,
+            });
+            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+            expect(protocolsConfigureReply.status.code).to.equal(202);
+
+            // Alice creates a thread
+            const threadRecord = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : mixedProtocol.protocol,
+              protocolPath : 'thread',
+            });
+            const threadReply = await dwn.processMessage(alice.did, threadRecord.message, { dataStream: threadRecord.dataStream });
+            expect(threadReply.status.code).to.equal(202);
+
+            // Dave tries to subscribe with a role he doesn't have — should be rejected
+            const daveRoleSub = await TestDataGenerator.generateRecordsSubscribe({
+              author : dave,
+              filter : {
+                protocol     : mixedProtocol.protocol,
+                protocolPath : 'thread/chat',
+                contextId    : threadRecord.message.contextId,
+              },
+              protocolRole: 'thread/participant',
+            });
+            const daveRoleSubReply = await dwn.processMessage(alice.did, daveRoleSub.message);
+            expect(daveRoleSubReply.status.code).to.equal(401);
+            expect(daveRoleSubReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+            expect(daveRoleSubReply.subscription).to.not.exist;
+          });
         });
       });
     });
