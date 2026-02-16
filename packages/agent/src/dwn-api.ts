@@ -1,4 +1,3 @@
-import type { Readable } from '@enbox/common';
 import type {
   DerivedPrivateJwk,
   DwnConfig,
@@ -16,6 +15,7 @@ import type {
 import type { KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
 import { CryptoUtils } from '@enbox/crypto';
+import { TtlCache } from '@enbox/common';
 import {
   Cid,
   DataStoreLevel,
@@ -37,7 +37,6 @@ import {
   Secp256k1
 } from '@enbox/dwn-sdk-js';
 import { DidDht, DidJwk, DidResolverCacheLevel, UniversalResolver } from '@enbox/dids';
-import { NodeStream, TtlCache } from '@enbox/common';
 
 import type { Web5PlatformAgent } from './types/agent.js';
 import type {
@@ -57,8 +56,8 @@ import type {
   SendDwnRequest
 } from './types/dwn.js';
 
-import { blobToIsomorphicNodeReadable, getDwnServiceEndpointUrls, isRecordsWrite, webReadableToIsomorphicNodeReadable } from './utils.js';
 import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
+import { getDwnServiceEndpointUrls, isRecordsWrite } from './utils.js';
 
 export type DwnMessageWithBlob<T extends DwnInterface> = {
   message: DwnMessage[T];
@@ -212,8 +211,8 @@ export class AgentDwnApi {
   public async processRequest<T extends DwnInterface>(
     request: ProcessDwnRequest<T>
   ): Promise<DwnResponse<T>> {
-    // Constructs a DWN message. and if there is a data payload, transforms the data to a Node
-    // Readable stream.
+    // Constructs a DWN message. and if there is a data payload, prepares the data as a
+    // Web ReadableStream.
     const { message, dataStream, roleRecordAutoPush } =
       await this.constructDwnMessage({ request });
 
@@ -385,7 +384,7 @@ export class AgentDwnApi {
     }
 
     const rawMessage = request.rawMessage;
-    let readableStream: Readable | undefined;
+    let readableStream: ReadableStream<Uint8Array> | undefined;
     // TODO: Consider refactoring to move data transformations imposed by fetch() limitations to the HTTP transport-related methods.
     // if the request is a RecordsWrite message, we need to handle the data stream and update the messageParams accordingly
     if (isDwnRequest(request, DwnInterface.RecordsWrite)) {
@@ -393,23 +392,31 @@ export class AgentDwnApi {
 
       if (request.dataStream && !messageParams?.data) {
         const { dataStream } = request;
-        let isomorphicNodeReadable: Readable;
+        let forCid: ReadableStream<Uint8Array>;
 
         if (dataStream instanceof Blob) {
-          isomorphicNodeReadable = blobToIsomorphicNodeReadable(dataStream);
-          readableStream = blobToIsomorphicNodeReadable(dataStream);
+          const [ cidCopy, processCopy ] = (dataStream.stream() as ReadableStream<Uint8Array>).tee();
+          forCid = cidCopy;
+          readableStream = processCopy;
 
         } else if (dataStream instanceof ReadableStream) {
-          const [ forCid, forProcessMessage ] = dataStream.tee();
-          isomorphicNodeReadable = webReadableToIsomorphicNodeReadable(forCid);
-          readableStream = webReadableToIsomorphicNodeReadable(forProcessMessage);
+          const [ cidCopy, processCopy ] = dataStream.tee();
+          forCid = cidCopy;
+          readableStream = processCopy;
         }
 
-        if (!rawMessage) {
-          // @ts-ignore
-          messageParams.dataCid = await Cid.computeDagPbCidFromStream(isomorphicNodeReadable);
-          // @ts-ignore
-          messageParams.dataSize ??= isomorphicNodeReadable['bytesRead'];
+        if (!rawMessage && messageParams) {
+          // @ts-ignore — dataCid is set dynamically
+          messageParams.dataCid = await Cid.computeDagPbCidFromStream(forCid!);
+          // Compute data size by consuming forCid (already consumed by computeDagPbCidFromStream)
+          // and using the Blob/stream size if available.
+          if (messageParams.dataSize === undefined) {
+            if (dataStream instanceof Blob) {
+              // @ts-ignore — dataSize is set dynamically
+              messageParams.dataSize = dataStream.size;
+            }
+            // For ReadableStream without known size, the SDK will compute it during processMessage.
+          }
         }
       }
     }
@@ -504,10 +511,7 @@ export class AgentDwnApi {
         } else if (request.dataStream instanceof Blob) {
           plaintextBytes = new Uint8Array(await request.dataStream.arrayBuffer());
         } else if (request.dataStream instanceof ReadableStream) {
-          const nodeReadable = webReadableToIsomorphicNodeReadable(request.dataStream);
-          plaintextBytes = await NodeStream.consumeToBytes({ readable: nodeReadable });
-        } else if (request.dataStream) {
-          plaintextBytes = await NodeStream.consumeToBytes({ readable: request.dataStream as Readable });
+          plaintextBytes = await DataStream.toBytes(request.dataStream);
         } else {
           throw new Error('AgentDwnApi: Data must be provided for encrypted records.');
         }
@@ -636,7 +640,7 @@ export class AgentDwnApi {
         const encryptedStream = await Encryption.aes256CtrEncrypt(
           dataEncryptionKey, dataEncryptionIV, plaintextStream
         );
-        const encryptedBytes = await NodeStream.consumeToBytes({ readable: encryptedStream });
+        const encryptedBytes = await DataStream.toBytes(encryptedStream);
 
         // 8. Replace plaintext with encrypted data
         const encryptedCidStream = DataStream.fromBytes(encryptedBytes);
@@ -1129,7 +1133,7 @@ export class AgentDwnApi {
       pathKeyDecrypter,
       DataStream.fromBytes(cipherBytes),
     );
-    const plainBytes = await NodeStream.consumeToBytes({ readable: plainStream });
+    const plainBytes = await DataStream.toBytes(plainStream);
 
     const contextDerivedPrivateKey = Encoder.bytesToObject(
       plainBytes,
@@ -1264,7 +1268,7 @@ export class AgentDwnApi {
               const plainStream = await Records.decrypt(
                 entry as RecordsWriteMessage, keyDecrypter, cipherStream,
               );
-              const plainBytes = await NodeStream.consumeToBytes({ readable: plainStream });
+              const plainBytes = await DataStream.toBytes(plainStream);
               entry.encodedData = Encoder.bytesToBase64Url(plainBytes);
             } catch (error: any) {
               throw new Error(
@@ -1308,7 +1312,7 @@ export class AgentDwnApi {
     // If the message is a RecordsWrite, data will be present in the form of a stream
 
     if (isRecordsWrite(messageEntry) && messageEntry.data) {
-      const dataBytes = await NodeStream.consumeToBytes({ readable: messageEntry.data });
+      const dataBytes = await DataStream.toBytes(messageEntry.data);
       dwnMessageWithBlob.data = new Blob([ dataBytes ], { type: messageEntry.message.descriptor.dataFormat });
     }
 

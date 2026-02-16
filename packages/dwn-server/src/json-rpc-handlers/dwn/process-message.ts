@@ -1,7 +1,6 @@
 import type { GenericMessage } from '@enbox/dwn-sdk-js';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
-import type { Readable as IsomorphicReadable } from 'readable-stream';
 import log from 'loglevel';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -75,15 +74,15 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
     }
 
     const reply = await dwn.processMessage(target, message, {
-      dataStream          : dataStream as IsomorphicReadable,
-      subscriptionHandler : subscriptionRequest?.subscriptionHandler,
+      dataStream,
+      subscriptionHandler: subscriptionRequest?.subscriptionHandler,
     });
 
 
     const { entry } = reply;
     // RecordsRead or MessagesRead messages optionally return data as a stream to accommodate large amounts of data
     // we remove the data stream from the reply that will be serialized and return it as a separate property in the response payload.
-    let recordDataStream: IsomorphicReadable;
+    let recordDataStream: ReadableStream<Uint8Array>;
     if (entry !== undefined && entry.data !== undefined) {
       recordDataStream = entry.data;
       delete reply.entry.data; // not serializable via JSON

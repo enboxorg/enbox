@@ -4,7 +4,6 @@ import type { DataStore, DataStoreGetResult, DataStorePutResult } from '@enbox/d
 
 import { DataStream } from '@enbox/dwn-sdk-js';
 import { Kysely } from 'kysely';
-import { Readable } from 'readable-stream';
 
 export class DataStoreSql implements DataStore {
   #dialect: Dialect;
@@ -80,12 +79,13 @@ export class DataStoreSql implements DataStore {
       return undefined;
     }
 
+    const dataBytes = new Uint8Array(result.data);
     return {
       dataSize   : result.data.length,
-      dataStream : new Readable({
-        read(): void {
-          this.push(Buffer.from(result.data));
-          this.push(null);
+      dataStream : new ReadableStream<Uint8Array>({
+        start(controller): void {
+          controller.enqueue(dataBytes);
+          controller.close();
         }
       }),
     };
@@ -95,7 +95,7 @@ export class DataStoreSql implements DataStore {
     tenant: string,
     recordId: string,
     dataCid: string,
-    dataStream: Readable
+    dataStream: ReadableStream<Uint8Array>
   ): Promise<DataStorePutResult> {
     if (!this.#db) {
       throw new Error(

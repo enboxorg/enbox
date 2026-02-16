@@ -1,6 +1,5 @@
 import type { DerivedPrivateJwk } from './hd-key.js';
 import type { KeyDecrypter } from '../types/encryption-types.js';
-import type { Readable } from 'readable-stream';
 import type { Filter, KeyValues, StartsWithFilter } from '../types/query-types.js';
 import type { GenericMessage, GenericSignaturePayload } from '../types/message-types.js';
 import type { RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteDescriptor, RecordsWriteMessage, RecordsWriteTags, RecordsWriteTagsFilter } from '../types/records-types.js';
@@ -44,8 +43,8 @@ export class Records {
   public static async decrypt(
     recordsWrite: RecordsWriteMessage,
     keyDecrypter: KeyDecrypter,
-    cipherStream: Readable,
-  ): Promise<Readable>;
+    cipherStream: ReadableStream<Uint8Array>,
+  ): Promise<ReadableStream<Uint8Array>>;
 
   /**
    * Overload 2 (raw-key, existing): Takes DerivedPrivateJwk directly.
@@ -54,15 +53,15 @@ export class Records {
   public static async decrypt(
     recordsWrite: RecordsWriteMessage,
     ancestorPrivateKey: DerivedPrivateJwk,
-    cipherStream: Readable,
-  ): Promise<Readable>;
+    cipherStream: ReadableStream<Uint8Array>,
+  ): Promise<ReadableStream<Uint8Array>>;
 
   // Implementation dispatches based on argument type
   public static async decrypt(
     recordsWrite: RecordsWriteMessage,
     keyOrDecrypter: DerivedPrivateJwk | KeyDecrypter,
-    cipherStream: Readable,
-  ): Promise<Readable> {
+    cipherStream: ReadableStream<Uint8Array>,
+  ): Promise<ReadableStream<Uint8Array>> {
     const { encryption } = recordsWrite;
     const isCallback = 'decrypt' in keyOrDecrypter;
 

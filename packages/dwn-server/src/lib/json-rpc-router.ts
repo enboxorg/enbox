@@ -1,7 +1,5 @@
 import type { Dwn, MessageSubscriptionHandler } from '@enbox/dwn-sdk-js';
 
-import type { Readable } from 'node:stream';
-
 import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from './json-rpc.js';
 
 import type { SocketConnection } from '../connection/socket-connection.js';
@@ -17,13 +15,13 @@ export type RequestContext = {
     /** The `MessageEvent` handler associated with a subscription request, only used in `ws` requests */
     subscriptionHandler: MessageSubscriptionHandler;
   }
-  /** The `Readable` stream associated with a `RecordsWrite` request only used in `http` requests */
-  dataStream?: Readable;
+  /** The `ReadableStream` associated with a `RecordsWrite` request only used in `http` requests */
+  dataStream?: ReadableStream<Uint8Array>;
 };
 
 export type HandlerResponse = {
   jsonRpcResponse: JsonRpcResponse;
-  dataStream?: Readable;
+  dataStream?: ReadableStream<Uint8Array>;
 };
 
 export type JsonRpcHandler = (

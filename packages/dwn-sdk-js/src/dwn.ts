@@ -5,7 +5,6 @@ import type { EventLog } from './types/event-log.js';
 import type { EventStream } from './types/subscriptions.js';
 import type { MessageStore } from './types/message-store.js';
 import type { MethodHandler } from './types/method-handler.js';
-import type { Readable } from 'readable-stream';
 import type { ResumableTaskStore } from './types/resumable-task-store.js';
 import type { TenantGate } from './core/tenant-gate.js';
 import type { UnionMessageReply } from './core/message-reply.js';
@@ -243,7 +242,7 @@ export class Dwn {
  *  MessageOptions that are used when processing a message.
  */
 export interface MessageOptions {
-  dataStream?: Readable;
+  dataStream?: ReadableStream<Uint8Array>;
   subscriptionHandler?: MessageSubscriptionHandler | RecordSubscriptionHandler;
 };
 

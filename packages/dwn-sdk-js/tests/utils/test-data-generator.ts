@@ -9,7 +9,7 @@ import type { PaginationCursor } from '../../src/types/query-types.js';
 import type { PermissionGrantCreateOptions } from '../../src/protocols/permissions.js';
 import type { ProtocolsConfigureOptions } from '../../src/interfaces/protocols-configure.js';
 import type { ProtocolsQueryOptions } from '../../src/interfaces/protocols-query.js';
-import type { Readable } from 'readable-stream';
+
 import type { RecordsQueryOptions } from '../../src/interfaces/records-query.js';
 import type { RecordsSubscribeOptions } from '../../src/interfaces/records-subscribe.js';
 import type { AuthorizationModel, Pagination } from '../../src/types/message-types.js';
@@ -111,7 +111,7 @@ export type GenerateGrantCreateInput = {
 export type GenerateGrantCreateOutput = {
   message: RecordsWriteMessage;
   dataBytes: Uint8Array;
-  dataStream: Readable;
+  dataStream: ReadableStream<Uint8Array>;
   recordsWrite: RecordsWrite;
   dataEncodedMessage: DataEncodedRecordsWriteMessage;
 };
@@ -154,7 +154,7 @@ export type GenerateFromRecordsWriteInput = {
 export type GenerateFromRecordsWriteOut = {
   message: RecordsWriteMessage;
   dataBytes: Uint8Array;
-  dataStream: Readable;
+  dataStream: ReadableStream<Uint8Array>;
   recordsWrite: RecordsWrite;
 };
 
@@ -164,7 +164,7 @@ export type GenerateRecordsWriteOutput = {
   dataCid?: string;
   dataSize?: number;
   dataBytes?: Uint8Array;
-  dataStream?: Readable;
+  dataStream?: ReadableStream<Uint8Array>;
   recordsWrite: RecordsWrite;
 };
 
@@ -484,7 +484,7 @@ export class TestDataGenerator {
     encryptSymmetricKeyWithProtocolContextDerivedKey: boolean,
   }): Promise<{
     message: RecordsWriteMessage;
-    dataStream: Readable;
+    dataStream: ReadableStream<Uint8Array>;
     recordsWrite: RecordsWrite;
     encryptionInput: EncryptionInput;
     encryptedDataBytes: Uint8Array;

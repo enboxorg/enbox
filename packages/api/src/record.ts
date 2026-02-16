@@ -4,7 +4,6 @@
  */
 /// <reference types="@enbox/dwn-sdk-js" />
 
-import type { Readable } from '@enbox/common';
 import type {
   DwnDateSort,
   DwnMessage,
@@ -26,7 +25,7 @@ import {
   getRecordProtocolRole,
   isDwnMessage,
 } from '@enbox/agent';
-import { Convert, isEmptyObject, NodeStream, removeUndefinedProperties, Stream } from '@enbox/common';
+import { Convert, isEmptyObject, removeUndefinedProperties, Stream } from '@enbox/common';
 
 import { dataToBlob, SendCache } from './utils.js';
 
@@ -108,10 +107,9 @@ export type RecordOptions = DwnMessage[DwnInterface.RecordsWrite | DwnInterface.
    * datasets that should not be loaded entirely in memory, allowing for efficient, chunked
    * processing of the record's data.
    *
-   * Note: A Node.js `Readable` stream is also accepted and will be converted to a Web
-   * `ReadableStream` internally for cross-platform consistency.
+   * The DWN SDK now returns Web `ReadableStream` natively, so no conversion is needed.
    */
-  data?: ReadableStream | Readable;
+  data?: ReadableStream;
 
   /** The initial `RecordsWriteMessage` that represents the initial state/version of the record. */
   initialWrite?: DwnMessage[DwnInterface.RecordsWrite];
@@ -431,10 +429,8 @@ export class Record implements RecordModel {
 
     if (options.data) {
       // If the record was created from a RecordsRead reply then it will have a `data` property.
-      // If the `data` property is a Node.js Readable, convert it to a Web ReadableStream.
-      this._readableStream = Stream.isReadableStream(options.data) ?
-        options.data :
-        NodeStream.toWebReadable({ readable: options.data });
+      // The DWN SDK now returns Web ReadableStream natively.
+      this._readableStream = options.data;
     }
   }
 
@@ -1124,13 +1120,8 @@ export class Record implements RecordModel {
         throw new Error(`${status.code}: ${status.detail}`);
       }
 
-      const dataStream = entry.data;
-      // DWN SDK returns Node Readable; convert to Web ReadableStream for cross-platform use.
-      // If it's already a Web ReadableStream (e.g., from a remote fetch), use it directly.
-      const webReadable = Stream.isReadableStream(dataStream) ?
-        dataStream :
-        NodeStream.toWebReadable({ readable: dataStream });
-      return webReadable;
+      // DWN SDK now returns Web ReadableStream natively.
+      return entry.data;
 
     } catch (error) {
       throw new Error(`Error encountered while attempting to read data: ${error.message}`);

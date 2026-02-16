@@ -26,8 +26,7 @@
     "@enbox/dwn-sdk-js": "workspace:*",
     "@ipld/dag-cbor": "9.0.5",
     "kysely": "0.26.3",
-    "multiformats": "12.0.1",
-    "readable-stream": "4.4.2"
+    "multiformats": "12.0.1"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -38,7 +37,6 @@
     "@types/node": "20.3.1",
     "@types/pg": "8.10.2",
     "@types/pg-cursor": "2.7.0",
-    "@types/readable-stream": "4.0.6",
     "@types/supertest": "2.0.12",
     "@typescript-eslint/eslint-plugin": "8.32.1",
     "@typescript-eslint/parser": "8.32.1",

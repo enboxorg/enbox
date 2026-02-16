@@ -2,7 +2,6 @@ import type { EncryptionAlgorithm } from '../utils/encryption.js';
 import type { GeneralJws } from './jws-types.js';
 import type { KeyDerivationScheme } from '../utils/hd-key.js';
 import type { PublicKeyJwk } from './jose-types.js';
-import type { Readable } from 'readable-stream';
 import type { AuthorizationModel, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSubscription, Pagination } from './message-types.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import type { PaginationCursor, RangeCriterion, RangeFilter, StartsWithFilter } from './query-types.js';
@@ -40,7 +39,7 @@ export type RecordsWriteDescriptor = {
 };
 
 export type RecordsWriteMessageOptions = {
-  dataStream?: Readable;
+  dataStream?: ReadableStream<Uint8Array>;
 };
 
 /**
@@ -235,7 +234,7 @@ export type RecordsReadReplyEntry = {
   /**
    * The data stream associated with the record if the records exists (not deleted).
    */
-  data?: Readable;
+  data?: ReadableStream<Uint8Array>;
 };
 
 export type RecordsReadDescriptor = {

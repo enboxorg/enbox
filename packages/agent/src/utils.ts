@@ -1,14 +1,8 @@
 import type { DidUrlDereferencer } from '@enbox/dids';
-import type { Readable } from '@enbox/common';
 import type { PaginationCursor, RecordsDeleteMessage, RecordsWrite, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { utils as didUtils } from '@enbox/dids';
-import { NodeStream } from '@enbox/common';
 import { DateSort, DwnInterfaceName, DwnMethodName, Jws, Message } from '@enbox/dwn-sdk-js';
-
-export function blobToIsomorphicNodeReadable(blob: Blob): Readable {
-  return NodeStream.fromWebReadable({ readableStream: blob.stream() as ReadableStream<any> });
-}
 
 export async function getDwnServiceEndpointUrls(didUri: string, dereferencer: DidUrlDereferencer): Promise<string[]> {
   // Attempt to dereference the DID service with ID fragment #dwn.
@@ -88,10 +82,6 @@ export async function getPaginationCursor(message: RecordsWriteMessage, dateSort
     messageCid: await getRecordMessageCid(message),
     value
   };
-}
-
-export function webReadableToIsomorphicNodeReadable(webReadable: ReadableStream<any>): Readable {
-  return NodeStream.fromWebReadable({ readableStream: webReadable });
 }
 
 /**

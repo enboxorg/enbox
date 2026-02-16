@@ -1,14 +1,16 @@
 import type { RecordsReadReply } from '@enbox/dwn-sdk-js';
 import type { Express, Request, Response } from 'express';
 
-import { Convert } from '@enbox/common';
 import cors from 'cors';
 import express from 'express';
 import http from 'http';
 import log from 'loglevel';
+import responseTime from 'response-time';
+
+import { Convert } from '@enbox/common';
+import { Readable } from 'node:stream';
 import { readFileSync } from 'fs';
 import { register } from 'prom-client';
-import responseTime from 'response-time';
 import { v4 as uuidv4 } from 'uuid';
 import { DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
 
@@ -116,12 +118,13 @@ export class HttpApi {
     function readReplyHandler(res, reply: RecordsReadReply): any {
       if (reply.status.code === 200) {
         if (reply?.entry?.data) {
-          const stream = reply.entry.data;
+          // DWN SDK now returns Web ReadableStream; convert to Node Readable for piping to Express response
+          const nodeStream = Readable.fromWeb(reply.entry.data as any);
 
           res.setHeader('content-type', reply.entry.recordsWrite.descriptor.dataFormat);
           res.setHeader('dwn-response', JSON.stringify(reply));
 
-          return stream.pipe(res);
+          return nodeStream.pipe(res);
         } else {
           return res.sendStatus(400);
         }
@@ -313,7 +316,10 @@ export class HttpApi {
       // Check whether data was provided in the request body
       const contentLength = req.headers['content-length'];
       const transferEncoding = req.headers['transfer-encoding'];
-      const requestDataStream = parseInt(contentLength) > 0 || transferEncoding !== undefined ? req : undefined;
+      // Convert Node.js IncomingMessage (Readable) to Web ReadableStream at the HTTP boundary
+      const requestDataStream = parseInt(contentLength) > 0 || transferEncoding !== undefined
+        ? Readable.toWeb(req) as ReadableStream<Uint8Array>
+        : undefined;
 
       const requestContext: RequestContext = {
         dwn        : this.dwn,
@@ -337,7 +343,8 @@ export class HttpApi {
         res.setHeader('content-type', 'application/octet-stream');
         res.setHeader('dwn-response', JSON.stringify(jsonRpcResponse));
 
-        return responseDataStream.pipe(res);
+        // Convert Web ReadableStream back to Node Readable for piping to Express response
+        return Readable.fromWeb(responseDataStream as any).pipe(res);
       } else {
         return res.json(jsonRpcResponse);
       }

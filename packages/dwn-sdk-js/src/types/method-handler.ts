@@ -1,5 +1,4 @@
 import type { MessageSubscriptionHandler } from './messages-types.js';
-import type { Readable } from 'readable-stream';
 import type { RecordSubscriptionHandler } from './records-types.js';
 import type { GenericMessage, GenericMessageReply } from './message-types.js';
 
@@ -13,7 +12,7 @@ export interface MethodHandler {
   handle(input: {
     tenant: string;
     message: GenericMessage;
-    dataStream?: Readable
+    dataStream?: ReadableStream<Uint8Array>
     subscriptionHandler?: MessageSubscriptionHandler | RecordSubscriptionHandler;
   }): Promise<GenericMessageReply>;
 }
