@@ -1,11 +1,15 @@
 import type { Readable } from '@enbox/common';
+import type { PublicJwk } from '@enbox/crypto';
 
 import type {
   DwnConfig,
-  GenericMessage } from '@enbox/dwn-sdk-js';
+  EncryptionKeyDeriver,
+  GenericMessage,
+  KeyDecrypter,
+  ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
-import { CryptoUtils } from '@enbox/crypto';
-import { NodeStream } from '@enbox/common';
+import { CryptoUtils, type KeyIdentifier } from '@enbox/crypto';
+import { NodeStream, TtlCache } from '@enbox/common';
 import {
   Cid,
   DataStoreLevel,
@@ -14,6 +18,7 @@ import {
   DwnMethodName,
   EventEmitterStream,
   EventLogLevel,
+  KeyDerivationScheme,
   Message,
   MessageStoreLevel,
   ResumableTaskStoreLevel
@@ -97,6 +102,14 @@ export class AgentDwnApi {
    * The DWN instance to use for this API.
    */
   private _dwn: Dwn;
+
+  /**
+   * Protocol definition cache — TTL 30 minutes. Protocols rarely change.
+   * Keyed by `${tenantDid}~${protocolUri}`.
+   */
+  private _protocolDefinitionCache = new TtlCache<string, ProtocolDefinition>({
+    ttl: 30 * 60 * 1000
+  });
 
   constructor({ agent, dwn }: DwnApiParams) {
     // If an agent is provided, set it as the execution context for this API.
@@ -422,6 +435,177 @@ export class AgentDwnApi {
         throw new Error(`AgentDwnApi: Unable to get signer for author '${author}': ${error.message}`);
       }
     }
+  }
+
+  /**
+   * Resolves the encryption key info for a given DID.
+   * Looks up the keyAgreement verification method in the DID document,
+   * then resolves the corresponding KMS key URI.
+   *
+   * @param didUri - The DID URI to resolve encryption key info for
+   * @returns keyId (fully qualified verification method ID), keyUri (KMS reference),
+   *          and publicKeyJwk. No private key material is returned.
+   * @throws If the DID has no keyAgreement verification method or it's not secp256k1.
+   */
+  private async getEncryptionKeyInfo(didUri: string): Promise<{
+    keyId: string;
+    keyUri: KeyIdentifier;
+    publicKeyJwk: PublicJwk;
+  }> {
+    // 1. Resolve the DID document
+    const { didDocument, didResolutionMetadata } = await this.agent.did.resolve(didUri);
+    if (!didDocument) {
+      throw new Error(
+        `AgentDwnApi: Failed to resolve DID '${didUri}': ` +
+        `${JSON.stringify(didResolutionMetadata)}`
+      );
+    }
+
+    // 2. Find the keyAgreement verification method
+    const keyAgreementRefs = didDocument.keyAgreement;
+    if (!keyAgreementRefs || keyAgreementRefs.length === 0) {
+      throw new Error(
+        `AgentDwnApi: DID '${didUri}' does not have a keyAgreement ` +
+        `verification method. Create the identity with a secp256k1 key ` +
+        `with keyAgreement purpose to use protocol encryption.`
+      );
+    }
+
+    // 3. Resolve the verification method (handle both inline and string refs)
+    const keyAgreementRef = keyAgreementRefs[0];
+    let verificationMethod;
+    if (typeof keyAgreementRef === 'string') {
+      const fragment = keyAgreementRef.includes('#')
+        ? keyAgreementRef.split('#').pop()
+        : keyAgreementRef;
+      verificationMethod = didDocument.verificationMethod?.find(
+        vm => vm.id.endsWith(`#${fragment}`)
+      );
+    } else {
+      verificationMethod = keyAgreementRef;
+    }
+
+    if (!verificationMethod?.publicKeyJwk) {
+      throw new Error(
+        `AgentDwnApi: keyAgreement verification method for '${didUri}' ` +
+        `does not contain a public key in JWK format.`
+      );
+    }
+
+    // 4. Verify it's a secp256k1 key
+    const publicKeyJwk = verificationMethod.publicKeyJwk;
+    if (publicKeyJwk.crv !== 'secp256k1') {
+      throw new Error(
+        `AgentDwnApi: keyAgreement key for '${didUri}' uses curve ` +
+        `'${publicKeyJwk.crv}', but DWN encryption requires 'secp256k1'.`
+      );
+    }
+
+    // 5. Compute the KMS key URI (does NOT export the key)
+    const keyUri = await this.agent.keyManager.getKeyUri({ key: publicKeyJwk });
+
+    return {
+      keyId        : verificationMethod.id,
+      keyUri,
+      publicKeyJwk : publicKeyJwk as PublicJwk,
+    };
+  }
+
+  /**
+   * Constructs an EncryptionKeyDeriver callback for the SDK.
+   * The SDK calls derivePublicKey(path), the KMS performs HKDF + public key
+   * computation internally. The private key never leaves the KMS.
+   *
+   * Analogous to getSigner() for signing operations.
+   *
+   * @param didUri - The DID URI to create the key deriver for
+   * @returns An EncryptionKeyDeriver callback object
+   */
+  private async getEncryptionKeyDeriver(
+    didUri: string
+  ): Promise<EncryptionKeyDeriver> {
+    const { keyId, keyUri } = await this.getEncryptionKeyInfo(didUri);
+    const keyManager = this.agent.keyManager;
+
+    return {
+      rootKeyId        : keyId,
+      derivationScheme : KeyDerivationScheme.ProtocolPath,
+      derivePublicKey  : async (fullDerivationPath: string[]) => {
+        return keyManager.derivePublicKey({
+          keyUri,
+          derivationPath: fullDerivationPath,
+        });
+      },
+    };
+  }
+
+  /**
+   * Constructs a KeyDecrypter callback for the SDK.
+   * The SDK calls decrypt(path, eciesParams), the KMS performs HKDF + ECIES
+   * decryption internally. The private key never leaves the KMS.
+   *
+   * Analogous to getSigner() for signing operations.
+   *
+   * @param didUri - The DID URI to create the key decrypter for
+   * @returns A KeyDecrypter callback object
+   */
+  private async getKeyDecrypter(
+    didUri: string
+  ): Promise<KeyDecrypter> {
+    const { keyId, keyUri } = await this.getEncryptionKeyInfo(didUri);
+    const keyManager = this.agent.keyManager;
+
+    return {
+      rootKeyId        : keyId,
+      derivationScheme : KeyDerivationScheme.ProtocolPath,
+      decrypt          : async (fullDerivationPath, eciesPayload) => {
+        return keyManager.eciesSecp256k1Decrypt({
+          keyUri,
+          derivationPath            : fullDerivationPath,
+          ciphertext                : eciesPayload.ciphertext,
+          ephemeralPublicKey        : eciesPayload.ephemeralPublicKey,
+          initializationVector      : eciesPayload.initializationVector,
+          messageAuthenticationCode : eciesPayload.messageAuthenticationCode,
+        });
+      },
+    };
+  }
+
+  /**
+   * Fetches a protocol definition from the local DWN, with caching.
+   * Returns undefined if the protocol is not installed.
+   *
+   * @param tenantDid - The tenant DID to query
+   * @param protocolUri - The protocol URI to fetch
+   * @returns The protocol definition, or undefined if not found
+   */
+  private async getProtocolDefinition(
+    tenantDid: string,
+    protocolUri: string
+  ): Promise<ProtocolDefinition | undefined> {
+    const cacheKey = `${tenantDid}~${protocolUri}`;
+
+    const cached = this._protocolDefinitionCache.get(cacheKey);
+    if (cached) return cached;
+
+    const signer = await this.getSigner(tenantDid);
+    const protocolsQuery = await dwnMessageConstructors[
+      DwnInterface.ProtocolsQuery
+    ].create({
+      filter: { protocol: protocolUri },
+      signer,
+    });
+
+    const reply = await this._dwn.processMessage(
+      tenantDid, protocolsQuery.message,
+    );
+    if (reply.status.code !== 200 || !reply.entries?.length) {
+      return undefined;
+    }
+
+    const definition = reply.entries[0].descriptor.definition;
+    this._protocolDefinitionCache.set(cacheKey, definition);
+    return definition;
   }
 
   /**
