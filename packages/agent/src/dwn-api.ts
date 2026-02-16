@@ -1,5 +1,5 @@
 import type { Readable } from '@enbox/common';
-import type { PublicJwk } from '@enbox/crypto';
+import type { KeyIdentifier, PublicJwk } from '@enbox/crypto';
 
 import type {
   DwnConfig,
@@ -8,8 +8,8 @@ import type {
   KeyDecrypter,
   ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
-import { CryptoUtils, type KeyIdentifier } from '@enbox/crypto';
 import { NodeStream, TtlCache } from '@enbox/common';
+import { CryptoUtils } from '@enbox/crypto';
 import {
   Cid,
   DataStoreLevel,
@@ -530,7 +530,7 @@ export class AgentDwnApi {
     return {
       rootKeyId        : keyId,
       derivationScheme : KeyDerivationScheme.ProtocolPath,
-      derivePublicKey  : async (fullDerivationPath: string[]) => {
+      derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicJwk> => {
         return keyManager.derivePublicKey({
           keyUri,
           derivationPath: fullDerivationPath,
@@ -558,7 +558,7 @@ export class AgentDwnApi {
     return {
       rootKeyId        : keyId,
       derivationScheme : KeyDerivationScheme.ProtocolPath,
-      decrypt          : async (fullDerivationPath, eciesPayload) => {
+      decrypt          : async (fullDerivationPath, eciesPayload): Promise<Uint8Array> => {
         return keyManager.eciesSecp256k1Decrypt({
           keyUri,
           derivationPath            : fullDerivationPath,
@@ -586,7 +586,9 @@ export class AgentDwnApi {
     const cacheKey = `${tenantDid}~${protocolUri}`;
 
     const cached = this._protocolDefinitionCache.get(cacheKey);
-    if (cached) return cached;
+    if (cached) {
+      return cached;
+    }
 
     const signer = await this.getSigner(tenantDid);
     const protocolsQuery = await dwnMessageConstructors[
