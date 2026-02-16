@@ -2872,17 +2872,17 @@ describe('Encryption Callback Factories', () => {
       }
     };
 
-    it('should detect multi-party protocols via protocolPathHasRoles()', () => {
+    it('should detect multi-party protocols via isMultiPartyContext()', () => {
       // Access private method via bracket notation
-      const hasRoles = testHarness.agent.dwn['protocolPathHasRoles'].bind(
+      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
         testHarness.agent.dwn
       );
 
       // Multi-party: thread has participant with $role: true
-      expect(hasRoles(multiPartyProtocolDefinition, 'thread')).to.be.true;
+      expect(isMultiParty(multiPartyProtocolDefinition, 'thread')).to.be.true;
 
       // Single-party: note has no $role children
-      expect(hasRoles(singlePartyProtocolDefinition, 'note')).to.be.false;
+      expect(isMultiParty(singlePartyProtocolDefinition, 'note')).to.be.false;
     });
 
     it('should encrypt root record with ProtocolContext for multi-party protocol', async () => {
@@ -3351,8 +3351,8 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
       expect(entry.encryption).to.have.property('keyEncryption');
       expect(entry.encryption!.keyEncryption).to.have.length(1);
 
-      // Verify it uses ProtocolPath derivation (encrypted to the path key)
-      expect(entry.encryption!.keyEncryption[0].derivationScheme).to.equal('protocolPath');
+      // Verify it uses ProtocolContext derivation (key-delivery protocol has relational who/of rules)
+      expect(entry.encryption!.keyEncryption[0].derivationScheme).to.equal('protocolContext');
 
       // Verify recipient
       expect(entry.descriptor).to.have.property('recipient', bob.did.uri);
@@ -3456,6 +3456,280 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
       expect(result).to.not.be.undefined;
       expect(result!.derivationPath).to.deep.equal(['protocolContext', 'context-bbb']);
       expect(result!.derivedPrivateKey).to.deep.equal(contextKey2.derivedPrivateKey);
+    });
+  });
+});
+describe('Participant Detection (PR B)', () => {
+  let testHarness: PlatformAgentTestHarness;
+
+  before(async () => {
+    testHarness = await PlatformAgentTestHarness.setup({
+      agentClass  : TestAgent,
+      agentStores : 'dwn'
+    });
+  });
+
+  beforeEach(async () => {
+    await testHarness.clearStorage();
+    await testHarness.createAgentDid();
+  });
+
+  after(async () => {
+    await testHarness.clearStorage();
+    await testHarness.closeStorage();
+  });
+
+  // ---- Protocol fixtures ----
+
+  // Role-based multi-party protocol (existing pattern)
+  const roleProtocol: ProtocolDefinition = {
+    published : true,
+    protocol  : 'https://protocol.xyz/role-chat',
+    types     : {
+      thread      : { dataFormats: ['application/json'] },
+      participant : { dataFormats: ['application/json'] },
+      chat        : { dataFormats: ['text/plain'] },
+    },
+    structure: {
+      thread: {
+        participant : { $role: true },
+        chat        : {},
+      },
+    },
+  };
+
+  // Relational-only protocol (no $role, uses who/of read rules)
+  const relationalProtocol: ProtocolDefinition = {
+    published : true,
+    protocol  : 'https://protocol.xyz/email',
+    types     : {
+      email      : { dataFormats: ['text/plain'] },
+      attachment : { dataFormats: ['application/octet-stream'] },
+    },
+    structure: {
+      email: {
+        $actions: [
+          { who: 'anyone', can: ['create'] },
+          { who: 'author', of: 'email', can: ['read', 'query', 'subscribe'] },
+          { who: 'recipient', of: 'email', can: ['read', 'query', 'subscribe'] },
+        ],
+        attachment: {
+          $actions: [
+            { who: 'author', of: 'email', can: ['create', 'read', 'query', 'subscribe'] },
+            { who: 'recipient', of: 'email', can: ['read', 'query', 'subscribe'] },
+          ],
+        },
+      },
+    },
+  };
+
+  // Mixed protocol (both $role and relational rules)
+  const mixedProtocol: ProtocolDefinition = {
+    published : true,
+    protocol  : 'https://protocol.xyz/community',
+    types     : {
+      community : { dataFormats: ['application/json'] },
+      admin     : { dataFormats: ['application/json'] },
+      channel   : { dataFormats: ['application/json'] },
+      message   : { dataFormats: ['text/plain'] },
+    },
+    structure: {
+      community: {
+        admin   : { $role: true },
+        channel : {
+          $actions: [
+            { who: 'author', of: 'community', can: ['create'] },
+          ],
+          message: {
+            $actions: [
+              { role: 'community/admin', can: ['read', 'query', 'subscribe'] },
+              { who: 'recipient', of: 'community/channel/message', can: ['read', 'query', 'subscribe'] },
+            ],
+          },
+        },
+      },
+    },
+  };
+
+  // Single-party protocol (no roles, no relational read)
+  const singlePartyProtocol: ProtocolDefinition = {
+    published : true,
+    protocol  : 'https://protocol.xyz/notes',
+    types     : {
+      note: { dataFormats: ['text/plain'] },
+    },
+    structure: {
+      note: {},
+    },
+  };
+
+  // Protocol with create-only relational rule (no read → not multi-party)
+  const createOnlyProtocol: ProtocolDefinition = {
+    published : true,
+    protocol  : 'https://protocol.xyz/form',
+    types     : {
+      form       : { dataFormats: ['application/json'] },
+      submission : { dataFormats: ['application/json'] },
+    },
+    structure: {
+      form: {
+        submission: {
+          $actions: [
+            { who: 'anyone', can: ['create'] },
+            { who: 'recipient', of: 'form/submission', can: ['update'] },
+          ],
+        },
+      },
+    },
+  };
+
+  describe('isMultiPartyContext()', () => {
+    it('should return true for role-based protocols', () => {
+      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
+        testHarness.agent.dwn
+      );
+      expect(isMultiParty(roleProtocol, 'thread')).to.be.true;
+    });
+
+    it('should return true for relational-only protocols with read rules', () => {
+      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
+        testHarness.agent.dwn
+      );
+      expect(isMultiParty(relationalProtocol, 'email')).to.be.true;
+    });
+
+    it('should return true for mixed role + relational protocols', () => {
+      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
+        testHarness.agent.dwn
+      );
+      expect(isMultiParty(mixedProtocol, 'community')).to.be.true;
+    });
+
+    it('should return false for single-party protocols', () => {
+      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
+        testHarness.agent.dwn
+      );
+      expect(isMultiParty(singlePartyProtocol, 'note')).to.be.false;
+    });
+
+    it('should return false when relational rules only grant create, not read', () => {
+      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
+        testHarness.agent.dwn
+      );
+      expect(isMultiParty(createOnlyProtocol, 'form')).to.be.false;
+    });
+  });
+
+  describe('hasRelationalReadAccess()', () => {
+    it('should find recipient-of read rules', () => {
+      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
+        testHarness.agent.dwn
+      );
+      expect(hasAccess('recipient', 'email', relationalProtocol)).to.be.true;
+    });
+
+    it('should find author-of read rules', () => {
+      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
+        testHarness.agent.dwn
+      );
+      expect(hasAccess('author', 'email', relationalProtocol)).to.be.true;
+    });
+
+    it('should return false when no matching rule exists', () => {
+      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
+        testHarness.agent.dwn
+      );
+      expect(hasAccess('recipient', 'note', singlePartyProtocol)).to.be.false;
+    });
+
+    it('should return false when rules exist but do not grant read', () => {
+      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
+        testHarness.agent.dwn
+      );
+      expect(hasAccess('recipient', 'form/submission', createOnlyProtocol)).to.be.false;
+    });
+
+    it('should find rules with undefined actorType (any who)', () => {
+      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
+        testHarness.agent.dwn
+      );
+      expect(hasAccess(undefined, 'email', relationalProtocol)).to.be.true;
+    });
+
+    it('should find deeply nested relational rules', () => {
+      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
+        testHarness.agent.dwn
+      );
+      // The mixed protocol has { who: 'recipient', of: 'community/channel/message', can: ['read'...] }
+      expect(hasAccess('recipient', 'community/channel/message', mixedProtocol)).to.be.true;
+    });
+  });
+
+  describe('detectNewParticipants()', () => {
+    it('should detect $role recipient as participant', () => {
+      const result = testHarness.agent.dwn.detectNewParticipants({
+        protocolDefinition : roleProtocol,
+        protocolPath       : 'thread/participant',
+        recipient          : 'did:example:bob',
+        tenantDid          : 'did:example:alice',
+      });
+      expect(result.size).to.equal(1);
+      expect(result.has('did:example:bob')).to.be.true;
+    });
+
+    it('should detect relational recipient as participant', () => {
+      const result = testHarness.agent.dwn.detectNewParticipants({
+        protocolDefinition : relationalProtocol,
+        protocolPath       : 'email',
+        recipient          : 'did:example:bob',
+        tenantDid          : 'did:example:alice',
+      });
+      expect(result.size).to.equal(1);
+      expect(result.has('did:example:bob')).to.be.true;
+    });
+
+    it('should exclude the DWN owner from participants', () => {
+      const result = testHarness.agent.dwn.detectNewParticipants({
+        protocolDefinition : relationalProtocol,
+        protocolPath       : 'email',
+        recipient          : 'did:example:alice',
+        tenantDid          : 'did:example:alice',
+      });
+      expect(result.size).to.equal(0);
+    });
+
+    it('should return empty set when no recipient and no role', () => {
+      const result = testHarness.agent.dwn.detectNewParticipants({
+        protocolDefinition : singlePartyProtocol,
+        protocolPath       : 'note',
+        tenantDid          : 'did:example:alice',
+      });
+      expect(result.size).to.equal(0);
+    });
+
+    it('should not detect recipients when no relational read rule exists', () => {
+      const result = testHarness.agent.dwn.detectNewParticipants({
+        protocolDefinition : createOnlyProtocol,
+        protocolPath       : 'form/submission',
+        recipient          : 'did:example:bob',
+        tenantDid          : 'did:example:alice',
+      });
+      expect(result.size).to.equal(0);
+    });
+
+    it('should detect role recipient even when recipient equals tenant (role overrides)', () => {
+      // $role records should still add the recipient even if it's the tenant —
+      // the tenant exclusion happens AFTER. When tenant IS the recipient of a $role,
+      // they get excluded by the final delete. But this tests that non-tenant role
+      // recipients work alongside relational detection.
+      const result = testHarness.agent.dwn.detectNewParticipants({
+        protocolDefinition : roleProtocol,
+        protocolPath       : 'thread/participant',
+        recipient          : 'did:example:carol',
+        tenantDid          : 'did:example:alice',
+      });
+      expect(result.size).to.equal(1);
+      expect(result.has('did:example:carol')).to.be.true;
     });
   });
 });
