@@ -441,7 +441,7 @@ export class LocalKeyManager implements AgentKeyManager {
 
     // Perform ECIES decryption — leaf key bytes consumed and discarded after
     return Encryption.eciesSecp256k1Decrypt({
-      privateKey : leafPrivateKeyBytes,
+      privateKey                : leafPrivateKeyBytes,
       ciphertext,
       ephemeralPublicKey,
       initializationVector,
