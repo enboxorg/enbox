@@ -4,8 +4,13 @@ import { ed25519 } from './ed25519.js';
 import { Secp256k1 } from '../../../utils/secp256k1.js';
 import { Secp256r1 } from '../../../utils/secp256r1.js';
 
+/**
+ * Curves supported by the DWN for signing and verification.
+ */
+export type SupportedCurve = 'Ed25519' | 'secp256k1' | 'P-256';
+
 // the key should be the appropriate `crv` value
-export const signatureAlgorithms: Record<string, SignatureAlgorithm> = {
+export const signatureAlgorithms: Record<SupportedCurve, SignatureAlgorithm> = {
   'Ed25519'   : ed25519,
   'secp256k1' : {
     sign            : Secp256k1.sign,

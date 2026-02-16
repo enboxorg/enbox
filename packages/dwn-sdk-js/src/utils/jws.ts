@@ -1,14 +1,14 @@
 import type { GeneralJws } from '../types/jws-types.js';
+import type { MessageSigner } from '../types/signer.js';
 import type { SignatureEntry } from '../types/jws-types.js';
-import type { Signer } from '../types/signer.js';
-import type { KeyMaterial, PublicJwk } from '../types/jose-types.js';
+import type { KeyMaterial, PublicKeyJwk } from '../types/jose-types.js';
 
 import isPlainObject from 'lodash/isPlainObject.js';
 
 import { Encoder } from './encoder.js';
 import { PrivateKeySigner } from './private-key-signer.js';
-import { signatureAlgorithms } from '../jose/algorithms/signing/signature-algorithms.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
+import { signatureAlgorithms, type SupportedCurve } from '../jose/algorithms/signing/signature-algorithms.js';
 
 
 /**
@@ -36,8 +36,8 @@ export class Jws {
    * Verifies the signature against the given payload.
    * @returns `true` if signature is valid; `false` otherwise
    */
-  public static async verifySignature(base64UrlPayload: string, signatureEntry: SignatureEntry, jwkPublic: PublicJwk): Promise<boolean> {
-    const signatureAlgorithm = signatureAlgorithms[jwkPublic.crv];
+  public static async verifySignature(base64UrlPayload: string, signatureEntry: SignatureEntry, jwkPublic: PublicKeyJwk): Promise<boolean> {
+    const signatureAlgorithm = signatureAlgorithms[jwkPublic.crv as SupportedCurve];
 
     if (!signatureAlgorithm) {
       throw new DwnError(DwnErrorCode.JwsVerifySignatureUnsupportedCrv, `unsupported crv. crv must be one of ${Object.keys(signatureAlgorithms)}`);
@@ -76,17 +76,17 @@ export class Jws {
   }
 
   /**
-   * Creates a Signer[] from the given Personas.
+   * Creates a MessageSigner[] from the given Personas.
    */
-  public static createSigners(keyMaterials: KeyMaterial[]): Signer[] {
+  public static createSigners(keyMaterials: KeyMaterial[]): MessageSigner[] {
     const signers = keyMaterials.map((keyMaterial) => Jws.createSigner(keyMaterial));
     return signers;
   }
 
   /**
-   * Creates a Signer from the given Persona.
+   * Creates a MessageSigner from the given Persona.
    */
-  public static createSigner(keyMaterial: KeyMaterial): Signer {
+  public static createSigner(keyMaterial: KeyMaterial): MessageSigner {
     const privateJwk = keyMaterial.keyPair.privateJwk;
     const keyId = keyMaterial.keyId;
     const signer = new PrivateKeySigner({ privateJwk, keyId });

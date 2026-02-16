@@ -1,6 +1,6 @@
 import type { Cache } from '../../../types/cache.js';
 import type { GeneralJws } from '../../../types/jws-types.js';
-import type { PublicJwk } from '../../../types/jose-types.js';
+import type { PublicKeyJwk } from '../../../types/jose-types.js';
 import type { DidResolver, DidVerificationMethod } from '@enbox/dids';
 
 import { Jws } from '../../../utils/jws.js';
@@ -80,7 +80,7 @@ export class GeneralJwsVerifier {
   /**
    * Gets the public key given a fully qualified key ID (`kid`) by resolving the DID to its DID Document.
    */
-  private static async getPublicKey(kid: string, didResolver: DidResolver): Promise<PublicJwk> {
+  private static async getPublicKey(kid: string, didResolver: DidResolver): Promise<PublicKeyJwk> {
     // `resolve` throws exception if DID is invalid, DID method is not supported,
     // or resolving DID fails
     const did = Jws.extractDid(kid);
@@ -107,6 +107,6 @@ export class GeneralJwsVerifier {
 
     const { publicKeyJwk: publicJwk } = verificationMethod;
 
-    return publicJwk as PublicJwk;
+    return publicJwk as PublicKeyJwk;
   }
 }

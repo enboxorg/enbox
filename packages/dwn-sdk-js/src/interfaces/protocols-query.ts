@@ -1,6 +1,6 @@
 import type { AuthorizationModel } from '../types/message-types.js';
+import type { MessageSigner } from '../types/signer.js';
 import type { MessageStore } from '../types/message-store.js';
-import type { Signer } from '../types/signer.js';
 import type { ProtocolsQueryDescriptor, ProtocolsQueryFilter, ProtocolsQueryMessage } from '../types/protocols-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
@@ -16,7 +16,7 @@ import { normalizeProtocolUrl, validateProtocolUrlNormalized } from '../utils/ur
 export type ProtocolsQueryOptions = {
   messageTimestamp?: string;
   filter?: ProtocolsQueryFilter,
-  signer?: Signer;
+  signer?: MessageSigner;
   permissionGrantId?: string;
 };
 

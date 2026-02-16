@@ -1,7 +1,7 @@
 /**
  * A signer that is capable of generating a digital signature over any given bytes.
  */
-export interface Signer {
+export interface MessageSigner {
   /**
    * The ID of the key used by this signer.
    * This needs to be a fully-qualified ID (ie. prefixed with DID) so that author can be parsed out for processing such as `recordId` computation.

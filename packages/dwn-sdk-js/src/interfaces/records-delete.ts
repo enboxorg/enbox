@@ -1,6 +1,6 @@
 import type { KeyValues } from '../types/query-types.js';
+import type { MessageSigner } from '../types/signer.js';
 import type { MessageStore } from '../types//message-store.js';
-import type { Signer } from '../types/signer.js';
 import type { DataEncodedRecordsWriteMessage, RecordsDeleteDescriptor, RecordsDeleteMessage, RecordsWriteMessage } from '../types/records-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
@@ -16,7 +16,7 @@ export type RecordsDeleteOptions = {
   recordId: string;
   messageTimestamp?: string;
   protocolRole?: string;
-  signer: Signer;
+  signer: MessageSigner;
 
   /**
    * Denotes if all the descendent records should be purged. Defaults to `false`.

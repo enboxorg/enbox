@@ -1,5 +1,5 @@
 import type { EncryptionInput, RecordsWriteOptions } from '../../src/interfaces/records-write.js';
-import type { PermissionScope, Signer } from '../../src/index.js';
+import type { MessageSigner, PermissionScope } from '../../src/index.js';
 
 import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
@@ -183,7 +183,7 @@ describe('RecordsWrite', () => {
     it('should be able to create a RecordsWrite successfully using a custom signer', async () => {
       // create a custom signer
       const hardCodedSignature = Encoder.stringToBytes('some_hard_coded_signature');
-      class CustomSigner implements Signer {
+      class CustomSigner implements MessageSigner {
         public keyId = 'did:example:alice#key1';
         public algorithm = 'unused';
         public async sign (_content: Uint8Array): Promise<Uint8Array> {

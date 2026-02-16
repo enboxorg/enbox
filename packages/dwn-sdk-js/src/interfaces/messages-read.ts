@@ -1,4 +1,4 @@
-import type { Signer } from '../types/signer.js';
+import type { MessageSigner } from '../types/signer.js';
 import type { MessagesReadDescriptor, MessagesReadMessage } from '../types/messages-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
@@ -10,7 +10,7 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 
 export type MessagesReadOptions = {
   messageCid: string;
-  signer: Signer;
+  signer: MessageSigner;
   messageTimestamp?: string;
   permissionGrantId?: string;
 };

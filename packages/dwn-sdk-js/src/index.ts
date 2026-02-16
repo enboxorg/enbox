@@ -26,7 +26,7 @@ export { Encryption, EncryptionAlgorithm, EciesEncryptionOutput, EciesEncryption
 export { EncryptionInput, KeyEncryptionInput, RecordsWrite, RecordsWriteOptions, CreateFromOptions } from './interfaces/records-write.js';
 export { executeUnlessAborted } from './utils/abort.js';
 export { Jws } from './utils/jws.js';
-export { KeyMaterial, PrivateJwk, PublicJwk, Jwk } from './types/jose-types.js';
+export { KeyMaterial, PrivateKeyJwk, PublicKeyJwk, Jwk } from './types/jose-types.js';
 export { Message } from './core/message.js';
 export { MessagesRead as MessagesRead, MessagesReadOptions as MessagesReadOptions } from './interfaces/messages-read.js';
 export { MessagesQuery, MessagesQueryOptions } from './interfaces/messages-query.js';
@@ -46,7 +46,8 @@ export { RecordsRead, RecordsReadOptions } from './interfaces/records-read.js';
 export { RecordsSubscribe, RecordsSubscribeOptions } from './interfaces/records-subscribe.js';
 export { Secp256k1 } from './utils/secp256k1.js';
 export { Secp256r1 } from './utils/secp256r1.js';
-export { Signer } from './types/signer.js';
+export type { SupportedCurve } from './jose/algorithms/signing/signature-algorithms.js';
+export { MessageSigner } from './types/signer.js';
 export { SortDirection } from './types/query-types.js';
 export type { EncryptionKeyDeriver, KeyDecrypter } from './types/encryption-types.js';
 export { Time } from './utils/time.js';

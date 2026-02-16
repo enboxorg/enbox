@@ -1,7 +1,7 @@
 import type { EncryptionAlgorithm } from '../utils/encryption.js';
 import type { GeneralJws } from './jws-types.js';
 import type { KeyDerivationScheme } from '../utils/hd-key.js';
-import type { PublicJwk } from './jose-types.js';
+import type { PublicKeyJwk } from './jose-types.js';
 import type { Readable } from 'readable-stream';
 import type { AuthorizationModel, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSubscription, Pagination } from './message-types.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -78,11 +78,11 @@ export type EncryptedKey = {
   /**
    * The actual derived public key.
    */
-  derivedPublicKey?: PublicJwk;
+  derivedPublicKey?: PublicKeyJwk;
   derivationScheme: KeyDerivationScheme;
   algorithm: EncryptionAlgorithm;
   initializationVector: string;
-  ephemeralPublicKey: PublicJwk;
+  ephemeralPublicKey: PublicKeyJwk;
   messageAuthenticationCode: string;
   encryptedKey: string;
 };

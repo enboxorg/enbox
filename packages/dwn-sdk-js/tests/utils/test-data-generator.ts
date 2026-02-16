@@ -1,6 +1,7 @@
 import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { DidResolutionResult } from '@enbox/dids';
 import type { GeneralJws } from '../../src/types/jws-types.js';
+import type { MessageSigner } from '../../src/types/signer.js';
 import type { MessagesQueryOptions } from '../../src/interfaces/messages-query.js';
 import type { MessagesReadOptions } from '../../src/interfaces/messages-read.js';
 import type { MessagesSubscribeOptions } from '../../src/interfaces/messages-subscribe.js';
@@ -11,13 +12,12 @@ import type { ProtocolsQueryOptions } from '../../src/interfaces/protocols-query
 import type { Readable } from 'readable-stream';
 import type { RecordsQueryOptions } from '../../src/interfaces/records-query.js';
 import type { RecordsSubscribeOptions } from '../../src/interfaces/records-subscribe.js';
-import type { Signer } from '../../src/types/signer.js';
 import type { AuthorizationModel, Pagination } from '../../src/types/message-types.js';
 import type { CreateFromOptions, EncryptionInput, KeyEncryptionInput, RecordsWriteOptions } from '../../src/interfaces/records-write.js';
 import type { DataEncodedRecordsWriteMessage, DateSort, RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsWriteTags } from '../../src/types/records-types.js';
 import type { MessagesFilter, MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage } from '../../src/types/messages-types.js';
 import type { PermissionConditions, PermissionScope } from '../../src/types/permission-types.js';
-import type { PrivateJwk, PublicJwk } from '../../src/types/jose-types.js';
+import type { PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js';
 import type { ProtocolDefinition, ProtocolsConfigureMessage, ProtocolsQueryMessage } from '../../src/types/protocols-types.js';
 import type { RecordsSubscribeMessage, RecordsWriteMessage } from '../../src/types/records-types.js';
 
@@ -54,8 +54,8 @@ import { HdKey, KeyDerivationScheme } from '../../src/utils/hd-key.js';
 export type Persona = {
   did: string;
   keyId: string;
-  keyPair: { publicJwk: PublicJwk, privateJwk: PrivateJwk };
-  signer: Signer;
+  keyPair: { publicJwk: PublicKeyJwk, privateJwk: PrivateKeyJwk };
+  signer: MessageSigner;
 };
 
 export type GenerateProtocolsConfigureInput = {
@@ -403,7 +403,7 @@ export class TestDataGenerator {
    * @param input.attesters Attesters of the message. Will NOT be generated if not given.
    * @param input.data Data that belongs to the record. Generated when not given only if `dataCid` and `dataSize` are also not given.
    * @param input.dataFormat Format of the data. Defaults to 'application/json' if not given.
-   * @param input.signer Signer of the message. Generated if not given.
+   * @param input.signer MessageSigner of the message. Generated if not given.
    * @param input.schema Schema of the message. Randomly generated if not given.
    */
   public static async generateRecordsWrite(input?: GenerateRecordsWriteInput): Promise<GenerateRecordsWriteOutput> {
@@ -479,7 +479,7 @@ export class TestDataGenerator {
     protocolPath: string,
     protocolParentContextId?: string,
     protocolContextDerivingRootKeyId?: string,
-    protocolContextDerivedPublicJwk?: PublicJwk,
+    protocolContextDerivedPublicKeyJwk?: PublicKeyJwk,
     encryptSymmetricKeyWithProtocolPathDerivedKey: boolean,
     encryptSymmetricKeyWithProtocolContextDerivedKey: boolean,
   }): Promise<{
@@ -497,7 +497,7 @@ export class TestDataGenerator {
       protocolPath,
       protocolParentContextId,
       protocolContextDerivingRootKeyId,
-      protocolContextDerivedPublicJwk,
+      protocolContextDerivedPublicKeyJwk,
     } = input;
 
     // encrypt the plaintext data for the target with a randomly generated symmetric key
@@ -539,11 +539,11 @@ export class TestDataGenerator {
         protocolRuleSetSegment = protocolRuleSetSegment[pathSegment];
       }
 
-      const protocolPathDerivedPublicJwk = protocolRuleSetSegment.$encryption?.publicKeyJwk;
+      const protocolPathDerivedPublicKeyJwk = protocolRuleSetSegment.$encryption?.publicKeyJwk;
       const protocolPathDerivationRootKeyId = protocolRuleSetSegment.$encryption?.rootKeyId;
       const protocolPathDerivedKeyEncryptionInput: KeyEncryptionInput = {
         publicKeyId      : protocolPathDerivationRootKeyId,
-        publicKey        : protocolPathDerivedPublicJwk!,
+        publicKey        : protocolPathDerivedPublicKeyJwk!,
         derivationScheme : KeyDerivationScheme.ProtocolPath
       };
 
@@ -563,22 +563,22 @@ export class TestDataGenerator {
 
         const contextId = await RecordsWrite.getEntryId(author.did, message.descriptor);
         const contextDerivationPath = Records.constructKeyDerivationPathUsingProtocolContextScheme(contextId);
-        const authorGeneratedProtocolContextDerivedPublicJwk = await HdKey.derivePublicKey(authorRootPrivateKey, contextDerivationPath);
+        const authorGeneratedProtocolContextDerivedPublicKeyJwk = await HdKey.derivePublicKey(authorRootPrivateKey, contextDerivationPath);
 
         protocolContextDerivedKeyEncryptionInput = {
           publicKeyId      : author.keyId,
-          publicKey        : authorGeneratedProtocolContextDerivedPublicJwk,
+          publicKey        : authorGeneratedProtocolContextDerivedPublicKeyJwk,
           derivationScheme : KeyDerivationScheme.ProtocolContext
         };
       } else {
         if (protocolContextDerivingRootKeyId === undefined ||
-          protocolContextDerivedPublicJwk === undefined) {
-          throw new Error ('`protocolContextDerivingRootKeyId` and `protocolContextDerivedPublicJwk` must both be defined if `protocolContextId` is given');
+          protocolContextDerivedPublicKeyJwk === undefined) {
+          throw new Error ('`protocolContextDerivingRootKeyId` and `protocolContextDerivedPublicKeyJwk` must both be defined if `protocolContextId` is given');
         }
 
         protocolContextDerivedKeyEncryptionInput = {
           publicKeyId      : protocolContextDerivingRootKeyId!,
-          publicKey        : protocolContextDerivedPublicJwk!,
+          publicKey        : protocolContextDerivedPublicKeyJwk!,
           derivationScheme : KeyDerivationScheme.ProtocolContext
         };
       }
@@ -914,8 +914,8 @@ export class TestDataGenerator {
     const portableDid = await did.export();
     const keyPair = {
       // TODO: #672 - port and use type from @enbox/crypto - https://github.com/enboxorg/enbox/issues/672
-      publicJwk  : signingMethod.publicKeyJwk as PublicJwk,
-      privateJwk : portableDid.privateKeys![0] as PrivateJwk,
+      publicJwk  : signingMethod.publicKeyJwk as PublicKeyJwk,
+      privateJwk : portableDid.privateKeys![0] as PrivateKeyJwk,
     };
 
     return {

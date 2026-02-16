@@ -1,3 +1,5 @@
+import type { JwkParamsEcPublic } from '@enbox/crypto';
+
 import { base64url } from 'multiformats/bases/base64';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { expect } from 'chai';
@@ -38,7 +40,7 @@ describe('Secp256r1', () => {
       const publicJwk2 = await Secp256r1.publicKeyToJwk(uncompressedPublicKey);
 
       expect(publicJwk1.x).to.equal(publicJwk2.x);
-      expect(publicJwk1.y).to.equal(publicJwk2.y);
+      expect((publicJwk1 as JwkParamsEcPublic).y).to.equal((publicJwk2 as JwkParamsEcPublic).y);
     });
   });
 

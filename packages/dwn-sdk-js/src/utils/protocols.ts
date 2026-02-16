@@ -1,6 +1,6 @@
 import type { DerivedPrivateJwk } from '../utils/hd-key.js';
 import type { EncryptionKeyDeriver } from '../types/encryption-types.js';
-import type { PrivateJwk } from '../types/jose-types.js';
+import type { PrivateKeyJwk } from '../types/jose-types.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 
 import { Secp256k1 } from './secp256k1.js';
@@ -24,20 +24,20 @@ export class Protocols {
   ): Promise<ProtocolDefinition>;
 
   /**
-   * Overload 2 (raw-key, existing): Takes rootKeyId and raw PrivateJwk directly.
+   * Overload 2 (raw-key, existing): Takes rootKeyId and raw PrivateKeyJwk directly.
    * Preserved for backward compatibility with tests and non-KMS callers.
    */
   public static async deriveAndInjectPublicEncryptionKeys(
     protocolDefinition: ProtocolDefinition,
     rootKeyId: string,
-    privateJwk: PrivateJwk,
+    privateJwk: PrivateKeyJwk,
   ): Promise<ProtocolDefinition>;
 
   // Implementation dispatches based on argument type
   public static async deriveAndInjectPublicEncryptionKeys(
     protocolDefinition: ProtocolDefinition,
     rootKeyIdOrKeyDeriver: string | EncryptionKeyDeriver,
-    privateJwk?: PrivateJwk,
+    privateJwk?: PrivateKeyJwk,
   ): Promise<ProtocolDefinition> {
     // clone before modify
     const clone = JSON.parse(JSON.stringify(protocolDefinition)) as ProtocolDefinition;

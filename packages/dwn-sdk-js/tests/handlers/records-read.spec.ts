@@ -1874,7 +1874,7 @@ export function testRecordsReadHandler(): void {
             protocolPath                                     : 'thread/message',
             protocolParentContextId                          : fetchedRecordsWrite.contextId,
             protocolContextDerivingRootKeyId                 : protocolContextDerivingRootKeyIdReturned,
-            protocolContextDerivedPublicJwk                  : protocolContextDerivedPublicJwkReturned!,
+            protocolContextDerivedPublicKeyJwk               : protocolContextDerivedPublicJwkReturned!,
             encryptSymmetricKeyWithProtocolPathDerivedKey    : true,
             encryptSymmetricKeyWithProtocolContextDerivedKey : true
           });

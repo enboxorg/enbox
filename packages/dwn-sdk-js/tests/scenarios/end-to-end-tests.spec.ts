@@ -165,7 +165,7 @@ export function testEndToEndScenarios(): void {
         protocolPath                                     : 'thread/chat',
         protocolParentContextId                          : threadRecord.message.contextId,
         protocolContextDerivingRootKeyId                 : aliceRootKey.rootKeyId,
-        protocolContextDerivedPublicJwk                  : contextDerivedPublicKey,
+        protocolContextDerivedPublicKeyJwk               : contextDerivedPublicKey,
         encryptSymmetricKeyWithProtocolPathDerivedKey    : false,
         encryptSymmetricKeyWithProtocolContextDerivedKey : true
       });
