@@ -477,9 +477,33 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
 
   /**
    * Encrypts the symmetric encryption key using the public keys given and attach the resulting `encryption` property to the RecordsWrite.
+   *
+   * @param options.append - When `true`, appends new `keyEncryption` entries to the existing
+   *   `encryption` property instead of replacing it. Requires `this._message.encryption` to
+   *   already exist (i.e., the record must already be encrypted). This is used for the reactive
+   *   root-record upgrade: adding a ProtocolContext `keyEncryption` entry alongside an existing
+   *   ProtocolPath entry so both the owner and context key holders can decrypt.
    */
-  public async encryptSymmetricEncryptionKey(encryptionInput: EncryptionInput): Promise<void> {
-    this._message.encryption = await RecordsWrite.createEncryptionProperty(this._message.descriptor, encryptionInput);
+  public async encryptSymmetricEncryptionKey(
+    encryptionInput: EncryptionInput,
+    options?: { append?: boolean },
+  ): Promise<void> {
+    if (options?.append) {
+      if (!this._message.encryption) {
+        throw new DwnError(
+          DwnErrorCode.RecordsWriteMissingEncryption,
+          'Cannot append keyEncryption entries: record does not have an existing `encryption` property.'
+        );
+      }
+
+      // Build only the new keyEncryption entries (reuses createEncryptionProperty for ECIES logic)
+      const newEncryption = await RecordsWrite.createEncryptionProperty(this._message.descriptor, encryptionInput);
+      if (newEncryption) {
+        this._message.encryption.keyEncryption.push(...newEncryption.keyEncryption);
+      }
+    } else {
+      this._message.encryption = await RecordsWrite.createEncryptionProperty(this._message.descriptor, encryptionInput);
+    }
 
     // opportunity here to re-sign instead of remove
     delete this._message.authorization;
