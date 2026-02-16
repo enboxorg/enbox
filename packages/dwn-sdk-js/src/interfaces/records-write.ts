@@ -501,14 +501,28 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       if (newEncryption) {
         this._message.encryption.keyEncryption.push(...newEncryption.keyEncryption);
       }
+
+      // In append mode, preserve the author's identity and authorization so
+      // that signAsOwner() can be called afterwards. The author's signature
+      // payload will have a stale encryptionCid (since we just appended new
+      // keyEncryption entries), but the owner's signature vouches for the
+      // updated state. validateIntegrity() skips the encryptionCid check on
+      // the author's signature when an ownerSignature is present.
+      //
+      // NOTE: An alternative design would deliver the DEK out-of-band via the
+      // key-delivery protocol (as a field on the contextKey record) instead of
+      // mutating the record's encryption property. That avoids the stale
+      // encryptionCid issue entirely but adds complexity to the read path and
+      // the contextKey schema. We chose the in-record approach because it keeps
+      // records self-contained and the read/decrypt path unchanged.
     } else {
       this._message.encryption = await RecordsWrite.createEncryptionProperty(this._message.descriptor, encryptionInput);
-    }
 
-    // opportunity here to re-sign instead of remove
-    delete this._message.authorization;
-    this._signaturePayload = undefined;
-    this._author = undefined;
+      // Full replacement invalidates the authorization — caller must re-sign.
+      delete this._message.authorization;
+      this._signaturePayload = undefined;
+      this._author = undefined;
+    }
   }
 
   /**
@@ -685,8 +699,14 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       }
     }
 
-    // if `encryption` is given in message, make sure the correct `encryptionCid` is in the payload of the message signature
-    if (signaturePayload.encryptionCid !== undefined) {
+    // If `encryption` is given in message, make sure the correct `encryptionCid`
+    // is in the payload of the message signature — UNLESS the message has an
+    // ownerSignature. When the DWN owner appends keyEncryption entries to an
+    // externally-authored record (reactive root-record upgrade), the author's
+    // encryptionCid becomes stale. The owner's signature vouches for the
+    // updated encryption property, so the mismatch is expected and safe.
+    const hasOwnerSignature = this.message.authorization?.ownerSignature !== undefined;
+    if (signaturePayload.encryptionCid !== undefined && !hasOwnerSignature) {
       const expectedEncryptionCid = await Cid.computeCid(this.message.encryption);
       const actualEncryptionCid = signaturePayload.encryptionCid;
       if (actualEncryptionCid !== expectedEncryptionCid) {
