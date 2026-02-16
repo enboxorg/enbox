@@ -57,5 +57,5 @@ export const chaiUrl: Chai.ChaiPlugin = function(chai: Chai.ChaiStatic, utils: C
   utils.addProperty(chai.Assertion.prototype, 'url', isValidUrl);
 
   // Add the method to the Assert API.
-  assert.isUrl = (actual: string): void => { (new chai.Assertion(actual)).to.be.a.url; };
+  (assert as any).isUrl = (actual: string): void => { (new chai.Assertion(actual)).to.be.a.url; };
 };

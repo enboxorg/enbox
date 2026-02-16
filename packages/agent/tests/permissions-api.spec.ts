@@ -9,7 +9,7 @@ import { AgentPermissionsApi } from '../src/permissions-api.js';
 import { Convert } from '@enbox/common';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
-import { DwnInterface, DwnPermissionGrant } from '../src/index.js';
+import { DwnInterface, DwnPermissionGrant, type PermissionGrantEntry } from '../src/index.js';
 import { DwnInterfaceName, DwnMethodName, Time } from '@enbox/dwn-sdk-js';
 
 
@@ -764,7 +764,7 @@ describe('AgentPermissionsApi', () => {
       protocol: string;
       protocolPath?: string;
       contextId?: string;
-    }): Promise<Record<string, DwnPermissionGrant>> => {
+    }): Promise<Record<string, PermissionGrantEntry>> => {
       const recordsWriteGrant = await grantorAgent.permissions.createGrant({
         author      : grantor,
         grantedTo   : grantee,
@@ -855,7 +855,7 @@ describe('AgentPermissionsApi', () => {
       grantor: string;
       grantee: string;
       protocol?: string;
-    }): Promise<Record<string, DwnPermissionGrant>> => {
+    }): Promise<Record<string, PermissionGrantEntry>> => {
 
       const messagesReadGrant = await grantorAgent.permissions.createGrant({
         author      : grantor,
