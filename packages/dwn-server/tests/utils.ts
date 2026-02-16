@@ -1,4 +1,3 @@
-import type { Readable } from 'readable-stream';
 import { Cid, DataStream, RecordsWrite } from '@enbox/dwn-sdk-js';
 import type { GenericMessage, Persona, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
@@ -38,7 +37,7 @@ export type CreateRecordsWriteOverrides =
 
 export type GenerateRecordsWriteOutput = {
   recordsWrite: RecordsWrite;
-  dataStream: Readable | undefined;
+  dataStream: ReadableStream<Uint8Array> | undefined;
 };
 
 export async function createRecordsWriteMessage(
@@ -55,7 +54,7 @@ export async function createRecordsWriteMessage(
     signer     : signer.signer,
   });
 
-  let dataStream: Readable | undefined;
+  let dataStream: ReadableStream<Uint8Array> | undefined;
   if (overrides.data) {
     dataStream = DataStream.fromBytes(overrides.data);
   }
@@ -80,24 +79,16 @@ export async function getFileAsReadStream(
 ): Promise<{ stream: fs.ReadStream; cid: string; size: number }> {
   const absoluteFilePath = `${__dirname}/${filePath}`;
 
-  let readStream = fs.createReadStream(absoluteFilePath);
-  const cid = await Cid.computeDagPbCidFromStream(readStream as any);
+  // Read file into bytes to compute CID using Web ReadableStream
+  const fileBytes = fs.readFileSync(absoluteFilePath);
+  const cid = await Cid.computeDagPbCidFromBytes(fileBytes);
+  const size = fileBytes.byteLength;
 
-  let size = 0;
-  readStream = fs.createReadStream(absoluteFilePath);
-  readStream.on('data', (chunk) => {
-    size += chunk['byteLength'];
-  });
-
-  return new Promise((resolve) => {
-    readStream.on('close', () => {
-      return resolve({
-        stream: fs.createReadStream(absoluteFilePath),
-        cid,
-        size,
-      });
-    });
-  });
+  return {
+    stream: fs.createReadStream(absoluteFilePath),
+    cid,
+    size,
+  };
 }
 
 export function getDwnResponse(response: Response): UnionMessageReply {

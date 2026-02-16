@@ -1,5 +1,4 @@
 import type { MessageEvent } from './subscriptions.js';
-import type { Readable } from 'readable-stream';
 import type { AuthorizationModel, GenericMessage, GenericMessageReply, MessageSubscription } from './message-types.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import type { PaginationCursor, RangeCriterion } from './query-types.js';
@@ -29,7 +28,7 @@ export type MessagesReadMessage = GenericMessage & {
 export type MessagesReadReplyEntry = {
   messageCid: string;
   message: GenericMessage;
-  data?: Readable;
+  data?: ReadableStream<Uint8Array>;
 };
 
 export type MessagesReadReply = GenericMessageReply & {

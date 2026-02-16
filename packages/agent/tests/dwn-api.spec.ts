@@ -1,10 +1,9 @@
-import type { Readable } from '@enbox/common';
 import type { Dwn, MessageEvent, ProtocolDefinition , RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type { JwkParamsEcPublic, PrivateKeyJwk } from '@enbox/crypto';
 
+import { Convert } from '@enbox/common';
 import { DidDht } from '@enbox/dids';
-import { Convert, NodeStream, Stream } from '@enbox/common';
-import { DwnInterfaceName, DwnMethodName, Message, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnInterfaceName, DwnMethodName, Message, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -291,7 +290,7 @@ describe('AgentDwnApi', () => {
       const retrievedRecordsWrite = messagesReadReply.entry!;
       expect(retrievedRecordsWrite.message).to.have.property('recordId', writeMessage.recordId);
 
-      const readDataBytes = await NodeStream.consumeToBytes({ readable: retrievedRecordsWrite.data! });
+      const readDataBytes = await DataStream.toBytes(retrievedRecordsWrite.data!);
       expect(readDataBytes).to.deep.equal(dataBytes);
     });
 
@@ -494,7 +493,7 @@ describe('AgentDwnApi', () => {
       expect(readReply.entry!.recordsWrite).to.have.property('descriptor');
       expect(readReply.entry!.recordsWrite).to.have.property('recordId', writeMessage.recordId);
 
-      const readDataBytes = await NodeStream.consumeToBytes({ readable: readReply.entry!.data! });
+      const readDataBytes = await DataStream.toBytes(readReply.entry!.data!);
       expect(readDataBytes).to.deep.equal(dataBytes);
     });
 
@@ -1330,13 +1329,7 @@ describe('AgentDwnApi', () => {
       const retrievedRecordsWrite = messagesReadReply.entry!;
       expect(retrievedRecordsWrite.message).to.have.property('recordId', writeMessage.recordId);
 
-      const dataStream: ReadableStream | Readable = retrievedRecordsWrite.data!;
-      // If the data stream is a web ReadableStream, convert it to a Node.js Readable.
-      const nodeReadable = Stream.isReadableStream(dataStream) ?
-        NodeStream.fromWebReadable({ readableStream: dataStream }) :
-        dataStream;
-
-      const readDataBytes = await NodeStream.consumeToBytes({ readable: nodeReadable });
+      const readDataBytes = await DataStream.toBytes(retrievedRecordsWrite.data!);
       expect(readDataBytes).to.deep.equal(dataBytes);
     });
 
@@ -1539,13 +1532,7 @@ describe('AgentDwnApi', () => {
       expect(readReply.entry?.recordsWrite).to.have.property('descriptor');
       expect(readReply.entry?.recordsWrite).to.have.property('recordId', writeMessage.recordId);
 
-      const dataStream: ReadableStream | Readable = readReply.entry!.data!;
-      // If the data stream is a web ReadableStream, convert it to a Node.js Readable.
-      const nodeReadable = Stream.isReadableStream(dataStream) ?
-        NodeStream.fromWebReadable({ readableStream: dataStream }) :
-        dataStream;
-
-      const readDataBytes = await NodeStream.consumeToBytes({ readable: nodeReadable });
+      const readDataBytes = await DataStream.toBytes(readReply.entry!.data!);
       expect(readDataBytes).to.deep.equal(dataBytes);
     });
 
@@ -2265,7 +2252,7 @@ describe('Encryption Callback Factories', () => {
       });
 
       expect(readReply.status.code).to.equal(200);
-      const rawDataBytes = await NodeStream.consumeToBytes({ readable: readReply.entry!.data! });
+      const rawDataBytes = await DataStream.toBytes(readReply.entry!.data!);
       // Raw data should NOT be the original plaintext (it's encrypted)
       expect(Convert.uint8Array(rawDataBytes).toString()).to.not.equal(plaintextString);
     });
@@ -2313,7 +2300,7 @@ describe('Encryption Callback Factories', () => {
       });
 
       expect(readReply.status.code).to.equal(200);
-      const decryptedBytes = await NodeStream.consumeToBytes({ readable: readReply.entry!.data! });
+      const decryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
       expect(Convert.uint8Array(decryptedBytes).toString()).to.equal(plaintextString);
     });
 
@@ -2477,7 +2464,7 @@ describe('Encryption Callback Factories', () => {
       });
 
       expect(readReply.status.code).to.equal(200);
-      const decryptedBytes = await NodeStream.consumeToBytes({ readable: readReply.entry!.data! });
+      const decryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
       expect(Convert.uint8Array(decryptedBytes).toString()).to.equal(plaintextString);
     });
 
@@ -2617,7 +2604,7 @@ describe('Encryption Callback Factories', () => {
       });
 
       expect(readReply.status.code).to.equal(200);
-      const readDecryptedBytes = await NodeStream.consumeToBytes({ readable: readReply.entry!.data! });
+      const readDecryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
       expect(Convert.uint8Array(readDecryptedBytes).toString()).to.equal(plaintextString);
 
       // 4. Query with auto-decrypt
@@ -2724,7 +2711,7 @@ describe('Encryption Callback Factories', () => {
       });
 
       expect(readReply.status.code).to.equal(200);
-      const decryptedBytes = await NodeStream.consumeToBytes({ readable: readReply.entry!.data! });
+      const decryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
       expect(Convert.uint8Array(decryptedBytes).toString()).to.equal(updatedPlaintext);
     });
 
@@ -2837,7 +2824,7 @@ describe('Encryption Callback Factories', () => {
       });
 
       expect(readReply.status.code).to.equal(200);
-      const decryptedBytes = await NodeStream.consumeToBytes({ readable: readReply.entry!.data! });
+      const decryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
       expect(Convert.uint8Array(decryptedBytes).toString()).to.equal(updatedChat);
     });
   });
@@ -3079,7 +3066,7 @@ describe('Encryption Callback Factories', () => {
       });
 
       expect(readReply.status.code).to.equal(200);
-      const decryptedBytes = await NodeStream.consumeToBytes({ readable: readReply.entry!.data! });
+      const decryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
       expect(Convert.uint8Array(decryptedBytes).toString()).to.equal(plaintextString);
     });
 
@@ -3145,9 +3132,7 @@ describe('Encryption Callback Factories', () => {
       });
 
       expect(threadReadReply.status.code).to.equal(200);
-      const threadDecrypted = await NodeStream.consumeToBytes({
-        readable: threadReadReply.entry!.data!
-      });
+      const threadDecrypted = await DataStream.toBytes(threadReadReply.entry!.data!);
       expect(Convert.uint8Array(threadDecrypted).toString()).to.equal(threadPlaintext);
 
       // 4. Read child record — should decrypt
@@ -3162,9 +3147,7 @@ describe('Encryption Callback Factories', () => {
       });
 
       expect(chatReadReply.status.code).to.equal(200);
-      const chatDecrypted = await NodeStream.consumeToBytes({
-        readable: chatReadReply.entry!.data!
-      });
+      const chatDecrypted = await DataStream.toBytes(chatReadReply.entry!.data!);
       expect(Convert.uint8Array(chatDecrypted).toString()).to.equal(chatPlaintext);
 
       // 5. Query child records — should auto-decrypt encodedData
@@ -3235,7 +3218,7 @@ describe('Encryption Callback Factories', () => {
       });
 
       expect(readReply.status.code).to.equal(200);
-      const rawBytes = await NodeStream.consumeToBytes({ readable: readReply.entry!.data! });
+      const rawBytes = await DataStream.toBytes(readReply.entry!.data!);
       expect(Convert.uint8Array(rawBytes).toString()).to.not.equal(plaintextString);
     });
   });

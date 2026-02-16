@@ -1,5 +1,3 @@
-import type { Readable } from 'readable-stream';
-
 /**
  * The interface that defines how to store and fetch data associated with a message.
  */
@@ -19,7 +17,7 @@ export interface DataStore {
    * @param recordId The logical ID of the record that references the data.
    * @param dataCid The IPFS CID of the data.
    */
-  put(tenant: string, recordId: string, dataCid: string, dataStream: Readable): Promise<DataStorePutResult>;
+  put(tenant: string, recordId: string, dataCid: string, dataStream: ReadableStream<Uint8Array>): Promise<DataStorePutResult>;
 
   /**
    * Fetches the specified data.
@@ -60,5 +58,5 @@ export type DataStoreGetResult = {
    * The number of bytes of the data stored.
    */
   dataSize: number;
-  dataStream: Readable;
+  dataStream: ReadableStream<Uint8Array>;
 };

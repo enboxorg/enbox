@@ -1,6 +1,5 @@
 import type { JsonRpcSuccessResponse } from '../src/lib/json-rpc.js';
 import type { Persona } from '@enbox/dwn-sdk-js';
-import type { Readable } from 'readable-stream';
 
 import chaiAsPromised from 'chai-as-promised';
 import { v4 as uuidv4 } from 'uuid';
@@ -134,7 +133,7 @@ export default class CommonScenarioValidator {
     expect(recordsReadJsonRpcResponse.result.reply.entry.recordsWrite).to.exist;
 
     // can't get response as stream from supertest :(
-    const cid = await Cid.computeDagPbCidFromStream(recordsReadResponse.body as unknown as Readable);
+    const cid = await Cid.computeDagPbCidFromStream(recordsReadResponse.body as unknown as ReadableStream<Uint8Array>);
     expect(cid).to.equal(dataCid);
   }
 }

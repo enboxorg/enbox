@@ -1,5 +1,5 @@
 import type { DidService } from '@enbox/dids';
-import type { Readable, RequireOnly } from '@enbox/common';
+import type { RequireOnly } from '@enbox/common';
 
 import type {
   GenericMessageReply,
@@ -194,7 +194,7 @@ export type DwnResponseStatus = {
 };
 
 export type ProcessDwnRequest<T extends DwnInterface> = DwnRequest<T> & {
-  dataStream?: Blob | ReadableStream | Readable;
+  dataStream?: Blob | ReadableStream;
   rawMessage?: DwnMessage[T];
   messageParams?: DwnMessageParams[T];
   store?: boolean;
@@ -253,7 +253,7 @@ export interface DwnMessageInstance {
 
 export type DwnMessageWithData<T extends DwnInterface> = {
   message: DwnMessage[T];
-  dataStream?: Readable;
+  dataStream?: ReadableStream<Uint8Array>;
   /** Set when a $role record with key delivery needs auto-push to the recipient's DWN. */
   roleRecordAutoPush?: { encryptedBytes: Uint8Array; recipient: string };
 };

@@ -5,7 +5,6 @@ import { BlockstoreLevel } from './blockstore-level.js';
 import { createLevelDatabase } from './level-wrapper.js';
 import { exporter } from 'ipfs-unixfs-exporter';
 import { importer } from 'ipfs-unixfs-importer';
-import { Readable } from 'readable-stream';
 
 /**
  * A simple implementation of {@link DataStore} that works in both the browser and server-side.
@@ -40,10 +39,10 @@ export class DataStoreLevel implements DataStore {
     await this.blockstore.close();
   }
 
-  async put(tenant: string, recordId: string, dataCid: string, dataStream: Readable): Promise<DataStorePutResult> {
+  async put(tenant: string, recordId: string, dataCid: string, dataStream: ReadableStream<Uint8Array>): Promise<DataStorePutResult> {
     const blockstoreForData = await this.getBlockstoreForStoringData(tenant, recordId, dataCid);
 
-    const asyncDataBlocks = importer([{ content: dataStream }], blockstoreForData, { cidVersion: 1 });
+    const asyncDataBlocks = importer([{ content: DataStoreLevel.asAsyncIterable(dataStream) }], blockstoreForData, { cidVersion: 1 });
 
     // NOTE: the last block contains the root CID as well as info to derive the data size
     let dataDagRoot!: ImportResult;
@@ -66,13 +65,13 @@ export class DataStoreLevel implements DataStore {
     const dataDagRoot = await exporter(dataCid, blockstoreForData);
     const contentIterator = dataDagRoot.content();
 
-    const dataStream = new Readable({
-      async read(): Promise<void> {
+    const dataStream = new ReadableStream<Uint8Array>({
+      async pull(controller): Promise<void> {
         const result = await contentIterator.next();
         if (result.done) {
-          this.push(null); // end the stream
+          controller.close();
         } else {
-          this.push(result.value);
+          controller.enqueue(result.value);
         }
       }
     });
@@ -111,6 +110,22 @@ export class DataStoreLevel implements DataStore {
     const blockstoreOfGivenRecordId = await blockstoreOfGivenTenant.partition(recordId);
     const blockstoreOfGivenDataCidOfRecordId = await blockstoreOfGivenRecordId.partition(dataCid);
     return blockstoreOfGivenDataCidOfRecordId;
+  }
+
+  /**
+   * Adapts a Web ReadableStream into an AsyncIterable for compatibility with `ipfs-unixfs-importer`.
+   */
+  private static async * asAsyncIterable(stream: ReadableStream<Uint8Array>): AsyncIterable<Uint8Array> {
+    const reader = stream.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) { break; }
+        yield value;
+      }
+    } finally {
+      reader.releaseLock();
+    }
   }
 }
 

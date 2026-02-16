@@ -22,7 +22,7 @@ import { StorageController } from '../store/storage-controller.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
-type HandlerArgs = { tenant: string, message: RecordsWriteMessage, dataStream?: _Readable.Readable};
+type HandlerArgs = { tenant: string, message: RecordsWriteMessage, dataStream?: ReadableStream<Uint8Array>};
 
 export class RecordsWriteHandler implements MethodHandler {
 
@@ -255,7 +255,7 @@ export class RecordsWriteHandler implements MethodHandler {
   private async processMessageWithDataStream(
     tenant: string,
     message: RecordsWriteMessage,
-    dataStream: _Readable.Readable,
+    dataStream: ReadableStream<Uint8Array>,
   ):Promise<RecordsQueryReplyEntry> {
     let messageWithOptionalEncodedData: RecordsQueryReplyEntry = message;
 

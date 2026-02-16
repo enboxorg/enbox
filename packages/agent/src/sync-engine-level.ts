@@ -1,4 +1,3 @@
-import type { Readable } from '@enbox/common';
 import type { ULIDFactory } from 'ulidx';
 import type { AbstractBatchOperation, AbstractLevel } from 'abstract-level';
 import type {
@@ -13,8 +12,9 @@ import ms from 'ms';
 
 import { Level } from 'level';
 import { monotonicFactory } from 'ulidx';
-import { NodeStream } from '@enbox/common';
+import { Stream } from '@enbox/common';
 import {
+  DataStream,
   DwnInterfaceName,
   DwnMethodName,
 } from '@enbox/dwn-sdk-js';
@@ -185,17 +185,17 @@ export class SyncEngineLevel implements SyncEngine {
 
       const replyEntry = reply.entry;
       const message = replyEntry.message;
-      // If the message includes data, ensure it is a Node Readable stream for the DWN engine.
+      // If the message includes data, ensure it is a Web ReadableStream for the DWN engine.
       // The RPC layer may return either a Web ReadableStream (from HTTP fetch) or a Node Readable,
-      // depending on the transport, so we handle both cases.
-      let dataStream: Readable | undefined;
+      // depending on the transport, so we normalize to Web ReadableStream.
+      let dataStream: ReadableStream<Uint8Array> | undefined;
       if (isRecordsWrite(replyEntry) && replyEntry.data) {
-        dataStream = NodeStream.isReadableStream(replyEntry.data)
+        dataStream = Stream.isReadableStream(replyEntry.data)
           ? replyEntry.data
-          : NodeStream.fromWebReadable({ readableStream: replyEntry.data as unknown as ReadableStream });
+          : undefined; // DWN SDK now expects Web ReadableStream; data should already be one
       }
 
-      const pullReply = await this.agent.dwn.node.processMessage(did, message, { dataStream: dataStream as any });
+      const pullReply = await this.agent.dwn.node.processMessage(did, message, { dataStream });
       if (SyncEngineLevel.syncMessageReplyIsSuccessful(pullReply)) {
         await this.addMessage(did, messageCid);
         deleteOperations.push({ type: 'del', key: key });
@@ -596,7 +596,7 @@ export class SyncEngineLevel implements SyncEngine {
     // If the message is a RecordsWrite, either data will be present,
     // OR we have to fetch it using a RecordsRead.
     if (isRecordsWrite(messageEntry) && messageEntry.data) {
-      const dataBytes = await NodeStream.consumeToBytes({ readable: messageEntry.data });
+      const dataBytes = await DataStream.toBytes(messageEntry.data);
       dwnMessageWithBlob.data = new Blob([ dataBytes ], { type: messageEntry.message.descriptor.dataFormat });
     }
 

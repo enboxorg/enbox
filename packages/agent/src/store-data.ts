@@ -1,7 +1,7 @@
 import type { Jwk } from '@enbox/crypto';
 
 import ms from 'ms';
-import { Convert, NodeStream, TtlCache } from '@enbox/common';
+import { Convert, Stream, TtlCache } from '@enbox/common';
 
 import type { DwnMessageParams } from './types/dwn.js';
 import type { Web5PlatformAgent } from './types/agent.js';
@@ -262,7 +262,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     }
 
     // If the record was found, convert back to store object format.
-    const storeObject = await NodeStream.consumeToJson({ readable: readReply.entry.data }) as TStoreObject;
+    const storeObject = await Stream.consumeToJson({ readableStream: readReply.entry.data }) as TStoreObject;
 
     // If caching is enabled, add the store object to the cache.
     if (useCache) {
