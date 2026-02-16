@@ -2,6 +2,7 @@ import * as cbor from '@ipld/dag-cbor';
 
 import { BlockstoreMock } from '../store/blockstore-mock.js';
 import { CID } from 'multiformats/cid';
+import { DataStream } from './data-stream.js';
 import { importer } from 'ipfs-unixfs-importer';
 import { sha256 } from 'multiformats/hashes/sha2';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
@@ -88,29 +89,12 @@ export class Cid {
    * @returns V1 CID of the DAG comprised by chunking data into unixfs DAG-PB encoded blocks
    */
   public static async computeDagPbCidFromStream(dataStream: ReadableStream<Uint8Array>): Promise<string> {
-    const asyncDataBlocks = importer([{ content: Cid.asAsyncIterable(dataStream) }], new BlockstoreMock(), { cidVersion: 1 });
+    const asyncDataBlocks = importer([{ content: DataStream.asAsyncIterable(dataStream) }], new BlockstoreMock(), { cidVersion: 1 });
 
     // NOTE: the last block contains the root CID
     let block;
     for await (block of asyncDataBlocks) { ; }
 
     return block ? block.cid.toString() : '';
-  }
-
-  /**
-   * Adapts a Web ReadableStream into an AsyncIterable for compatibility with libraries
-   * like `ipfs-unixfs-importer` that expect `AsyncIterable<Uint8Array>`.
-   */
-  private static async * asAsyncIterable(stream: ReadableStream<Uint8Array>): AsyncIterable<Uint8Array> {
-    const reader = stream.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) { break; }
-        yield value;
-      }
-    } finally {
-      reader.releaseLock();
-    }
   }
 }

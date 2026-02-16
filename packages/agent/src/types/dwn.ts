@@ -103,8 +103,6 @@ export enum DwnInterface {
 export type DwnRecordsInterfaces =
   | DwnInterface.RecordsDelete | DwnInterface.RecordsQuery | DwnInterface.RecordsRead
   | DwnInterface.RecordsSubscribe | DwnInterface.RecordsWrite;
-export type DwnMessageInterfaces = DwnInterface.MessagesQuery | DwnInterface.MessagesRead | DwnInterface.MessagesSubscribe;
-export type DwnProtocolInterfaces = DwnInterface.ProtocolsConfigure | DwnInterface.ProtocolsQuery;
 
 export interface DwnMessage {
   [DwnInterface.MessagesQuery] : MessagesQueryMessage;
@@ -235,8 +233,6 @@ export const dwnMessageConstructors: { [T in DwnInterface]: DwnMessageConstructo
   [DwnInterface.RecordsSubscribe]   : RecordsSubscribe as any,
   [DwnInterface.RecordsWrite]       : RecordsWrite as any,
 } as const;
-
-export type DwnMessageConstructors = typeof dwnMessageConstructors;
 
 export interface DwnMessageInstance {
   [DwnInterface.MessagesQuery] : MessagesQuery;
