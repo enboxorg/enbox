@@ -521,28 +521,34 @@ export class Record implements RecordModel {
        * @beta
        */
       async stream(): Promise<ReadableStream> {
+        if (self.deleted) {
+          throw new Error('404: Not Found');
+        }
+
         if (self._encodedData) {
           /** If `encodedData` is set, it indicates that the Record was instantiated by
            * `dwn.records.create()`/`dwn.records.write()` or the record's data payload was small
            * enough to be returned in `dwn.records.query()` results. In either case, the data is
            * already available in-memory and can be returned as a Web `ReadableStream`. */
-          self._readableStream = Stream.fromBlob(self._encodedData);
+          return Stream.fromBlob(self._encodedData);
 
-        } else if (!Stream.isReadable({ readableStream: self._readableStream })) {
-          /** If the data stream for this `Record` instance has already been partially or fully
-           * consumed, then the data must be fetched again from either: */
-          self._readableStream = self._remoteOrigin ?
+        } else if (self._readableStream) {
+          /** If a data stream is available, return it and clear the reference so subsequent
+           * calls will re-fetch. Unlike Node Readable streams, a consumed Web ReadableStream
+           * still appears "readable" (unlocked), so we cannot rely on `isReadable()` to
+           * detect exhaustion. Clearing the reference ensures the next call re-fetches. */
+          const currentStream = self._readableStream;
+          self._readableStream = undefined;
+          return currentStream;
+
+        } else {
+          /** The data stream has been consumed or was never set. Re-fetch from either: */
+          return self._remoteOrigin ?
             // A. ...a remote DWN if the record was originally queried from a remote DWN.
             await self.readRecordData({ target: self._remoteOrigin, isRemote: true }) :
             // B. ...a local DWN if the record was originally queried from the local DWN.
             await self.readRecordData({ target: self._connectedDid, isRemote: false });
         }
-
-        if (!self._readableStream) {
-          throw new Error('Record data is not available.');
-        }
-
-        return self._readableStream;
       },
 
       /**
