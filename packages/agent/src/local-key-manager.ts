@@ -7,6 +7,7 @@ import type {
   AesGcmParams,
   KeyGenerator,
   VerifyParams,
+  PublicKeyJwk,
   KeyIdentifier,
   KmsSignParams,
   KmsDigestParams,
@@ -30,6 +31,8 @@ import {
   KEY_URI_PREFIX_JWK,
   computeJwkThumbprint,
 } from '@enbox/crypto';
+
+import { Encryption, HdKey, PrivateJwk, Secp256k1 } from '@enbox/dwn-sdk-js';
 
 import type { AgentDataStore } from './store-data.js';
 import type { Web5PlatformAgent } from './types/agent.js';
@@ -383,6 +386,89 @@ export class LocalKeyManager implements AgentKeyManager {
     const publicKey = await keyGenerator.getPublicKey({ key: privateKey });
 
     return publicKey;
+  }
+
+  /**
+   * Derives an HD child public key from a stored private key using HKDF-SHA256.
+   * The private key stays within the KMS — only the public key is returned.
+   */
+  public async derivePublicKey({ keyUri, derivationPath }: {
+    keyUri: KeyIdentifier;
+    derivationPath: string[];
+  }): Promise<PublicKeyJwk> {
+    // Get stored private key — stays within this method's scope
+    const privateKeyJwk = await this.getPrivateKey({ keyUri }) as PrivateJwk;
+    
+    // Convert JWK to bytes for HKDF derivation
+    const privateKeyBytes = Secp256k1.privateJwkToBytes(privateKeyJwk);
+
+    // Run HKDF derivation through each path segment
+    const derivedPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(
+      privateKeyBytes,
+      derivationPath
+    );
+
+    // Compute public key from derived private key
+    const derivedPublicKeyBytes = await Secp256k1.getPublicKey(derivedPrivateKeyBytes);
+
+    // Convert to JWK format
+    return Secp256k1.publicKeyToJwk(derivedPublicKeyBytes);
+  }
+
+  /**
+   * Decrypts an ECIES-SECP256K1 encrypted payload using a derived private key.
+   * The derived private key is used internally and discarded after decryption.
+   */
+  public async eciesSecp256k1Decrypt({ keyUri, derivationPath, ciphertext, ephemeralPublicKey, initializationVector, messageAuthenticationCode }: {
+    keyUri: KeyIdentifier;
+    derivationPath: string[];
+    ciphertext: Uint8Array;
+    ephemeralPublicKey: Uint8Array;
+    initializationVector: Uint8Array;
+    messageAuthenticationCode: Uint8Array;
+  }): Promise<Uint8Array> {
+    // Get stored private key — stays within this method's scope
+    const privateKeyJwk = await this.getPrivateKey({ keyUri }) as PrivateJwk;
+    
+    // Convert JWK to bytes for HKDF derivation
+    const privateKeyBytes = Secp256k1.privateJwkToBytes(privateKeyJwk);
+
+    // Run HKDF derivation through each path segment to get leaf private key
+    const leafPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(
+      privateKeyBytes,
+      derivationPath
+    );
+
+    // Perform ECIES decryption — leaf key bytes consumed and discarded after
+    return Encryption.eciesSecp256k1Decrypt({
+      privateKey                : leafPrivateKeyBytes,
+      ciphertext,
+      ephemeralPublicKey,
+      initializationVector,
+      messageAuthenticationCode,
+    });
+  }
+
+  /**
+   * Derives an HD child private key bytes from a stored private key.
+   * Unlike derivePublicKey(), this returns the derived private key bytes.
+   * Used ONLY for context-derived key sharing in multi-party encryption.
+   */
+  public async derivePrivateKeyBytes({ keyUri, derivationPath }: {
+    keyUri: KeyIdentifier;
+    derivationPath: string[];
+  }): Promise<Uint8Array> {
+    // Get stored private key — stays within this method's scope
+    const privateKeyJwk = await this.getPrivateKey({ keyUri }) as PrivateJwk;
+    
+    // Convert JWK to bytes for HKDF derivation
+    const privateKeyBytes = Secp256k1.privateJwkToBytes(privateKeyJwk);
+
+    // Run HKDF derivation through each path segment, return raw bytes
+    return HdKey.derivePrivateKeyBytes(
+      privateKeyBytes,
+      derivationPath
+    );
   }
 
   /**
