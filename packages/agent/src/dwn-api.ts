@@ -60,17 +60,17 @@ import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
 import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
 import { getDwnServiceEndpointUrls, isRecordsWrite } from './utils.js';
 
-export type DwnMessageWithBlob<T extends DwnInterface> = {
+type DwnMessageWithBlob<T extends DwnInterface> = {
   message: DwnMessage[T];
   data?: Blob;
 };
 
-export type DwnApiParams = {
+type DwnApiParams = {
   agent?: Web5PlatformAgent;
   dwn: Dwn;
 };
 
-export interface DwnApiCreateDwnParams extends Partial<DwnConfig> {
+interface DwnApiCreateDwnParams extends Partial<DwnConfig> {
   dataPath?: string;
 }
 
@@ -498,7 +498,7 @@ export class AgentDwnApi {
         // 3. Classify the record
         const isRoleRecord = ruleSet.$role === true;
         const rootPathSegment = messageParams.protocolPath.split('/')[0];
-        const isMultiPartyContext = this.protocolPathHasRoles(
+        const isMultiPartyContext = this.isMultiPartyContext(
           protocolDefinition, rootPathSegment,
         );
         const isRootRecord = !messageParams.parentContextId;
@@ -967,14 +967,20 @@ export class AgentDwnApi {
   }
 
   /**
-   * Checks if a protocol path has $role descendants, indicating multi-party intent.
-   * Recurses into the full sub-tree — handles deeply nested roles.
+   * Checks if a protocol path represents a multi-party context. Returns true
+   * if the root path's subtree contains:
+   *   (a) any `$role: true` descendants, OR
+   *   (b) any relational `who`/`of` `$actions` rules that grant `read` access
+   *       (indicating external authors or recipients need context keys).
+   *
+   * This generalises the earlier `protocolPathHasRoles()` to cover protocols
+   * that use relational access without explicit role definitions.
    */
-  private protocolPathHasRoles(
+  private isMultiPartyContext(
     protocolDefinition: ProtocolDefinition,
-    protocolPath: string,
+    rootProtocolPath: string,
   ): boolean {
-    const segments = protocolPath.split('/');
+    const segments = rootProtocolPath.split('/');
     let ruleSet: ProtocolRuleSet | undefined =
       protocolDefinition.structure as unknown as ProtocolRuleSet;
     for (const segment of segments) {
@@ -982,6 +988,7 @@ export class AgentDwnApi {
       if (!ruleSet) { return false; }
     }
 
+    // (a) Check for $role descendants in the subtree
     function hasRoleRecursive(rs: ProtocolRuleSet): boolean {
       for (const key in rs) {
         if (!key.startsWith('$')) {
@@ -993,7 +1000,130 @@ export class AgentDwnApi {
       return false;
     }
 
-    return hasRoleRecursive(ruleSet);
+    if (hasRoleRecursive(ruleSet)) {
+      return true;
+    }
+
+    // (b) Check for relational who/of read rules anywhere in the protocol
+    //     that reference a path within this subtree. A rule like
+    //     { who: 'recipient', of: 'email', can: ['read'] } on any record
+    //     type means the email recipient needs a context key.
+    return this.hasRelationalReadAccess(
+      undefined, rootProtocolPath, protocolDefinition,
+    );
+  }
+
+  /**
+   * Checks whether any relational `who`/`of` rule in the protocol grants
+   * `read` access for a given actor type and ancestor path.
+   *
+   * Walks the *entire* protocol structure looking for any `$actions` rule that:
+   *   - Has `who` equal to `actorType` ('recipient' or 'author'), or any actor
+   *     type if `actorType` is `undefined`
+   *   - Has `of` equal to `ofPath`
+   *   - Has `can` including 'read'
+   *
+   * The search covers all record types in the protocol, since a relational
+   * rule can appear at any level (e.g. `{ who: 'recipient', of: 'thread',
+   * can: ['read'] }` might be defined on `thread/message`).
+   *
+   * @param actorType  - 'author' | 'recipient', or undefined for any
+   * @param ofPath     - The protocol path to check (e.g. 'thread', 'email')
+   * @param protocolDefinition - The full protocol definition
+   * @returns true if a matching relational read rule exists
+   */
+  private hasRelationalReadAccess(
+    actorType: 'author' | 'recipient' | undefined,
+    ofPath: string,
+    protocolDefinition: ProtocolDefinition,
+  ): boolean {
+    const structure = protocolDefinition.structure as unknown as ProtocolRuleSet;
+
+    function walkRuleSet(rs: ProtocolRuleSet): boolean {
+      // Check $actions on this node
+      if (rs.$actions) {
+        for (const rule of rs.$actions) {
+          if (
+            rule.who &&
+            rule.who !== 'anyone' &&
+            (actorType === undefined || rule.who === actorType) &&
+            rule.of === ofPath &&
+            rule.can?.includes('read')
+          ) {
+            return true;
+          }
+        }
+      }
+
+      // Recurse into child record types
+      for (const key in rs) {
+        if (!key.startsWith('$')) {
+          if (walkRuleSet(rs[key] as ProtocolRuleSet)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    return walkRuleSet(structure);
+  }
+
+  /**
+   * Analyses a record write to determine which DIDs need context key delivery.
+   *
+   * Returns a set of participant DIDs that should receive `contextKey` records.
+   * The DWN owner (tenantDid) is always excluded — they have ProtocolPath access.
+   *
+   * Cases handled:
+   *   1. `$role` record with a recipient → recipient is a participant
+   *   2. Record has a recipient and a relational read rule grants access
+   *      via `{ who: 'recipient', of: '<path>', can: ['read'] }`
+   *
+   * Note: Author-based detection (case 3 in the plan) requires walking the
+   * record chain and is deferred to PR E.
+   *
+   * @param params.protocolDefinition - The installed protocol definition
+   * @param params.protocolPath       - The written record's protocol path
+   * @param params.recipient          - Recipient DID from the record, if any
+   * @param params.tenantDid          - The DWN owner's DID (excluded from results)
+   * @returns Set of DIDs that need context key delivery
+   */
+  detectNewParticipants({ protocolDefinition, protocolPath, recipient, tenantDid }: {
+    protocolDefinition: ProtocolDefinition;
+    protocolPath: string;
+    recipient?: string;
+    tenantDid: string;
+  }): Set<string> {
+    const participants = new Set<string>();
+
+    // Navigate to the rule set at the given protocol path
+    const pathSegments = protocolPath.split('/');
+    let ruleSet: ProtocolRuleSet | undefined =
+      protocolDefinition.structure as unknown as ProtocolRuleSet;
+    for (const segment of pathSegments) {
+      ruleSet = ruleSet[segment] as ProtocolRuleSet | undefined;
+      if (!ruleSet) { return participants; }
+    }
+
+    // Case 1: $role record → recipient is a participant
+    if (ruleSet.$role === true && recipient) {
+      participants.add(recipient);
+    }
+
+    // Case 2: Record has a recipient → check if relational read rules exist
+    if (recipient && recipient !== tenantDid) {
+      if (this.hasRelationalReadAccess('recipient', protocolPath, protocolDefinition)) {
+        participants.add(recipient);
+      }
+    }
+
+    // Case 3: Author-based detection is deferred to PR E (requires record chain walking)
+
+    // Remove the DWN owner — they always have ProtocolPath access
+    participants.delete(tenantDid);
+
+    return participants;
   }
 
   /**
