@@ -172,86 +172,6 @@ describe('HdIdentityVault', () => {
             expect(error.message).to.include('has not been initialized and unlocked');
           }
         });
-
-        it('should include an #enc verification method with keyAgreement purpose', async () => {
-          await identityVault.initialize({ password: 'dumbbell-krakatoa-ditty' });
-
-          const did = await identityVault.getDid();
-          const doc = did.document;
-
-          // Find the #enc verification method in the DID document.
-          const encMethod = doc.verificationMethod?.find(
-            (vm: any) => vm.id.endsWith('#enc')
-          );
-          expect(encMethod).to.exist;
-          expect(encMethod!.type).to.equal('JsonWebKey');
-          expect(encMethod!.publicKeyJwk).to.have.property('crv', 'secp256k1');
-          expect(encMethod!.publicKeyJwk).to.have.property('kty', 'EC');
-
-          // Verify the #enc key is listed under keyAgreement.
-          expect(doc.keyAgreement).to.exist;
-          expect(doc.keyAgreement).to.include(encMethod!.id);
-
-          // Verify the #enc key is NOT listed under authentication or assertionMethod.
-          expect(doc.authentication ?? []).to.not.include(encMethod!.id);
-          expect(doc.assertionMethod ?? []).to.not.include(encMethod!.id);
-        });
-
-        it('should include a #sig verification method distinct from #enc', async () => {
-          await identityVault.initialize({ password: 'dumbbell-krakatoa-ditty' });
-
-          const did = await identityVault.getDid();
-          const doc = did.document;
-
-          const sigMethod = doc.verificationMethod?.find(
-            (vm: any) => vm.id.endsWith('#sig')
-          );
-          const encMethod = doc.verificationMethod?.find(
-            (vm: any) => vm.id.endsWith('#enc')
-          );
-
-          expect(sigMethod).to.exist;
-          expect(encMethod).to.exist;
-
-          // The #sig key is Ed25519, the #enc key is secp256k1.
-          expect(sigMethod!.publicKeyJwk).to.have.property('crv', 'Ed25519');
-          expect(encMethod!.publicKeyJwk).to.have.property('crv', 'secp256k1');
-
-          // They must be distinct keys.
-          expect(sigMethod!.id).to.not.equal(encMethod!.id);
-        });
-
-        it('should deterministically derive the #enc key from a recovery phrase', async () => {
-          const recoveryPhrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
-
-          // Initialize the vault with a known recovery phrase.
-          await identityVault.initialize({
-            password: 'dumbbell-krakatoa-ditty',
-            recoveryPhrase,
-          });
-
-          const did1 = await identityVault.getDid();
-          const enc1 = did1.document.verificationMethod?.find(
-            (vm: any) => vm.id.endsWith('#enc')
-          );
-
-          // Create a second vault with the same recovery phrase.
-          await vaultStore.clear();
-          identityVault = new HdIdentityVault({ keyValueStore: vaultStore, keyDerivationWorkFactor: 1 });
-          await identityVault.initialize({
-            password: 'different-password-same-phrase',
-            recoveryPhrase,
-          });
-
-          const did2 = await identityVault.getDid();
-          const enc2 = did2.document.verificationMethod?.find(
-            (vm: any) => vm.id.endsWith('#enc')
-          );
-
-          // Both should have the same encryption public key.
-          expect(enc1!.publicKeyJwk!.x).to.equal(enc2!.publicKeyJwk!.x);
-          expect(enc1!.publicKeyJwk!.y).to.equal(enc2!.publicKeyJwk!.y);
-        });
       });
 
       describe('initialize()', () => {
@@ -555,13 +475,11 @@ describe('HdIdentityVault', () => {
 
       describe('encryption key derivation', () => {
         it('should create DID with secp256k1 encryption key in verification methods', async () => {
-          // Initialize the vault
           await identityVault.initialize({ password: 'test-password', dwnEndpoints: ['https://dwn.example.com'] });
 
-          // Get the DID
           const did = await identityVault.getDid();
 
-          // Verify #enc verification method exists with secp256k1 curve
+          // Verify #enc verification method exists with secp256k1 curve.
           const encKey = did.document.verificationMethod?.find((vm: any) => vm.id.endsWith('#enc'));
           expect(encKey).to.exist;
           expect(encKey?.type).to.equal('JsonWebKey');
@@ -572,74 +490,76 @@ describe('HdIdentityVault', () => {
           expect(encKey?.publicKeyJwk).to.not.have.property('d'); // Should be public only
         });
 
-        it('should include #enc in keyAgreement relationship', async () => {
-          // Initialize the vault
+        it('should include #enc in keyAgreement and exclude from authentication', async () => {
           await identityVault.initialize({ password: 'test-password', dwnEndpoints: ['https://dwn.example.com'] });
 
-          // Get the DID
           const did = await identityVault.getDid();
+          const doc = did.document;
 
-          // Verify keyAgreement includes #enc
-          const keyAgreement = did.document.keyAgreement;
-          expect(keyAgreement).to.be.an('array');
-          const encReference = keyAgreement?.find((ref: any) =>
+          // Verify keyAgreement includes #enc.
+          expect(doc.keyAgreement).to.be.an('array');
+          const encReference = doc.keyAgreement?.find((ref: any) =>
             typeof ref === 'string' && ref.endsWith('#enc')
           );
           expect(encReference).to.exist;
+
+          // Verify #enc is NOT in authentication or assertionMethod.
+          const encId = doc.verificationMethod?.find((vm: any) => vm.id.endsWith('#enc'))?.id;
+          expect(doc.authentication ?? []).to.not.include(encId);
+          expect(doc.assertionMethod ?? []).to.not.include(encId);
         });
 
-        it('should derive deterministic encryption key from mnemonic', async () => {
-          const password = 'test-password';
-          const dwnEndpoints = ['https://dwn.example.com'];
+        it('should deterministically derive the #enc key from a recovery phrase', async () => {
           const recoveryPhrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 
-          // Initialize vault with recovery phrase and get first DID
-          await identityVault.initialize({ password, dwnEndpoints, recoveryPhrase });
+          // Initialize a vault with a known recovery phrase.
+          await identityVault.initialize({
+            password       : 'first-password',
+            dwnEndpoints   : ['https://dwn.example.com'],
+            recoveryPhrase : recoveryPhrase,
+          });
           const did1 = await identityVault.getDid();
           const encKey1 = did1.document.verificationMethod?.find((vm: any) => vm.id.endsWith('#enc'));
 
-          // Backup and clear vault
-          const backup = await identityVault.backup();
-          await identityVault.lock();
+          // Create a completely fresh vault with the same recovery phrase but
+          // a different password — the encryption key should be identical.
           await vaultStore.clear();
-
-          // Restore vault with same recovery phrase and get second DID
-          await identityVault.restore({ backup, password });
+          identityVault = new HdIdentityVault({ keyValueStore: vaultStore, keyDerivationWorkFactor: 1 });
+          await identityVault.initialize({
+            password       : 'different-password',
+            dwnEndpoints   : ['https://dwn.example.com'],
+            recoveryPhrase : recoveryPhrase,
+          });
           const did2 = await identityVault.getDid();
           const encKey2 = did2.document.verificationMethod?.find((vm: any) => vm.id.endsWith('#enc'));
 
-          // Verify encryption keys are identical (deterministic derivation)
+          // Both should produce the same encryption public key.
           expect(encKey1?.publicKeyJwk?.x).to.equal(encKey2?.publicKeyJwk?.x);
           expect(encKey1?.publicKeyJwk?.y).to.equal(encKey2?.publicKeyJwk?.y);
         });
 
         it('should use different key indices for identity, signing, and encryption keys', async () => {
-          // Initialize the vault
           await identityVault.initialize({ password: 'test-password', dwnEndpoints: ['https://dwn.example.com'] });
 
-          // Get the DID
           const did = await identityVault.getDid();
-
-          // Get all verification methods
           const vms = did.document.verificationMethod || [];
 
-          // Verify we have at least 3 keys (identity #0, signing #sig, encryption #enc)
+          // Verify we have at least 3 keys (identity #0, signing #sig, encryption #enc).
           expect(vms.length).to.be.at.least(3);
 
-          // Verify each key has different public key values
-          const publicKeys = vms.map((vm: any) => `${vm.publicKeyJwk.x}-${vm.publicKeyJwk.y}`);
+          // Verify each key has different public key material.
+          // Use JSON.stringify to handle Ed25519 keys (which have only x, no y).
+          const publicKeys = vms.map((vm: any) => JSON.stringify(vm.publicKeyJwk));
           const uniqueKeys = new Set(publicKeys);
-          expect(uniqueKeys.size).to.equal(vms.length); // All keys should be unique
+          expect(uniqueKeys.size).to.equal(vms.length);
         });
 
         it('should reference encryption key in DWN service', async () => {
-          // Initialize the vault
           await identityVault.initialize({ password: 'test-password', dwnEndpoints: ['https://dwn.example.com'] });
 
-          // Get the DID
           const did = await identityVault.getDid();
 
-          // Verify DWN service references #enc
+          // Verify DWN service references #enc.
           const dwnService = did.document.service?.find((svc: any) => svc.type === 'DecentralizedWebNode');
           expect(dwnService).to.exist;
           expect(dwnService).to.have.property('enc', '#enc');

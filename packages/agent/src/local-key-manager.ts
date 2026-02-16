@@ -410,8 +410,9 @@ export class LocalKeyManager implements AgentKeyManager {
     // Compute public key from derived private key
     const derivedPublicKeyBytes = await Secp256k1.getPublicKey(derivedPrivateKeyBytes);
 
-    // Convert to JWK format
-    return Secp256k1.publicKeyToJwk(derivedPublicKeyBytes);
+    // Convert to JWK format — cast is safe because secp256k1 public keys
+    // always produce JwkParamsEcPublic (kty: 'EC', crv: 'secp256k1', x, y)
+    return await Secp256k1.publicKeyToJwk(derivedPublicKeyBytes) as PublicKeyJwk;
   }
 
   /**
