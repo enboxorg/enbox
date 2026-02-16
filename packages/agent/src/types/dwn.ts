@@ -250,8 +250,6 @@ export interface DwnMessageInstance {
 export type DwnMessageWithData<T extends DwnInterface> = {
   message: DwnMessage[T];
   dataStream?: ReadableStream<Uint8Array>;
-  /** Set when a $role record with key delivery needs auto-push to the recipient's DWN. */
-  roleRecordAutoPush?: { encryptedBytes: Uint8Array; recipient: string };
 };
 
 // The following types are exported by the DWN SDK and are re-exported here so that dependent
