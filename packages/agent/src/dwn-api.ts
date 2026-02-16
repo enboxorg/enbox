@@ -56,6 +56,7 @@ import type {
   SendDwnRequest
 } from './types/dwn.js';
 
+import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
 import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
 import { getDwnServiceEndpointUrls, isRecordsWrite } from './utils.js';
 
@@ -1317,5 +1318,237 @@ export class AgentDwnApi {
     }
 
     return dwnMessageWithBlob;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Key Delivery Protocol
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Cache for key delivery protocol installation status per tenant.
+   * Once confirmed installed, we skip re-checking for 21 days.
+   */
+  private _keyDeliveryProtocolInstalledCache = new TtlCache<string, boolean>({
+    ttl : 21 * 24 * 60 * 60 * 1000,
+    max : 1000,
+  });
+
+  /**
+   * Ensures the key delivery protocol is installed on the given tenant's DWN,
+   * with `$encryption` keys injected. Uses the same lazy initialization pattern
+   * as `DwnDataStore.initialize()`.
+   *
+   * @param tenantDid - The DID of the DWN owner
+   */
+  async ensureKeyDeliveryProtocol(tenantDid: string): Promise<void> {
+    if (this._keyDeliveryProtocolInstalledCache.get(tenantDid)) {
+      return;
+    }
+
+    const protocolUri = KeyDeliveryProtocolDefinition.protocol;
+    const existing = await this.getProtocolDefinition(tenantDid, protocolUri);
+
+    if (!existing) {
+      // Derive and inject $encryption keys for each type path
+      const keyDeriver = await this.getEncryptionKeyDeriver(tenantDid);
+      const definitionWithKeys = await Protocols.deriveAndInjectPublicEncryptionKeys(
+        KeyDeliveryProtocolDefinition,
+        keyDeriver,
+      );
+
+      const { reply: { status } } = await this.processRequest({
+        author        : tenantDid,
+        target        : tenantDid,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: definitionWithKeys },
+      });
+
+      if (status.code !== 202) {
+        throw new Error(`AgentDwnApi: Failed to install key delivery protocol: ${status.code} - ${status.detail}`);
+      }
+
+      // Invalidate protocol definition cache so subsequent reads pick up the new definition
+      this._protocolDefinitionCache.delete(`${tenantDid}~${protocolUri}`);
+    }
+
+    this._keyDeliveryProtocolInstalledCache.set(tenantDid, true);
+  }
+
+  /**
+   * Writes a `contextKey` record to the owner's DWN, delivering an encrypted
+   * context key to a participant.
+   *
+   * The `contextKey` record contains a `DerivedPrivateJwk` payload encrypted to
+   * the recipient's ProtocolPath-derived key on the key-delivery protocol.
+   *
+   * @param params.tenantDid      - The DWN owner's DID (who is delivering the key)
+   * @param params.recipientDid   - The participant's DID (who will receive the key)
+   * @param params.contextKeyData - The `DerivedPrivateJwk` to deliver (will be encrypted automatically)
+   * @param params.sourceProtocol - The URI of the source protocol (tag)
+   * @param params.sourceContextId - The root context ID (tag)
+   * @returns The recordId of the written contextKey record
+   */
+  async writeContextKeyRecord({ tenantDid, recipientDid, contextKeyData, sourceProtocol, sourceContextId }: {
+    tenantDid: string;
+    recipientDid: string;
+    contextKeyData: DerivedPrivateJwk;
+    sourceProtocol: string;
+    sourceContextId: string;
+  }): Promise<string> {
+    // Ensure the key delivery protocol is installed on the owner's DWN
+    await this.ensureKeyDeliveryProtocol(tenantDid);
+
+    const protocolUri = KeyDeliveryProtocolDefinition.protocol;
+
+    // Serialize the payload to JSON bytes
+    const dataBytes = new TextEncoder().encode(JSON.stringify(contextKeyData));
+    const dataBlob = new Blob([dataBytes], { type: 'application/json' });
+
+    // Write the contextKey record — encryption is handled by processRequest
+    // because the key-delivery protocol has $encryption keys injected.
+    const { message, reply: { status } } = await this.processRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : protocolUri,
+        protocolPath : 'contextKey',
+        dataFormat   : 'application/json',
+        recipient    : recipientDid,
+        tags         : { protocol: sourceProtocol, contextId: sourceContextId },
+      },
+      dataStream : dataBlob,
+      encryption : true,
+    });
+
+    if (!(message && status.code === 202)) {
+      throw new Error(
+        `AgentDwnApi: Failed to write contextKey record for ${recipientDid}: ${status.code} - ${status.detail}`
+      );
+    }
+
+    return message.recordId;
+  }
+
+  /**
+   * Fetches and decrypts a `contextKey` record from a DWN, returning the
+   * `DerivedPrivateJwk` payload.
+   *
+   * Supports both local reads (tenant queries own DWN) and remote reads
+   * (participant queries the context owner's DWN).
+   *
+   * @param params.ownerDid       - The DWN owner's DID (where contextKey records live)
+   * @param params.requesterDid   - The DID of the requester (used for signing and decryption)
+   * @param params.sourceProtocol - The URI of the source protocol (tag filter)
+   * @param params.sourceContextId - The root context ID (tag filter)
+   * @returns The decrypted `DerivedPrivateJwk`, or `undefined` if no matching record found
+   */
+  async fetchContextKeyRecord({ ownerDid, requesterDid, sourceProtocol, sourceContextId }: {
+    ownerDid: string;
+    requesterDid: string;
+    sourceProtocol: string;
+    sourceContextId: string;
+  }): Promise<DerivedPrivateJwk | undefined> {
+    const protocolUri = KeyDeliveryProtocolDefinition.protocol;
+    const isLocal = ownerDid === requesterDid;
+
+    if (isLocal) {
+      // Local query: owner queries their own DWN
+      const { reply } = await this.processRequest({
+        author        : requesterDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            protocol     : protocolUri,
+            protocolPath : 'contextKey',
+            recipient    : requesterDid,
+            tags         : { protocol: sourceProtocol, contextId: sourceContextId },
+          },
+        },
+      });
+
+      if (reply.status.code !== 200 || !reply.entries?.length) {
+        return undefined;
+      }
+
+      // Read the full record to get the data
+      const recordId = reply.entries[0].recordId;
+      const { reply: readReply } = await this.processRequest({
+        author        : requesterDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : { filter: { recordId } },
+        encryption    : true,
+      });
+
+      const readResult = readReply as RecordsReadReply;
+      if (!readResult.entry?.data) {
+        return undefined;
+      }
+
+      const dataBytes = await DataStream.toBytes(readResult.entry.data);
+      const payload = JSON.parse(new TextDecoder().decode(dataBytes));
+      return payload as DerivedPrivateJwk;
+    } else {
+      // Remote query: participant queries the context owner's DWN
+      const signer = await this.getSigner(requesterDid);
+
+      const recordsQuery = await dwnMessageConstructors[DwnInterface.RecordsQuery].create({
+        signer,
+        filter: {
+          protocol     : protocolUri,
+          protocolPath : 'contextKey',
+          recipient    : requesterDid,
+          tags         : { protocol: sourceProtocol, contextId: sourceContextId },
+        },
+      });
+
+      const dwnEndpointUrls = await getDwnServiceEndpointUrls(ownerDid, this.agent.did);
+      const queryReply = await this.sendDwnRpcRequest<DwnInterface.RecordsQuery>({
+        targetDid : ownerDid,
+        dwnEndpointUrls,
+        message   : recordsQuery.message,
+      }) as RecordsQueryReply;
+
+      if (queryReply.status.code !== 200 || !queryReply.entries?.length) {
+        return undefined;
+      }
+
+      // Read the full record remotely
+      const recordId = queryReply.entries[0].recordId;
+      const recordsRead = await dwnMessageConstructors[DwnInterface.RecordsRead].create({
+        signer,
+        filter: { recordId },
+      });
+
+      const readReply = await this.sendDwnRpcRequest<DwnInterface.RecordsRead>({
+        targetDid : ownerDid,
+        dwnEndpointUrls,
+        message   : recordsRead.message,
+      }) as RecordsReadReply;
+
+      if (!readReply.entry?.data) {
+        return undefined;
+      }
+
+      // Decrypt the contextKey payload using the requester's key-delivery protocol path key
+      const readResult = readReply.entry;
+      if (!readResult.recordsWrite) {
+        return undefined;
+      }
+
+      // The record is encrypted with the recipient's ProtocolPath key on the key-delivery protocol.
+      // Use the requester's KeyDecrypter to decrypt it.
+      const keyDecrypter = await this.getKeyDecrypter(requesterDid);
+      const decryptedStream = await Records.decrypt(
+        readResult.recordsWrite,
+        keyDecrypter,
+        readResult.data as ReadableStream<Uint8Array>,
+      );
+      const decryptedBytes = await DataStream.toBytes(decryptedStream);
+      const payload = JSON.parse(new TextDecoder().decode(decryptedBytes));
+      return payload as DerivedPrivateJwk;
+    }
   }
 }
