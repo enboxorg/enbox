@@ -1,11 +1,12 @@
 import * as Ed25519 from '@noble/ed25519';
+import type { JwkParamsOkpPrivate, JwkParamsOkpPublic } from '@enbox/crypto';
 import type { PrivateKeyJwk, PublicKeyJwk, SignatureAlgorithm } from '../../../types/jose-types.js';
 
 import { Encoder } from '../../../utils/encoder.js';
 import { DwnError, DwnErrorCode } from '../../../core/dwn-error.js';
 
 function validateKey(jwk: PrivateKeyJwk | PublicKeyJwk): void {
-  if (jwk.kty !== 'OKP' || jwk.crv !== 'Ed25519') {
+  if (jwk.kty !== 'OKP' || (jwk as JwkParamsOkpPublic).crv !== 'Ed25519') {
     throw new DwnError(DwnErrorCode.Ed25519InvalidJwk, 'invalid jwk. kty MUST be OKP. crv MUST be Ed25519');
   }
 }
@@ -27,7 +28,7 @@ export const ed25519: SignatureAlgorithm = {
   sign: async (content: Uint8Array, privateJwk: PrivateKeyJwk): Promise<Uint8Array> => {
     validateKey(privateJwk);
 
-    const privateKeyBytes = Encoder.base64UrlToBytes(privateJwk.d);
+    const privateKeyBytes = Encoder.base64UrlToBytes((privateJwk as JwkParamsOkpPrivate).d);
 
     return Ed25519.signAsync(content, privateKeyBytes);
   },
@@ -35,7 +36,7 @@ export const ed25519: SignatureAlgorithm = {
   verify: async (content: Uint8Array, signature: Uint8Array, publicJwk: PublicKeyJwk): Promise<boolean> => {
     validateKey(publicJwk);
 
-    const publicKeyBytes = Encoder.base64UrlToBytes(publicJwk.x);
+    const publicKeyBytes = Encoder.base64UrlToBytes((publicJwk as JwkParamsOkpPublic).x);
 
     return Ed25519.verifyAsync(signature, content, publicKeyBytes);
   },

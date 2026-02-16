@@ -39,7 +39,7 @@ describe('Secp256r1', () => {
       const publicJwk1 = await Secp256r1.publicKeyToJwk(compressedPublicKey);
       const publicJwk2 = await Secp256r1.publicKeyToJwk(uncompressedPublicKey);
 
-      expect(publicJwk1.x).to.equal(publicJwk2.x);
+      expect((publicJwk1 as JwkParamsEcPublic).x).to.equal((publicJwk2 as JwkParamsEcPublic).x);
       expect((publicJwk1 as JwkParamsEcPublic).y).to.equal((publicJwk2 as JwkParamsEcPublic).y);
     });
   });

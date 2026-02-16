@@ -330,17 +330,11 @@ export type JwkParamsRsaPrivate = JwkParamsRsaPublic & {
   }[];
 };
 
-/**
- * Asymmetric public key types in JWK format.
- * Covers EC (secp256k1, P-256, P-384, P-521) and OKP (Ed25519, X25519).
- */
-export type PublicKeyJwk = JwkParamsEcPublic | JwkParamsOkpPublic;
+/** Parameters used with public keys in JWK format. */
+export type PublicKeyJwk = JwkParamsEcPublic | JwkParamsOkpPublic | JwkParamsRsaPublic;
 
-/**
- * Asymmetric private key types in JWK format.
- * Covers EC (secp256k1, P-256, P-384, P-521) and OKP (Ed25519, X25519).
- */
-export type PrivateKeyJwk = JwkParamsEcPrivate | JwkParamsOkpPrivate;
+/** Parameters used with private keys in JWK format. */
+export type PrivateKeyJwk = JwkParamsEcPrivate | JwkParamsOkpPrivate | JwkParamsOctPrivate | JwkParamsRsaPrivate;
 
 /**
  * JSON Web Key ({@link https://datatracker.ietf.org/doc/html/rfc7517 | JWK}).
@@ -593,13 +587,12 @@ export function isOkpPublicJwk(obj: unknown): obj is JwkParamsOkpPublic {
 }
 
 /**
- * Checks if the provided object is a valid private or secret key in JWK format.
- * Supports asymmetric (EC, OKP) and symmetric (oct) key types.
+ * Checks if the provided object is a valid private key in JWK format of any supported type.
  *
  * @param obj - The object to check.
- * @returns True if the object is a valid private/secret JWK; otherwise, false.
+ * @returns True if the object is a valid private JWK; otherwise, false.
  */
-export function isPrivateJwk(obj: unknown): obj is PrivateKeyJwk | JwkParamsOctPrivate {
+export function isPrivateJwk(obj: unknown): obj is PrivateKeyJwk {
   if (!obj || typeof obj !== 'object') {return false;}
 
   const kty = (obj as { kty: string }).kty;
@@ -607,6 +600,7 @@ export function isPrivateJwk(obj: unknown): obj is PrivateKeyJwk | JwkParamsOctP
   switch (kty) {
     case 'EC':
     case 'OKP':
+    case 'RSA':
       return 'd' in obj;
     case 'oct':
       return 'k' in obj;
@@ -630,6 +624,8 @@ export function isPublicJwk(obj: unknown): obj is PublicKeyJwk {
     case 'EC':
     case 'OKP':
       return 'x' in obj && !('d' in obj);
+    case 'RSA':
+      return 'n' in obj && 'e' in obj && !('d' in obj);
     default:
       return false;
   }

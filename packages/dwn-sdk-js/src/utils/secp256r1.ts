@@ -1,4 +1,4 @@
-import type { JwkParamsEcPublic } from '@enbox/crypto';
+import type { JwkParamsEcPrivate, JwkParamsEcPublic } from '@enbox/crypto';
 import type { PrivateKeyJwk, PublicKeyJwk } from '../types/jose-types.js';
 
 import { p256, secp256r1 } from '@noble/curves/p256';
@@ -19,7 +19,7 @@ export class Secp256r1 {
    * @throws {Error} if fails validation.
    */
   public static validateKey(jwk: PrivateKeyJwk | PublicKeyJwk): void {
-    if (jwk.kty !== 'EC' || jwk.crv !== 'P-256') {
+    if (jwk.kty !== 'EC' || (jwk as JwkParamsEcPublic).crv !== 'P-256') {
       throw new DwnError(
         DwnErrorCode.Secp256r1KeyNotValid,
         'Invalid SECP256R1 JWK: `kty` MUST be `EC`. `crv` MUST be `P-256`'
@@ -70,7 +70,7 @@ export class Secp256r1 {
    * Creates a private key in raw bytes from the given SECP256R1 JWK.
    */
   public static privateJwkToBytes(privateJwk: PrivateKeyJwk): Uint8Array {
-    const privateKey = Encoder.base64UrlToBytes(privateJwk.d);
+    const privateKey = Encoder.base64UrlToBytes((privateJwk as JwkParamsEcPrivate).d);
     return privateKey;
   }
 

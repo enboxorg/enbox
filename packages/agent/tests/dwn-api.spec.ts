@@ -2005,23 +2005,30 @@ describe('Encryption Callback Factories', () => {
     });
 
     it('should throw if DID has no keyAgreement method', async () => {
-      // Create a DID without keyAgreement
-      const didWithoutEncryption = await DidDht.create({
-        options: {
-          verificationMethods: [{
-            algorithm: 'Ed25519'
+      // Stub DID resolution to return a document without keyAgreement
+      const fakeDid = 'did:example:no-key-agreement';
+      sinon.stub(testHarness.agent.did, 'resolve').resolves({
+        didDocument: {
+          id                 : fakeDid,
+          verificationMethod : [{
+            id           : `${fakeDid}#key-1`,
+            type         : 'JsonWebKey',
+            controller   : fakeDid,
+            publicKeyJwk : { kty: 'OKP', crv: 'Ed25519', x: 'test' }
           }]
-        }
-      });
-
-      // Import to agent
-      await testHarness.agent.did.import({ portableDid: didWithoutEncryption });
+          // No keyAgreement field
+        },
+        didResolutionMetadata : {},
+        didDocumentMetadata   : {}
+      } as any);
 
       try {
-        await testHarness.agent.dwn['getEncryptionKeyInfo'](didWithoutEncryption.uri);
+        await testHarness.agent.dwn['getEncryptionKeyInfo'](fakeDid);
         expect.fail('Expected an error to be thrown');
       } catch (error: any) {
         expect(error.message).to.include('does not have a keyAgreement');
+      } finally {
+        sinon.restore();
       }
     });
 
@@ -2038,7 +2045,7 @@ describe('Encryption Callback Factories', () => {
 
       expect(keyDeriver).to.have.property('rootKeyId');
       expect(keyDeriver.rootKeyId).to.include('#enc');
-      expect(keyDeriver).to.have.property('derivationScheme', 'ProtocolPath');
+      expect(keyDeriver).to.have.property('derivationScheme', 'protocolPath');
       expect(keyDeriver).to.have.property('derivePublicKey');
       expect(keyDeriver.derivePublicKey).to.be.a('function');
     });
@@ -2061,7 +2068,7 @@ describe('Encryption Callback Factories', () => {
       const key1 = await keyDeriver.derivePublicKey(['path1']);
       const key2 = await keyDeriver.derivePublicKey(['path2']);
 
-      expect(key1.x).to.not.equal(key2.x);
+      expect((key1 as JwkParamsEcPublic).x).to.not.equal((key2 as JwkParamsEcPublic).x);
       expect((key1 as JwkParamsEcPublic).y).to.not.equal((key2 as JwkParamsEcPublic).y);
     });
 
@@ -2071,7 +2078,7 @@ describe('Encryption Callback Factories', () => {
       const key1 = await keyDeriver.derivePublicKey(['consistent', 'path']);
       const key2 = await keyDeriver.derivePublicKey(['consistent', 'path']);
 
-      expect(key1.x).to.equal(key2.x);
+      expect((key1 as JwkParamsEcPublic).x).to.equal((key2 as JwkParamsEcPublic).x);
       expect((key1 as JwkParamsEcPublic).y).to.equal((key2 as JwkParamsEcPublic).y);
     });
   });
@@ -2082,7 +2089,7 @@ describe('Encryption Callback Factories', () => {
 
       expect(keyDecrypter).to.have.property('rootKeyId');
       expect(keyDecrypter.rootKeyId).to.include('#enc');
-      expect(keyDecrypter).to.have.property('derivationScheme', 'ProtocolPath');
+      expect(keyDecrypter).to.have.property('derivationScheme', 'protocolPath');
       expect(keyDecrypter).to.have.property('decrypt');
       expect(keyDecrypter.decrypt).to.be.a('function');
     });

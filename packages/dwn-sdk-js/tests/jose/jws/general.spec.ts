@@ -4,6 +4,8 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { UniversalResolver } from '@enbox/dids';
 
+import type { JwkParamsOkpPublic } from '@enbox/crypto';
+
 import { ed25519 } from '../../../src/jose/algorithms/signing/ed25519.js';
 import { Encoder } from '../../../src/utils/encoder.js';
 import { GeneralJwsBuilder } from '../../../src/jose/jws/general/builder.js';
@@ -150,7 +152,7 @@ describe('General JWS Sign/Verify', () => {
 
   it('should convert public key bytes to JWK', async () => {
     const { publicJwk } = await ed25519.generateKeyPair();
-    const publicKeyBytes = Encoder.base64UrlToBytes(publicJwk.x);
+    const publicKeyBytes = Encoder.base64UrlToBytes((publicJwk as JwkParamsOkpPublic).x);
 
     const convertedJwk = await ed25519.publicKeyToJwk(publicKeyBytes);
 

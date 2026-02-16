@@ -52,12 +52,13 @@ export class PrivateKeySigner implements MessageSigner {
     this.keyId = options.keyId ?? options.privateJwk.kid!;
     this.algorithm = options.algorithm ?? options.privateJwk.alg!;
     this.privateJwk = options.privateJwk;
-    this.signatureAlgorithm = signatureAlgorithms[options.privateJwk.crv as SupportedCurve];
+    const crv = 'crv' in options.privateJwk ? options.privateJwk.crv : undefined;
+    this.signatureAlgorithm = signatureAlgorithms[crv as SupportedCurve];
 
     if (!this.signatureAlgorithm) {
       throw new DwnError(
         DwnErrorCode.PrivateKeySignerUnsupportedCurve,
-        `Unsupported crv ${options.privateJwk.crv}, crv must be one of ${Object.keys(signatureAlgorithms)}`
+        `Unsupported crv ${crv}, crv must be one of ${Object.keys(signatureAlgorithms)}`
       );
     }
   }
