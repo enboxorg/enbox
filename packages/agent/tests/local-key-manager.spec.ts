@@ -661,7 +661,7 @@ describe('LocalKeyManager', () => {
 
           // Compute public key from private key bytes and verify they match
           const publicKeyBytesFromPrivate = await Secp256k1.getPublicKey(privateKeyBytes);
-          const publicKeyFromBytes = await Secp256k1.publicKeyToJwk(publicKeyBytesFromPrivate);
+          const publicKeyFromBytes = await Secp256k1.publicKeyToJwk(publicKeyBytesFromPrivate) as JwkParamsEcPublic;
 
           expect(publicKeyFromBytes.x).to.equal(publicKey.x);
           expect(publicKeyFromBytes.y).to.equal(publicKey.y);
