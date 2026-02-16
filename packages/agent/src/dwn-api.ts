@@ -1,15 +1,19 @@
 import type { Readable } from '@enbox/common';
 import type {
+  DerivedPrivateJwk,
   DwnConfig,
   EncryptionInput,
   EncryptionKeyDeriver,
   GenericMessage,
   KeyDecrypter,
   ProtocolDefinition,
+  ProtocolRuleSet,
+  ProtocolsQueryReply,
   RecordsQueryReply,
-  RecordsReadReply,
+  RecordsReadReply ,
+  RecordsWrite,
   RecordsWriteMessage } from '@enbox/dwn-sdk-js';
-import type { KeyIdentifier, PublicKeyJwk } from '@enbox/crypto';
+import type { KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
 import { CryptoUtils } from '@enbox/crypto';
 import {
@@ -23,12 +27,14 @@ import {
   Encryption,
   EventEmitterStream,
   EventLogLevel,
+  Jws,
   KeyDerivationScheme,
   Message,
   MessageStoreLevel,
   Protocols,
   Records,
-  ResumableTaskStoreLevel
+  ResumableTaskStoreLevel,
+  Secp256k1
 } from '@enbox/dwn-sdk-js';
 import { DidDht, DidJwk, DidResolverCacheLevel, UniversalResolver } from '@enbox/dids';
 import { NodeStream, TtlCache } from '@enbox/common';
@@ -119,6 +125,25 @@ export class AgentDwnApi {
     ttl: 30 * 60 * 1000
   });
 
+  /**
+   * Context key cache — stores resolved context encryption key info for
+   * multi-party protocols. Keyed by rootContextId. TTL 30 minutes.
+   */
+  private _contextKeyCache = new TtlCache<string, {
+    keyId: string;
+    keyUri: KeyIdentifier;
+    contextDerivationPath: string[];
+  }>({ ttl: 30 * 60 * 1000 });
+
+  /**
+   * Context-derived private key cache — stores DerivedPrivateJwk for contexts
+   * where the current user is a participant (not the creator).
+   * Keyed by `ctx~${authorDid}~${rootContextId}`. TTL 30 minutes.
+   */
+  private _contextDerivedKeyCache = new TtlCache<string, DerivedPrivateJwk>({
+    ttl: 30 * 60 * 1000
+  });
+
   constructor({ agent, dwn }: DwnApiParams) {
     // If an agent is provided, set it as the execution context for this API.
     this._agent = agent;
@@ -189,7 +214,8 @@ export class AgentDwnApi {
   ): Promise<DwnResponse<T>> {
     // Constructs a DWN message. and if there is a data payload, transforms the data to a Node
     // Readable stream.
-    const { message, dataStream } = await this.constructDwnMessage({ request });
+    const { message, dataStream, roleRecordAutoPush } =
+      await this.constructDwnMessage({ request });
 
     // Extracts the optional subscription handler from the request to pass into `processMessage.
     const { subscriptionHandler } = request;
@@ -202,6 +228,30 @@ export class AgentDwnApi {
     const reply: DwnMessageReply[T] = (request.store !== false)
       ? await this._dwn.processMessage(request.target, message, { dataStream: dataStream as any, subscriptionHandler })
       : { status: { code: 202, detail: 'Accepted' } };
+
+    // Auto-push role record to recipient's DWN (Component 11).
+    // The dataStream was consumed by processMessage(), so we use the saved encryptedBytes.
+    if (roleRecordAutoPush) {
+      try {
+        const recipientDwnUrls = await getDwnServiceEndpointUrls(
+          roleRecordAutoPush.recipient, this.agent.did,
+        );
+        await this.sendDwnRpcRequest({
+          targetDid       : roleRecordAutoPush.recipient,
+          dwnEndpointUrls : recipientDwnUrls,
+          message,
+          data            : new Blob([roleRecordAutoPush.encryptedBytes]),
+        });
+      } catch (error: any) {
+        // Auto-push failure is non-fatal — the record is stored locally.
+        // The recipient can fetch it later via remote fallback (Component 12).
+        console.warn(
+          `AgentDwnApi: Auto-push of role record to ` +
+          `'${roleRecordAutoPush.recipient}' failed: ${error.message}. ` +
+          `The recipient will need to fetch the record remotely.`
+        );
+      }
+    }
 
     // Auto-decrypt reply data if encryption is enabled (Component 7)
     await this.maybeDecryptReply(request, reply);
@@ -382,7 +432,29 @@ export class AgentDwnApi {
       );
     }
 
-    // Auto-encrypt data on RecordsWrite (Component 6)
+    // Auto-encrypt data on RecordsWrite (Components 6, 9, 10, 11)
+    //
+    // Encryption scheme decision:
+    //   | Condition                              | Scheme          |
+    //   |----------------------------------------|-----------------|
+    //   | $role record with recipient            | ProtocolPath    | ← key delivery
+    //   | Root record + protocol has $role        | ProtocolContext  | ← deferred (needs recordId)
+    //   | Non-root record in multi-party context | ProtocolContext  |
+    //   | Single-party (no $role)                | ProtocolPath    | ← existing logic
+    //
+    // For root multi-party records, encryption is deferred until after message
+    // creation because contextId = recordId, which is only known after create().
+    // Follows the SDK's two-pass pattern: create → encryptSymmetricEncryptionKey → sign.
+
+    // Tracks encrypted bytes + recipient for auto-push of role records.
+    let roleRecordAutoPush: { encryptedBytes: Uint8Array; recipient: string } | undefined;
+    // Tracks deferred context encryption info for root multi-party records.
+    let deferredContextEncryption: {
+      dataEncryptionKey: Uint8Array;
+      dataEncryptionIV: Uint8Array;
+      encryptedBytes: Uint8Array;
+    } | undefined;
+
     if (isDwnRequest(request, DwnInterface.RecordsWrite) && request.encryption && !rawMessage) {
       const messageParams = request.messageParams;
       if (messageParams?.protocol && messageParams.protocolPath) {
@@ -415,9 +487,13 @@ export class AgentDwnApi {
           );
         }
 
-        // 3. Generate random DEK and IV
-        const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
-        const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(16));
+        // 3. Classify the record
+        const isRoleRecord = ruleSet.$role === true;
+        const rootPathSegment = messageParams.protocolPath.split('/')[0];
+        const isMultiPartyContext = this.protocolPathHasRoles(
+          protocolDefinition, rootPathSegment,
+        );
+        const isRootRecord = !messageParams.parentContextId;
 
         // 4. Get plaintext bytes (normalize from all supported input types)
         let plaintextBytes: Uint8Array;
@@ -436,40 +512,156 @@ export class AgentDwnApi {
           throw new Error('AgentDwnApi: Data must be provided for encrypted records.');
         }
 
-        // 5. Encrypt data with AES-256-CTR
+        // 5. Generate random DEK and IV
+        const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
+        const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(16));
+
+        // 6. Build EncryptionInput based on the encryption scheme decision
+        let encryptionInput: EncryptionInput | undefined;
+
+        if (isRoleRecord && messageParams.recipient) {
+          // --- Key Delivery (Component 11) ---
+          // Replace user data with the serialized context key for the recipient.
+          const rootContextId = messageParams.parentContextId!.split('/')[0]
+            || messageParams.parentContextId!;
+
+          const { keyId: authorKeyId, keyUri: authorKeyUri } =
+            await this.getEncryptionKeyInfo(request.author);
+
+          const contextDerivationPath = [
+            KeyDerivationScheme.ProtocolContext,
+            rootContextId,
+          ];
+
+          // Derive the context private key bytes from KMS
+          const contextDerivedPrivateKeyBytes =
+            await this.agent.keyManager.derivePrivateKeyBytes({
+              keyUri         : authorKeyUri,
+              derivationPath : contextDerivationPath,
+            });
+          const contextDerivedPrivateJwk =
+            await Secp256k1.privateKeyToJwk(contextDerivedPrivateKeyBytes);
+
+          const contextDerivedKeyPayload: DerivedPrivateJwk = {
+            rootKeyId         : authorKeyId,
+            derivationScheme  : KeyDerivationScheme.ProtocolContext,
+            derivationPath    : contextDerivationPath,
+            derivedPrivateKey : contextDerivedPrivateJwk as PrivateKeyJwk,
+          };
+
+          // Fetch the recipient's protocol definition for their public key
+          const recipientProtocolDef = await this.fetchRemoteProtocolDefinition(
+            messageParams.recipient,
+            messageParams.protocol!,
+          );
+
+          const rolePathSegments = messageParams.protocolPath!.split('/');
+          let recipientRuleSet: any = recipientProtocolDef.structure;
+          for (const seg of rolePathSegments) {
+            recipientRuleSet = recipientRuleSet[seg];
+          }
+
+          const recipientPublicKey = recipientRuleSet?.$encryption?.publicKeyJwk;
+          if (!recipientPublicKey) {
+            throw new Error(
+              `AgentDwnApi: Recipient '${messageParams.recipient}' does not have ` +
+              `encryption configured for '${messageParams.protocolPath}'. ` +
+              `The recipient must configure the protocol with encryption: true.`
+            );
+          }
+
+          // Replace user data with the serialized context key
+          plaintextBytes = Encoder.objectToBytes(contextDerivedKeyPayload);
+
+          encryptionInput = {
+            initializationVector : dataEncryptionIV,
+            key                  : dataEncryptionKey,
+            keyEncryptionInputs  : [{
+              publicKeyId      : recipientRuleSet.$encryption!.rootKeyId,
+              publicKey        : recipientPublicKey,
+              derivationScheme : KeyDerivationScheme.ProtocolPath,
+            }]
+          };
+
+        } else if (isMultiPartyContext && !isRootRecord) {
+          // --- Non-root record in a multi-party context → Context key ---
+          const rootContextId = messageParams.parentContextId!.split('/')[0]
+            || messageParams.parentContextId!;
+
+          let contextKeyInfo = this._contextKeyCache.get(rootContextId);
+          if (!contextKeyInfo) {
+            const { keyId, keyUri } = await this.getEncryptionKeyInfo(request.author);
+            const contextDerivationPath =
+              Records.constructKeyDerivationPathUsingProtocolContextScheme(rootContextId);
+            contextKeyInfo = { keyId, keyUri, contextDerivationPath };
+            this._contextKeyCache.set(rootContextId, contextKeyInfo);
+          }
+
+          const contextPublicKey = await this.agent.keyManager.derivePublicKey({
+            keyUri         : contextKeyInfo.keyUri,
+            derivationPath : contextKeyInfo.contextDerivationPath,
+          });
+
+          encryptionInput = {
+            initializationVector : dataEncryptionIV,
+            key                  : dataEncryptionKey,
+            keyEncryptionInputs  : [{
+              publicKeyId      : contextKeyInfo.keyId,
+              publicKey        : contextPublicKey,
+              derivationScheme : KeyDerivationScheme.ProtocolContext,
+            }]
+          };
+
+        } else if (isMultiPartyContext && isRootRecord) {
+          // --- Root record in multi-party context → Deferred context encryption ---
+          // contextId = recordId, which is only known after message creation.
+          // Skip encryptionInput here; apply it after create() below.
+          encryptionInput = undefined;
+
+        } else {
+          // --- Single-party → ProtocolPath key (existing logic) ---
+          encryptionInput = {
+            initializationVector : dataEncryptionIV,
+            key                  : dataEncryptionKey,
+            keyEncryptionInputs  : [{
+              publicKeyId      : ruleSet.$encryption.rootKeyId,
+              publicKey        : ruleSet.$encryption.publicKeyJwk,
+              derivationScheme : KeyDerivationScheme.ProtocolPath,
+            }]
+          };
+        }
+
+        // 7. Encrypt data with AES-256-CTR
         const plaintextStream = DataStream.fromBytes(plaintextBytes);
         const encryptedStream = await Encryption.aes256CtrEncrypt(
           dataEncryptionKey, dataEncryptionIV, plaintextStream
         );
         const encryptedBytes = await NodeStream.consumeToBytes({ readable: encryptedStream });
 
-        // 6. Replace plaintext with encrypted data.
-        // Compute dataCid/dataSize from the *encrypted* bytes so the descriptor
-        // references the ciphertext CID (what the DWN stores and verifies).
-        // Clear messageParams.data so the SDK sees dataCid (not both).
+        // 8. Replace plaintext with encrypted data
         const encryptedCidStream = DataStream.fromBytes(encryptedBytes);
         // @ts-ignore — dataCid is set dynamically above
         messageParams.dataCid = await Cid.computeDagPbCidFromStream(encryptedCidStream);
         // @ts-ignore — dataSize is set dynamically above
         messageParams.dataSize = encryptedBytes.length;
         delete messageParams.data;
-        // Provide the encrypted bytes as the dataStream for processMessage()
-        // so the DWN actually persists the data (avoids 204 No Content).
         readableStream = DataStream.fromBytes(encryptedBytes);
         request.dataStream = undefined;
 
-        // 7. Build EncryptionInput — only uses PUBLIC key from $encryption
-        const encryptionInput: EncryptionInput = {
-          initializationVector : dataEncryptionIV,
-          key                  : dataEncryptionKey,
-          keyEncryptionInputs  : [{
-            publicKeyId      : ruleSet.$encryption.rootKeyId,
-            publicKey        : ruleSet.$encryption.publicKeyJwk,
-            derivationScheme : KeyDerivationScheme.ProtocolPath,
-          }]
-        };
+        if (encryptionInput) {
+          messageParams.encryptionInput = encryptionInput;
+        } else {
+          // Deferred — store info for post-creation encryption
+          deferredContextEncryption = { dataEncryptionKey, dataEncryptionIV, encryptedBytes };
+        }
 
-        messageParams.encryptionInput = encryptionInput;
+        // Track role record for auto-push (Component 11)
+        if (isRoleRecord && messageParams.recipient) {
+          roleRecordAutoPush = {
+            encryptedBytes,
+            recipient: messageParams.recipient,
+          };
+        }
       }
     }
 
@@ -491,6 +683,38 @@ export class AgentDwnApi {
         signer
       });
 
+      // Deferred context encryption for root multi-party records (Component 9).
+      // Now that the message exists, we know recordId = contextId.
+      // Following the SDK two-pass pattern: encryptSymmetricEncryptionKey → sign.
+      if (deferredContextEncryption && isDwnRequest(request, DwnInterface.RecordsWrite)) {
+        const recordsWriteInstance = dwnMessage as unknown as RecordsWrite;
+        const contextId = recordsWriteInstance.message.recordId;
+
+        const { keyId, keyUri } = await this.getEncryptionKeyInfo(request.author);
+        const contextDerivationPath =
+          Records.constructKeyDerivationPathUsingProtocolContextScheme(contextId);
+        const contextPublicKey = await this.agent.keyManager.derivePublicKey({
+          keyUri,
+          derivationPath: contextDerivationPath,
+        });
+
+        const contextEncryptionInput: EncryptionInput = {
+          initializationVector : deferredContextEncryption.dataEncryptionIV,
+          key                  : deferredContextEncryption.dataEncryptionKey,
+          keyEncryptionInputs  : [{
+            publicKeyId      : keyId,
+            publicKey        : contextPublicKey,
+            derivationScheme : KeyDerivationScheme.ProtocolContext,
+          }]
+        };
+
+        await recordsWriteInstance.encryptSymmetricEncryptionKey(contextEncryptionInput);
+        await recordsWriteInstance.sign({ signer });
+
+        // Cache context key info for subsequent writes in this context
+        this._contextKeyCache.set(contextId, { keyId, keyUri, contextDerivationPath });
+      }
+
     } else {
       dwnMessage = await dwnMessageConstructor.parse(rawMessage);
       if (isRecordsWrite(dwnMessage) && request.signAsOwner) {
@@ -507,7 +731,11 @@ export class AgentDwnApi {
       }
     }
 
-    return { message: dwnMessage.message as DwnMessage[T], dataStream: readableStream };
+    return {
+      message    : dwnMessage.message as DwnMessage[T],
+      dataStream : readableStream,
+      roleRecordAutoPush,
+    };
   }
 
   private hasGrantParams<T extends DwnInterface>(params?: DwnMessageParams[T]): boolean {
@@ -734,10 +962,257 @@ export class AgentDwnApi {
   }
 
   /**
+   * Checks if a protocol path has $role descendants, indicating multi-party intent.
+   * Recurses into the full sub-tree — handles deeply nested roles.
+   */
+  private protocolPathHasRoles(
+    protocolDefinition: ProtocolDefinition,
+    protocolPath: string,
+  ): boolean {
+    const segments = protocolPath.split('/');
+    let ruleSet: ProtocolRuleSet | undefined =
+      protocolDefinition.structure as unknown as ProtocolRuleSet;
+    for (const segment of segments) {
+      ruleSet = ruleSet[segment] as ProtocolRuleSet | undefined;
+      if (!ruleSet) { return false; }
+    }
+
+    function hasRoleRecursive(rs: ProtocolRuleSet): boolean {
+      for (const key in rs) {
+        if (!key.startsWith('$')) {
+          const child = rs[key] as ProtocolRuleSet;
+          if (child.$role === true) { return true; }
+          if (hasRoleRecursive(child)) { return true; }
+        }
+      }
+      return false;
+    }
+
+    return hasRoleRecursive(ruleSet);
+  }
+
+  /**
+   * Fetches a protocol definition from a remote DWN.
+   * Uses an unsigned ProtocolsQuery (public protocols can be queried anonymously).
+   */
+  private async fetchRemoteProtocolDefinition(
+    targetDid: string,
+    protocolUri: string,
+  ): Promise<ProtocolDefinition> {
+    const cacheKey = `remote~${targetDid}~${protocolUri}`;
+    const cached = this._protocolDefinitionCache.get(cacheKey);
+    if (cached) { return cached; }
+
+    const protocolsQuery = await dwnMessageConstructors[
+      DwnInterface.ProtocolsQuery
+    ].create({
+      filter: { protocol: protocolUri },
+    });
+
+    const reply = await this.sendDwnRpcRequest({
+      targetDid,
+      dwnEndpointUrls: await getDwnServiceEndpointUrls(
+        targetDid, this.agent.did,
+      ),
+      message: protocolsQuery.message,
+    }) as ProtocolsQueryReply;
+
+    if (reply.status.code !== 200 || !reply.entries?.length) {
+      throw new Error(
+        `AgentDwnApi: Failed to fetch protocol '${protocolUri}' from ` +
+        `'${targetDid}'. The recipient may not have the protocol installed.`
+      );
+    }
+
+    const definition = reply.entries[0].descriptor.definition;
+    this._protocolDefinitionCache.set(cacheKey, definition);
+    return definition;
+  }
+
+  /**
+   * Resolves the appropriate KeyDecrypter for a record's encryption scheme.
+   * Handles both single-party (ProtocolPath) and multi-party (ProtocolContext).
+   *
+   * For ProtocolContext records:
+   *   - Context creator: derives key directly from KMS
+   *   - Participant: finds role record, decrypts context key, caches it
+   */
+  private async resolveKeyDecrypter(
+    authorDid: string,
+    recordsWrite: RecordsWriteMessage,
+  ): Promise<KeyDecrypter> {
+    const { encryption } = recordsWrite;
+
+    // Check if the record uses context-derived encryption
+    const hasContextKey = encryption?.keyEncryption.some(
+      (k: { derivationScheme: string }) => k.derivationScheme === KeyDerivationScheme.ProtocolContext
+    );
+
+    if (!hasContextKey || !recordsWrite.contextId) {
+      // Single-party protocol-path encryption
+      return this.getKeyDecrypter(authorDid);
+    }
+
+    // --- Multi-party context encryption ---
+    const contextKeyEntry = encryption!.keyEncryption.find(
+      (k: { derivationScheme: string }) => k.derivationScheme === KeyDerivationScheme.ProtocolContext
+    )!;
+
+    const rootContextId = recordsWrite.contextId.split('/')[0];
+
+    // Case 1: I am the context creator — rootKeyId matches my encryption key
+    const { keyId, keyUri } = await this.getEncryptionKeyInfo(authorDid);
+    if (contextKeyEntry.rootKeyId === keyId) {
+      const keyManager = this.agent.keyManager;
+      return {
+        rootKeyId        : keyId,
+        derivationScheme : KeyDerivationScheme.ProtocolContext,
+        decrypt          : async (fullDerivationPath, eciesPayload): Promise<Uint8Array> => {
+          return keyManager.eciesSecp256k1Decrypt({
+            keyUri,
+            derivationPath            : fullDerivationPath,
+            ciphertext                : eciesPayload.ciphertext,
+            ephemeralPublicKey        : eciesPayload.ephemeralPublicKey,
+            initializationVector      : eciesPayload.initializationVector,
+            messageAuthenticationCode : eciesPayload.messageAuthenticationCode,
+          });
+        },
+      };
+    }
+
+    // Case 2: I am a participant — need to find and decrypt my role record
+    const cacheKey = `ctx~${authorDid}~${rootContextId}`;
+    const cached = this._contextDerivedKeyCache.get(cacheKey);
+    if (cached) {
+      return this.buildContextKeyDecrypter(cached);
+    }
+
+    // Find participant record — local first, then remote fallback
+    const protocol = recordsWrite.descriptor.protocol!;
+    const signer = await this.getSigner(authorDid);
+
+    let participantEntry = await this.findParticipantRecord(
+      authorDid, protocol, rootContextId, signer, 'local',
+    );
+
+    if (!participantEntry) {
+      const contextOwnerDid = Jws.getSignerDid(
+        recordsWrite.authorization.signature.signatures[0]
+      );
+      participantEntry = await this.findParticipantRecord(
+        authorDid, protocol, rootContextId, signer, 'remote',
+        contextOwnerDid,
+      );
+
+      // Store locally for future lookups
+      if (participantEntry) {
+        await this._dwn.processMessage(
+          authorDid, participantEntry, { dataStream: undefined }
+        );
+      }
+    }
+
+    if (!participantEntry || !participantEntry.encodedData
+        || !participantEntry.encryption) {
+      throw new Error(
+        `AgentDwnApi: Failed to decrypt record '${recordsWrite.recordId}'. ` +
+        `Record uses context-derived encryption but no participant record ` +
+        `could be found for this context.`
+      );
+    }
+
+    // Decrypt the participant record with our protocol-path key
+    const pathKeyDecrypter = await this.getKeyDecrypter(authorDid);
+    const cipherBytes = Encoder.base64UrlToBytes(participantEntry.encodedData);
+    const plainStream = await Records.decrypt(
+      participantEntry as RecordsWriteMessage,
+      pathKeyDecrypter,
+      DataStream.fromBytes(cipherBytes),
+    );
+    const plainBytes = await NodeStream.consumeToBytes({ readable: plainStream });
+
+    const contextDerivedPrivateKey = Encoder.bytesToObject(
+      plainBytes,
+    ) as DerivedPrivateJwk;
+
+    this._contextDerivedKeyCache.set(cacheKey, contextDerivedPrivateKey);
+    return this.buildContextKeyDecrypter(contextDerivedPrivateKey);
+  }
+
+  /**
+   * Queries for a participant record (role record addressed to the user)
+   * in a given context. Supports both local and remote DWN queries.
+   */
+  private async findParticipantRecord(
+    recipientDid: string,
+    protocol: string,
+    contextId: string,
+    signer: DwnSigner,
+    target: 'local' | 'remote',
+    remoteDid?: string,
+  ): Promise<(RecordsWriteMessage & { encodedData?: string }) | undefined> {
+    const query = await dwnMessageConstructors[
+      DwnInterface.RecordsQuery
+    ].create({
+      filter: {
+        protocol,
+        recipient: recipientDid,
+        contextId,
+      },
+      signer,
+    });
+
+    let reply: RecordsQueryReply;
+    if (target === 'local') {
+      reply = await this._dwn.processMessage(
+        recipientDid, query.message,
+      ) as RecordsQueryReply;
+    } else {
+      reply = await this.sendDwnRpcRequest({
+        targetDid       : remoteDid!,
+        dwnEndpointUrls : await getDwnServiceEndpointUrls(
+          remoteDid!, this.agent.did,
+        ),
+        message: query.message,
+      }) as RecordsQueryReply;
+    }
+
+    if (reply.status.code !== 200 || !reply.entries?.length) {
+      return undefined;
+    }
+
+    return reply.entries[0] as RecordsWriteMessage & { encodedData?: string };
+  }
+
+  /**
+   * Builds a KeyDecrypter from a context-derived private key.
+   * Uses the raw key directly (since it was shared with us via role record).
+   */
+  private buildContextKeyDecrypter(
+    contextKey: DerivedPrivateJwk,
+  ): KeyDecrypter {
+    return {
+      rootKeyId        : contextKey.rootKeyId,
+      derivationScheme : contextKey.derivationScheme,
+      decrypt          : async (fullDerivationPath, eciesPayload): Promise<Uint8Array> => {
+        const leafPrivateKey = await Records.derivePrivateKey(
+          contextKey, fullDerivationPath,
+        );
+        return Encryption.eciesSecp256k1Decrypt({
+          privateKey                : leafPrivateKey,
+          ciphertext                : eciesPayload.ciphertext,
+          ephemeralPublicKey        : eciesPayload.ephemeralPublicKey,
+          initializationVector      : eciesPayload.initializationVector,
+          messageAuthenticationCode : eciesPayload.messageAuthenticationCode,
+        });
+      },
+    };
+  }
+
+  /**
    * Post-processes a DWN reply, auto-decrypting data if encryption is enabled.
-   * Delegates to the SDK's Records.decrypt() with a KeyDecrypter callback —
-   * the SDK handles key matching, path construction, and AES decryption.
-   * The KMS handles HKDF + ECIES via the callback.
+   * Delegates to the SDK's Records.decrypt() with the appropriate KeyDecrypter —
+   * resolveKeyDecrypter() selects between ProtocolPath and ProtocolContext schemes.
    */
   private async maybeDecryptReply<T extends DwnInterface>(
     request: ProcessDwnRequest<T> | SendDwnRequest<T>,
@@ -753,7 +1228,9 @@ export class AgentDwnApi {
       if (readReply.status.code === 200
           && readReply.entry?.recordsWrite?.encryption
           && readReply.entry?.data) {
-        const keyDecrypter = await this.getKeyDecrypter(request.author);
+        const keyDecrypter = await this.resolveKeyDecrypter(
+          request.author, readReply.entry.recordsWrite,
+        );
 
         try {
           readReply.entry.data = await Records.decrypt(
@@ -775,10 +1252,12 @@ export class AgentDwnApi {
     if (isDwnRequest(request as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsQuery)) {
       const queryReply = reply as RecordsQueryReply;
       if (queryReply.status.code === 200 && queryReply.entries) {
-        const keyDecrypter = await this.getKeyDecrypter(request.author);
-
         for (const entry of queryReply.entries) {
           if (entry.encryption && entry.encodedData) {
+            const keyDecrypter = await this.resolveKeyDecrypter(
+              request.author, entry as RecordsWriteMessage,
+            );
+
             try {
               const cipherBytes = Encoder.base64UrlToBytes(entry.encodedData);
               const cipherStream = DataStream.fromBytes(cipherBytes);
