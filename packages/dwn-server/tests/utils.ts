@@ -76,16 +76,15 @@ export function randomBytes(length: number): Uint8Array {
 
 export async function getFileAsReadStream(
   filePath: string,
-): Promise<{ stream: fs.ReadStream; cid: string; size: number }> {
+): Promise<{ stream: Blob; cid: string; size: number }> {
   const absoluteFilePath = `${__dirname}/${filePath}`;
 
-  // Read file into bytes to compute CID using Web ReadableStream
   const fileBytes = fs.readFileSync(absoluteFilePath);
   const cid = await Cid.computeDagPbCidFromBytes(fileBytes);
   const size = fileBytes.byteLength;
 
   return {
-    stream: fs.createReadStream(absoluteFilePath),
+    stream: new Blob([fileBytes]),
     cid,
     size,
   };

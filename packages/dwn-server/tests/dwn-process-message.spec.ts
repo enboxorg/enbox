@@ -109,7 +109,7 @@ describe('handleDwnProcessMessage', function () {
     expect(responseDataStream).to.not.be.undefined;
 
     // Compare the data stream bytes to ensure they are the same
-    const responseDataBytes = await DataStream.toBytes(responseDataStream as any);
+    const responseDataBytes = await DataStream.toBytes(responseDataStream!);
     expect(responseDataBytes).to.deep.equal(dataBytes);
     await dwn.close();
   });
@@ -160,7 +160,7 @@ describe('handleDwnProcessMessage', function () {
     expect(responseDataStream).to.not.be.undefined;
 
     // Compare the data stream bytes to ensure they are the same
-    const responseDataBytes = await DataStream.toBytes(responseDataStream as any);
+    const responseDataBytes = await DataStream.toBytes(responseDataStream!);
     expect(responseDataBytes).to.deep.equal(dataBytes);
     await dwn.close();
   });

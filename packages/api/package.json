@@ -78,12 +78,12 @@
   },
   "dependencies": {
     "@enbox/agent": "workspace:*",
-    "@enbox/common": "workspace:*",
-    "@enbox/crypto": "workspace:*",
-    "@enbox/dids": "workspace:*"
+    "@enbox/common": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "1.45.3",
+    "@enbox/crypto": "workspace:*",
+    "@enbox/dids": "workspace:*",
     "@enbox/dwn-sdk-js": "workspace:*",
     "@types/chai": "4.3.6",
     "@types/mocha": "10.0.1",

@@ -60,17 +60,17 @@ import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
 import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
 import { getDwnServiceEndpointUrls, isRecordsWrite } from './utils.js';
 
-export type DwnMessageWithBlob<T extends DwnInterface> = {
+type DwnMessageWithBlob<T extends DwnInterface> = {
   message: DwnMessage[T];
   data?: Blob;
 };
 
-export type DwnApiParams = {
+type DwnApiParams = {
   agent?: Web5PlatformAgent;
   dwn: Dwn;
 };
 
-export interface DwnApiCreateDwnParams extends Partial<DwnConfig> {
+interface DwnApiCreateDwnParams extends Partial<DwnConfig> {
   dataPath?: string;
 }
 

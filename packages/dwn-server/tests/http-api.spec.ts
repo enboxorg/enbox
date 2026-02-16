@@ -324,7 +324,7 @@ describe('http api', function () {
         headers : {
           'dwn-request': JSON.stringify(dwnRequest),
         },
-        body: stream as any,
+        body: stream,
       });
 
       expect(response.status).to.equal(200);
@@ -368,7 +368,7 @@ describe('http api', function () {
         headers : {
           'dwn-request': JSON.stringify(dwnRequest),
         },
-        body: stream as any,
+        body: stream,
       });
 
       expect(response.status).to.equal(200);
@@ -440,7 +440,7 @@ describe('http api', function () {
         headers : {
           'dwn-request': JSON.stringify(dwnRequest),
         },
-        body: stream as any,
+        body: stream,
       });
 
       expect(response.status).to.equal(200);
@@ -484,7 +484,7 @@ describe('http api', function () {
         headers : {
           'dwn-request': JSON.stringify(dwnRequest),
         },
-        body: stream as any,
+        body: stream,
       });
 
       expect(response.status).to.equal(200);
@@ -751,7 +751,7 @@ describe('http api', function () {
         headers : {
           'dwn-request': JSON.stringify(recordsWriteDwnRequest),
         },
-        body: stream as any,
+        body: stream,
       });
       expect(recordsWriteResponse.status).to.equal(200);
       const responseJson = await recordsWriteResponse.json() as JsonRpcResponse;
@@ -844,7 +844,7 @@ describe('http api', function () {
         headers : {
           'dwn-request': JSON.stringify(recordsWriteDwnRequest),
         },
-        body: stream as any,
+        body: stream,
       });
       expect(recordsWriteResponse.status).to.equal(200);
       const responseJson = await recordsWriteResponse.json() as JsonRpcResponse;
@@ -900,7 +900,7 @@ describe('http api', function () {
         headers : {
           'dwn-request': JSON.stringify(dwnRequest),
         },
-        body: stream as any,
+        body: stream,
       });
 
       expect(response.status).to.equal(200);

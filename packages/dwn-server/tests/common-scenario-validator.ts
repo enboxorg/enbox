@@ -88,7 +88,7 @@ export default class CommonScenarioValidator {
       headers : {
         'dwn-request': JSON.stringify(recordsWriteRequest),
       },
-      body: stream as any
+      body: stream
     });
     const recordsWriteResponseBody = await recordsWriteResponse.json() as JsonRpcSuccessResponse;
 

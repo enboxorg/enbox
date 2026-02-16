@@ -23,8 +23,7 @@ export class Stream {
   /**
    * Creates a `ReadableStream<Uint8Array>` from a `Uint8Array`.
    *
-   * This method creates a `ReadableStream` that emits the provided bytes in chunks. It's the
-   * Web Streams equivalent of creating a Node.js `Readable` from a buffer.
+   * This method creates a `ReadableStream` that emits the provided bytes in chunks.
    *
    * @example
    * ```ts

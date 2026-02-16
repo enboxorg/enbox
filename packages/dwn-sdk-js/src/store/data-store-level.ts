@@ -3,6 +3,7 @@ import type { DataStore, DataStoreGetResult, DataStorePutResult } from '../types
 
 import { BlockstoreLevel } from './blockstore-level.js';
 import { createLevelDatabase } from './level-wrapper.js';
+import { DataStream } from '../utils/data-stream.js';
 import { exporter } from 'ipfs-unixfs-exporter';
 import { importer } from 'ipfs-unixfs-importer';
 
@@ -42,7 +43,7 @@ export class DataStoreLevel implements DataStore {
   async put(tenant: string, recordId: string, dataCid: string, dataStream: ReadableStream<Uint8Array>): Promise<DataStorePutResult> {
     const blockstoreForData = await this.getBlockstoreForStoringData(tenant, recordId, dataCid);
 
-    const asyncDataBlocks = importer([{ content: DataStoreLevel.asAsyncIterable(dataStream) }], blockstoreForData, { cidVersion: 1 });
+    const asyncDataBlocks = importer([{ content: DataStream.asAsyncIterable(dataStream) }], blockstoreForData, { cidVersion: 1 });
 
     // NOTE: the last block contains the root CID as well as info to derive the data size
     let dataDagRoot!: ImportResult;
@@ -112,21 +113,6 @@ export class DataStoreLevel implements DataStore {
     return blockstoreOfGivenDataCidOfRecordId;
   }
 
-  /**
-   * Adapts a Web ReadableStream into an AsyncIterable for compatibility with `ipfs-unixfs-importer`.
-   */
-  private static async * asAsyncIterable(stream: ReadableStream<Uint8Array>): AsyncIterable<Uint8Array> {
-    const reader = stream.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) { break; }
-        yield value;
-      }
-    } finally {
-      reader.releaseLock();
-    }
-  }
 }
 
 export type DataStoreLevelConfig = {

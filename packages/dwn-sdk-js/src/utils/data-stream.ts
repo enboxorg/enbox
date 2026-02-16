@@ -80,6 +80,23 @@ export class DataStream {
   }
 
   /**
+   * Adapts a Web ReadableStream into an AsyncIterable for compatibility with libraries
+   * like `ipfs-unixfs-importer` that expect `AsyncIterable<Uint8Array>`.
+   */
+  public static async * asAsyncIterable(stream: ReadableStream<Uint8Array>): AsyncIterable<Uint8Array> {
+    const reader = stream.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) { break; }
+        yield value;
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  /**
    * Duplicates the given data stream into the number of streams specified so that multiple handlers can consume the same data stream.
    * Uses the native `ReadableStream.tee()` method for 2 copies, or a custom fan-out for N copies.
    */

@@ -12,23 +12,6 @@ import { importer } from 'ipfs-unixfs-importer';
 import { MemoryBlockstore } from 'blockstore-core';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 
-/**
- * Adapts a Web ReadableStream into an AsyncIterable for compatibility with
- * `ipfs-unixfs-importer` which expects `AsyncIterable<Uint8Array>`.
- */
-async function* asAsyncIterable(stream: ReadableStream<Uint8Array>): AsyncIterable<Uint8Array> {
-  const reader = stream.getReader();
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) { break; }
-      yield value;
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
 chai.use(chaiAsPromised);
 
 describe('BlockstoreMock', () => {
@@ -50,10 +33,10 @@ describe('BlockstoreMock', () => {
       const dataStreamForMockBlockstore = DataStream.fromBytes(dataBytes);
 
       const asyncDataBlocksByMemoryBlockstore = importer(
-        [{ content: asAsyncIterable(dataStreamForMemoryBlockstore) }], new MemoryBlockstore(), { cidVersion: 1 }
+        [{ content: DataStream.asAsyncIterable(dataStreamForMemoryBlockstore) }], new MemoryBlockstore(), { cidVersion: 1 }
       );
       const asyncDataBlocksByMockBlockstore = importer(
-        [{ content: asAsyncIterable(dataStreamForMockBlockstore) }], new BlockstoreMock(), { cidVersion: 1 }
+        [{ content: DataStream.asAsyncIterable(dataStreamForMockBlockstore) }], new BlockstoreMock(), { cidVersion: 1 }
       );
 
       // NOTE: the last block contains the root CID
