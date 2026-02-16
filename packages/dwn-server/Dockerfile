@@ -4,7 +4,7 @@ FROM oven/bun:1 AS builder
 WORKDIR /app
 
 # Copy monorepo configuration files
-COPY bun.lockb ./
+COPY bun.lock ./
 COPY bunfig.toml ./
 COPY package.json ./
 COPY tsconfig.json ./
