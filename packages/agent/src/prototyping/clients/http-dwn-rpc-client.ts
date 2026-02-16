@@ -24,18 +24,18 @@ export class HttpDwnRpcClient implements DwnRpc {
       message : request.message
     });
 
-    const fetchOpts = {
+    const requestHeaders: Record<string, string> = {
+      'dwn-request': JSON.stringify(jsonRpcRequest)
+    };
+
+    const fetchOpts: RequestInit = {
       method  : 'POST',
-      headers : {
-        'dwn-request': JSON.stringify(jsonRpcRequest)
-      }
+      headers : requestHeaders,
     };
 
     if (request.data) {
-      // @ts-expect-error TODO: REMOVE
-      fetchOpts.headers['content-type'] = 'application/octet-stream';
-      // @ts-expect-error TODO: REMOVE
-      fetchOpts['body'] = request.data;
+      requestHeaders['content-type'] = 'application/octet-stream';
+      fetchOpts.body = request.data;
     }
 
     const resp = await fetch(request.dwnUrl, fetchOpts);
@@ -45,8 +45,7 @@ export class HttpDwnRpcClient implements DwnRpc {
     let dataStream;
     const { headers } = resp;
     if (headers.has('dwn-response')) {
-      // @ts-expect-error TODO: REMOVE
-      const jsonRpcResponse = parseJson(headers.get('dwn-response')) as JsonRpcResponse;
+      const jsonRpcResponse = parseJson(headers.get('dwn-response')!) as JsonRpcResponse;
 
       if (jsonRpcResponse == null) {
         throw new Error(`failed to parse json rpc response. dwn url: ${request.dwnUrl}`);
