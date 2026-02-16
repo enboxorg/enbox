@@ -2644,6 +2644,199 @@ describe('Encryption Callback Factories', () => {
         expect(Convert.uint8Array(queryDecryptedBytes).toString()).to.equal(plaintextString);
       }
     });
+
+    it('should auto-encrypt record updates with fresh DEK', async () => {
+      // Configure protocol with encryption
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: encryptedProtocolDefinition
+        },
+        encryption: true
+      });
+
+      // Write initial encrypted record
+      const initialPlaintext = 'Initial secret note';
+      const initialDataBytes = Convert.string(initialPlaintext).toUint8Array();
+
+      const { message: writeMessage } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : encryptedProtocolDefinition.protocol,
+          protocolPath : 'note',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/note',
+        },
+        dataStream : new Blob([initialDataBytes]),
+        encryption : true
+      });
+
+      const recordsWriteMessage = writeMessage as RecordsWriteMessage;
+      const initialEncryption = recordsWriteMessage.encryption;
+      expect(initialEncryption).to.exist;
+
+      // Update the record with new data and encryption: true
+      const updatedPlaintext = 'Updated secret note content';
+      const updatedDataBytes = Convert.string(updatedPlaintext).toUint8Array();
+
+      const { message: updateMessage, reply: { status: updateStatus } } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : encryptedProtocolDefinition.protocol,
+          protocolPath : 'note',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/note',
+          recordId     : recordsWriteMessage.recordId,
+        },
+        dataStream : new Blob([updatedDataBytes]),
+        encryption : true
+      });
+
+      expect(updateStatus.code).to.equal(202);
+
+      const updateWriteMessage = updateMessage as RecordsWriteMessage;
+      expect(updateWriteMessage).to.have.property('encryption');
+      expect(updateWriteMessage.encryption!.keyEncryption).to.have.length(1);
+      expect(updateWriteMessage.encryption!.keyEncryption[0]).to.have.property(
+        'derivationScheme', 'protocolPath'
+      );
+
+      // The update should have a different initialization vector (fresh DEK)
+      expect(updateWriteMessage.encryption!.initializationVector)
+        .to.not.equal(initialEncryption!.initializationVector);
+
+      // Read back with decryption — should get the UPDATED plaintext
+      const { reply: readReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter: { recordId: recordsWriteMessage.recordId }
+        },
+        encryption: true
+      });
+
+      expect(readReply.status.code).to.equal(200);
+      const decryptedBytes = await NodeStream.consumeToBytes({ readable: readReply.entry!.data! });
+      expect(Convert.uint8Array(decryptedBytes).toString()).to.equal(updatedPlaintext);
+    });
+
+    it('should auto-encrypt record updates for multi-party context', async () => {
+      // A protocol with $role records
+      const multiPartyDef = {
+        published : true,
+        protocol  : 'https://protocol.xyz/mp-update-test',
+        types     : {
+          thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'] },
+          participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'] },
+          chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'] }
+        },
+        structure: {
+          thread: {
+            participant : { $role: true },
+            chat        : {}
+          }
+        }
+      };
+
+      // Configure protocol
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: multiPartyDef },
+        encryption    : true
+      });
+
+      // Write root record (thread)
+      const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : multiPartyDef.protocol,
+          protocolPath : 'thread',
+          dataFormat   : 'application/json',
+          schema       : 'https://schemas.xyz/thread',
+        },
+        dataStream : new Blob([Convert.string('thread root').toUint8Array()]),
+        encryption : true
+      });
+
+      const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
+
+      // Write a chat message
+      const initialChat = 'Initial chat message';
+      const { message: chatMessage } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol        : multiPartyDef.protocol,
+          protocolPath    : 'thread/chat',
+          parentContextId : threadContextId,
+          dataFormat      : 'text/plain',
+          schema          : 'https://schemas.xyz/chat',
+        },
+        dataStream : new Blob([Convert.string(initialChat).toUint8Array()]),
+        encryption : true
+      });
+
+      const chatRecordId = (chatMessage as RecordsWriteMessage).recordId;
+      const chatEncryption = (chatMessage as RecordsWriteMessage).encryption;
+      expect(chatEncryption).to.exist;
+      expect(chatEncryption!.keyEncryption[0]).to.have.property(
+        'derivationScheme', 'protocolContext'
+      );
+
+      // Update the chat message
+      const updatedChat = 'Updated chat message';
+      const { message: updatedChatMessage, reply: { status } } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol        : multiPartyDef.protocol,
+          protocolPath    : 'thread/chat',
+          parentContextId : threadContextId,
+          dataFormat      : 'text/plain',
+          schema          : 'https://schemas.xyz/chat',
+          recordId        : chatRecordId,
+        },
+        dataStream : new Blob([Convert.string(updatedChat).toUint8Array()]),
+        encryption : true
+      });
+
+      expect(status.code).to.equal(202);
+
+      // Updated message should still use ProtocolContext scheme
+      const updatedEncryption = (updatedChatMessage as RecordsWriteMessage).encryption;
+      expect(updatedEncryption).to.exist;
+      expect(updatedEncryption!.keyEncryption[0]).to.have.property(
+        'derivationScheme', 'protocolContext'
+      );
+
+      // Read back with decryption
+      const { reply: readReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter: { recordId: chatRecordId }
+        },
+        encryption: true
+      });
+
+      expect(readReply.status.code).to.equal(200);
+      const decryptedBytes = await NodeStream.consumeToBytes({ readable: readReply.entry!.data! });
+      expect(Convert.uint8Array(decryptedBytes).toString()).to.equal(updatedChat);
+    });
   });
 
   describe('Multi-Party Context Encryption (PR #5)', () => {
