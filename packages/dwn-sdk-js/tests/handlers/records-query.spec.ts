@@ -8,10 +8,10 @@ import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
 import chai, { expect } from 'chai';
 
-import freeForAll from '../vectors/protocol-definitions/free-for-all.json' assert { type: 'json' };
-import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' assert { type: 'json' };
-import nestedProtocol from '../vectors/protocol-definitions/nested.json' assert { type: 'json' };
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' assert { type: 'json' };
+import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
+import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
+import nestedProtocol from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
+import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 
 import { ArrayUtility } from '../../src/utils/array.js';
 import { DateSort } from '../../src/types/records-types.js';

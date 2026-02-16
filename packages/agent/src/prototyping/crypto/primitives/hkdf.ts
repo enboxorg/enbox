@@ -2,7 +2,7 @@
 import { getWebcryptoSubtle } from '@noble/ciphers/webcrypto';
 
 import { Convert } from '@enbox/common';
-import { DeriveKeyBytesParams } from '../types/params-direct.js';
+import type { DeriveKeyBytesParams } from '../types/params-direct.js';
 
 /**
  * The object that should be passed into `Hkdf.deriveKey()`, when using the HKDF algorithm.

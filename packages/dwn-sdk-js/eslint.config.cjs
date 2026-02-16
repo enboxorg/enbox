@@ -1,6 +1,6 @@
 const tsParser = require("@typescript-eslint/parser");
-
 const tsPlugin = require("@typescript-eslint/eslint-plugin");
+const stylisticPlugin = require("@stylistic/eslint-plugin");
 const todoPlzPlugin = require('eslint-plugin-todo-plz');
 
 module.exports = [{
@@ -14,6 +14,7 @@ module.exports = [{
   },
   plugins: {
     "@typescript-eslint": tsPlugin,
+    "@stylistic": stylisticPlugin,
     'todo-plz': todoPlzPlugin // for enforcing TODO formatting to require "github.com/enboxorg/enbox/issues/"
   },
   files: [
@@ -41,8 +42,8 @@ module.exports = [{
       'single',
       { 'allowTemplateLiterals': true }
     ],
-    '@typescript-eslint/semi' : ['error', 'always'],
-    'semi'                    : ['off'],
+    '@stylistic/semi' : ['error', 'always'],
+    'semi'            : ['off'],
     'no-multi-spaces'         : ['error'],
     'no-trailing-spaces'      : ['error'],
     'max-len'                 : ['error', { 'code': 150, 'ignoreStrings': true }],

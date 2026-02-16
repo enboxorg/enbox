@@ -59,7 +59,7 @@ describe('Utils', () => {
       try {
         await getPaginationCursor(message, DateSort.PublishedAscending);
         expect.fail('Expected getPaginationCursor to throw an error');
-      } catch(error: any) {
+      } catch (error: any) {
         expect(error.message).to.include('The dateCreated or datePublished property is missing from the record descriptor.');
       }
     });

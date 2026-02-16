@@ -1,9 +1,9 @@
 import type { AffinePoint } from '@noble/curves/abstract/weierstrass';
 
 import { Convert } from '@enbox/common';
-import { sha256 } from '@noble/hashes/sha256';
-import { secp256r1 } from '@noble/curves/p256';
 import { numberToBytesBE } from '@noble/curves/abstract/utils';
+import { secp256r1 } from '@noble/curves/p256';
+import { sha256 } from '@noble/hashes/sha256';
 
 import type { Jwk } from '../jose/jwk.js';
 import type { ComputePublicKeyParams, GetPublicKeyParams, SignParams, VerifyParams } from '../types/params-direct.js';
@@ -304,7 +304,7 @@ export class Secp256r1 {
     ComputePublicKeyParams
   ): Promise<Jwk> {
     // Convert the provided private key to a byte array.
-    const privateKeyBytes  = await Secp256r1.privateKeyToBytes({ privateKey: key });
+    const privateKeyBytes = await Secp256r1.privateKeyToBytes({ privateKey: key });
 
     // Get the elliptic curve point (x and y coordinates) for the provided private key.
     const point = await Secp256r1.getCurvePoint({ keyBytes: privateKeyBytes });
@@ -357,7 +357,7 @@ export class Secp256r1 {
     // into a single byte array.
     const compactSignature = signatureObject.toCompactRawBytes();
 
-    return  compactSignature;
+    return compactSignature;
   }
 
   /**
@@ -468,7 +468,7 @@ export class Secp256r1 {
     }
 
     // Remove the private key property ('d') and make a shallow copy of the provided key.
-    let { d, ...publicKey } = key;
+    const { d, ...publicKey } = key;
 
     // If the key ID is undefined, set it to the JWK thumbprint.
     publicKey.kid ??= await computeJwkThumbprint({ jwk: publicKey });
@@ -732,7 +732,7 @@ export class Secp256r1 {
       // Check if points are on the Short Weierstrass curve.
       point.assertValidity();
 
-    } catch(error: any) {
+    } catch {
       return false;
     }
 

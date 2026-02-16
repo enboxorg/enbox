@@ -1,13 +1,13 @@
 import type { Dwn } from '@enbox/dwn-sdk-js';
 
 import chaiAsPromised from 'chai-as-promised';
-import chai, { expect } from 'chai';
-
+import log from 'loglevel';
 import sinon from 'sinon';
 import { WebSocket } from 'ws';
-import { SocketConnection } from '../../src/connection/socket-connection.js';
+import chai, { expect } from 'chai';
+
 import { getTestDwn } from '../test-dwn.js';
-import log from 'loglevel';
+import { SocketConnection } from '../../src/connection/socket-connection.js';
 
 chai.use(chaiAsPromised);
 
@@ -35,15 +35,15 @@ describe('SocketConnection', () => {
     const socket = sinon.createStubInstance(WebSocket);
     const connection = new SocketConnection(socket, dwn);
     const subscriptionRequest = {
-      id: 'id',
-      method: 'method',
-      params: { param1: 'param' },
-      close: async ():Promise<void> => {}
-    }
+      id     : 'id',
+      method : 'method',
+      params : { param1: 'param' },
+      close  : async ():Promise<void> => {}
+    };
 
     await connection.addSubscription(subscriptionRequest);
     expect((connection as any).subscriptions.size).to.equal(1);
-    await connection.close(); 
+    await connection.close();
     expect((connection as any).subscriptions.size).to.equal(0);
   });
 
@@ -55,10 +55,10 @@ describe('SocketConnection', () => {
 
     const subscriptionRequest = {
       id,
-      method: 'method',
-      params: { param1: 'param' },
-      close: async ():Promise<void> => {}
-    }
+      method : 'method',
+      params : { param1: 'param' },
+      close  : async ():Promise<void> => {}
+    };
 
     await connection.addSubscription(subscriptionRequest);
     expect((connection as any).subscriptions.size).to.equal(1);
@@ -66,7 +66,7 @@ describe('SocketConnection', () => {
     const addDuplicatePromise = connection.addSubscription(subscriptionRequest);
     await expect(addDuplicatePromise).to.eventually.be.rejectedWith(`the subscription with id ${id} already exists`);
     expect((connection as any).subscriptions.size).to.equal(1);
-    await connection.close(); 
+    await connection.close();
     expect((connection as any).subscriptions.size).to.equal(0);
   });
 
@@ -78,10 +78,10 @@ describe('SocketConnection', () => {
 
     const subscriptionRequest = {
       id,
-      method: 'method',
-      params: { param1: 'param' },
-      close: async ():Promise<void> => {}
-    }
+      method : 'method',
+      params : { param1: 'param' },
+      close  : async ():Promise<void> => {}
+    };
 
     await connection.addSubscription(subscriptionRequest);
     expect((connection as any).subscriptions.size).to.equal(1);
@@ -91,18 +91,18 @@ describe('SocketConnection', () => {
 
     const closeAgainPromise = connection.closeSubscription(id);
     await expect(closeAgainPromise).to.eventually.be.rejectedWith(`the subscription with id ${id} was not found`);
-    await connection.close(); 
+    await connection.close();
   });
 
   it('hasSubscription returns whether a subscription with the id already exists', async () => {
     const socket = sinon.createStubInstance(WebSocket);
     const connection = new SocketConnection(socket, dwn);
     const subscriptionRequest = {
-      id: 'id',
-      method: 'method',
-      params: { param1: 'param' },
-      close: async ():Promise<void> => {}
-    }
+      id     : 'id',
+      method : 'method',
+      params : { param1: 'param' },
+      close  : async ():Promise<void> => {}
+    };
 
     await connection.addSubscription(subscriptionRequest);
     expect((connection as any).subscriptions.size).to.equal(1);
@@ -133,7 +133,7 @@ describe('SocketConnection', () => {
     const closeSpy = sinon.spy(connection, 'close');
 
     (connection as any).pong(); // trigger a pong
-    clock.tick(30_100); // first interval 
+    clock.tick(30_100); // first interval
 
     (connection as any).pong(); // trigger a pong
     clock.tick(30_100); // second interval

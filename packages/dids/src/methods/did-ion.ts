@@ -1,31 +1,31 @@
 import type { CryptoApi, Jwk, KeyIdentifier, KeyImporterExporter, KmsExportKeyParams, KmsImportKeyParams } from '@enbox/crypto';
 import type {
-  JwkEs256k,
   IonDocumentModel,
   IonPublicKeyModel,
   IonPublicKeyPurpose,
+  JwkEs256k,
 } from '@decentralized-identity/ion-sdk';
 
+import { computeJwkThumbprint, LocalKeyManager } from '@enbox/crypto';
 import { IonDid, IonRequest } from '@decentralized-identity/ion-sdk';
-import { LocalKeyManager, computeJwkThumbprint } from '@enbox/crypto';
 
 import type { PortableDid } from '../types/portable-did.js';
 import type { DidCreateOptions, DidCreateVerificationMethod, DidRegistrationResult } from '../methods/did-method.js';
 import type {
-  DidService,
   DidDocument,
-  DidResolutionResult,
   DidResolutionOptions,
+  DidResolutionResult,
+  DidService,
   DidVerificationMethod,
   DidVerificationRelationship,
 } from '../types/did-core.js';
 
-import { Did } from '../did.js';
 import { BearerDid } from '../bearer-did.js';
+import { Did } from '../did.js';
 import { DidMethod } from '../methods/did-method.js';
-import { DidError, DidErrorCode } from '../did-error.js';
-import { getVerificationRelationshipsById } from '../utils.js';
 import { EMPTY_DID_RESOLUTION_RESULT } from '../types/did-resolution.js';
+import { getVerificationRelationshipsById } from '../utils.js';
+import { DidError, DidErrorCode } from '../did-error.js';
 
 /**
  * Options for creating a Decentralized Identifier (DID) using the DID ION method.
@@ -613,7 +613,7 @@ export class DidIon extends DidMethod {
         didRegistrationMetadata: {}
       };
 
-    } catch (error: any) {
+    } catch {
       return {
         didDocument         : null,
         didDocumentMetadata : {
@@ -700,7 +700,7 @@ export class DidIon extends DidMethod {
 
     } catch (error: any) {
       // Rethrow any unexpected errors that are not a `DidError`.
-      if (!(error instanceof DidError)) throw new Error(error);
+      if (!(error instanceof DidError)) {throw new Error(error);}
 
       // Return a DID Resolution Result with the appropriate error code.
       return {
@@ -813,7 +813,8 @@ export class DidIonUtils {
    *
    * @param params - The parameters containing the services and verification methods to include in the ION document.
    * @param params.services - A list of service endpoints to be included in the DID document, specifying ways to interact with the DID subject.
-   * @param params.verificationMethods - A list of verification methods to be included, detailing the cryptographic keys and their intended uses within the DID document.
+   * @param params.verificationMethods - A list of verification methods to be included, detailing the
+   * cryptographic keys and their intended uses within the DID document.
    * @returns A Promise resolving to an `IonDocumentModel`, ready for use in Sidetree operations like DID creation and updates.
    */
   public static async createIonDocument({ services, verificationMethods }: {

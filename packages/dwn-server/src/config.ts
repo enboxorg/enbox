@@ -23,7 +23,7 @@ export const config = {
   /**
    * The URL of the TTL cache used by the DWN.
    * NOTE: Used for session/state keeping, thus requires the cache to be commonly addressable by nodes in a cloud cluster environment.
-   * 
+   *
    * Currently only supports SQL databases, e.g.
    * Postgres: 'postgres://root:dwn@localhost:5432/dwn'
    * MySQL: 'mysql://root:dwn@localhost:3306/dwn'
@@ -37,9 +37,9 @@ export const config = {
    * If `DWN_SERVER_PACKAGE_JSON` is set, we use that path.
    * Otherwise we resort to the path within the docker server image, located at `/dwn-server/package.json`.
    */
-  packageJsonPath: process.env.DWN_SERVER_PACKAGE_JSON || '/dwn-server/package.json',
+  packageJsonPath   : process.env.DWN_SERVER_PACKAGE_JSON || '/dwn-server/package.json',
   // max size of data that can be provided with a RecordsWrite
-  maxRecordDataSize: bytes(process.env.MAX_RECORD_DATA_SIZE || '1gb'),
+  maxRecordDataSize : bytes(process.env.MAX_RECORD_DATA_SIZE || '1gb'),
 
   // whether to enable 'ws:'
   webSocketSupport: { on: true, off: false }[process.env.DS_WEBSOCKET_SERVER] ?? true,
@@ -50,17 +50,17 @@ export const config = {
   eventStreamPluginPath: process.env.DWN_EVENT_STREAM_PLUGIN_PATH,
 
   // where to store persistent data
-  messageStore: process.env.DWN_STORAGE_MESSAGES || process.env.DWN_STORAGE || 'level://data',
-  dataStore: process.env.DWN_STORAGE_DATA || process.env.DWN_STORAGE || 'level://data',
-  eventLog: process.env.DWN_STORAGE_EVENTS || process.env.DWN_STORAGE || 'level://data',
-  resumableTaskStore: process.env.DWN_STORAGE_RESUMABLE_TASKS || process.env.DWN_STORAGE || 'level://data',
+  messageStore       : process.env.DWN_STORAGE_MESSAGES || process.env.DWN_STORAGE || 'level://data',
+  dataStore          : process.env.DWN_STORAGE_DATA || process.env.DWN_STORAGE || 'level://data',
+  eventLog           : process.env.DWN_STORAGE_EVENTS || process.env.DWN_STORAGE || 'level://data',
+  resumableTaskStore : process.env.DWN_STORAGE_RESUMABLE_TASKS || process.env.DWN_STORAGE || 'level://data',
 
   // tenant registration feature configuration
-  registrationStoreUrl: process.env.DWN_REGISTRATION_STORE_URL || process.env.DWN_STORAGE,
-  registrationProofOfWorkSeed: process.env.DWN_REGISTRATION_PROOF_OF_WORK_SEED,
-  registrationProofOfWorkEnabled: process.env.DWN_REGISTRATION_PROOF_OF_WORK_ENABLED === 'true',
-  registrationProofOfWorkInitialMaxHash: process.env.DWN_REGISTRATION_PROOF_OF_WORK_INITIAL_MAX_HASH,
-  termsOfServiceFilePath: process.env.DWN_TERMS_OF_SERVICE_FILE_PATH,
+  registrationStoreUrl                  : process.env.DWN_REGISTRATION_STORE_URL || process.env.DWN_STORAGE,
+  registrationProofOfWorkSeed           : process.env.DWN_REGISTRATION_PROOF_OF_WORK_SEED,
+  registrationProofOfWorkEnabled        : process.env.DWN_REGISTRATION_PROOF_OF_WORK_ENABLED === 'true',
+  registrationProofOfWorkInitialMaxHash : process.env.DWN_REGISTRATION_PROOF_OF_WORK_INITIAL_MAX_HASH,
+  termsOfServiceFilePath                : process.env.DWN_TERMS_OF_SERVICE_FILE_PATH,
 
   // log level - trace/debug/info/warn/error
   logLevel: process.env.DWN_SERVER_LOG_LEVEL || 'INFO',

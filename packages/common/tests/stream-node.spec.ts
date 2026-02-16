@@ -2,8 +2,8 @@
 import { expect } from 'chai';
 import { Duplex, Readable, Transform, Writable } from 'readable-stream';
 
-import { Stream } from '../src/stream.js';
 import { NodeStream } from '../src/stream-node.js';
+import { Stream } from '../src/stream.js';
 
 // Helper function to simulate a slow consumer.
 function sleep(ms: number): Promise<void> {
@@ -47,7 +47,7 @@ describe('NodeStream', () => {
     it('throws an error for a stream that errors', async () => {
       const error = new Error('Stream error');
       const nodeReadable = new Readable({
-        read() {
+        read(): void {
           this.emit('error', error);
         }
       });
@@ -116,7 +116,7 @@ describe('NodeStream', () => {
     it('throws an error for a stream that errors', async () => {
       const error = new Error('Stream error');
       const nodeReadable = new Readable({
-        read() {
+        read(): void {
           this.emit('error', error);
         }
       });
@@ -175,7 +175,7 @@ describe('NodeStream', () => {
     it('throws an error for a stream that errors', async () => {
       const error = new Error('Stream error');
       const nodeReadable = new Readable({
-        read() {
+        read(): void {
           this.emit('error', error);
         }
       });
@@ -232,7 +232,7 @@ describe('NodeStream', () => {
     it('throws an error for a stream that errors', async () => {
       const error = new Error('Stream error');
       const nodeReadable = new Readable({
-        read() {
+        read(): void {
           this.emit('error', error);
         }
       });
@@ -253,7 +253,7 @@ describe('NodeStream', () => {
       nodeReadable.push(new TextEncoder().encode(inputText));
       nodeReadable.push(null);
 
-      const result = await NodeStream.consumeToText({ readable: nodeReadable});
+      const result = await NodeStream.consumeToText({ readable: nodeReadable });
       expect(result).to.be.a('string');
       expect(result).to.equal(inputText);
     });
@@ -262,7 +262,7 @@ describe('NodeStream', () => {
       const nodeReadable = new Readable();
       nodeReadable.push(null); // Empty stream
 
-      const result = await NodeStream.consumeToText({ readable: nodeReadable});
+      const result = await NodeStream.consumeToText({ readable: nodeReadable });
       expect(result).to.be.a('string');
       expect(result).to.equal('');
     });
@@ -273,14 +273,14 @@ describe('NodeStream', () => {
       nodeReadable.push(new TextEncoder().encode(largeText));
       nodeReadable.push(null);
 
-      const result = await NodeStream.consumeToText({ readable: nodeReadable});
+      const result = await NodeStream.consumeToText({ readable: nodeReadable });
       expect(result).to.equal(largeText);
     });
 
     it('throws an error for a stream that errors', async () => {
       const error = new Error('Stream error');
       const nodeReadable = new Readable({
-        read() {
+        read(): void {
           this.emit('error', error);
         }
       });
@@ -295,11 +295,11 @@ describe('NodeStream', () => {
   });
 
   describe('fromWebReadable()', () => {
-    it('converts a Web ReadableStream to a Node Readable and reads the data correctly', (done) => {
+    it('converts a Web ReadableStream to a Node Readable and reads the data correctly', (done): void => {
     // Step 1: Create a Web ReadableStream
       const inputData = ['chunk1', 'chunk2', 'chunk3'];
       const webStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           inputData.forEach(chunk => controller.enqueue(chunk));
           controller.close();
         }
@@ -387,7 +387,7 @@ describe('NodeStream', () => {
       // Create a Web ReadableStream that throws an error.
       let controller: ReadableStreamDefaultController;
       const webStream = new ReadableStream({
-        start(c) {
+        start(c): void {
           controller = c;
           // Simulate an error after a delay.
           setTimeout(() => controller.error(new Error('Test error1')), 10);
@@ -414,10 +414,10 @@ describe('NodeStream', () => {
       }
     });
 
-    it('calls reader.cancel() if the stream is destroyed before closing', function (done) {
+    it('calls reader.cancel() if the stream is destroyed before closing', function (done): void {
       // Create a Web ReadableStream.
       const webStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           // Enqueue some data and then delay closing the stream.
           controller.enqueue('test data');
           setTimeout(() => {
@@ -453,22 +453,22 @@ describe('NodeStream', () => {
   describe('isDestroyed', () => {
     it('returns true for a destroyed Duplex stream', () => {
       const duplex = new Duplex({
-        read() {},
-        write(chunk, encoding, callback) { callback(); }
+        read(): void {},
+        write(chunk, encoding, callback): void { callback(); }
       });
       duplex.destroy();
       expect(NodeStream.isDestroyed({ stream: duplex })).to.be.true;
     });
 
     it('returns true for a destroyed Readable stream', () => {
-      const readable = new Readable({ read() {} });
+      const readable = new Readable({ read(): void {} });
       readable.destroy();
       expect(NodeStream.isDestroyed({ stream: readable })).to.be.true;
     });
 
     it('returns true for a destroyed Transform stream', () => {
       const transform = new Transform({
-        transform(chunk, encoding, callback) { callback(); }
+        transform(chunk, encoding, callback): void { callback(); }
       });
       transform.destroy();
       expect(NodeStream.isDestroyed({ stream: transform })).to.be.true;
@@ -476,29 +476,29 @@ describe('NodeStream', () => {
 
     it('returns true for a destroyed Writable stream', () => {
       const writable = new Writable({
-        write(chunk, encoding, callback) { callback(); }
+        write(chunk, encoding, callback): void { callback(); }
       });
       writable.destroy();
       expect(NodeStream.isDestroyed({ stream: writable })).to.be.true;
     });
 
     it('returns false for a non-destroyed Duplex stream', () => {
-      const duplex = new Duplex({ read() {}, write(chunk, encoding, callback) { callback(); } });
+      const duplex = new Duplex({ read(): void {}, write(chunk, encoding, callback): void { callback(); } });
       expect(NodeStream.isDestroyed({ stream: duplex })).to.be.false;
     });
 
     it('returns false for a non-destroyed Readable stream', () => {
-      const readable = new Readable({ read() {} });
+      const readable = new Readable({ read(): void {} });
       expect(NodeStream.isDestroyed({ stream: readable })).to.be.false;
     });
 
     it('returns false for a non-destroyed Transform stream', () => {
-      const transform = new Transform({ transform(chunk, encoding, callback) { callback(); } });
+      const transform = new Transform({ transform(chunk, encoding, callback): void { callback(); } });
       expect(NodeStream.isDestroyed({ stream: transform })).to.be.false;
     });
 
     it('returns false for a non-destroyed Writable stream', () => {
-      const writable = new Writable({ write(chunk, encoding, callback) { callback(); } });
+      const writable = new Writable({ write(chunk, encoding, callback): void { callback(); } });
       expect(NodeStream.isDestroyed({ stream: writable })).to.be.false;
     });
 
@@ -518,13 +518,13 @@ describe('NodeStream', () => {
 
   describe('isReadable()', () => {
     it('returns true for a readable stream', () => {
-      const nodeReadable = new Readable({ read() {} });
+      const nodeReadable = new Readable({ read(): void {} });
 
       expect(NodeStream.isReadable({ readable: nodeReadable })).to.be.true;
     });
 
     it('returns false for a paused stream', () => {
-      const nodeReadable = new Readable({ read() {} });
+      const nodeReadable = new Readable({ read(): void {} });
       nodeReadable.pause();
       expect(NodeStream.isReadable({ readable: nodeReadable })).to.be.false;
     });
@@ -551,7 +551,7 @@ describe('NodeStream', () => {
     });
 
     it('returns false for a destroyed stream', () => {
-      const nodeReadable = new Readable({ read() {} });
+      const nodeReadable = new Readable({ read(): void {} });
       nodeReadable.destroy();
       expect(NodeStream.isReadable({ readable: nodeReadable })).to.be.false;
     });
@@ -586,7 +586,7 @@ describe('NodeStream', () => {
     });
 
     it('returns false for a non-stream object', () => {
-      const nonStreamObject = { pipe: () => {}, on: () => {} };
+      const nonStreamObject = { pipe: (): void => {}, on: (): void => {} };
       const result = NodeStream.isReadableStream(nonStreamObject);
       expect(result).to.be.false;
     });
@@ -630,7 +630,7 @@ describe('NodeStream', () => {
 
   describe('isStream', () => {
     it('returns true for a Readable stream', () => {
-      const readableStream = new Readable({ read() {} });
+      const readableStream = new Readable({ read(): void {} });
       expect(NodeStream.isStream(readableStream)).to.be.true;
     });
 
@@ -705,7 +705,7 @@ describe('NodeStream', () => {
 
     it('closes the Web ReadableStream when the Node stream ends', async () => {
       const nodeReadable = new Readable({
-        read() {
+        read(): void {
           this.push('data');
           this.push(null); // End the stream
         }
@@ -724,7 +724,7 @@ describe('NodeStream', () => {
     it('handles errors in the Node stream', async () => {
       const error = new Error('Test error');
       const nodeReadable = new Readable({
-        read() {
+        read(): void {
           this.emit('error', error);
         }
       });
@@ -743,8 +743,8 @@ describe('NodeStream', () => {
     it('cancels the Node stream when the Web ReadableStream is canceled', async () => {
       let canceled = false;
       const nodeReadable = new Readable({
-        read() {},
-        destroy() {
+        read(): void {},
+        destroy(): void {
           canceled = true;
         }
       });
@@ -771,7 +771,7 @@ describe('NodeStream', () => {
 
     it('returns a cancelled ReadableStream for a destroyed Node stream', async () => {
       const destroyedStream = new Readable({
-        read() { this.destroy(); }
+        read(): void { this.destroy(); }
       });
       destroyedStream.destroy();
 

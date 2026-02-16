@@ -1,7 +1,7 @@
 import { Convert } from '@enbox/common';
 
-import type { Web5PlatformAgent } from './types/agent.js';
 import type { IdentityMetadata } from './types/identity.js';
+import type { Web5PlatformAgent } from './types/agent.js';
 import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreListParams, DataStoreSetParams } from './store-data.js';
 
 import { DwnInterface } from './types/dwn.js';
@@ -62,7 +62,7 @@ export class DwnIdentityStore extends DwnDataStore<IdentityMetadata> implements 
     });
 
     // Loop through all of the stored IdentityMetadata records and accumulate the objects.
-    let storedIdentities: IdentityMetadata[] = [];
+    const storedIdentities: IdentityMetadata[] = [];
     for (const record of queryReply.entries ?? []) {
       // All IdentityMetadata records are expected to be small enough such that the data is returned
       // with the query results. If a record is returned without `encodedData` this is unexpected so

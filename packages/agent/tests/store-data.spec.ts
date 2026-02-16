@@ -1,19 +1,22 @@
 import sinon from 'sinon';
-import { expect } from 'chai';
+
 import { Convert } from '@enbox/common';
-import { DidJwk, PortableDid } from '@enbox/dids';
+import { DidJwk } from '@enbox/dids';
+import { expect } from 'chai';
+import type { PortableDid } from '@enbox/dids';
 
 import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreListParams, DataStoreSetParams } from '../src/store-data.js';
 
+import type { Web5PlatformAgent } from '../src/types/agent.js';
+import type { ProtocolDefinition, RecordsDeleteMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+
 import { AgentDidApi } from '../src/did-api.js';
-import { TestAgent } from './utils/test-agent.js';
 import { DwnInterface } from '../src/types/dwn.js';
-import { TENANT_SEPARATOR, getDataStoreTenant } from '../src/utils-internal.js';
-import { Web5PlatformAgent } from '../src/types/agent.js';
 import { isPortableDid } from '../src/prototyping/dids/utils.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { TestAgent } from './utils/test-agent.js';
 import { DwnDataStore, InMemoryDataStore } from '../src/store-data.js';
-import { ProtocolDefinition, RecordsDeleteMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import { getDataStoreTenant, TENANT_SEPARATOR } from '../src/utils-internal.js';
 
 class DwnTestStore extends DwnDataStore<PortableDid> implements AgentDataStore<PortableDid> {
   protected name = 'DwnTestStore';
@@ -74,7 +77,7 @@ class DwnTestStore extends DwnDataStore<PortableDid> implements AgentDataStore<P
     });
 
     // Loop through all of the stored PortableDid records and accumulate the objects.
-    let storedObjects: PortableDid[] = [];
+    const storedObjects: PortableDid[] = [];
     for (const record of queryReply.entries ?? []) {
       // All PortableDid records are expected to be small enough such that the data is returned
       // with the query results. If a record is returned without `encodedData` this is unexpected so
@@ -172,7 +175,7 @@ describe('AgentDataStore', () => {
       let testStore: AgentDataStore<PortableDid>;
 
       beforeEach(async () => {
-        testStore =  new TestStore();
+        testStore = new TestStore();
 
         const didApi = new AgentDidApi({
           didMethods    : [DidJwk],
@@ -194,7 +197,7 @@ describe('AgentDataStore', () => {
       describe('delete()', () => {
         it('should delete DID and return true if DID exists', async () => {
           // Create and import a DID.
-          let bearerDid = await DidJwk.create();
+          const bearerDid = await DidJwk.create();
           await testHarness.agent.did.import({ portableDid: await bearerDid.export() });
 
           // Test deleting the DID and validate the result.
@@ -208,7 +211,7 @@ describe('AgentDataStore', () => {
 
         it('should return false if DID does not exist', async () => {
           // Test deleting a non-existent DID using the tenant of the only DID with keys.
-          const deleteResult = await testStore.delete({ id: 'non-existent',  agent: testHarness.agent });
+          const deleteResult = await testStore.delete({ id: 'non-existent', agent: testHarness.agent });
 
           // Validate that a delete could not be carried out.
           expect(deleteResult).to.be.false;
@@ -217,7 +220,7 @@ describe('AgentDataStore', () => {
         it('throws an error if no keys exist for specified DID', async function() {
           // Skip this test for InMemoryTestStore, as checking for keys to sign DWN messages is not
           // relevant given that the store is in-memory.
-          if (TestStore.name === 'InMemoryTestStore') this.skip();
+          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
 
           try {
             await testStore.delete({
@@ -235,7 +238,7 @@ describe('AgentDataStore', () => {
 
         it('throws an error if the DWN delete request fails', async function() {
           // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
-          if (TestStore.name === 'InMemoryTestStore') this.skip();
+          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
 
           // Store test data in the store that will be deleted.
           await testStore.set({
@@ -274,7 +277,7 @@ describe('AgentDataStore', () => {
       describe('get()', () => {
         it('should return a DID by identifier if it exists', async () => {
           // Create and import a DID.
-          let bearerDid = await DidJwk.create();
+          const bearerDid = await DidJwk.create();
           const importedDid = await testHarness.agent.did.import({ portableDid: await bearerDid.export() });
 
           // Test getting the DID.
@@ -297,7 +300,7 @@ describe('AgentDataStore', () => {
         it('throws an error if no keys exist for specified DID', async function() {
           // Skip this test for InMemoryTestStore, as checking for keys to sign DWN messages is not
           // relevant given that the store is in-memory.
-          if (TestStore.name === 'InMemoryTestStore') this.skip();
+          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
 
           try {
             await testStore.get({
@@ -315,7 +318,7 @@ describe('AgentDataStore', () => {
 
         it('throws an error if DWN unexpectedly is missing a record that is present in the index', async function() {
           // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
-          if (TestStore.name === 'InMemoryTestStore') this.skip();
+          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
 
           // Store test data in the store that will be retrieved.
           await testStore.set({
@@ -419,7 +422,7 @@ describe('AgentDataStore', () => {
         it('throws an error if the DID records exceed the DWN maximum data size for query results', async function() {
           // Skip this test for InMemoryTestStore, as the in-memory store returns all records
           // regardless of the size of the data.
-          if (TestStore.name === 'InMemoryTestStore') this.skip();
+          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
 
           const didBytes = Convert.string(new Array(102400 + 1).join('0')).toUint8Array();
 
@@ -454,7 +457,7 @@ describe('AgentDataStore', () => {
       describe('set()', () => {
         it('stores a DID', async () => {
           // Generate a new DID.
-          let bearerDid = await DidJwk.create();
+          const bearerDid = await DidJwk.create();
 
           // Export the DID including its private key material.
           const portableDid = await bearerDid.export();
@@ -478,8 +481,8 @@ describe('AgentDataStore', () => {
 
         it('authors multiple entries in the store with the Agent DID', async () => {
           // Create two did:jwk DIDs to test import.
-          let bearerDid1 = await DidJwk.create();
-          let bearerDid2 = await DidJwk.create();
+          const bearerDid1 = await DidJwk.create();
+          const bearerDid2 = await DidJwk.create();
 
           // Create PortableDid versions of each DID to store.
           const portableDid1: PortableDid = { uri: bearerDid1.uri, document: bearerDid1.document, metadata: bearerDid1.metadata };
@@ -521,7 +524,7 @@ describe('AgentDataStore', () => {
 
         it('throws an error on duplicate DID entry when preventDuplicates=true', async () => {
           // Generate a new DID.
-          let bearerDid = await DidJwk.create();
+          const bearerDid = await DidJwk.create();
 
           // Export the DID including its private key material.
           const portableDid = await bearerDid.export();
@@ -555,10 +558,10 @@ describe('AgentDataStore', () => {
         it('throws an error if no keys exist for specified DID', async function() {
           // Skip this test for InMemoryTestStore, as checking for keys to sign DWN messages is not
           // relevant given that the store is in-memory.
-          if (TestStore.name === 'InMemoryTestStore') this.skip();
+          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
 
           // Generate a new DID.
-          let bearerDid = await DidJwk.create();
+          const bearerDid = await DidJwk.create();
 
           // Export the DID including its private key material.
           const portableDid: PortableDid = { uri: bearerDid.uri, document: bearerDid.document, metadata: bearerDid.metadata };
@@ -579,7 +582,7 @@ describe('AgentDataStore', () => {
 
         it('throws an error if the DWN write request fails', async function() {
           // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
-          if (TestStore.name === 'InMemoryTestStore') this.skip();
+          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
 
           // since we are writing directly to the dwn we first initialize the storage protocol
           await (testStore as DwnDataStore<PortableDid>)['initialize']({ agent: testHarness.agent });
@@ -617,19 +620,19 @@ describe('AgentDataStore', () => {
 
           // Skip this test for InMemoryTestStore, as checking for protocol installation is not
           // relevant given that the store is in-memory.
-          if (TestStore.name === 'InMemoryTestStore') this.skip();
+          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
 
           // spy on the installProtocol method
           const installProtocolSpy = sinon.spy(testStore as any, 'installProtocol');
 
           // create and set did1
-          let bearerDid1 = await DidJwk.create();
+          const bearerDid1 = await DidJwk.create();
           const portableDid1 = { uri: bearerDid1.uri, document: bearerDid1.document, metadata: bearerDid1.metadata };
           await testStore.set({ id: portableDid1.uri, data: portableDid1, agent: testHarness.agent });
           expect(installProtocolSpy.calledOnce).to.be.true;
 
           // create and set did2
-          let bearerDid2 = await DidJwk.create();
+          const bearerDid2 = await DidJwk.create();
           const portableDid2 = { uri: bearerDid2.uri, document: bearerDid2.document, metadata: bearerDid2.metadata };
           await testStore.set({ id: portableDid2.uri, data: portableDid2, agent: testHarness.agent });
           expect(installProtocolSpy.calledOnce).to.be.true; // still only called once
@@ -638,7 +641,7 @@ describe('AgentDataStore', () => {
           (testStore as DwnDataStore<PortableDid>)['_protocolInitializedCache']?.clear();
 
           // create and set did3
-          let bearerDid3 = await DidJwk.create();
+          const bearerDid3 = await DidJwk.create();
           const portableDid3 = { uri: bearerDid3.uri, document: bearerDid3.document, metadata: bearerDid3.metadata };
           await testStore.set({ id: portableDid3.uri, data: portableDid3, agent: testHarness.agent });
           expect(installProtocolSpy.calledOnce).to.be.true; // still only called once
@@ -651,7 +654,7 @@ describe('AgentDataStore', () => {
 
         it('throws an error if dwn failed during query for protocol installation', async function () {
           // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
-          if (TestStore.name === 'InMemoryTestStore') this.skip();
+          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
 
           // stub `processRequest` to return a code other than 200
           sinon.stub(testHarness.agent.dwn, 'processRequest').resolves({
@@ -667,7 +670,7 @@ describe('AgentDataStore', () => {
 
           try {
             // create and set did
-            let bearerDid = await DidJwk.create();
+            const bearerDid = await DidJwk.create();
             const portableDid = { uri: bearerDid.uri, document: bearerDid.document, metadata: bearerDid.metadata };
             await testStore.set({ id: portableDid.uri, data: portableDid, agent: testHarness.agent });
             expect.fail('Expected an error to be thrown');
@@ -678,7 +681,7 @@ describe('AgentDataStore', () => {
 
         it('throws an error if dwn failed during protocol installation', async function () {
           // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
-          if (TestStore.name === 'InMemoryTestStore') this.skip();
+          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
 
           // stub `processRequest` to return a code other than 200
           sinon.stub(testHarness.agent.dwn, 'processRequest').resolves({
@@ -707,7 +710,7 @@ describe('AgentDataStore', () => {
           it('updates an existing record', async () => {
 
             // Create and import a DID.
-            let bearerDid = await DidJwk.create();
+            const bearerDid = await DidJwk.create();
             const importedDid = await testHarness.agent.did.import({
               portableDid : await bearerDid.export(),
               tenant      : testHarness.agent.agentDid.uri

@@ -1,6 +1,6 @@
-import { Sha256, CryptoUtils } from '@enbox/crypto';
 import { concatenateUrl } from './utils.js';
 import { Convert } from '@enbox/common';
+import { CryptoUtils, Sha256 } from '@enbox/crypto';
 
 /**
  * A client for registering tenants with a DWN.
@@ -35,7 +35,7 @@ export class DwnRegistrar {
     const proofOfWorkChallengeGetResponse = await fetch(proofOfWorkEndpoint, {
       method: 'GET',
     });
-    const { challengeNonce, maximumAllowedHashValue} = await proofOfWorkChallengeGetResponse.json();
+    const { challengeNonce, maximumAllowedHashValue } = await proofOfWorkChallengeGetResponse.json();
 
     // create registration data based on the hash of the terms-of-service and the DID
     const registrationData = {
@@ -77,7 +77,7 @@ export class DwnRegistrar {
    * Computes the SHA-256 hash of the given array of strings.
    */
   public static async hashAsHexString(input: string): Promise<string> {
-    const hashAsBytes = await Sha256.digest({ data: Convert.string(input).toUint8Array()});
+    const hashAsBytes = await Sha256.digest({ data: Convert.string(input).toUint8Array() });
     const hashAsHex = Convert.uint8Array(hashAsBytes).toHex();
     return hashAsHex;
   }

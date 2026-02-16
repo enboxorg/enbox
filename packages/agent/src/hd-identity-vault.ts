@@ -1,21 +1,21 @@
+import type { DidDhtCreateOptions } from '@enbox/dids';
 import type { Jwk } from '@enbox/crypto';
 import type { KeyValueStore } from '@enbox/common';
-import { DidDhtCreateOptions } from '@enbox/dids';
 
 import { HDKey } from 'ed25519-keygen/hdkey';
+import { wordlist } from '@scure/bip39/wordlists/english';
 import { BearerDid, DidDht } from '@enbox/dids';
 import { Convert, MemoryStore } from '@enbox/common';
-import { wordlist } from '@scure/bip39/wordlists/english';
 import { generateMnemonic, mnemonicToSeed, validateMnemonic } from '@scure/bip39';
 
 import type { JweHeaderParams } from './prototyping/crypto/jose/jwe.js';
-import type { IdentityVaultBackup, IdentityVaultBackupData, IdentityVaultStatus, IdentityVaultParams, IdentityVault } from './types/identity-vault.js';
+import type { IdentityVault, IdentityVaultBackup, IdentityVaultBackupData, IdentityVaultParams, IdentityVaultStatus } from './types/identity-vault.js';
 
 import { AgentCryptoApi } from './crypto-api.js';
-import { LocalKeyManager } from './local-key-manager.js';
-import { isPortableDid } from './prototyping/dids/utils.js';
-import { DeterministicKeyGenerator } from './utils-internal.js';
 import { CompactJwe } from './prototyping/crypto/jose/jwe-compact.js';
+import { DeterministicKeyGenerator } from './utils-internal.js';
+import { isPortableDid } from './prototyping/dids/utils.js';
+import { LocalKeyManager } from './local-key-manager.js';
 
 /**
  * Extended initialization parameters for HdIdentityVault, including an optional recovery phrase
@@ -255,7 +255,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       }));
       contentEncryptionKey = Convert.uint8Array(contentEncryptionKeyBytes).toObject() as Jwk;
 
-    } catch (error: any) {
+    } catch {
       throw new Error(`HdIdentityVault: Unable to change the vault password due to an incorrectly entered old password.`);
     }
 
@@ -431,11 +431,11 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     // A non-secret static info value is combined with the vault private key as input to HKDF
     // (Hash-based Key Derivation Function) to derive a 32-byte content encryption key (CEK).
     const contentEncryptionKey = await this.crypto.deriveKey({
-      algorithm           : 'HKDF-512',            // key derivation function
+      algorithm           : 'HKDF-512', // key derivation function
       baseKeyBytes        : vaultHdKey.privateKey, // input keying material
-      salt                : '',                    // empty salt because private key is sufficiently random
-      info                : 'vault_cek',           // non-secret application specific information
-      derivedKeyAlgorithm : 'A256GCM'              // derived key algorithm
+      salt                : '', // empty salt because private key is sufficiently random
+      info                : 'vault_cek', // non-secret application specific information
+      derivedKeyAlgorithm : 'A256GCM' // derived key algorithm
     });
 
     /**
@@ -446,11 +446,11 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     // A non-secret static info value is combined with the vault public key as input to HKDF
     // (Hash-based Key Derivation Function) to derive a new 32-byte salt.
     const saltInput = await this.crypto.deriveKeyBytes({
-      algorithm    : 'HKDF-512',           // key derivation function
+      algorithm    : 'HKDF-512', // key derivation function
       baseKeyBytes : vaultHdKey.publicKey, // input keying material
-      salt         : '',                   // empty salt because public key is sufficiently random
-      info         : 'vault_unlock_salt',  // non-secret application specific information
-      length       : 256,                  // derived key length, in bits
+      salt         : '', // empty salt because public key is sufficiently random
+      info         : 'vault_unlock_salt', // non-secret application specific information
+      length       : 256, // derived key length, in bits
     });
 
     // Construct the JWE header.
@@ -642,7 +642,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     }
 
     // Clear the vault content encryption key (CEK), effectively locking the vault.
-    if (this._contentEncryptionKey) this._contentEncryptionKey.k = '';
+    if (this._contentEncryptionKey) {this._contentEncryptionKey.k = '';}
     this._contentEncryptionKey = undefined;
   }
 
@@ -708,7 +708,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       // Attempt to unlock the vault with the given `password`.
       await this.unlock({ password });
 
-    } catch (error: any) {
+    } catch {
       // If the restore operation fails, revert the data store to the status and contents that were
       // saved before the restore operation was attempted.
       await this.setStatus(previousStatus);
@@ -769,7 +769,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       // Save the content encryption key in memory, thereby unlocking the vault.
       this._contentEncryptionKey = contentEncryptionKey;
 
-    } catch (error: any) {
+    } catch {
       throw new Error(`HdIdentityVault: Unable to unlock the vault due to an incorrect password.`);
     }
   }
@@ -841,7 +841,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    */
   private async setStatus({ initialized, lastBackup, lastRestore }: Partial<IdentityVaultStatus>): Promise<boolean> {
     // Get the current status values from the store, if any.
-    let vaultStatus = await this.getStatus();
+    const vaultStatus = await this.getStatus();
 
     // Update the status properties with new values specified, if any.
     vaultStatus.initialized = initialized ?? vaultStatus.initialized;

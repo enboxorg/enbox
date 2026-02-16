@@ -1,15 +1,17 @@
-import { Dialect } from './dialect.js';
-import {
-  ColumnDataType,
+import type { Dialect } from './dialect.js';
+import type {
   ColumnBuilderCallback,
+  ColumnDataType,
   CreateTableBuilder,
   InsertObject,
   InsertQueryBuilder,
   Kysely,
-  PostgresDialect as KyselyPostgresDialect,
   SelectExpression,
   Selection,
-  Transaction,
+  Transaction } from 'kysely';
+
+import {
+  PostgresDialect as KyselyPostgresDialect
 } from 'kysely';
 
 export class PostgresDialect extends KyselyPostgresDialect implements Dialect {
@@ -51,7 +53,10 @@ export class PostgresDialect extends KyselyPostgresDialect implements Dialect {
     referenceColumnName: string,
     onDeleteAction: 'cascade' | 'no action' | 'restrict' | 'set null' | 'set default',
   ): CreateTableBuilder<TB & string> {
-    return builder.addColumn(columnName, columnType, (col) => col.notNull().references(`${referenceTable}.${referenceColumnName}`).onDelete(onDeleteAction));
+    return builder.addColumn(
+      columnName, columnType,
+      (col) => col.notNull().references(`${referenceTable}.${referenceColumnName}`).onDelete(onDeleteAction),
+    );
   }
 
   insertThenReturnId<DB, TB extends keyof DB = keyof DB, SE extends SelectExpression<DB, TB & string> = any>(

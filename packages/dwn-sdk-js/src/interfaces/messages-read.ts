@@ -56,7 +56,7 @@ export class MessagesRead extends AbstractMessage<MessagesReadMessage> {
   private static validateMessageCid(messageCid: string): void {
     try {
       Cid.parseCid(messageCid);
-    } catch (_) {
+    } catch {
       throw new DwnError(DwnErrorCode.MessagesReadInvalidCid, `${messageCid} is not a valid CID`);
     }
   }

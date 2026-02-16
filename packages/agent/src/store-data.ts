@@ -3,24 +3,24 @@ import type { Jwk } from '@enbox/crypto';
 import ms from 'ms';
 import { Convert, NodeStream, TtlCache } from '@enbox/common';
 
+import type { DwnMessageParams } from './types/dwn.js';
 import type { Web5PlatformAgent } from './types/agent.js';
+import type { ProtocolDefinition, RecordsReadReplyEntry } from '@enbox/dwn-sdk-js';
 
-import { TENANT_SEPARATOR } from './utils-internal.js';
-import { getDataStoreTenant } from './utils-internal.js';
-import { DwnInterface, DwnMessageParams } from './types/dwn.js';
-import { ProtocolDefinition, RecordsReadReplyEntry } from '@enbox/dwn-sdk-js';
+import { DwnInterface } from './types/dwn.js';
+import { getDataStoreTenant, TENANT_SEPARATOR } from './utils-internal.js';
 
 export type DataStoreTenantParams = {
   agent: Web5PlatformAgent;
   tenant?: string;
-}
+};
 
 export type DataStoreListParams = DataStoreTenantParams;
 
 export type DataStoreGetParams = DataStoreTenantParams & {
   id: string;
   useCache?: boolean;
-}
+};
 
 export type DataStoreSetParams<TStoreObject> = DataStoreTenantParams & {
   id: string;
@@ -28,11 +28,11 @@ export type DataStoreSetParams<TStoreObject> = DataStoreTenantParams & {
   preventDuplicates?: boolean;
   updateExisting?: boolean;
   useCache?: boolean;
-}
+};
 
 export type DataStoreDeleteParams = DataStoreTenantParams & {
   id: string;
-}
+};
 
 export interface AgentDataStore<TStoreObject> {
   delete(params: DataStoreDeleteParams): Promise<boolean>;
@@ -88,10 +88,10 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     const tenantDid = await getDataStoreTenant({ agent, tenant, didUri: id });
 
     // Look up the DWN record ID of the object in the store with the given `id`.
-    let matchingRecordId = await this.lookupRecordId({ id, tenantDid, agent });
+    const matchingRecordId = await this.lookupRecordId({ id, tenantDid, agent });
 
     // Return false if the given ID was not found in the store.
-    if (!matchingRecordId) return false;
+    if (!matchingRecordId) {return false;}
 
     // If a record for the given ID was found, attempt to delete it.
     const { reply: { status } } = await agent.dwn.processRequest({
@@ -119,16 +119,16 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     const tenantDid = await getDataStoreTenant({ agent, tenant, didUri: id });
 
     // Look up the DWN record ID of the object in the store with the given `id`.
-    let matchingRecordId = await this.lookupRecordId({ id, tenantDid, agent });
+    const matchingRecordId = await this.lookupRecordId({ id, tenantDid, agent });
 
     // Return undefined if no matches were found.
-    if (!matchingRecordId) return undefined;
+    if (!matchingRecordId) {return undefined;}
 
     // Retrieve and return the stored object.
     return await this.getRecord({ recordId: matchingRecordId, tenantDid, agent, useCache });
   }
 
-  public async list({ agent, tenant}: DataStoreListParams): Promise<TStoreObject[]> {
+  public async list({ agent, tenant }: DataStoreListParams): Promise<TStoreObject[]> {
     // Determine the tenant identifier (DID) for the list operation.
     const tenantDid = await getDataStoreTenant({ tenant, agent });
 
@@ -199,13 +199,13 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    * Initialize the relevant protocol for the given tenant.
    * This confirms that the storage protocol is configured, otherwise it will be installed.
    */
-  public async initialize({ tenant, agent }: DataStoreTenantParams) {
+  public async initialize({ tenant, agent }: DataStoreTenantParams): Promise<void> {
     const tenantDid = await getDataStoreTenant({ agent, tenant });
     if (this._protocolInitializedCache.has(tenantDid)) {
       return;
     }
 
-    const { reply: { status, entries }} = await agent.dwn.processRequest({
+    const { reply: { status, entries } } = await agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
       messageType   : DwnInterface.ProtocolsQuery,
@@ -245,7 +245,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     if (useCache) {
       const record = this._cache.get(recordId);
       // If the record ID was present in the cache, return the associated store object.
-      if (record) return record;
+      if (record) {return record;}
       // Otherwise, continue to read from the store.
     }
 
@@ -275,7 +275,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
   /**
    * Install the protocol for the given tenant using a `ProtocolsConfigure` message.
    */
-  private async installProtocol(tenant: string, agent: Web5PlatformAgent) {
+  private async installProtocol(tenant: string, agent: Web5PlatformAgent): Promise<void> {
     const { reply : { status } } = await agent.dwn.processRequest({
       author        : tenant,
       target        : tenant,
@@ -360,7 +360,7 @@ export class InMemoryDataStore<TStoreObject extends Record<string, any> = Jwk> i
     return this.store.get(`${tenantDid}${TENANT_SEPARATOR}${id}`);
   }
 
-  public async list({ agent, tenant}: DataStoreListParams): Promise<TStoreObject[]> {
+  public async list({ agent, tenant }: DataStoreListParams): Promise<TStoreObject[]> {
     // Determine the tenant identifier (DID) for the list operation.
     const tenantDid = await getDataStoreTenant({ tenant, agent });
 

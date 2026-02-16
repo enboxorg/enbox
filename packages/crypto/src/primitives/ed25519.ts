@@ -1,5 +1,5 @@
 import { Convert } from '@enbox/common';
-import { ed25519, edwardsToMontgomeryPub, edwardsToMontgomeryPriv, x25519 } from '@noble/curves/ed25519';
+import { ed25519, edwardsToMontgomeryPriv, edwardsToMontgomeryPub, x25519 } from '@noble/curves/ed25519';
 
 import type { Jwk } from '../jose/jwk.js';
 import type { ComputePublicKeyParams, GetPublicKeyParams, SignParams, VerifyParams } from '../types/params-direct.js';
@@ -86,7 +86,7 @@ export class Ed25519 {
     privateKeyBytes: Uint8Array;
   }): Promise<Jwk> {
     // Derive the public key from the private key.
-    const publicKeyBytes  = ed25519.getPublicKey(privateKeyBytes);
+    const publicKeyBytes = ed25519.getPublicKey(privateKeyBytes);
 
     // Construct the private key in JWK format.
     const privateKey: Jwk = {
@@ -167,10 +167,10 @@ export class Ed25519 {
     ComputePublicKeyParams
   ): Promise<Jwk> {
     // Convert the provided private key to a byte array.
-    const privateKeyBytes  = await Ed25519.privateKeyToBytes({ privateKey: key });
+    const privateKeyBytes = await Ed25519.privateKeyToBytes({ privateKey: key });
 
     // Derive the public key from the private key.
-    const publicKeyBytes  = ed25519.getPublicKey(privateKeyBytes);
+    const publicKeyBytes = ed25519.getPublicKey(privateKeyBytes);
 
     // Construct the public key in JWK format.
     const publicKey: Jwk = {
@@ -355,7 +355,7 @@ export class Ed25519 {
     }
 
     // Remove the private key property ('d') and make a shallow copy of the provided key.
-    let { d, ...publicKey } = key;
+    const { d, ...publicKey } = key;
 
     // If the key ID is undefined, set it to the JWK thumbprint.
     publicKey.kid ??= await computeJwkThumbprint({ jwk: publicKey });
@@ -502,7 +502,7 @@ export class Ed25519 {
       // Check if points are on the Twisted Edwards curve.
       point.assertValidity();
 
-    } catch(error: any) {
+    } catch {
       return false;
     }
 

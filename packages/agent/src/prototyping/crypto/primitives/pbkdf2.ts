@@ -43,7 +43,9 @@ export interface Pbkdf2Params {
  * Notes:
  * - The `baseKeyBytes` that will be the input key material for PBKDF2 is expected to be a low-entropy
  *   value, such as a password or passphrase. It should be kept confidential.
- * - In 2023, {@link https://web.archive.org/web/20230123232056/https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2 | OWASP recommended}
+ * - In 2023,
+ *   {@link https://web.archive.org/web/20230123232056/https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2
+ *   | OWASP recommended}
  *   a minimum of 600,000 iterations for PBKDF2-HMAC-SHA256 and 210,000 for PBKDF2-HMAC-SHA512.
  *
  * @example
@@ -94,11 +96,11 @@ export class Pbkdf2 {
 
     // Import the password as a raw key for use with the Web Crypto API.
     const webCryptoKey = await webCrypto.importKey(
-      'raw',              // key format is raw bytes
-      baseKeyBytes,       // key data to import
+      'raw', // key format is raw bytes
+      baseKeyBytes, // key data to import
       { name: 'PBKDF2' }, // algorithm identifier
-      false,              // key is not extractable
-      ['deriveBits']      // key usages
+      false, // key is not extractable
+      ['deriveBits'] // key usages
     );
 
     // Derive the bytes using the Web Crypto API.

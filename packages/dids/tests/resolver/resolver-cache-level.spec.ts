@@ -1,16 +1,16 @@
-import sinon from 'sinon';
 import { expect } from 'chai';
 import { Level } from 'level';
+import sinon from 'sinon';
 
 import type { DidResolver, DidResolverCache } from '../../src/types/did-resolution.js';
 
 import { DidJwk } from '../../src/methods/did-jwk.js';
-import { UniversalResolver } from '../../src/resolver/universal-resolver.js';
 import { DidResolverCacheLevel } from '../../src/resolver/resolver-cache-level.js';
+import { UniversalResolver } from '../../src/resolver/universal-resolver.js';
 
 describe('DidResolverCacheLevel', () => {
   let cache: DidResolverCacheLevel;
-  let cacheStoreLocation = '__TESTDATA__/DID_RESOLVERCACHE';
+  const cacheStoreLocation = '__TESTDATA__/DID_RESOLVERCACHE';
   let clock: sinon.SinonFakeTimers;
 
   before(() => {

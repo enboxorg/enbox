@@ -58,7 +58,7 @@ export class DwnDidStore extends DwnDataStore<PortableDid> implements AgentDataS
     });
 
     // Loop through all of the stored DID records and accumulate the DID objects.
-    let storedDids: PortableDid[] = [];
+    const storedDids: PortableDid[] = [];
     for (const record of queryReply.entries ?? []) {
       // All DID records are expected to be small enough such that the data is returned with the
       // query results. If a record is returned without `encodedData` this is unexpected so throw

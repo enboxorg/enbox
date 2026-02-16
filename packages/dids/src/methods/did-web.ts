@@ -75,7 +75,7 @@ export class DidWeb extends DidMethod {
       const response = await fetch(didDocumentUrl);
 
       // If the response status code is not 200, return an error.
-      if (!response.ok) throw new Error('HTTP error status code returned');
+      if (!response.ok) {throw new Error('HTTP error status code returned');}
 
       // Parse the DID document.
       const didDocument = await response.json() as DidDocument;
@@ -85,7 +85,7 @@ export class DidWeb extends DidMethod {
         didDocument,
       };
 
-    } catch (error: any) {
+    } catch {
       // If the DID document could not be retrieved, return an error.
       return {
         ...EMPTY_DID_RESOLUTION_RESULT,

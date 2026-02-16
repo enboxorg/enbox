@@ -1,8 +1,10 @@
-import { DwnDatabaseType } from './types.js';
-import { Dialect } from './dialect/dialect.js';
+import type { Dialect } from './dialect/dialect.js';
+import type { DwnDatabaseType } from './types.js';
+import type { ManagedResumableTask, ResumableTaskStore } from '@enbox/dwn-sdk-js';
+
+import { Cid } from '@enbox/dwn-sdk-js';
 import { executeWithRetryIfDatabaseIsLocked } from './utils/transaction.js';
 import { Kysely } from 'kysely';
-import { Cid, ManagedResumableTask, ResumableTaskStore } from '@enbox/dwn-sdk-js';
 
 export class ResumableTaskStoreSql implements ResumableTaskStore {
   private static readonly taskTimeoutInSeconds = 60;
@@ -30,7 +32,7 @@ export class ResumableTaskStoreSql implements ResumableTaskStore {
 
     // else create the table and corresponding indexes
 
-    let table = this.#db.schema
+    const table = this.#db.schema
       .createTable(tableName)
       .ifNotExists() // kept to show supported by all dialects in contrast to ifNotExists() below, though not needed due to hasTable() check above
       .addColumn('id', 'varchar(255)', (col) => col.primaryKey())
@@ -83,7 +85,7 @@ export class ResumableTaskStoreSql implements ResumableTaskStore {
 
     let tasks: DwnDatabaseType['resumableTasks'][] = [];
 
-    const operation = async (transaction) => {
+    const operation = async (transaction): Promise<void> => {
       tasks = await transaction
         .selectFrom('resumableTasks')
         .selectAll()

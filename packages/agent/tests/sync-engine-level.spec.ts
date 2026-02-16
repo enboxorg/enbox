@@ -1,21 +1,23 @@
 import sinon from 'sinon';
-import { expect } from 'chai';
+
+import { Convert } from '@enbox/common';
 import { CryptoUtils } from '@enbox/crypto';
-import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, ProtocolDefinition, Time } from '@enbox/dwn-sdk-js';
+import { expect } from 'chai';
+import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { SyncIdentityOptions } from '../src/index.js';
+import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, Time } from '@enbox/dwn-sdk-js';
 
 import type { BearerIdentity } from '../src/bearer-identity.js';
 
-import { AgentSyncApi } from '../src/sync-api.js';
-import { TestAgent } from './utils/test-agent.js';
-import { DwnInterface } from '../src/types/dwn.js';
-import { testDwnUrl } from './utils/test-config.js';
-import { SyncEngineLevel } from '../src/sync-engine-level.js';
-import { PlatformAgentTestHarness } from '../src/test-harness.js';
-import { Convert } from '@enbox/common';
 import { AbstractLevel } from 'abstract-level';
-import { SyncIdentityOptions } from '../src/index.js';
+import { AgentSyncApi } from '../src/sync-api.js';
+import { DwnInterface } from '../src/types/dwn.js';
+import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { SyncEngineLevel } from '../src/sync-engine-level.js';
+import { TestAgent } from './utils/test-agent.js';
+import { testDwnUrl } from './utils/test-config.js';
 
-let testDwnUrls: string[] = [testDwnUrl];
+const testDwnUrls: string[] = [testDwnUrl];
 
 describe('SyncEngineLevel', () => {
   let testHarness: PlatformAgentTestHarness;
@@ -262,7 +264,7 @@ describe('SyncEngineLevel', () => {
       // create 3 remote records
       const remoteRecords: string[] = [];
       for (let i = 0; i < 3; i++) {
-        let writeResponse = await testHarness.agent.dwn.sendRequest({
+        const writeResponse = await testHarness.agent.dwn.sendRequest({
           author        : alice.did.uri,
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
@@ -489,7 +491,7 @@ describe('SyncEngineLevel', () => {
         try {
           await syncEngine.sync();
           expect.fail('Expected an error to be thrown');
-        } catch(error:any) {
+        } catch (error:any) {
           expect(error.message).to.equal('SyncEngineLevel: Sync operation is already in progress.');
         }
 
@@ -535,7 +537,7 @@ describe('SyncEngineLevel', () => {
     describe('pull()', () => {
       it('synchronizes records that have been updated', async () => {
         // Write a test record to Alice's remote DWN.
-        let writeResponse1 = await testHarness.agent.dwn.sendRequest({
+        const writeResponse1 = await testHarness.agent.dwn.sendRequest({
           author        : alice.did.uri,
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
@@ -550,7 +552,7 @@ describe('SyncEngineLevel', () => {
         const testRecordId = writeResponse1.message!.recordId;
 
         // const update the record
-        let updateResponse = await testHarness.agent.dwn.sendRequest({
+        const updateResponse = await testHarness.agent.dwn.sendRequest({
           author        : alice.did.uri,
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
@@ -993,7 +995,7 @@ describe('SyncEngineLevel', () => {
 
       it('synchronizes records for 1 identity from remote DWN to local DWN', async () => {
         // Write a test record to Alice's remote DWN.
-        let writeResponse = await testHarness.agent.dwn.sendRequest({
+        const writeResponse = await testHarness.agent.dwn.sendRequest({
           author        : alice.did.uri,
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
@@ -1044,7 +1046,7 @@ describe('SyncEngineLevel', () => {
 
 
         // Add another record for a subsequent sync.
-        let writeResponse2 = await testHarness.agent.dwn.sendRequest({
+        const writeResponse2 = await testHarness.agent.dwn.sendRequest({
           author        : alice.did.uri,
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
@@ -1217,7 +1219,7 @@ describe('SyncEngineLevel', () => {
     describe('push()', () => {
       it('synchronizes records that have been updated', async () => {
         // Write a test record to Alice's local DWN.
-        let writeResponse1 = await testHarness.agent.dwn.processRequest({
+        const writeResponse1 = await testHarness.agent.dwn.processRequest({
           author        : alice.did.uri,
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
@@ -1232,7 +1234,7 @@ describe('SyncEngineLevel', () => {
         const testRecordId = writeResponse1.message!.recordId;
 
         // const update the record
-        let updateResponse = await testHarness.agent.dwn.processRequest({
+        const updateResponse = await testHarness.agent.dwn.processRequest({
           author        : alice.did.uri,
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
@@ -1669,7 +1671,7 @@ describe('SyncEngineLevel', () => {
 
       it('synchronizes records for 1 identity from local DWN to remote DWN', async () => {
         // Write a record that we can use for this test.
-        let writeResponse = await testHarness.agent.dwn.processRequest({
+        const writeResponse = await testHarness.agent.dwn.processRequest({
           author        : alice.did.uri,
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
@@ -1713,7 +1715,7 @@ describe('SyncEngineLevel', () => {
         expect(remoteDwnQueryReply.entries).to.have.length(1); // Record does exist on remote DWN.
 
         // Add another record for a subsequent sync.
-        let writeResponse2 = await testHarness.agent.dwn.processRequest({
+        const writeResponse2 = await testHarness.agent.dwn.processRequest({
           author        : alice.did.uri,
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
@@ -1776,7 +1778,7 @@ describe('SyncEngineLevel', () => {
           author        : alice.did.uri,
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsQuery,
-          messageParams : { filter: { recordId: record.message!.recordId }}
+          messageParams : { filter: { recordId: record.message!.recordId } }
         });
 
         expect(remoteReply.status.code).to.equal(200);
@@ -1790,7 +1792,7 @@ describe('SyncEngineLevel', () => {
           author        : alice.did.uri,
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsQuery,
-          messageParams : { filter: { recordId: record.message!.recordId }}
+          messageParams : { filter: { recordId: record.message!.recordId } }
         });
 
         expect(remoteReply2.status.code).to.equal(200);
@@ -1814,7 +1816,7 @@ describe('SyncEngineLevel', () => {
 
       it('synchronizes records for multiple identities from local DWN to remote DWN', async () => {
         // Create a second Identity to author the DWN messages.
-        const bob  = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
+        const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
 
         // Write a test record to Alice's local DWN.
         let writeResponse = await testHarness.agent.dwn.processRequest({
@@ -2043,7 +2045,7 @@ describe('SyncEngineLevel', () => {
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
         const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
 
-        syncSpy.returns(new Promise<void>((resolve, reject) => {
+        syncSpy.returns(new Promise<void>((resolve, _reject) => {
           clock.setTimeout(() => {
             resolve();
           }, 100);
@@ -2245,14 +2247,14 @@ describe('SyncEngineLevel', () => {
               try {
                 await stopPromise;
                 resolve();
-              } catch(error) {
+              } catch (error) {
                 reject(error);
               }
             });
 
           });
           expect.fail('Expected an error to be thrown');
-        } catch(error:any) {
+        } catch (error:any) {
           expect(error.message).to.equal('SyncEngineLevel: Existing sync operation did not complete within 2000 milliseconds.');
         }
 
@@ -2312,14 +2314,14 @@ describe('SyncEngineLevel', () => {
               try {
                 await stopPromise;
                 resolve();
-              } catch(error) {
+              } catch (error) {
                 reject(error);
               }
             });
 
           });
           expect.fail('Expected an error to be thrown');
-        } catch(error:any) {
+        } catch (error:any) {
           expect(error.message).to.equal('SyncEngineLevel: Existing sync operation did not complete within 10 milliseconds.');
         }
 
@@ -2361,7 +2363,7 @@ describe('SyncEngineLevel', () => {
         try {
           await testHarness.agent.sync.registerIdentity({ did, options: syncOption });
           expect.fail('Expected an error to be thrown');
-        } catch(error:any) {
+        } catch (error:any) {
           expect(error.message).to.equal(`SyncEngineLevel: Identity with DID ${did} is already registered.`);
         }
       });
@@ -2388,7 +2390,7 @@ describe('SyncEngineLevel', () => {
         try {
           await testHarness.agent.sync.unregisterIdentity(did);
           expect.fail('Expected an error to be thrown');
-        } catch(error:any) {
+        } catch (error:any) {
           expect(error.message).to.equal(`SyncEngineLevel: Identity with DID ${did} is not registered.`);
         }
       });
@@ -2407,14 +2409,14 @@ describe('SyncEngineLevel', () => {
       it('throws if underlying DB throws an error when getting identity options', async () => {
         // stub the sublevel get method to throw an error
         const stubbedSublevel = {
-          get: (_key:string) => { throw { code: 'DB_ERROR' }; }
+          get: (_key:string): never => { throw { code: 'DB_ERROR' }; }
         };
         sinon.stub(syncEngine['_db'], 'sublevel').withArgs('registeredIdentities').returns(stubbedSublevel as any);
 
         try {
           await testHarness.agent.sync.getIdentityOptions('did:example:123');
           expect.fail('Expected an error to be thrown');
-        } catch(error:any) {
+        } catch (error:any) {
           expect(error.message).to.equal('SyncEngineLevel: Error reading level: DB_ERROR.');
         }
       });
@@ -2448,7 +2450,7 @@ describe('SyncEngineLevel', () => {
         try {
           await testHarness.agent.sync.updateIdentityOptions({ did, options: syncOption });
           expect.fail('Expected an error to be thrown');
-        } catch(error:any) {
+        } catch (error:any) {
           expect(error.message).to.equal(`SyncEngineLevel: Identity with DID ${did} is not registered.`);
         }
       });
@@ -2597,7 +2599,7 @@ describe('SyncEngineLevel', () => {
         expect(remoteProtocolsQueryReply.entries).to.have.deep.equal([ protocolsFoo.message, protocolsBar.message ]);
 
         // query remote to see foo record
-        let remoteFooRecordsResponse = await testHarness.agent.dwn.sendRequest({
+        const remoteFooRecordsResponse = await testHarness.agent.dwn.sendRequest({
           author        : aliceSync.did.uri,
           target        : aliceSync.did.uri,
           messageType   : DwnInterface.RecordsQuery,
@@ -2607,10 +2609,10 @@ describe('SyncEngineLevel', () => {
             }
           }
         });
-        let remoteFooRecordsReply = remoteFooRecordsResponse.reply;
+        const remoteFooRecordsReply = remoteFooRecordsResponse.reply;
         expect(remoteFooRecordsReply.status.code).to.equal(200);
         expect(remoteFooRecordsReply.entries).to.have.length(1);
-        let remoteFooRecordIds = remoteFooRecordsReply.entries?.map(entry => entry.recordId);
+        const remoteFooRecordIds = remoteFooRecordsReply.entries?.map(entry => entry.recordId);
         expect(remoteFooRecordIds).to.have.members([ recordFoo.message!.recordId ]);
 
         // query remote to see bar record

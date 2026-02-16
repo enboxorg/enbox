@@ -32,7 +32,9 @@ export class Did {
   static readonly FRAGMENT_PATTERN = `(#.*)?`;
   /** Regular expression pattern for matching all of the components of a DID URI. */
   static readonly DID_URI_PATTERN = new RegExp(
-    `^did:(?<method>${Did.METHOD_PATTERN}):(?<id>${Did.METHOD_ID_PATTERN})(?<path>${Did.PATH_PATTERN})(?<query>${Did.QUERY_PATTERN})(?<fragment>${Did.FRAGMENT_PATTERN})$`
+    '^did:(?<method>' + Did.METHOD_PATTERN + '):(?<id>' + Did.METHOD_ID_PATTERN + ')' +
+    '(?<path>' + Did.PATH_PATTERN + ')(?<query>' + Did.QUERY_PATTERN + ')' +
+    '(?<fragment>' + Did.FRAGMENT_PATTERN + ')$'
   );
 
   /**
@@ -141,13 +143,13 @@ export class Did {
    */
   static parse(didUri: string): Did | null {
     // Return null if the input string is empty or not provided.
-    if (!didUri) return null;
+    if (!didUri) {return null;}
 
     // Execute the regex pattern on the input string to extract URI components.
     const match = Did.DID_URI_PATTERN.exec(didUri);
 
     // If the pattern does not match, or if the required groups are not found, return null.
-    if (!match || !match.groups) return null;
+    if (!match || !match.groups) {return null;}
 
     // Extract the method, id, params, path, query, and fragment from the regex match groups.
     const { method, id, path, query, fragment } = match.groups;
@@ -160,13 +162,13 @@ export class Did {
     };
 
     // If path is present, add it to the Did object.
-    if (path) did.path = path;
+    if (path) {did.path = path;}
 
     // If query is present, add it to the Did object, removing the leading '?'.
-    if (query) did.query = query.slice(1);
+    if (query) {did.query = query.slice(1);}
 
     // If fragment is present, add it to the Did object, removing the leading '#'.
-    if (fragment) did.fragment = fragment.slice(1);
+    if (fragment) {did.fragment = fragment.slice(1);}
 
     // If query params are present, parse them into a key-value object and add to the Did object.
     if (query) {

@@ -1,5 +1,5 @@
-import type { Jwk } from '../jose/jwk.js';
 import type { Cipher } from '../types/cipher.js';
+import type { Jwk } from '../jose/jwk.js';
 import type { KeyGenerator } from '../types/key-generator.js';
 import type { DecryptParams, EncryptParams, GenerateKeyParams } from '../types/params-direct.js';
 

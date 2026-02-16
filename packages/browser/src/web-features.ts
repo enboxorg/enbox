@@ -6,15 +6,15 @@
   so take care to gate additions to only activate code in the right env, such as a Service Worker scope or page window.
 */
 
-import { UniversalResolver, DidDht, DidWeb } from '@enbox/dids';
+import { DidDht, DidWeb, UniversalResolver } from '@enbox/dids';
 
 // This is in place to prevent our `bundler-bonanza` repo from failing for Node CJS builds
 // Not sure if this is working as expected in all environments, crated an issue
 // TODO: https://github.com/enboxorg/enbox/issues/767
-function importMetaIfSupported() {
+function importMetaIfSupported(): any {
   try {
     return new Function('return import.meta')();
-  } catch (_error) {
+  } catch {
     return undefined;
   }
 }
@@ -26,7 +26,7 @@ const didUrlRegex = /^https?:\/\/dweb\/([^/]+)\/?(.*)?$/;
 const httpToHttpsRegex = /^http:/;
 const trailingSlashRegex = /\/$/;
 
-async function getDwnEndpoints(did) {
+async function getDwnEndpoints(did: any): Promise<string[]> {
   const { didDocument } = await DidResolver.resolve(did);
   const endpoints = didDocument?.service?.find(
     (service) => service.type === 'DecentralizedWebNode'
@@ -36,14 +36,14 @@ async function getDwnEndpoints(did) {
   );
 }
 
-async function handleEvent(event, did, path, options) {
+async function handleEvent(event: any, did: any, path: any, options: any): Promise<Response> {
   const drl = event.request.url
     .replace(httpToHttpsRegex, 'https:')
     .replace(trailingSlashRegex, '');
   const responseCache = await caches.open('drl');
   const cachedResponse = await responseCache.match(drl);
   if (cachedResponse) {
-    if (!navigator.onLine) return cachedResponse;
+    if (!navigator.onLine) {return cachedResponse;}
     const match = await options?.onCacheCheck(event, drl);
     if (match) {
       const cacheTime = cachedResponse.headers.get('dwn-cache-time');
@@ -65,7 +65,7 @@ async function handleEvent(event, did, path, options) {
         },
       });
     } else
-      return await fetchResource(event, did, drl, path, responseCache, options);
+    {return await fetchResource(event, did, drl, path, responseCache, options);}
   } catch (error) {
     if (error instanceof Response) {
       return error;
@@ -75,7 +75,7 @@ async function handleEvent(event, did, path, options) {
   }
 }
 
-async function fetchResource(event, did, drl, path, responseCache, options) {
+async function fetchResource(event: any, did: any, drl: any, path: any, responseCache: any, options: any): Promise<Response | undefined> {
   const endpoints = await getDwnEndpoints(did);
   if (!endpoints?.length) {
     throw new Response(
@@ -107,7 +107,7 @@ async function fetchResource(event, did, drl, path, responseCache, options) {
   }
 }
 
-async function cacheResponse(drl, url, response, cache) {
+async function cacheResponse(drl: any, url: any, response: any, cache: any): Promise<void> {
   const clonedResponse = response.clone();
   const headers = new Headers(clonedResponse.headers);
   headers.append('dwn-cache-time', Date.now().toString());
@@ -151,14 +151,14 @@ async function installWorker(options: any = {}): Promise<void> {
           ? document?.currentScript?.src
           : importMetaIfSupported()?.url);
         if (installUrl)
-          navigator.serviceWorker
-            .register(installUrl, { type: 'module' })
-            .catch((error) => {
-              console.error(
-                'DWeb networking feature installation failed: ',
-                error
-              );
-            });
+        {navigator.serviceWorker
+          .register(installUrl, { type: 'module' })
+          .catch((error) => {
+            console.error(
+              'DWeb networking feature installation failed: ',
+              error
+            );
+          });}
       }
     } else {
       throw new Error(
@@ -310,8 +310,8 @@ const tabContent = `
 `;
 
 let elementsInjected = false;
-function injectElements() {
-  if (elementsInjected) return;
+function injectElements(): void {
+  if (elementsInjected) {return;}
   const style = document.createElement('style');
   style.innerHTML = `
     ${loaderStyles}
@@ -343,14 +343,14 @@ function injectElements() {
   elementsInjected = true;
 }
 
-function cancelNavigation() {
+function cancelNavigation(): void {
   document.documentElement.removeAttribute('drl-link-loading');
   activeNavigation = null;
 }
 
 let activeNavigation;
 let linkFeaturesActive = false;
-function addLinkFeatures() {
+function addLinkFeatures(): void {
   if (!linkFeaturesActive) {
     document.addEventListener('click', async (event: any) => {
       const anchor = event.target.closest('a');
@@ -377,17 +377,17 @@ function addLinkFeatures() {
               );
             }
             const endpoints = await getDwnEndpoints(did);
-            if (!endpoints.length) throw null;
+            if (!endpoints.length) {throw null;}
             const url = `${endpoints[0].replace(
               trailingSlashRegex,
               ''
             )}/${did}/${path}`;
             if (openAsTab) {
-              if (!tab.closed) tab.location.href = url;
+              if (!tab.closed) {tab.location.href = url;}
             } else if (activeNavigation === path) {
               window.location.href = url;
             }
-          } catch (e) {
+          } catch {
             if (activeNavigation === path) {
               cancelNavigation();
             }
@@ -416,7 +416,7 @@ function addLinkFeatures() {
           const responseCache = await caches.open('drl');
           const response = await responseCache.match(drl);
           const url = response.headers.get('dwn-composed-url');
-          if (url) target.src = url;
+          if (url) {target.src = url;}
           target.addEventListener('pointerup', resetContextMenuTarget, {
             once: true,
           });
@@ -431,7 +431,7 @@ function addLinkFeatures() {
 }
 
 let contextMenuTarget;
-async function resetContextMenuTarget(e?: any) {
+async function resetContextMenuTarget(e?: any): Promise<void> {
   if (e?.type === 'pointerup') {
     await new Promise((r) => requestAnimationFrame(r));
   }
@@ -446,10 +446,12 @@ async function resetContextMenuTarget(e?: any) {
  * Activates various polyfills to enable Web5 features in Web environments.
  *
  * @param {object} [options={}] - Configuration options to control the activation of polyfills.
- * @param {boolean} [options.serviceWorker=true] - Option to avoid installation of the Service Worker. Defaults to true, installing the Service Worker.
+ * @param {boolean} [options.serviceWorker=true] - Option to avoid installation of the Service Worker.
+ * Defaults to true, installing the Service Worker.
  * @param {boolean} [options.injectStyles=true] - Option to skip injection of styles for UI related UX polyfills. Defaults to true, injecting styles.
  * @param {boolean} [options.links=true] - Option to skip activation of DRL link features. Defaults to true, activating link features.
- * @param {function} [options.onCacheCheck] - Callback function to handle cache check events, allowing fine-grained control over what DRL request to cache, and for how long.
+ * @param {function} [options.onCacheCheck] - Callback function to handle cache check events,
+ * allowing fine-grained control over what DRL request to cache, and for how long.
  * @param {object} [options.onCacheCheck.event] - The event object passed to the callback.
  * @param {object} [options.onCacheCheck.route] - The route object passed to the callback.
  * @returns {object} [options.onCacheCheck.return] - The return object from the callback.
@@ -471,19 +473,19 @@ async function resetContextMenuTarget(e?: any) {
  * // Activate polyfills, but without Service Worker activation
  * activatePolyfills({ serviceWorker: false });
  */
-export function activatePolyfills(options: any = {}) {
+export function activatePolyfills(options: any = {}): void {
   if (options.serviceWorker !== false) {
     installWorker(options);
   }
   if (typeof window !== 'undefined' && typeof window.document !== 'undefined') {
     if (options.injectStyles !== false) {
-      if (document.readyState !== 'loading') injectElements();
+      if (document.readyState !== 'loading') {injectElements();}
       else {
         document.addEventListener('DOMContentLoaded', injectElements, {
           once: true,
         });
       }
     }
-    if (options.links !== false) addLinkFeatures();
+    if (options.links !== false) {addLinkFeatures();}
   }
 }

@@ -16,13 +16,12 @@ import type {
   Web5Agent,
 } from '@enbox/agent';
 
-import { Web5UserAgent } from '@enbox/agent';
-import { DwnInterface, DwnRegistrar, WalletConnect } from '@enbox/agent';
+import { DwnRegistrar, WalletConnect, Web5UserAgent } from '@enbox/agent';
 
 import { DidApi } from './did-api.js';
 import { DwnApi } from './dwn-api.js';
-import { VcApi } from './vc-api.js';
 import { PermissionGrant } from './permission-grant.js';
+import { VcApi } from './vc-api.js';
 
 /** Override defaults configured during the technical preview phase. */
 export type TechPreviewOptions = {
@@ -34,7 +33,7 @@ export type TechPreviewOptions = {
 export type DidCreateOptions = {
   /** Override default dwnEndpoints provided during DID creation. */
   dwnEndpoints?: string[];
-}
+};
 
 /**
  * Represents a permission request for a protocol definition.
@@ -49,7 +48,7 @@ export type ConnectPermissionRequest = {
    * The permissions being requested for the protocol. If none are provided, the default is to request all permissions.
    */
   permissions?: Permission[];
-}
+};
 
 /**
  * Options for connecting to a Web5 agent. This includes the ability to connect to an external wallet.
@@ -65,7 +64,7 @@ export type ConnectOptions = Omit<WalletConnectOptions, 'permissionRequests'> & 
    * This is used to create the {@link ConnectPermissionRequest} for the wallet connect flow.
    */
   permissionRequests: ConnectPermissionRequest[];
-}
+};
 
 /** Optional overrides that can be provided when calling {@link Web5.connect}. */
 export type Web5ConnectOptions = {
@@ -154,7 +153,8 @@ export type Web5ConnectOptions = {
   didCreateOptions?: DidCreateOptions;
 
   /**
-   * If the `registration` option is provided, the agent DID and the connected DID will be registered with the DWN endpoints provided by `techPreview` or `didCreateOptions`.
+   * If the `registration` option is provided, the agent DID and the connected DID will be
+   * registered with the DWN endpoints provided by `techPreview` or `didCreateOptions`.
    *
    * If registration fails, the `onFailure` callback will be called with the error.
    * If registration is successful, the `onSuccess` callback will be called.
@@ -165,7 +165,7 @@ export type Web5ConnectOptions = {
     /** Called when any of the DWN registrations fail */
     onFailure: (error: any) => void;
   }
-}
+};
 
 /**
  * Represents the result of the Web5 connection process, including the Web5 instance,
@@ -311,12 +311,15 @@ export class Web5 {
         // No connected identity found and connectOptions are provided, attempt to import a delegated DID from an external wallet
         try {
           const { permissionRequests, ...connectOptions } = walletConnectOptions;
-          const walletPermissionRequests = permissionRequests.map(({ protocolDefinition, permissions }) => WalletConnect.createPermissionRequestForProtocol({
-            definition  : protocolDefinition,
-            permissions : permissions ?? [
-              'read', 'write', 'delete', 'query', 'subscribe'
-            ]}
-          ));
+          const walletPermissionRequests = permissionRequests.map(
+            ({ protocolDefinition, permissions }) =>
+              WalletConnect.createPermissionRequestForProtocol({
+                definition  : protocolDefinition,
+                permissions : permissions ?? [
+                  'read', 'write', 'delete', 'query', 'subscribe',
+                ],
+              })
+          );
 
           const { delegatePortableDid, connectedDid, delegateGrants } = await WalletConnect.initClient({
             ...connectOptions,
@@ -333,7 +336,7 @@ export class Web5 {
               uri    : delegatePortableDid.uri,
               tenant : agent.agentDid.uri,
             }
-          }});
+          } });
 
           // Attempts to process the connected grants to be used by the delegateDID
           // If the process fails, we want to clean up the identity
@@ -416,7 +419,7 @@ export class Web5 {
 
           // If no failures occurred, call the onSuccess callback
           registration.onSuccess();
-        } catch(error) {
+        } catch (error) {
           // for any failure, call the onFailure callback with the error
           registration.onFailure(error);
         }
@@ -436,7 +439,7 @@ export class Web5 {
             }
           });
 
-          if(walletConnectOptions !== undefined) {
+          if (walletConnectOptions !== undefined) {
             // If we are using WalletConnect, we should do a one-shot sync to pull down any messages that are associated with the connectedDid
             await userAgent.sync.sync('pull');
           }
@@ -471,14 +474,14 @@ export class Web5 {
         tenant    : identity.metadata.tenant,
         deleteKey : true,
       });
-    } catch(error: any) {
+    } catch (error: any) {
       console.error(`Failed to delete DID ${identity.did.uri}: ${error.message}`);
     }
 
     try {
       // Delete the Identity
       await userAgent.identity.delete({ didUri: identity.did.uri });
-    } catch(error: any) {
+    } catch (error: any) {
       console.error(`Failed to delete Identity ${identity.metadata.name}: ${error.message}`);
     }
   }

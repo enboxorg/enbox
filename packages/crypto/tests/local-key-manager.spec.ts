@@ -1,5 +1,5 @@
-import sinon from 'sinon';
 import { expect } from 'chai';
+import sinon from 'sinon';
 import { Convert, MemoryStore } from '@enbox/common';
 
 import type { Jwk } from '../src/jose/jwk.js';

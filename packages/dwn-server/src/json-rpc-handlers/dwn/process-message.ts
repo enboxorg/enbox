@@ -38,11 +38,11 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
         requestId,
         JsonRpcErrorCodes.InvalidParams,
         `RecordsWrite is not supported via ${context.transport}`
-      )
+      );
       return { jsonRpcResponse };
     }
 
-    // subscribe methods must come with a subscriptionRequest context 
+    // subscribe methods must come with a subscriptionRequest context
     if (message.descriptor.method === DwnMethodName.Subscribe && subscriptionRequest === undefined) {
       const jsonRpcResponse = createJsonRpcErrorResponse(
         requestId,
@@ -58,7 +58,7 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
         requestId,
         JsonRpcErrorCodes.InvalidParams,
         `subscriptions are not supported via ${context.transport}`
-      )
+      );
       return { jsonRpcResponse };
     }
 
@@ -70,13 +70,13 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
         requestId,
         JsonRpcErrorCodes.InvalidParams,
         `the subscribe id: ${subscriptionRequest.id} is in use by an active subscription`
-      )
+      );
       return { jsonRpcResponse };
     }
 
     const reply = await dwn.processMessage(target, message, {
-      dataStream: dataStream as IsomorphicReadable,
-      subscriptionHandler: subscriptionRequest?.subscriptionHandler,
+      dataStream          : dataStream as IsomorphicReadable,
+      subscriptionHandler : subscriptionRequest?.subscriptionHandler,
     });
 
 
@@ -97,9 +97,9 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
       const subscriptionReply: JsonRpcSubscription = {
         id: subscriptionRequest.id,
         close,
-      }
+      };
       await socketConnection.addSubscription(subscriptionReply);
-      delete reply.subscription.close // delete the close method from the reply as it's not JSON serializable and has a held reference.
+      delete reply.subscription.close; // delete the close method from the reply as it's not JSON serializable and has a held reference.
     }
 
     const jsonRpcResponse = createJsonRpcSuccessResponse(requestId, { reply });

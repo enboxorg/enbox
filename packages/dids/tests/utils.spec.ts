@@ -1,24 +1,24 @@
 import { expect } from 'chai';
 
-import { DidVerificationRelationship, type DidDocument } from '../src/types/did-core.js';
+import { type DidDocument, DidVerificationRelationship } from '../src/types/did-core.js';
 
 import {
-  getServices,
-  isDidService,
-  isDwnDidService,
   extractDidFragment,
-  keyBytesToMultibaseId,
-  multibaseIdToKeyBytes,
-  getVerificationMethods,
-  isDidVerificationMethod,
+  getServices,
   getVerificationMethodByKey,
+  getVerificationMethods,
   getVerificationMethodTypes,
   getVerificationRelationshipsById,
+  isDidService,
+  isDidVerificationMethod,
+  isDwnDidService,
+  keyBytesToMultibaseId,
+  multibaseIdToKeyBytes,
 } from '../src/utils.js';
 
-import DidUtilsgetVerificationMethodsTestVector from './fixtures/test-vectors/utils/get-verification-methods.json' assert { type: 'json' };
-import DidUtilsGetVerificationMethodTypesTestVector from './fixtures/test-vectors/utils/get-verification-method-types.json' assert { type: 'json' };
-import DidUtilsGetVerificationMethodByKeyTestVector from './fixtures/test-vectors/utils/get-verification-method-by-key.json' assert { type: 'json' };
+import DidUtilsGetVerificationMethodByKeyTestVector from './fixtures/test-vectors/utils/get-verification-method-by-key.json' with { type: 'json' };
+import DidUtilsgetVerificationMethodsTestVector from './fixtures/test-vectors/utils/get-verification-methods.json' with { type: 'json' };
+import DidUtilsGetVerificationMethodTypesTestVector from './fixtures/test-vectors/utils/get-verification-method-types.json' with { type: 'json' };
 
 describe('DID Utils', () => {
   describe('extractDidFragment()', () => {
@@ -67,7 +67,7 @@ describe('DID Utils', () => {
   });
 
   describe('getServices()', () => {
-    let didDocument: DidDocument = {
+    const didDocument: DidDocument = {
       id      : 'did:example:123',
       service : [
         { id: 'service1', type: 'TypeA', serviceEndpoint: 'http://example.com/service1' },

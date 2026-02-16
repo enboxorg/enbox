@@ -1,10 +1,11 @@
-import type { Jwk } from '../jose/jwk.js';
+import type { AES_GCM_TAG_LENGTHS } from '../primitives/aes-gcm.js';
 import type { Cipher } from '../types/cipher.js';
+import type { Jwk } from '../jose/jwk.js';
 import type { KeyGenerator } from '../types/key-generator.js';
 import type { DecryptParams, EncryptParams, GenerateKeyParams } from '../types/params-direct.js';
 
+import { AesGcm } from '../primitives/aes-gcm.js';
 import { CryptoAlgorithm } from './crypto-algorithm.js';
-import { AesGcm, AES_GCM_TAG_LENGTHS } from '../primitives/aes-gcm.js';
 
 /**
  * The `AesGcmGenerateKeyParams` interface defines the algorithm-specific parameters that should be

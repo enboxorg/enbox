@@ -1,7 +1,8 @@
-import chai, { expect } from 'chai';
 import chaiAsPromised from 'chai-as-promised';
+import chai, { expect } from 'chai';
 
-import { DwnDatabaseType } from '../src/types.js';
+import type { DwnDatabaseType } from '../src/types.js';
+
 import { executeWithRetryIfDatabaseIsLocked } from '../src/utils/transaction.js';
 import { Kysely } from 'kysely';
 import { TestDataGenerator } from '@enbox/dwn-sdk-js';
@@ -34,14 +35,15 @@ describe('Dialect tests', () => {
       expect(tableExists).to.be.false;
     });
 
-    it(`executeWithRetryIfDatabaseIsLocked() should rethrow error if its not due to database being locked: ${dialect.name}: ${dialect.name}`, async () => {
-      const database = new Kysely<DwnDatabaseType>({ dialect });
-      const operation = async (_transaction) => {
-        throw new Error('Some error');
-      };
+    it(`executeWithRetryIfDatabaseIsLocked() should rethrow if not locked: ${dialect.name}`,
+      async (): Promise<void> => {
+        const database = new Kysely<DwnDatabaseType>({ dialect });
+        const operation = async (_transaction): Promise<void> => {
+          throw new Error('Some error');
+        };
 
-      const executePromise = executeWithRetryIfDatabaseIsLocked(database, operation);
-      await expect(executePromise).to.be.rejectedWith('Some error');
-    });
+        const executePromise = executeWithRetryIfDatabaseIsLocked(database, operation);
+        await expect(executePromise).to.be.rejectedWith('Some error');
+      });
   }
 });

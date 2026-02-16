@@ -1,13 +1,16 @@
 import sinon from 'sinon';
+
+import type { BearerDid } from '@enbox/dids';
 import { expect } from 'chai';
+
+import type { DwnPermissionScope, Web5PlatformAgent } from '../src/index.js';
+
 import { AgentPermissionsApi } from '../src/permissions-api.js';
+import { Convert } from '@enbox/common';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
-import { BearerDid } from '@enbox/dids';
-
+import { DwnInterface, DwnPermissionGrant, type PermissionGrantEntry } from '../src/index.js';
 import { DwnInterfaceName, DwnMethodName, Time } from '@enbox/dwn-sdk-js';
-import { DwnInterface, DwnPermissionGrant, DwnPermissionScope, Web5PlatformAgent } from '../src/index.js';
-import { Convert } from '@enbox/common';
 
 
 describe('AgentPermissionsApi', () => {
@@ -67,7 +70,7 @@ describe('AgentPermissionsApi', () => {
           messageType  : DwnInterface.MessagesQuery,
         });
         expect.fail('Expected an error to be thrown');
-      } catch(error: any) {
+      } catch (error: any) {
         expect(error.message).to.equal('CachedPermissions: No permissions found for MessagesQuery: undefined');
       }
 
@@ -238,7 +241,7 @@ describe('AgentPermissionsApi', () => {
       // spy on the processDwnRequest method
       const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
       // mock the sendDwnRequest method to return a 200 response
-      const sendDwnRequestStub = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({ messageCid: '', reply: { entries: [], status: { code: 200, detail: 'OK'} }});
+      const sendDwnRequestStub = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({ messageCid: '', reply: { entries: [], status: { code: 200, detail: 'OK' } } });
 
       // fetch permission grants
       await testHarness.agent.permissions.fetchGrants({
@@ -301,7 +304,7 @@ describe('AgentPermissionsApi', () => {
 
     it('throws if the query returns anything other than 200', async () => {
       // stub the processDwnRequest method to return a 400 error
-      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request'} }});
+      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
 
       // fetch permission requests
       try {
@@ -309,7 +312,7 @@ describe('AgentPermissionsApi', () => {
           author : aliceDid.uri,
           target : aliceDid.uri,
         });
-      } catch(error: any) {
+      } catch (error: any) {
         expect(error.message).to.equal('PermissionsApi: Failed to fetch grants: Bad Request');
       }
     });
@@ -320,7 +323,7 @@ describe('AgentPermissionsApi', () => {
       // spy on the processDwnRequest method
       const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
       // mock the sendDwnRequest method to return a 200 response
-      const sendDwnRequestStub = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({ messageCid: '', reply: { entries: [], status: { code: 200, detail: 'OK'} }});
+      const sendDwnRequestStub = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({ messageCid: '', reply: { entries: [], status: { code: 200, detail: 'OK' } } });
 
       // fetch permission grants
       await testHarness.agent.permissions.fetchRequests({
@@ -379,7 +382,7 @@ describe('AgentPermissionsApi', () => {
 
     it('throws if the query returns anything other than 200', async () => {
       // stub the processDwnRequest method to return a 400 error
-      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request'} }});
+      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
 
       // fetch permission requests
       try {
@@ -387,7 +390,7 @@ describe('AgentPermissionsApi', () => {
           author : aliceDid.uri,
           target : aliceDid.uri,
         });
-      } catch(error: any) {
+      } catch (error: any) {
         expect(error.message).to.equal('PermissionsApi: Failed to fetch requests: Bad Request');
       }
     });
@@ -398,7 +401,7 @@ describe('AgentPermissionsApi', () => {
       // spy on the processDwnRequest method
       const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
       // mock the sendDwnRequest method to return a 200 response
-      const sendDwnRequestStub = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK'} }});
+      const sendDwnRequestStub = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' } } });
 
       // fetch permission grants
       await testHarness.agent.permissions.isGrantRevoked({
@@ -417,7 +420,7 @@ describe('AgentPermissionsApi', () => {
 
     it('throws if the request was bad', async () => {
       // stub the processDwnRequest method to return a 400 error
-      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request'} }});
+      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
 
       // create a permission request
       try {
@@ -426,7 +429,7 @@ describe('AgentPermissionsApi', () => {
           target        : aliceDid.uri,
           grantRecordId : 'grant-record-id'
         });
-      } catch(error: any) {
+      } catch (error: any) {
         expect(error.message).to.equal('PermissionsApi: Failed to check if grant is revoked: Bad Request');
       }
     });
@@ -482,7 +485,7 @@ describe('AgentPermissionsApi', () => {
   describe('createGrant', () => {
     it('throws if the grant was not created', async () => {
       // stub the processDwnRequest method to return a 400 error
-      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request'} }});
+      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
 
       // create a permission request
       try {
@@ -493,7 +496,7 @@ describe('AgentPermissionsApi', () => {
           store       : true,
           scope       : {} as DwnPermissionScope,
         });
-      } catch(error: any) {
+      } catch (error: any) {
         expect(error.message).to.equal('PermissionsApi: Failed to create grant: Bad Request');
       }
     });
@@ -564,7 +567,7 @@ describe('AgentPermissionsApi', () => {
   describe('createRevocation', () => {
     it('throws if the revocation was not created', async () => {
       // stub the processDwnRequest method to return a 400 error
-      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request'} }});
+      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
 
       // create a permission request
       try {
@@ -575,7 +578,7 @@ describe('AgentPermissionsApi', () => {
             scope: {}
           } as DwnPermissionGrant,
         });
-      } catch(error: any) {
+      } catch (error: any) {
         expect(error.message).to.equal('PermissionsApi: Failed to create revocation: Bad Request');
       }
 
@@ -684,7 +687,7 @@ describe('AgentPermissionsApi', () => {
   describe('createRequest', () => {
     it('throws if the request was not created', async () => {
       // stub the processDwnRequest method to return a 400 error
-      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request'} }});
+      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
 
       // create a permission request
       try {
@@ -696,7 +699,7 @@ describe('AgentPermissionsApi', () => {
             protocol  : 'http://example.com/protocol'
           }
         });
-      } catch(error: any) {
+      } catch (error: any) {
         expect(error.message).to.equal('PermissionsApi: Failed to create request: Bad Request');
       }
 
@@ -761,7 +764,7 @@ describe('AgentPermissionsApi', () => {
       protocol: string;
       protocolPath?: string;
       contextId?: string;
-    }) => {
+    }): Promise<Record<string, PermissionGrantEntry>> => {
       const recordsWriteGrant = await grantorAgent.permissions.createGrant({
         author      : grantor,
         grantedTo   : grantee,
@@ -852,7 +855,7 @@ describe('AgentPermissionsApi', () => {
       grantor: string;
       grantee: string;
       protocol?: string;
-    }) => {
+    }): Promise<Record<string, PermissionGrantEntry>> => {
 
       const messagesReadGrant = await grantorAgent.permissions.createGrant({
         author      : grantor,

@@ -1,6 +1,6 @@
-import type { DataStore } from "@enbox/dwn-sdk-js";
-import { DataStoreSql } from "@enbox/dwn-sql-store";
-import { getDialectFromUrl } from "../../src/storage.js";
+import type { DataStore } from '@enbox/dwn-sdk-js';
+import { DataStoreSql } from '@enbox/dwn-sql-store';
+import { getDialectFromUrl } from '../../src/storage.js';
 
 /**
  * An example of a plugin that is used for testing.

@@ -1,8 +1,8 @@
-import sinon from 'sinon';
 import { config } from '../../src/config.js';
 import { DwnServer } from '../../src/dwn-server.js';
 import { expect } from 'chai';
 import { Poller } from '@enbox/dwn-sdk-js';
+import sinon from 'sinon';
 import { useFakeTimers } from 'sinon';
 import { Web5ConnectServer } from '../../src/web5-connect/web5-connect-server.js';
 import { randomUUID, webcrypto } from 'node:crypto';
@@ -18,7 +18,7 @@ describe('Web5 Connect scenarios', function () {
 
   let clock: sinon.SinonFakeTimers;
   let dwnServer: DwnServer;
-  const dwnServerConfig = { ...config } // not touching the original config
+  const dwnServerConfig = { ...config }; // not touching the original config
 
   before(async function () {
 
@@ -29,7 +29,7 @@ describe('Web5 Connect scenarios', function () {
     dwnServerConfig.resumableTaskStore = 'sqlite://',
     dwnServerConfig.eventLog = 'sqlite://',
 
-    dwnServer =  new DwnServer({ config: dwnServerConfig });
+    dwnServer = new DwnServer({ config: dwnServerConfig });
   });
 
   after(async () => {
@@ -62,20 +62,20 @@ describe('Web5 Connect scenarios', function () {
     // 1. App sends the Web5 Connect Request object to the Web5 Connect server.
     const requestBody = { request: { dummyProperty: 'dummyValue' } };
     const postWeb5ConnectRequestResult = await fetch(`${web5ConnectBaseUrl}/connect/par`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify(requestBody),
     });
     expect(postWeb5ConnectRequestResult.status).to.equal(201);
 
     // 2. Identity Provider (wallet) fetches the Web5 Connect Request object from the Web5 Connect server.
     const requestUrl = (await postWeb5ConnectRequestResult.json() as any).request_uri;
-    const regex = /^http:\/\/localhost:3000\/connect\/authorize\/[a-zA-Z0-9\-]{21,}\.jwt$/;
+    const regex = /^http:\/\/localhost:3000\/connect\/authorize\/[a-zA-Z0-9-]{21,}\.jwt$/;
     expect(requestUrl).to.match(regex);
 
     let getWeb5ConnectRequestResult;
     await Poller.pollUntilSuccessOrTimeout(async () => {
-      console.log('Polling for Web5 Connect Request object...')
+      console.log('Polling for Web5 Connect Request object...');
       getWeb5ConnectRequestResult = await fetch(requestUrl, { method: 'GET' });
       expect(getWeb5ConnectRequestResult.status).to.equal(200);
     });
@@ -91,26 +91,26 @@ describe('Web5 Connect scenarios', function () {
 
     // 4. Identity Provider (wallet) should receive 400 if sending an incomplete response.
     const incompleteResponseBody = {
-      id_token : { dummyToken: 'dummyToken' },
+      id_token: { dummyToken: 'dummyToken' },
       // state    : 'dummyState', // intentionally missing
     };
     const postIncompleteWeb5ConnectResponseResult = await fetch(`${web5ConnectBaseUrl}/connect/callback`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(incompleteResponseBody),
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify(incompleteResponseBody),
     });
     expect(postIncompleteWeb5ConnectResponseResult.status).to.equal(400);
 
     const state = `dummyState-${randomUUID()}`;
     // 5. Identity Provider (wallet) sends the Web5 Connect Response object to the Web5 Connect server.
     const web5ConnectResponseBody = {
-      id_token : { dummyToken: 'dummyToken' },
+      id_token: { dummyToken: 'dummyToken' },
       state
     };
     const postWeb5ConnectResponseResult = await fetch(`${web5ConnectBaseUrl}/connect/callback`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(web5ConnectResponseBody),
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify(web5ConnectResponseBody),
     });
     expect(postWeb5ConnectResponseResult.status).to.equal(201);
 
@@ -122,7 +122,7 @@ describe('Web5 Connect scenarios', function () {
       getWeb5ConnectResponseResult = await fetch(web5ConnectResponseUrl, { method: 'GET' });
       expect(getWeb5ConnectResponseResult.status).to.equal(200);
     });
-  
+
     const fetchedResponse = await getWeb5ConnectResponseResult.json();
     expect(fetchedResponse).to.deep.equal(web5ConnectResponseBody.id_token);
 
@@ -142,9 +142,9 @@ describe('Web5 Connect scenarios', function () {
     // 1. App sends the Web5 Connect Request object to the Web5 Connect server.
     const requestBody = { request: { dummyProperty: 'dummyValue' } };
     const postWeb5ConnectRequestResult = await fetch(`${web5ConnectBaseUrl}/connect/par`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify(requestBody),
     });
     expect(postWeb5ConnectRequestResult.status).to.equal(201);
 

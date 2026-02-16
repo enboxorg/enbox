@@ -1,11 +1,11 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { PortableIdentity } from '../src/types/identity.js';
 
-import { expect } from 'chai';
-import { DidDht } from '@enbox/dids';
 import { Convert } from '@enbox/common';
+import { DidDht } from '@enbox/dids';
 import { DidInterface } from '../src/did-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
+import { expect } from 'chai';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 
 import { testDwnUrl } from './utils/test-config.js';
@@ -17,9 +17,9 @@ import { Web5UserAgent } from '../src/web5-user-agent.js';
 // Remove when we move off of node.js v18 to v20, earliest possible time would be Oct 2023: https://github.com/nodejs/release#release-schedule
 import { webcrypto } from 'node:crypto';
 // @ts-ignore
-if (!globalThis.crypto) globalThis.crypto = webcrypto;
+if (!globalThis.crypto) {globalThis.crypto = webcrypto;}
 
-let testDwnUrls: string[] = [testDwnUrl];
+const testDwnUrls: string[] = [testDwnUrl];
 
 describe('Web5UserAgent', () => {
 
@@ -101,7 +101,7 @@ describe('Web5UserAgent', () => {
 
           // Verify that the vault is initialized and is unlocked.
           expect(generatedRecoveryPhrase).to.be.a('string');
-          if (typeof generatedRecoveryPhrase !== 'string') throw new Error('type guard');
+          if (typeof generatedRecoveryPhrase !== 'string') {throw new Error('type guard');}
           expect(generatedRecoveryPhrase.split(' ')).to.have.lengthOf(12);
         });
 
@@ -171,7 +171,7 @@ describe('Web5UserAgent', () => {
             const dataBytes = Convert.string('Hello, world!').toUint8Array();
 
             // Attempt to process the RecordsWrite
-            let writeResponse = await testHarness.agent.processDwnRequest({
+            const writeResponse = await testHarness.agent.processDwnRequest({
               author        : alice.did.uri,
               target        : alice.did.uri,
               messageType   : DwnInterface.RecordsWrite,
@@ -348,7 +348,7 @@ describe('Web5UserAgent', () => {
             const dataBytes = Convert.string('Hello, world!').toUint8Array();
 
             // Attempt to process the RecordsWrite
-            let writeResponse = await testHarness.agent.sendDwnRequest({
+            const writeResponse = await testHarness.agent.sendDwnRequest({
               author        : alice.did.uri,
               target        : alice.did.uri,
               messageType   : DwnInterface.RecordsWrite,

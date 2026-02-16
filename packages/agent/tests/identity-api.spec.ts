@@ -1,11 +1,14 @@
 import sinon from 'sinon';
+
 import { expect } from 'chai';
 
-import { TestAgent } from './utils/test-agent.js';
+import type { PortableDid } from '@enbox/dids';
+import type { PortableIdentity } from '../src/index.js';
+
 import { AgentIdentityApi } from '../src/identity-api.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
-import { PortableIdentity } from '../src/index.js';
-import { BearerDid, PortableDid, UniversalResolver } from '@enbox/dids';
+import { TestAgent } from './utils/test-agent.js';
+import { BearerDid, UniversalResolver } from '@enbox/dids';
 
 describe('AgentIdentityApi', () => {
 
@@ -385,7 +388,7 @@ describe('AgentIdentityApi', () => {
           try {
             await testHarness.agent.identity.getDwnEndpoints({ didUri: testPortableDid.uri });
             expect.fail('should have thrown an error');
-          } catch(error: any) {
+          } catch (error: any) {
             expect(error.message).to.include('Failed to dereference');
           }
 
@@ -416,7 +419,7 @@ describe('AgentIdentityApi', () => {
           try {
             await testHarness.agent.identity.getDwnEndpoints({ didUri: testPortableDidWithDifferentService.uri });
             expect.fail('should have thrown an error');
-          } catch(error: any) {
+          } catch (error: any) {
             expect(error.message).to.include('Failed to dereference');
           }
 

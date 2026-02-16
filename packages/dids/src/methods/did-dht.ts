@@ -1,37 +1,37 @@
-import type { Packet, StringAnswer, TxtAnswer, TxtData } from '@dnsquery/dns-packet';
 import type {
-  Jwk,
-  Signer,
+  AsymmetricKeyConverter,
   CryptoApi,
+  Jwk,
   KeyIdentifier,
+  KeyImporterExporter,
   KmsExportKeyParams,
   KmsImportKeyParams,
-  KeyImporterExporter,
-  AsymmetricKeyConverter,
+  Signer,
 } from '@enbox/crypto';
+import type { Packet, StringAnswer, TxtAnswer, TxtData } from '@dnsquery/dns-packet';
 
 import bencode from 'bencode';
 import { Convert } from '@enbox/common';
-import { computeJwkThumbprint, Ed25519, LocalKeyManager, Secp256k1, Secp256r1, X25519 } from '@enbox/crypto';
 import { AUTHORITATIVE_ANSWER, decode as dnsPacketDecode, encode as dnsPacketEncode } from '@dnsquery/dns-packet';
+import { computeJwkThumbprint, Ed25519, LocalKeyManager, Secp256k1, Secp256r1, X25519 } from '@enbox/crypto';
 
-import type { DidMetadata, PortableDid } from '../types/portable-did.js';
 import type { DidCreateOptions, DidCreateVerificationMethod, DidRegistrationResult } from './did-method.js';
 import type {
-  DidService,
   DidDocument,
-  DidResolutionResult,
   DidResolutionOptions,
+  DidResolutionResult,
+  DidService,
   DidVerificationMethod,
 } from '../types/did-core.js';
+import type { DidMetadata, PortableDid } from '../types/portable-did.js';
 
+import { BearerDid } from '../bearer-did.js';
 import { Did } from '../did.js';
 import { DidMethod } from './did-method.js';
-import { BearerDid } from '../bearer-did.js';
-import { extractDidFragment } from '../utils.js';
-import { DidError, DidErrorCode } from '../did-error.js';
 import { DidVerificationRelationship } from '../types/did-core.js';
 import { EMPTY_DID_RESOLUTION_RESULT } from '../types/did-resolution.js';
+import { extractDidFragment } from '../utils.js';
+import { DidError, DidErrorCode } from '../did-error.js';
 
 /**
  * Represents a BEP44 message, which is used for storing and retrieving data in the Mainline DHT
@@ -587,7 +587,7 @@ export class DidDht extends DidMethod {
       // Add the verification method to the specified purpose properties of the DID document.
       for (const purpose of verificationMethod.purposes ?? []) {
         // Initialize the purpose property if it does not already exist.
-        if (!document[purpose]) document[purpose] = [];
+        if (!document[purpose]) {document[purpose] = [];}
         // Add the verification method to the purpose property.
         document[purpose]!.push(methodId);
       }
@@ -784,7 +784,7 @@ export class DidDht extends DidMethod {
 
     } catch (error: any) {
       // Rethrow any unexpected errors that are not a `DidError`.
-      if (!(error instanceof DidError)) throw new Error(error);
+      if (!(error instanceof DidError)) {throw new Error(error);}
 
       // Return a DID Resolution Result with the appropriate error code.
       return {
@@ -910,14 +910,14 @@ export class DidDhtDocument {
       }
 
     } catch (error: any) {
-      if (error instanceof DidError) throw error;
+      if (error instanceof DidError) {throw error;}
       throw new DidError(DidErrorCode.InternalError, `Failed to fetch Pkarr record: ${error.message}`);
     }
 
     // Read the Fetch Response stream into a byte array.
     const messageBytes = await response.arrayBuffer();
 
-    if(!messageBytes) {
+    if (!messageBytes) {
       throw new DidError(DidErrorCode.NotFound, `Pkarr record not found for: ${identifier}`);
     }
 
@@ -1010,7 +1010,7 @@ export class DidDhtDocument {
 
     for (const answer of dnsPacket?.answers ?? []) {
       // DID DHT properties are ONLY present in DNS TXT records.
-      if (answer.type !== 'TXT') continue;
+      if (answer.type !== 'TXT') {continue;}
 
       // Get the DID DHT record identifier (e.g., k0, aka, did, etc.) from the DNS resource name.
       const dnsRecordId = answer.name.split('.')[0].substring(1);
@@ -1051,7 +1051,7 @@ export class DidDhtDocument {
           const namedCurve = DidDhtRegisteredKeyType[Number(t)];
 
           // Convert the public key from a byte array to JWK format.
-          let publicKey = await DidDhtUtils.keyConverter(namedCurve).bytesToPublicKey({ publicKeyBytes });
+          const publicKey = await DidDhtUtils.keyConverter(namedCurve).bytesToPublicKey({ publicKeyBytes });
 
           publicKey.alg = parsedAlg || KeyTypeToDefaultAlgorithmMap[Number(t) as DidDhtRegisteredKeyType];
 
@@ -1138,11 +1138,11 @@ export class DidDhtDocument {
           const { auth, asm, del, inv, agm } = DidDhtUtils.parseTxtDataToObject(answer.data);
 
           // Add the verification relationships, if any, to the DID document.
-          if (auth) didDocument.authentication = recordIdsToMethodIds(auth);
-          if (asm) didDocument.assertionMethod = recordIdsToMethodIds(asm);
-          if (del) didDocument.capabilityDelegation = recordIdsToMethodIds(del);
-          if (inv) didDocument.capabilityInvocation = recordIdsToMethodIds(inv);
-          if (agm) didDocument.keyAgreement = recordIdsToMethodIds(agm);
+          if (auth) {didDocument.authentication = recordIdsToMethodIds(auth);}
+          if (asm) {didDocument.assertionMethod = recordIdsToMethodIds(asm);}
+          if (del) {didDocument.capabilityDelegation = recordIdsToMethodIds(del);}
+          if (inv) {didDocument.capabilityInvocation = recordIdsToMethodIds(inv);}
+          if (agm) {didDocument.keyAgreement = recordIdsToMethodIds(agm);}
 
           break;
         }
@@ -1220,7 +1220,7 @@ export class DidDhtDocument {
     for (const [index, verificationMethod] of didDocument.verificationMethod?.entries() ?? []) {
       const dnsRecordId = `k${index}`;
       verificationMethodIds.push(dnsRecordId);
-      let methodId = verificationMethod.id.split('#').pop()!; // Remove fragment prefix, if any.
+      const methodId = verificationMethod.id.split('#').pop()!; // Remove fragment prefix, if any.
       idLookup.set(methodId, dnsRecordId);
 
       const publicKey = verificationMethod.publicKeyJwk;
@@ -1242,16 +1242,16 @@ export class DidDhtDocument {
       const txtData = [`t=${keyType}`, `k=${publicKeyBase64Url}`];
       // if the methodId is not the identity key or a thumbprint, explicity define the id within the DNS TXT record.
       // otherwise the id can be inferred from the thumbprint.
-      if (methodId !== '0' && await computeJwkThumbprint({ jwk: publicKey }) !== methodId)  {
+      if (methodId !== '0' && await computeJwkThumbprint({ jwk: publicKey }) !== methodId) {
         txtData.unshift(`id=${methodId}`);
       }
       // Only set the algorithm property (`a`) if it differs from the default algorithm for the key type.
-      if(publicKey.alg !== KeyTypeToDefaultAlgorithmMap[keyType]) {
+      if (publicKey.alg !== KeyTypeToDefaultAlgorithmMap[keyType]) {
         txtData.push(`a=${publicKey.alg}`);
       }
 
       // Add the controller property, if set to a value other than the Identity Key (DID Subject).
-      if (verificationMethod.controller !== didDocument.id) txtData.push(`c=${verificationMethod.controller}`);
+      if (verificationMethod.controller !== didDocument.id) {txtData.push(`c=${verificationMethod.controller}`);}
 
       // Add a TXT record for the verification method.
       txtRecords.push({
@@ -1422,7 +1422,7 @@ export class DidDhtUtils {
     didUri: string
   }): Promise<Jwk> {
     // Decode the method-specific identifier from z-base-32 to a byte array.
-    let identityKeyBytes = DidDhtUtils.identifierToIdentityKeyBytes({ didUri });
+    const identityKeyBytes = DidDhtUtils.identifierToIdentityKeyBytes({ didUri });
 
     // Convert the byte array to a JWK.
     const identityKey = await Ed25519.bytesToPublicKey({ publicKeyBytes: identityKeyBytes });
@@ -1528,7 +1528,7 @@ export class DidDhtUtils {
 
     const converter = converters[curve];
 
-    if (!converter) throw new DidError(DidErrorCode.InvalidPublicKeyType, `Unsupported curve: ${curve}`);
+    if (!converter) {throw new DidError(DidErrorCode.InvalidPublicKeyType, `Unsupported curve: ${curve}`);}
 
     return converter;
   }
@@ -1609,7 +1609,7 @@ export class DidDhtUtils {
     const key = await DidDhtUtils.identifierToIdentityKey({ didUri: previousDidProof.previousDid });
     const data = DidDhtUtils.identifierToIdentityKeyBytes({ didUri: newDid });
     const signature = Convert.base64Url(previousDidProof.signature).toUint8Array();
-    const isValid = await Ed25519.verify({ key, data, signature  });
+    const isValid = await Ed25519.verify({ key, data, signature });
 
     if (!isValid) {
       throw new DidError(DidErrorCode.InvalidPreviousDidProof, 'The previous DID proof is invalid.');

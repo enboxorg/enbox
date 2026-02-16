@@ -9,7 +9,7 @@ describe('Stream', () => {
     it('consumes a ReadableStream and returns an ArrayBuffer', async () => {
       const inputBytes = new Uint8Array([1, 2, 3, 4, 5]);
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.enqueue(inputBytes);
           controller.close();
         }
@@ -23,7 +23,7 @@ describe('Stream', () => {
     it('consumes a large ReadableStream and returns the expected bytes', async () => {
       const oneMegabyte = new Uint8Array(1024 * 1024).map((_, i) => i % 256);
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.enqueue(oneMegabyte);
           controller.close();
         }
@@ -35,7 +35,7 @@ describe('Stream', () => {
 
     it('handles an empty ReadableStream', async () => {
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.close();
         }
       });
@@ -48,7 +48,7 @@ describe('Stream', () => {
     it('throws an error for a stream that errors', async () => {
       const error = new Error('Stream error');
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.error(error);
         }
       });
@@ -66,7 +66,7 @@ describe('Stream', () => {
     it('consumes a ReadableStream and returns a Blob', async () => {
       const inputBytes = new Uint8Array([1, 2, 3, 4, 5]);
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.enqueue(inputBytes);
           controller.close();
         }
@@ -83,7 +83,7 @@ describe('Stream', () => {
 
     it('handles an empty ReadableStream', async () => {
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.close();
         }
       });
@@ -96,7 +96,7 @@ describe('Stream', () => {
     it('consumes a large ReadableStream and returns the expected blob size', async () => {
       const oneMegabyte = new Uint8Array(1024 * 1024).map((_, i) => i % 256);
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.enqueue(oneMegabyte);
           controller.close();
         }
@@ -111,7 +111,7 @@ describe('Stream', () => {
       const textEncoder = new TextEncoder();
       const inputBytes = textEncoder.encode(inputString);
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.enqueue(inputBytes);
           controller.close();
         }
@@ -129,7 +129,7 @@ describe('Stream', () => {
     it('throws an error for a stream that errors', async () => {
       const error = new Error('Stream error');
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.error(error);
         }
       });
@@ -147,7 +147,7 @@ describe('Stream', () => {
     it('consumes a ReadableStream and returns a Uint8Array', async () => {
       const inputBytes = new Uint8Array([1, 2, 3, 4, 5]);
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.enqueue(inputBytes);
           controller.close();
         }
@@ -161,7 +161,7 @@ describe('Stream', () => {
     it('consumes a 5-byte ReadableStream and returns the expected bytes', async () => {
       const inputBytes = new Uint8Array([1, 2, 3, 4, 5]);
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.enqueue(inputBytes);
           controller.close();
         }
@@ -175,7 +175,7 @@ describe('Stream', () => {
       // Create a 1MB byte stream that is filled with monotonically increasing values from 0 to 255, repeatedly.
       const oneMegabyte = new Uint8Array(1024 * 1024).map((_, i) => i % 256);
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.enqueue(oneMegabyte);
           controller.close();
         }
@@ -187,7 +187,7 @@ describe('Stream', () => {
 
     it('handles an empty ReadableStream', async () => {
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.close();
         }
       });
@@ -200,7 +200,7 @@ describe('Stream', () => {
     it('throws an error for a stream that errors', async () => {
       const error = new Error('Stream error');
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.error(error);
         }
       });
@@ -221,7 +221,7 @@ describe('Stream', () => {
       const textEncoder = new TextEncoder();
       const inputBytes = textEncoder.encode(inputString);
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.enqueue(inputBytes);
           controller.close();
         }
@@ -234,7 +234,7 @@ describe('Stream', () => {
     it('throws an error for a stream containing invalid JSON', async () => {
       const invalidJson = 'Invalid JSON';
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.enqueue(new TextEncoder().encode(invalidJson));
           controller.close();
         }
@@ -250,7 +250,7 @@ describe('Stream', () => {
 
     it('handles an empty ReadableStream', async () => {
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.close();
         }
       });
@@ -266,7 +266,7 @@ describe('Stream', () => {
     it('throws an error for a stream that errors', async () => {
       const error = new Error('Stream error');
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.error(error);
         }
       });
@@ -284,7 +284,7 @@ describe('Stream', () => {
     it('consumes a ReadableStream containing text and returns a string', async () => {
       const inputText = 'Hello, World!';
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.enqueue(new TextEncoder().encode(inputText));
           controller.close();
         }
@@ -297,7 +297,7 @@ describe('Stream', () => {
 
     it('handles an empty ReadableStream', async () => {
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.close();
         }
       });
@@ -310,7 +310,7 @@ describe('Stream', () => {
     it('consumes a large text stream and returns the expected text', async () => {
       const largeText = 'a'.repeat(1024 * 1024); // 1MB of 'a'
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.enqueue(new TextEncoder().encode(largeText));
           controller.close();
         }
@@ -323,7 +323,7 @@ describe('Stream', () => {
     it('throws an error for a stream that errors', async () => {
       const error = new Error('Stream error');
       const readableStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.error(error);
         }
       });
@@ -359,7 +359,7 @@ describe('Stream', () => {
       const streamByteLength = 100;
       const chunkLength = 10;
       const fillValue = 43;
-      const stream = Stream.generateByteStream({ streamLength: streamByteLength, chunkLength,  fillValue });
+      const stream = Stream.generateByteStream({ streamLength: streamByteLength, chunkLength, fillValue });
 
       // Collecting data from the stream.
       const reader = stream.getReader();
@@ -369,7 +369,7 @@ describe('Stream', () => {
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {break;}
         receivedBytes = new Uint8Array([...receivedBytes, ...value]);
         firstChunkLength ??= value.length;
         chunkCount++;
@@ -419,7 +419,7 @@ describe('Stream', () => {
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {break;}
 
         expect(value).to.be.an.instanceof(Uint8Array);
         expect(value.length).to.be.at.most(chunkLength);
@@ -444,7 +444,7 @@ describe('Stream', () => {
       let allChunksValid = true;
       while (iterations < maxIterations) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {break;}
 
         allChunksValid = allChunksValid && value.length === chunkLength;
         iterations++;
@@ -472,7 +472,7 @@ describe('Stream', () => {
        * `isReadable()` method is incapable of detecting an errored stream.
        */
       const erroredStream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.error(new Error('Stream intentionally errored'));
         }
       });
@@ -488,7 +488,7 @@ describe('Stream', () => {
 
     it('returns false for a consumed ReadableStream', async () => {
       const stream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.enqueue('data');
           controller.close();
         },
@@ -501,7 +501,7 @@ describe('Stream', () => {
 
     it('returns false for a closed ReadableStream', async () => {
       const stream = new ReadableStream({
-        start(controller) {
+        start(controller): void {
           controller.close();
         }
       });
@@ -522,7 +522,7 @@ describe('Stream', () => {
     it('returns false for a ReadableStream where getReader() throws an error', () => {
       // Create a custom ReadableStream with an overridden getReader method that throws an error
       const erroredStream = new ReadableStream();
-      erroredStream.getReader = () => { throw new Error('getReader intentionally throws an error'); };
+      erroredStream.getReader = (): ReadableStreamDefaultReader => { throw new Error('getReader intentionally throws an error'); };
 
       const result = Stream.isReadable({ readableStream: erroredStream });
       expect(result).to.be.false;

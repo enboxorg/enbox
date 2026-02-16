@@ -280,7 +280,7 @@ describe('EcdsaAlgorithm', () => {
   });
 
   describe('sign()', () => {
-    let data = new Uint8Array([0, 1, 2, 3, 4]);
+    const data = new Uint8Array([0, 1, 2, 3, 4]);
 
     it('generates signatures as Uint8Array', async () => {
       // Test the method.
@@ -301,7 +301,7 @@ describe('EcdsaAlgorithm', () => {
 
     it('supports ECDSA using secp256k1 curve and SHA-256', async () => {
       // Setup.
-      const privateKey = await ecdsa.generateKey({ algorithm: 'ES256K'});
+      const privateKey = await ecdsa.generateKey({ algorithm: 'ES256K' });
 
       // Test the method.
       const signature = await ecdsa.sign({ key: privateKey, data });
@@ -312,7 +312,7 @@ describe('EcdsaAlgorithm', () => {
 
     it('supports ECDSA using secp256r1 curve and SHA-256', async () => {
       // Setup.
-      const privateKey = await ecdsa.generateKey({ algorithm: 'ES256'});
+      const privateKey = await ecdsa.generateKey({ algorithm: 'ES256' });
 
       // Test the method.
       const signature = await ecdsa.sign({ key: privateKey, data });
@@ -369,7 +369,7 @@ describe('EcdsaAlgorithm', () => {
   });
 
   describe('verify()', () => {
-    let data = new Uint8Array([0, 1, 2, 3, 4]);
+    const data = new Uint8Array([0, 1, 2, 3, 4]);
     let signature: Uint8Array;
 
     beforeEach(async () => {

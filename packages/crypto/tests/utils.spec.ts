@@ -1,5 +1,4 @@
 import { expect } from 'chai';
-import * as sinon from 'sinon';
 
 import type { Jwk } from '../src/jose/jwk.js';
 
@@ -12,7 +11,7 @@ if (!globalThis.crypto) {
   // 20 removed the experimental flag and `webcrypto` is globally available.
   // As a consequence `webcrypto` must be imported from the Node.js `crypto` until Node.js 18
   // reaches "End-of-life" status on 2025-04-30.
-  (async () => {
+  (async (): Promise<void> => {
     const { webcrypto } = await import('node:crypto');
     // @ts-ignore
     globalThis.crypto = webcrypto;

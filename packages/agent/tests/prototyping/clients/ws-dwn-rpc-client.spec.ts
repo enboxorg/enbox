@@ -4,13 +4,12 @@ import sinon from 'sinon';
 
 import { expect } from 'chai';
 
-import { DwnInterfaceName, DwnMethodName, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
-import { WebSocketDwnRpcClient } from '../../../src/prototyping/clients/web-socket-clients.js';
-
-import { testDwnUrl } from '../../utils/test-config.js';
-import { JsonRpcSocket } from '../../../src/prototyping/clients/json-rpc-socket.js';
-import { JsonRpcErrorCodes, createJsonRpcErrorResponse } from '../../../src/prototyping/clients/json-rpc.js';
 import { HttpDwnRpcClient } from '../../../src/prototyping/clients/http-dwn-rpc-client.js';
+import { JsonRpcSocket } from '../../../src/prototyping/clients/json-rpc-socket.js';
+import { testDwnUrl } from '../../utils/test-config.js';
+import { WebSocketDwnRpcClient } from '../../../src/prototyping/clients/web-socket-clients.js';
+import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '../../../src/prototyping/clients/json-rpc.js';
+import { DwnInterfaceName, DwnMethodName, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 /** helper method to sleep while waiting for events to process/arrive */
 async function sleepWhileWaitingForEvents(override?: number):Promise<void> {
@@ -252,7 +251,7 @@ describe('WebSocketDwnRpcClient', () => {
         try {
           await WebSocketDwnRpcClient['processMessage'](connection, alice.did, message);
           expect.fail('Expected an error to be thrown');
-        } catch(error: any) {
+        } catch (error: any) {
           expect(error.message).to.equal('error sending DWN request: some error');
         }
       });
@@ -313,7 +312,7 @@ describe('WebSocketDwnRpcClient', () => {
                 status       : { code: 200, detail: 'Ok' },
                 subscription : {
                   id    : 'sub-id',
-                  close : () => {}
+                  close : (): void => {}
                 }
               }
             }
@@ -330,7 +329,7 @@ describe('WebSocketDwnRpcClient', () => {
         const subscriptionId = subRequest.subscription!.id;
         const subscription = {
           id    : subscriptionId,
-          close : () => {}
+          close : (): void => {}
         };
         // spy on the close function
         const closeSpy = sinon.spy(subscription, 'close');

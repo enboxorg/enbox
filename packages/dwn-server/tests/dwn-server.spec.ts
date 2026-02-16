@@ -9,7 +9,7 @@ import { getTestDwn } from './test-dwn.js';
 describe('DwnServer', function () {
   const dwnServerConfig = { ...config };
   let dwn: Dwn;
-  
+
   it('starts with injected dwn', async function () {
     dwn = await getTestDwn();
 

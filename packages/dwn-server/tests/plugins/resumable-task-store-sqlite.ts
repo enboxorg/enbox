@@ -1,6 +1,7 @@
-import type { ResumableTaskStore } from "@enbox/dwn-sdk-js";
-import { ResumableTaskStoreSql } from "@enbox/dwn-sql-store";
-import { getDialectFromUrl } from "../../src/storage.js";
+import type { ResumableTaskStore } from '@enbox/dwn-sdk-js';
+
+import { getDialectFromUrl } from '../../src/storage.js';
+import { ResumableTaskStoreSql } from '@enbox/dwn-sql-store';
 
 /**
  * An example of a plugin that is used for testing.

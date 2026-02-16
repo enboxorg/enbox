@@ -6,7 +6,7 @@ import type { JsonRpcRequest, JsonRpcResponse } from '../../src/lib/json-rpc.js'
 import type { RegistrationData, RegistrationRequest } from '../../src/registration/registration-types.js';
 
 import { config } from '../../src/config.js';
-import { createJsonRpcRequest} from '../../src/lib/json-rpc.js';
+import { createJsonRpcRequest } from '../../src/lib/json-rpc.js';
 import { createRecordsWriteMessage } from '../utils.js';
 import { DwnServer } from '../../src/dwn-server.js';
 import { DwnServerErrorCode } from '../../src/dwn-error.js';
@@ -38,7 +38,7 @@ describe('Registration scenarios', function () {
   let registrationManager: RegistrationManager;
   let clock;
   let dwnServer: DwnServer;
-  const dwnServerConfig = { ...config } // not touching the original config
+  const dwnServerConfig = { ...config }; // not touching the original config
 
   before(async function () {
     clock = useFakeTimers({ shouldAdvanceTime: true });
@@ -62,9 +62,9 @@ describe('Registration scenarios', function () {
     // otherwise we will receive a `Database is not open` coming from LevelDB.
     // This is likely due to the fact that LevelDB is the default cache used in `DWN`, and we have tests creating default DWN instances,
     // so here we have to create a DWN that does not use the same LevelDB cache to avoid hitting LevelDB locked issues.
-    // Long term we should investigate and unify approach of DWN instantiation taken by tests to avoid this "workaround" entirely. 
+    // Long term we should investigate and unify approach of DWN instantiation taken by tests to avoid this "workaround" entirely.
     const didResolver = new UniversalResolver({
-      didResolvers : [DidDht, DidKey],
+      didResolvers: [DidDht, DidKey],
     });
 
     dwnServer = new DwnServer({ config: dwnServerConfig, didResolver });
@@ -98,7 +98,7 @@ describe('Registration scenarios', function () {
     const proofOfWorkChallengeGetResponse = await fetch(proofOfWorkEndpoint, {
       method: 'GET',
     });
-    const { challengeNonce, maximumAllowedHashValue} = await proofOfWorkChallengeGetResponse.json() as ProofOfWorkChallengeModel;
+    const { challengeNonce, maximumAllowedHashValue } = await proofOfWorkChallengeGetResponse.json() as ProofOfWorkChallengeModel;
     expect(proofOfWorkChallengeGetResponse.status).to.equal(200);
     expect(challengeNonce.length).to.equal(64);
     expect(ProofOfWorkManager.isHexString(challengeNonce)).to.be.true;
@@ -106,8 +106,8 @@ describe('Registration scenarios', function () {
 
     // 3. Alice creates registration data based on the hash of the terms-of-service and her DID.
     const registrationData: RegistrationData = {
-      did: alice.did,
-      termsOfServiceHash: ProofOfWork.hashAsHexString([termsOfServiceFetched]),
+      did                : alice.did,
+      termsOfServiceHash : ProofOfWork.hashAsHexString([termsOfServiceFetched]),
     };
 
     // 4. Alice computes the proof-of-work response nonce based on the the proof-of-work challenge and the registration data.
@@ -127,17 +127,17 @@ describe('Registration scenarios', function () {
     };
 
     const registrationResponse = await fetch(registrationEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(registrationRequest),
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify(registrationRequest),
     });
     expect(registrationResponse.status).to.equal(200);
 
     // 6. Alice can now write to the DWN.
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
     const writeResponse = await fetch(dwnMessageEndpoint, {
-      method: 'POST',
-      headers: {
+      method  : 'POST',
+      headers : {
         'dwn-request': JSON.stringify(jsonRpcRequest),
       },
       body: new Blob([dataBytes]),
@@ -150,8 +150,8 @@ describe('Registration scenarios', function () {
     const nonTenant = await TestDataGenerator.generateDidKeyPersona();
     const nonTenantJsonRpcRequest = await generateRecordsWriteJsonRpcRequest(nonTenant);
     const nonTenantJsonRpcResponse = await fetch(dwnMessageEndpoint, {
-      method: 'POST',
-      headers: {
+      method  : 'POST',
+      headers : {
         'dwn-request': JSON.stringify(nonTenantJsonRpcRequest.jsonRpcRequest),
       },
       body: new Blob([nonTenantJsonRpcRequest.dataBytes]),
@@ -177,15 +177,15 @@ describe('Registration scenarios', function () {
     registrationManager['proofOfWorkManager']['currentMaximumAllowedHashValueAsBigInt'] = BigInt('0x0000000000000000000000000000000000000000000000000000000000000001');
 
     const registrationData: RegistrationData = {
-      did: alice.did,
-      termsOfServiceHash: ProofOfWork.hashAsHexString([termsOfService]),
+      did                : alice.did,
+      termsOfServiceHash : ProofOfWork.hashAsHexString([termsOfService]),
     };
 
     // 1. Alice computes the proof-of-work response nonce that is insufficient to meet the difficulty requirement.
     const responseNonce = ProofOfWork.findQualifiedResponseNonce({
       challengeNonce,
-      maximumAllowedHashValue: 'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF', // any hash value will always be less or equal to this value
-      requestData: JSON.stringify(registrationData),
+      maximumAllowedHashValue : 'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF', // any hash value will always be less or equal to this value
+      requestData             : JSON.stringify(registrationData),
     });
 
     // 2. Alice sends the registration request to the server and is rejected.
@@ -196,11 +196,11 @@ describe('Registration scenarios', function () {
         responseNonce,
       },
     };
-    
+
     const registrationResponse = await fetch(registrationEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(registrationRequest),
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify(registrationRequest),
     });
     const registrationResponseBody = await registrationResponse.json() as any;
     expect(registrationResponse.status).to.equal(400);
@@ -221,8 +221,8 @@ describe('Registration scenarios', function () {
 
     // 1. Alice constructs the registration data with an invalid/outdated terms-of-service hash.
     const registrationData: RegistrationData = {
-      did: alice.did,
-      termsOfServiceHash: ProofOfWork.hashAsHexString(['invalid-or-outdated-terms-of-service']),
+      did                : alice.did,
+      termsOfServiceHash : ProofOfWork.hashAsHexString(['invalid-or-outdated-terms-of-service']),
     };
 
     const responseNonce = ProofOfWork.findQualifiedResponseNonce({
@@ -239,11 +239,11 @@ describe('Registration scenarios', function () {
         responseNonce,
       },
     };
-    
+
     const registrationResponse = await fetch(registrationEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(registrationRequest),
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify(registrationRequest),
     });
     const registrationResponseBody = await registrationResponse.json() as any;
     expect(registrationResponse.status).to.equal(400);
@@ -262,8 +262,8 @@ describe('Registration scenarios', function () {
 
     // 1. Alice sends the registration request to the server and it is accepted.
     const registrationData: RegistrationData = {
-      did: alice.did,
-      termsOfServiceHash: ProofOfWork.hashAsHexString([termsOfService]),
+      did                : alice.did,
+      termsOfServiceHash : ProofOfWork.hashAsHexString([termsOfService]),
     };
 
     const responseNonce = ProofOfWork.findQualifiedResponseNonce({
@@ -279,19 +279,19 @@ describe('Registration scenarios', function () {
         responseNonce,
       },
     };
-    
+
     const registrationResponse = await fetch(registrationEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(registrationRequest),
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify(registrationRequest),
     });
     expect(registrationResponse.status).to.equal(200);
 
     // 2. Alice sends the same registration request which uses the same response nonce to the server again and it is rejected.
     const registration2Response = await fetch(registrationEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(registrationRequest),
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify(registrationRequest),
     });
     const registration2ResponseBody = await registration2Response.json() as any;
     expect(registration2Response.status).to.equal(400);
@@ -303,22 +303,22 @@ describe('Registration scenarios', function () {
     // Assume Alice fetched the terms-of-service.
     const termsOfService = registrationManager.getTermsOfService();
     const registrationData: RegistrationData = {
-      did: alice.did,
-      termsOfServiceHash: ProofOfWork.hashAsHexString([termsOfService]),
+      did                : alice.did,
+      termsOfServiceHash : ProofOfWork.hashAsHexString([termsOfService]),
     };
 
     const registrationRequest1: RegistrationRequest = {
       registrationData,
       proofOfWork: {
-        challengeNonce: 'unused',
-        responseNonce: 'not-a-hex-string',
+        challengeNonce : 'unused',
+        responseNonce  : 'not-a-hex-string',
       },
     };
-    
+
     const registrationResponse1 = await fetch(registrationEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(registrationRequest1),
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify(registrationRequest1),
     });
     const registrationResponseBody1 = await registrationResponse1.json() as any;
     expect(registrationResponse1.status).to.equal(400);
@@ -327,15 +327,15 @@ describe('Registration scenarios', function () {
     const registrationRequest2: RegistrationRequest = {
       registrationData,
       proofOfWork: {
-        challengeNonce: 'unused',
-        responseNonce: 'FFFF', // HEX string too short
+        challengeNonce : 'unused',
+        responseNonce  : 'FFFF', // HEX string too short
       },
     };
-    
+
     const registrationResponse2 = await fetch(registrationEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(registrationRequest2),
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify(registrationRequest2),
     });
     const registrationResponseBody2 = await registrationResponse2.json() as any;
     expect(registrationResponse2.status).to.equal(400);
@@ -362,8 +362,8 @@ describe('Registration scenarios', function () {
 
     // 2. Alice computes the proof-of-work response nonce based on the the proof-of-work challenge and the registration data.
     const registrationData: RegistrationData = {
-      did: alice.did,
-      termsOfServiceHash: ProofOfWork.hashAsHexString([termsOfService]),
+      did                : alice.did,
+      termsOfServiceHash : ProofOfWork.hashAsHexString([termsOfService]),
     };
 
     const responseNonce = ProofOfWork.findQualifiedResponseNonce({
@@ -380,11 +380,11 @@ describe('Registration scenarios', function () {
         responseNonce,
       },
     };
-    
+
     const registrationResponse = await fetch(registrationEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(registrationRequest),
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify(registrationRequest),
     });
     const registrationResponseBody = await registrationResponse.json() as any;
     expect(registrationResponse.status).to.equal(400);
@@ -402,24 +402,24 @@ describe('Registration scenarios', function () {
 
     // 5. Alice computes the proof-of-work response nonce based on the the new proof-of-work challenge and the registration data.
     const newResponseNonce = ProofOfWork.findQualifiedResponseNonce({
-      challengeNonce: newChallengeNonce,
-      maximumAllowedHashValue: newMaximumAllowedHashValue,
-      requestData: JSON.stringify(registrationData),
+      challengeNonce          : newChallengeNonce,
+      maximumAllowedHashValue : newMaximumAllowedHashValue,
+      requestData             : JSON.stringify(registrationData),
     });
 
     // 6. Alice sends the new registration request to the server and it is accepted.
     const newRegistrationRequest: RegistrationRequest = {
       registrationData,
       proofOfWork: {
-        challengeNonce: newChallengeNonce,
-        responseNonce: newResponseNonce
+        challengeNonce : newChallengeNonce,
+        responseNonce  : newResponseNonce
       },
     };
-    
+
     const newRegistrationResponse = await fetch(registrationEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newRegistrationRequest),
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify(newRegistrationRequest),
     });
     expect(newRegistrationResponse.status).to.equal(200);
   });
@@ -429,22 +429,22 @@ describe('Registration scenarios', function () {
     // 1. Alice is a registered tenant and is able to write to the DWN.
     // 2. DWN server administrator updates the terms-of-service.
     // 3. Alice no longer can write to the DWN because she has not agreed to the new terms-of-service.
-    // 4. Alice fetches the new terms-of-service and proof-of-work challenge 
+    // 4. Alice fetches the new terms-of-service and proof-of-work challenge
     // 5. Alice agrees to the new terms-of-service.
     // 6. Alice can now write to the DWN again.
 
     // 1. Alice is a registered tenant and is able to write to the DWN.
     // Shortcut to register Alice.
     registrationManager.recordTenantRegistration({
-      did: alice.did,
-      termsOfServiceHash: ProofOfWork.hashAsHexString([registrationManager.getTermsOfService()])
+      did                : alice.did,
+      termsOfServiceHash : ProofOfWork.hashAsHexString([registrationManager.getTermsOfService()])
     });
 
     // Sanity test that Alice can write to the DWN after registration.
     const write1 = await generateRecordsWriteJsonRpcRequest(alice);
     const write1Response = await fetch(dwnMessageEndpoint, {
-      method: 'POST',
-      headers: {
+      method  : 'POST',
+      headers : {
         'dwn-request': JSON.stringify(write1.jsonRpcRequest),
       },
       body: new Blob([write1.dataBytes]),
@@ -460,8 +460,8 @@ describe('Registration scenarios', function () {
     // 3. Alice no longer can write to the DWN because she has not agreed to the new terms-of-service.
     const write2 = await generateRecordsWriteJsonRpcRequest(alice);
     const write2Response = await fetch(dwnMessageEndpoint, {
-      method: 'POST',
-      headers: {
+      method  : 'POST',
+      headers : {
         'dwn-request': JSON.stringify(write2.jsonRpcRequest),
       },
       body: new Blob([write2.dataBytes]),
@@ -471,7 +471,7 @@ describe('Registration scenarios', function () {
     expect(write2ResponseBody.result.reply.status.code).to.equal(401);
     expect(write2ResponseBody.result.reply.status.detail).to.equal('Agreed terms-of-service is outdated.');
 
-    // 4. Alice fetches the new terms-of-service and proof-of-work challenge 
+    // 4. Alice fetches the new terms-of-service and proof-of-work challenge
     const termsOfServiceGetResponse = await fetch(termsOfUseEndpoint, {
       method: 'GET',
     });
@@ -482,12 +482,12 @@ describe('Registration scenarios', function () {
     const proofOfWorkChallengeGetResponse = await fetch(proofOfWorkEndpoint, {
       method: 'GET',
     });
-    const { challengeNonce, maximumAllowedHashValue} = await proofOfWorkChallengeGetResponse.json() as ProofOfWorkChallengeModel;
+    const { challengeNonce, maximumAllowedHashValue } = await proofOfWorkChallengeGetResponse.json() as ProofOfWorkChallengeModel;
 
     // 5. Alice agrees to the new terms-of-service.
     const registrationData: RegistrationData = {
-      did: alice.did,
-      termsOfServiceHash: ProofOfWork.hashAsHexString([newTermsOfService]),
+      did                : alice.did,
+      termsOfServiceHash : ProofOfWork.hashAsHexString([newTermsOfService]),
     };
 
     const responseNonce = ProofOfWork.findQualifiedResponseNonce({
@@ -505,17 +505,17 @@ describe('Registration scenarios', function () {
     };
 
     const registrationResponse = await fetch(registrationEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(registrationRequest),
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify(registrationRequest),
     });
     expect(registrationResponse.status).to.equal(200);
 
     // 6. Alice can now write to the DWN again.
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
     const write3Response = await fetch(dwnMessageEndpoint, {
-      method: 'POST',
-      headers: {
+      method  : 'POST',
+      headers : {
         'dwn-request': JSON.stringify(jsonRpcRequest),
       },
       body: new Blob([dataBytes]),
@@ -532,8 +532,8 @@ describe('Registration scenarios', function () {
     const registrationProofOfWorkSeed = randomBytes(32).toString('hex');
     const configWithProofOfWorkSeed: DwnServerConfig = {
       ...dwnServerConfig,
-      registrationStoreUrl: 'sqlite://',
-      registrationProofOfWorkEnabled: true,
+      registrationStoreUrl           : 'sqlite://',
+      registrationProofOfWorkEnabled : true,
       registrationProofOfWorkSeed,
     };
 
@@ -544,14 +544,14 @@ describe('Registration scenarios', function () {
 
   it('should allow tenant registration to be turned off to allow all DWN messages through.', async () => {
     await dwnServer.stop();
-    
+
     // CRITICAL: We need to create a custom DID resolver that does not use a LevelDB based cache (which is the default cache used in `DWN`)
     // otherwise we will receive a `Database is not open` coming from LevelDB.
     // This is likely due to the fact that LevelDB is the default cache used in `DWN`, and we have tests creating default DWN instances,
     // so here we have to create a DWN that does not use the same LevelDB cache to avoid hitting LevelDB locked issues.
-    // Long term we should investigate and unify approach of DWN instantiation taken by tests to avoid this "workaround" entirely. 
+    // Long term we should investigate and unify approach of DWN instantiation taken by tests to avoid this "workaround" entirely.
     const didResolver = new UniversalResolver({
-      didResolvers : [DidDht, DidKey],
+      didResolvers: [DidDht, DidKey],
     });
 
     // Scenario:
@@ -559,10 +559,10 @@ describe('Registration scenarios', function () {
     // 2. Alice can write to the DWN without registering as a tenant.
     const configClone = {
       ...dwnServerConfig,
-      registrationStoreUrl: '', // set to empty to disable tenant registration
-      port: 3002,
-      registrationProofOfWorkEnabled: false,
-      termsOfServiceFilePath: undefined,
+      registrationStoreUrl           : '', // set to empty to disable tenant registration
+      port                           : 3002,
+      registrationProofOfWorkEnabled : false,
+      termsOfServiceFilePath         : undefined,
     };
     dwnServer = new DwnServer({ config: configClone, didResolver });
     await dwnServer.start();
@@ -570,8 +570,8 @@ describe('Registration scenarios', function () {
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
 
     const writeResponse = await fetch('http://localhost:3002', {
-      method: 'POST',
-      headers: {
+      method  : 'POST',
+      headers : {
         'dwn-request': JSON.stringify(jsonRpcRequest),
       },
       body: new Blob([dataBytes]),
@@ -588,8 +588,8 @@ async function generateRecordsWriteJsonRpcRequest(persona: Persona): Promise<{ j
 
   const requestId = uuidv4();
   const jsonRpcRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
-    message: recordsWrite.toJSON(),
-    target: persona.did,
+    message : recordsWrite.toJSON(),
+    target  : persona.did,
   });
 
   const dataBytes = await DataStream.toBytes(dataStream);

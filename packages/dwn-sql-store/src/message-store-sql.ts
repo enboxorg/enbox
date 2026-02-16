@@ -1,27 +1,29 @@
+import type { Dialect } from './dialect/dialect.js';
+import type { Transaction } from 'kysely';
+import type { DwnDatabaseType, KeyValues } from './types.js';
+import type {
+  Filter,
+  GenericMessage,
+  MessageSort,
+  MessageStore,
+  MessageStoreOptions,
+  Pagination,
+  PaginationCursor } from '@enbox/dwn-sdk-js';
+
+import * as block from 'multiformats/block';
+import * as cbor from '@ipld/dag-cbor';
+import { executeWithRetryIfDatabaseIsLocked } from './utils/transaction.js';
+import { extractTagsAndSanitizeIndexes } from './utils/sanitize.js';
+import { filterSelectQuery } from './utils/filter.js';
+import { Kysely } from 'kysely';
+import { sha256 } from 'multiformats/hashes/sha2';
+import { TagTables } from './utils/tags.js';
 import {
   DwnInterfaceName,
   DwnMethodName,
   executeUnlessAborted,
-  Filter,
-  GenericMessage,
-  MessageStore,
-  MessageStoreOptions,
-  MessageSort,
-  Pagination,
-  SortDirection,
-  PaginationCursor,
+  SortDirection
 } from '@enbox/dwn-sdk-js';
-
-import { Kysely, Transaction } from 'kysely';
-import { DwnDatabaseType, KeyValues } from './types.js';
-import * as block from 'multiformats/block';
-import * as cbor from '@ipld/dag-cbor';
-import { Dialect } from './dialect/dialect.js';
-import { executeWithRetryIfDatabaseIsLocked } from './utils/transaction.js';
-import { extractTagsAndSanitizeIndexes } from './utils/sanitize.js';
-import { filterSelectQuery } from './utils/filter.js';
-import { sha256 } from 'multiformats/hashes/sha2';
-import { TagTables } from './utils/tags.js';
 
 
 export class MessageStoreSql implements MessageStore {
@@ -170,7 +172,7 @@ export class MessageStoreSql implements MessageStore {
       let encodedData: string|null = null;
       if (message.descriptor.interface === DwnInterfaceName.Records && message.descriptor.method === DwnMethodName.Write) {
         const data = (message as any).encodedData as string|undefined;
-        if(data) {
+        if (data) {
           delete (message as any).encodedData;
           encodedData = data;
         }
@@ -178,10 +180,10 @@ export class MessageStoreSql implements MessageStore {
       return { message, encodedData };
     };
 
-    const { message: messageToProcess, encodedData} = getEncodedData(message);
+    const { message: messageToProcess, encodedData } = getEncodedData(message);
 
     const encodedMessageBlock = await executeUnlessAborted(
-      block.encode({ value: messageToProcess, codec: cbor, hasher: sha256}),
+      block.encode({ value: messageToProcess, codec: cbor, hasher: sha256 }),
       options?.signal
     );
 
@@ -297,7 +299,7 @@ export class MessageStoreSql implements MessageStore {
     // filter sanitization takes place within `filterSelectQuery`
     query = filterSelectQuery(filters, query);
 
-    if(pagination?.cursor !== undefined) {
+    if (pagination?.cursor !== undefined) {
       // currently the sort property is explicitly either `dateCreated` | `messageTimestamp` | `datePublished` which are all strings
       // TODO: https://github.com/enboxorg/enbox/issues/664 to handle the edge case
       const cursorValue = pagination.cursor.value as string;
@@ -312,7 +314,7 @@ export class MessageStoreSql implements MessageStore {
 
     const orderDirection = sortDirection === SortDirection.Ascending ? 'asc' : 'desc';
     // sorting by the provided sort property, the tiebreak is always in ascending order regardless of sort
-    query =  query
+    query = query
       .orderBy(sortProperty, orderDirection)
       .orderBy('messageCid', orderDirection);
 
@@ -427,14 +429,14 @@ export class MessageStoreSql implements MessageStore {
   private extractSortProperties(
     messageSort?: MessageSort
   ):{ property: 'dateCreated' | 'datePublished' | 'messageTimestamp', direction: SortDirection } {
-    if(messageSort?.dateCreated !== undefined)  {
-      return  { property: 'dateCreated', direction: messageSort.dateCreated };
-    } else if(messageSort?.datePublished !== undefined) {
-      return  { property: 'datePublished', direction: messageSort.datePublished };
+    if (messageSort?.dateCreated !== undefined) {
+      return { property: 'dateCreated', direction: messageSort.dateCreated };
+    } else if (messageSort?.datePublished !== undefined) {
+      return { property: 'datePublished', direction: messageSort.datePublished };
     } else if (messageSort?.messageTimestamp !== undefined) {
-      return  { property: 'messageTimestamp', direction: messageSort.messageTimestamp };
+      return { property: 'messageTimestamp', direction: messageSort.messageTimestamp };
     } else {
-      return  { property: 'messageTimestamp', direction: SortDirection.Ascending };
+      return { property: 'messageTimestamp', direction: SortDirection.Ascending };
     }
   }
 }

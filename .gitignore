@@ -150,3 +150,5 @@ web5.polyfill.min.js
 # Coverage reports
 .nyc_output/
 coverage/ 
+
+.notes/

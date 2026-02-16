@@ -1,13 +1,16 @@
 import sinon from 'sinon';
+
+import { CryptoUtils } from '@enbox/crypto';
 import { expect } from 'chai';
 import { testDwnUrl } from './utils/test-config.js';
-import { CryptoUtils } from '@enbox/crypto';
 
-import { DidRpcMethod, HttpWeb5RpcClient, Web5RpcClient, WebSocketWeb5RpcClient } from '../src/rpc-client.js';
+import type { Persona } from '@enbox/dwn-sdk-js';
+
 import { DwnServerInfoCacheMemory } from '../src/prototyping/clients/dwn-server-info-cache-memory.js';
 import { HttpDwnRpcClient } from '../src/prototyping/clients/http-dwn-rpc-client.js';
-import { Persona, TestDataGenerator } from '@enbox/dwn-sdk-js';
-import { JsonRpcErrorCodes, createJsonRpcErrorResponse, createJsonRpcSuccessResponse } from '../src/prototyping/clients/json-rpc.js';
+import { TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '../src/prototyping/clients/json-rpc.js';
+import { DidRpcMethod, HttpWeb5RpcClient, Web5RpcClient, WebSocketWeb5RpcClient } from '../src/rpc-client.js';
 
 describe('RPC Clients', () => {
   describe('HttpDwnRpcClient', () => {
@@ -168,7 +171,7 @@ describe('RPC Clients', () => {
             message,
           });
           expect.fail('Expected error to be thrown');
-        } catch(error: any) {
+        } catch (error: any) {
           expect(error.message).to.equal('no foo: transport client available');
         }
       });
@@ -200,7 +203,7 @@ describe('RPC Clients', () => {
         try {
           await client.getServerInfo(testDwnUrl);
           expect.fail('Expected an error to be thrown');
-        } catch(error: any) {
+        } catch (error: any) {
           expect(error.message).to.contain('HTTP (500)');
         }
       });
@@ -316,7 +319,7 @@ describe('RPC Clients', () => {
         try {
           await client.sendDidRequest(request);
           expect.fail('Expected an error to be thrown');
-        } catch(error: any) {
+        } catch (error: any) {
           expect(error.message).to.contain(`Error encountered while processing response from ${testDwnUrl}`);
         }
       });
@@ -330,7 +333,7 @@ describe('RPC Clients', () => {
         try {
           await client.sendDidRequest(request);
           expect.fail('Expected an error to be thrown');
-        } catch(error: any) {
+        } catch (error: any) {
           expect(error.message).to.contain(`Error encountered while processing response from ${testDwnUrl}`);
         }
       });

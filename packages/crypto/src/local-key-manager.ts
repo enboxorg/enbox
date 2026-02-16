@@ -1,28 +1,29 @@
-import { KeyValueStore, MemoryStore } from '@enbox/common';
+import type { KeyValueStore } from '@enbox/common';
+import { MemoryStore } from '@enbox/common';
 
-import type { Jwk } from './jose/jwk.js';
-import type { Hasher } from './types/hasher.js';
-import type { Signer } from './types/signer.js';
+import type { CryptoAlgorithm } from './algorithms/crypto-algorithm.js';
 import type { CryptoApi } from './types/crypto-api.js';
+import type { Hasher } from './types/hasher.js';
+import type { Jwk } from './jose/jwk.js';
 import type { KeyIdentifier } from './types/identifier.js';
 import type { KeyImporterExporter } from './types/key-io.js';
-import type { KeyGenerator, AsymmetricKeyGenerator } from './types/key-generator.js';
+import type { Signer } from './types/signer.js';
+import type { AsymmetricKeyGenerator, KeyGenerator } from './types/key-generator.js';
 import type { GetPublicKeyParams, SignParams, VerifyParams } from './types/params-direct.js';
 import type {
-  KmsSignParams,
   KmsDigestParams,
-  KmsVerifyParams,
   KmsExportKeyParams,
-  KmsGetKeyUriParams,
-  KmsImportKeyParams,
   KmsGenerateKeyParams,
+  KmsGetKeyUriParams,
   KmsGetPublicKeyParams,
+  KmsImportKeyParams,
+  KmsSignParams,
+  KmsVerifyParams,
 } from './types/params-kms.js';
 
-import { Sha2Algorithm } from './algorithms/sha-2.js';
 import { EcdsaAlgorithm } from './algorithms/ecdsa.js';
 import { EdDsaAlgorithm } from './algorithms/eddsa.js';
-import { CryptoAlgorithm } from './algorithms/crypto-algorithm.js';
+import { Sha2Algorithm } from './algorithms/sha-2.js';
 import { computeJwkThumbprint, isPrivateJwk, KEY_URI_PREFIX_JWK } from './jose/jwk.js';
 
 /**
@@ -53,7 +54,7 @@ const supportedAlgorithms = {
 } satisfies {
   [key: string]: {
     implementation : typeof CryptoAlgorithm;
-    names          : string[];
+    names : string[];
   }
 };
 
@@ -335,7 +336,7 @@ export class LocalKeyManager implements
   public async importKey({ key }:
     KmsImportKeyParams
   ): Promise<KeyIdentifier> {
-    if (!isPrivateJwk(key)) throw new TypeError('Invalid key provided. Must be a private key in JWK format.');
+    if (!isPrivateJwk(key)) {throw new TypeError('Invalid key provided. Must be a private key in JWK format.');}
 
     // Make a deep copy of the key to avoid mutating the original.
     const privateKey = structuredClone(key);

@@ -1,20 +1,19 @@
-import { expect, use } from 'chai';
-import { Convert } from '@enbox/common';
 import chaiAsPromised from 'chai-as-promised';
+import { Convert } from '@enbox/common';
+import { expect, use } from 'chai';
 
 import type { Jwk, JwkParamsOkpPrivate } from '../../src/jose/jwk.js';
 
-import CryptoEd25519SignTestVector from '../fixtures/web5-spec-vectors/crypto_ed25519/sign.json' assert { type: 'json' };
-import ed25519ComputePublicKey from '../fixtures/test-vectors/ed25519/compute-public-key.json' assert { type: 'json' };
-import CryptoEd25519VerifyTestVector from '../fixtures/web5-spec-vectors/crypto_ed25519/verify.json' assert { type: 'json' };
-import ed25519BytesToPublicKey from '../fixtures/test-vectors/ed25519/bytes-to-public-key.json' assert { type: 'json' };
-import ed25519PublicKeyToBytes from '../fixtures/test-vectors/ed25519/public-key-to-bytes.json' assert { type: 'json' };
-import ed25519BytesToPrivateKey from '../fixtures/test-vectors/ed25519/bytes-to-private-key.json' assert { type: 'json' };
-import ed25519PrivateKeyToBytes from '../fixtures/test-vectors/ed25519/private-key-to-bytes.json' assert { type: 'json' };
-import ed25519ConvertPublicKeyToX25519 from '../fixtures/test-vectors/ed25519/convert-public-key-to-x25519.json' assert { type: 'json' };
-import ed25519ConvertPrivateKeyToX25519 from '../fixtures/test-vectors/ed25519/convert-private-key-to-x25519.json' assert { type: 'json' };
-
+import CryptoEd25519SignTestVector from '../fixtures/web5-spec-vectors/crypto_ed25519/sign.json' with { type: 'json' };
+import CryptoEd25519VerifyTestVector from '../fixtures/web5-spec-vectors/crypto_ed25519/verify.json' with { type: 'json' };
 import { Ed25519 } from '../../src/primitives/ed25519.js';
+import ed25519BytesToPrivateKey from '../fixtures/test-vectors/ed25519/bytes-to-private-key.json' with { type: 'json' };
+import ed25519BytesToPublicKey from '../fixtures/test-vectors/ed25519/bytes-to-public-key.json' with { type: 'json' };
+import ed25519ComputePublicKey from '../fixtures/test-vectors/ed25519/compute-public-key.json' with { type: 'json' };
+import ed25519ConvertPrivateKeyToX25519 from '../fixtures/test-vectors/ed25519/convert-private-key-to-x25519.json' with { type: 'json' };
+import ed25519ConvertPublicKeyToX25519 from '../fixtures/test-vectors/ed25519/convert-public-key-to-x25519.json' with { type: 'json' };
+import ed25519PrivateKeyToBytes from '../fixtures/test-vectors/ed25519/private-key-to-bytes.json' with { type: 'json' };
+import ed25519PublicKeyToBytes from '../fixtures/test-vectors/ed25519/public-key-to-bytes.json' with { type: 'json' };
 
 use(chaiAsPromised);
 
@@ -309,9 +308,7 @@ describe('Ed25519', () => {
 
     it('accepts input data as Uint8Array', async () => {
       const data = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
-      let signature: Uint8Array;
-
-      signature = await Ed25519.sign({ key: privateKey, data: data });
+      const signature = await Ed25519.sign({ key: privateKey, data: data });
       expect(signature).to.be.instanceOf(Uint8Array);
     });
 

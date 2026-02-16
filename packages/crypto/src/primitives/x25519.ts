@@ -79,7 +79,7 @@ export class X25519 {
     privateKeyBytes: Uint8Array;
   }): Promise<Jwk> {
     // Derive the public key from the private key.
-    const publicKeyBytes  = x25519.getPublicKey(privateKeyBytes);
+    const publicKeyBytes = x25519.getPublicKey(privateKeyBytes);
 
     // Construct the private key in JWK format.
     const privateKey: Jwk = {
@@ -168,7 +168,7 @@ export class X25519 {
     ComputePublicKeyParams
   ): Promise<Jwk> {
     // Convert the provided private key to a byte array.
-    const privateKeyBytes  = await X25519.privateKeyToBytes({ privateKey: key });
+    const privateKeyBytes = await X25519.privateKeyToBytes({ privateKey: key });
 
     // Derive the public key from the private key.
     const publicKeyBytes = x25519.getPublicKey(privateKeyBytes);
@@ -260,7 +260,7 @@ export class X25519 {
     }
 
     // Remove the private key property ('d') and make a shallow copy of the provided key.
-    let { d, ...publicKey } = key;
+    const { d, ...publicKey } = key;
 
     // If the key ID is undefined, set it to the JWK thumbprint.
     publicKey.kid ??= await computeJwkThumbprint({ jwk: publicKey });

@@ -1,16 +1,16 @@
+import type { AsymmetricKeyGenerator } from '../types/key-generator.js';
 import type { Jwk } from '../jose/jwk.js';
 import type { Signer } from '../types/signer.js';
-import type { AsymmetricKeyGenerator } from '../types/key-generator.js';
 import type {
-  SignParams,
-  VerifyParams,
+  ComputePublicKeyParams,
   GenerateKeyParams,
   GetPublicKeyParams,
-  ComputePublicKeyParams,
+  SignParams,
+  VerifyParams,
 } from '../types/params-direct.js';
 
-import { Ed25519 } from '../primitives/ed25519.js';
 import { CryptoAlgorithm } from './crypto-algorithm.js';
+import { Ed25519 } from '../primitives/ed25519.js';
 import { isOkpPrivateJwk, isOkpPublicJwk } from '../jose/jwk.js';
 
 /**
@@ -62,7 +62,7 @@ export class EdDsaAlgorithm extends CryptoAlgorithm
   public async computePublicKey({ key }:
     ComputePublicKeyParams
   ): Promise<Jwk> {
-    if (!isOkpPrivateJwk(key)) throw new TypeError('Invalid key provided. Must be an octet key pair (OKP) private key.');
+    if (!isOkpPrivateJwk(key)) {throw new TypeError('Invalid key provided. Must be an octet key pair (OKP) private key.');}
 
     switch (key.crv) {
 
@@ -134,7 +134,7 @@ export class EdDsaAlgorithm extends CryptoAlgorithm
   public async getPublicKey({ key }:
     GetPublicKeyParams
   ): Promise<Jwk> {
-    if (!isOkpPrivateJwk(key)) throw new TypeError('Invalid key provided. Must be an octet key pair (OKP) private key.');
+    if (!isOkpPrivateJwk(key)) {throw new TypeError('Invalid key provided. Must be an octet key pair (OKP) private key.');}
 
     switch (key.crv) {
 
@@ -181,7 +181,7 @@ export class EdDsaAlgorithm extends CryptoAlgorithm
   public async sign({ key, data }:
     SignParams
   ): Promise<Uint8Array> {
-    if (!isOkpPrivateJwk(key)) throw new TypeError('Invalid key provided. Must be an octet key pair (OKP) private key.');
+    if (!isOkpPrivateJwk(key)) {throw new TypeError('Invalid key provided. Must be an octet key pair (OKP) private key.');}
 
     switch (key.crv) {
 
@@ -227,7 +227,7 @@ export class EdDsaAlgorithm extends CryptoAlgorithm
   public async verify({ key, signature, data }:
     VerifyParams
   ): Promise<boolean> {
-    if (!isOkpPublicJwk(key)) throw new TypeError('Invalid key provided. Must be an octet key pair (OKP) public key.');
+    if (!isOkpPublicJwk(key)) {throw new TypeError('Invalid key provided. Must be an octet key pair (OKP) public key.');}
 
     switch (key.crv) {
 

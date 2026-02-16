@@ -1,11 +1,9 @@
-import { CryptoUtils } from '@enbox/crypto';
-
-
+import type { JsonRpcResponse } from './prototyping/clients/json-rpc.js';
 import type { DwnRpc, DwnRpcRequest, DwnRpcResponse } from './prototyping/clients/dwn-rpc-types.js';
 import type { DwnServerInfoRpc, ServerInfo } from './prototyping/clients/server-info-types.js';
-import type { JsonRpcResponse } from './prototyping/clients/json-rpc.js';
 
 import { createJsonRpcRequest } from './prototyping/clients/json-rpc.js';
+import { CryptoUtils } from '@enbox/crypto';
 import { HttpDwnRpcClient } from './prototyping/clients/http-dwn-rpc-client.js';
 import { WebSocketDwnRpcClient } from './prototyping/clients/web-socket-clients.js';
 
@@ -27,13 +25,13 @@ export type DidRpcRequest = {
   data: string;
   method: DidRpcMethod;
   url: string;
-}
+};
 
 export type DidRpcResponse = {
   data?: string;
   ok: boolean;
   status: RpcStatus;
-}
+};
 
 export type RpcStatus = {
   code: number;
@@ -55,8 +53,8 @@ export class Web5RpcClient implements Web5Rpc {
     // can be overwritten for 'http:', 'https:', 'ws: or ':wss' if instantiated with other clients.
     clients = [new HttpWeb5RpcClient(), new WebSocketWeb5RpcClient(), ...clients];
 
-    for (let client of clients) {
-      for (let transportScheme of client.transportProtocols) {
+    for (const client of clients) {
+      for (const transportScheme of client.transportProtocols) {
         this.transportClients.set(transportScheme, client);
       }
     }
@@ -101,7 +99,7 @@ export class Web5RpcClient implements Web5Rpc {
     const url = new URL(dwnUrl);
 
     const transportClient = this.transportClients.get(url.protocol);
-    if(!transportClient) {
+    if (!transportClient) {
       const error = new Error(`no ${url.protocol} transport client available`);
       error.name = 'NO_TRANSPORT_CLIENT';
 

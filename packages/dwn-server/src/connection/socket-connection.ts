@@ -1,17 +1,16 @@
-import type { Dwn, GenericMessage, MessageEvent } from "@enbox/dwn-sdk-js";
-import { DwnMethodName } from "@enbox/dwn-sdk-js";
+import { DwnMethodName } from '@enbox/dwn-sdk-js';
+import type { RequestContext } from '../lib/json-rpc-router.js';
+import type { WebSocket } from 'ws';
+import type { Dwn, GenericMessage, MessageEvent } from '@enbox/dwn-sdk-js';
+import type { JsonRpcErrorResponse, JsonRpcId, JsonRpcRequest, JsonRpcResponse, JsonRpcSubscription } from '../lib/json-rpc.js';
 
-import type { WebSocket } from "ws";
 import log from 'loglevel';
 import { v4 as uuidv4 } from 'uuid';
 
-import type { RequestContext } from "../lib/json-rpc-router.js";
-import type { JsonRpcErrorResponse, JsonRpcId, JsonRpcRequest, JsonRpcResponse, JsonRpcSubscription } from "../lib/json-rpc.js";
-
-import { requestCounter } from "../metrics.js";
-import { jsonRpcRouter } from "../json-rpc-api.js";
-import { JsonRpcErrorCodes, createJsonRpcErrorResponse, createJsonRpcSuccessResponse } from "../lib/json-rpc.js";
-import { DwnServerError, DwnServerErrorCode } from "../dwn-error.js";
+import { jsonRpcRouter } from '../json-rpc-api.js';
+import { requestCounter } from '../metrics.js';
+import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '../lib/json-rpc.js';
+import { DwnServerError, DwnServerErrorCode } from '../dwn-error.js';
 
 const HEARTBEAT_INTERVAL = 30_000;
 
@@ -65,7 +64,7 @@ export class SocketConnection {
       throw new DwnServerError(
         DwnServerErrorCode.ConnectionSubscriptionJsonRpcIdExists,
         `the subscription with id ${subscription.id} already exists`
-      )
+      );
     }
 
     this.subscriptions.set(subscription.id, subscription);
@@ -81,7 +80,7 @@ export class SocketConnection {
       throw new DwnServerError(
         DwnServerErrorCode.ConnectionSubscriptionJsonRpcIdNotFound,
         `the subscription with id ${id} was not found`
-      )
+      );
     }
 
     const connection = this.subscriptions.get(id);
@@ -143,13 +142,13 @@ export class SocketConnection {
         uuidv4(),
         JsonRpcErrorCodes.BadRequest,
         'request payload required.'
-      ))
+      ));
     }
 
     let jsonRequest: JsonRpcRequest;
     try {
       jsonRequest = JSON.parse(requestData);
-    } catch(error) {
+    } catch (error) {
       const errorResponse = createJsonRpcErrorResponse(
         uuidv4(),
         JsonRpcErrorCodes.BadRequest,
@@ -164,8 +163,8 @@ export class SocketConnection {
       requestCounter.inc({ method: jsonRequest.method, error: 1 });
     } else {
       requestCounter.inc({
-        method: jsonRequest.method,
-        status: jsonRpcResponse?.result?.reply?.status?.code || 0,
+        method : jsonRequest.method,
+        status : jsonRpcResponse?.result?.reply?.status?.code || 0,
       });
     }
     this.send(jsonRpcResponse);
@@ -187,7 +186,7 @@ export class SocketConnection {
     return (event) => {
       const response = createJsonRpcSuccessResponse(id, { event });
       this.send(response);
-    }
+    };
   }
 
   /**
@@ -202,7 +201,7 @@ export class SocketConnection {
       transport        : 'ws',
       dwn              : this.dwn,
       socketConnection : this,
-    }
+    };
 
     // methods that expect a long-running subscription begin with `rpc.subscribe.`
     if (method.startsWith('rpc.subscribe.') && subscription) {
@@ -210,9 +209,9 @@ export class SocketConnection {
       if (message?.descriptor.method === DwnMethodName.Subscribe) {
         const handlerFunc = this.createSubscriptionHandler(subscription.id);
         requestContext.subscriptionRequest = {
-          id: subscription.id,
-          subscriptionHandler: (message): void => handlerFunc(message),
-        }
+          id                  : subscription.id,
+          subscriptionHandler : (message): void => handlerFunc(message),
+        };
       }
     }
 

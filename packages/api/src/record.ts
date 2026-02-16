@@ -5,29 +5,30 @@
 /// <reference types="@enbox/dwn-sdk-js" />
 
 import type { Readable } from '@enbox/common';
-import {
-  Web5Agent,
-  DwnInterface,
-  DwnMessage,
-  DwnMessageParams,
-  DwnResponseStatus,
-  ProcessDwnRequest,
-  DwnMessageDescriptor,
-  getPaginationCursor,
-  getRecordAuthor,
+import type {
   DwnDateSort,
+  DwnMessage,
+  DwnMessageDescriptor,
+  DwnMessageParams,
   DwnPaginationCursor,
-  isDwnMessage,
-  SendDwnRequest,
+  DwnResponseStatus,
   PermissionsApi,
-  AgentPermissionsApi,
-  getRecordProtocolRole
+  ProcessDwnRequest,
+  SendDwnRequest,
+  Web5Agent,
 } from '@enbox/agent';
 
+import {
+  AgentPermissionsApi,
+  DwnInterface,
+  getPaginationCursor,
+  getRecordAuthor,
+  getRecordProtocolRole,
+  isDwnMessage,
+} from '@enbox/agent';
 import { Convert, isEmptyObject, NodeStream, removeUndefinedProperties, Stream } from '@enbox/common';
 
 import { dataToBlob, SendCache } from './utils.js';
-import { PermissionGrant } from './permission-grant.js';
 
 /**
  * Represents Immutable Record properties that cannot be changed after the record is created.
@@ -65,7 +66,7 @@ export type RecordModel = ImmutableRecordProperties & OptionalRecordProperties &
 
   /** The protocol role under which this record is written. */
   protocolRole?: RecordOptions['protocolRole'];
-}
+};
 
 /**
  * Options for configuring a {@link Record} instance, extending the base `RecordsWriteMessage` with
@@ -165,7 +166,7 @@ export type RecordUpdateParams = {
 
   /** The tags associated with the updated record */
   tags?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['tags'];
-}
+};
 
 /**
  * Parameters for deleting a DWN record.
@@ -260,7 +261,7 @@ export class Record implements RecordModel {
   private _protocolRole?: RecordOptions['protocolRole'];
 
   /** The `RecordsWriteMessage` descriptor unless the record is in a deleted state */
-  private get _recordsWriteDescriptor() {
+  private get _recordsWriteDescriptor(): DwnMessageDescriptor[DwnInterface.RecordsWrite] | undefined {
     if (isDwnMessage(DwnInterface.RecordsWrite, this.rawMessage)) {
       return this._descriptor as DwnMessageDescriptor[DwnInterface.RecordsWrite];
     }
@@ -269,54 +270,56 @@ export class Record implements RecordModel {
   }
 
   /** The `RecordsWrite` descriptor from the current record or the initial write if the record is in a delete state. */
-  private get _immutableProperties(): ImmutableRecordProperties {
+  private get _immutableProperties(): DwnMessageDescriptor[DwnInterface.RecordsWrite] {
     return this._recordsWriteDescriptor || this._initialWrite.descriptor;
   }
 
   // Getters for immutable Record properties.
   /** Record's ID */
-  get id() { return this._recordId; }
+  get id(): string { return this._recordId; }
 
   /** Record's context ID. If the record is deleted, the context Id comes from the initial write */
-  get contextId() { return this.deleted ? this._initialWrite.contextId : this._contextId; }
+  get contextId(): string | undefined { return this.deleted ? this._initialWrite.contextId : this._contextId; }
 
   /** Record's creation date */
-  get dateCreated() { return this._immutableProperties.dateCreated; }
+  get dateCreated(): string { return this._immutableProperties.dateCreated; }
 
   /** Record's parent ID */
-  get parentId() { return this._immutableProperties.parentId; }
+  get parentId(): string | undefined { return this._immutableProperties.parentId; }
 
   /** Record's protocol */
-  get protocol() { return this._immutableProperties.protocol; }
+  get protocol(): string | undefined { return this._immutableProperties.protocol; }
 
   /** Record's protocol path */
-  get protocolPath() { return this._immutableProperties.protocolPath; }
+  get protocolPath(): string | undefined { return this._immutableProperties.protocolPath; }
 
   /** Record's recipient */
-  get recipient() { return this._immutableProperties.recipient; }
+  get recipient(): string | undefined { return this._immutableProperties.recipient; }
 
   /** Record's schema */
-  get schema() { return this._immutableProperties.schema; }
+  get schema(): string | undefined { return this._immutableProperties.schema; }
 
 
   // Getters for mutable DWN RecordsWrite properties that may be undefined in a deleted state.
   /** Record's data format */
-  get dataFormat() { return this._recordsWriteDescriptor?.dataFormat; }
+  get dataFormat(): string | undefined { return this._recordsWriteDescriptor?.dataFormat; }
 
   /** Record's CID */
-  get dataCid() { return this._recordsWriteDescriptor?.dataCid; }
+  get dataCid(): string | undefined { return this._recordsWriteDescriptor?.dataCid; }
 
   /** Record's data size */
-  get dataSize() { return this._recordsWriteDescriptor?.dataSize; }
+  get dataSize(): number | undefined { return this._recordsWriteDescriptor?.dataSize; }
 
   /** Record's published date */
-  get datePublished() { return this._recordsWriteDescriptor?.datePublished; }
+  get datePublished(): string | undefined { return this._recordsWriteDescriptor?.datePublished; }
 
   /** Record's published status (true/false) */
-  get published() { return this._recordsWriteDescriptor?.published; }
+  get published(): boolean | undefined { return this._recordsWriteDescriptor?.published; }
 
   /** Tags of the record */
-  get tags() { return this._recordsWriteDescriptor?.tags; }
+  get tags(): DwnMessageDescriptor[DwnInterface.RecordsWrite]['tags'] | undefined {
+    return this._recordsWriteDescriptor?.tags;
+  }
 
   // Getters for for properties that depend on the current state of the Record.
   /** DID that is the logical author of the Record. */
@@ -326,7 +329,7 @@ export class Record implements RecordModel {
   get creator(): string { return this._creator; }
 
   /** Record's modified date */
-  get dateModified() { return this._descriptor.messageTimestamp; }
+  get dateModified(): string { return this._descriptor.messageTimestamp; }
 
   /** Record's encryption */
   get encryption(): DwnMessage[DwnInterface.RecordsWrite]['encryption'] { return this._encryption; }
@@ -338,10 +341,10 @@ export class Record implements RecordModel {
   get attestation(): DwnMessage[DwnInterface.RecordsWrite]['attestation'] | undefined { return this._attestation; }
 
   /** Role under which the author is writing the record */
-  get protocolRole() { return this._protocolRole; }
+  get protocolRole(): string | undefined { return this._protocolRole; }
 
   /** Record's deleted state (true/false) */
-  get deleted() { return isDwnMessage(DwnInterface.RecordsDelete, this.rawMessage); }
+  get deleted(): boolean { return isDwnMessage(DwnInterface.RecordsDelete, this.rawMessage); }
 
   /** Record's initial write if the record has been updated */
   get initialWrite(): RecordOptions['initialWrite'] { return this._initialWrite; }
@@ -431,7 +434,18 @@ export class Record implements RecordModel {
    *
    * @beta
    */
-  get data() {
+  get data(): {
+      blob: () => Promise<Blob>;
+      bytes: () => Promise<Uint8Array>;
+      json: () => Promise<any>;
+      text: () => Promise<string>;
+      stream: () => Promise<Readable>;
+      then: (
+        onFulfilled?: (value: Readable) => Readable | PromiseLike<Readable>,
+        onRejected?: (reason: any) => PromiseLike<never>,
+      ) => Promise<Readable>;
+      catch: (onRejected?: (reason: any) => PromiseLike<never>) => Promise<Readable>;
+      } {
     const self = this; // Capture the context of the `Record` instance.
     const dataObj = {
 
@@ -528,7 +542,10 @@ export class Record implements RecordModel {
        *                     becomes rejected.
        * @returns A `Promise` for the completion of which ever callback is executed.
        */
-      then(onFulfilled?: (value: Readable) => Readable | PromiseLike<Readable>, onRejected?: (reason: any) => PromiseLike<never>) {
+      then(
+        onFulfilled?: (value: Readable) => Readable | PromiseLike<Readable>,
+        onRejected?: (reason: any) => PromiseLike<never>,
+      ): Promise<Readable> {
         return this.stream().then(onFulfilled, onRejected);
       },
 
@@ -543,7 +560,7 @@ export class Record implements RecordModel {
        * @returns A `Promise` that resolves to the value of the callback if it is called, or to its
        *          original fulfillment value if the promise is instead fulfilled.
        */
-      catch(onRejected?: (reason: any) => PromiseLike<never>) {
+      catch(onRejected?: (reason: any) => PromiseLike<never>): Promise<Readable> {
         return this.stream().catch(onRejected);
       }
     };
@@ -670,7 +687,7 @@ export class Record implements RecordModel {
    * Convenience method to return the string representation of the Record instance.
    * Called automatically in string concatenation, String() type conversion, and template literals.
    */
-  toString() {
+  toString(): string {
     let str = `Record: {\n`;
     str += `  ID: ${this.id}\n`;
     str += this.contextId ? `  Context ID: ${this.contextId}\n` : '';
@@ -720,7 +737,7 @@ export class Record implements RecordModel {
     const parentContextId = parentId ? this._contextId.split('/').slice(0, -1).join('/') : undefined;
 
     // Begin assembling the update message.
-    let updateMessage: DwnMessageParams[DwnInterface.RecordsWrite] = {
+    const updateMessage: DwnMessageParams[DwnInterface.RecordsWrite] = {
       ...descriptor,
       ...params,
       parentContextId,
@@ -833,7 +850,7 @@ export class Record implements RecordModel {
     await this.processInitialWriteIfNeeded({ store, signAsOwner });
 
     // prepare delete options
-    let deleteOptions: ProcessDwnRequest<DwnInterface.RecordsDelete> = {
+    const deleteOptions: ProcessDwnRequest<DwnInterface.RecordsDelete> = {
       messageType : DwnInterface.RecordsDelete,
       author      : this._connectedDid,
       target      : this._connectedDid,
@@ -843,7 +860,7 @@ export class Record implements RecordModel {
     };
 
     // Check to see if the provided protocolRole within the deleteParams is different from the current protocolRole.
-    const differentRole = deleteParams?.protocolRole ? getRecordProtocolRole(this.rawMessage)  !== deleteParams.protocolRole : false;
+    const differentRole = deleteParams?.protocolRole ? getRecordProtocolRole(this.rawMessage) !== deleteParams.protocolRole : false;
     // If the record is already in a deleted state but the protocolRole is different, we need to construct a delete message with the new protocolRole
     // otherwise we can just use the existing delete message.
     if (this.deleted && !differentRole) {
@@ -941,7 +958,7 @@ export class Record implements RecordModel {
       const responseMessage = message;
 
       if (200 <= status.code && status.code <= 299) {
-        if (store) this._initialWriteStored = true;
+        if (store) {this._initialWriteStored = true;}
         if (signAsOwner) {
           this._initialWriteSigned = true;
           this.initialWrite.authorization = responseMessage.authorization;
@@ -1009,8 +1026,9 @@ export class Record implements RecordModel {
     const responseMessage = message;
 
     if (200 <= status.code && status.code <= 299) {
-      // If we are signing as the owner, make sure to update the current record state's authorization, because now it will have the owner's signature on it.
-      if (signAsOwner) this._authorization = responseMessage.authorization;
+      // If we are signing as the owner, make sure to update the current record state's
+      // authorization, because now it will have the owner's signature on it.
+      if (signAsOwner) {this._authorization = responseMessage.authorization;}
     }
 
     return { status };
@@ -1032,7 +1050,7 @@ export class Record implements RecordModel {
    *
    * @beta
    */
-  private async readRecordData({ target, isRemote }: { target: string, isRemote: boolean }) {
+  private async readRecordData({ target, isRemote }: { target: string, isRemote: boolean }): Promise<Readable> {
     const readRequest: ProcessDwnRequest<DwnInterface.RecordsRead> = {
       author        : this._connectedDid,
       messageParams : { filter: { recordId: this.id }, protocolRole: this._protocolRole },
@@ -1063,7 +1081,7 @@ export class Record implements RecordModel {
         };
 
         readRequest.granteeDid = this._delegateDid;
-      } catch(error) {
+      } catch {
         // If there is an error fetching the grant, we will attempt to read the data as the delegate.
         readRequest.author = this._delegateDid;
       }
@@ -1074,7 +1092,7 @@ export class Record implements RecordModel {
       this._agent.processDwnRequest(readRequest);
 
     try {
-      const { reply: { status, entry }} = await agentResponsePromise;
+      const { reply: { status, entry } } = await agentResponsePromise;
       if (status.code !== 200) {
         throw new Error(`${status.code}: ${status.detail}`);
       }
@@ -1106,7 +1124,7 @@ export class Record implements RecordModel {
    *
    * @beta
    */
-  private static verifyPermittedMutation(propertiesToMutate: Iterable<string>, mutableDescriptorProperties: Set<string>) {
+  private static verifyPermittedMutation(propertiesToMutate: Iterable<string>, mutableDescriptorProperties: Set<string>): void {
     for (const property of propertiesToMutate) {
       if (!mutableDescriptorProperties.has(property)) {
         throw new Error(`${property} is an immutable property. Its value cannot be changed.`);
@@ -1119,7 +1137,9 @@ export class Record implements RecordModel {
    *
    * @param descriptor a RecordsWrite or RecordsDelete descriptor
    */
-  private isRecordsDeleteDescriptor(descriptor: DwnMessageDescriptor[DwnInterface.RecordsWrite | DwnInterface.RecordsDelete]): descriptor is DwnMessageDescriptor[DwnInterface.RecordsDelete] {
+  private isRecordsDeleteDescriptor(
+    descriptor: DwnMessageDescriptor[DwnInterface.RecordsWrite | DwnInterface.RecordsDelete],
+  ): descriptor is DwnMessageDescriptor[DwnInterface.RecordsDelete] {
     return descriptor.interface + descriptor.method === DwnInterface.RecordsDelete;
   }
 }

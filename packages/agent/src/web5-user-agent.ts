@@ -1,27 +1,27 @@
-import { LevelStore } from '@enbox/common';
-import { BearerDid, DidDht, DidJwk } from '@enbox/dids';
-
-import type { Web5Rpc } from './rpc-client.js';
-import type { DidRequest, DidResponse, DidInterface } from './did-api.js';
-import type { VcResponse, SendVcRequest, ProcessVcRequest } from './types/vc.js';
-import type { DwnResponse, DwnInterface, SendDwnRequest, ProcessDwnRequest } from './types/dwn.js';
-import type { Web5PlatformAgent } from './types/agent.js';
 import type { AgentKeyManager } from './types/key-manager.js';
+import type { BearerDid } from '@enbox/dids';
+import type { Web5PlatformAgent } from './types/agent.js';
+import type { Web5Rpc } from './rpc-client.js';
+import type { DidInterface, DidRequest, DidResponse } from './did-api.js';
+import type { DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './types/dwn.js';
+import type { ProcessVcRequest, SendVcRequest, VcResponse } from './types/vc.js';
 
-import { AgentPermissionsApi } from './permissions-api.js';
-import { AgentDidResolverCache } from './agent-did-resolver-cache.js';
-import { AgentDidApi } from './did-api.js';
-import { AgentDwnApi } from './dwn-api.js';
-import { DwnDidStore } from './store-did.js';
-import { DwnKeyStore } from './store-key.js';
-import { AgentSyncApi } from './sync-api.js';
-import { Web5RpcClient } from './rpc-client.js';
 import { AgentCryptoApi } from './crypto-api.js';
+import { AgentDidApi } from './did-api.js';
+import { AgentDidResolverCache } from './agent-did-resolver-cache.js';
+import { AgentDwnApi } from './dwn-api.js';
+import { AgentIdentityApi } from './identity-api.js';
+import { AgentPermissionsApi } from './permissions-api.js';
+import { AgentSyncApi } from './sync-api.js';
+import { DwnDidStore } from './store-did.js';
+import { DwnIdentityStore } from './store-identity.js';
+import { DwnKeyStore } from './store-key.js';
 import { HdIdentityVault } from './hd-identity-vault.js';
+import { LevelStore } from '@enbox/common';
 import { LocalKeyManager } from './local-key-manager.js';
 import { SyncEngineLevel } from './sync-engine-level.js';
-import { AgentIdentityApi } from './identity-api.js';
-import { DwnIdentityStore } from './store-identity.js';
+import { Web5RpcClient } from './rpc-client.js';
+import { DidDht, DidJwk } from '@enbox/dids';
 
 /**
  * Initialization parameters for {@link Web5UserAgent}, including an optional recovery phrase that
@@ -60,7 +60,7 @@ export type AgentStartParams = {
    * The password used to unlock the previously initialized Agent vault.
    */
   password: string;
- }
+ };
 
 export type AgentParams<TKeyManager extends AgentKeyManager = LocalKeyManager> = {
   /** Optional. The Decentralized Identifier (DID) representing this Web5 User Agent. */
@@ -85,7 +85,7 @@ export type AgentParams<TKeyManager extends AgentKeyManager = LocalKeyManager> =
   rpcClient: Web5Rpc;
   /** Facilitates data synchronization of DWN records between nodes. */
   syncApi: AgentSyncApi;
-}
+};
 
 export class Web5UserAgent<TKeyManager extends AgentKeyManager = LocalKeyManager> implements Web5PlatformAgent<TKeyManager> {
   public crypto: AgentCryptoApi;

@@ -1,14 +1,14 @@
 import type {
-  DidDocument,
-  DidMetadata,
-  PortableDid,
-  DidMethodApi,
   DidDhtCreateOptions,
+  DidDocument,
   DidJwkCreateOptions,
-  DidResolutionResult,
+  DidMetadata,
+  DidMethodApi,
   DidResolutionOptions,
-  DidVerificationMethod,
+  DidResolutionResult,
   DidResolverCache,
+  DidVerificationMethod,
+  PortableDid,
 } from '@enbox/dids';
 
 import { BearerDid, Did, DidDht, UniversalResolver } from '@enbox/dids';
@@ -17,12 +17,12 @@ import type { AgentDataStore } from './store-data.js';
 import type { AgentKeyManager } from './types/key-manager.js';
 import type { ResponseStatus, Web5PlatformAgent } from './types/agent.js';
 
-import { InMemoryDidStore } from './store-did.js';
 import { AgentDidResolverCache } from './agent-did-resolver-cache.js';
 import { canonicalize } from '@enbox/crypto';
+import { InMemoryDidStore } from './store-did.js';
 
 export enum DidInterface {
-  Create  = 'Create',
+  Create = 'Create',
   // Deactivate = 'Deactivate',
   Resolve = 'Resolve',
   // Update  = 'Update'
@@ -46,19 +46,19 @@ export type DidCreateResult = {
   uri: string;
   document: DidDocument;
   metadata: DidMetadata;
-}
+};
 
-export type DidResolveResult = DidResolutionResult
+export type DidResolveResult = DidResolutionResult;
 
 export type DidRequest<T extends DidInterface> = {
   messageType: T;
   messageParams: DidMessageParams[T];
-}
+};
 
 export type DidResolveParams = {
   didUri: string;
   options?: DidResolutionOptions;
-}
+};
 
 export type DidResponse<T extends DidInterface> = ResponseStatus & {
   result?: DidMessageResult[T];
@@ -225,7 +225,7 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
   }): Promise<BearerDid | undefined> {
     const portableDid = await this._store.get({ id: didUri, agent: this.agent, tenant, useCache: true });
 
-    if (!portableDid) return undefined;
+    if (!portableDid) {return undefined;}
 
     const bearerDid = await BearerDid.import({ portableDid, keyManager: this.agent.keyManager });
 
@@ -346,7 +346,7 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
     deleteKey?: boolean;
   }): Promise<void> {
     const portableDid = await this._store.get({ id: didUri, agent: this.agent, tenant, useCache: false });
-    if(!portableDid) {
+    if (!portableDid) {
       throw new Error('AgentDidApi: Could not delete, DID not found');
     }
 

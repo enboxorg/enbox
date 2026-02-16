@@ -1,15 +1,15 @@
 import chaiAsPromised from 'chai-as-promised';
-import chai, { expect } from 'chai';
-import DataStoreSqlite from '../plugins/data-store-sqlite.js';
-import EventLogSqlite from '../plugins/event-log-sqlite.js';
-import EventStreamInMemory from '../plugins/event-stream-in-memory.js';
 import sinon from 'sinon';
-
-import { config } from '../../src/config.js';
-import { DwnServer } from '../../src/dwn-server.js';
+import chai, { expect } from 'chai';
 
 import { DidDht, DidKey, UniversalResolver } from '@enbox/dids';
+
 import CommonScenarioValidator from '../common-scenario-validator.js';
+import { config } from '../../src/config.js';
+import DataStoreSqlite from '../plugins/data-store-sqlite.js';
+import { DwnServer } from '../../src/dwn-server.js';
+import EventLogSqlite from '../plugins/event-log-sqlite.js';
+import EventStreamInMemory from '../plugins/event-stream-in-memory.js';
 import MessageStoreSqlite from '../plugins/message-store-sqlite.js';
 import ResumableTaskStoreSqlite from '../plugins/resumable-task-store-sqlite.js';
 
@@ -69,9 +69,9 @@ describe('Dynamic DWN plugin loading', function () {
     // otherwise we will receive a `Database is not open` coming from LevelDB.
     // This is likely due to the fact that LevelDB is the default cache used in `DWN`, and we have tests creating default DWN instances,
     // so here we have to create a DWN that does not use the same LevelDB cache to avoid hitting LevelDB locked issues.
-    // Long term we should investigate and unify approach of DWN instantiation taken by tests to avoid this "workaround" entirely. 
+    // Long term we should investigate and unify approach of DWN instantiation taken by tests to avoid this "workaround" entirely.
     const didResolver = new UniversalResolver({
-      didResolvers : [DidDht, DidKey],
+      didResolvers: [DidDht, DidKey],
     });
     dwnServer = new DwnServer({ config: dwnServerConfigCopy, didResolver });
     await dwnServer.start();

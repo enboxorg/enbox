@@ -1,22 +1,22 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 
-import { Web5UserAgent } from '@enbox/agent';
+import type { DwnProtocolDefinition } from '@enbox/agent';
 import {
   AgentIdentityApi,
   BearerIdentity,
   DwnInterface,
-  DwnProtocolDefinition,
   DwnRegistrar,
   PlatformAgentTestHarness,
   WalletConnect,
+  Web5UserAgent,
 } from '@enbox/agent';
 
+import { Convert } from '@enbox/common';
+import { DidJwk } from '@enbox/dids';
+import { testDwnUrl } from './utils/test-config.js';
 import { Web5 } from '../src/web5.js';
 import { DwnInterfaceName, DwnMethodName, Jws, Time } from '@enbox/dwn-sdk-js';
-import { testDwnUrl } from './utils/test-config.js';
-import { DidJwk } from '@enbox/dids';
-import { Convert } from '@enbox/common';
 
 describe('web5 api', () => {
   let consoleWarn;
@@ -24,7 +24,7 @@ describe('web5 api', () => {
   before(() => {
     // Suppress console.warn output due to default password warnings
     consoleWarn = console.warn;
-    console.warn = () => {};
+    console.warn = (): void => {};
   });
 
   after(() => {
@@ -263,11 +263,12 @@ describe('web5 api', () => {
     it('defaults to the first identity if multiple identities exist', async () => {
       // scenario: For some reason more than one identity exists when attempting to re-connect to `Web5`
       // the first identity in the array should be the one selected
-      // TODO: this has happened due to a race condition somewhere. Dig into this issue and implement a better way to select/manage DIDs when using `Web5.connect()`
+      // TODO: this has happened due to a race condition somewhere. Dig into this issue
+      // and implement a better way to select/manage DIDs when using `Web5.connect()`
 
       // create an identity by connecting
       sinon.stub(Web5UserAgent, 'create').resolves(testHarness.agent as Web5UserAgent);
-      const { web5, did } = await Web5.connect({ techPreview: { dwnEndpoints: [ testDwnUrl ] }});
+      const { web5, did } = await Web5.connect({ techPreview: { dwnEndpoints: [ testDwnUrl ] } });
       expect(web5).to.exist;
       expect(did).to.exist;
 
@@ -403,7 +404,7 @@ describe('web5 api', () => {
           }
         });
 
-        const { encodedData: messagesQueryGrantEncodedData, ...messagesQueryGrantMessage} = messagesQueryGrant.message;
+        const { encodedData: messagesQueryGrantEncodedData, ...messagesQueryGrantMessage } = messagesQueryGrant.message;
         const messagesQueryGrantSend = await testHarness.agent.sendDwnRequest({
           author      : alice.did.uri,
           target      : alice.did.uri,
@@ -424,7 +425,7 @@ describe('web5 api', () => {
           }
         });
 
-        const { encodedData: messagesReadEncodedData, ...messagesReadGrantMessage  } = messagesReadGrant.message;
+        const { encodedData: messagesReadEncodedData, ...messagesReadGrantMessage } = messagesReadGrant.message;
         const messagesReadGrantSend = await testHarness.agent.sendDwnRequest({
           author      : alice.did.uri,
           target      : alice.did.uri,
@@ -517,7 +518,7 @@ describe('web5 api', () => {
           });
 
           expect.fail('Should have thrown an error');
-        } catch(error:any) {
+        } catch (error:any) {
           expect(error.message).to.include('CachedPermissions: No permissions found for RecordsDelete');
         }
 
@@ -670,7 +671,7 @@ describe('web5 api', () => {
         sinon.stub(Web5UserAgent, 'create').resolves(appTestHarness.agent as Web5UserAgent);
 
         // stub console.error so that it doesn't log in the test output and use it as a spy confirming the error messages were logged
-        const consoleSpy = sinon.stub(console, 'error').returns();
+        const _consoleSpy = sinon.stub(console, 'error').returns();
 
         try {
           // connect to the app, the options don't matter because we're stubbing the initClient method
@@ -686,7 +687,7 @@ describe('web5 api', () => {
           });
 
           expect.fail('Should have thrown an error');
-        } catch(error:any) {
+        } catch (error:any) {
           expect(error.message).to.equal('Failed to connect to wallet: AgentDwnApi: Failed to process connected grant: Bad Request');
         }
 
@@ -747,7 +748,7 @@ describe('web5 api', () => {
           });
 
           expect.fail('Should have thrown an error');
-        } catch(error: any) {
+        } catch (error: any) {
           expect(error.message).to.equal('Sync must not be disabled when using WalletConnect');
         }
       });
@@ -836,7 +837,7 @@ describe('web5 api', () => {
           });
 
           expect.fail('Should have thrown an error');
-        } catch(error: any) {
+        } catch (error: any) {
           // we expect an error because we stubbed the initClient method to throw it
           expect(error.message).to.include('Sinon-provided Error');
 
@@ -911,7 +912,7 @@ describe('web5 api', () => {
           });
 
           expect.fail('Should have thrown an error');
-        } catch(error: any) {
+        } catch (error: any) {
           // we expect an error because we stubbed the initClient method to throw it
           expect(error.message).to.include('Sinon-provided Error');
 
@@ -953,8 +954,8 @@ describe('web5 api', () => {
           .resolves();
 
         const registration = {
-          onSuccess : () => {},
-          onFailure : () => {},
+          onSuccess : (): void => {},
+          onFailure : (): void => {},
         };
 
         const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
@@ -999,8 +1000,8 @@ describe('web5 api', () => {
           .rejects();
 
         const registration = {
-          onSuccess : () => {},
-          onFailure : () => {},
+          onSuccess : (): void => {},
+          onFailure : (): void => {},
         };
 
         const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
@@ -1045,8 +1046,8 @@ describe('web5 api', () => {
           .resolves();
 
         const registration = {
-          onSuccess : () => {},
-          onFailure : () => {},
+          onSuccess : (): void => {},
+          onFailure : (): void => {},
         };
 
         const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
@@ -1091,8 +1092,8 @@ describe('web5 api', () => {
           .resolves();
 
         const registration = {
-          onSuccess : () => {},
-          onFailure : () => {},
+          onSuccess : (): void => {},
+          onFailure : (): void => {},
         };
 
         const registerSuccessSpy = sinon.spy(registration, 'onSuccess');

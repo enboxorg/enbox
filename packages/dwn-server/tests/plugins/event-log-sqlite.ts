@@ -1,6 +1,6 @@
-import type { EventLog } from "@enbox/dwn-sdk-js";
-import { EventLogSql } from "@enbox/dwn-sql-store";
-import { getDialectFromUrl } from "../../src/storage.js";
+import type { EventLog } from '@enbox/dwn-sdk-js';
+import { EventLogSql } from '@enbox/dwn-sql-store';
+import { getDialectFromUrl } from '../../src/storage.js';
 
 /**
  * An example of a plugin. Used for testing.

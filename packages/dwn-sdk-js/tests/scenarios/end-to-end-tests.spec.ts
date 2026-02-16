@@ -5,7 +5,7 @@ import type { DataStore, EventLog, MessageStore, ProtocolDefinition, ProtocolsCo
 
 import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' assert { type: 'json' };
+import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 
 import { authenticate } from '../../src/core/auth.js';
 import { Encoder } from '../../src/index.js';

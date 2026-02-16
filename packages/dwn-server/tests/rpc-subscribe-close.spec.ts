@@ -3,10 +3,11 @@ import sinon from 'sinon';
 import { v4 as uuidv4 } from 'uuid';
 
 import type { RequestContext } from '../src/lib/json-rpc-router.js';
-import { JsonRpcErrorCodes, createJsonRpcRequest, createJsonRpcSubscriptionRequest } from '../src/lib/json-rpc.js';
+
 import { getTestDwn } from './test-dwn.js';
 import { handleSubscriptionsClose } from '../src/json-rpc-handlers/subscription/close.js';
 import { SocketConnection } from '../src/connection/socket-connection.js';
+import { createJsonRpcRequest, createJsonRpcSubscriptionRequest, JsonRpcErrorCodes } from '../src/lib/json-rpc.js';
 import { DwnServerError, DwnServerErrorCode } from '../src/dwn-error.js';
 
 describe('handleDwnProcessMessage', function () {

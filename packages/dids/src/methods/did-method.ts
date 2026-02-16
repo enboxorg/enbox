@@ -1,19 +1,19 @@
 import type {
   CryptoApi,
-  LocalKeyManager,
   InferKeyGeneratorAlgorithm,
+  LocalKeyManager,
 } from '@enbox/crypto';
 
 import type { BearerDid } from '../bearer-did.js';
 import type { DidMetadata } from '../types/portable-did.js';
 import type {
   DidDocument,
-  DidResolutionResult,
   DidResolutionOptions,
+  DidResolutionResult,
   DidVerificationMethod,
 } from '../types/did-core.js';
 
-import { DidVerificationRelationship } from '../types/did-core.js';
+import type { DidVerificationRelationship } from '../types/did-core.js';
 
 /**
  * Represents options during the creation of a Decentralized Identifier (DID).

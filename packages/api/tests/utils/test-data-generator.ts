@@ -13,7 +13,7 @@ export class TestDataGenerator {
    */
   static randomDigits(length: number): number {
     let result = 0;
-    for(let i = 0; i < length; i++) {
+    for (let i = 0; i < length; i++) {
       result = result * 10 + Math.floor(Math.random() * 10);
     }
     return result;
@@ -24,18 +24,18 @@ export class TestDataGenerator {
    */
   static randomJson(length: number): object {
     // Start with an empty object.
-    let obj = {};
+    const obj = {};
 
     // Generate properties until the JSON string is close to the desired length.
     let lessThanDesiredLength = true;
     while (lessThanDesiredLength) {
       // Use a random key and value to avoid any optimization that might occur
       // from using the same key and value repeatedly.
-      let key = Math.random().toString(36).substring(2);
-      let value = Math.random().toString(36).substring(2);
+      const key = Math.random().toString(36).substring(2);
+      const value = Math.random().toString(36).substring(2);
 
       // Calculate the size of the new property (including quotes and colon).
-      let propertySize = key.length + value.length + 4;
+      const propertySize = key.length + value.length + 4;
 
       // If the new property fits within the desired size, add it to the object.
       const currentLength = JSON.stringify(obj).length;
@@ -61,7 +61,7 @@ export class TestDataGenerator {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
     // Select characters randomly.
-    let randomChars: string[] = [];
+    const randomChars: string[] = [];
     for (let i = 0; i < length; i++) {
       randomChars.push(charset.charAt(Math.floor(Math.random() * charset.length)));
     }

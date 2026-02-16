@@ -41,7 +41,7 @@ export class SqlTtlCache {
         .addColumn('value', 'text', (column) => column.notNull())
         .addColumn('expiry', 'bigint', (column) => column.notNull())
         .execute();
-  
+
       await this.db.schema
         .createIndex('index_expiry')
         // .ifNotExists() // intentionally kept commented out code to show that it is not supported by all dialects (ie. MySQL)

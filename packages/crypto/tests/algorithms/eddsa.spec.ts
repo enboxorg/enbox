@@ -203,7 +203,7 @@ describe('EdDsaAlgorithm', () => {
   });
 
   describe('sign()', () => {
-    let data = new Uint8Array([0, 1, 2, 3, 4]);
+    const data = new Uint8Array([0, 1, 2, 3, 4]);
 
     it('generates signatures as Uint8Array', async () => {
       // Test the method.
@@ -270,7 +270,7 @@ describe('EdDsaAlgorithm', () => {
   });
 
   describe('verify()', () => {
-    let data = new Uint8Array([0, 1, 2, 3, 4]);
+    const data = new Uint8Array([0, 1, 2, 3, 4]);
     let signature: Uint8Array;
 
     beforeEach(async () => {

@@ -1,9 +1,9 @@
 import type { Readable } from '@enbox/common';
-import type { Dwn, MessageEvent, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { Dwn, MessageEvent, ProtocolDefinition , RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { DidDht } from '@enbox/dids';
 import { Convert, NodeStream, Stream } from '@enbox/common';
-import { DwnInterfaceName, DwnMethodName, Message, ProtocolDefinition, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Message, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -11,9 +11,11 @@ import { expect } from 'chai';
 
 import type { PortableIdentity } from '../src/types/identity.js';
 
-import { DwnInterface, DwnPermissionScope } from '../src/types/dwn.js';
-import { BearerIdentity } from '../src/bearer-identity.js';
-import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' assert { type: 'json' };
+import type { BearerIdentity } from '../src/bearer-identity.js';
+import type { DwnPermissionScope } from '../src/types/dwn.js';
+
+import { DwnInterface } from '../src/types/dwn.js';
+import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
@@ -23,9 +25,9 @@ import { AgentDwnApi, isDwnMessage, isMessagesPermissionScope, isRecordPermissio
 // Remove when we move off of node.js v18 to v20, earliest possible time would be Oct 2023: https://github.com/nodejs/release#release-schedule
 import { webcrypto } from 'node:crypto';
 // @ts-expect-error - globalThis.crypto and webcrypto are of different types.
-if (!globalThis.crypto) globalThis.crypto = webcrypto;
+if (!globalThis.crypto) {globalThis.crypto = webcrypto;}
 
-let testDwnUrls: string[] = [testDwnUrl];
+const testDwnUrls: string[] = [testDwnUrl];
 
 describe('AgentDwnApi', () => {
   let testHarness: PlatformAgentTestHarness;
@@ -114,7 +116,7 @@ describe('AgentDwnApi', () => {
       const testFilters = [{ protocol: 'http://protocol1' }];
 
       // Attempt to process the MessagesQuery.
-      let messagesQueryResponse = await testHarness.agent.dwn.processRequest({
+      const messagesQueryResponse = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.MessagesQuery,
@@ -140,7 +142,7 @@ describe('AgentDwnApi', () => {
 
     it('handles MessageSubscription', async () => {
       const receivedMessages: string[] = [];
-      const subscriptionHandler = async (event: MessageEvent) => {
+      const subscriptionHandler = async (event: MessageEvent): Promise<void> => {
         const { message } = event;
         receivedMessages.push(await Message.getCid(message));
       };
@@ -177,7 +179,7 @@ describe('AgentDwnApi', () => {
         }
       };
 
-      let {messageCid: protocolMessageCid, reply: { status: protocolStatus } } = await testHarness.agent.dwn.processRequest({
+      const { messageCid: protocolMessageCid, reply: { status: protocolStatus } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
@@ -189,7 +191,7 @@ describe('AgentDwnApi', () => {
 
       // create a test record that matches the subscription filter
       const dataBytes = Convert.string('Write 1').toUint8Array();
-      let { messageCid: write1MessageCid, reply: { status: writeStatus } } = await testHarness.agent.dwn.processRequest({
+      const { messageCid: write1MessageCid, reply: { status: writeStatus } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -205,7 +207,7 @@ describe('AgentDwnApi', () => {
 
       // create another test record that matches the subscription filter
       const dataBytes2 = Convert.string('Write 2').toUint8Array();
-      let { messageCid: write2MessageCid, reply: { status: writeStatus2 } } = await testHarness.agent.dwn.processRequest({
+      const { messageCid: write2MessageCid, reply: { status: writeStatus2 } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -221,7 +223,7 @@ describe('AgentDwnApi', () => {
 
       // create a message that does not match the subscription filter
       const dataBytes3 = Convert.string('Write 3').toUint8Array();
-      let { reply: { status: writeStatus3 } } = await testHarness.agent.dwn.processRequest({
+      const { reply: { status: writeStatus3 } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -250,7 +252,7 @@ describe('AgentDwnApi', () => {
       const dataBytes = Convert.string('Hello, world!').toUint8Array();
 
       // Write a record to use for the MessagesRead test.
-      let writeResponse = await testHarness.agent.dwn.processRequest({
+      const writeResponse = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -264,7 +266,7 @@ describe('AgentDwnApi', () => {
       const writeMessage = writeResponse.message!;
 
       // Attempt to process the MessagesRead.
-      let messagesReadResponse = await testHarness.agent.dwn.processRequest({
+      const messagesReadResponse = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.MessagesRead,
@@ -293,7 +295,7 @@ describe('AgentDwnApi', () => {
     });
 
     it('handles ProtocolsConfigure', async () => {
-      let protocolsConfigureResponse = await testHarness.agent.dwn.processRequest({
+      const protocolsConfigureResponse = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
@@ -317,7 +319,7 @@ describe('AgentDwnApi', () => {
 
     it('handles ProtocolsQuery', async () => {
       // Configure a protocol to use for the ProtocolsQuery test.
-      let protocolsConfigureResponse = await testHarness.agent.dwn.processRequest({
+      const protocolsConfigureResponse = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
@@ -328,7 +330,7 @@ describe('AgentDwnApi', () => {
       expect(protocolsConfigureResponse.reply.status.code).to.equal(202);
 
       // Attempt to query for the protocol that was just configured.
-      let protocolsQueryResponse = await testHarness.agent.dwn.processRequest({
+      const protocolsQueryResponse = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsQuery,
@@ -347,8 +349,8 @@ describe('AgentDwnApi', () => {
       expect(queryReply).to.have.property('entries');
       expect(queryReply.entries).to.have.length(1);
 
-      if (!Array.isArray(queryReply.entries)) throw new Error('Type guard');
-      if (queryReply.entries.length !== 1) throw new Error('Type guard');
+      if (!Array.isArray(queryReply.entries)) {throw new Error('Type guard');}
+      if (queryReply.entries.length !== 1) {throw new Error('Type guard');}
       const protocolsConfigure = queryReply.entries[0];
       expect(protocolsConfigure.descriptor.definition).to.deep.equal(emailProtocolDefinition);
     });
@@ -358,7 +360,7 @@ describe('AgentDwnApi', () => {
       const dataBytes = Convert.string('Hello, world!').toUint8Array();
 
       // Write a record that can be deleted.
-      let { message, reply: { status: writeStatus } } = await testHarness.agent.dwn.processRequest({
+      const { message, reply: { status: writeStatus } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -400,7 +402,7 @@ describe('AgentDwnApi', () => {
       const dataBytes = Convert.string('Hello, world!').toUint8Array();
 
       // Write a record that can be queried for.
-      let { message, reply: { status: writeStatus } } = await testHarness.agent.dwn.processRequest({
+      const { message, reply: { status: writeStatus } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -449,7 +451,7 @@ describe('AgentDwnApi', () => {
       const dataBytes = Convert.string('Hello, world!').toUint8Array();
 
       // Write a record that can be read.
-      let { message, reply: { status: writeStatus } } = await testHarness.agent.dwn.processRequest({
+      const { message, reply: { status: writeStatus } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -497,7 +499,7 @@ describe('AgentDwnApi', () => {
 
     it('handles RecordsSubscribe message', async () => {
       const receivedMessages: RecordsWriteMessage[] = [];
-      const subscriptionHandler = (event: MessageEvent) => {
+      const subscriptionHandler = (event: MessageEvent): void => {
         const { message } = event;
         if (!isDwnMessage(DwnInterface.RecordsWrite, message)) {
           expect.fail('Received message is not a RecordsWrite message');
@@ -525,7 +527,7 @@ describe('AgentDwnApi', () => {
 
       // create a test record that matches the subscription filter
       const dataBytes = Convert.string('Write 1').toUint8Array();
-      let { message, reply: { status: writeStatus } } = await testHarness.agent.dwn.processRequest({
+      const { message, reply: { status: writeStatus } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -540,7 +542,7 @@ describe('AgentDwnApi', () => {
 
       // create another test record that matches the subscription filter
       const dataBytes2 = Convert.string('Write 2').toUint8Array();
-      let { message: message2, reply: { status: writeStatus2 } } = await testHarness.agent.dwn.processRequest({
+      const { message: message2, reply: { status: writeStatus2 } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -555,7 +557,7 @@ describe('AgentDwnApi', () => {
 
       // create a message that does not match the subscription filter
       const dataBytes3 = Convert.string('Write 3').toUint8Array();
-      let { reply: { status: writeStatus3 } } = await testHarness.agent.dwn.processRequest({
+      const { reply: { status: writeStatus3 } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -581,7 +583,7 @@ describe('AgentDwnApi', () => {
       const dataBytes = Convert.string('Hello, world!').toUint8Array();
 
       // Attempt to process the RecordsWrite
-      let writeResponse = await testHarness.agent.dwn.processRequest({
+      const writeResponse = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -612,7 +614,7 @@ describe('AgentDwnApi', () => {
 
       // Attempt to process the RecordsWrite
       const dataBytes = Convert.string('Hello, world!').toUint8Array();
-      let writeResponse = await testHarness.agent.dwn.processRequest({
+      const writeResponse = await testHarness.agent.dwn.processRequest({
         store         : false,
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -661,7 +663,7 @@ describe('AgentDwnApi', () => {
           }
         }
       });
-      let reply = queryBobResponse.reply;
+      const reply = queryBobResponse.reply;
       expect(reply.status.code).to.equal(200);
       expect(reply.entries!.length).to.equal(1);
       expect(reply.entries![0].recordId).to.equal(message.recordId);
@@ -730,7 +732,7 @@ describe('AgentDwnApi', () => {
       };
 
       // install for bob
-      let { reply: { status: protocolStatus } } = await testHarness.agent.dwn.processRequest({
+      const { reply: { status: protocolStatus } } = await testHarness.agent.dwn.processRequest({
         author        : bob.did.uri,
         target        : bob.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
@@ -741,7 +743,7 @@ describe('AgentDwnApi', () => {
       expect(protocolStatus.code).to.equal(202);
 
       // install for alice
-      let { reply: { status: protocolStatus2 } } = await testHarness.agent.dwn.processRequest({
+      const { reply: { status: protocolStatus2 } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
@@ -796,7 +798,7 @@ describe('AgentDwnApi', () => {
           }
         }
       });
-      let reply = queryBobResponse.reply;
+      const reply = queryBobResponse.reply;
       expect(reply.status.code).to.equal(200);
       expect(reply.entries!.length).to.equal(1);
       expect(reply.entries![0].recordId).to.equal(message.recordId);
@@ -876,7 +878,7 @@ describe('AgentDwnApi', () => {
       };
 
       // install for bob
-      let { reply: { status: protocolStatus } } = await testHarness.agent.dwn.processRequest({
+      const { reply: { status: protocolStatus } } = await testHarness.agent.dwn.processRequest({
         author        : bob.did.uri,
         target        : bob.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
@@ -887,7 +889,7 @@ describe('AgentDwnApi', () => {
       expect(protocolStatus.code).to.equal(202);
 
       // install for alice
-      let { reply: { status: protocolStatus2 } } = await testHarness.agent.dwn.processRequest({
+      const { reply: { status: protocolStatus2 } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
@@ -929,7 +931,7 @@ describe('AgentDwnApi', () => {
         });
 
         expect.fail('Should have thrown');
-      } catch(error:any) {
+      } catch (error:any) {
         expect(error.message).to.include('Requested to sign with a permission but no grant messageParams were provided in the request');
       }
     });
@@ -959,7 +961,7 @@ describe('AgentDwnApi', () => {
         });
 
         expect.fail('Should have thrown');
-      } catch(error:any) {
+      } catch (error:any) {
         expect(error.message).to.include('AgentDwnApi: Requested to sign with a permission but no grant messageParams were provided in the request');
       }
     });
@@ -1100,7 +1102,7 @@ describe('AgentDwnApi', () => {
       const dataBytes = Convert.string('Hello, world!').toUint8Array();
 
       // Write a record to the local DWN to use for the test.
-      let writeResponse = await testHarness.agent.dwn.processRequest({
+      const writeResponse = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -1154,7 +1156,7 @@ describe('AgentDwnApi', () => {
       const testFilters = [{ protocol: 'http://protocol1' }];
 
       // Attempt to process the MessagesQuery.
-      let messagesQueryResponse = await testHarness.agent.dwn.sendRequest({
+      const messagesQueryResponse = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.MessagesQuery,
@@ -1180,7 +1182,7 @@ describe('AgentDwnApi', () => {
 
     it('handles MessagesSubscribe', async () => {
       const receivedMessages: string[] = [];
-      const subscriptionHandler = async (event: MessageEvent) => {
+      const subscriptionHandler = async (event: MessageEvent): Promise<void> => {
         const { message } = event;
         receivedMessages.push(await Message.getCid(message));
       };
@@ -1217,7 +1219,7 @@ describe('AgentDwnApi', () => {
         }
       };
 
-      let {messageCid: protocolMessageCid, reply: { status: protocolStatus } } = await testHarness.agent.dwn.sendRequest({
+      const { messageCid: protocolMessageCid, reply: { status: protocolStatus } } = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
@@ -1229,7 +1231,7 @@ describe('AgentDwnApi', () => {
 
       // create a test record that matches the subscription filter
       const dataBytes = Convert.string('Write 1').toUint8Array();
-      let { messageCid: write1MessageCid, reply: { status: writeStatus } } = await testHarness.agent.dwn.sendRequest({
+      const { messageCid: write1MessageCid, reply: { status: writeStatus } } = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -1245,7 +1247,7 @@ describe('AgentDwnApi', () => {
 
       // create another test record that matches the subscription filter
       const dataBytes2 = Convert.string('Write 2').toUint8Array();
-      let { messageCid: write2MessageCid, reply: { status: writeStatus2 } } = await testHarness.agent.dwn.sendRequest({
+      const { messageCid: write2MessageCid, reply: { status: writeStatus2 } } = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -1261,7 +1263,7 @@ describe('AgentDwnApi', () => {
 
       // create a message that does not match the subscription filter
       const dataBytes3 = Convert.string('Write 3').toUint8Array();
-      let { reply: { status: writeStatus3 } } = await testHarness.agent.dwn.sendRequest({
+      const { reply: { status: writeStatus3 } } = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -1290,7 +1292,7 @@ describe('AgentDwnApi', () => {
       const dataBytes = Convert.string('Hello, world!').toUint8Array();
 
       // Write a record to use for the MessagesRead test.
-      let writeResponse = await testHarness.agent.dwn.sendRequest({
+      const writeResponse = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -1304,7 +1306,7 @@ describe('AgentDwnApi', () => {
       const writeMessage = writeResponse.message!;
 
       // Attempt to process the MessagesRead.
-      let messagesReadResponse = await testHarness.agent.dwn.sendRequest({
+      const messagesReadResponse = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.MessagesRead,
@@ -1338,7 +1340,7 @@ describe('AgentDwnApi', () => {
     });
 
     it('handles ProtocolsConfigure', async () => {
-      let protocolsConfigureResponse = await testHarness.agent.dwn.sendRequest({
+      const protocolsConfigureResponse = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
@@ -1362,7 +1364,7 @@ describe('AgentDwnApi', () => {
 
     it('handles ProtocolsQuery', async () => {
       // Configure a protocol to use for the ProtocolsQuery test.
-      let protocolsConfigureResponse = await testHarness.agent.dwn.sendRequest({
+      const protocolsConfigureResponse = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
@@ -1373,7 +1375,7 @@ describe('AgentDwnApi', () => {
       expect(protocolsConfigureResponse.reply.status.code).to.equal(202);
 
       // Attempt to query for the protocol that was just configured.
-      let protocolsQueryResponse = await testHarness.agent.dwn.sendRequest({
+      const protocolsQueryResponse = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsQuery,
@@ -1392,8 +1394,8 @@ describe('AgentDwnApi', () => {
       expect(queryReply).to.have.property('entries');
       expect(queryReply.entries).to.have.length(1);
 
-      if (!Array.isArray(queryReply.entries)) throw new Error('Type guard');
-      if (queryReply.entries.length !== 1) throw new Error('Type guard');
+      if (!Array.isArray(queryReply.entries)) {throw new Error('Type guard');}
+      if (queryReply.entries.length !== 1) {throw new Error('Type guard');}
       const protocolsConfigure = queryReply.entries[0];
       expect(protocolsConfigure.descriptor.definition).to.deep.equal(emailProtocolDefinition);
     });
@@ -1403,7 +1405,7 @@ describe('AgentDwnApi', () => {
       const dataBytes = Convert.string('Hello, world!').toUint8Array();
 
       // Write a record that can be deleted.
-      let { message, reply: { status: writeStatus } } = await testHarness.agent.dwn.sendRequest({
+      const { message, reply: { status: writeStatus } } = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -1445,7 +1447,7 @@ describe('AgentDwnApi', () => {
       const dataBytes = Convert.string('Hello, world!').toUint8Array();
 
       // Write a record that can be queried for.
-      let { message, reply: { status: writeStatus } } = await testHarness.agent.dwn.sendRequest({
+      const { message, reply: { status: writeStatus } } = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -1494,7 +1496,7 @@ describe('AgentDwnApi', () => {
       const dataBytes = Convert.string('Hello, world!').toUint8Array();
 
       // Write a record that can be read.
-      let { message, reply: { status: writeStatus } } = await testHarness.agent.dwn.sendRequest({
+      const { message, reply: { status: writeStatus } } = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -1548,7 +1550,7 @@ describe('AgentDwnApi', () => {
 
     it('handles RecordsSubscribe message', async () => {
       const receivedMessages: RecordsWriteMessage[] = [];
-      const subscriptionHandler = (event: MessageEvent) => {
+      const subscriptionHandler = (event: MessageEvent): void => {
         const { message } = event;
         if (!isDwnMessage(DwnInterface.RecordsWrite, message)) {
           expect.fail('Received message is not a RecordsWrite message');
@@ -1576,7 +1578,7 @@ describe('AgentDwnApi', () => {
 
       // create a test record that matches the subscription filter
       const dataBytes = Convert.string('Write 1').toUint8Array();
-      let { message, reply: { status: writeStatus } } = await testHarness.agent.dwn.sendRequest({
+      const { message, reply: { status: writeStatus } } = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -1591,7 +1593,7 @@ describe('AgentDwnApi', () => {
 
       // create another test record that matches the subscription filter
       const dataBytes2 = Convert.string('Write 2').toUint8Array();
-      let { message: message2, reply: { status: writeStatus2 } } = await testHarness.agent.dwn.sendRequest({
+      const { message: message2, reply: { status: writeStatus2 } } = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -1606,7 +1608,7 @@ describe('AgentDwnApi', () => {
 
       // create a message that does not match the subscription filter
       const dataBytes3 = Convert.string('Write 3').toUint8Array();
-      let { reply: { status: writeStatus3 } } = await testHarness.agent.dwn.sendRequest({
+      const { reply: { status: writeStatus3 } } = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
@@ -1632,7 +1634,7 @@ describe('AgentDwnApi', () => {
       const dataBytes = Convert.string('Hello, world!').toUint8Array();
 
       // Attempt to process the RecordsWrite
-      let writeResponse = await testHarness.agent.dwn.sendRequest({
+      const writeResponse = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,

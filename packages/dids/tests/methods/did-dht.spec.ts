@@ -1,23 +1,22 @@
+import type { Answer } from '@dnsquery/dns-packet';
+import type { DidDocument } from '../../src/index.js';
 import type { PortableDid } from '../../src/types/portable-did.js';
 
 import chaiAsPromised from 'chai-as-promised';
-import sinon from 'sinon';
-import resolveTestVectors from '../fixtures/web5-spec-vectors/did_dht/resolve.json' assert { type: 'json' };
-import officialTestVector1 from '../fixtures/test-vectors/did-dht/vector-1.json' assert { type: 'json' };
-import officialTestVector2 from '../fixtures/test-vectors/did-dht/vector-2.json' assert { type: 'json' };
-import officialTestVector3 from '../fixtures/test-vectors/did-dht/vector-3.json' assert { type: 'json' };
-
-import { Answer } from '@dnsquery/dns-packet';
 import { Convert } from '@enbox/common';
-import { DidDocument } from '../../src/index.js';
 import { DidErrorCode } from '../../src/did-error.js';
+import officialTestVector1 from '../fixtures/test-vectors/did-dht/vector-1.json' with { type: 'json' };
+import officialTestVector2 from '../fixtures/test-vectors/did-dht/vector-2.json' with { type: 'json' };
+import officialTestVector3 from '../fixtures/test-vectors/did-dht/vector-3.json' with { type: 'json' };
+import resolveTestVectors from '../fixtures/web5-spec-vectors/did_dht/resolve.json' with { type: 'json' };
+import sinon from 'sinon';
 import { DidDht, DidDhtDocument, DidDhtRegisteredDidType, DidDhtUtils } from '../../src/methods/did-dht.js';
 import { expect, use } from 'chai';
 
 use(chaiAsPromised);
 
 // Helper function to create a mocked fetch response that fails and returns a 404 Not Found.
-const fetchNotFoundResponse = () => ({
+const fetchNotFoundResponse = (): { status: number; statusText: string; ok: boolean } => ({
   status     : 404,
   statusText : 'Not Found',
   ok         : false
@@ -25,11 +24,13 @@ const fetchNotFoundResponse = () => ({
 
 // Helper function to create a mocked fetch response that is successful and returns the given
 // response.
-const fetchOkResponse = (response?: any) => ({
+const fetchOkResponse = (response?: any): {
+  status: number; statusText: string; ok: boolean; arrayBuffer: () => Promise<any>
+} => ({
   status      : 200,
   statusText  : 'OK',
   ok          : true,
-  arrayBuffer : async () => Promise.resolve(response)
+  arrayBuffer : async (): Promise<any> => Promise.resolve(response)
 });
 
 describe('DidDht', () => {
@@ -495,7 +496,7 @@ describe('DidDht', () => {
 
     beforeEach(() => {
       // Define a DID to use for the test.
-      portableDid =  {
+      portableDid = {
         uri      : 'did:dht:urex8kbn3ewbdrjq36obf3rpg8joomzpu1gb4cfkhj3ey4y9fqgo',
         document : {
           id                 : 'did:dht:urex8kbn3ewbdrjq36obf3rpg8joomzpu1gb4cfkhj3ey4y9fqgo',
@@ -849,7 +850,12 @@ describe('DidDhtDocument', () => {
               ttl   : 7200,
               class : 'IN',
               data  : [
-                new Uint8Array([105, 100, 61, 48, 59, 116, 61, 48, 59, 107, 61, 108, 105, 78, 102, 65, 57, 114, 99, 87, 107, 69, 118, 52, 108, 79, 77, 97, 97, 101, 121, 79, 70, 99, 88, 85, 50, 115, 75, 88, 72, 55, 71, 73, 83, 67, 105, 87, 67, 107, 75, 117, 105, 48]),
+                new Uint8Array([
+                  105, 100, 61, 48, 59, 116, 61, 48, 59, 107, 61, 108, 105, 78, 102, 65, 57,
+                  114, 99, 87, 107, 69, 118, 52, 108, 79, 77, 97, 97, 101, 121, 79, 70, 99,
+                  88, 85, 50, 115, 75, 88, 72, 55, 71, 73, 83, 67, 105, 87, 67, 107, 75,
+                  117, 105, 48,
+                ]),
               ],
             },
             {
@@ -858,7 +864,12 @@ describe('DidDhtDocument', () => {
               ttl   : 7200,
               class : 'IN',
               data  : [
-                new Uint8Array([105, 100, 61, 97, 117, 116, 104, 59, 116, 61, 48, 59, 107, 61, 97, 103, 66, 54, 55, 109, 113, 70, 88, 76, 45, 102, 79, 115, 95, 119, 122, 100, 74, 65, 85, 104, 86, 83, 53, 120, 90, 112, 70, 56, 50, 55, 55, 72, 88, 103, 86, 110, 121, 78, 103, 95, 99]),
+                new Uint8Array([
+                  105, 100, 61, 97, 117, 116, 104, 59, 116, 61, 48, 59, 107, 61, 97, 103,
+                  66, 54, 55, 109, 113, 70, 88, 76, 45, 102, 79, 115, 95, 119, 122, 100,
+                  74, 65, 85, 104, 86, 83, 53, 120, 90, 112, 70, 56, 50, 55, 55, 72, 88,
+                  103, 86, 110, 121, 78, 103, 95, 99,
+                ]),
               ],
             },
             {
@@ -867,7 +878,12 @@ describe('DidDhtDocument', () => {
               ttl   : 7200,
               class : 'IN',
               data  : [
-                new Uint8Array([105, 100, 61, 97, 115, 115, 101, 114, 116, 59, 116, 61, 48, 59, 107, 61, 54, 121, 109, 110, 97, 118, 116, 77, 114, 98, 85, 71, 84, 65, 86, 45, 108, 86, 87, 108, 73, 115, 116, 73, 66, 121, 110, 86, 75, 50, 103, 114, 73, 95, 113, 68, 104, 109, 72, 100, 83, 113, 115]),
+                new Uint8Array([
+                  105, 100, 61, 97, 115, 115, 101, 114, 116, 59, 116, 61, 48, 59, 107, 61,
+                  54, 121, 109, 110, 97, 118, 116, 77, 114, 98, 85, 71, 84, 65, 86, 45,
+                  108, 86, 87, 108, 73, 115, 116, 73, 66, 121, 110, 86, 75, 50, 103, 114,
+                  73, 95, 113, 68, 104, 109, 72, 100, 83, 113, 115,
+                ]),
               ],
             },
             {
@@ -876,7 +892,13 @@ describe('DidDhtDocument', () => {
               ttl   : 7200,
               class : 'IN',
               data  : [
-                new Uint8Array([105, 100, 61, 100, 119, 110, 59, 116, 61, 68, 101, 99, 101, 110, 116, 114, 97, 108, 105, 122, 101, 100, 87, 101, 98, 78, 111, 100, 101, 59, 115, 101, 61, 104, 116, 116, 112, 115, 58, 47, 47, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109, 47, 100, 119, 110, 59, 115, 105, 103, 61, 35, 97, 117, 116, 104, 44, 35, 97, 115, 115, 101, 114, 116]),
+                new Uint8Array([
+                  105, 100, 61, 100, 119, 110, 59, 116, 61, 68, 101, 99, 101, 110, 116,
+                  114, 97, 108, 105, 122, 101, 100, 87, 101, 98, 78, 111, 100, 101, 59,
+                  115, 101, 61, 104, 116, 116, 112, 115, 58, 47, 47, 101, 120, 97, 109,
+                  112, 108, 101, 46, 99, 111, 109, 47, 100, 119, 110, 59, 115, 105, 103,
+                  61, 35, 97, 117, 116, 104, 44, 35, 97, 115, 115, 101, 114, 116,
+                ]),
               ],
             },
             {
@@ -885,7 +907,12 @@ describe('DidDhtDocument', () => {
               ttl   : 7200,
               class : 'IN',
               data  : [
-                new Uint8Array([118, 61, 48, 59, 118, 109, 61, 107, 48, 44, 107, 49, 44, 107, 50, 59, 97, 117, 116, 104, 61, 107, 48, 44, 107, 49, 59, 97, 115, 109, 61, 107, 48, 44, 107, 50, 59, 100, 101, 108, 61, 107, 48, 59, 105, 110, 118, 61, 107, 48, 59, 115, 118, 99, 61, 115, 48]),
+                new Uint8Array([
+                  118, 61, 48, 59, 118, 109, 61, 107, 48, 44, 107, 49, 44, 107, 50, 59,
+                  97, 117, 116, 104, 61, 107, 48, 44, 107, 49, 59, 97, 115, 109, 61, 107,
+                  48, 44, 107, 50, 59, 100, 101, 108, 61, 107, 48, 59, 105, 110, 118, 61,
+                  107, 48, 59, 115, 118, 99, 61, 115, 48,
+                ]),
               ],
             },
           ],
@@ -903,9 +930,12 @@ describe('DidDhtDocument', () => {
       // Check the DID Document.
       expect(didResolutionResult.didDocument).to.have.property('id', didUri); // expected DID URI
       expect(didResolutionResult.didDocument?.verificationMethod).to.have.length(3); // expected 3 verification methods
-      expect(didResolutionResult.didDocument?.verificationMethod![0].id).to.equal(`${didUri}#0`); // expected first verification method to be the identity key
-      expect(didResolutionResult.didDocument?.verificationMethod![1].id).to.equal(`${didUri}#auth`); // expected second verification method to be #auth
-      expect(didResolutionResult.didDocument?.verificationMethod![2].id).to.equal(`${didUri}#assert`); // expected third verification method to be #assert
+      // expected first verification method to be the identity key
+      expect(didResolutionResult.didDocument?.verificationMethod![0].id).to.equal(`${didUri}#0`);
+      // expected second verification method to be #auth
+      expect(didResolutionResult.didDocument?.verificationMethod![1].id).to.equal(`${didUri}#auth`);
+      // expected third verification method to be #assert
+      expect(didResolutionResult.didDocument?.verificationMethod![2].id).to.equal(`${didUri}#assert`);
 
       expect(didResolutionResult.didDocument?.service).to.have.length(1); // expected 1 service
       expect(didResolutionResult.didDocument?.service![0].id).to.equal(`${didUri}#dwn`); // expected service id

@@ -1,16 +1,16 @@
 import type { Jwk } from '@enbox/crypto';
 
-import { expect } from 'chai';
 import { Convert } from '@enbox/common';
+import { expect } from 'chai';
 
 import type { AgentDataStore, DwnDataStore } from '../src/store-data.js';
 
-import { TestAgent } from './utils/test-agent.js';
 import { DwnInterface } from '../src/types/dwn.js';
+import { JwkProtocolDefinition } from '../src/store-data-protocols.js';
 import { LocalKeyManager } from '../src/local-key-manager.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { TestAgent } from './utils/test-agent.js';
 import { DwnKeyStore, InMemoryKeyStore } from '../src/store-key.js';
-import { JwkProtocolDefinition } from '../src/store-data-protocols.js';
 
 describe('KeyStore', () => {
   let testHarness: PlatformAgentTestHarness;
@@ -73,7 +73,7 @@ describe('KeyStore', () => {
 
         it('should return false if Private Key does not exist', async () => {
           // Test deleting a non-existent Private Key using the context of the only DID with keys.
-          const deleteResult = await keyStore.delete({ id: 'non-existent',  agent: testHarness.agent });
+          const deleteResult = await keyStore.delete({ id: 'non-existent', agent: testHarness.agent });
 
           // Validate that a delete could not be carried out.
           expect(deleteResult).to.be.false;
@@ -129,7 +129,7 @@ describe('KeyStore', () => {
         it('throws an error if the DID records exceed the DWN maximum data size for query results', async function() {
           // Skip this test for InMemoryKeyStore, as the in-memory store returns all records
           // regardless of the size of the data.
-          if (AgentDataStore.name === 'InMemoryKeyStore') this.skip();
+          if (AgentDataStore.name === 'InMemoryKeyStore') {this.skip();}
 
           const keyBytes = Convert.string(new Array(102400 + 1).join('0')).toUint8Array();
 

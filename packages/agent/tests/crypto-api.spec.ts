@@ -1,11 +1,11 @@
 import type { Jwk } from '@enbox/crypto';
 
-import { expect } from 'chai';
 import { Convert } from '@enbox/common';
-import { CryptoUtils, isOctPrivateJwk } from '@enbox/crypto';
+import { expect } from 'chai';
 
-import { isChrome } from './utils/runtimes.js';
 import { AgentCryptoApi } from '../src/crypto-api.js';
+import { isChrome } from './utils/runtimes.js';
+import { CryptoUtils, isOctPrivateJwk } from '@enbox/crypto';
 
 describe('AgentCryptoApi', () => {
   let cryptoApi: AgentCryptoApi;
@@ -26,7 +26,7 @@ describe('AgentCryptoApi', () => {
       expect(privateKey).to.have.property('kty', 'oct');
       expect(privateKey).to.have.property('k');
       expect(privateKey).to.have.property('alg', 'A128KW');
-      if (!isOctPrivateJwk(privateKey)) throw new Error('Invalid key type'); // type guard
+      if (!isOctPrivateJwk(privateKey)) {throw new Error('Invalid key type');} // type guard
       const privateKeyBytesResult = Convert.base64Url(privateKey.k).toUint8Array();
       expect(privateKeyBytesResult).to.deep.equal(privateKeyBytes);
     });
@@ -42,7 +42,7 @@ describe('AgentCryptoApi', () => {
       expect(privateKey).to.have.property('kty', 'oct');
       expect(privateKey).to.have.property('k');
       expect(privateKey).to.have.property('alg', 'A128KW');
-      if (!isOctPrivateJwk(privateKey)) throw new Error('Invalid key type'); // type guard
+      if (!isOctPrivateJwk(privateKey)) {throw new Error('Invalid key type');} // type guard
       const privateKeyBytesResult = Convert.base64Url(privateKey.k).toUint8Array();
       expect(privateKeyBytesResult).to.deep.equal(privateKeyBytes);
     });
@@ -65,7 +65,7 @@ describe('AgentCryptoApi', () => {
 
     it('supports A192GCM in all supported runtimes except Chrome browser', async function () {
       // Google Chrome does not support AES with 192-bit keys.
-      if (isChrome) this.skip();
+      if (isChrome) {this.skip();}
 
       for (const algorithm of ['A192GCM'] as const) {
         // Setup.
@@ -100,7 +100,7 @@ describe('AgentCryptoApi', () => {
 
     it('supports A192KW in all supported runtimes except Chrome browser', async function () {
       // Google Chrome does not support AES with 192-bit keys.
-      if (isChrome) this.skip();
+      if (isChrome) {this.skip();}
 
       for (const algorithm of ['A192KW'] as const) {
         // Setup.
@@ -195,7 +195,7 @@ describe('AgentCryptoApi', () => {
       expect(derivedKey).to.have.property('kty', 'oct');
       expect(derivedKey).to.have.property('k');
       expect(derivedKey).to.have.property('alg', 'A128KW');
-      if (!isOctPrivateJwk(derivedKey)) throw new Error('Invalid key type'); // type guard
+      if (!isOctPrivateJwk(derivedKey)) {throw new Error('Invalid key type');} // type guard
       const derivedKeyBytes = Convert.base64Url(derivedKey.k).toUint8Array();
       expect(derivedKeyBytes.byteLength).to.equal(128 / 8);
     });
@@ -217,7 +217,7 @@ describe('AgentCryptoApi', () => {
 
         // Validate the result.
         expect(derivedKey).to.have.property('alg', derivedKeyAlgorithm);
-        if (!isOctPrivateJwk(derivedKey)) throw new Error('Invalid key type'); // type guard
+        if (!isOctPrivateJwk(derivedKey)) {throw new Error('Invalid key type');} // type guard
         const derivedKeyBytes = Convert.base64Url(derivedKey.k).toUint8Array();
         const expectedKeyLength = parseInt(derivedKeyAlgorithm.slice(1, 4), 10);
         expect(derivedKeyBytes.byteLength).to.equal(expectedKeyLength / 8);
@@ -241,7 +241,7 @@ describe('AgentCryptoApi', () => {
         // Validate the result.
         const [, , derivedKeyAlgorithm] = algorithm.split(/[-+]/);
         expect(derivedKey).to.have.property('alg', derivedKeyAlgorithm);
-        if (!isOctPrivateJwk(derivedKey)) throw new Error('Invalid key type'); // type guard
+        if (!isOctPrivateJwk(derivedKey)) {throw new Error('Invalid key type');} // type guard
         const derivedKeyBytes = Convert.base64Url(derivedKey.k).toUint8Array();
         const expectedKeyLength = parseInt(derivedKeyAlgorithm.slice(1, 4), 10);
         expect(derivedKeyBytes.byteLength).to.equal(expectedKeyLength / 8);

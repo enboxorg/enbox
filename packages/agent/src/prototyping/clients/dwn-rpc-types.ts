@@ -1,4 +1,4 @@
-import type { RecordsReadReply, UnionMessageReply, MessageSubscriptionHandler, RecordSubscriptionHandler } from '@enbox/dwn-sdk-js';
+import type { MessageSubscriptionHandler, RecordsReadReply, RecordSubscriptionHandler, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
 export interface SerializableDwnMessage {
   toJSON(): string;
@@ -46,7 +46,7 @@ export type DwnRpcRequest = {
 
   /** Optional subscription handler for DWN message events. */
   subscriptionHandler?: DwnSubscriptionHandler;
-}
+};
 
 /**
  * Represents the JSON RPC response from a DWN server to a request, combining the results of various

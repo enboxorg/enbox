@@ -1,13 +1,14 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { v4 as uuidv4 } from 'uuid';
-
-import { handleDwnProcessMessage } from '../src/json-rpc-handlers/dwn/process-message.js';
-import type { RequestContext } from '../src/lib/json-rpc-router.js';
-import { JsonRpcErrorCodes, createJsonRpcRequest } from '../src/lib/json-rpc.js';
-import { getTestDwn } from './test-dwn.js';
-import { createRecordsWriteMessage } from './utils.js';
 import { DataStream, Jws, Message, MessagesRead, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
+
+import type { RequestContext } from '../src/lib/json-rpc-router.js';
+
+import { createRecordsWriteMessage } from './utils.js';
+import { getTestDwn } from './test-dwn.js';
+import { handleDwnProcessMessage } from '../src/json-rpc-handlers/dwn/process-message.js';
+import { createJsonRpcRequest, JsonRpcErrorCodes } from '../src/lib/json-rpc.js';
 
 describe('handleDwnProcessMessage', function () {
   it('returns a JSON RPC Success Response when DWN returns a 2XX status code', async function () {
@@ -17,8 +18,8 @@ describe('handleDwnProcessMessage', function () {
     const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice);
     const requestId = uuidv4();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
-      message: recordsWrite.toJSON(),
-      target: alice.did,
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
     });
 
     const dwn = await getTestDwn();
@@ -72,8 +73,8 @@ describe('handleDwnProcessMessage', function () {
     const { recordsWrite, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice });
     const requestId = uuidv4();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
-      message: recordsWrite.toJSON(),
-      target: alice.did,
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
     });
 
     const dwn = await getTestDwn();
@@ -92,13 +93,13 @@ describe('handleDwnProcessMessage', function () {
     // Read the record to get the data back
     const readRequestId = uuidv4();
     const recordsRead = await RecordsRead.create({
-      signer: Jws.createSigner(alice),
-      filter: { recordId: recordsWrite.message.recordId }, 
+      signer : Jws.createSigner(alice),
+      filter : { recordId: recordsWrite.message.recordId },
     });
 
     const readRequest = createJsonRpcRequest(readRequestId, 'dwn.processMessage', {
-      message: recordsRead.toJSON(),
-      target: alice.did,
+      message : recordsRead.toJSON(),
+      target  : alice.did,
     });
 
     const { jsonRpcResponse: recordsReadResponse, dataStream: responseDataStream } = await handleDwnProcessMessage(readRequest, { dwn, transport: 'http' });
@@ -108,7 +109,7 @@ describe('handleDwnProcessMessage', function () {
     expect(responseDataStream).to.not.be.undefined;
 
     // Compare the data stream bytes to ensure they are the same
-    const responseDataBytes = await DataStream.toBytes(responseDataStream as any)
+    const responseDataBytes = await DataStream.toBytes(responseDataStream as any);
     expect(responseDataBytes).to.deep.equal(dataBytes);
     await dwn.close();
   });
@@ -122,8 +123,8 @@ describe('handleDwnProcessMessage', function () {
     const { recordsWrite, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice });
     const requestId = uuidv4();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
-      message: recordsWrite.toJSON(),
-      target: alice.did,
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
     });
 
     const dwn = await getTestDwn();
@@ -148,8 +149,8 @@ describe('handleDwnProcessMessage', function () {
     });
 
     const readRequest = createJsonRpcRequest(readRequestId, 'dwn.processMessage', {
-      message: messageRead.toJSON(),
-      target: alice.did,
+      message : messageRead.toJSON(),
+      target  : alice.did,
     });
 
     const { jsonRpcResponse: recordsReadResponse, dataStream: responseDataStream } = await handleDwnProcessMessage(readRequest, { dwn, transport: 'http' });
@@ -159,7 +160,7 @@ describe('handleDwnProcessMessage', function () {
     expect(responseDataStream).to.not.be.undefined;
 
     // Compare the data stream bytes to ensure they are the same
-    const responseDataBytes = await DataStream.toBytes(responseDataStream as any)
+    const responseDataBytes = await DataStream.toBytes(responseDataStream as any);
     expect(responseDataBytes).to.deep.equal(dataBytes);
     await dwn.close();
   });
@@ -197,7 +198,7 @@ describe('handleDwnProcessMessage', function () {
     });
 
     const dwn = await getTestDwn();
-    const context: RequestContext = { dwn, transport: 'http', subscriptionRequest: { id: 'test', subscriptionHandler: () => {}} };
+    const context: RequestContext = { dwn, transport: 'http', subscriptionRequest: { id: 'test', subscriptionHandler: () => {} } };
 
     const { jsonRpcResponse } = await handleDwnProcessMessage(
       dwnRequest,

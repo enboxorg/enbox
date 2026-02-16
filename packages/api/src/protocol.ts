@@ -56,7 +56,7 @@ export class Protocol {
    * Retrieves the protocol definition from the protocol's configuration message.
    * @returns The protocol definition.
    */
-  get definition() {
+  get definition(): DwnMessage[DwnInterface.ProtocolsConfigure]['descriptor']['definition'] {
     return this._protocolsConfigureMessage.descriptor.definition;
   }
 
@@ -64,7 +64,7 @@ export class Protocol {
    * Serializes the protocol's configuration message to JSON.
    * @returns The serialized JSON object of the protocol's configuration message.
    */
-  toJSON() {
+  toJSON(): DwnMessage[DwnInterface.ProtocolsConfigure] {
     return this._protocolsConfigureMessage;
   }
 

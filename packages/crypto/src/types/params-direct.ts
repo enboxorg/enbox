@@ -1,5 +1,5 @@
-import type { Jwk } from '../jose/jwk.js';
 import type { AlgorithmIdentifier } from './identifier.js';
+import type { Jwk } from '../jose/jwk.js';
 
 /**
  * Parameters for computing a public key.

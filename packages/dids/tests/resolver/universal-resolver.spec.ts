@@ -1,14 +1,14 @@
 import type { UnwrapPromise } from '@enbox/common';
 
-import { expect } from 'chai';
 import * as sinon from 'sinon';
+import { expect } from 'chai';
 
 import type { DidResource } from '../../src/types/did-core.js';
 
 import { DidJwk } from '../../src/methods/did-jwk.js';
+import DidJwkResolveTestVector from '../fixtures/web5-spec-vectors/did_jwk/resolve.json' with { type: 'json' };
 import { isDidVerificationMethod } from '../../src/utils.js';
 import { UniversalResolver } from '../../src/resolver/universal-resolver.js';
-import DidJwkResolveTestVector from '../fixtures/web5-spec-vectors/did_jwk/resolve.json' assert { type: 'json' };
 
 describe('UniversalResolver', () => {
   describe('resolve()', () => {
@@ -185,7 +185,7 @@ describe('UniversalResolver', () => {
       expect(result.dereferencingMetadata.error).to.not.exist;
 
       const didResource = result.contentStream as DidResource;
-      if (!(!isDidVerificationMethod(didResource) && !isDidVerificationMethod(didResource))) throw new Error('Expected DidResource to be a DidDocument');
+      if (!(!isDidVerificationMethod(didResource) && !isDidVerificationMethod(didResource))) {throw new Error('Expected DidResource to be a DidDocument');}
       expect(didResource['@context']).to.exist;
       expect(didResource['@context']).to.include('https://www.w3.org/ns/did/v1');
     });

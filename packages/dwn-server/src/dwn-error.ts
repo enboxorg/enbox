@@ -16,8 +16,8 @@ export class DwnServerError extends Error {
    */
   public toJSON(): { code: string, message: string } {
     return {
-      code: this.code,
-      message: this.message,
+      code    : this.code,
+      message : this.message,
     };
   }
 }
