@@ -1,5 +1,4 @@
 import { expect } from 'chai';
-import { Readable } from 'readable-stream';
 
 import { Stream } from '../src/stream.js';
 
@@ -630,8 +629,9 @@ describe('Stream', () => {
       expect(Stream.isReadableStream(readableStream)).to.be.true;
     });
 
-    it('returns false for a Node Readable stream', () => {
-      expect(Stream.isReadableStream(new Readable())).to.be.false;
+    it('returns false for a Node-like stream object', () => {
+      const nodeLike = { pipe: (): void => {}, on: (): void => {}, _readableState: {} };
+      expect(Stream.isReadableStream(nodeLike)).to.be.false;
     });
 
 
