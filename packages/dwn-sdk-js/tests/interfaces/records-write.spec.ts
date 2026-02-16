@@ -595,8 +595,81 @@ describe('RecordsWrite', () => {
       // ProtocolContext entry should have derivedPublicKey
       expect(encryption.keyEncryption[1].derivedPublicKey).to.exist;
 
-      // Authorization should be stripped (needs re-signing)
+      // Authorization was already wiped by the first (non-append) call, so
+      // append mode preserves whatever state exists — which is undefined here.
+      // When starting from a parsed/signed message (the signAsOwner test
+      // below), authorization IS preserved by append mode.
       expect(recordsWrite['_message'].authorization).to.not.exist;
+    });
+
+    it('should allow signAsOwner after append (reactive root-record upgrade)', async () => {
+      // Simulates the cross-DWN scenario: Bob authors a record, Alice (owner)
+      // appends a ProtocolContext keyEncryption entry, then signs as owner.
+      const alice = await TestDataGenerator.generatePersona();
+      const bob = await TestDataGenerator.generatePersona();
+      const dataEncryptionKey = TestDataGenerator.randomBytes(32);
+      const dataEncryptionIV = TestDataGenerator.randomBytes(16);
+
+      // Bob creates and signs the record
+      const recordsWrite = await RecordsWrite.create({
+        signer       : Jws.createSigner(bob),
+        protocol     : 'https://example.com/protocol',
+        protocolPath : 'thread',
+        schema       : 'https://example.com/schema',
+        dataFormat   : 'application/octet-stream',
+        data         : TestDataGenerator.randomBytes(100),
+      });
+
+      // Bob encrypts with ProtocolPath, then re-signs
+      const encryptionInput1: EncryptionInput = {
+        initializationVector : dataEncryptionIV,
+        key                  : dataEncryptionKey,
+        keyEncryptionInputs  : [{
+          publicKeyId      : alice.keyId,
+          publicKey        : alice.keyPair.publicJwk,
+          derivationScheme : KeyDerivationScheme.ProtocolPath,
+        }],
+      };
+      await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput1);
+      await recordsWrite.sign({ signer: Jws.createSigner(bob) });
+
+      expect(recordsWrite.author).to.equal(bob.did);
+      expect(recordsWrite['_message'].authorization).to.exist;
+
+      // Simulate: Alice parses Bob's message and appends ProtocolContext
+      const parsed = await RecordsWrite.parse(recordsWrite.message);
+      expect(parsed.author).to.equal(bob.did);
+
+      const encryptionInput2: EncryptionInput = {
+        initializationVector : dataEncryptionIV,
+        key                  : dataEncryptionKey,
+        keyEncryptionInputs  : [{
+          publicKeyId      : alice.keyId,
+          publicKey        : alice.keyPair.publicJwk,
+          derivationScheme : KeyDerivationScheme.ProtocolContext,
+        }],
+      };
+      await parsed.encryptSymmetricEncryptionKey(encryptionInput2, { append: true });
+
+      // Author and authorization should be preserved after append
+      expect(parsed.author).to.equal(bob.did);
+      expect(parsed['_message'].authorization).to.exist;
+
+      // Alice signs as owner — should NOT throw
+      await parsed.signAsOwner(Jws.createSigner(alice));
+
+      expect(parsed.owner).to.equal(alice.did);
+      expect(parsed['_message'].authorization!.ownerSignature).to.exist;
+
+      // Both keyEncryption entries should be present
+      const encryption = parsed['_message'].encryption!;
+      expect(encryption.keyEncryption).to.have.length(2);
+      expect(encryption.keyEncryption[0].derivationScheme).to.equal('protocolPath');
+      expect(encryption.keyEncryption[1].derivationScheme).to.equal('protocolContext');
+
+      // validateIntegrity should pass — the stale encryptionCid in the
+      // author's signature is allowed when ownerSignature is present
+      await parsed['validateIntegrity']();
     });
 
     it('should throw when append is true but encryption does not exist', async () => {

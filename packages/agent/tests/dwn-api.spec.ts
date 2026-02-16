@@ -4148,3 +4148,428 @@ describe('Unified Key Retrieval - Read Side (PR D)', () => {
     expect(bobKey!.derivedPrivateKey).to.deep.equal(contextKeyPayload.derivedPrivateKey);
   }).timeout(30000);
 });
+
+describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
+  let testHarness: PlatformAgentTestHarness;
+  let alice: BearerIdentity;
+  let bob: BearerIdentity;
+
+  before(async () => {
+    testHarness = await PlatformAgentTestHarness.setup({
+      agentClass  : TestAgent,
+      agentStores : 'dwn'
+    });
+  });
+
+  beforeEach(async () => {
+    sinon.restore();
+    // Stub DidDht.publish so tests work without a DHT gateway
+    sinon.stub(DidDht, 'publish').resolves({
+      didDocumentMetadata   : { published: true },
+      didDocument           : {} as any,
+      didResolutionMetadata : {},
+    } as any);
+
+    await testHarness.clearStorage();
+    await testHarness.createAgentDid();
+    alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
+    bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
+
+    // Stub fetchRemoteProtocolDefinition to route through the local DWN.
+    // In tests both Alice and Bob share the same local DWN node, so we
+    // use getProtocolDefinition (local) instead of the network call.
+    const dwnApi = testHarness.agent.dwn;
+    sinon.stub(dwnApi as any, 'fetchRemoteProtocolDefinition')
+      .callsFake(async (...args: any[]) => {
+        const [targetDid, protocolUri] = args as [string, string];
+        return dwnApi['getProtocolDefinition'](targetDid, protocolUri);
+      });
+
+    // Stub extractDerivedPublicKey: in the local test env there's no
+    // remote DWN to query, so query the local DWN instead.
+    sinon.stub(dwnApi as any, 'extractDerivedPublicKey')
+      .callsFake(async (...args: any[]) => {
+        const [targetDid, protocolUri, rootContextId] = args as [string, string, string, string];
+        // Query the local DWN for records in this context
+        const { reply } = await dwnApi.processRequest({
+          author        : targetDid,
+          target        : targetDid,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : {
+            filter: {
+              protocol  : protocolUri,
+              contextId : rootContextId,
+            },
+          },
+        });
+
+        const entries = (reply as any).entries ?? [];
+        for (const entry of entries) {
+          const encryption = entry.encryption ?? entry.recordsWrite?.encryption;
+          if (encryption?.keyEncryption) {
+            const contextEntry = encryption.keyEncryption.find(
+              (k: any) => k.derivationScheme === 'protocolContext' && k.derivedPublicKey
+            );
+            if (contextEntry?.derivedPublicKey) {
+              return {
+                rootKeyId        : contextEntry.rootKeyId,
+                derivedPublicKey : contextEntry.derivedPublicKey,
+              };
+            }
+          }
+        }
+        return undefined;
+      });
+  });
+
+  afterEach(() => {
+    sinon.restore();
+  });
+
+  after(async () => {
+    await testHarness.clearStorage();
+    await testHarness.closeStorage();
+  });
+
+  // Email protocol: relational access without $role records
+  const emailProtocol: ProtocolDefinition = {
+    published : true,
+    protocol  : 'http://email-protocol.xyz/pre',
+    types     : {
+      thread : { schema: 'http://email-protocol.xyz/schema/thread', dataFormats: ['text/plain'] },
+      email  : { schema: 'http://email-protocol.xyz/schema/email', dataFormats: ['text/plain'] },
+    },
+    structure: {
+      thread: {
+        $actions: [
+          { who: 'anyone', can: ['create'] },
+          { who: 'author', of: 'thread', can: ['read', 'query', 'subscribe'] },
+          { who: 'recipient', of: 'thread', can: ['read', 'query', 'subscribe'] },
+        ],
+        email: {
+          $actions: [
+            { who: 'author', of: 'thread', can: ['create'] },
+            { who: 'recipient', of: 'thread', can: ['create'] },
+            { who: 'author', of: 'thread/email', can: ['read', 'query', 'subscribe'] },
+            { who: 'recipient', of: 'thread/email', can: ['read', 'query', 'subscribe'] },
+          ],
+        },
+      },
+    },
+  };
+
+  // Chat protocol with $role records
+  const chatProtocol: ProtocolDefinition = {
+    published : true,
+    protocol  : 'https://protocol.xyz/chat-pre',
+    types     : {
+      thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'] },
+      participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'] },
+      chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'] },
+    },
+    structure: {
+      thread: {
+        participant : { $role: true },
+        chat        : {},
+      },
+    },
+  };
+
+  it('detectNewParticipants should detect external author via Case 3', () => {
+    const participants = testHarness.agent.dwn.detectNewParticipants({
+      protocolDefinition : emailProtocol,
+      protocolPath       : 'thread',
+      recipient          : alice.did.uri,
+      tenantDid          : alice.did.uri,
+      authorDid          : bob.did.uri,
+    });
+
+    // Bob (the author) should be detected as a participant due to
+    // { who: 'author', of: 'thread', can: ['read'] }
+    expect(participants.has(bob.did.uri)).to.be.true;
+  });
+
+  it('detectNewParticipants should not detect external author when no author-read rules exist', () => {
+    // Chat protocol has no "who: author" rules — only $role
+    const participants = testHarness.agent.dwn.detectNewParticipants({
+      protocolDefinition : chatProtocol,
+      protocolPath       : 'thread',
+      tenantDid          : alice.did.uri,
+      authorDid          : bob.did.uri,
+    });
+
+    expect(participants.has(bob.did.uri)).to.be.false;
+  });
+
+  it('detectNewParticipants should not include the DWN owner even as an author', () => {
+    const participants = testHarness.agent.dwn.detectNewParticipants({
+      protocolDefinition : emailProtocol,
+      protocolPath       : 'thread',
+      tenantDid          : alice.did.uri,
+      authorDid          : alice.did.uri, // owner is the author
+    });
+
+    expect(participants.has(alice.did.uri)).to.be.false;
+  });
+
+  it('cross-DWN root record should use ProtocolPath encryption with target key', async () => {
+    // Configure protocol for Alice (the DWN owner) with encryption
+    await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: emailProtocol },
+      encryption    : true,
+    });
+
+    // Bob writes a root record to Alice's DWN (cross-DWN).
+    // Because this is a local test environment, we simulate cross-DWN by:
+    // - Bob constructs and encrypts the message targeting Alice's DWN
+    // - processRequest stores the message on Alice's DWN (local)
+    //
+    // In production, Bob would use sendRequest() to write to Alice's remote DWN.
+    // Here we use processRequest() with target=alice to simulate the same effect.
+    const threadText = 'Hello from Bob!';
+    const { message: threadMessage, reply: writeReply } = await testHarness.agent.dwn.processRequest({
+      author        : bob.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : emailProtocol.protocol,
+        protocolPath : 'thread',
+        dataFormat   : 'text/plain',
+        schema       : 'http://email-protocol.xyz/schema/thread',
+        recipient    : alice.did.uri,
+      },
+      dataStream : new Blob([new TextEncoder().encode(threadText)]),
+      encryption : true,
+    });
+
+    expect(writeReply.status.code).to.equal(202);
+
+    const recordsWriteMessage = threadMessage as RecordsWriteMessage;
+    expect(recordsWriteMessage.encryption).to.exist;
+
+    // For cross-DWN root records, the encryption should use ProtocolPath
+    // (the external author cannot derive the target's context key)
+    const keyEncryption = recordsWriteMessage.encryption!.keyEncryption;
+    expect(keyEncryption).to.have.length(1);
+    expect(keyEncryption[0].derivationScheme).to.equal('protocolPath');
+  }).timeout(15000);
+
+  it('reactive root-record upgrade should append ProtocolContext keyEncryption entry', async () => {
+    // Configure protocol for Alice with encryption
+    await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: emailProtocol },
+      encryption    : true,
+    });
+
+    // Bob writes a root record to Alice's DWN (cross-DWN)
+    const threadText = 'Hello from Bob - should be upgraded!';
+    const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
+      author        : bob.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : emailProtocol.protocol,
+        protocolPath : 'thread',
+        dataFormat   : 'text/plain',
+        schema       : 'http://email-protocol.xyz/schema/thread',
+        recipient    : alice.did.uri,
+      },
+      dataStream : new Blob([new TextEncoder().encode(threadText)]),
+      encryption : true,
+    });
+
+    const recordId = (threadMessage as RecordsWriteMessage).recordId;
+
+    // Read the record as Alice — the reactive upgrade should have run in
+    // processRequest's post-write step, adding a ProtocolContext entry
+    const { reply: readReply } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId } },
+    });
+
+    const readResult = readReply as any;
+    expect(readResult.status.code).to.equal(200);
+    expect(readResult.entry).to.exist;
+    expect(readResult.entry.recordsWrite.encryption).to.exist;
+
+    const keyEncryption = readResult.entry.recordsWrite.encryption.keyEncryption;
+
+    // After upgrade: should have BOTH ProtocolPath AND ProtocolContext entries
+    expect(keyEncryption.length).to.be.greaterThanOrEqual(2);
+
+    const hasProtocolPath = keyEncryption.some(
+      (k: { derivationScheme: string }) => k.derivationScheme === 'protocolPath'
+    );
+    const hasProtocolContext = keyEncryption.some(
+      (k: { derivationScheme: string }) => k.derivationScheme === 'protocolContext'
+    );
+    expect(hasProtocolPath).to.be.true;
+    expect(hasProtocolContext).to.be.true;
+
+    // The ProtocolContext entry should include derivedPublicKey
+    const contextEntry = keyEncryption.find(
+      (k: { derivationScheme: string }) => k.derivationScheme === 'protocolContext'
+    );
+    expect(contextEntry.derivedPublicKey).to.exist;
+  }).timeout(15000);
+
+  it('Alice should decrypt cross-DWN root record via ProtocolPath after upgrade', async () => {
+    // Configure protocol for Alice with encryption
+    await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: emailProtocol },
+      encryption    : true,
+    });
+
+    // Bob writes a root record to Alice's DWN
+    const threadText = 'Secret message from Bob to Alice';
+    const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
+      author        : bob.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : emailProtocol.protocol,
+        protocolPath : 'thread',
+        dataFormat   : 'text/plain',
+        schema       : 'http://email-protocol.xyz/schema/thread',
+        recipient    : alice.did.uri,
+      },
+      dataStream : new Blob([new TextEncoder().encode(threadText)]),
+      encryption : true,
+    });
+
+    const recordId = (threadMessage as RecordsWriteMessage).recordId;
+
+    // Alice reads with auto-decryption
+    const { reply: readReply } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId } },
+      encryption    : true,
+    });
+
+    const readResult = readReply as any;
+    expect(readResult.entry.data).to.exist;
+
+    const decryptedBytes = await DataStream.toBytes(readResult.entry.data);
+    const decryptedText = new TextDecoder().decode(decryptedBytes);
+    expect(decryptedText).to.equal(threadText);
+  }).timeout(15000);
+
+  it('should auto-deliver contextKey to external author on cross-DWN root record write', async () => {
+    // Configure protocol for Alice with encryption
+    await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: emailProtocol },
+      encryption    : true,
+    });
+
+    // Bob writes a root record to Alice's DWN with a recipient
+    const threadText = 'Hello Alice, from Bob';
+    await testHarness.agent.dwn.processRequest({
+      author        : bob.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : emailProtocol.protocol,
+        protocolPath : 'thread',
+        dataFormat   : 'text/plain',
+        schema       : 'http://email-protocol.xyz/schema/thread',
+        recipient    : alice.did.uri,
+      },
+      dataStream : new Blob([new TextEncoder().encode(threadText)]),
+      encryption : true,
+    });
+
+    // Alice's post-write step should have detected Bob as an external author
+    // with read access and delivered a contextKey to Bob.
+    // Check if a contextKey was written for Bob
+    const { reply: ckQuery } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          protocol     : KeyDeliveryProtocolDefinition.protocol,
+          protocolPath : 'contextKey',
+          recipient    : bob.did.uri,
+        }
+      }
+    });
+
+    // Bob should have received a contextKey (author-based detection)
+    expect(ckQuery.entries).to.have.length.greaterThanOrEqual(1);
+  }).timeout(15000);
+
+  it('should also auto-deliver contextKey to recipient on cross-DWN write', async () => {
+    // Configure protocol for Alice with encryption
+    await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: emailProtocol },
+      encryption    : true,
+    });
+
+    const carol = await testHarness.createIdentity({ name: 'Carol', testDwnUrls });
+
+    // Bob writes a root record to Alice's DWN with Carol as recipient
+    const threadText = 'Hello Carol, from Bob on Alice DWN';
+    await testHarness.agent.dwn.processRequest({
+      author        : bob.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : emailProtocol.protocol,
+        protocolPath : 'thread',
+        dataFormat   : 'text/plain',
+        schema       : 'http://email-protocol.xyz/schema/thread',
+        recipient    : carol.did.uri,
+      },
+      dataStream : new Blob([new TextEncoder().encode(threadText)]),
+      encryption : true,
+    });
+
+    // Check contextKeys: should have one for Bob (author) and one for Carol (recipient)
+    const { reply: ckQueryBob } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          protocol     : KeyDeliveryProtocolDefinition.protocol,
+          protocolPath : 'contextKey',
+          recipient    : bob.did.uri,
+        }
+      }
+    });
+    expect(ckQueryBob.entries).to.have.length.greaterThanOrEqual(1);
+
+    const { reply: ckQueryCarol } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          protocol     : KeyDeliveryProtocolDefinition.protocol,
+          protocolPath : 'contextKey',
+          recipient    : carol.did.uri,
+        }
+      }
+    });
+    expect(ckQueryCarol.entries).to.have.length.greaterThanOrEqual(1);
+  }).timeout(15000);
+});
