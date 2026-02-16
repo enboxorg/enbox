@@ -1,12 +1,11 @@
 import type { Readable } from '@enbox/common';
-import type { KeyIdentifier, PublicJwk } from '@enbox/crypto';
-
 import type {
   DwnConfig,
   EncryptionKeyDeriver,
   GenericMessage,
   KeyDecrypter,
   ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { KeyIdentifier, PublicKeyJwk } from '@enbox/crypto';
 
 import { CryptoUtils } from '@enbox/crypto';
 import {
@@ -450,7 +449,7 @@ export class AgentDwnApi {
   private async getEncryptionKeyInfo(didUri: string): Promise<{
     keyId: string;
     keyUri: KeyIdentifier;
-    publicKeyJwk: PublicJwk;
+    publicKeyJwk: PublicKeyJwk;
   }> {
     // 1. Resolve the DID document
     const { didDocument, didResolutionMetadata } = await this.agent.did.resolve(didUri);
@@ -507,7 +506,7 @@ export class AgentDwnApi {
     return {
       keyId        : verificationMethod.id,
       keyUri,
-      publicKeyJwk : publicKeyJwk as PublicJwk,
+      publicKeyJwk : publicKeyJwk as PublicKeyJwk,
     };
   }
 
@@ -530,7 +529,7 @@ export class AgentDwnApi {
     return {
       rootKeyId        : keyId,
       derivationScheme : KeyDerivationScheme.ProtocolPath,
-      derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicJwk> => {
+      derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicKeyJwk> => {
         return keyManager.derivePublicKey({
           keyUri,
           derivationPath: fullDerivationPath,

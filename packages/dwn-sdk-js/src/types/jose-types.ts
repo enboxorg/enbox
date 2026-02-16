@@ -1,24 +1,6 @@
-import type {
-  Jwk,
-  JwkParamsEcPrivate,
-  JwkParamsEcPublic,
-  JwkParamsOkpPrivate,
-  JwkParamsOkpPublic,
-} from '@enbox/crypto';
+import type { Jwk, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
-export type { Jwk };
-
-/**
- * Public key types supported by DWN: EC (secp256k1, P-256) and OKP (Ed25519).
- * Re-exported from `@enbox/crypto` for convenience.
- */
-export type PublicKeyJwk = JwkParamsEcPublic | JwkParamsOkpPublic;
-
-/**
- * Private key types supported by DWN: EC (secp256k1, P-256) and OKP (Ed25519).
- * Re-exported from `@enbox/crypto` for convenience.
- */
-export type PrivateKeyJwk = JwkParamsEcPrivate | JwkParamsOkpPrivate;
+export type { Jwk, PrivateKeyJwk, PublicKeyJwk };
 
 /**
  * Contains a public-private key pair and the associated key ID.

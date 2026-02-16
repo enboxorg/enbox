@@ -1,5 +1,6 @@
 import type { Readable } from '@enbox/common';
 import type { Dwn, MessageEvent, ProtocolDefinition , RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { JwkParamsEcPublic, PrivateKeyJwk } from '@enbox/crypto';
 
 import { DidDht } from '@enbox/dids';
 import { Convert, NodeStream, Stream } from '@enbox/common';
@@ -2061,7 +2062,7 @@ describe('Encryption Callback Factories', () => {
       const key2 = await keyDeriver.derivePublicKey(['path2']);
 
       expect(key1.x).to.not.equal(key2.x);
-      expect(key1.y).to.not.equal(key2.y);
+      expect((key1 as JwkParamsEcPublic).y).to.not.equal((key2 as JwkParamsEcPublic).y);
     });
 
     it('should derive same key for same path (deterministic)', async () => {
@@ -2071,7 +2072,7 @@ describe('Encryption Callback Factories', () => {
       const key2 = await keyDeriver.derivePublicKey(['consistent', 'path']);
 
       expect(key1.x).to.equal(key2.x);
-      expect(key1.y).to.equal(key2.y);
+      expect((key1 as JwkParamsEcPublic).y).to.equal((key2 as JwkParamsEcPublic).y);
     });
   });
 
@@ -2093,7 +2094,7 @@ describe('Encryption Callback Factories', () => {
       const keyInfo = await testHarness.agent.dwn['getEncryptionKeyInfo'](alice.did.uri);
 
       // Derive a test key for encryption
-      const privateKeyJwk = await testHarness.agent.keyManager['getPrivateKey']({ keyUri: keyInfo.keyUri });
+      const privateKeyJwk = await testHarness.agent.keyManager['getPrivateKey']({ keyUri: keyInfo.keyUri }) as PrivateKeyJwk;
       const privateKeyBytes = Secp256k1.privateJwkToBytes(privateKeyJwk);
       const derivationPath = ['test', 'decrypt'];
       const leafPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(privateKeyBytes, derivationPath);
@@ -2101,10 +2102,7 @@ describe('Encryption Callback Factories', () => {
 
       // Encrypt a test message
       const plaintext = Convert.string('Test message').toUint8Array();
-      const encrypted = await Encryption.eciesSecp256k1Encrypt({
-        publicKey : leafPublicKeyBytes,
-        data      : plaintext
-      });
+      const encrypted = await Encryption.eciesSecp256k1Encrypt(leafPublicKeyBytes, plaintext);
 
       // Get key decrypter and decrypt
       const keyDecrypter = await testHarness.agent.dwn['getKeyDecrypter'](alice.did.uri);
@@ -2117,7 +2115,7 @@ describe('Encryption Callback Factories', () => {
   describe('getProtocolDefinition()', () => {
     it('should return cached protocol definition', async () => {
       // Install a protocol
-      const { status: configureStatus } = await testHarness.agent.dwn.processRequest({
+      const { reply: { status: configureStatus } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
