@@ -103,12 +103,15 @@ export type RecordOptions = DwnMessage[DwnInterface.RecordsWrite | DwnInterface.
   encodedData?: string | Blob;
 
   /**
-   * A stream of data, conforming to the `Readable` or `ReadableStream` interface, providing a
-   * mechanism to read the record's data sequentially. This is particularly useful for handling
-   * large datasets that should not be loaded entirely in memory, allowing for efficient, chunked
+   * A stream of data, conforming to the Web `ReadableStream` interface, providing a mechanism
+   * to read the record's data sequentially. This is particularly useful for handling large
+   * datasets that should not be loaded entirely in memory, allowing for efficient, chunked
    * processing of the record's data.
+   *
+   * Note: A Node.js `Readable` stream is also accepted and will be converted to a Web
+   * `ReadableStream` internally for cross-platform consistency.
    */
-  data?: Readable | ReadableStream;
+  data?: ReadableStream | Readable;
 
   /** The initial `RecordsWriteMessage` that represents the initial state/version of the record. */
   initialWrite?: DwnMessage[DwnInterface.RecordsWrite];
@@ -237,8 +240,8 @@ export class Record implements RecordModel {
   private _permissionsApi: PermissionsApi;
   /** Encoded data of the record, if available. */
   private _encodedData?: Blob;
-  /** Stream of the record's data. */
-  private _readableStream?: Readable;
+  /** Stream of the record's data (Web ReadableStream for cross-platform compatibility). */
+  private _readableStream?: ReadableStream;
   /** The origin DID if the record was fetched from a remote DWN. */
   private _remoteOrigin?: string;
 
@@ -428,10 +431,10 @@ export class Record implements RecordModel {
 
     if (options.data) {
       // If the record was created from a RecordsRead reply then it will have a `data` property.
-      // If the `data` property is a web ReadableStream, convert it to a Node.js Readable.
+      // If the `data` property is a Node.js Readable, convert it to a Web ReadableStream.
       this._readableStream = Stream.isReadableStream(options.data) ?
-        NodeStream.fromWebReadable({ readableStream: options.data }) :
-        options.data;
+        options.data :
+        NodeStream.toWebReadable({ readable: options.data });
     }
   }
 
@@ -448,12 +451,12 @@ export class Record implements RecordModel {
       bytes: () => Promise<Uint8Array>;
       json: () => Promise<any>;
       text: () => Promise<string>;
-      stream: () => Promise<Readable>;
+      stream: () => Promise<ReadableStream>;
       then: (
-        onFulfilled?: (value: Readable) => Readable | PromiseLike<Readable>,
+        onFulfilled?: (value: ReadableStream) => ReadableStream | PromiseLike<ReadableStream>,
         onRejected?: (reason: any) => PromiseLike<never>,
-      ) => Promise<Readable>;
-      catch: (onRejected?: (reason: any) => PromiseLike<never>) => Promise<Readable>;
+      ) => Promise<ReadableStream>;
+      catch: (onRejected?: (reason: any) => PromiseLike<never>) => Promise<ReadableStream>;
       } {
     const self = this; // Capture the context of the `Record` instance.
     const dataObj = {
@@ -467,7 +470,7 @@ export class Record implements RecordModel {
        * @beta
        */
       async blob(): Promise<Blob> {
-        return new Blob([await NodeStream.consumeToBytes({ readable: await this.stream() })], { type: self.dataFormat });
+        return new Blob([await Stream.consumeToBytes({ readableStream: await this.stream() })], { type: self.dataFormat });
       },
 
       /**
@@ -479,7 +482,7 @@ export class Record implements RecordModel {
        * @beta
        */
       async bytes(): Promise<Uint8Array> {
-        return await NodeStream.consumeToBytes({ readable: await this.stream() });
+        return await Stream.consumeToBytes({ readableStream: await this.stream() });
       },
 
       /**
@@ -491,7 +494,7 @@ export class Record implements RecordModel {
        * @beta
        */
       async json(): Promise<any> {
-        return await NodeStream.consumeToJson({ readable: await this.stream() });
+        return await Stream.consumeToJson({ readableStream: await this.stream() });
       },
 
       /**
@@ -503,40 +506,49 @@ export class Record implements RecordModel {
        * @beta
        */
       async text(): Promise<string> {
-        return await NodeStream.consumeToText({ readable: await this.stream() });
+        return await Stream.consumeToText({ readableStream: await this.stream() });
       },
 
       /**
-       * Provides a `Readable` stream containing the record's data.
+       * Provides a Web `ReadableStream` containing the record's data.
        *
-       * @returns A promise that resolves to a Node.js `Readable` stream of the record's data.
+       * Uses the standard Web Streams API for cross-platform compatibility across
+       * browsers, Node.js, Bun, and Deno.
+       *
+       * @returns A promise that resolves to a Web `ReadableStream` of the record's data.
        * @throws If the record data is not available in-memory and cannot be fetched.
        *
        * @beta
        */
-      async stream(): Promise<Readable> {
+      async stream(): Promise<ReadableStream> {
+        if (self.deleted) {
+          throw new Error('404: Not Found');
+        }
+
         if (self._encodedData) {
           /** If `encodedData` is set, it indicates that the Record was instantiated by
            * `dwn.records.create()`/`dwn.records.write()` or the record's data payload was small
            * enough to be returned in `dwn.records.query()` results. In either case, the data is
-           * already available in-memory and can be returned as a Node.js `Readable` stream. */
-          self._readableStream = NodeStream.fromWebReadable({ readableStream: self._encodedData.stream() });
+           * already available in-memory and can be returned as a Web `ReadableStream`. */
+          return Stream.fromBlob(self._encodedData);
 
-        } else if (!NodeStream.isReadable({ readable: self._readableStream })) {
-          /** If the data stream for this `Record` instance has already been partially or fully
-           * consumed, then the data must be fetched again from either: */
-          self._readableStream = self._remoteOrigin ?
+        } else if (self._readableStream) {
+          /** If a data stream is available, return it and clear the reference so subsequent
+           * calls will re-fetch. Unlike Node Readable streams, a consumed Web ReadableStream
+           * still appears "readable" (unlocked), so we cannot rely on `isReadable()` to
+           * detect exhaustion. Clearing the reference ensures the next call re-fetches. */
+          const currentStream = self._readableStream;
+          self._readableStream = undefined;
+          return currentStream;
+
+        } else {
+          /** The data stream has been consumed or was never set. Re-fetch from either: */
+          return self._remoteOrigin ?
             // A. ...a remote DWN if the record was originally queried from a remote DWN.
             await self.readRecordData({ target: self._remoteOrigin, isRemote: true }) :
             // B. ...a local DWN if the record was originally queried from the local DWN.
             await self.readRecordData({ target: self._connectedDid, isRemote: false });
         }
-
-        if (!self._readableStream) {
-          throw new Error('Record data is not available.');
-        }
-
-        return self._readableStream;
       },
 
       /**
@@ -552,9 +564,9 @@ export class Record implements RecordModel {
        * @returns A `Promise` for the completion of which ever callback is executed.
        */
       then(
-        onFulfilled?: (value: Readable) => Readable | PromiseLike<Readable>,
+        onFulfilled?: (value: ReadableStream) => ReadableStream | PromiseLike<ReadableStream>,
         onRejected?: (reason: any) => PromiseLike<never>,
-      ): Promise<Readable> {
+      ): Promise<ReadableStream> {
         return this.stream().then(onFulfilled, onRejected);
       },
 
@@ -569,7 +581,7 @@ export class Record implements RecordModel {
        * @returns A `Promise` that resolves to the value of the callback if it is called, or to its
        *          original fulfillment value if the promise is instead fulfilled.
        */
-      catch(onRejected?: (reason: any) => PromiseLike<never>): Promise<Readable> {
+      catch(onRejected?: (reason: any) => PromiseLike<never>): Promise<ReadableStream> {
         return this.stream().catch(onRejected);
       }
     };
@@ -1055,17 +1067,17 @@ export class Record implements RecordModel {
    * This private method is called when the record data is not available in-memory
    * and needs to be fetched from either a local or a remote DWN.
    * It makes a read request to the specified DWN and processes the response to provide
-   * a Node.js `Readable` stream of the record's data.
+   * a Web `ReadableStream` of the record's data.
    *
    * @param params - Parameters for fetching the record's data.
    * @param params.target - The DID of the DWN to fetch the data from.
    * @param params.isRemote - Indicates whether the target DWN is a remote node.
-   * @returns A Promise that resolves to a Node.js `Readable` stream of the record's data.
+   * @returns A Promise that resolves to a Web `ReadableStream` of the record's data.
    * @throws If there is an error while fetching or processing the data from the DWN.
    *
    * @beta
    */
-  private async readRecordData({ target, isRemote }: { target: string, isRemote: boolean }): Promise<Readable> {
+  private async readRecordData({ target, isRemote }: { target: string, isRemote: boolean }): Promise<ReadableStream> {
     const readRequest: ProcessDwnRequest<DwnInterface.RecordsRead> = {
       author        : this._connectedDid,
       messageParams : { filter: { recordId: this.id }, protocolRole: this._protocolRole },
@@ -1112,12 +1124,13 @@ export class Record implements RecordModel {
         throw new Error(`${status.code}: ${status.detail}`);
       }
 
-      const dataStream: ReadableStream | Readable = entry.data;
-      // If the data stream is a web ReadableStream, convert it to a Node.js Readable.
-      const nodeReadable = Stream.isReadableStream(dataStream) ?
-        NodeStream.fromWebReadable({ readableStream: dataStream }) :
-        dataStream;
-      return nodeReadable;
+      const dataStream = entry.data;
+      // DWN SDK returns Node Readable; convert to Web ReadableStream for cross-platform use.
+      // If it's already a Web ReadableStream (e.g., from a remote fetch), use it directly.
+      const webReadable = Stream.isReadableStream(dataStream) ?
+        dataStream :
+        NodeStream.toWebReadable({ readable: dataStream });
+      return webReadable;
 
     } catch (error) {
       throw new Error(`Error encountered while attempting to read data: ${error.message}`);

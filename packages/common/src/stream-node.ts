@@ -131,7 +131,7 @@ export class NodeStream {
   public static fromWebReadable({ readableStream, readableOptions }: {
     readableStream: ReadableStream,
     readableOptions?: ReadableStateOptions
-  }): Readable {
+  }): Readable & { bytesRead: number } {
     if (!Stream.isReadableStream(readableStream)) {
       throw new TypeError(`NodeStream.fromWebReadable: 'readableStream' is not a Web ReadableStream.`);
     }
@@ -147,6 +147,7 @@ export class NodeStream {
           if (done) {
             this.push(null); // Push null to signify end of stream.
           } else {
+            (nodeReadable as any).bytesRead += value.length;
             if (!this.push(value)) {
               // When push returns false, we should stop reading until _read is called again.
               return;
@@ -173,6 +174,9 @@ export class NodeStream {
       }
     });
 
+    // Track total bytes read, matching the behavior of ReadableWebToNodeStream.
+    (nodeReadable as any).bytesRead = 0;
+
     reader.closed
       .then(() => {
         closed = true; // Prevents reader.cancel() from being called in destroy()
@@ -182,7 +186,7 @@ export class NodeStream {
         nodeReadable.destroy(error);
       });
 
-    return nodeReadable;
+    return nodeReadable as Readable & { bytesRead: number };
   }
 
   /**

@@ -5,6 +5,101 @@ import { Stream } from '../src/stream.js';
 
 describe('Stream', () => {
 
+  describe('fromBlob()', () => {
+    it('creates a ReadableStream from a Blob', async () => {
+      const inputText = 'Hello, World!';
+      const blob = new Blob([inputText], { type: 'text/plain' });
+      const readableStream = Stream.fromBlob(blob);
+
+      const result = await Stream.consumeToText({ readableStream });
+      expect(result).to.equal(inputText);
+    });
+
+    it('creates a ReadableStream from an empty Blob', async () => {
+      const blob = new Blob([]);
+      const readableStream = Stream.fromBlob(blob);
+
+      const result = await Stream.consumeToBytes({ readableStream });
+      expect(result.length).to.equal(0);
+    });
+
+    it('creates a ReadableStream from a Blob with binary data', async () => {
+      const inputBytes = new Uint8Array([1, 2, 3, 4, 5]);
+      const blob = new Blob([inputBytes]);
+      const readableStream = Stream.fromBlob(blob);
+
+      const result = await Stream.consumeToBytes({ readableStream });
+      expect(result).to.deep.equal(inputBytes);
+    });
+  });
+
+  describe('fromBytes()', () => {
+    it('creates a ReadableStream from a Uint8Array', async () => {
+      const inputBytes = new Uint8Array([1, 2, 3, 4, 5]);
+      const readableStream = Stream.fromBytes(inputBytes);
+
+      const result = await Stream.consumeToBytes({ readableStream });
+      expect(result).to.deep.equal(inputBytes);
+    });
+
+    it('creates a ReadableStream from an empty Uint8Array', async () => {
+      const inputBytes = new Uint8Array(0);
+      const readableStream = Stream.fromBytes(inputBytes);
+
+      const result = await Stream.consumeToBytes({ readableStream });
+      expect(result.length).to.equal(0);
+    });
+
+    it('creates a ReadableStream from a large Uint8Array', async () => {
+      const oneMegabyte = new Uint8Array(1024 * 1024).map((_, i) => i % 256);
+      const readableStream = Stream.fromBytes(oneMegabyte);
+
+      const result = await Stream.consumeToBytes({ readableStream });
+      expect(result).to.deep.equal(oneMegabyte);
+    });
+
+    it('chunks the data according to the specified chunk length', async () => {
+      const inputBytes = new Uint8Array(250).fill(42);
+      const chunkLength = 100;
+      const readableStream = Stream.fromBytes(inputBytes, chunkLength);
+
+      const reader = readableStream.getReader();
+      const chunks: Uint8Array[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {break;}
+        chunks.push(value);
+      }
+
+      // 250 bytes / 100 byte chunks = 3 chunks (100, 100, 50)
+      expect(chunks.length).to.equal(3);
+      expect(chunks[0].length).to.equal(100);
+      expect(chunks[1].length).to.equal(100);
+      expect(chunks[2].length).to.equal(50);
+    });
+
+    it('uses the default chunk length of 100,000 bytes', async () => {
+      const inputBytes = new Uint8Array(250_000).fill(7);
+      const readableStream = Stream.fromBytes(inputBytes);
+
+      const reader = readableStream.getReader();
+      const chunks: Uint8Array[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {break;}
+        chunks.push(value);
+      }
+
+      // 250,000 bytes / 100,000 byte default chunks = 3 chunks (100K, 100K, 50K)
+      expect(chunks.length).to.equal(3);
+      expect(chunks[0].length).to.equal(100_000);
+      expect(chunks[1].length).to.equal(100_000);
+      expect(chunks[2].length).to.equal(50_000);
+    });
+  });
+
   describe('consumeToArrayBuffer()', () => {
     it('consumes a ReadableStream and returns an ArrayBuffer', async () => {
       const inputBytes = new Uint8Array([1, 2, 3, 4, 5]);

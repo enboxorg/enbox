@@ -5,7 +5,7 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 
 import { utils as didUtils } from '@enbox/dids';
-import { NodeStream } from '@enbox/common';
+import { Stream } from '@enbox/common';
 import {
   DwnConstant, DwnDateSort, DwnEncryptionAlgorithm, DwnInterface, DwnKeyDerivationScheme,
   dwnMessageConstructors, getRecordAuthor, getRecordProtocolRole, Oidc,
@@ -1071,7 +1071,7 @@ describe('Record', () => {
 
         // Confirm that the length of the data read as text matches the original input data.
         const dataStream = await record!.data.stream();
-        const dataStreamBytes = await NodeStream.consumeToBytes({ readable: dataStream });
+        const dataStreamBytes = await Stream.consumeToBytes({ readableStream: dataStream });
         expect(dataStreamBytes.length).to.equal(dataText500Bytes.length);
 
         // Ensure the text returned matches the input data, byte for byte.
@@ -1093,7 +1093,7 @@ describe('Record', () => {
 
         // Confirm that the length of the data read as text matches the original input data.
         const dataStream = await readRecord!.data.stream();
-        const dataStreamBytes = await NodeStream.consumeToBytes({ readable: dataStream });
+        const dataStreamBytes = await Stream.consumeToBytes({ readableStream: dataStream });
         expect(dataStreamBytes.length).to.equal(dataText500Bytes.length);
 
         // Ensure the text returned matches the input data, byte for byte.
@@ -1111,7 +1111,7 @@ describe('Record', () => {
 
         // Confirm that the length of the data read as text matches the original input data.
         const dataStream = await record!.data.stream();
-        const dataStreamBytes = await NodeStream.consumeToBytes({ readable: dataStream });
+        const dataStreamBytes = await Stream.consumeToBytes({ readableStream: dataStream });
         expect(dataStreamBytes.length).to.equal(dataTextExceedingMaxSize.length);
 
         // Ensure the text returned matches the input data, byte for byte.
@@ -1136,7 +1136,7 @@ describe('Record', () => {
         // Confirm that the length of the data read as text matches the original input data.
         const [ queryRecord ] = queryRecords;
         const dataStream = await queryRecord!.data.stream();
-        const dataStreamBytes = await NodeStream.consumeToBytes({ readable: dataStream });
+        const dataStreamBytes = await Stream.consumeToBytes({ readableStream: dataStream });
         expect(dataStreamBytes.length).to.equal(dataTextExceedingMaxSize.length);
 
         // Ensure the text returned matches the input data, byte for byte.
@@ -1161,7 +1161,7 @@ describe('Record', () => {
 
         // Confirm that the length of the data read as text matches the original input data.
         const dataStream = await readRecord!.data.stream();
-        const dataStreamBytes = await NodeStream.consumeToBytes({ readable: dataStream });
+        const dataStreamBytes = await Stream.consumeToBytes({ readableStream: dataStream });
         expect(dataStreamBytes.length).to.equal(dataTextExceedingMaxSize.length);
 
         // Ensure the text returned matches the input data, byte for byte.
@@ -1291,7 +1291,7 @@ describe('Record', () => {
 
         // Confirm that the length of the data read as text matches the original input data.
         const dataStream = await record.data.then(stream => stream);
-        const dataStreamBytes = await NodeStream.consumeToBytes({ readable: dataStream });
+        const dataStreamBytes = await Stream.consumeToBytes({ readableStream: dataStream });
         expect(dataStreamBytes.length).to.equal(dataText500Bytes.length);
 
         // Ensure the text returned matches the input data, byte for byte.
@@ -1310,7 +1310,7 @@ describe('Record', () => {
 
         // Confirm that the length of the data read as text matches the original input data.
         const dataStream = await record.data.then(stream => stream);
-        const readDataText = await NodeStream.consumeToText({ readable: dataStream });
+        const readDataText = await Stream.consumeToText({ readableStream: dataStream });
         expect(readDataText.length).to.equal(dataText.length);
 
         // Ensure the text returned matches the input data, char for char.
@@ -1448,12 +1448,12 @@ describe('Record', () => {
 
       // Consume the data stream as bytes.
       let readDataStream = await record!.data.stream();
-      let readDataBytes = await NodeStream.consumeToBytes({ readable: readDataStream });
+      let readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
       expect(readDataBytes.length).to.equal(inputDataBytes.length);
 
       // Consume the data stream as bytes a second time.
       readDataStream = await record!.data.stream();
-      readDataBytes = await NodeStream.consumeToBytes({ readable: readDataStream });
+      readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
       expect(readDataBytes.length).to.equal(inputDataBytes.length);
     });
 
@@ -1469,12 +1469,12 @@ describe('Record', () => {
 
       // Consume the data stream as bytes.
       let readDataStream = await record!.data.stream();
-      let readDataBytes = await NodeStream.consumeToBytes({ readable: readDataStream });
+      let readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
       expect(readDataBytes.length).to.equal(inputDataBytes.length);
 
       // Consume the data stream as bytes a second time.
       readDataStream = await record!.data.stream();
-      readDataBytes = await NodeStream.consumeToBytes({ readable: readDataStream });
+      readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
       expect(readDataBytes.length).to.equal(inputDataBytes.length);
     });
 
@@ -1505,12 +1505,12 @@ describe('Record', () => {
 
       // Confirm that the size, in bytes, of the data read as JSON matches the original input data.
       let readDataStream = await readRecord!.data.stream();
-      let readDataBytes = await NodeStream.consumeToBytes({ readable: readDataStream });
+      let readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
       expect(readDataBytes.length).to.equal(inputDataBytes.length);
 
       // Consume the data stream as bytes a third time.
       readDataStream = await readRecord!.data.stream();
-      readDataBytes = await NodeStream.consumeToBytes({ readable: readDataStream });
+      readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
       expect(readDataBytes.length).to.equal(inputDataBytes.length);
     });
 
@@ -1537,17 +1537,17 @@ describe('Record', () => {
 
       // Consume the data stream as bytes.
       let readDataStream = await readRecord!.data.stream();
-      let readDataBytes = await NodeStream.consumeToBytes({ readable: readDataStream });
+      let readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
       expect(readDataBytes.length).to.equal(inputDataBytes.length);
 
       // Consume the data stream as bytes a second time.
       readDataStream = await record!.data.stream();
-      readDataBytes = await NodeStream.consumeToBytes({ readable: readDataStream });
+      readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
       expect(readDataBytes.length).to.equal(inputDataBytes.length);
 
       // Consume the data stream as bytes a third time.
       readDataStream = await record!.data.stream();
-      readDataBytes = await NodeStream.consumeToBytes({ readable: readDataStream });
+      readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
       expect(readDataBytes.length).to.equal(inputDataBytes.length);
     });
 
@@ -1576,17 +1576,17 @@ describe('Record', () => {
 
       // Consume the data stream as bytes.
       let readDataStream = await queriedRecord!.data.stream();
-      let readDataBytes = await NodeStream.consumeToBytes({ readable: readDataStream });
+      let readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
       expect(readDataBytes.length).to.equal(inputDataBytes.length);
 
       // Consume the data stream as bytes a second time.
       readDataStream = await queriedRecord!.data.stream();
-      readDataBytes = await NodeStream.consumeToBytes({ readable: readDataStream });
+      readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
       expect(readDataBytes.length).to.equal(inputDataBytes.length);
 
       // Consume the data stream as bytes a third time.
       readDataStream = await queriedRecord!.data.stream();
-      readDataBytes = await NodeStream.consumeToBytes({ readable: readDataStream });
+      readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
       expect(readDataBytes.length).to.equal(inputDataBytes.length);
     });
 
@@ -1615,17 +1615,17 @@ describe('Record', () => {
 
       // Consume the data stream as bytes.
       let readDataStream = await queriedRecord!.data.stream();
-      let readDataBytes = await NodeStream.consumeToBytes({ readable: readDataStream });
+      let readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
       expect(readDataBytes.length).to.equal(inputDataBytes.length);
 
       // Consume the data stream as bytes a second time.
       readDataStream = await queriedRecord!.data.stream();
-      readDataBytes = await NodeStream.consumeToBytes({ readable: readDataStream });
+      readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
       expect(readDataBytes.length).to.equal(inputDataBytes.length);
 
       // Consume the data stream as bytes a third time.
       readDataStream = await queriedRecord!.data.stream();
-      readDataBytes = await NodeStream.consumeToBytes({ readable: readDataStream });
+      readDataBytes = await Stream.consumeToBytes({ readableStream: readDataStream });
       expect(readDataBytes.length).to.equal(inputDataBytes.length);
     });
 

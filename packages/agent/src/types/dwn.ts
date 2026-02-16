@@ -262,27 +262,32 @@ export type DwnMessageWithData<T extends DwnInterface> = {
 // packages do not need to import the DWN SDK directly. This ensures that downstream packages are
 // always using the same version of the DWN SDK as the agent package.
 
+// Runtime value re-exports (classes, enums, objects)
 export {
-  DwnConstant,
-  MessageSigner as DwnSigner,
   DateSort as DwnDateSort,
-  DataEncodedRecordsWriteMessage as DwnDataEncodedRecordsWriteMessage,
-  PublicKeyJwk as DwnPublicKeyJwk,
-  PaginationCursor as DwnPaginationCursor,
-  MessageSubscriptionHandler as DwnMessageSubscriptionHandler,
-  RecordSubscriptionHandler as DwnRecordSubscriptionHandler,
-  MessageSubscription as DwnMessageSubscription,
-  MessagesPermissionScope as DwnMessagesPermissionScope,
+  DwnConstant,
   EncryptionAlgorithm as DwnEncryptionAlgorithm,
   KeyDerivationScheme as DwnKeyDerivationScheme,
   PermissionGrant as DwnPermissionGrant,
-  PermissionGrantData as DwnPermissionGrantData,
   PermissionRequest as DwnPermissionRequest,
-  PermissionRequestData as DwnPermissionRequestData,
   PermissionsProtocol as DwnPermissionsProtocol,
+} from '@enbox/dwn-sdk-js';
+
+// Type-only re-exports (interfaces, type aliases)
+export type {
+  DataEncodedRecordsWriteMessage as DwnDataEncodedRecordsWriteMessage,
+  MessageSigner as DwnSigner,
+  MessageSubscription as DwnMessageSubscription,
+  MessageSubscriptionHandler as DwnMessageSubscriptionHandler,
+  MessagesPermissionScope as DwnMessagesPermissionScope,
+  PaginationCursor as DwnPaginationCursor,
+  PermissionConditions as DwnPermissionConditions,
+  PermissionGrantData as DwnPermissionGrantData,
+  PermissionRequestData as DwnPermissionRequestData,
+  PermissionScope as DwnPermissionScope,
   ProtocolDefinition as DwnProtocolDefinition,
   ProtocolPermissionScope as DwnProtocolPermissionScope,
+  PublicKeyJwk as DwnPublicKeyJwk,
+  RecordSubscriptionHandler as DwnRecordSubscriptionHandler,
   RecordsPermissionScope as DwnRecordsPermissionScope,
-  PermissionConditions as DwnPermissionConditions,
-  PermissionScope as DwnPermissionScope,
 } from '@enbox/dwn-sdk-js';
