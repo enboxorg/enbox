@@ -1163,7 +1163,7 @@ export class AgentDwnApi {
    *
    * For ProtocolContext records:
    *   - Context creator: derives key directly from KMS
-   *   - Participant: finds role record, decrypts context key, caches it
+   *   - Participant: fetches contextKey via key-delivery protocol, caches it
    */
   private async resolveKeyDecrypter(
     authorDid: string,
@@ -1208,113 +1208,53 @@ export class AgentDwnApi {
       };
     }
 
-    // Case 2: I am a participant — need to find and decrypt my role record
+    // Case 2: I am a participant — fetch my context key from the key-delivery protocol
     const cacheKey = `ctx~${authorDid}~${rootContextId}`;
     const cached = this._contextDerivedKeyCache.get(cacheKey);
     if (cached) {
       return this.buildContextKeyDecrypter(cached);
     }
 
-    // Find participant record — local first, then remote fallback
+    // Fetch context key via the key-delivery protocol — local first, then remote
     const protocol = recordsWrite.descriptor.protocol!;
-    const signer = await this.getSigner(authorDid);
 
-    let participantEntry = await this.findParticipantRecord(
-      authorDid, protocol, rootContextId, signer, 'local',
-    );
+    // Try local: I may be the DWN owner with a contextKey addressed to myself
+    let contextDerivedPrivateKey = await this.fetchContextKeyRecord({
+      ownerDid        : authorDid,
+      requesterDid    : authorDid,
+      sourceProtocol  : protocol,
+      sourceContextId : rootContextId,
+    });
 
-    if (!participantEntry) {
+    // Try remote: query the context owner's DWN for my contextKey record
+    if (!contextDerivedPrivateKey) {
       const contextOwnerDid = Jws.getSignerDid(
         recordsWrite.authorization.signature.signatures[0]
       );
-      participantEntry = await this.findParticipantRecord(
-        authorDid, protocol, rootContextId, signer, 'remote',
-        contextOwnerDid,
-      );
-
-      // Store locally for future lookups
-      if (participantEntry) {
-        await this._dwn.processMessage(
-          authorDid, participantEntry, { dataStream: undefined }
-        );
-      }
+      contextDerivedPrivateKey = await this.fetchContextKeyRecord({
+        ownerDid        : contextOwnerDid,
+        requesterDid    : authorDid,
+        sourceProtocol  : protocol,
+        sourceContextId : rootContextId,
+      });
     }
 
-    if (!participantEntry || !participantEntry.encodedData
-        || !participantEntry.encryption) {
+    if (!contextDerivedPrivateKey) {
       throw new Error(
         `AgentDwnApi: Failed to decrypt record '${recordsWrite.recordId}'. ` +
-        `Record uses context-derived encryption but no participant record ` +
-        `could be found for this context.`
+        `Record uses context-derived encryption but no contextKey record ` +
+        `could be found via the key-delivery protocol.`
       );
     }
-
-    // Decrypt the participant record with our protocol-path key
-    const pathKeyDecrypter = await this.getKeyDecrypter(authorDid);
-    const cipherBytes = Encoder.base64UrlToBytes(participantEntry.encodedData);
-    const plainStream = await Records.decrypt(
-      participantEntry as RecordsWriteMessage,
-      pathKeyDecrypter,
-      DataStream.fromBytes(cipherBytes),
-    );
-    const plainBytes = await DataStream.toBytes(plainStream);
-
-    const contextDerivedPrivateKey = Encoder.bytesToObject(
-      plainBytes,
-    ) as DerivedPrivateJwk;
 
     this._contextDerivedKeyCache.set(cacheKey, contextDerivedPrivateKey);
     return this.buildContextKeyDecrypter(contextDerivedPrivateKey);
   }
 
-  /**
-   * Queries for a participant record (role record addressed to the user)
-   * in a given context. Supports both local and remote DWN queries.
-   */
-  private async findParticipantRecord(
-    recipientDid: string,
-    protocol: string,
-    contextId: string,
-    signer: DwnSigner,
-    target: 'local' | 'remote',
-    remoteDid?: string,
-  ): Promise<(RecordsWriteMessage & { encodedData?: string }) | undefined> {
-    const query = await dwnMessageConstructors[
-      DwnInterface.RecordsQuery
-    ].create({
-      filter: {
-        protocol,
-        recipient: recipientDid,
-        contextId,
-      },
-      signer,
-    });
-
-    let reply: RecordsQueryReply;
-    if (target === 'local') {
-      reply = await this._dwn.processMessage(
-        recipientDid, query.message,
-      ) as RecordsQueryReply;
-    } else {
-      reply = await this.sendDwnRpcRequest({
-        targetDid       : remoteDid!,
-        dwnEndpointUrls : await getDwnServiceEndpointUrls(
-          remoteDid!, this.agent.did,
-        ),
-        message: query.message,
-      }) as RecordsQueryReply;
-    }
-
-    if (reply.status.code !== 200 || !reply.entries?.length) {
-      return undefined;
-    }
-
-    return reply.entries[0] as RecordsWriteMessage & { encodedData?: string };
-  }
 
   /**
    * Builds a KeyDecrypter from a context-derived private key.
-   * Uses the raw key directly (since it was shared with us via role record).
+   * Uses the raw key directly (since it was shared with us via the key-delivery protocol).
    */
   private buildContextKeyDecrypter(
     contextKey: DerivedPrivateJwk,
