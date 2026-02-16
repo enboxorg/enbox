@@ -1,15 +1,40 @@
 import type { Dwn } from '@enbox/dwn-sdk-js';
+import type { ServerWebSocket } from 'bun';
 
 import chaiAsPromised from 'chai-as-promised';
 import log from 'loglevel';
 import sinon from 'sinon';
-import { WebSocket } from 'ws';
 import chai, { expect } from 'chai';
+
+import type { WsData } from '../../src/http-api.js';
 
 import { getTestDwn } from '../test-dwn.js';
 import { SocketConnection } from '../../src/connection/socket-connection.js';
 
 chai.use(chaiAsPromised);
+
+/** Creates a minimal mock of Bun's ServerWebSocket for unit testing. */
+function createMockSocket(): ServerWebSocket<WsData> {
+  return {
+    data          : { connection: null as any },
+    send          : sinon.stub(),
+    sendText      : sinon.stub(),
+    sendBinary    : sinon.stub(),
+    close         : sinon.stub(),
+    ping          : sinon.stub(),
+    pong          : sinon.stub(),
+    publish       : sinon.stub(),
+    publishText   : sinon.stub(),
+    publishBinary : sinon.stub(),
+    subscribe     : sinon.stub(),
+    unsubscribe   : sinon.stub(),
+    isSubscribed  : sinon.stub(),
+    cork          : sinon.stub(),
+    remoteAddress : '127.0.0.1',
+    readyState    : 1,
+    binaryType    : 'arraybuffer',
+  } as unknown as ServerWebSocket<WsData>;
+}
 
 describe('SocketConnection', () => {
   let dwn: Dwn;
@@ -23,16 +48,17 @@ describe('SocketConnection', () => {
     sinon.restore();
   });
 
-  it('should assign socket handlers', async () => {
-    const socket = sinon.createStubInstance(WebSocket);
+  it('should create a connection with heartbeat', async () => {
+    const socket = createMockSocket();
     const connection = new SocketConnection(socket, dwn);
-    expect(socket.on.callCount).to.equal(4);
-    expect(socket.on.args.map(arg => arg[0])).to.have.members(['message', 'close', 'error', 'pong']);
+    // With Bun, events are dispatched externally — no socket.on() calls.
+    // Just verify the connection was created successfully.
+    expect(connection).to.be.instanceOf(SocketConnection);
     await connection.close();
   });
 
   it('should add a subscription to the subscription manager map', async () => {
-    const socket = sinon.createStubInstance(WebSocket);
+    const socket = createMockSocket();
     const connection = new SocketConnection(socket, dwn);
     const subscriptionRequest = {
       id     : 'id',
@@ -48,7 +74,7 @@ describe('SocketConnection', () => {
   });
 
   it('should reject a subscription with an Id of an existing subscription', async () => {
-    const socket = sinon.createStubInstance(WebSocket);
+    const socket = createMockSocket();
     const connection = new SocketConnection(socket, dwn);
 
     const id = 'some-id';
@@ -71,7 +97,7 @@ describe('SocketConnection', () => {
   });
 
   it('should close a subscription and remove it from the connection manager map', async () => {
-    const socket = sinon.createStubInstance(WebSocket);
+    const socket = createMockSocket();
     const connection = new SocketConnection(socket, dwn);
 
     const id = 'some-id';
@@ -95,7 +121,7 @@ describe('SocketConnection', () => {
   });
 
   it('hasSubscription returns whether a subscription with the id already exists', async () => {
-    const socket = sinon.createStubInstance(WebSocket);
+    const socket = createMockSocket();
     const connection = new SocketConnection(socket, dwn);
     const subscriptionRequest = {
       id     : 'id',
@@ -115,7 +141,7 @@ describe('SocketConnection', () => {
   });
 
   it('should close if pong is not triggered between heartbeat intervals', async () => {
-    const socket = sinon.createStubInstance(WebSocket);
+    const socket = createMockSocket();
     const clock = sinon.useFakeTimers();
     const connection = new SocketConnection(socket, dwn);
     const closeSpy = sinon.spy(connection, 'close');
@@ -127,15 +153,15 @@ describe('SocketConnection', () => {
   });
 
   it('should not close if pong is called within the heartbeat interval', async () => {
-    const socket = sinon.createStubInstance(WebSocket);
+    const socket = createMockSocket();
     const clock = sinon.useFakeTimers();
     const connection = new SocketConnection(socket, dwn);
     const closeSpy = sinon.spy(connection, 'close');
 
-    (connection as any).pong(); // trigger a pong
+    connection.pong(); // trigger a pong (now public)
     clock.tick(30_100); // first interval
 
-    (connection as any).pong(); // trigger a pong
+    connection.pong(); // trigger a pong
     clock.tick(30_100); // second interval
 
     expect(closeSpy.callCount).to.equal(0);
@@ -146,12 +172,12 @@ describe('SocketConnection', () => {
   });
 
   it('logs an error and closes connection if error is triggered', async () => {
-    const socket = sinon.createStubInstance(WebSocket);
+    const socket = createMockSocket();
     const connection = new SocketConnection(socket, dwn);
     const logSpy = sinon.stub(log, 'error');
     const closeSpy = sinon.spy(connection, 'close');
 
-    (connection as any).error(new Error('some error'));
+    connection.error(new Error('some error')); // now public
 
     expect(logSpy.callCount).to.equal(1);
     expect(closeSpy.callCount).to.equal(1);

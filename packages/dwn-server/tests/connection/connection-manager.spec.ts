@@ -18,13 +18,15 @@ describe('InMemoryConnectionManager', () => {
   let connectionManager: InMemoryConnectionManager;
   let httpApi: HttpApi;
   let wsApi: WsApi;
+  let wsUrl: string;
 
   beforeEach(async () => {
     dwn = await getTestDwn({ withEvents: true });
     connectionManager = new InMemoryConnectionManager(dwn);
     httpApi = await HttpApi.create(config, dwn);
-    await httpApi.start(9002);
-    wsApi = new WsApi(httpApi.server, dwn, connectionManager);
+    await httpApi.start(0);
+    wsUrl = `ws://127.0.0.1:${httpApi.server.port}`;
+    wsApi = new WsApi(httpApi, dwn, connectionManager);
     wsApi.start();
   });
 
@@ -37,7 +39,7 @@ describe('InMemoryConnectionManager', () => {
   });
 
   it('adds connection to the connections and removes it if that connection is closed', async () => {
-    const connection = await JsonRpcSocket.connect('ws://127.0.0.1:9002');
+    const connection = await JsonRpcSocket.connect(wsUrl);
     expect((connectionManager as any).connections.size).to.equal(1);
     connection.close();
 
@@ -47,10 +49,10 @@ describe('InMemoryConnectionManager', () => {
 
   it('closes all connections on `closeAll`', async () => {
 
-    await JsonRpcSocket.connect('ws://127.0.0.1:9002');
+    await JsonRpcSocket.connect(wsUrl);
     expect((connectionManager as any).connections.size).to.equal(1);
 
-    await JsonRpcSocket.connect('ws://127.0.0.1:9002');
+    await JsonRpcSocket.connect(wsUrl);
     expect((connectionManager as any).connections.size).to.equal(2);
 
     await connectionManager.closeAll();

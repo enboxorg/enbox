@@ -2,8 +2,9 @@ import type { DidResolver } from '@enbox/dids';
 import type { DwnServerConfig } from './config.js';
 import type { EventStream } from '@enbox/dwn-sdk-js';
 import type { ProcessHandlers } from './process-handlers.js';
-import type { Server } from 'http';
-import type { WebSocketServer } from 'ws';
+import type { Server } from 'bun';
+
+import type { WsData } from './http-api.js';
 
 import log from 'loglevel';
 import prefix from 'loglevel-plugin-prefix';
@@ -12,7 +13,6 @@ import { Dwn, EventEmitterStream } from '@enbox/dwn-sdk-js';
 import { config as defaultConfig } from './config.js';
 import { getDwnConfig } from './storage.js';
 import { HttpApi } from './http-api.js';
-import { HttpServerShutdownHandler } from './lib/http-server-shutdown-handler.js';
 import { PluginLoader } from './plugin-loader.js';
 import { RegistrationManager } from './registration/registration-manager.js';
 import { WsApi } from './ws-api.js';
@@ -52,7 +52,6 @@ export class DwnServer {
   didResolver?: DidResolver;
   dwn?: Dwn;
   config: DwnServerConfig;
-  #httpServerShutdownHandler: HttpServerShutdownHandler;
   #httpApi: HttpApi;
   #wsApi: WsApi;
 
@@ -124,12 +123,8 @@ export class DwnServer {
     await this.#httpApi.start(this.config.port);
     log.info(`HttpServer listening on port ${this.config.port}`);
 
-    this.#httpServerShutdownHandler = new HttpServerShutdownHandler(
-      this.#httpApi.server,
-    );
-
     if (this.config.webSocketSupport) {
-      this.#wsApi = new WsApi(this.#httpApi.server, this.dwn);
+      this.#wsApi = new WsApi(this.#httpApi, this.dwn);
       this.#wsApi.start();
       log.info('WebSocketServer ready...');
     }
@@ -144,30 +139,21 @@ export class DwnServer {
     }
 
     await this.dwn.close();
-    await this.#httpApi.close();
 
     // close WebSocket server if it was initialized
     if (this.#wsApi !== undefined) {
       await this.#wsApi.close();
     }
 
-    await new Promise<void>((resolve) => {
-      this.#httpServerShutdownHandler.stop(() => {
-        resolve();
-      });
-    });
+    await this.#httpApi.close();
 
     removeProcessHandlers(this.processHandlers);
 
     this.serverState = DwnServerState.Stopped;
   }
 
-  get httpServer(): Server {
+  get httpServer(): Server<WsData> {
     return this.#httpApi.server;
-  }
-
-  get wsServer(): WebSocketServer | undefined {
-    return this.#wsApi?.server;
   }
 
   /**

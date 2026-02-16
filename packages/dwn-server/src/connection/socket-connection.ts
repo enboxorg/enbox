@@ -1,15 +1,21 @@
 import { DwnMethodName } from '@enbox/dwn-sdk-js';
 import type { RequestContext } from '../lib/json-rpc-router.js';
-import type { WebSocket } from 'ws';
+import type { ServerWebSocket } from 'bun';
 import type { Dwn, GenericMessage, MessageEvent } from '@enbox/dwn-sdk-js';
 import type { JsonRpcErrorResponse, JsonRpcId, JsonRpcRequest, JsonRpcResponse, JsonRpcSubscription } from '../lib/json-rpc.js';
+
+import type { WsData } from '../http-api.js';
 
 import log from 'loglevel';
 import { v4 as uuidv4 } from 'uuid';
 
 import { jsonRpcRouter } from '../json-rpc-api.js';
 import { requestCounter } from '../metrics.js';
-import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '../lib/json-rpc.js';
+import {
+  createJsonRpcErrorResponse,
+  createJsonRpcSuccessResponse,
+  JsonRpcErrorCodes,
+} from '../lib/json-rpc.js';
 import { DwnServerError, DwnServerErrorCode } from '../dwn-error.js';
 
 const HEARTBEAT_INTERVAL = 30_000;
@@ -17,35 +23,39 @@ const HEARTBEAT_INTERVAL = 30_000;
 /**
  * SocketConnection handles a WebSocket connection to a DWN using JSON RPC.
  * It also manages references to the long running RPC subscriptions for the connection.
+ *
+ * With Bun's native WebSocket, the message/close/error events are dispatched by the
+ * Bun.serve() websocket handlers in http-api.ts, which delegate to the public `message()`
+ * and `close()` methods on this class.
  */
 export class SocketConnection {
-  private heartbeatInterval: NodeJS.Timer;
+  private heartbeatInterval: ReturnType<typeof setInterval>;
   private subscriptions: Map<JsonRpcId, JsonRpcSubscription> = new Map();
   private isAlive: boolean;
 
   constructor(
-    private socket: WebSocket,
+    private socket: ServerWebSocket<WsData>,
     private dwn: Dwn,
-    private onClose?: () => void
+    private onCloseCallback?: () => void
   ){
-    socket.on('message', this.message.bind(this));
-    socket.on('close', this.close.bind(this));
-    socket.on('error', this.error.bind(this));
-    socket.on('pong', this.pong.bind(this));
-
-    // Sometimes connections between client <-> server can get borked in such a way that
-    // leaves both unaware of the borkage. ping messages can be used as a means to verify
-    // that the remote endpoint is still responsive. Server will ping each socket every 30s
-    // if a pong hasn't received from a socket by the next ping, the server will terminate
-    // the socket connection
+    // Bun handles ping/pong automatically at the protocol level, but we still
+    // want an application-level heartbeat to detect dead connections.
     this.isAlive = true;
     this.heartbeatInterval = setInterval(() => {
       if (this.isAlive === false) {
         this.close();
+        return;
       }
       this.isAlive = false;
       this.socket.ping();
     }, HEARTBEAT_INTERVAL);
+  }
+
+  /**
+   * Called when a pong is received (triggered by Bun's built-in ping/pong handling).
+   */
+  pong(): void {
+    this.isAlive = true;
   }
 
   /**
@@ -94,10 +104,7 @@ export class SocketConnection {
   async close(): Promise<void> {
     clearInterval(this.heartbeatInterval);
 
-    // clean up all socket event listeners
-    this.socket.removeAllListeners();
-
-    const closePromises = [];
+    const closePromises: Promise<void>[] = [];
     for (const [id, subscription] of this.subscriptions) {
       closePromises.push(subscription.close());
       this.subscriptions.delete(id);
@@ -110,32 +117,25 @@ export class SocketConnection {
     this.socket.close();
 
     // if there was a close handler passed call it after the connection has been closed
-    if (this.onClose !== undefined) {
-      this.onClose();
+    if (this.onCloseCallback !== undefined) {
+      this.onCloseCallback();
     }
-  }
-
-  /**
-   * Pong messages are automatically sent in response to ping messages as required by
-   * the websocket spec. So, no need to send explicit pongs.
-   */
-  private pong(): void {
-    this.isAlive = true;
   }
 
   /**
    * Log the error and close the connection.
    */
-  private async error(error:Error): Promise<void>{
+  async error(error: Error): Promise<void> {
     log.error(`SocketConnection error, terminating connection`, error);
-    this.socket.terminate();
+    this.socket.close();
     await this.close();
   }
 
   /**
    * Handles a `JSON RPC 2.0` encoded message.
+   * This is called by Bun's websocket message handler via http-api.ts.
    */
-  private async message(dataBuffer: Buffer): Promise<void> {
+  async message(dataBuffer: Buffer): Promise<void> {
     const requestData = dataBuffer.toString();
     if (!requestData) {
       return this.send(createJsonRpcErrorResponse(
@@ -155,7 +155,7 @@ export class SocketConnection {
         (error as Error).message
       );
       return this.send(errorResponse);
-    };
+    }
 
     const requestContext = await this.buildRequestContext(jsonRequest);
     const { jsonRpcResponse } = await jsonRpcRouter.handle(jsonRequest, requestContext);
@@ -171,7 +171,7 @@ export class SocketConnection {
   }
 
   /**
-   * Sends a JSON encoded Buffer through the Websocket.
+   * Sends a JSON encoded string through the WebSocket.
    */
   private send(response: JsonRpcResponse | JsonRpcErrorResponse): void {
     this.socket.send(JSON.stringify(response));
@@ -179,8 +179,6 @@ export class SocketConnection {
 
   /**
    * Creates a subscription handler to send messages matching the subscription requested.
-   *
-   * Wraps the incoming `message` in a `JSON RPC Success Response` using the original subscription`JSON RPC Id` to send through the WebSocket.
    */
   private createSubscriptionHandler(id: JsonRpcId): (message: MessageEvent) => void {
     return (event) => {
@@ -191,8 +189,6 @@ export class SocketConnection {
 
   /**
    * Builds a `RequestContext` object to use with the `JSON RPC API`.
-   *
-   * Adds a `subscriptionHandler` for `Subscribe` messages.
    */
   private async buildRequestContext(request: JsonRpcRequest): Promise<RequestContext> {
     const { params, method, subscription } = request;

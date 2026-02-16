@@ -15,7 +15,7 @@ describe('Process Handlers', function () {
 
   beforeEach(async function () {
     const dwn = await getTestDwn();
-    dwnServer = new DwnServer({ dwn, config: config });
+    dwnServer = new DwnServer({ dwn, config: { ...config, port: 0 } });
     await dwnServer.start();
     processExitStub = sinon.stub(process, 'exit');
   });
@@ -29,7 +29,7 @@ describe('Process Handlers', function () {
     process.emit('SIGINT');
 
     Poller.pollUntilSuccessOrTimeout(async () => {
-      expect(dwnServer.httpServer.listening).to.be.false;
+      expect(dwnServer.serverState).to.equal(0); // DwnServerState.Stopped
       expect(processExitStub.called).to.be.false; // Ensure process.exit is not called
     });
   });
@@ -38,7 +38,7 @@ describe('Process Handlers', function () {
     process.emit('SIGTERM');
 
     Poller.pollUntilSuccessOrTimeout(async () => {
-      expect(dwnServer.httpServer.listening).to.be.false;
+      expect(dwnServer.serverState).to.equal(0); // DwnServerState.Stopped
       expect(processExitStub.called).to.be.false; // Ensure process.exit is not called
     });
   });
@@ -56,7 +56,7 @@ describe('Process Handlers', function () {
     const existingUncaughtExceptionListeners = [...process.listeners('uncaughtException')];
     process.removeAllListeners('uncaughtException');
 
-    dwnServer = new DwnServer({ dwn, config: config });
+    dwnServer = new DwnServer({ dwn, config: { ...config, port: 0 } });
     await dwnServer.start();
 
     const consoleErrorStub = sinon.stub(console, 'error'); // Stub console.error

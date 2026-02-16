@@ -2,7 +2,6 @@ import { expect } from 'chai';
 import * as http from 'http';
 import { default as httpProxy } from 'http-proxy';
 import { default as karma } from 'karma';
-import type { AddressInfo } from 'net';
 import { executablePath } from 'puppeteer';
 
 import { config as defaultConfig } from '../src/config.js';
@@ -34,7 +33,7 @@ class CorsProxySetup {
       },
     });
     await dwnServer.start();
-    const dwnPort = (dwnServer.httpServer.address() as AddressInfo).port;
+    const dwnPort = dwnServer.httpServer.port;
 
     // setup proxy server
     const proxy = httpProxy.createProxyServer({});
