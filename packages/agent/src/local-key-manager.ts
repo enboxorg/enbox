@@ -398,7 +398,7 @@ export class LocalKeyManager implements AgentKeyManager {
   }): Promise<PublicKeyJwk> {
     // Get stored private key — stays within this method's scope
     const privateKeyJwk = await this.getPrivateKey({ keyUri }) as PrivateJwk;
-    
+
     // Convert JWK to bytes for HKDF derivation
     const privateKeyBytes = Secp256k1.privateJwkToBytes(privateKeyJwk);
 
@@ -429,7 +429,7 @@ export class LocalKeyManager implements AgentKeyManager {
   }): Promise<Uint8Array> {
     // Get stored private key — stays within this method's scope
     const privateKeyJwk = await this.getPrivateKey({ keyUri }) as PrivateJwk;
-    
+
     // Convert JWK to bytes for HKDF derivation
     const privateKeyBytes = Secp256k1.privateJwkToBytes(privateKeyJwk);
 
@@ -441,7 +441,7 @@ export class LocalKeyManager implements AgentKeyManager {
 
     // Perform ECIES decryption — leaf key bytes consumed and discarded after
     return Encryption.eciesSecp256k1Decrypt({
-      privateKey                : leafPrivateKeyBytes,
+      privateKey : leafPrivateKeyBytes,
       ciphertext,
       ephemeralPublicKey,
       initializationVector,
@@ -460,7 +460,7 @@ export class LocalKeyManager implements AgentKeyManager {
   }): Promise<Uint8Array> {
     // Get stored private key — stays within this method's scope
     const privateKeyJwk = await this.getPrivateKey({ keyUri }) as PrivateJwk;
-    
+
     // Convert JWK to bytes for HKDF derivation
     const privateKeyBytes = Secp256k1.privateJwkToBytes(privateKeyJwk);
 
