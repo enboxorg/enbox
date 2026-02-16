@@ -2645,4 +2645,402 @@ describe('Encryption Callback Factories', () => {
       }
     });
   });
+
+  describe('Multi-Party Context Encryption (PR #5)', () => {
+    // A protocol with $role records — indicates multi-party intent
+    const multiPartyProtocolDefinition = {
+      published : true,
+      protocol  : 'https://protocol.xyz/multi-party-chat',
+      types     : {
+        thread: {
+          schema      : 'https://schemas.xyz/thread',
+          dataFormats : ['application/json']
+        },
+        participant: {
+          schema      : 'https://schemas.xyz/participant',
+          dataFormats : ['application/json']
+        },
+        chat: {
+          schema      : 'https://schemas.xyz/chat',
+          dataFormats : ['text/plain']
+        }
+      },
+      structure: {
+        thread: {
+          participant : { $role: true },
+          chat        : {}
+        }
+      }
+    };
+
+    // A single-party protocol without $role — for backward compatibility testing
+    const singlePartyProtocolDefinition = {
+      published : true,
+      protocol  : 'https://protocol.xyz/single-party-notes',
+      types     : {
+        note: {
+          schema      : 'https://schemas.xyz/note',
+          dataFormats : ['text/plain']
+        }
+      },
+      structure: {
+        note: {}
+      }
+    };
+
+    it('should detect multi-party protocols via protocolPathHasRoles()', () => {
+      // Access private method via bracket notation
+      const hasRoles = testHarness.agent.dwn['protocolPathHasRoles'].bind(
+        testHarness.agent.dwn
+      );
+
+      // Multi-party: thread has participant with $role: true
+      expect(hasRoles(multiPartyProtocolDefinition, 'thread')).to.be.true;
+
+      // Single-party: note has no $role children
+      expect(hasRoles(singlePartyProtocolDefinition, 'note')).to.be.false;
+    });
+
+    it('should encrypt root record with ProtocolContext for multi-party protocol', async () => {
+      // Configure protocol with encryption
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: multiPartyProtocolDefinition
+        },
+        encryption: true
+      });
+
+      // Write a root record (thread) — should use deferred ProtocolContext encryption
+      const plaintextString = 'Thread root message';
+      const dataBytes = Convert.string(plaintextString).toUint8Array();
+
+      const { message: writeMessage, reply: { status: writeStatus } } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : multiPartyProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          dataFormat   : 'application/json',
+          schema       : 'https://schemas.xyz/thread',
+        },
+        dataStream : new Blob([dataBytes]),
+        encryption : true
+      });
+
+      expect(writeStatus.code).to.equal(202);
+
+      const recordsWriteMessage = writeMessage as RecordsWriteMessage;
+      expect(recordsWriteMessage).to.have.property('encryption');
+      expect(recordsWriteMessage.encryption!.keyEncryption).to.have.length(1);
+      expect(recordsWriteMessage.encryption!.keyEncryption[0]).to.have.property(
+        'derivationScheme', 'protocolContext'
+      );
+
+      // contextId should equal recordId for root records
+      expect(recordsWriteMessage.contextId).to.equal(recordsWriteMessage.recordId);
+    });
+
+    it('should encrypt non-root record with ProtocolContext for multi-party protocol', async () => {
+      // Configure protocol with encryption
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: multiPartyProtocolDefinition
+        },
+        encryption: true
+      });
+
+      // Write root record first to get a contextId
+      const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : multiPartyProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          dataFormat   : 'application/json',
+          schema       : 'https://schemas.xyz/thread',
+        },
+        dataStream : new Blob([Convert.string('thread root').toUint8Array()]),
+        encryption : true
+      });
+
+      const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
+
+      // Write a child record (chat) — should use ProtocolContext
+      const plaintextString = 'Hello from the chat!';
+      const dataBytes = Convert.string(plaintextString).toUint8Array();
+
+      const { message: chatMessage, reply: { status: chatStatus } } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol        : multiPartyProtocolDefinition.protocol,
+          protocolPath    : 'thread/chat',
+          parentContextId : threadContextId,
+          dataFormat      : 'text/plain',
+          schema          : 'https://schemas.xyz/chat',
+        },
+        dataStream : new Blob([dataBytes]),
+        encryption : true
+      });
+
+      expect(chatStatus.code).to.equal(202);
+
+      const chatWriteMessage = chatMessage as RecordsWriteMessage;
+      expect(chatWriteMessage).to.have.property('encryption');
+      expect(chatWriteMessage.encryption!.keyEncryption).to.have.length(1);
+      expect(chatWriteMessage.encryption!.keyEncryption[0]).to.have.property(
+        'derivationScheme', 'protocolContext'
+      );
+    });
+
+    it('should still use ProtocolPath for single-party protocols', async () => {
+      // Configure single-party protocol with encryption
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: singlePartyProtocolDefinition
+        },
+        encryption: true
+      });
+
+      const dataBytes = Convert.string('single-party note').toUint8Array();
+
+      const { message: writeMessage, reply: { status } } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : singlePartyProtocolDefinition.protocol,
+          protocolPath : 'note',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/note',
+        },
+        dataStream : new Blob([dataBytes]),
+        encryption : true
+      });
+
+      expect(status.code).to.equal(202);
+
+      const recordsWriteMessage = writeMessage as RecordsWriteMessage;
+      expect(recordsWriteMessage).to.have.property('encryption');
+      expect(recordsWriteMessage.encryption!.keyEncryption[0]).to.have.property(
+        'derivationScheme', 'protocolPath'
+      );
+    });
+
+    it('context creator should decrypt root record via RecordsRead', async () => {
+      // Configure protocol
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: multiPartyProtocolDefinition
+        },
+        encryption: true
+      });
+
+      const plaintextString = 'Secret thread content';
+      const dataBytes = Convert.string(plaintextString).toUint8Array();
+
+      // Write root record
+      const { message: writeMessage } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : multiPartyProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          dataFormat   : 'application/json',
+          schema       : 'https://schemas.xyz/thread',
+        },
+        dataStream : new Blob([dataBytes]),
+        encryption : true
+      });
+
+      const recordsWriteMessage = writeMessage as RecordsWriteMessage;
+
+      // Read with auto-decrypt — context creator path
+      const { reply: readReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter: { recordId: recordsWriteMessage.recordId }
+        },
+        encryption: true
+      });
+
+      expect(readReply.status.code).to.equal(200);
+      const decryptedBytes = await NodeStream.consumeToBytes({ readable: readReply.entry!.data! });
+      expect(Convert.uint8Array(decryptedBytes).toString()).to.equal(plaintextString);
+    });
+
+    it('full round-trip: root + child with context encryption', async () => {
+      // Configure protocol
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: multiPartyProtocolDefinition
+        },
+        encryption: true
+      });
+
+      // 1. Write root record (thread)
+      const threadPlaintext = 'Thread root data';
+      const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : multiPartyProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          dataFormat   : 'application/json',
+          schema       : 'https://schemas.xyz/thread',
+        },
+        dataStream : new Blob([Convert.string(threadPlaintext).toUint8Array()]),
+        encryption : true
+      });
+
+      const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
+      const threadRecordId = (threadMessage as RecordsWriteMessage).recordId;
+
+      // 2. Write child record (chat)
+      const chatPlaintext = 'Hello from chat message';
+      const { message: chatMessage } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol        : multiPartyProtocolDefinition.protocol,
+          protocolPath    : 'thread/chat',
+          parentContextId : threadContextId,
+          dataFormat      : 'text/plain',
+          schema          : 'https://schemas.xyz/chat',
+        },
+        dataStream : new Blob([Convert.string(chatPlaintext).toUint8Array()]),
+        encryption : true
+      });
+
+      const chatRecordId = (chatMessage as RecordsWriteMessage).recordId;
+
+      // 3. Read root record — should decrypt
+      const { reply: threadReadReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter: { recordId: threadRecordId }
+        },
+        encryption: true
+      });
+
+      expect(threadReadReply.status.code).to.equal(200);
+      const threadDecrypted = await NodeStream.consumeToBytes({
+        readable: threadReadReply.entry!.data!
+      });
+      expect(Convert.uint8Array(threadDecrypted).toString()).to.equal(threadPlaintext);
+
+      // 4. Read child record — should decrypt
+      const { reply: chatReadReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter: { recordId: chatRecordId }
+        },
+        encryption: true
+      });
+
+      expect(chatReadReply.status.code).to.equal(200);
+      const chatDecrypted = await NodeStream.consumeToBytes({
+        readable: chatReadReply.entry!.data!
+      });
+      expect(Convert.uint8Array(chatDecrypted).toString()).to.equal(chatPlaintext);
+
+      // 5. Query child records — should auto-decrypt encodedData
+      const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            protocol     : multiPartyProtocolDefinition.protocol,
+            protocolPath : 'thread/chat',
+            contextId    : threadContextId,
+          }
+        },
+        encryption: true
+      });
+
+      expect(queryReply.status.code).to.equal(200);
+      expect(queryReply.entries).to.have.length(1);
+
+      const entry = queryReply.entries![0];
+      if (entry.encodedData) {
+        const { Encoder } = await import('@enbox/dwn-sdk-js');
+        const decodedBytes = Encoder.base64UrlToBytes(entry.encodedData);
+        expect(Convert.uint8Array(decodedBytes).toString()).to.equal(chatPlaintext);
+      }
+    });
+
+    it('raw read without encryption flag should return encrypted data', async () => {
+      // Configure protocol
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: multiPartyProtocolDefinition
+        },
+        encryption: true
+      });
+
+      const plaintextString = 'Should be encrypted at rest';
+      const dataBytes = Convert.string(plaintextString).toUint8Array();
+
+      const { message: writeMessage } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : multiPartyProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          dataFormat   : 'application/json',
+          schema       : 'https://schemas.xyz/thread',
+        },
+        dataStream : new Blob([dataBytes]),
+        encryption : true
+      });
+
+      const recordsWriteMessage = writeMessage as RecordsWriteMessage;
+
+      // Read WITHOUT encryption flag — should get raw encrypted data
+      const { reply: readReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter: { recordId: recordsWriteMessage.recordId }
+        }
+      });
+
+      expect(readReply.status.code).to.equal(200);
+      const rawBytes = await NodeStream.consumeToBytes({ readable: readReply.entry!.data! });
+      expect(Convert.uint8Array(rawBytes).toString()).to.not.equal(plaintextString);
+    });
+  });
 });
