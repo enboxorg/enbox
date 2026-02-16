@@ -101,7 +101,7 @@ export class AesKw {
     length: typeof AES_KEY_LENGTHS[number];
   }): Promise<Jwk> {
     // Validate the key length.
-    if (!AES_KEY_LENGTHS.includes(length as any)) {
+    if (!(AES_KEY_LENGTHS as readonly number[]).includes(length)) {
       throw new RangeError(`The key length is invalid: Must be ${AES_KEY_LENGTHS.join(', ')} bits`);
     }
 

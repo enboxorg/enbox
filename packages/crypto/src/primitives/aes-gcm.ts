@@ -187,7 +187,7 @@ export class AesGcm {
     }
 
     // Validate the tag length.
-    if (tagLength && !AES_GCM_TAG_LENGTHS.includes(tagLength as any)) {
+    if (tagLength && !(AES_GCM_TAG_LENGTHS as readonly number[]).includes(tagLength)) {
       throw new RangeError(`The tag length is invalid: Must be ${AES_GCM_TAG_LENGTHS.join(', ')} bits`);
     }
 
@@ -263,7 +263,7 @@ export class AesGcm {
     }
 
     // Validate the tag length.
-    if (tagLength && !AES_GCM_TAG_LENGTHS.includes(tagLength as any)) {
+    if (tagLength && !(AES_GCM_TAG_LENGTHS as readonly number[]).includes(tagLength)) {
       throw new RangeError(`The tag length is invalid: Must be ${AES_GCM_TAG_LENGTHS.join(', ')} bits`);
     }
 
@@ -321,7 +321,7 @@ export class AesGcm {
     length: typeof AES_KEY_LENGTHS[number];
   }): Promise<Jwk> {
     // Validate the key length.
-    if (!AES_KEY_LENGTHS.includes(length as any)) {
+    if (!(AES_KEY_LENGTHS as readonly number[]).includes(length)) {
       throw new RangeError(`The key length is invalid: Must be ${AES_KEY_LENGTHS.join(', ')} bits`);
     }
 

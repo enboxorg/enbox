@@ -8,6 +8,13 @@ import type { PaginationCursor, SortDirection } from './query-types.js';
 export type GenericMessage = {
   descriptor: Descriptor;
   authorization?: AuthorizationModel;
+
+  /**
+   * Base64url-encoded data that the message store may attach to small RecordsWrite messages.
+   * This is a runtime-only property — it is stripped before CID computation and not part of the
+   * canonical message schema, but it flows through the store layer for performance optimisation.
+   */
+  encodedData?: string;
 };
 
 /**

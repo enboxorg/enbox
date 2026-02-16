@@ -742,8 +742,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       throw new DwnError(DwnErrorCode.RecordsWriteGetEntryIdUndefinedAuthor, 'Property `author` is needed to compute entry ID.');
     }
 
-    const entryIdInput = { ...descriptor };
-    (entryIdInput as any).author = author;
+    const entryIdInput: Record<string, unknown> = { ...descriptor, author };
 
     const cid = await Cid.computeCid(entryIdInput);
     return cid;
@@ -988,8 +987,8 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     for (const descriptorPropertyName of descriptorPropertyNames) {
       // if property is supposed to be immutable
       if (mutableDescriptorProperties.indexOf(descriptorPropertyName) === -1) {
-        const valueInExistingWrite = (existingWriteMessage.descriptor as any)[descriptorPropertyName];
-        const valueInNewMessage = (newMessage.descriptor as any)[descriptorPropertyName];
+        const valueInExistingWrite = (existingWriteMessage.descriptor as Record<string, unknown>)[descriptorPropertyName];
+        const valueInNewMessage = (newMessage.descriptor as Record<string, unknown>)[descriptorPropertyName];
         if (valueInNewMessage !== valueInExistingWrite) {
           throw new DwnError(
             DwnErrorCode.RecordsWriteImmutablePropertyChanged,

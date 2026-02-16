@@ -171,9 +171,9 @@ export class MessageStoreSql implements MessageStore {
     const getEncodedData = (message: GenericMessage): { message: GenericMessage, encodedData: string|null} => {
       let encodedData: string|null = null;
       if (message.descriptor.interface === DwnInterfaceName.Records && message.descriptor.method === DwnMethodName.Write) {
-        const data = (message as any).encodedData as string|undefined;
+        const data = message.encodedData;
         if (data) {
-          delete (message as any).encodedData;
+          delete message.encodedData;
           encodedData = data;
         }
       }
@@ -386,7 +386,7 @@ export class MessageStoreSql implements MessageStore {
     // We store encodedData when the data is below a certain threshold.
     // https://github.com/enboxorg/enbox/pull/456
     if (message !== undefined && encodedData !== undefined && encodedData !== null) {
-      (message as any).encodedData = encodedData;
+      message.encodedData = encodedData;
     }
     return message;
   }
