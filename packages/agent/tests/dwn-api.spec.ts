@@ -3351,8 +3351,8 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
       expect(entry.encryption).to.have.property('keyEncryption');
       expect(entry.encryption!.keyEncryption).to.have.length(1);
 
-      // Verify it uses ProtocolPath derivation (encrypted to the path key)
-      expect(entry.encryption!.keyEncryption[0].derivationScheme).to.equal('protocolPath');
+      // Verify it uses ProtocolContext derivation (key-delivery protocol has relational who/of rules)
+      expect(entry.encryption!.keyEncryption[0].derivationScheme).to.equal('protocolContext');
 
       // Verify recipient
       expect(entry.descriptor).to.have.property('recipient', bob.did.uri);
