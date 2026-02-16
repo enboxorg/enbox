@@ -142,6 +142,7 @@ export enum DwnErrorCode {
   RecordsWriteMissingSigner = 'RecordsWriteMissingSigner',
   RecordsWriteMissingDataInPrevious = 'RecordsWriteMissingDataInPrevious',
   RecordsWriteMissingEncodedDataInPrevious = 'RecordsWriteMissingEncodedDataInPrevious',
+  RecordsWriteMissingEncryption = 'RecordsWriteMissingEncryption',
   RecordsWriteMissingProtocol = 'RecordsWriteMissingProtocol',
   RecordsWriteMissingSchema = 'RecordsWriteMissingSchema',
   RecordsWriteNotAllowedAfterDelete = 'RecordsWriteNotAllowedAfterDelete',

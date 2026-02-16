@@ -492,4 +492,139 @@ describe('RecordsWrite', () => {
       expect(() => recordsWrite.message).to.throw(DwnErrorCode.RecordsWriteMissingSigner);
     });
   });
+
+  describe('encryptSymmetricEncryptionKey()', () => {
+    it('should replace encryption property by default', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const dataEncryptionKey = TestDataGenerator.randomBytes(32);
+      const dataEncryptionIV = TestDataGenerator.randomBytes(16);
+
+      const recordsWrite = await RecordsWrite.create({
+        signer       : Jws.createSigner(alice),
+        protocol     : 'https://example.com/protocol',
+        protocolPath : 'test',
+        schema       : 'https://example.com/schema',
+        dataFormat   : 'application/octet-stream',
+        data         : TestDataGenerator.randomBytes(100),
+      });
+
+      // First encryption — ProtocolPath
+      const encryptionInput1: EncryptionInput = {
+        initializationVector : dataEncryptionIV,
+        key                  : dataEncryptionKey,
+        keyEncryptionInputs  : [{
+          publicKeyId      : alice.keyId,
+          publicKey        : alice.keyPair.publicJwk,
+          derivationScheme : KeyDerivationScheme.ProtocolPath,
+        }],
+      };
+      await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput1);
+
+      expect(recordsWrite['_message'].encryption).to.exist;
+      expect(recordsWrite['_message'].encryption!.keyEncryption).to.have.length(1);
+      expect(recordsWrite['_message'].encryption!.keyEncryption[0].derivationScheme).to.equal('protocolPath');
+
+      // Second encryption (replace mode) — should overwrite
+      const encryptionInput2: EncryptionInput = {
+        initializationVector : dataEncryptionIV,
+        key                  : dataEncryptionKey,
+        keyEncryptionInputs  : [{
+          publicKeyId      : alice.keyId,
+          publicKey        : alice.keyPair.publicJwk,
+          derivationScheme : KeyDerivationScheme.Schemas,
+        }],
+      };
+      await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput2);
+
+      // Should have replaced — only 1 entry with Schemas scheme
+      expect(recordsWrite['_message'].encryption!.keyEncryption).to.have.length(1);
+      expect(recordsWrite['_message'].encryption!.keyEncryption[0].derivationScheme).to.equal('schemas');
+    });
+
+    it('should append keyEncryption entries when append option is true', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const dataEncryptionKey = TestDataGenerator.randomBytes(32);
+      const dataEncryptionIV = TestDataGenerator.randomBytes(16);
+
+      const recordsWrite = await RecordsWrite.create({
+        signer       : Jws.createSigner(alice),
+        protocol     : 'https://example.com/protocol',
+        protocolPath : 'test',
+        schema       : 'https://example.com/schema',
+        dataFormat   : 'application/octet-stream',
+        data         : TestDataGenerator.randomBytes(100),
+      });
+
+      // First encryption — ProtocolPath
+      const encryptionInput1: EncryptionInput = {
+        initializationVector : dataEncryptionIV,
+        key                  : dataEncryptionKey,
+        keyEncryptionInputs  : [{
+          publicKeyId      : alice.keyId,
+          publicKey        : alice.keyPair.publicJwk,
+          derivationScheme : KeyDerivationScheme.ProtocolPath,
+        }],
+      };
+      await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput1);
+
+      const originalIV = recordsWrite['_message'].encryption!.initializationVector;
+      const originalAlgorithm = recordsWrite['_message'].encryption!.algorithm;
+
+      // Second encryption with append — ProtocolContext
+      const encryptionInput2: EncryptionInput = {
+        initializationVector : dataEncryptionIV,
+        key                  : dataEncryptionKey,
+        keyEncryptionInputs  : [{
+          publicKeyId      : alice.keyId,
+          publicKey        : alice.keyPair.publicJwk,
+          derivationScheme : KeyDerivationScheme.ProtocolContext,
+        }],
+      };
+      await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput2, { append: true });
+
+      // Should have both entries
+      const encryption = recordsWrite['_message'].encryption!;
+      expect(encryption.keyEncryption).to.have.length(2);
+      expect(encryption.keyEncryption[0].derivationScheme).to.equal('protocolPath');
+      expect(encryption.keyEncryption[1].derivationScheme).to.equal('protocolContext');
+
+      // Original IV and algorithm should be preserved
+      expect(encryption.initializationVector).to.equal(originalIV);
+      expect(encryption.algorithm).to.equal(originalAlgorithm);
+
+      // ProtocolContext entry should have derivedPublicKey
+      expect(encryption.keyEncryption[1].derivedPublicKey).to.exist;
+
+      // Authorization should be stripped (needs re-signing)
+      expect(recordsWrite['_message'].authorization).to.not.exist;
+    });
+
+    it('should throw when append is true but encryption does not exist', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const dataEncryptionKey = TestDataGenerator.randomBytes(32);
+      const dataEncryptionIV = TestDataGenerator.randomBytes(16);
+
+      const recordsWrite = await RecordsWrite.create({
+        signer       : Jws.createSigner(alice),
+        protocol     : 'https://example.com/protocol',
+        protocolPath : 'test',
+        dataFormat   : 'application/octet-stream',
+        data         : TestDataGenerator.randomBytes(100),
+      });
+
+      const encryptionInput: EncryptionInput = {
+        initializationVector : dataEncryptionIV,
+        key                  : dataEncryptionKey,
+        keyEncryptionInputs  : [{
+          publicKeyId      : alice.keyId,
+          publicKey        : alice.keyPair.publicJwk,
+          derivationScheme : KeyDerivationScheme.ProtocolPath,
+        }],
+      };
+
+      await expect(
+        recordsWrite.encryptSymmetricEncryptionKey(encryptionInput, { append: true })
+      ).to.be.rejectedWith(DwnErrorCode.RecordsWriteMissingEncryption);
+    });
+  });
 });
