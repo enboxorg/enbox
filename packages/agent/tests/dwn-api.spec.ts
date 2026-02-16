@@ -2693,6 +2693,7 @@ describe('Encryption Callback Factories', () => {
           dataFormat   : 'text/plain',
           schema       : 'https://schemas.xyz/note',
           recordId     : recordsWriteMessage.recordId,
+          dateCreated  : recordsWriteMessage.descriptor.dateCreated,
         },
         dataStream : new Blob([updatedDataBytes]),
         encryption : true
@@ -2788,8 +2789,9 @@ describe('Encryption Callback Factories', () => {
         encryption : true
       });
 
-      const chatRecordId = (chatMessage as RecordsWriteMessage).recordId;
-      const chatEncryption = (chatMessage as RecordsWriteMessage).encryption;
+      const chatWriteMessage = chatMessage as RecordsWriteMessage;
+      const chatRecordId = chatWriteMessage.recordId;
+      const chatEncryption = chatWriteMessage.encryption;
       expect(chatEncryption).to.exist;
       expect(chatEncryption!.keyEncryption[0]).to.have.property(
         'derivationScheme', 'protocolContext'
@@ -2808,6 +2810,7 @@ describe('Encryption Callback Factories', () => {
           dataFormat      : 'text/plain',
           schema          : 'https://schemas.xyz/chat',
           recordId        : chatRecordId,
+          dateCreated     : chatWriteMessage.descriptor.dateCreated,
         },
         dataStream : new Blob([Convert.string(updatedChat).toUint8Array()]),
         encryption : true
