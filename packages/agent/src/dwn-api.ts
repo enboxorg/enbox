@@ -8,7 +8,6 @@ import type {
   KeyDecrypter,
   ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
-import { NodeStream, TtlCache } from '@enbox/common';
 import { CryptoUtils } from '@enbox/crypto';
 import {
   Cid,
@@ -24,6 +23,7 @@ import {
   ResumableTaskStoreLevel
 } from '@enbox/dwn-sdk-js';
 import { DidDht, DidJwk, DidResolverCacheLevel, UniversalResolver } from '@enbox/dids';
+import { NodeStream, TtlCache } from '@enbox/common';
 
 import type { Web5PlatformAgent } from './types/agent.js';
 import type {
