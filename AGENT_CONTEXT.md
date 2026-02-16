@@ -146,7 +146,7 @@ enbox/
 ### Docker
 - Dockerfile uses `oven/bun:1` base image
 - Multi-stage build: builder + slim runner
-- Railway PaaS deployment supported via `railway.toml`
+- Fly.io deployment supported via `fly.toml`
 
 ### Key Architectural Decisions
 1. **Monorepo consolidation**: All related packages in one repository

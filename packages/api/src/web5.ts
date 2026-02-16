@@ -283,7 +283,7 @@ export class Web5 {
       }
 
       // Use the specified DWN endpoints or the latest TBD hosted DWN
-      const serviceEndpointNodes = techPreview?.dwnEndpoints ?? didCreateOptions?.dwnEndpoints ?? ['https://enbox-production.up.railway.app'];
+      const serviceEndpointNodes = techPreview?.dwnEndpoints ?? didCreateOptions?.dwnEndpoints ?? ['https://enbox-dwn.fly.dev'];
 
       // Initialize, if necessary, and start the agent.
       if (await userAgent.firstLaunch()) {

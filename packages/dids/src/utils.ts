@@ -30,7 +30,7 @@ import { DidError, DidErrorCode } from './did-error.js';
  * const service: DwnDidService = {
  *   id: 'did:example:123#dwn',
  *   type: 'DecentralizedWebNode',
- *   serviceEndpoint: 'https://enbox-production.up.railway.app',
+ *   serviceEndpoint: 'https://enbox-dwn.fly.dev',
  *   enc: 'did:example:123#key-1',
  *   sig: 'did:example:123#key-2'
  * }
@@ -393,7 +393,7 @@ export function isDidService(obj: unknown): obj is DidService {
  *     {
  *       id: 'did:example:123#dwn',
  *       type: 'DecentralizedWebNode',
- *       serviceEndpoint: 'https://enbox-production.up.railway.app',
+ *       serviceEndpoint: 'https://enbox-dwn.fly.dev',
  *       enc: 'did:example:123#key-1',
  *       sig: 'did:example:123#key-2'
  *     }

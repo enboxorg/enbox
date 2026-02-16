@@ -132,7 +132,7 @@ An object which may specify any of the following properties:
 
 - **`techPreview`** - _`object`_ _(optional)_: an object that specifies configuration parameters that are relevant during the Tech Preview period of Enbox API and may be deprecated in the future with advance notice.
 
-  - **`dwnEndpoints`** - _`array`_ _(optional)_: a list of DWeb Node endpoints to define in the DID created and returned by `Enbox.connect()`. If this property is omitted, during the Tech Preview the default endpoint will be used (e.g., `['https://enbox-production.up.railway.app']`).
+  - **`dwnEndpoints`** - _`array`_ _(optional)_: a list of DWeb Node endpoints to define in the DID created and returned by `Enbox.connect()`. If this property is omitted, during the Tech Preview the default endpoint will be used (e.g., `['https://enbox-dwn.fly.dev']`).
 
   For example:
 

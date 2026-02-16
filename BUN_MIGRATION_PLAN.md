@@ -66,7 +66,7 @@ Full migration from Node.js/npm/pnpm to Bun as runtime, package manager, bundler
 - [x] 8.1 Dockerfile: `oven/bun:1` base image, removed corepack, bun commands
 - [x] 8.2 entrypoint.sh: `exec bun`
 - [x] 8.3 .dockerignore: removed npm/yarn log refs
-- [x] 8.4 Railway configs: verified no changes needed (Dockerfile builder)
+- [x] 8.4 Fly.io configs: verified no changes needed (Dockerfile builder)
 
 ## Phase 9: Cleanup & Polish -- DONE
 - [x] 9.1 Removed `cross-fetch` from dwn-sdk-js deps
