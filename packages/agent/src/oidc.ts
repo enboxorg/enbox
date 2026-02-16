@@ -484,7 +484,10 @@ async function decryptAuthResponse(
 
   // get the delegatedid public key from the header
   const header = Convert.base64Url(protectedHeaderB64U).toObject() as Jwk;
-  const delegateResolvedDid = await DidJwk.resolve(header.kid!.split('#')[0]);
+  if (!header.kid) {
+    throw new Error('JWE protected header is missing required "kid" property');
+  }
+  const delegateResolvedDid = await DidJwk.resolve(header.kid.split('#')[0]);
 
   // derive ECDH shared key using the provider's public key and our clientDid private key
   const sharedKey = await Oidc.deriveSharedKey(

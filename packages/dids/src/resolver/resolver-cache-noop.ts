@@ -8,19 +8,19 @@ import type { DidResolverCache } from '../types/did-resolution.js';
  * potential for this library to be used in as many JS runtimes as possible.
  */
 export const DidResolverCacheNoop: DidResolverCache = {
-  get: function (_key: string): Promise<DidResolutionResult> {
-    return null as any;
+  get(_key: string): Promise<DidResolutionResult | void> {
+    return Promise.resolve(undefined);
   },
-  set: function (_key: string, _value: DidResolutionResult): Promise<void> {
-    return null as any;
+  set(_key: string, _value: DidResolutionResult): Promise<void> {
+    return Promise.resolve();
   },
-  delete: function (_key: string): Promise<void> {
-    return null as any;
+  delete(_key: string): Promise<boolean | void> {
+    return Promise.resolve();
   },
-  clear: function (): Promise<void> {
-    return null as any;
+  clear(): Promise<void> {
+    return Promise.resolve();
   },
-  close: function (): Promise<void> {
-    return null as any;
+  close(): Promise<void> {
+    return Promise.resolve();
   }
 };

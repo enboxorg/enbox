@@ -157,12 +157,14 @@ export class HttpApi {
 
       // wrap request in a try-catch block to handle any unexpected errors
       try {
-        const queryOptions = { filter: {} } as any;
+        const queryOptions: Record<string, any> = { filter: {} };
         for (const param in req.query) {
           const keys = param.split('.');
           const lastKey = keys.pop();
-          const lastLevelObject = keys.reduce((obj, key) => obj[key] = obj[key] || {}, queryOptions);
-          lastLevelObject[lastKey] = req.query[param];
+          const nestObj = (obj: Record<string, any>, key: string): Record<string, any> =>
+            obj[key] = obj[key] || {};
+          const lastLevelObject = keys.reduce(nestObj, queryOptions);
+          lastLevelObject[lastKey!] = req.query[param];
         }
 
         // the protocol path segment is base64url encoded, as the actual protocol is a URL
@@ -264,12 +266,14 @@ export class HttpApi {
         //     protocolPath: 'bar'
         //   }
         // }
-        const recordsQueryOptions = {} as any;
+        const recordsQueryOptions: Record<string, any> = {};
         for (const param in req.query) {
           const keys = param.split('.');
           const lastKey = keys.pop();
-          const lastLevelObject = keys.reduce((obj, key) => obj[key] = obj[key] || {}, recordsQueryOptions);
-          lastLevelObject[lastKey] = req.query[param];
+          const nestObj = (obj: Record<string, any>, key: string): Record<string, any> =>
+            obj[key] = obj[key] || {};
+          const lastLevelObject = keys.reduce(nestObj, recordsQueryOptions);
+          lastLevelObject[lastKey!] = req.query[param];
         }
 
         const recordsQuery = await RecordsQuery.create({
