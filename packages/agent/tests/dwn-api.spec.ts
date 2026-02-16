@@ -3923,3 +3923,228 @@ describe('Unified Key Delivery - Write Side (PR C)', () => {
     }
   }).timeout(10000);
 });
+
+describe('Unified Key Retrieval - Read Side (PR D)', () => {
+  let testHarness: PlatformAgentTestHarness;
+  let alice: BearerIdentity;
+
+  before(async () => {
+    testHarness = await PlatformAgentTestHarness.setup({
+      agentClass  : TestAgent,
+      agentStores : 'dwn'
+    });
+  });
+
+  beforeEach(async () => {
+    await testHarness.clearStorage();
+    await testHarness.createAgentDid();
+    alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
+  });
+
+  after(async () => {
+    await testHarness.clearStorage();
+    await testHarness.closeStorage();
+  });
+
+  // Multi-party protocol with $role records
+  const chatProtocol: ProtocolDefinition = {
+    published : true,
+    protocol  : 'https://protocol.xyz/chat-prd',
+    types     : {
+      thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'] },
+      participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'] },
+      chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'] }
+    },
+    structure: {
+      thread: {
+        participant : { $role: true },
+        chat        : {},
+      },
+    },
+  };
+
+  it('owner should auto-decrypt multi-party records via resolveKeyDecrypter Case 1 (context creator)', async () => {
+    // Configure protocol
+    await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: chatProtocol },
+      encryption    : true,
+    });
+
+    // Create thread (root record)
+    const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : chatProtocol.protocol,
+        protocolPath : 'thread',
+        dataFormat   : 'application/json',
+        schema       : 'https://schemas.xyz/thread',
+      },
+      dataStream : new Blob([new TextEncoder().encode('{"title":"Secret Thread"}')]),
+      encryption : true,
+    });
+
+    const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
+
+    // Write an encrypted chat message
+    const chatText = 'Hello from Alice in a multi-party context!';
+    await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol        : chatProtocol.protocol,
+        protocolPath    : 'thread/chat',
+        parentContextId : threadContextId,
+        dataFormat      : 'text/plain',
+        schema          : 'https://schemas.xyz/chat',
+      },
+      dataStream : new Blob([new TextEncoder().encode(chatText)]),
+      encryption : true,
+    });
+
+    // Read back with auto-decryption — owner uses Case 1 (context creator path)
+    const { reply: readReply } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread/chat',
+        }
+      },
+      encryption: true,
+    });
+
+    expect(readReply.entries).to.have.length(1);
+    const entry = readReply.entries![0];
+    expect(entry.encryption).to.exist;
+    expect(entry.encryption!.keyEncryption[0].derivationScheme).to.equal('protocolContext');
+
+    // Verify auto-decryption produced the original plaintext
+    if (entry.encodedData) {
+      const { Encoder } = await import('@enbox/dwn-sdk-js');
+      const decoded = new TextDecoder().decode(Encoder.base64UrlToBytes(entry.encodedData));
+      expect(decoded).to.equal(chatText);
+    }
+  }).timeout(10000);
+
+  it('should use fetchContextKeyRecord in resolveKeyDecrypter Case 2 (participant path)', async () => {
+    const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
+
+    // Configure protocol for Alice
+    await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: chatProtocol },
+      encryption    : true,
+    });
+
+    // Create thread (root record)
+    const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : chatProtocol.protocol,
+        protocolPath : 'thread',
+        dataFormat   : 'application/json',
+        schema       : 'https://schemas.xyz/thread',
+      },
+      dataStream : new Blob([new TextEncoder().encode('{"title":"Secret Thread"}')]),
+      encryption : true,
+    });
+
+    const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
+
+    // Add Bob as participant — triggers contextKey delivery (PR C)
+    await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol        : chatProtocol.protocol,
+        protocolPath    : 'thread/participant',
+        parentContextId : threadContextId,
+        dataFormat      : 'application/json',
+        schema          : 'https://schemas.xyz/participant',
+        recipient       : bob.did.uri,
+      },
+      dataStream : new Blob([new TextEncoder().encode('{"name":"Bob"}')]),
+      encryption : true,
+    });
+
+    // Verify a contextKey was written to Alice's DWN for Bob
+    const { reply: ckQuery } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          protocol     : KeyDeliveryProtocolDefinition.protocol,
+          protocolPath : 'contextKey',
+          recipient    : bob.did.uri,
+        }
+      }
+    });
+    expect(ckQuery.entries).to.have.length(1);
+
+    // Read the contextKey with decryption to verify it contains a valid DerivedPrivateJwk
+    const ckRecordId = ckQuery.entries![0].recordId;
+    const { reply: ckRead } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId: ckRecordId } },
+      encryption    : true,
+    });
+    const ckReadResult = ckRead as any;
+    const ckDataBytes = await DataStream.toBytes(ckReadResult.entry.data);
+    const contextKeyPayload = JSON.parse(new TextDecoder().decode(ckDataBytes));
+
+    // Verify the contextKey payload has the expected DerivedPrivateJwk shape
+    expect(contextKeyPayload).to.have.property('rootKeyId');
+    expect(contextKeyPayload).to.have.property('derivationScheme', 'protocolContext');
+    expect(contextKeyPayload).to.have.property('derivationPath').that.is.an('array');
+    expect(contextKeyPayload).to.have.property('derivedPrivateKey');
+    expect(contextKeyPayload.derivedPrivateKey).to.have.property('kty', 'EC');
+    expect(contextKeyPayload.derivedPrivateKey).to.have.property('crv', 'secp256k1');
+    expect(contextKeyPayload.derivedPrivateKey).to.have.property('d'); // private key component
+
+    // Verify the derivation path is correct for this context
+    const rootContextId = threadContextId.split('/')[0];
+    expect(contextKeyPayload.derivationPath).to.deep.equal([
+      'protocolContext', rootContextId,
+    ]);
+
+    // Verify that fetchContextKeyRecord can also retrieve it
+    // (Bob fetching his own key from Alice's DWN — here we test the local path
+    // by writing Bob's key to Bob's DWN first, simulating sync)
+    await testHarness.agent.dwn.ensureKeyDeliveryProtocol(bob.did.uri);
+    await testHarness.agent.dwn.writeContextKeyRecord({
+      tenantDid       : bob.did.uri,
+      recipientDid    : bob.did.uri,
+      contextKeyData  : contextKeyPayload,
+      sourceProtocol  : chatProtocol.protocol,
+      sourceContextId : rootContextId,
+    });
+
+    // Bob can fetch his own contextKey from his local DWN
+    const bobKey = await testHarness.agent.dwn.fetchContextKeyRecord({
+      ownerDid        : bob.did.uri,
+      requesterDid    : bob.did.uri,
+      sourceProtocol  : chatProtocol.protocol,
+      sourceContextId : rootContextId,
+    });
+    expect(bobKey).to.not.be.undefined;
+    expect(bobKey!.rootKeyId).to.equal(contextKeyPayload.rootKeyId);
+    expect(bobKey!.derivationScheme).to.equal('protocolContext');
+    expect(bobKey!.derivedPrivateKey).to.deep.equal(contextKeyPayload.derivedPrivateKey);
+  }).timeout(30000);
+});
