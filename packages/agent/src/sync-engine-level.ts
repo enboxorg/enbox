@@ -12,7 +12,6 @@ import ms from 'ms';
 
 import { Level } from 'level';
 import { monotonicFactory } from 'ulidx';
-import { Stream } from '@enbox/common';
 import {
   DataStream,
   DwnInterfaceName,
@@ -185,14 +184,9 @@ export class SyncEngineLevel implements SyncEngine {
 
       const replyEntry = reply.entry;
       const message = replyEntry.message;
-      // If the message includes data, ensure it is a Web ReadableStream for the DWN engine.
-      // The RPC layer may return either a Web ReadableStream (from HTTP fetch) or a Node Readable,
-      // depending on the transport, so we normalize to Web ReadableStream.
       let dataStream: ReadableStream<Uint8Array> | undefined;
       if (isRecordsWrite(replyEntry) && replyEntry.data) {
-        dataStream = Stream.isReadableStream(replyEntry.data)
-          ? replyEntry.data
-          : undefined; // DWN SDK now expects Web ReadableStream; data should already be one
+        dataStream = replyEntry.data;
       }
 
       const pullReply = await this.agent.dwn.node.processMessage(did, message, { dataStream });
