@@ -1,4 +1,4 @@
-import type { Jwk } from '@enbox/crypto';
+import type { Jwk, JwkParamsEcPublic } from '@enbox/crypto';
 import type { BearerDid } from '@enbox/dids';
 
 import sinon from 'sinon';
@@ -456,12 +456,12 @@ describe('LocalKeyManager', () => {
           const derivedKey1 = await testHarness.agent.keyManager.derivePublicKey({
             keyUri,
             derivationPath: ['path1']
-          });
+          }) as JwkParamsEcPublic;
 
           const derivedKey2 = await testHarness.agent.keyManager.derivePublicKey({
             keyUri,
             derivationPath: ['path2']
-          });
+          }) as JwkParamsEcPublic;
 
           // Verify they are different
           expect(derivedKey1.x).to.not.equal(derivedKey2.x);
@@ -476,12 +476,12 @@ describe('LocalKeyManager', () => {
           const derivedKey1 = await testHarness.agent.keyManager.derivePublicKey({
             keyUri,
             derivationPath: ['consistent', 'path']
-          });
+          }) as JwkParamsEcPublic;
 
           const derivedKey2 = await testHarness.agent.keyManager.derivePublicKey({
             keyUri,
             derivationPath: ['consistent', 'path']
-          });
+          }) as JwkParamsEcPublic;
 
           // Verify they are identical
           expect(derivedKey1.x).to.equal(derivedKey2.x);
@@ -533,10 +533,7 @@ describe('LocalKeyManager', () => {
 
           // Encrypt a message using ECIES
           const plaintext = Convert.string('Hello, ECIES!').toUint8Array();
-          const encryptedData = await Encryption.eciesSecp256k1Encrypt({
-            publicKey : leafPublicKeyBytes,
-            data      : plaintext
-          });
+          const encryptedData = await Encryption.eciesSecp256k1Encrypt(leafPublicKeyBytes, plaintext);
 
           // Decrypt using the key manager method
           const decrypted = await testHarness.agent.keyManager.eciesSecp256k1Decrypt({
@@ -567,10 +564,7 @@ describe('LocalKeyManager', () => {
 
           // Encrypt a message
           const plaintext = Convert.string('Secret message').toUint8Array();
-          const encryptedData = await Encryption.eciesSecp256k1Encrypt({
-            publicKey : leafPublicKeyBytes,
-            data      : plaintext
-          });
+          const encryptedData = await Encryption.eciesSecp256k1Encrypt(leafPublicKeyBytes, plaintext);
 
           // Attempt to decrypt with wrong derivation path
           const wrongPath = ['wrong', 'path'];
@@ -665,7 +659,7 @@ describe('LocalKeyManager', () => {
           const publicKey = await testHarness.agent.keyManager.derivePublicKey({
             keyUri,
             derivationPath
-          });
+          }) as JwkParamsEcPublic;
 
           // Compute public key from private key bytes and verify they match
           const publicKeyBytesFromPrivate = await Secp256k1.getPublicKey(privateKeyBytes);
