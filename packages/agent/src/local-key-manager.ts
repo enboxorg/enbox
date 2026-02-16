@@ -16,6 +16,7 @@ import type {
   KmsImportKeyParams,
   KmsSignParams,
   KmsVerifyParams,
+  PublicKeyJwk,
   Signer,
   SignParams,
 
@@ -30,6 +31,10 @@ import {
   KEY_URI_PREFIX_JWK,
   Sha2Algorithm,
 } from '@enbox/crypto';
+
+import type { PrivateJwk } from '@enbox/dwn-sdk-js';
+
+import { Encryption, HdKey, Secp256k1 } from '@enbox/dwn-sdk-js';
 
 import type { AgentDataStore } from './store-data.js';
 import type { AgentKeyManager } from './types/key-manager.js';
@@ -386,6 +391,88 @@ export class LocalKeyManager implements AgentKeyManager {
   }
 
   /**
+   * Derives an HD child public key from a stored private key using HKDF-SHA256.
+   * The private key stays within the KMS — only the public key is returned.
+   */
+  public async derivePublicKey({ keyUri, derivationPath }: {
+    keyUri: KeyIdentifier;
+    derivationPath: string[];
+  }): Promise<PublicKeyJwk> {
+    // Get stored secp256k1 private key as bytes
+    const privateKeyBytes = await this.getSecp256k1PrivateKeyBytes({ keyUri });
+
+    // Run HKDF derivation through each path segment
+    const derivedPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(
+      privateKeyBytes,
+      derivationPath
+    );
+
+    // Compute public key from derived private key
+    const derivedPublicKeyBytes = await Secp256k1.getPublicKey(derivedPrivateKeyBytes);
+
+    // Convert to JWK format — cast is safe because secp256k1 public keys
+    // always produce JwkParamsEcPublic (kty: 'EC', crv: 'secp256k1', x, y)
+    return await Secp256k1.publicKeyToJwk(derivedPublicKeyBytes) as PublicKeyJwk;
+  }
+
+  /**
+   * Decrypts an ECIES-SECP256K1 encrypted payload using a derived private key.
+   * The derived private key is used internally and discarded after decryption.
+   */
+  public async eciesSecp256k1Decrypt({
+    keyUri,
+    derivationPath,
+    ciphertext,
+    ephemeralPublicKey,
+    initializationVector,
+    messageAuthenticationCode
+  }: {
+    keyUri: KeyIdentifier;
+    derivationPath: string[];
+    ciphertext: Uint8Array;
+    ephemeralPublicKey: Uint8Array;
+    initializationVector: Uint8Array;
+    messageAuthenticationCode: Uint8Array;
+  }): Promise<Uint8Array> {
+    // Get stored secp256k1 private key as bytes
+    const privateKeyBytes = await this.getSecp256k1PrivateKeyBytes({ keyUri });
+
+    // Run HKDF derivation through each path segment to get leaf private key
+    const leafPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(
+      privateKeyBytes,
+      derivationPath
+    );
+
+    // Perform ECIES decryption — leaf key bytes consumed and discarded after
+    return Encryption.eciesSecp256k1Decrypt({
+      privateKey: leafPrivateKeyBytes,
+      ciphertext,
+      ephemeralPublicKey,
+      initializationVector,
+      messageAuthenticationCode,
+    });
+  }
+
+  /**
+   * Derives an HD child private key bytes from a stored private key.
+   * Unlike derivePublicKey(), this returns the derived private key bytes.
+   * Used ONLY for context-derived key sharing in multi-party encryption.
+   */
+  public async derivePrivateKeyBytes({ keyUri, derivationPath }: {
+    keyUri: KeyIdentifier;
+    derivationPath: string[];
+  }): Promise<Uint8Array> {
+    // Get stored secp256k1 private key as bytes
+    const privateKeyBytes = await this.getSecp256k1PrivateKeyBytes({ keyUri });
+
+    // Run HKDF derivation through each path segment, return raw bytes
+    return HdKey.derivePrivateKeyBytes(
+      privateKeyBytes,
+      derivationPath
+    );
+  }
+
+  /**
    * Imports a private key into the local KMS.
    *
    * @remarks
@@ -640,6 +727,21 @@ export class LocalKeyManager implements AgentKeyManager {
       `Algorithm not supported based on provided input: alg=${algProperty}, crv=${crvProperty}. ` +
       'Please check the documentation for the list of supported algorithms.'
     );
+  }
+
+  /**
+   * Helper method to retrieve a secp256k1 private key and convert it to bytes.
+   * Used by HD key derivation methods to avoid code duplication.
+   *
+   * @param keyUri - The key URI identifying the secp256k1 private key
+   * @returns The private key as raw bytes
+   * @throws Error if the key is not found or is not a secp256k1 key
+   */
+  private async getSecp256k1PrivateKeyBytes({ keyUri }: {
+    keyUri: KeyIdentifier;
+  }): Promise<Uint8Array> {
+    const privateKeyJwk = await this.getPrivateKey({ keyUri }) as PrivateJwk;
+    return Secp256k1.privateJwkToBytes(privateKeyJwk);
   }
 
   /**

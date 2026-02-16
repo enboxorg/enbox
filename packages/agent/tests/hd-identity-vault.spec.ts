@@ -472,6 +472,99 @@ describe('HdIdentityVault', () => {
           }
         });
       });
+
+      describe('encryption key derivation', () => {
+        it('should create DID with secp256k1 encryption key in verification methods', async () => {
+          await identityVault.initialize({ password: 'test-password', dwnEndpoints: ['https://dwn.example.com'] });
+
+          const did = await identityVault.getDid();
+
+          // Verify #enc verification method exists with secp256k1 curve.
+          const encKey = did.document.verificationMethod?.find((vm: any) => vm.id.endsWith('#enc'));
+          expect(encKey).to.exist;
+          expect(encKey?.type).to.equal('JsonWebKey');
+          expect(encKey?.publicKeyJwk).to.have.property('kty', 'EC');
+          expect(encKey?.publicKeyJwk).to.have.property('crv', 'secp256k1');
+          expect(encKey?.publicKeyJwk).to.have.property('x');
+          expect(encKey?.publicKeyJwk).to.have.property('y');
+          expect(encKey?.publicKeyJwk).to.not.have.property('d'); // Should be public only
+        });
+
+        it('should include #enc in keyAgreement and exclude from authentication', async () => {
+          await identityVault.initialize({ password: 'test-password', dwnEndpoints: ['https://dwn.example.com'] });
+
+          const did = await identityVault.getDid();
+          const doc = did.document;
+
+          // Verify keyAgreement includes #enc.
+          expect(doc.keyAgreement).to.be.an('array');
+          const encReference = doc.keyAgreement?.find((ref: any) =>
+            typeof ref === 'string' && ref.endsWith('#enc')
+          );
+          expect(encReference).to.exist;
+
+          // Verify #enc is NOT in authentication or assertionMethod.
+          const encId = doc.verificationMethod?.find((vm: any) => vm.id.endsWith('#enc'))?.id;
+          expect(doc.authentication ?? []).to.not.include(encId);
+          expect(doc.assertionMethod ?? []).to.not.include(encId);
+        });
+
+        it('should deterministically derive the #enc key from a recovery phrase', async () => {
+          const recoveryPhrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+
+          // Initialize a vault with a known recovery phrase.
+          await identityVault.initialize({
+            password       : 'first-password',
+            dwnEndpoints   : ['https://dwn.example.com'],
+            recoveryPhrase : recoveryPhrase,
+          });
+          const did1 = await identityVault.getDid();
+          const encKey1 = did1.document.verificationMethod?.find((vm: any) => vm.id.endsWith('#enc'));
+
+          // Create a completely fresh vault with the same recovery phrase but
+          // a different password — the encryption key should be identical.
+          await vaultStore.clear();
+          identityVault = new HdIdentityVault({ store: vaultStore, keyDerivationWorkFactor: 1 });
+          await identityVault.initialize({
+            password       : 'different-password',
+            dwnEndpoints   : ['https://dwn.example.com'],
+            recoveryPhrase : recoveryPhrase,
+          });
+          const did2 = await identityVault.getDid();
+          const encKey2 = did2.document.verificationMethod?.find((vm: any) => vm.id.endsWith('#enc'));
+
+          // Both should produce the same encryption public key.
+          expect(encKey1?.publicKeyJwk?.x).to.equal(encKey2?.publicKeyJwk?.x);
+          expect(encKey1?.publicKeyJwk?.y).to.equal(encKey2?.publicKeyJwk?.y);
+        });
+
+        it('should use different key indices for identity, signing, and encryption keys', async () => {
+          await identityVault.initialize({ password: 'test-password', dwnEndpoints: ['https://dwn.example.com'] });
+
+          const did = await identityVault.getDid();
+          const vms = did.document.verificationMethod || [];
+
+          // Verify we have at least 3 keys (identity #0, signing #sig, encryption #enc).
+          expect(vms.length).to.be.at.least(3);
+
+          // Verify each key has different public key material.
+          // Use JSON.stringify to handle Ed25519 keys (which have only x, no y).
+          const publicKeys = vms.map((vm: any) => JSON.stringify(vm.publicKeyJwk));
+          const uniqueKeys = new Set(publicKeys);
+          expect(uniqueKeys.size).to.equal(vms.length);
+        });
+
+        it('should reference encryption key in DWN service', async () => {
+          await identityVault.initialize({ password: 'test-password', dwnEndpoints: ['https://dwn.example.com'] });
+
+          const did = await identityVault.getDid();
+
+          // Verify DWN service references #enc.
+          const dwnService = did.document.service?.find((svc: any) => svc.type === 'DecentralizedWebNode');
+          expect(dwnService).to.exist;
+          expect(dwnService).to.have.property('enc', '#enc');
+        });
+      });
     });
   });
 });

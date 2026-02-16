@@ -495,20 +495,18 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       privateKeyBytes : signingHdKey.privateKey
     });
 
-    // TODO: Enable this once DID DHT supports X25519 keys.
-    // Derive the encryption key using index 1 and convert to JWK format.
-    // const encryptionHdKey = rootHdKey.derive(`m/44'/0'/1708523827'/0'/1'`);
-    // const encryptionKeyEd25519 = await this.crypto.bytesToPrivateKey({
-    //   algorithm       : 'Ed25519',
-    //   privateKeyBytes : encryptionHdKey.privateKey
-    // });
-    // const encryptionPrivateKey = await Ed25519.convertPrivateKeyToX25519({ privateKey: encryptionKeyEd25519 });
+    // Derive the encryption key using index 2 (secp256k1 for ECIES encryption).
+    const encryptionHdKey = rootHdKey.derive(`m/44'/0'/1708523827'/0'/2'`);
+    const encryptionPrivateKey = await this.crypto.bytesToPrivateKey({
+      algorithm       : 'secp256k1',
+      privateKeyBytes : encryptionHdKey.privateKey
+    });
 
-    // Add the identity and signing keys to the deterministic key generator so that when the DID is
-    // created it will use the derived keys.
+    // Add the identity, signing, and encryption keys to the deterministic key generator so that
+    // when the DID is created it will use the derived keys.
     const deterministicKeyGenerator = new DeterministicKeyGenerator();
     await deterministicKeyGenerator.addPredefinedKeys({
-      privateKeys: [identityPrivateKey, signingPrivateKey]
+      privateKeys: [identityPrivateKey, signingPrivateKey, encryptionPrivateKey]
     });
 
     // Create the DID using the derived identity, signing, and encryption keys.
@@ -519,6 +517,11 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
           id        : 'sig',
           purposes  : ['assertionMethod', 'authentication']
         },
+        {
+          algorithm : 'secp256k1',
+          id        : 'enc',
+          purposes  : ['keyAgreement']
+        }
       ]
     } as DidDhtCreateOptions<DeterministicKeyGenerator>;
 
