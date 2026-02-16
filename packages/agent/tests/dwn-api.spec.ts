@@ -2161,17 +2161,488 @@ describe('Encryption Callback Factories', () => {
     });
   });
 
-  describe('Skipped tests for PR #4', () => {
-    it.skip('should auto-inject $encryption on ProtocolsConfigure', async () => {
-      // Will be implemented in PR #4
+  describe('Auto-Encryption (PR #4)', () => {
+    const encryptedProtocolDefinition = {
+      published : true,
+      protocol  : 'https://protocol.xyz/encrypted-notes',
+      types     : {
+        note: {
+          schema      : 'https://schemas.xyz/note',
+          dataFormats : ['text/plain', 'application/json']
+        }
+      },
+      structure: {
+        note: {}
+      }
+    };
+
+    it('should auto-inject $encryption on ProtocolsConfigure', async () => {
+      // Configure protocol with encryption: true
+      const { reply: { status } } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: encryptedProtocolDefinition
+        },
+        encryption: true
+      });
+      expect(status.code).to.equal(202);
+
+      // Query to verify $encryption was injected
+      const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : {
+          filter: { protocol: encryptedProtocolDefinition.protocol },
+        }
+      });
+
+      expect(queryReply.status.code).to.equal(200);
+      expect(queryReply.entries).to.have.length(1);
+
+      const storedDefinition = queryReply.entries![0].descriptor.definition;
+      // Verify $encryption was injected at the 'note' level
+      expect(storedDefinition.structure.note).to.have.property('$encryption');
+      expect(storedDefinition.structure.note.$encryption).to.have.property('rootKeyId');
+      expect(storedDefinition.structure.note.$encryption!.rootKeyId).to.include('#enc');
+      expect(storedDefinition.structure.note.$encryption).to.have.property('publicKeyJwk');
+      expect(storedDefinition.structure.note.$encryption!.publicKeyJwk).to.have.property('crv', 'secp256k1');
     });
 
-    it.skip('should auto-encrypt data on RecordsWrite', async () => {
-      // Will be implemented in PR #4
+    it('should auto-encrypt data on RecordsWrite', async () => {
+      // First configure the protocol with encryption
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: encryptedProtocolDefinition
+        },
+        encryption: true
+      });
+
+      // Write an encrypted record
+      const plaintextString = 'This is my secret note';
+      const dataBytes = Convert.string(plaintextString).toUint8Array();
+
+      const { message: writeMessage, reply: { status: writeStatus } } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : encryptedProtocolDefinition.protocol,
+          protocolPath : 'note',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/note',
+        },
+        dataStream : new Blob([dataBytes]),
+        encryption : true
+      });
+
+      expect(writeStatus.code).to.equal(202);
+
+      // Verify the message has encryption metadata
+      const recordsWriteMessage = writeMessage as RecordsWriteMessage;
+      expect(recordsWriteMessage).to.have.property('encryption');
+      expect(recordsWriteMessage.encryption).to.have.property('algorithm');
+      expect(recordsWriteMessage.encryption).to.have.property('initializationVector');
+      expect(recordsWriteMessage.encryption).to.have.property('keyEncryption');
+      expect(recordsWriteMessage.encryption!.keyEncryption).to.have.length(1);
+      expect(recordsWriteMessage.encryption!.keyEncryption[0]).to.have.property('rootKeyId');
+      expect(recordsWriteMessage.encryption!.keyEncryption[0].rootKeyId).to.include('#enc');
+      expect(recordsWriteMessage.encryption!.keyEncryption[0]).to.have.property('derivationScheme', 'protocolPath');
+
+      // Read the raw data without decryption to verify it's encrypted
+      const { reply: readReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter: { recordId: recordsWriteMessage.recordId }
+        }
+      });
+
+      expect(readReply.status.code).to.equal(200);
+      const rawDataBytes = await NodeStream.consumeToBytes({ readable: readReply.entry!.data! });
+      // Raw data should NOT be the original plaintext (it's encrypted)
+      expect(Convert.uint8Array(rawDataBytes).toString()).to.not.equal(plaintextString);
     });
 
-    it.skip('should auto-decrypt data on RecordsRead', async () => {
-      // Will be implemented in PR #4
+    it('should auto-decrypt data on RecordsRead', async () => {
+      // Configure and write encrypted record
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: encryptedProtocolDefinition
+        },
+        encryption: true
+      });
+
+      const plaintextString = 'This is my secret note for reading';
+      const dataBytes = Convert.string(plaintextString).toUint8Array();
+
+      const { message: writeMessage } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : encryptedProtocolDefinition.protocol,
+          protocolPath : 'note',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/note',
+        },
+        dataStream : new Blob([dataBytes]),
+        encryption : true
+      });
+
+      const recordsWriteMessage = writeMessage as RecordsWriteMessage;
+
+      // Read with encryption: true should auto-decrypt
+      const { reply: readReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter: { recordId: recordsWriteMessage.recordId }
+        },
+        encryption: true
+      });
+
+      expect(readReply.status.code).to.equal(200);
+      const decryptedBytes = await NodeStream.consumeToBytes({ readable: readReply.entry!.data! });
+      expect(Convert.uint8Array(decryptedBytes).toString()).to.equal(plaintextString);
+    });
+
+    it('should auto-decrypt encodedData on RecordsQuery', async () => {
+      // Configure and write a small encrypted record (will be inline as encodedData)
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: encryptedProtocolDefinition
+        },
+        encryption: true
+      });
+
+      const plaintextString = 'Small secret';
+      const dataBytes = Convert.string(plaintextString).toUint8Array();
+
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : encryptedProtocolDefinition.protocol,
+          protocolPath : 'note',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/note',
+        },
+        dataStream : new Blob([dataBytes]),
+        encryption : true
+      });
+
+      // Query with encryption: true should auto-decrypt encodedData
+      const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            protocol     : encryptedProtocolDefinition.protocol,
+            protocolPath : 'note',
+          }
+        },
+        encryption: true
+      });
+
+      expect(queryReply.status.code).to.equal(200);
+      expect(queryReply.entries).to.have.length(1);
+
+      const entry = queryReply.entries![0];
+      // The encodedData should be decrypted plaintext (base64url encoded)
+      if (entry.encodedData) {
+        const { Encoder } = await import('@enbox/dwn-sdk-js');
+        const decodedBytes = Encoder.base64UrlToBytes(entry.encodedData);
+        expect(Convert.uint8Array(decodedBytes).toString()).to.equal(plaintextString);
+      }
+    });
+
+    it('should throw if protocol is not installed when encrypting', async () => {
+      const dataBytes = Convert.string('secret').toUint8Array();
+
+      try {
+        await testHarness.agent.dwn.processRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsWrite,
+          messageParams : {
+            protocol     : 'https://protocol.xyz/non-existent',
+            protocolPath : 'note',
+            dataFormat   : 'text/plain',
+          },
+          dataStream : new Blob([dataBytes]),
+          encryption : true
+        });
+        expect.fail('Expected an error to be thrown');
+      } catch (error: any) {
+        expect(error.message).to.include('not installed');
+      }
+    });
+
+    it('should throw if protocol path has no $encryption configured', async () => {
+      // Install protocol WITHOUT encryption
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: encryptedProtocolDefinition
+        }
+        // No encryption: true, so no $encryption injected
+      });
+
+      const dataBytes = Convert.string('secret').toUint8Array();
+
+      try {
+        await testHarness.agent.dwn.processRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsWrite,
+          messageParams : {
+            protocol     : encryptedProtocolDefinition.protocol,
+            protocolPath : 'note',
+            dataFormat   : 'text/plain',
+            schema       : 'https://schemas.xyz/note',
+          },
+          dataStream : new Blob([dataBytes]),
+          encryption : true
+        });
+        expect.fail('Expected an error to be thrown');
+      } catch (error: any) {
+        expect(error.message).to.include('does not have encryption configured');
+      }
+    });
+
+    it('should handle Uint8Array data input for encryption', async () => {
+      // Configure protocol with encryption
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: encryptedProtocolDefinition
+        },
+        encryption: true
+      });
+
+      const plaintextString = 'Direct Uint8Array data';
+      const dataBytes = Convert.string(plaintextString).toUint8Array();
+
+      // Write with data as Uint8Array in messageParams.data
+      const { message: writeMessage, reply: { status: writeStatus } } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : encryptedProtocolDefinition.protocol,
+          protocolPath : 'note',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/note',
+          data         : dataBytes,
+        },
+        encryption: true
+      });
+
+      expect(writeStatus.code).to.equal(202);
+
+      const recordsWriteMessage = writeMessage as RecordsWriteMessage;
+
+      // Verify encryption metadata present
+      expect(recordsWriteMessage).to.have.property('encryption');
+
+      // Read with decryption
+      const { reply: readReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter: { recordId: recordsWriteMessage.recordId }
+        },
+        encryption: true
+      });
+
+      expect(readReply.status.code).to.equal(200);
+      const decryptedBytes = await NodeStream.consumeToBytes({ readable: readReply.entry!.data! });
+      expect(Convert.uint8Array(decryptedBytes).toString()).to.equal(plaintextString);
+    });
+
+    it('should invalidate protocol definition cache on ProtocolsConfigure', async () => {
+      // Configure protocol with encryption
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: encryptedProtocolDefinition
+        },
+        encryption: true
+      });
+
+      // Populate cache
+      const def1 = await testHarness.agent.dwn['getProtocolDefinition'](
+        alice.did.uri,
+        encryptedProtocolDefinition.protocol
+      );
+      expect(def1).to.exist;
+      expect(def1!.structure.note).to.have.property('$encryption');
+
+      // Reconfigure (should invalidate cache)
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: encryptedProtocolDefinition
+        },
+        encryption: true
+      });
+
+      // Fetch again - should be the fresh definition, not the old cached one
+      const def2 = await testHarness.agent.dwn['getProtocolDefinition'](
+        alice.did.uri,
+        encryptedProtocolDefinition.protocol
+      );
+      expect(def2).to.exist;
+      expect(def2!.structure.note).to.have.property('$encryption');
+    });
+
+    it('should handle nested protocol paths', async () => {
+      const nestedProtocol = {
+        published : true,
+        protocol  : 'https://protocol.xyz/nested-encrypted',
+        types     : {
+          thread: {
+            schema      : 'https://schemas.xyz/thread',
+            dataFormats : ['application/json']
+          },
+          message: {
+            schema      : 'https://schemas.xyz/message',
+            dataFormats : ['text/plain']
+          }
+        },
+        structure: {
+          thread: {
+            message: {}
+          }
+        }
+      };
+
+      // Configure with encryption
+      const { reply: { status } } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: nestedProtocol
+        },
+        encryption: true
+      });
+      expect(status.code).to.equal(202);
+
+      // Query to verify $encryption was injected at all levels
+      const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : {
+          filter: { protocol: nestedProtocol.protocol },
+        }
+      });
+
+      const storedDef = queryReply.entries![0].descriptor.definition;
+      // Verify $encryption exists at 'thread' level
+      expect(storedDef.structure.thread).to.have.property('$encryption');
+      expect(storedDef.structure.thread.$encryption!.publicKeyJwk).to.have.property('crv', 'secp256k1');
+      // Verify $encryption exists at 'thread/message' level
+      expect(storedDef.structure.thread.message).to.have.property('$encryption');
+      expect(storedDef.structure.thread.message.$encryption!.publicKeyJwk).to.have.property('crv', 'secp256k1');
+    });
+
+    it('should full round-trip: configure, write, read, query with encryption', async () => {
+      // 1. Configure protocol with encryption
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: encryptedProtocolDefinition
+        },
+        encryption: true
+      });
+
+      // 2. Write encrypted record
+      const plaintextString = 'Full round-trip secret message';
+      const dataBytes = Convert.string(plaintextString).toUint8Array();
+
+      const { message: writeMessage } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : encryptedProtocolDefinition.protocol,
+          protocolPath : 'note',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/note',
+        },
+        dataStream : new Blob([dataBytes]),
+        encryption : true
+      });
+
+      const recordsWriteMessage = writeMessage as RecordsWriteMessage;
+
+      // 3. Read with auto-decrypt
+      const { reply: readReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter: { recordId: recordsWriteMessage.recordId }
+        },
+        encryption: true
+      });
+
+      expect(readReply.status.code).to.equal(200);
+      const readDecryptedBytes = await NodeStream.consumeToBytes({ readable: readReply.entry!.data! });
+      expect(Convert.uint8Array(readDecryptedBytes).toString()).to.equal(plaintextString);
+
+      // 4. Query with auto-decrypt
+      const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            protocol     : encryptedProtocolDefinition.protocol,
+            protocolPath : 'note',
+          }
+        },
+        encryption: true
+      });
+
+      expect(queryReply.status.code).to.equal(200);
+      expect(queryReply.entries).to.have.length(1);
+
+      const entry = queryReply.entries![0];
+      if (entry.encodedData) {
+        const { Encoder } = await import('@enbox/dwn-sdk-js');
+        const queryDecryptedBytes = Encoder.base64UrlToBytes(entry.encodedData);
+        expect(Convert.uint8Array(queryDecryptedBytes).toString()).to.equal(plaintextString);
+      }
     });
   });
 });

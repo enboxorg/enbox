@@ -64,6 +64,8 @@ export type FetchGrantsRequest = Omit<FetchPermissionsParams, 'author' | 'target
 export type ProtocolsConfigureRequest = {
   /** Configuration options for the protocol. */
   message: Omit<DwnMessageParams[DwnInterface.ProtocolsConfigure], 'signer'>;
+  /** When true, derives and injects $encryption public keys into the protocol definition. */
+  encryption?: boolean;
 };
 
 /**
@@ -165,6 +167,9 @@ export type RecordsQueryRequest = {
 
   /** The parameters for the query operation, detailing the criteria for selecting records. */
   message: Omit<DwnMessageParams[DwnInterface.RecordsQuery], 'signer'>;
+
+  /** When true, automatically decrypts encrypted records in the query results. */
+  encryption?: boolean;
 };
 
 /**
@@ -195,6 +200,9 @@ export type RecordsReadRequest = {
 
   /** The parameters for the read operation, detailing the criteria for selecting the record. */
   message: Omit<DwnMessageParams[DwnInterface.RecordsRead], 'signer'>;
+
+  /** When true, automatically decrypts the encrypted record data. */
+  encryption?: boolean;
 };
 
 /**
@@ -227,6 +235,9 @@ export type RecordsSubscribeRequest = {
 
   /** The handler to process the subscription events */
   subscriptionHandler: RecordsSubscriptionHandler;
+
+  /** When true, indicates encryption is active (decryption happens on subsequent reads). */
+  encryption?: boolean;
 };
 
 /** Encapsulates the response from a DWN RecordsSubscriptionRequest */
@@ -262,6 +273,9 @@ export type RecordsWriteRequest = {
    * signed, and returned but not persisted.
    */
   store?: boolean;
+
+  /** When true, automatically encrypts the record data using the protocol's encryption keys. */
+  encryption?: boolean;
 };
 
 /**
@@ -440,7 +454,8 @@ export class DwnApi {
           author        : this.connectedDid,
           messageParams : request.message,
           messageType   : DwnInterface.ProtocolsConfigure,
-          target        : this.connectedDid
+          target        : this.connectedDid,
+          encryption    : request.encryption,
         };
 
         if (this.delegateDid) {
@@ -650,7 +665,8 @@ export class DwnApi {
            * If `from` is provided, the query operation will be executed on a remote DWN.
            * Otherwise, the local DWN will be queried.
            */
-          target        : request.from || this.connectedDid
+          target        : request.from || this.connectedDid,
+          encryption    : request.encryption,
         };
 
         if (this.delegateDid) {
@@ -742,7 +758,8 @@ export class DwnApi {
            * If `from` is provided, the read operation will be executed on a remote DWN.
            * Otherwise, the read will occur on the local DWN.
            */
-          target        : request.from || this.connectedDid
+          target        : request.from || this.connectedDid,
+          encryption    : request.encryption,
         };
         if (this.delegateDid) {
           // if we don't find a delegated grant, we will attempt to read signing as the delegated DID
@@ -914,7 +931,8 @@ export class DwnApi {
           },
           author     : this.connectedDid,
           target     : this.connectedDid,
-          dataStream : dataBlob
+          dataStream : dataBlob,
+          encryption : request.encryption,
         };
 
         // if impersonation is enabled, fetch the delegated grant to use with the write operation

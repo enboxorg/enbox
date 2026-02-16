@@ -1,24 +1,33 @@
 import type { Readable } from '@enbox/common';
 import type {
   DwnConfig,
+  EncryptionInput,
   EncryptionKeyDeriver,
   GenericMessage,
   KeyDecrypter,
-  ProtocolDefinition } from '@enbox/dwn-sdk-js';
+  ProtocolDefinition,
+  RecordsQueryReply,
+  RecordsReadReply,
+  RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type { KeyIdentifier, PublicKeyJwk } from '@enbox/crypto';
 
 import { CryptoUtils } from '@enbox/crypto';
 import {
   Cid,
   DataStoreLevel,
+  DataStream,
   Dwn,
   DwnInterfaceName,
   DwnMethodName,
+  Encoder,
+  Encryption,
   EventEmitterStream,
   EventLogLevel,
   KeyDerivationScheme,
   Message,
   MessageStoreLevel,
+  Protocols,
+  Records,
   ResumableTaskStoreLevel
 } from '@enbox/dwn-sdk-js';
 import { DidDht, DidJwk, DidResolverCacheLevel, UniversalResolver } from '@enbox/dids';
@@ -194,6 +203,9 @@ export class AgentDwnApi {
       ? await this._dwn.processMessage(request.target, message, { dataStream: dataStream as any, subscriptionHandler })
       : { status: { code: 202, detail: 'Accepted' } };
 
+    // Auto-decrypt reply data if encryption is enabled (Component 7)
+    await this.maybeDecryptReply(request, reply);
+
     // Returns an object containing the reply from processing the message, the original message,
     // and the content identifier (CID) of the message.
     return {
@@ -244,6 +256,9 @@ export class AgentDwnApi {
       data,
       subscriptionHandler
     });
+
+    // Auto-decrypt reply data if encryption is enabled (Component 7)
+    await this.maybeDecryptReply(request, reply);
 
     // If the message CID was not given in the `request`, compute it.
     messageCid ??= await Message.getCid(message);
@@ -346,6 +361,115 @@ export class AgentDwnApi {
           // @ts-ignore
           messageParams.dataSize ??= isomorphicNodeReadable['bytesRead'];
         }
+      }
+    }
+
+    // Auto-inject encryption keys into protocol definition (Component 5)
+    if (isDwnRequest(request, DwnInterface.ProtocolsConfigure) && request.encryption && !rawMessage) {
+      const messageParams = request.messageParams!;
+      const keyDeriver = await this.getEncryptionKeyDeriver(request.author);
+
+      // SDK walks the protocol structure and calls our callback for each path.
+      // The KMS performs HKDF derivation + public key computation internally.
+      messageParams.definition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+        messageParams.definition,
+        keyDeriver,
+      );
+
+      // Invalidate cache for this protocol
+      this._protocolDefinitionCache.delete(
+        `${request.target}~${messageParams.definition.protocol}`
+      );
+    }
+
+    // Auto-encrypt data on RecordsWrite (Component 6)
+    if (isDwnRequest(request, DwnInterface.RecordsWrite) && request.encryption && !rawMessage) {
+      const messageParams = request.messageParams;
+      if (messageParams?.protocol && messageParams.protocolPath) {
+        // 1. Fetch the installed protocol definition (cached)
+        const protocolDefinition = await this.getProtocolDefinition(
+          request.target,
+          messageParams.protocol
+        );
+
+        if (!protocolDefinition) {
+          throw new Error(
+            `AgentDwnApi: Protocol '${messageParams.protocol}' is not installed ` +
+            `for '${request.target}'. Install the protocol before writing ` +
+            `encrypted records.`
+          );
+        }
+
+        // 2. Walk the protocol structure to find $encryption for this protocol path
+        const protocolPathSegments = messageParams.protocolPath.split('/');
+        let ruleSet: any = protocolDefinition.structure;
+        for (const segment of protocolPathSegments) {
+          ruleSet = ruleSet[segment];
+        }
+
+        if (!ruleSet?.$encryption) {
+          throw new Error(
+            `AgentDwnApi: Protocol '${messageParams.protocol}' at path ` +
+            `'${messageParams.protocolPath}' does not have encryption configured. ` +
+            `Configure the protocol with encryption: true.`
+          );
+        }
+
+        // 3. Generate random DEK and IV
+        const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
+        const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(16));
+
+        // 4. Get plaintext bytes (normalize from all supported input types)
+        let plaintextBytes: Uint8Array;
+        if (messageParams.data) {
+          plaintextBytes = messageParams.data instanceof Uint8Array
+            ? messageParams.data
+            : new TextEncoder().encode(String(messageParams.data));
+        } else if (request.dataStream instanceof Blob) {
+          plaintextBytes = new Uint8Array(await request.dataStream.arrayBuffer());
+        } else if (request.dataStream instanceof ReadableStream) {
+          const nodeReadable = webReadableToIsomorphicNodeReadable(request.dataStream);
+          plaintextBytes = await NodeStream.consumeToBytes({ readable: nodeReadable });
+        } else if (request.dataStream) {
+          plaintextBytes = await NodeStream.consumeToBytes({ readable: request.dataStream as Readable });
+        } else {
+          throw new Error('AgentDwnApi: Data must be provided for encrypted records.');
+        }
+
+        // 5. Encrypt data with AES-256-CTR
+        const plaintextStream = DataStream.fromBytes(plaintextBytes);
+        const encryptedStream = await Encryption.aes256CtrEncrypt(
+          dataEncryptionKey, dataEncryptionIV, plaintextStream
+        );
+        const encryptedBytes = await NodeStream.consumeToBytes({ readable: encryptedStream });
+
+        // 6. Replace plaintext with encrypted data.
+        // Compute dataCid/dataSize from the *encrypted* bytes so the descriptor
+        // references the ciphertext CID (what the DWN stores and verifies).
+        // Clear messageParams.data so the SDK sees dataCid (not both).
+        const encryptedCidStream = DataStream.fromBytes(encryptedBytes);
+        // @ts-ignore — dataCid is set dynamically above
+        messageParams.dataCid = await Cid.computeDagPbCidFromStream(encryptedCidStream);
+        // @ts-ignore — dataSize is set dynamically above
+        messageParams.dataSize = encryptedBytes.length;
+        delete messageParams.data;
+        // Provide the encrypted bytes as the dataStream for processMessage()
+        // so the DWN actually persists the data (avoids 204 No Content).
+        readableStream = DataStream.fromBytes(encryptedBytes);
+        request.dataStream = undefined;
+
+        // 7. Build EncryptionInput — only uses PUBLIC key from $encryption
+        const encryptionInput: EncryptionInput = {
+          initializationVector : dataEncryptionIV,
+          key                  : dataEncryptionKey,
+          keyEncryptionInputs  : [{
+            publicKeyId      : ruleSet.$encryption.rootKeyId,
+            publicKey        : ruleSet.$encryption.publicKeyJwk,
+            derivationScheme : KeyDerivationScheme.ProtocolPath,
+          }]
+        };
+
+        messageParams.encryptionInput = encryptionInput;
       }
     }
 
@@ -607,6 +731,72 @@ export class AgentDwnApi {
     const definition = reply.entries[0].descriptor.definition;
     this._protocolDefinitionCache.set(cacheKey, definition);
     return definition;
+  }
+
+  /**
+   * Post-processes a DWN reply, auto-decrypting data if encryption is enabled.
+   * Delegates to the SDK's Records.decrypt() with a KeyDecrypter callback —
+   * the SDK handles key matching, path construction, and AES decryption.
+   * The KMS handles HKDF + ECIES via the callback.
+   */
+  private async maybeDecryptReply<T extends DwnInterface>(
+    request: ProcessDwnRequest<T> | SendDwnRequest<T>,
+    reply: DwnMessageReply[T],
+  ): Promise<void> {
+    if (!('encryption' in request) || !request.encryption) {
+      return;
+    }
+
+    // Auto-decrypt RecordsRead replies
+    if (isDwnRequest(request as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsRead)) {
+      const readReply = reply as RecordsReadReply;
+      if (readReply.status.code === 200
+          && readReply.entry?.recordsWrite?.encryption
+          && readReply.entry?.data) {
+        const keyDecrypter = await this.getKeyDecrypter(request.author);
+
+        try {
+          readReply.entry.data = await Records.decrypt(
+            readReply.entry.recordsWrite,
+            keyDecrypter,
+            readReply.entry.data,
+          );
+        } catch (error: any) {
+          throw new Error(
+            `AgentDwnApi: Failed to decrypt record ` +
+            `'${readReply.entry.recordsWrite.recordId}'. ` +
+            `Original error: ${error.message}`
+          );
+        }
+      }
+    }
+
+    // Auto-decrypt RecordsQuery replies (small records inline as encodedData)
+    if (isDwnRequest(request as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsQuery)) {
+      const queryReply = reply as RecordsQueryReply;
+      if (queryReply.status.code === 200 && queryReply.entries) {
+        const keyDecrypter = await this.getKeyDecrypter(request.author);
+
+        for (const entry of queryReply.entries) {
+          if (entry.encryption && entry.encodedData) {
+            try {
+              const cipherBytes = Encoder.base64UrlToBytes(entry.encodedData);
+              const cipherStream = DataStream.fromBytes(cipherBytes);
+              const plainStream = await Records.decrypt(
+                entry as RecordsWriteMessage, keyDecrypter, cipherStream,
+              );
+              const plainBytes = await NodeStream.consumeToBytes({ readable: plainStream });
+              entry.encodedData = Encoder.bytesToBase64Url(plainBytes);
+            } catch (error: any) {
+              throw new Error(
+                `AgentDwnApi: Failed to decrypt record ` +
+                `'${entry.recordId}'. Original error: ${error.message}`
+              );
+            }
+          }
+        }
+      }
+    }
   }
 
   /**
