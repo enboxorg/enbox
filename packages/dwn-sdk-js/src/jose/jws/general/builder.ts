@@ -1,5 +1,5 @@
 import type { GeneralJws } from '../../../types/jws-types.js';
-import type { Signer } from '../../../types/signer.js';
+import type { MessageSigner } from '../../../types/signer.js';
 
 import { Encoder } from '../../../utils/encoder.js';
 
@@ -10,7 +10,7 @@ export class GeneralJwsBuilder {
     this.jws = jws;
   }
 
-  static async create(payload: Uint8Array, signers: Signer[] = []): Promise<GeneralJwsBuilder> {
+  static async create(payload: Uint8Array, signers: MessageSigner[] = []): Promise<GeneralJwsBuilder> {
     const jws: GeneralJws = {
       payload    : Encoder.bytesToBase64Url(payload),
       signatures : []
@@ -25,7 +25,7 @@ export class GeneralJwsBuilder {
     return builder;
   }
 
-  async addSignature(signer: Signer): Promise<void> {
+  async addSignature(signer: MessageSigner): Promise<void> {
     const protectedHeader = {
       kid : signer.keyId,
       alg : signer.algorithm

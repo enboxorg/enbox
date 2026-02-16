@@ -1,9 +1,9 @@
 import type { GeneralJws } from '../types/jws-types.js';
 import type { KeyValues } from '../types/query-types.js';
 import type { MessageInterface } from '../types/message-interface.js';
+import type { MessageSigner } from '../types/signer.js';
 import type { MessageStore } from '../types/message-store.js';
-import type { PublicJwk } from '../types/jose-types.js';
-import type { Signer } from '../types/signer.js';
+import type { PublicKeyJwk } from '../types/jose-types.js';
 import type {
   DataEncodedRecordsWriteMessage,
   EncryptedKey,
@@ -62,14 +62,14 @@ export type RecordsWriteOptions = {
   /**
    * The signer of the message, which is commonly the author, but can also be a delegate.
    */
-  signer?: Signer;
+  signer?: MessageSigner;
 
   /**
    * The delegated grant invoked to sign on behalf of the logical author, which is the grantor of the delegated grant.
    */
   delegatedGrant?: DataEncodedRecordsWriteMessage;
 
-  attestationSigners?: Signer[];
+  attestationSigners?: MessageSigner[];
   encryptionInput?: EncryptionInput;
   permissionGrantId?: string;
 };
@@ -118,7 +118,7 @@ export type KeyEncryptionInput = {
   /**
    * Public key to be used to encrypt the symmetric key.
    */
-  publicKey: PublicJwk;
+  publicKey: PublicKeyJwk;
 
   /**
    * Algorithm used for encrypting the symmetric key. Uses {EncryptionAlgorithm.EciesSecp256k1} if not given.
@@ -144,14 +144,14 @@ export type CreateFromOptions = {
   /**
    * The signer of the message, which is commonly the author, but can also be a delegate.
    */
-  signer?: Signer;
+  signer?: MessageSigner;
 
   /**
    * The delegated grant to sign on behalf of the logical author, which is the grantor (`grantedBy`) of the delegated grant.
    */
   delegatedGrant?: DataEncodedRecordsWriteMessage;
 
-  attestationSigners?: Signer[];
+  attestationSigners?: MessageSigner[];
   encryptionInput?: EncryptionInput;
   protocolRole?: string;
 };
@@ -491,7 +491,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
    * Signs the RecordsWrite, the signer is commonly the author, but can also be a delegate.
    */
   public async sign(options: {
-    signer: Signer,
+    signer: MessageSigner,
     delegatedGrant?: DataEncodedRecordsWriteMessage,
     permissionGrantId?: string,
     protocolRole?: string
@@ -555,7 +555,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
    * This is used when the DWN owner wants to retain a copy of a message that the owner did not author.
    * NOTE: requires the `RecordsWrite` to already have the author's signature.
    */
-  public async signAsOwner(signer: Signer): Promise<void> {
+  public async signAsOwner(signer: MessageSigner): Promise<void> {
     if (this._author === undefined) {
       throw new DwnError(
         DwnErrorCode.RecordsWriteSignAsOwnerUnknownAuthor,
@@ -577,7 +577,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
    * This is used when a DWN owner-delegate wants to retain a copy of a message that the owner did not author.
    * NOTE: requires the `RecordsWrite` to already have the author's signature.
    */
-  public async signAsOwnerDelegate(signer: Signer, delegatedGrant: DataEncodedRecordsWriteMessage): Promise<void> {
+  public async signAsOwnerDelegate(signer: MessageSigner, delegatedGrant: DataEncodedRecordsWriteMessage): Promise<void> {
     if (this._author === undefined) {
       throw new DwnError(
         DwnErrorCode.RecordsWriteSignAsOwnerDelegateUnknownAuthor,
@@ -907,7 +907,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
   /**
    * Creates the `attestation` property of a RecordsWrite message if given signature inputs; returns `undefined` otherwise.
    */
-  public static async createAttestation(descriptorCid: string, signers?: Signer[]): Promise<GeneralJws | undefined> {
+  public static async createAttestation(descriptorCid: string, signers?: MessageSigner[]): Promise<GeneralJws | undefined> {
     if (signers === undefined || signers.length === 0) {
       return undefined;
     }
@@ -928,7 +928,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     descriptorCid: string,
     attestation: GeneralJws | undefined,
     encryption: EncryptionProperty | undefined,
-    signer: Signer,
+    signer: MessageSigner,
     delegatedGrantId?: string,
     permissionGrantId?: string,
     protocolRole?: string

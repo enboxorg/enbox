@@ -1,5 +1,5 @@
+import type { MessageSigner } from '../types/signer.js';
 import type { MessageStore } from '../types/message-store.js';
-import type { Signer } from '../types/signer.js';
 import type { DataEncodedRecordsWriteMessage, RecordsFilter, RecordsSubscribeDescriptor, RecordsSubscribeMessage } from '../types/records-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
@@ -16,7 +16,7 @@ import { validateProtocolUrlNormalized, validateSchemaUrlNormalized } from '../u
 export type RecordsSubscribeOptions = {
   messageTimestamp?: string;
   filter: RecordsFilter;
-  signer?: Signer;
+  signer?: MessageSigner;
   protocolRole?: string;
 
   /**

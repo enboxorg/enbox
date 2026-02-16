@@ -1,5 +1,5 @@
 import type { MessagesFilter } from '../types/messages-types.js';
-import type { Signer } from '../types/signer.js';
+import type { MessageSigner } from '../types/signer.js';
 import type { MessagesSubscribeDescriptor, MessagesSubscribeMessage } from '../types/messages-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
@@ -11,7 +11,7 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 
 
 export type MessagesSubscribeOptions = {
-  signer: Signer;
+  signer: MessageSigner;
   messageTimestamp?: string;
   filters?: MessagesFilter[]
   permissionGrantId?: string;

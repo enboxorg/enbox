@@ -1,6 +1,6 @@
 import type { DataEncodedRecordsWriteMessage } from '../types/records-types.js';
 import type { GeneralJws } from '../types/jws-types.js';
-import type { Signer } from '../types/signer.js';
+import type { MessageSigner } from '../types/signer.js';
 import type { AuthorizationModel, Descriptor, GenericMessage, GenericSignaturePayload } from '../types/message-types.js';
 
 import { Cid } from '../utils/cid.js';
@@ -97,7 +97,7 @@ export class Message {
    */
   public static async createAuthorization(input: {
     descriptor: Descriptor,
-    signer: Signer,
+    signer: MessageSigner,
     delegatedGrant?: DataEncodedRecordsWriteMessage,
     permissionGrantId?: string,
     protocolRole?: string
@@ -128,7 +128,7 @@ export class Message {
    */
   public static async createSignature(
     descriptor: Descriptor,
-    signer: Signer,
+    signer: MessageSigner,
     additionalPayloadProperties?: { delegatedGrantId?: string, permissionGrantId?: string, protocolRole?: string }
   ): Promise<GeneralJws> {
     const descriptorCid = await Cid.computeCid(descriptor);

@@ -1,4 +1,5 @@
-import type { PrivateJwk, PublicJwk } from '../types/jose-types.js';
+import type { JwkParamsEcPublic } from '@enbox/crypto';
+import type { PrivateKeyJwk, PublicKeyJwk } from '../types/jose-types.js';
 
 import { p256, secp256r1 } from '@noble/curves/p256';
 
@@ -17,7 +18,7 @@ export class Secp256r1 {
    * Validates the given JWK is a SECP256R1 key.
    * @throws {Error} if fails validation.
    */
-  public static validateKey(jwk: PrivateJwk | PublicJwk): void {
+  public static validateKey(jwk: PrivateKeyJwk | PublicKeyJwk): void {
     if (jwk.kty !== 'EC' || jwk.crv !== 'P-256') {
       throw new DwnError(
         DwnErrorCode.Secp256r1KeyNotValid,
@@ -31,7 +32,7 @@ export class Secp256r1 {
    */
   public static async publicKeyToJwk(
     publicKeyBytes: Uint8Array
-  ): Promise<PublicJwk> {
+  ): Promise<PublicKeyJwk> {
     // ensure public key is in uncompressed format so we can convert it into both x and y value
     let uncompressedPublicKeyBytes;
     if (publicKeyBytes.byteLength === 33) {
@@ -54,7 +55,7 @@ export class Secp256r1 {
       uncompressedPublicKeyBytes.subarray(33, 65)
     );
 
-    const publicJwk: PublicJwk = {
+    const publicJwk: PublicKeyJwk = {
       alg : 'ES256',
       kty : 'EC',
       crv : 'P-256',
@@ -68,7 +69,7 @@ export class Secp256r1 {
   /**
    * Creates a private key in raw bytes from the given SECP256R1 JWK.
    */
-  public static privateJwkToBytes(privateJwk: PrivateJwk): Uint8Array {
+  public static privateJwkToBytes(privateJwk: PrivateKeyJwk): Uint8Array {
     const privateKey = Encoder.base64UrlToBytes(privateJwk.d);
     return privateKey;
   }
@@ -79,7 +80,7 @@ export class Secp256r1 {
    */
   public static async sign(
     content: Uint8Array,
-    privateJwk: PrivateJwk
+    privateJwk: PrivateKeyJwk
   ): Promise<Uint8Array> {
     Secp256r1.validateKey(privateJwk);
 
@@ -99,7 +100,7 @@ export class Secp256r1 {
   public static async verify(
     content: Uint8Array,
     signature: Uint8Array,
-    publicJwk: PublicJwk
+    publicJwk: PublicKeyJwk
   ): Promise<boolean> {
     Secp256r1.validateKey(publicJwk);
 
@@ -111,9 +112,10 @@ export class Secp256r1 {
       sig = p256.Signature.fromDER(signature);
     }
     const hashedContent = await sha256.encode(content);
+    const ecJwk = publicJwk as JwkParamsEcPublic;
     const keyBytes = p256.ProjectivePoint.fromAffine({
-      x : Secp256r1.bytesToBigInt(Encoder.base64UrlToBytes(publicJwk.x)),
-      y : Secp256r1.bytesToBigInt(Encoder.base64UrlToBytes(publicJwk.y!)),
+      x : Secp256r1.bytesToBigInt(Encoder.base64UrlToBytes(ecJwk.x)),
+      y : Secp256r1.bytesToBigInt(Encoder.base64UrlToBytes(ecJwk.y!)),
     }).toRawBytes(false);
 
     return p256.verify(sig, hashedContent, keyBytes);
@@ -123,15 +125,15 @@ export class Secp256r1 {
    * Generates a random key pair in JWK format.
    */
   public static async generateKeyPair(): Promise<{
-    publicJwk: PublicJwk;
-    privateJwk: PrivateJwk;
+    publicJwk: PublicKeyJwk;
+    privateJwk: PrivateKeyJwk;
   }> {
     const privateKeyBytes = p256.utils.randomPrivateKey();
     const publicKeyBytes = secp256r1.getPublicKey(privateKeyBytes, false); // `false` = uncompressed
 
     const d = Encoder.bytesToBase64Url(privateKeyBytes);
-    const publicJwk: PublicJwk = await Secp256r1.publicKeyToJwk(publicKeyBytes);
-    const privateJwk: PrivateJwk = { ...publicJwk, d };
+    const publicJwk: PublicKeyJwk = await Secp256r1.publicKeyToJwk(publicKeyBytes);
+    const privateJwk: PrivateKeyJwk = { ...publicJwk, d };
 
     return { publicJwk, privateJwk };
   }

@@ -1,5 +1,5 @@
 import type { EncryptionKeyDeriver, KeyDecrypter } from '../../src/types/encryption-types.js';
-import type { PrivateJwk, PublicJwk } from '../../src/types/jose-types.js';
+import type { PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js';
 
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Encoder } from '../../src/utils/encoder.js';
@@ -12,7 +12,7 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { HdKey, KeyDerivationScheme } from '../../src/utils/hd-key.js';
 
 describe('Encryption Callback Interfaces', () => {
-  let privateJwk: PrivateJwk;
+  let privateJwk: PrivateKeyJwk;
   let rootKeyId: string;
 
   beforeEach(async () => {
@@ -54,7 +54,7 @@ describe('Encryption Callback Interfaces', () => {
       const keyDeriver: EncryptionKeyDeriver = {
         rootKeyId,
         derivationScheme : KeyDerivationScheme.ProtocolPath,
-        derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicJwk> => {
+        derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicKeyJwk> => {
           const privateKeyBytes = Secp256k1.privateJwkToBytes(privateJwk);
           const derivedPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(
             privateKeyBytes, fullDerivationPath
@@ -115,7 +115,7 @@ describe('Encryption Callback Interfaces', () => {
       const keyDeriver: EncryptionKeyDeriver = {
         rootKeyId,
         derivationScheme : KeyDerivationScheme.ProtocolPath,
-        derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicJwk> => {
+        derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicKeyJwk> => {
           calledPaths.push([...fullDerivationPath]);
           const privateKeyBytes = Secp256k1.privateJwkToBytes(privateJwk);
           const derivedPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(

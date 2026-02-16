@@ -1,4 +1,4 @@
-import type { PublicJwk } from './jose-types.js';
+import type { PublicKeyJwk } from './jose-types.js';
 import type { AuthorizationModel, GenericMessage, GenericMessageReply } from './message-types.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
@@ -112,7 +112,7 @@ export type ProtocolPathEncryption = {
   /**
    * Public key for encrypting the symmetric key used for data encryption.
    */
-  publicKeyJwk: PublicJwk;
+  publicKeyJwk: PublicKeyJwk;
 };
 
 export type ProtocolRuleSet = {

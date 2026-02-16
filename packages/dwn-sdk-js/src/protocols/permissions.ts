@@ -1,7 +1,7 @@
 import type { GenericMessage } from '../types/message-types.js';
+import type { MessageSigner } from '../types/signer.js';
 import type { MessageStore } from '../types/message-store.js';
 import type { ProtocolDefinition } from '../types/protocols-types.js';
-import type { Signer } from '../types/signer.js';
 import type { DataEncodedRecordsWriteMessage, RecordsWriteMessage } from '../types/records-types.js';
 import type { PermissionConditions, PermissionGrantData, PermissionRequestData, PermissionRevocationData, PermissionScope, RecordsPermissionScope } from '../types/permission-types.js';
 
@@ -22,7 +22,7 @@ export type PermissionRequestCreateOptions = {
   /**
    * The signer of the request.
    */
-  signer?: Signer;
+  signer?: MessageSigner;
 
   dateRequested?: string;
 
@@ -41,7 +41,7 @@ export type PermissionGrantCreateOptions = {
   /**
    * The signer of the grant.
    */
-  signer?: Signer;
+  signer?: MessageSigner;
   grantedTo: string;
   dateGranted?: string;
 
@@ -65,7 +65,7 @@ export type PermissionRevocationCreateOptions = {
   /**
    * The signer of the grant.
    */
-  signer?: Signer;
+  signer?: MessageSigner;
   /**
    * The PermissionGrant this revocation is for.
    */

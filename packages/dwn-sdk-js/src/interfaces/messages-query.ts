@@ -1,5 +1,5 @@
+import type { MessageSigner } from '../types/signer.js';
 import type { PaginationCursor } from '../types/query-types.js';
-import type { Signer } from '../types/signer.js';
 import type { MessagesFilter, MessagesQueryDescriptor, MessagesQueryMessage } from '../types/messages-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
@@ -11,7 +11,7 @@ import { validateProtocolUrlNormalized } from '../utils/url.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 export type MessagesQueryOptions = {
-  signer: Signer;
+  signer: MessageSigner;
   filters?: MessagesFilter[];
   cursor?: PaginationCursor;
   messageTimestamp?: string;

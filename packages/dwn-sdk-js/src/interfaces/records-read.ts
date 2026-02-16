@@ -1,5 +1,5 @@
+import type { MessageSigner } from '../types/signer.js';
 import type { MessageStore } from '../types//message-store.js';
-import type { Signer } from '../types/signer.js';
 import type { DataEncodedRecordsWriteMessage, RecordsFilter , RecordsReadDescriptor, RecordsReadMessage, RecordsWriteMessage } from '../types/records-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
@@ -14,7 +14,7 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 export type RecordsReadOptions = {
   filter: RecordsFilter;
   messageTimestamp?: string;
-  signer?: Signer;
+  signer?: MessageSigner;
   permissionGrantId?: string;
   /**
    * Used when authorizing protocol records.

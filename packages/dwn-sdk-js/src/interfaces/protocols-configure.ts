@@ -1,6 +1,6 @@
 import type { DataEncodedRecordsWriteMessage } from '../types/records-types.js';
+import type { MessageSigner } from '../types/signer.js';
 import type { MessageStore } from '../types/message-store.js';
-import type { Signer } from '../types/signer.js';
 import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureDescriptor, ProtocolsConfigureMessage } from '../types/protocols-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
@@ -17,7 +17,7 @@ import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
 export type ProtocolsConfigureOptions = {
   messageTimestamp?: string;
   definition: ProtocolDefinition;
-  signer: Signer;
+  signer: MessageSigner;
   /**
    * The delegated grant invoked to sign on behalf of the logical author, which is the grantor of the delegated grant.
    */

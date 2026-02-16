@@ -1,8 +1,8 @@
-import type { PrivateJwk } from '../types/jose-types.js';
-import type { Signer } from '../types/signer.js';
+import type { MessageSigner } from '../types/signer.js';
+import type { PrivateKeyJwk } from '../types/jose-types.js';
 
-import { signatureAlgorithms } from '../jose/algorithms/signing/signature-algorithms.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
+import { signatureAlgorithms, type SupportedCurve } from '../jose/algorithms/signing/signature-algorithms.js';
 
 /**
  * Input to `PrivateKeySigner` constructor.
@@ -11,7 +11,7 @@ export type PrivateKeySignerOptions = {
   /**
    * Private JWK to create the signer from.
    */
-  privateJwk: PrivateJwk;
+  privateJwk: PrivateKeyJwk;
 
   /**
    * If not specified, the constructor will attempt to default/fall back to the `kid` value in the given `privateJwk`.
@@ -27,10 +27,10 @@ export type PrivateKeySignerOptions = {
 /**
  * A signer that signs using a private key.
  */
-export class PrivateKeySigner implements Signer {
+export class PrivateKeySigner implements MessageSigner {
   public keyId;
   public algorithm;
-  private privateJwk: PrivateJwk;
+  private privateJwk: PrivateKeyJwk;
   private signatureAlgorithm;
 
   public constructor(options: PrivateKeySignerOptions) {
@@ -52,7 +52,7 @@ export class PrivateKeySigner implements Signer {
     this.keyId = options.keyId ?? options.privateJwk.kid!;
     this.algorithm = options.algorithm ?? options.privateJwk.alg!;
     this.privateJwk = options.privateJwk;
-    this.signatureAlgorithm = signatureAlgorithms[options.privateJwk.crv];
+    this.signatureAlgorithm = signatureAlgorithms[options.privateJwk.crv as SupportedCurve];
 
     if (!this.signatureAlgorithm) {
       throw new DwnError(

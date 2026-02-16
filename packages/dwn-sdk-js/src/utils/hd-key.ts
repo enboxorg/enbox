@@ -1,4 +1,4 @@
-import type { PrivateJwk, PublicJwk } from '../types/jose-types.js';
+import type { PrivateKeyJwk, PublicKeyJwk } from '../types/jose-types.js';
 
 import { Encoder } from './encoder.js';
 import { getWebcryptoSubtle } from '@noble/ciphers/webcrypto';
@@ -23,7 +23,7 @@ export type DerivedPrivateJwk = {
   rootKeyId: string,
   derivationScheme: KeyDerivationScheme;
   derivationPath?: string[];
-  derivedPrivateKey: PrivateJwk,
+  derivedPrivateKey: PrivateKeyJwk,
 };
 
 /**
@@ -38,12 +38,12 @@ export class HdKey {
     const ancestorPrivateKey = Secp256k1.privateJwkToBytes(ancestorKey.derivedPrivateKey);
     const ancestorPrivateKeyDerivationPath = ancestorKey.derivationPath ?? [];
     const derivedPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(ancestorPrivateKey, subDerivationPath);
-    const derivedPrivateJwk = await Secp256k1.privateKeyToJwk(derivedPrivateKeyBytes);
+    const derivedPrivateKeyJwk = await Secp256k1.privateKeyToJwk(derivedPrivateKeyBytes);
     const derivedDescendantPrivateKey: DerivedPrivateJwk = {
       rootKeyId         : ancestorKey.rootKeyId,
       derivationScheme  : ancestorKey.derivationScheme,
       derivationPath    : [...ancestorPrivateKeyDerivationPath, ...subDerivationPath],
-      derivedPrivateKey : derivedPrivateJwk
+      derivedPrivateKey : derivedPrivateKeyJwk
     };
 
     return derivedDescendantPrivateKey;
@@ -53,7 +53,7 @@ export class HdKey {
    * Derives a descendant public key from an ancestor private key.
    * NOTE: currently only supports SECP256K1 keys.
    */
-  public static async derivePublicKey(ancestorKey: DerivedPrivateJwk, subDerivationPath: string[]): Promise<PublicJwk> {
+  public static async derivePublicKey(ancestorKey: DerivedPrivateJwk, subDerivationPath: string[]): Promise<PublicKeyJwk> {
     const derivedDescendantPrivateKey = await HdKey.derivePrivateKey(ancestorKey, subDerivationPath);
     const derivedDescendantPublicKey = await Secp256k1.getPublicJwk(derivedDescendantPrivateKey.derivedPrivateKey);
 

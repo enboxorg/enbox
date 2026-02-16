@@ -257,10 +257,10 @@ export type DwnMessageWithData<T extends DwnInterface> = {
 
 export {
   DwnConstant,
-  Signer as DwnSigner,
+  MessageSigner as DwnSigner,
   DateSort as DwnDateSort,
   DataEncodedRecordsWriteMessage as DwnDataEncodedRecordsWriteMessage,
-  PublicJwk as DwnPublicKeyJwk, // TODO: Remove once DWN SDK switches to Jwk from @enbox/crypto
+  PublicKeyJwk as DwnPublicKeyJwk,
   PaginationCursor as DwnPaginationCursor,
   MessageSubscriptionHandler as DwnMessageSubscriptionHandler,
   RecordSubscriptionHandler as DwnRecordSubscriptionHandler,
