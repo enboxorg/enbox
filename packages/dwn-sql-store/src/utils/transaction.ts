@@ -1,5 +1,5 @@
-import { DwnDatabaseType } from '../types.js';
-import { Kysely, Transaction } from 'kysely';
+import type { DwnDatabaseType } from '../types.js';
+import type { Kysely, Transaction } from 'kysely';
 
 /**
  * Executes the provided transactional operation with retry if the database is locked.

@@ -1,9 +1,10 @@
+import type { JsonRpcSocketOptions } from './json-rpc-socket.js';
 import type { DwnRpc, DwnRpcRequest, DwnRpcResponse, DwnSubscriptionHandler } from './dwn-rpc-types.js';
 import type { GenericMessage, MessageSubscription, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
 import { CryptoUtils } from '@enbox/crypto';
+import { JsonRpcSocket } from './json-rpc-socket.js';
 import { createJsonRpcRequest, createJsonRpcSubscriptionRequest } from './json-rpc.js';
-import { JsonRpcSocket, JsonRpcSocketOptions } from './json-rpc-socket.js';
 
 interface SocketConnection {
   socket: JsonRpcSocket;
@@ -11,7 +12,7 @@ interface SocketConnection {
 }
 
 export class WebSocketDwnRpcClient implements DwnRpc {
-  public get transportProtocols() { return ['ws:', 'wss:']; }
+  public get transportProtocols(): string[] { return ['ws:', 'wss:']; }
   // a map of dwn host to WebSocket connection
   private static connections = new Map<string, SocketConnection>();
 
@@ -30,7 +31,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         const socket = await JsonRpcSocket.connect(url.toString(), jsonRpcSocketOptions);
         const subscriptions = new Map();
         WebSocketDwnRpcClient.connections.set(url.host, { socket, subscriptions });
-      } catch(error) {
+      } catch (error) {
         throw new Error(`Error connecting to ${url.host}: ${(error as Error).message}`);
       }
     }
@@ -60,7 +61,9 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     return result.reply as DwnRpcResponse;
   }
 
-  private static async subscriptionRequest(connection: SocketConnection, target:string, message: GenericMessage, messageHandler: DwnSubscriptionHandler): Promise<DwnRpcResponse> {
+  private static async subscriptionRequest(
+    connection: SocketConnection, target:string, message: GenericMessage, messageHandler: DwnSubscriptionHandler
+  ): Promise<DwnRpcResponse> {
     const requestId = CryptoUtils.randomUuid();
     const subscriptionId = CryptoUtils.randomUuid();
     const request = createJsonRpcSubscriptionRequest(requestId, 'dwn.processMessage', subscriptionId, { target, message });

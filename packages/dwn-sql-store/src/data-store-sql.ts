@@ -1,8 +1,10 @@
-import { DataStore, DataStream, DataStoreGetResult, DataStorePutResult } from '@enbox/dwn-sdk-js';
+import type { Dialect } from './dialect/dialect.js';
+import type { DwnDatabaseType } from './types.js';
+import type { DataStore, DataStoreGetResult, DataStorePutResult } from '@enbox/dwn-sdk-js';
+
+import { DataStream } from '@enbox/dwn-sdk-js';
 import { Kysely } from 'kysely';
 import { Readable } from 'readable-stream';
-import { DwnDatabaseType } from './types.js';
-import { Dialect } from './dialect/dialect.js';
 
 export class DataStoreSql implements DataStore {
   #dialect: Dialect;
@@ -81,7 +83,7 @@ export class DataStoreSql implements DataStore {
     return {
       dataSize   : result.data.length,
       dataStream : new Readable({
-        read() {
+        read(): void {
           this.push(Buffer.from(result.data));
           this.push(null);
         }

@@ -1,16 +1,16 @@
-import { expect } from 'chai';
-import { DidJwk } from '@enbox/dids';
 import { Convert } from '@enbox/common';
+import { DidJwk } from '@enbox/dids';
+import { expect } from 'chai';
 
-import type { AgentDataStore, DwnDataStore } from '../src/store-data.js';
 import type { IdentityMetadata } from '../src/types/identity.js';
+import type { AgentDataStore, DwnDataStore } from '../src/store-data.js';
 
-import { TestAgent } from './utils/test-agent.js';
-import { DwnInterface } from '../src/types/dwn.js';
 import { AgentIdentityApi } from '../src/identity-api.js';
-import { PlatformAgentTestHarness } from '../src/test-harness.js';
-import { DwnIdentityStore, InMemoryIdentityStore } from '../src/store-identity.js';
+import { DwnInterface } from '../src/types/dwn.js';
 import { IdentityProtocolDefinition } from '../src/store-data-protocols.js';
+import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { TestAgent } from './utils/test-agent.js';
+import { DwnIdentityStore, InMemoryIdentityStore } from '../src/store-identity.js';
 
 describe('IdentityStore', () => {
   let testHarness: PlatformAgentTestHarness;
@@ -79,7 +79,7 @@ describe('IdentityStore', () => {
 
         it('should return false if Identity does not exist', async () => {
           // Test deleting a non-existent Identity using the context of the only DID with keys.
-          const deleteResult = await identityStore.delete({ id: 'non-existent',  agent: testHarness.agent });
+          const deleteResult = await identityStore.delete({ id: 'non-existent', agent: testHarness.agent });
 
           // Validate that a delete could not be carried out.
           expect(deleteResult).to.be.false;
@@ -88,7 +88,7 @@ describe('IdentityStore', () => {
         it('throws an error if no keys exist for specified DID', async function() {
           // Skip this test for InMemoryIdentityStore, as checking for keys to sign DWN messages is not
           // relevant given that the store is in-memory.
-          if (IdentityStore.name === 'InMemoryIdentityStore') this.skip();
+          if (IdentityStore.name === 'InMemoryIdentityStore') {this.skip();}
 
           try {
             await identityStore.delete({
@@ -133,7 +133,7 @@ describe('IdentityStore', () => {
         it('throws an error if no keys exist for specified DID', async function() {
           // Skip this test for InMemoryIdentityStore, as checking for keys to sign DWN messages is not
           // relevant given that the store is in-memory.
-          if (IdentityStore.name === 'InMemoryIdentityStore') this.skip();
+          if (IdentityStore.name === 'InMemoryIdentityStore') {this.skip();}
 
           try {
             await identityStore.get({
@@ -197,7 +197,7 @@ describe('IdentityStore', () => {
         it('throws an error if the Identity records exceed the DWN maximum data size for query results', async function() {
           // Skip this test for InMemoryIdentityStore, as the in-memory store returns all records
           // regardless of the size of the data.
-          if (IdentityStore.name === 'InMemoryIdentityStore') this.skip();
+          if (IdentityStore.name === 'InMemoryIdentityStore') {this.skip();}
 
           // since we are writing directly to the dwn we first initialize the storage protocol
           await (identityStore as DwnDataStore<IdentityMetadata>)['initialize']({ agent: testHarness.agent });

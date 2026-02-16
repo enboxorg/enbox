@@ -1,7 +1,7 @@
 import {
+  Jws,
   RecordsRead,
   RecordsWrite,
-  Jws,
   TestDataGenerator,
 } from '@enbox/dwn-sdk-js';
 
@@ -19,9 +19,9 @@ describe('http-api', () => {
     const recordsWrite = (
       await RecordsWrite.create({
         data,
-        dataFormat: 'text/plalin',
-        published: true,
-        signer: Jws.createSigner(alice),
+        dataFormat : 'text/plalin',
+        published  : true,
+        signer     : Jws.createSigner(alice),
       })
     ).toJSON();
     const recordsRead = (
@@ -35,13 +35,13 @@ describe('http-api', () => {
 
     // Records Write
     const recordsWriteResponse = await fetch('http://dwn.localhost', {
-      method: 'POST',
-      headers: {
+      method  : 'POST',
+      headers : {
         'dwn-request': JSON.stringify({
-          method: 'dwn.processMessage',
-          params: {
-            target: alice.did,
-            message: recordsWrite,
+          method : 'dwn.processMessage',
+          params : {
+            target  : alice.did,
+            message : recordsWrite,
           },
         }),
       },
@@ -53,13 +53,13 @@ describe('http-api', () => {
 
     // Records Read
     const recordsReadResponse = await fetch('http://dwn.localhost', {
-      method: 'POST',
-      headers: {
+      method  : 'POST',
+      headers : {
         'dwn-request': JSON.stringify({
-          method: 'dwn.processMessage',
-          params: {
-            target: alice.did,
-            message: recordsRead,
+          method : 'dwn.processMessage',
+          params : {
+            target  : alice.did,
+            message : recordsRead,
           },
         }),
       },

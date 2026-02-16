@@ -31,7 +31,7 @@ export class LevelStore<K = string, V = any> implements KeyValueStore<K, V> {
       return await this.store.get(key);
     } catch (error: any) {
       // Don't throw when a key wasn't found.
-      if (error.notFound) return undefined;
+      if (error.notFound) {return undefined;}
       throw error;
     }
   }

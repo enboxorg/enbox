@@ -3,12 +3,12 @@ import type { Persona } from '@enbox/dwn-sdk-js';
 import type { Readable } from 'readable-stream';
 
 import chaiAsPromised from 'chai-as-promised';
-import chai, { expect } from 'chai';
-import { createJsonRpcRequest } from '../src/lib/json-rpc.js';
-import { getFileAsReadStream } from './utils.js';
 import { v4 as uuidv4 } from 'uuid';
 import { webcrypto } from 'node:crypto';
+import chai, { expect } from 'chai';
 
+import { createJsonRpcRequest } from '../src/lib/json-rpc.js';
+import { getFileAsReadStream } from './utils.js';
 import { Cid, DwnConstant, Jws, ProtocolsConfigure, RecordsRead, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 // node.js 18 and earlier needs globalThis.crypto polyfill
@@ -32,9 +32,9 @@ export default class CommonScenarioValidator {
 
     // install minimal protocol on Alice's DWN
     const protocolDefinition = {
-      protocol: 'http://minimal.xyz',
-      published: false,
-      types: {
+      protocol  : 'http://minimal.xyz',
+      published : false,
+      types     : {
         foo: {}
       },
       structure: {
@@ -43,18 +43,18 @@ export default class CommonScenarioValidator {
     };
 
     const protocolsConfig = await ProtocolsConfigure.create({
-      signer: aliceSigner,
-      definition: protocolDefinition
+      signer     : aliceSigner,
+      definition : protocolDefinition
     });
 
     const protocolConfigureRequestId = uuidv4();
     const protocolConfigureRequest = createJsonRpcRequest(protocolConfigureRequestId, 'dwn.processMessage', {
-      target: alice.did,
-      message: protocolsConfig.message,
+      target  : alice.did,
+      message : protocolsConfig.message,
     });
     const protocolConfigureResponse = await fetch(dwnUrl, {
-      method: 'POST',
-      headers: {
+      method  : 'POST',
+      headers : {
         'dwn-request': JSON.stringify(protocolConfigureRequest),
       }
     });
@@ -73,20 +73,20 @@ export default class CommonScenarioValidator {
     expect(dataSize).to.be.greaterThan(DwnConstant.maxDataSizeAllowedToBeEncoded);
 
     const recordsWrite = await RecordsWrite.create({
-      signer: aliceSigner,
-      dataFormat: 'image/jpeg',
+      signer     : aliceSigner,
+      dataFormat : 'image/jpeg',
       dataCid,
       dataSize
     });
 
     const recordsWriteRequestId = uuidv4();
     const recordsWriteRequest = createJsonRpcRequest(recordsWriteRequestId, 'dwn.processMessage', {
-      target: alice.did,
-      message: recordsWrite.message,
+      target  : alice.did,
+      message : recordsWrite.message,
     });
     const recordsWriteResponse = await fetch(dwnUrl, {
-      method: 'POST',
-      headers: {
+      method  : 'POST',
+      headers : {
         'dwn-request': JSON.stringify(recordsWriteRequest),
       },
       body: stream as any
@@ -98,21 +98,21 @@ export default class CommonScenarioValidator {
 
     // Alice reading the file back out.
     const recordsRead = await RecordsRead.create({
-      signer: aliceSigner,
-      filter: {
+      signer : aliceSigner,
+      filter : {
         recordId: recordsWrite.message.recordId,
       },
     });
 
     const recordsReadRequestId = uuidv4();
     const recordsReadRequest = createJsonRpcRequest(recordsReadRequestId, 'dwn.processMessage', {
-      target: alice.did,
-      message: recordsRead.message
+      target  : alice.did,
+      message : recordsRead.message
     });
 
     const recordsReadResponse = await fetch(dwnUrl, {
-      method: 'POST',
-      headers: {
+      method  : 'POST',
+      headers : {
         'dwn-request': JSON.stringify(recordsReadRequest),
       },
     });

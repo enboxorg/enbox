@@ -1,7 +1,7 @@
 
 import ms from 'ms';
 import { TtlCache } from '@enbox/common';
-import { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
+import type { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
 
 /**
  * Configuration parameters for creating an in-memory cache for DWN ServerInfo entries.
@@ -16,7 +16,7 @@ export type DwnServerInfoCacheMemoryParams = {
    * Defaults to '15m' if not specified.
    */
   ttl?: string;
-}
+};
 
 export class DwnServerInfoCacheMemory implements DwnServerInfoCache {
   private cache: TtlCache<string, ServerInfo>;

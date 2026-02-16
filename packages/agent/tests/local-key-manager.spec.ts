@@ -1,18 +1,17 @@
-import type { Jwk } from '@enbox/crypto';
 import type { BearerDid } from '@enbox/dids';
+import type { Jwk } from '@enbox/crypto';
 
-import sinon from 'sinon';
-import { expect } from 'chai';
 import { Convert } from '@enbox/common';
+import { expect } from 'chai';
 import { CryptoUtils, Ed25519 } from '@enbox/crypto';
 
 import type { Web5PlatformAgent } from '../src/types/agent.js';
 
+import { CryptoErrorCode } from '../src/prototyping/crypto/crypto-error.js';
 import { isChrome } from './utils/runtimes.js';
-import { TestAgent } from './utils/test-agent.js';
 import { LocalKeyManager } from '../src/local-key-manager.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
-import { CryptoErrorCode } from '../src/prototyping/crypto/crypto-error.js';
+import { TestAgent } from './utils/test-agent.js';
 
 describe('LocalKeyManager', () => {
   describe('get agent', () => {
@@ -409,7 +408,7 @@ describe('LocalKeyManager', () => {
             // verify that the key is no longer in the keyStore
             key = await testHarness.agent.keyManager.getPublicKey({ keyUri });
             expect.fail('Expected an error to be thrown.');
-          } catch(error: any) {
+          } catch (error: any) {
             expect(error.message).to.include('Key not found');
           }
         });
@@ -420,7 +419,7 @@ describe('LocalKeyManager', () => {
           try {
             await testHarness.agent.keyManager.deleteKey({ keyUri });
             expect.fail('Expected an error to be thrown.');
-          } catch(error: any) {
+          } catch (error: any) {
             expect(error.message).to.include('Key not found');
           }
         });

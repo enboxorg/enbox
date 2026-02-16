@@ -1,9 +1,12 @@
-import { PermissionGrant, PermissionGrantData, PermissionRequestData, PermissionRevocationData, PermissionsProtocol } from '@enbox/dwn-sdk-js';
-import { Web5Agent } from './types/agent.js';
-import { DwnDataEncodedRecordsWriteMessage, DwnInterface, DwnMessageParams, DwnMessagesPermissionScope, DwnPermissionGrant, DwnPermissionRequest, DwnPermissionScope, DwnProtocolPermissionScope, DwnRecordsPermissionScope, ProcessDwnRequest } from './types/dwn.js';
-import { Convert, TtlCache } from '@enbox/common';
-import { CreateGrantParams, CreateRequestParams, CreateRevocationParams, FetchPermissionRequestParams, FetchPermissionsParams, GetPermissionParams, IsGrantRevokedParams, PermissionGrantEntry, PermissionRequestEntry, PermissionRevocationEntry, PermissionsApi } from './types/permissions.js';
+import type { Web5Agent } from './types/agent.js';
+import type { CreateGrantParams, CreateRequestParams, CreateRevocationParams, FetchPermissionRequestParams, FetchPermissionsParams, GetPermissionParams, IsGrantRevokedParams, PermissionGrantEntry, PermissionRequestEntry, PermissionRevocationEntry, PermissionsApi } from './types/permissions.js';
+import type { DwnDataEncodedRecordsWriteMessage, DwnMessageParams, DwnMessagesPermissionScope, DwnPermissionScope, DwnProtocolPermissionScope, DwnRecordsPermissionScope, ProcessDwnRequest } from './types/dwn.js';
+import type { PermissionGrant, PermissionGrantData, PermissionRequestData, PermissionRevocationData } from '@enbox/dwn-sdk-js';
+
 import { isRecordsType } from './dwn-api.js';
+import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { Convert, TtlCache } from '@enbox/common';
+import { DwnInterface, DwnPermissionGrant, DwnPermissionRequest } from './types/dwn.js';
 
 export class AgentPermissionsApi implements PermissionsApi {
 

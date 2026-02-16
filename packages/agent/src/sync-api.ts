@@ -1,10 +1,10 @@
-import type { SyncEngine, SyncIdentityOptions } from './types/sync.js';
 import type { Web5PlatformAgent } from './types/agent.js';
+import type { SyncEngine, SyncIdentityOptions } from './types/sync.js';
 
 export type SyncApiParams = {
   agent?: Web5PlatformAgent;
   syncEngine: SyncEngine;
-}
+};
 
 export class AgentSyncApi implements SyncEngine {
   /**

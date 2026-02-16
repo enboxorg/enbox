@@ -1,8 +1,8 @@
-import { expect, use } from 'chai';
-import { Convert } from '@enbox/common';
 import chaiAsPromised from 'chai-as-promised';
+import { Convert } from '@enbox/common';
+import { expect, use } from 'chai';
 
-import Sha256DigestTestVector from '../fixtures/test-vectors/sha256/digest.json' assert { type: 'json' };
+import Sha256DigestTestVector from '../fixtures/test-vectors/sha256/digest.json' with { type: 'json' };
 
 import { Sha256 } from '../../src/primitives/sha256.js';
 

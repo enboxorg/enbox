@@ -10,7 +10,7 @@ import type {
 } from '../../src/index.js';
 
 import { expect } from 'chai';
-import freeForAll from '../vectors/protocol-definitions/free-for-all.json' assert { type: 'json' };
+import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { Message } from '../../src/core/message.js';
 import { MessagesQueryHandler } from '../../src/handlers/messages-query.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';

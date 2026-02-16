@@ -1,12 +1,14 @@
 import sinon from 'sinon';
+
 import { expect } from 'chai';
-import { BearerDid, DidDht, DidJwk, PortableDid } from '@enbox/dids';
+import type { BearerDid, PortableDid } from '@enbox/dids';
+import { DidDht, DidJwk } from '@enbox/dids';
 
 import type { Web5PlatformAgent } from '../src/types/agent.js';
 
+import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { AgentDidApi, DidInterface } from '../src/did-api.js';
-import { PlatformAgentTestHarness } from '../src/test-harness.js';
 
 describe('AgentDidApi', () => {
 
@@ -114,7 +116,7 @@ describe('AgentDidApi', () => {
 
           // Attempt to retrieve the DID's keys from the Agent's KeyManager.
           const signingMethod = await testHarness.agent.did.getSigningMethod({ didUri: did.uri });
-          if (!signingMethod.publicKeyJwk) throw new Error('Public key not found'); // Type guard.
+          if (!signingMethod.publicKeyJwk) {throw new Error('Public key not found');} // Type guard.
           const storedKeyUri = await testHarness.agent.keyManager.getKeyUri({ key: signingMethod.publicKeyJwk });
           const storedPublicKey = await testHarness.agent.keyManager.getPublicKey({ keyUri: storedKeyUri });
 
@@ -181,7 +183,7 @@ describe('AgentDidApi', () => {
           // that way when we delete the DID we cna still issue a `get()` and agent's key is still there
           const agentDid = testHarness.agent.agentDid.uri;
           // Generate a new DID.
-          const did = await testHarness.agent.did.create({tenant: agentDid, method: 'jwk', store: true }); // store
+          const did = await testHarness.agent.did.create({ tenant: agentDid, method: 'jwk', store: true }); // store
 
           // attempt to get the DID
           let storedDid = await testHarness.agent.did.get({ didUri: did.uri, tenant: agentDid });
@@ -200,7 +202,7 @@ describe('AgentDidApi', () => {
           try {
             await testHarness.agent.did.delete({ didUri: 'did:method:abc123', tenant: testHarness.agent.agentDid.uri });
             expect.fail('Expected an error to be thrown');
-          } catch(error: any) {
+          } catch (error: any) {
             expect(error.message).to.include('AgentDidApi: Could not delete, DID not found');
           }
         });
@@ -225,7 +227,7 @@ describe('AgentDidApi', () => {
           try {
             storedDid = await testHarness.agent.did.get({ didUri: did.uri, tenant: did.uri });
             expect.fail('Expected an error to be thrown');
-          } catch(error:any) {
+          } catch (error:any) {
             expect(error.message).to.include('Unable to get signer for author');
           }
         });
@@ -235,7 +237,7 @@ describe('AgentDidApi', () => {
           const did = await testHarness.agent.did.create({ method: 'jwk', store: true }); // store
 
           // attempt to get the DID
-          let storedDid = await testHarness.agent.did.get({ didUri: did.uri, tenant: did.uri});
+          let storedDid = await testHarness.agent.did.get({ didUri: did.uri, tenant: did.uri });
           expect(storedDid).to.not.be.undefined;
           expect(storedDid!.uri).to.equal(did.uri);
 
@@ -338,7 +340,7 @@ describe('AgentDidApi', () => {
           // Try to retrieve the DID from the AgentDidApi store to verify it was imported.
           const storedDid = await testHarness.agent.did.get({ didUri: importedDid.uri });
 
-          if (storedDid === undefined) throw new Error('Type guard unexpectedly threw'); // Type guard.
+          if (storedDid === undefined) {throw new Error('Type guard unexpectedly threw');} // Type guard.
           expect(storedDid.uri).to.equal(portableDid.uri);
           expect(storedDid.document).to.deep.equal(portableDid.document);
         });
@@ -359,12 +361,12 @@ describe('AgentDidApi', () => {
           });
 
           // Verify that DID 1 WAS stored under the Agent's tenant.
-          let storedDid1 = await testHarness.agent.did.get({ didUri: did1Import.uri });
+          const storedDid1 = await testHarness.agent.did.get({ didUri: did1Import.uri });
           expect(storedDid1).to.exist;
           expect(storedDid1?.uri).to.equal(did1.uri);
 
           // Verify that DID 2 WAS stored under the Agent's tenant.
-          let storedDid2 = await testHarness.agent.did.get({ didUri: did2Import.uri });
+          const storedDid2 = await testHarness.agent.did.get({ didUri: did2Import.uri });
           expect(storedDid2).to.exist;
           expect(storedDid2?.uri).to.equal(did2.uri);
         });
@@ -637,7 +639,7 @@ describe('AgentDidApi', () => {
 
         it('updates a DID under the tenant of the updated DID if tenant is not provided ', async () => {
           // Generate a new DID.
-          const did = await testHarness.agent.did.create({ method: 'dht'});
+          const did = await testHarness.agent.did.create({ method: 'dht' });
           const portableDid = await did.export();
 
           const updateDid = {
@@ -665,7 +667,7 @@ describe('AgentDidApi', () => {
 
         it('throws if DID does not exist in the store', async () => {
           // Generate a new DID.
-          const did = await testHarness.agent.did.create({ method: 'dht'});
+          const did = await testHarness.agent.did.create({ method: 'dht' });
           const portableDid = await did.export();
 
           const updateDid = {
@@ -681,7 +683,7 @@ describe('AgentDidApi', () => {
             // Update the DID.
             await testHarness.agent.did.update({ portableDid: updateDid, tenant: testHarness.agent.agentDid.uri });
             expect.fail('Expected an error to be thrown');
-          } catch(error: any) {
+          } catch (error: any) {
             expect(error.message).to.include('AgentDidApi: Could not update, DID not found');
           }
         });
@@ -695,7 +697,7 @@ describe('AgentDidApi', () => {
             // Update the DID.
             await testHarness.agent.did.update({ portableDid, tenant: testHarness.agent.agentDid.uri });
             expect.fail('Expected an error to be thrown');
-          } catch(error: any) {
+          } catch (error: any) {
             expect(error.message).to.include('AgentDidApi: No changes detected, update aborted');
           }
         });

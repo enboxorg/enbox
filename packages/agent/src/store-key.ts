@@ -1,14 +1,15 @@
 import type { Jwk } from '@enbox/crypto';
 
-import { KEY_URI_PREFIX_JWK, isPrivateJwk } from '@enbox/crypto';
 import { Convert } from '@enbox/common';
+import { isPrivateJwk, KEY_URI_PREFIX_JWK } from '@enbox/crypto';
 
 import type { Web5PlatformAgent } from './types/agent.js';
 
 import { DwnInterface } from './types/dwn.js';
 import { JwkProtocolDefinition } from './store-data-protocols.js';
 import { TENANT_SEPARATOR } from './utils-internal.js';
-import { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreListParams, DataStoreSetParams, DwnDataStore, InMemoryDataStore } from './store-data.js';
+import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreListParams, DataStoreSetParams } from './store-data.js';
+import { DwnDataStore, InMemoryDataStore } from './store-data.js';
 
 export class DwnKeyStore extends DwnDataStore<Jwk> implements AgentDataStore<Jwk> {
   protected name = 'DwnKeyStore';
@@ -57,7 +58,7 @@ export class DwnKeyStore extends DwnDataStore<Jwk> implements AgentDataStore<Jwk
     });
 
     // Loop through all of the stored Jwk records and accumulate the objects.
-    let storedKeys: Jwk[] = [];
+    const storedKeys: Jwk[] = [];
     for (const record of queryReply.entries ?? []) {
       // All Jwk records are expected to be small enough such that the data is returned
       // with the query results. If a record is returned without `encodedData` this is unexpected so

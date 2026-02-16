@@ -1,4 +1,4 @@
-import { Jwk } from '@enbox/crypto';
+import type { Jwk } from '@enbox/crypto';
 
 /**
  * Represents metadata related to the process of DID dereferencing.
@@ -33,7 +33,7 @@ export type DidDereferencingMetadata = {
 
   // Additional output metadata generated during DID Resolution.
   [key: string]: any;
-}
+};
 
 /**
  * Represents the options that can be used during the process of DID dereferencing.
@@ -90,7 +90,7 @@ export type DidDereferencingResult = {
    * dereferencing is unsuccessful, this output MUST be an empty metadata structure.
    */
   contentMetadata: DidDocumentMetadata;
-}
+};
 
 /**
  * A set of data describing the Decentralized Identifierr (DID) subject.

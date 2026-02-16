@@ -2,11 +2,14 @@ import { expect } from 'chai';
 
 import sinon from 'sinon';
 
-import { JsonRpcSocket } from '../../../src/prototyping/clients/json-rpc-socket.js';
+import type { JsonRpcResponse } from '../../../src/prototyping/clients/json-rpc.js';
+import type { Persona } from '@enbox/dwn-sdk-js';
+
 import { CryptoUtils } from '@enbox/crypto';
-import { JsonRpcErrorCodes, JsonRpcResponse, createJsonRpcErrorResponse, createJsonRpcRequest, createJsonRpcSubscriptionRequest, createJsonRpcSuccessResponse } from '../../../src/prototyping/clients/json-rpc.js';
+import { JsonRpcSocket } from '../../../src/prototyping/clients/json-rpc-socket.js';
+import { TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { testDwnUrl } from '../../utils/test-config.js';
-import { Persona, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { createJsonRpcErrorResponse, createJsonRpcRequest, createJsonRpcSubscriptionRequest, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '../../../src/prototyping/clients/json-rpc.js';
 
 /** helper method to sleep while waiting for events to process/arrive */
 async function sleepWhileWaitingForEvents(override?: number):Promise<void> {
@@ -154,7 +157,7 @@ describe('JsonRpcSocket', () => {
     try {
       await client.subscribe(request, () => {});
       expect.fail('Expected an error to be thrown');
-    } catch(error: any) {
+    } catch (error: any) {
       expect(error.message).to.contain('subscribe rpc requests must include the `rpc.subscribe` prefix');
     }
   });
@@ -166,7 +169,7 @@ describe('JsonRpcSocket', () => {
     try {
       await client.subscribe(request, () => {});
       expect.fail('Expected an error to be thrown');
-    } catch(error: any) {
+    } catch (error: any) {
       expect(error.message).to.contain('subscribe rpc requests must include subscribe options');
     }
   });

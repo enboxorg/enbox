@@ -3,10 +3,10 @@ import { getWebcryptoSubtle } from '@noble/ciphers/webcrypto';
 
 import type { Jwk } from '@enbox/crypto';
 
+import type { UnwrapKeyParams, WrapKeyParams } from '../types/params-direct.js';
+
 import { Convert } from '@enbox/common';
 import { computeJwkThumbprint, isOctPrivateJwk } from '@enbox/crypto';
-
-import type { UnwrapKeyParams, WrapKeyParams } from '../types/params-direct.js';
 import { CryptoError, CryptoErrorCode } from '../crypto-error.js';
 
 /**
@@ -171,11 +171,11 @@ export class AesKw {
 
     // Import the decryption key for use with the Web Crypto API.
     const decryptionCryptoKey = await webCrypto.importKey(
-      'jwk',                       // key format
+      'jwk', // key format
       decryptionKey as JsonWebKey, // key data
-      { name: 'AES-KW' },          // algorithm identifier
-      true,                        // key is extractable
-      ['unwrapKey']                // key usages
+      { name: 'AES-KW' }, // algorithm identifier
+      true, // key is extractable
+      ['unwrapKey'] // key usages
     );
 
     // Map the private key's JOSE algorithm name to the Web Crypto API algorithm identifier.
@@ -190,13 +190,13 @@ export class AesKw {
 
     // Unwrap the key using the Web Crypto API.
     const unwrappedCryptoKey = await webCrypto.unwrapKey(
-      'raw',                        // output format
-      wrappedKeyBytes.buffer,       // key to unwrap
-      decryptionCryptoKey,          // unwrapping key
-      'AES-KW',                     // algorithm identifier
+      'raw', // output format
+      wrappedKeyBytes.buffer, // key to unwrap
+      decryptionCryptoKey, // unwrapping key
+      'AES-KW', // algorithm identifier
       { name: webCryptoAlgorithm }, // unwrapped key algorithm identifier
-      true,                         // key is extractable
-      ['unwrapKey']                 // key usages
+      true, // key is extractable
+      ['unwrapKey'] // key usages
     );
 
     // Export the unwrapped key in JWK format.
@@ -229,11 +229,11 @@ export class AesKw {
 
     // Import the encryption key for use with the Web Crypto API.
     const encryptionCryptoKey = await webCrypto.importKey(
-      'jwk',                       // key format
+      'jwk', // key format
       encryptionKey as JsonWebKey, // key data
-      { name: 'AES-KW' },          // algorithm identifier
-      true,                        // key is extractable
-      ['wrapKey']                  // key usages
+      { name: 'AES-KW' }, // algorithm identifier
+      true, // key is extractable
+      ['wrapKey'] // key usages
     );
 
     // Map the private key's JOSE algorithm name to the Web Crypto API algorithm identifier.
@@ -248,19 +248,19 @@ export class AesKw {
 
     // Import the private key to wrap for use with the Web Crypto API.
     const unwrappedCryptoKey = await webCrypto.importKey(
-      'jwk',                        // key format
-      unwrappedKey as JsonWebKey,   // key data
+      'jwk', // key format
+      unwrappedKey as JsonWebKey, // key data
       { name: webCryptoAlgorithm }, // algorithm identifier
-      true,                         // key is extractable
-      ['unwrapKey']                 // key usages
+      true, // key is extractable
+      ['unwrapKey'] // key usages
     );
 
     // Wrap the key using the Web Crypto API.
     const wrappedKeyBuffer = await webCrypto.wrapKey(
-      'raw',                     // output format
-      unwrappedCryptoKey,        // key to wrap
-      encryptionCryptoKey,       // wrapping key
-      'AES-KW'                   // algorithm identifier
+      'raw', // output format
+      unwrappedCryptoKey, // key to wrap
+      encryptionCryptoKey, // wrapping key
+      'AES-KW' // algorithm identifier
     );
 
     // Convert from ArrayBuffer to Uint8Array.

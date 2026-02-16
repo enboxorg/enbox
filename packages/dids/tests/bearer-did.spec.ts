@@ -1,8 +1,8 @@
 import type { CryptoApi } from '@enbox/crypto';
 
-import sinon from 'sinon';
 import { expect } from 'chai';
 import { LocalKeyManager } from '@enbox/crypto';
+import sinon from 'sinon';
 
 import type { PortableDid } from '../src/types/portable-did.js';
 

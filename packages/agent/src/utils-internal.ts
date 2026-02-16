@@ -1,6 +1,6 @@
 import type { Jwk, KeyIdentifier, KmsExportKeyParams, KmsGetPublicKeyParams, KmsSignParams } from '@enbox/crypto';
 
-import { Ed25519, LocalKeyManager, computeJwkThumbprint } from '@enbox/crypto';
+import { computeJwkThumbprint, Ed25519, LocalKeyManager } from '@enbox/crypto';
 
 import type { Web5PlatformAgent } from './types/agent.js';
 
@@ -134,11 +134,11 @@ export async function getDataStoreTenant({ agent, tenant, didUri }: {
 }): Promise<string> {
   // Check if a tenant identifier (DID) is explicitly provided and return it immediately if so.
   // This is the highest priority to ensure explicit tenant isolation.
-  if (tenant) return tenant;
+  if (tenant) {return tenant;}
 
   // If the agent's DID is available, return it as the tenant identifier.
   // This allows using the agent's own identity as a fallback tenant.
-  if (agent.agentDid) return agent.agentDid.uri;
+  if (agent.agentDid) {return agent.agentDid.uri;}
 
   // Throw an error if neither tenant, agent.agentDid, nor didUri are provided,
   // as it's not possible to determine the tenant identifier without any of these.

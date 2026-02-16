@@ -51,11 +51,11 @@ export const setProcessHandlers = (dwnServer: DwnServer): ProcessHandlers => {
 };
 
 export const removeProcessHandlers = (handlers: ProcessHandlers): void => {
-  const { 
-    unhandledRejectionHandler, 
-    uncaughtExceptionHandler, 
-    sigintHandler, 
-    sigtermHandler 
+  const {
+    unhandledRejectionHandler,
+    uncaughtExceptionHandler,
+    sigintHandler,
+    sigtermHandler
   } = handlers;
 
   process.removeListener('unhandledRejection', unhandledRejectionHandler);

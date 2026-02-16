@@ -1,29 +1,33 @@
-import type { BearerDid ,PortableDid } from '@enbox/dids';
+import type { BearerDid, PortableDid } from '@enbox/dids';
 import type { DwnMessageParams, DwnProtocolDefinition, DwnPublicKeyJwk, DwnSigner, ProcessDwnRequest } from '@enbox/agent';
 
-import sinon from 'sinon';
 import { expect } from 'chai';
-import { NodeStream } from '@enbox/common';
+import sinon from 'sinon';
+
 import { utils as didUtils } from '@enbox/dids';
-import { Web5UserAgent } from '@enbox/agent';
-import { DwnConstant, DwnDateSort, DwnEncryptionAlgorithm, DwnInterface, DwnKeyDerivationScheme, dwnMessageConstructors, getRecordAuthor, getRecordProtocolRole, Oidc, PlatformAgentTestHarness, WalletConnect } from '@enbox/agent';
-import { Record } from '../src/record.js';
-import { DwnApi } from '../src/dwn-api.js';
-import { dataToBlob } from '../src/utils.js';
-import { testDwnUrl } from './utils/test-config.js';
-import { TestDataGenerator } from './utils/test-data-generator.js';
-import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' assert { type: 'json' };
-import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json' assert { type: 'json' };
+import { NodeStream } from '@enbox/common';
+import {
+  DwnConstant, DwnDateSort, DwnEncryptionAlgorithm, DwnInterface, DwnKeyDerivationScheme,
+  dwnMessageConstructors, getRecordAuthor, getRecordProtocolRole, Oidc,
+  PlatformAgentTestHarness, WalletConnect, Web5UserAgent,
+} from '@enbox/agent';
+import { Jws, Message, Poller } from '@enbox/dwn-sdk-js';
 
 // NOTE: @noble/secp256k1 requires globalThis.crypto polyfill for node.js <=18: https://github.com/paulmillr/noble-secp256k1/blob/main/README.md#usage
 // Remove when we move off of node.js v18 to v20, earliest possible time would be Oct 2023: https://github.com/nodejs/release#release-schedule
-import { webcrypto } from 'node:crypto';
-import { Jws, Message, Poller, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { dataToBlob } from '../src/utils.js';
+import { DwnApi } from '../src/dwn-api.js';
+import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
+import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json' with { type: 'json' };
+import { Record } from '../src/record.js';
+import { TestDataGenerator } from './utils/test-data-generator.js';
+import { testDwnUrl } from './utils/test-config.js';
 import { Web5 } from '../src/web5.js';
+import { webcrypto } from 'node:crypto';
 // @ts-ignore
-if (!globalThis.crypto) globalThis.crypto = webcrypto;
+if (!globalThis.crypto) {globalThis.crypto = webcrypto;}
 
-let testDwnUrls: string[] = [testDwnUrl];
+const testDwnUrls: string[] = [testDwnUrl];
 
 describe('Record', () => {
   let dataText: string;
@@ -41,7 +45,7 @@ describe('Record', () => {
   before(async () => {
     // Suppress console.warn output due to default password warnings
     consoleWarn = console.warn;
-    console.warn = () => {};
+    console.warn = (): void => {};
 
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : Web5UserAgent,
@@ -84,7 +88,9 @@ describe('Record', () => {
     };
 
     // Configure the protocol on both DWNs
-    const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({ message: { definition: protocolDefinition } });
+    const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
+      message: { definition: protocolDefinition }
+    });
     expect(aliceProtocolStatus.code).to.equal(202);
     expect(aliceProtocol).to.exist;
     const { status: aliceProtocolSendStatus } = await aliceProtocol.send(aliceDid.uri);
@@ -165,7 +171,9 @@ describe('Record', () => {
       });
 
       // alice and bob both configure the protocol
-      const { status: aliceConfigStatus, protocol: aliceNotesProtocol } = await dwnAlice.protocols.configure({ message: { definition: notesProtocol } });
+      const { status: aliceConfigStatus, protocol: aliceNotesProtocol } = await dwnAlice.protocols.configure({
+        message: { definition: notesProtocol }
+      });
       expect(aliceConfigStatus.code).to.equal(202);
       const { status: aliceNotesProtocolSend } = await aliceNotesProtocol.send(aliceDid.uri);
       expect(aliceNotesProtocolSend.code).to.equal(202);
@@ -457,7 +465,7 @@ describe('Record', () => {
       const largeDataBytes = new TextEncoder().encode(JSON.stringify(largeDataJson));
 
       // Write the large record to agent-connected DWN.
-      const { record, status } = await delegateDwn.records.write({
+      const { record: _record, status } = await delegateDwn.records.write({
         message: {
           protocol     : notesProtocol.protocol,
           protocolPath : 'note',
@@ -497,7 +505,7 @@ describe('Record', () => {
       const { status: aliceConfigStatus, protocol: aliceOtherProtocol } = await dwnAlice.protocols.configure({ message: { definition: {
         ...notesProtocol,
         protocol: `http://other-protocol.xyz/protocol/${TestDataGenerator.randomString(15)}`
-      }} });
+      } } });
       expect(aliceConfigStatus.code).to.equal(202);
       const { status: aliceOtherProtocolSend } = await aliceOtherProtocol.send(aliceDid.uri);
       expect(aliceOtherProtocolSend.code).to.equal(202);
@@ -566,7 +574,7 @@ describe('Record', () => {
       try {
         await record.data.bytes();
         expect.fail('Expected unauthorized data read to fail.');
-      } catch(error:any) {
+      } catch (error:any) {
         expect(error.message).to.include('Error encountered while attempting to read data:');
       }
     });
@@ -637,7 +645,7 @@ describe('Record', () => {
     expect(bobQueryBobDwn.records[0].id).to.equal(importRecord.id);
 
     // Alice updates her record
-    let { status: aliceThreadStatusUpdated } = await aliceThreadRecord.update({
+    const { status: aliceThreadStatusUpdated } = await aliceThreadRecord.update({
       data: TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000)
     });
     expect(aliceThreadStatusUpdated.code).to.equal(202);
@@ -649,7 +657,7 @@ describe('Record', () => {
 
     // Alice updates her record and sends it to her own DWN again
     const updatedText = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
-    let { status: aliceThreadStatusUpdatedAgain } = await aliceThreadRecord.update({
+    const { status: aliceThreadStatusUpdatedAgain } = await aliceThreadRecord.update({
       data: updatedText
     });
     expect(aliceThreadStatusUpdatedAgain.code).to.equal(202);
@@ -708,7 +716,7 @@ describe('Record', () => {
     const attestationSigners: DwnSigner[] = [{
       algorithm : aliceSigner.algorithm,
       keyId     : aliceSigner.keyId,
-      sign      : async (data: Uint8Array) => {
+      sign      : async (data: Uint8Array): Promise<Uint8Array> => {
         return await aliceSigner.sign({ data });
       }
     }];
@@ -716,7 +724,7 @@ describe('Record', () => {
     const authorizationSigner: DwnSigner = {
       algorithm : aliceSigner.algorithm,
       keyId     : aliceSigner.keyId,
-      sign      : async (data: Uint8Array) => {
+      sign      : async (data: Uint8Array): Promise<Uint8Array> => {
         return await aliceSigner.sign({ data });
       }
     };
@@ -844,7 +852,7 @@ describe('Record', () => {
         expect(status.code).to.equal(202);
 
         // Read the record that was just created.
-        const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({ message: { filter: { recordId: record!.id }}});
+        const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({ message: { filter: { recordId: record!.id } } });
 
         expect(readRecordStatus.code).to.equal(200);
 
@@ -889,7 +897,7 @@ describe('Record', () => {
 
         // Query for the record that was just created.
         const { records: queryRecords, status: queryRecordStatus } = await dwnAlice.records.query({
-          message: { filter: { recordId: record!.id }}
+          message: { filter: { recordId: record!.id } }
         });
         expect(queryRecordStatus.code).to.equal(200);
 
@@ -916,7 +924,7 @@ describe('Record', () => {
 
         // Read the record that was just created.
         const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({
-          message: { filter: { recordId: record!.id }}
+          message: { filter: { recordId: record!.id } }
         });
 
         expect(readRecordStatus.code).to.equal(200);
@@ -964,7 +972,7 @@ describe('Record', () => {
         expect(status.code).to.equal(202);
 
         // Read the record that was just created.
-        const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({ message: { filter: { recordId: record!.id }}});
+        const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({ message: { filter: { recordId: record!.id } } });
 
         expect(readRecordStatus.code).to.equal(200);
 
@@ -1009,7 +1017,7 @@ describe('Record', () => {
 
         // Query for the record that was just created.
         const { records: queryRecords, status: queryRecordStatus } = await dwnAlice.records.query({
-          message: { filter: { recordId: record!.id }}
+          message: { filter: { recordId: record!.id } }
         });
         expect(queryRecordStatus.code).to.equal(200);
 
@@ -1036,7 +1044,7 @@ describe('Record', () => {
 
         // Read the record that was just created.
         const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({
-          message: { filter: { recordId: record!.id }}
+          message: { filter: { recordId: record!.id } }
         });
 
         expect(readRecordStatus.code).to.equal(200);
@@ -1080,7 +1088,7 @@ describe('Record', () => {
         expect(status.code).to.equal(202);
 
         // Read the record that was just created.
-        const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({ message: { filter: { recordId: record!.id }}});
+        const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({ message: { filter: { recordId: record!.id } } });
         expect(readRecordStatus.code).to.equal(200);
 
         // Confirm that the length of the data read as text matches the original input data.
@@ -1121,7 +1129,7 @@ describe('Record', () => {
 
         // Query for the record that was just created.
         const { records: queryRecords, status: queryRecordStatus } = await dwnAlice.records.query({
-          message: { filter: { recordId: record!.id }}
+          message: { filter: { recordId: record!.id } }
         });
         expect(queryRecordStatus.code).to.equal(200);
 
@@ -1147,7 +1155,7 @@ describe('Record', () => {
 
         // Read the record that was just created.
         const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({
-          message: { filter: { recordId: record!.id }}
+          message: { filter: { recordId: record!.id } }
         });
         expect(readRecordStatus.code).to.equal(200);
 
@@ -1191,7 +1199,7 @@ describe('Record', () => {
         expect(status.code).to.equal(202);
 
         // Read the record that was just created.
-        const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({ message: { filter: { recordId: record!.id }}});
+        const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({ message: { filter: { recordId: record!.id } } });
 
         expect(readRecordStatus.code).to.equal(200);
 
@@ -1232,7 +1240,7 @@ describe('Record', () => {
 
         // Query for the record that was just created.
         const { records: queryRecords, status: queryRecordStatus } = await dwnAlice.records.query({
-          message: { filter: { recordId: record!.id }}
+          message: { filter: { recordId: record!.id } }
         });
         expect(queryRecordStatus.code).to.equal(200);
 
@@ -1257,7 +1265,7 @@ describe('Record', () => {
 
         // Read the record that was just created.
         const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({
-          message: { filter: { recordId: record!.id }}
+          message: { filter: { recordId: record!.id } }
         });
 
         expect(readRecordStatus.code).to.equal(200);
@@ -1327,7 +1335,7 @@ describe('Record', () => {
       // Query for the record that was just created on the remote DWN.
       const { records: queryRecords, status: queryRecordStatus } = await dwnAlice.records.query({
         from    : aliceDid.uri,
-        message : { filter: { recordId: record!.id }}
+        message : { filter: { recordId: record!.id } }
       });
       expect(queryRecordStatus.code).to.equal(200);
 
@@ -1354,7 +1362,7 @@ describe('Record', () => {
       // Read the record that was just created on the remote DWN.
       const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({
         from    : aliceDid.uri,
-        message : { filter: { recordId: record!.id }}
+        message : { filter: { recordId: record!.id } }
       });
       expect(readRecordStatus.code).to.equal(200);
 
@@ -1487,7 +1495,7 @@ describe('Record', () => {
       // Read the record that was just created on the remote DWN.
       const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({
         from    : aliceDid.uri,
-        message : { filter: { recordId: record!.id }}
+        message : { filter: { recordId: record!.id } }
       });
       expect(readRecordStatus.code).to.equal(200);
 
@@ -1523,7 +1531,7 @@ describe('Record', () => {
       // Read the record that was just created on the remote DWN.
       const { record: readRecord, status: readRecordStatus } = await dwnAlice.records.read({
         from    : aliceDid.uri,
-        message : { filter: { recordId: record!.id }}
+        message : { filter: { recordId: record!.id } }
       });
       expect(readRecordStatus.code).to.equal(200);
 
@@ -1560,7 +1568,7 @@ describe('Record', () => {
       // Read the record that was just created on the remote DWN.
       const { records: queriedRecords, status: queriedRecordStatus } = await dwnAlice.records.query({
         from    : aliceDid.uri,
-        message : { filter: { recordId: record!.id }}
+        message : { filter: { recordId: record!.id } }
       });
       expect(queriedRecordStatus.code).to.equal(200);
 
@@ -1599,7 +1607,7 @@ describe('Record', () => {
       // Query for the record that was just created on the remote DWN.
       const { records: queriedRecords, status: queriedRecordStatus } = await dwnAlice.records.query({
         from    : aliceDid.uri,
-        message : { filter: { recordId: record!.id }}
+        message : { filter: { recordId: record!.id } }
       });
       expect(queriedRecordStatus.code).to.equal(200);
 
@@ -1655,7 +1663,9 @@ describe('Record', () => {
         await testHarness.agent.permissions.clear();
         testHarnessCarol.dwnStores.clear();
 
-        const { status: carolProtocolStatus, protocol: carolProtocol } = await dwnCarol.protocols.configure({ message: { definition: protocolDefinition } });
+        const { status: carolProtocolStatus, protocol: carolProtocol } = await dwnCarol.protocols.configure({
+          message: { definition: protocolDefinition }
+        });
         expect(carolProtocolStatus.code).to.equal(202);
         expect(carolProtocol).to.exist;
         const { status: carolProtocolSendStatus } = await carolProtocol.send(carolDid.uri);
@@ -1716,7 +1726,7 @@ describe('Record', () => {
          */
         const { records: queryRecordsFrom, status: queryRecordStatusFrom } = await dwnCarol.records.query({
           from    : carolDid.uri,
-          message : { filter: { recordId: record!.id }}
+          message : { filter: { recordId: record!.id } }
         });
         expect(queryRecordStatusFrom.code).to.equal(200);
         /**
@@ -1775,7 +1785,7 @@ describe('Record', () => {
          */
         const { records: queryRecordsFrom, status: queryRecordStatusFrom } = await dwnCarol.records.query({
           from    : carolDid.uri,
-          message : { filter: { recordId: record!.id }}
+          message : { filter: { recordId: record!.id } }
         });
         expect(queryRecordStatusFrom.code).to.equal(200);
         /**
@@ -1788,7 +1798,7 @@ describe('Record', () => {
          */
         const { records: queryRecordsTo, status: queryRecordStatusTo } = await dwnAlice.records.query({
           from    : aliceDid.uri,
-          message : { filter: { recordId: record!.id }}
+          message : { filter: { recordId: record!.id } }
         });
         expect(queryRecordStatusTo.code).to.equal(200);
         /**
@@ -1997,7 +2007,7 @@ describe('Record', () => {
       // Alice queries for the record that was just created on her remote DWN.
       const { records: queryRecords, status: queryRecordStatus } = await dwnAlice.records.query({
         from    : aliceDid.uri,
-        message : { filter: { recordId: aliceEmailRecord!.id }}
+        message : { filter: { recordId: aliceEmailRecord!.id } }
       });
       expect(queryRecordStatus.code).to.equal(200);
 
@@ -2045,7 +2055,7 @@ describe('Record', () => {
       // Alice queries for the record that was just created on her remote DWN.
       const { record: queryRecord, status: queryRecordStatus } = await dwnAlice.records.read({
         from    : aliceDid.uri,
-        message : { filter: { recordId: aliceEmailRecord!.id }}
+        message : { filter: { recordId: aliceEmailRecord!.id } }
       });
       expect(queryRecordStatus.code).to.equal(200);
 
@@ -2301,7 +2311,7 @@ describe('Record', () => {
       const attestationSigners: DwnSigner[] = [{
         algorithm : aliceSigner.algorithm,
         keyId     : aliceSigner.keyId,
-        sign      : async (data: Uint8Array) => {
+        sign      : async (data: Uint8Array): Promise<Uint8Array> => {
           return await aliceSigner.sign({ data });
         }
       }];
@@ -2309,7 +2319,7 @@ describe('Record', () => {
       const authorizationSigner: DwnSigner = {
         algorithm : aliceSigner.algorithm,
         keyId     : aliceSigner.keyId,
-        sign      : async (data: Uint8Array) => {
+        sign      : async (data: Uint8Array): Promise<Uint8Array> => {
           return await aliceSigner.sign({ data });
         }
       };
@@ -2514,7 +2524,9 @@ describe('Record', () => {
       };
 
       // alice and bob both configure the protocol
-      const { status: aliceConfigStatus, protocol: aliceNotesProtocol } = await dwnAlice.protocols.configure({ message: { definition: notesProtocol } });
+      const { status: aliceConfigStatus, protocol: aliceNotesProtocol } = await dwnAlice.protocols.configure({
+        message: { definition: notesProtocol }
+      });
       expect(aliceConfigStatus.code).to.equal(202);
       const { status: aliceNotesProtocolSend } = await aliceNotesProtocol.send(aliceDid.uri);
       expect(aliceNotesProtocolSend.code).to.equal(202);
@@ -2687,7 +2699,7 @@ describe('Record', () => {
       expect(record).to.not.be.undefined;
 
       // Store the data CID of the record before it is updated.
-      const dataCidBeforeDataUpdate = record!.dataCid;
+      const _dataCidBeforeDataUpdate = record!.dataCid;
 
       // Write the record to a remote DWN.
       const { status: sendStatus } = await record!.send(aliceDid.uri);
@@ -2708,7 +2720,7 @@ describe('Record', () => {
 
       // Attempt to update the queried record
       const [ queriedRecord ] = queryResult.records;
-      let updateResult = await queriedRecord!.update({ data: 'Updated, world!', store: false });
+      const updateResult = await queriedRecord!.update({ data: 'Updated, world!', store: false });
       expect(updateResult.status.code).to.equal(202);
 
       // confirm that the record does not exist locally
@@ -2894,7 +2906,7 @@ describe('Record', () => {
 
     it('throws if attempting to revive a deleted record', async () => {
       // create a record but do not store it
-      const { status: writeStatus, record }  = await dwnAlice.records.write({
+      const { status: writeStatus, record } = await dwnAlice.records.write({
         store   : false,
         data    : 'Hello, world!',
         message : {
@@ -2935,7 +2947,7 @@ describe('Record', () => {
       expect(status.code).to.equal(202);
       expect(record).to.not.be.undefined;
       expect(await record.data.text()).to.equal('Hello, world!');
-      expect(record.tags).to.deep.equal({ tag1: 'value1', tag2: 'value2'});
+      expect(record.tags).to.deep.equal({ tag1: 'value1', tag2: 'value2' });
 
       // if you do not pass any tags they remain unchanged
       const updateResultWithoutTags = await record!.update({
@@ -2943,7 +2955,7 @@ describe('Record', () => {
       });
 
       expect(updateResultWithoutTags.status.code).to.equal(202);
-      expect(record.tags).to.deep.equal({ tag1: 'value1', tag2: 'value2'}); // unchanged
+      expect(record.tags).to.deep.equal({ tag1: 'value1', tag2: 'value2' }); // unchanged
       expect(await record.data.text()).to.equal('hi');
 
       // if you modify the tags they override the existing tags
@@ -2955,7 +2967,7 @@ describe('Record', () => {
       });
 
       expect(updateResultWithTags.status.code).to.equal(202);
-      expect(record.tags).to.deep.equal({ tag1: 'value3', tag3: 'value4'}); // changed to updated tags
+      expect(record.tags).to.deep.equal({ tag1: 'value3', tag3: 'value4' }); // changed to updated tags
       expect(await record.data.text()).to.equal('hi');
     });
 
@@ -2976,7 +2988,7 @@ describe('Record', () => {
       expect(status.code).to.equal(202);
       expect(record).to.not.be.undefined;
       expect(await record.data.text()).to.equal('Hello, world!');
-      expect(record.tags).to.deep.equal({ tag1: 'value1', tag2: 'value2'});
+      expect(record.tags).to.deep.equal({ tag1: 'value1', tag2: 'value2' });
 
       // if you use an empty tags object it removes the tags
       const updateResultWithEmptyTags = await record!.update({
@@ -2995,7 +3007,7 @@ describe('Record', () => {
       });
 
       expect(updateResultWithTags.status.code).to.equal(202);
-      expect(record.tags).to.deep.equal({ tag1: 'value3', tag3: 'value4'}); // added tags
+      expect(record.tags).to.deep.equal({ tag1: 'value3', tag3: 'value4' }); // added tags
 
       // if you use null it removes the tags
       const updateResultWithNullTags = await record!.update({
@@ -3146,7 +3158,7 @@ describe('Record', () => {
       }
 
       // Bob makes Alice a `friend` to allow her to read and comment on his notes
-      const { status: friendCreateStatus, record: friendRecord} = await dwnBob.records.create({
+      const { status: friendCreateStatus, record: friendRecord } = await dwnBob.records.create({
         data    : 'friend!',
         message : {
           recipient    : aliceDid.uri,
@@ -3264,7 +3276,9 @@ describe('Record', () => {
       };
 
       // alice and bob both configure the protocol
-      const { status: aliceConfigStatus, protocol: aliceNotesProtocol } = await dwnAlice.protocols.configure({ message: { definition: notesProtocol } });
+      const { status: aliceConfigStatus, protocol: aliceNotesProtocol } = await dwnAlice.protocols.configure({
+        message: { definition: notesProtocol }
+      });
       expect(aliceConfigStatus.code).to.equal(202);
       const { status: aliceNotesProtocolSend } = await aliceNotesProtocol.send(aliceDid.uri);
       expect(aliceNotesProtocolSend.code).to.equal(202);
@@ -3277,7 +3291,7 @@ describe('Record', () => {
     });
 
     it('deletes a local record on the local DWN', async () => {
-      const { status: writeStatus, record }  = await dwnAlice.records.write({
+      const { status: writeStatus, record } = await dwnAlice.records.write({
         data    : 'Hello, world!',
         message : {
           schema     : 'foo/bar',
@@ -3320,7 +3334,7 @@ describe('Record', () => {
     });
 
     it('deletes a record on the remote DWN', async () => {
-      const { status: writeStatus, record }  = await dwnAlice.records.write({
+      const { status: writeStatus, record } = await dwnAlice.records.write({
         data    : 'Hello, world!',
         message : {
           schema     : 'foo/bar',
@@ -3584,7 +3598,7 @@ describe('Record', () => {
 
     it('throws if a record status is deleted and initialWrite is not set', async () => {
       // create a record but do not store it
-      const { status: writeStatus, record }  = await dwnAlice.records.write({
+      const { status: writeStatus, record } = await dwnAlice.records.write({
         store   : false,
         data    : 'Hello, world!',
         message : {
@@ -3612,7 +3626,7 @@ describe('Record', () => {
 
     it('duplicate delete with store should return not found', async () => {
       // create a record
-      const { status: writeStatus, record }  = await dwnAlice.records.write({
+      const { status: writeStatus, record } = await dwnAlice.records.write({
         data    : 'Hello, world!',
         message : {
           schema     : 'foo/bar',
@@ -3645,7 +3659,7 @@ describe('Record', () => {
 
     it('a record in a deleted state returns undefined for data related fields', async () => {
       // create a record
-      const { status: writeStatus, record }  = await dwnAlice.records.write({
+      const { status: writeStatus, record } = await dwnAlice.records.write({
         data    : 'Hello, world!',
         message : {
           schema     : 'http://example.org/test-schema',
@@ -3701,7 +3715,7 @@ describe('Record', () => {
     it('deletes a record from someone else', async () => {
       // subscribe to records so that we can receive a record in a deleted state
       const records = new Map<string, Record>();
-      const subscriptionHandler = (record: Record) => {
+      const subscriptionHandler = (record: Record): void => {
         records.set(record.id, record);
       };
 
@@ -3755,7 +3769,7 @@ describe('Record', () => {
     it('deletes a record as owner from someone else', async () => {
       // subscribe to records so that we can receive a record in a deleted state
       const records = new Map<string, Record>();
-      const subscriptionHandler = (record: Record) => {
+      const subscriptionHandler = (record: Record): void => {
         records.set(record.id, record);
       };
 
@@ -3858,7 +3872,7 @@ describe('Record', () => {
       }
 
       // Bob makes Alice a `friend` to allow her to read and comment on his notes
-      const { status: friendCreateStatus, record: friendRecord} = await dwnBob.records.create({
+      const { status: friendCreateStatus, record: friendRecord } = await dwnBob.records.create({
         data    : 'friend!',
         message : {
           recipient    : aliceDid.uri,
@@ -3970,7 +3984,9 @@ describe('Record', () => {
       };
 
       // alice and bob both configure the protocol
-      const { status: aliceConfigStatus, protocol: aliceNotesProtocol } = await dwnAlice.protocols.configure({ message: { definition: notesProtocol } });
+      const { status: aliceConfigStatus, protocol: aliceNotesProtocol } = await dwnAlice.protocols.configure({
+        message: { definition: notesProtocol }
+      });
       expect(aliceConfigStatus.code).to.equal(202);
       const { status: aliceNotesProtocolSend } = await aliceNotesProtocol.send(aliceDid.uri);
       expect(aliceNotesProtocolSend.code).to.equal(202);
@@ -3996,7 +4012,7 @@ describe('Record', () => {
         }
       });
       expect(status.code).to.equal(202, status.detail);
-      let sendResponse = await record.send();
+      const sendResponse = await record.send();
       expect(sendResponse.status.code).to.equal(202, sendResponse.status.detail);
 
       // Bob queries Alice's DWN for the record.
@@ -4122,7 +4138,7 @@ describe('Record', () => {
       const processMessageSpy = sinon.spy(testHarness.dwn, 'processMessage');
 
       // create a record
-      const { status: writeStatus, record }  = await dwnAlice.records.write({
+      const { status: writeStatus, record } = await dwnAlice.records.write({
         store   : false,
         data    : 'Hello, world!',
         message : {
@@ -4155,7 +4171,7 @@ describe('Record', () => {
     it('stores a deleted record as owner to the local DWN from an external signer', async () => {
       // subscribe to records so that we can receive a record in a deleted state
       const records = new Map<string, Record>();
-      const subscriptionHandler = (record: Record) => {
+      const subscriptionHandler = (record: Record): void => {
         records.set(record.id, record);
       };
 
@@ -4239,7 +4255,9 @@ describe('Record', () => {
       };
 
       // alice and bob both configure the protocol
-      const { status: aliceConfigStatus, protocol: aliceNotesProtocol } = await dwnAlice.protocols.configure({ message: { definition: notesProtocol } });
+      const { status: aliceConfigStatus, protocol: aliceNotesProtocol } = await dwnAlice.protocols.configure({
+        message: { definition: notesProtocol }
+      });
       expect(aliceConfigStatus.code).to.equal(202);
       const { status: aliceNotesProtocolSend } = await aliceNotesProtocol.send(aliceDid.uri);
       expect(aliceNotesProtocolSend.code).to.equal(202);
@@ -4267,7 +4285,7 @@ describe('Record', () => {
         }
       });
       expect(status.code).to.equal(202, status.detail);
-      let sendResponse = await record.send();
+      const sendResponse = await record.send();
       expect(sendResponse.status.code).to.equal(202, sendResponse.status.detail);
 
       // Bob queries Alice's DWN for the record.
@@ -4284,7 +4302,7 @@ describe('Record', () => {
       const queriedRecord = aliceQueryResult.records[0];
 
       // Imports the record without storing it.
-      let { status: importRecordStatus } = await queriedRecord.import();
+      const { status: importRecordStatus } = await queriedRecord.import();
       expect(importRecordStatus.code).to.equal(202, importRecordStatus.detail);
 
       // Bob queries his own DWN for the record, which should return the record.
@@ -4336,7 +4354,7 @@ describe('Record', () => {
       const queriedRecord = aliceQueryResult.records[0];
 
       // Imports the record without storing it.
-      let { status: importRecordStatus } = await queriedRecord.import();
+      const { status: importRecordStatus } = await queriedRecord.import();
       expect(importRecordStatus.code).to.equal(202, importRecordStatus.detail);
 
       // Bob queries his own DWN for the record, which should return the record.
@@ -4356,7 +4374,7 @@ describe('Record', () => {
     it('signs and imports a deleted record as the owner', async () => {
       // subscribe to records so that we can receive a record in a deleted state
       const records = new Map<string, Record>();
-      const subscriptionHandler = (record: Record) => {
+      const subscriptionHandler = (record: Record): void => {
         records.set(record.id, record);
       };
 
@@ -4429,7 +4447,7 @@ describe('Record', () => {
           }
         });
         expect(status.code).to.equal(202, status.detail);
-        let sendResponse = await record.send();
+        const sendResponse = await record.send();
         expect(sendResponse.status.code).to.equal(202, sendResponse.status.detail);
 
         // Bob queries Alice's DWN for the record.
@@ -4549,7 +4567,7 @@ describe('Record', () => {
       it('signs and an external deleted record as the owner', async () => {
         // subscribe to records so that we can receive a record in a deleted state
         const records = new Map<string, Record>();
-        const subscriptionHandler = (record: Record) => {
+        const subscriptionHandler = (record: Record): void => {
           records.set(record.id, record);
         };
 
@@ -4678,7 +4696,7 @@ describe('Record', () => {
 
     it('should return undefined if record is in a deleted state', async () => {
       // create a record
-      const { status: writeStatus, record }  = await dwnAlice.records.write({
+      const { status: writeStatus, record } = await dwnAlice.records.write({
         store   : false,
         data    : 'Hello, world!',
         message : {

@@ -7,30 +7,30 @@
 import type {
   CreateGrantParams,
   CreateRequestParams,
+  DwnMessage,
+  DwnMessageParams
+  ,
+  DwnMessageSubscription,
+  DwnPaginationCursor,
+  DwnResponse,
+  DwnResponseStatus,
   FetchPermissionRequestParams,
-  FetchPermissionsParams
-} from '@enbox/agent';
+  FetchPermissionsParams,
+  ProcessDwnRequest,
+  Web5Agent } from '@enbox/agent';
 
 import {
-  Web5Agent,
-  DwnMessage,
-  DwnResponse,
-  DwnMessageParams,
-  DwnMessageSubscription,
-  DwnResponseStatus,
-  ProcessDwnRequest,
-  DwnPaginationCursor,
   AgentPermissionsApi,
 } from '@enbox/agent';
 
 import { isEmptyObject } from '@enbox/common';
 import { DwnInterface, getRecordAuthor } from '@enbox/agent';
 
-import { Record } from './record.js';
 import { dataToBlob } from './utils.js';
-import { Protocol } from './protocol.js';
 import { PermissionGrant } from './permission-grant.js';
 import { PermissionRequest } from './permission-request.js';
+import { Protocol } from './protocol.js';
+import { Record } from './record.js';
 import { SubscriptionUtil } from './subscription-util.js';
 
 /**
@@ -64,7 +64,7 @@ export type FetchGrantsRequest = Omit<FetchPermissionsParams, 'author' | 'target
 export type ProtocolsConfigureRequest = {
   /** Configuration options for the protocol. */
   message: Omit<DwnMessageParams[DwnInterface.ProtocolsConfigure], 'signer'>;
-}
+};
 
 /**
  * Encapsulates the response from a protocol configuration request to a Decentralized Web Node (DWN).
@@ -77,7 +77,7 @@ export type ProtocolsConfigureRequest = {
 export type ProtocolsConfigureResponse = DwnResponseStatus & {
   /** The configured protocol, if successful. */
   protocol?: Protocol;
-}
+};
 
 /**
  * Defines the request structure for querying protocols from a Decentralized Web Node (DWN).
@@ -93,7 +93,7 @@ export type ProtocolsQueryRequest = {
 
   /** Query filters and options that influence the results returned. */
   message: Omit<DwnMessageParams[DwnInterface.ProtocolsQuery], 'signer'>
-}
+};
 
 /**
  * Wraps the response from a protocols query, including the operation status and the list of
@@ -102,7 +102,7 @@ export type ProtocolsQueryRequest = {
 export type ProtocolsQueryResponse = DwnResponseStatus & {
   /** Array of protocols matching the query. */
   protocols: Protocol[];
-}
+};
 
 /**
  * Type alias for {@link RecordsWriteRequest}
@@ -129,7 +129,7 @@ export type RecordsCreateFromRequest = {
   message?: Omit<DwnMessageParams[DwnInterface.RecordsWrite], 'signer'>;
   /** The existing record instance that is being used as a basis for the new record. */
   record: Record;
-}
+};
 
 /**
  * Defines a request to delete a record from the Decentralized Web Node (DWN).
@@ -147,7 +147,7 @@ export type RecordsDeleteRequest = {
 
   /** The parameters for the delete operation. */
   message: Omit<DwnMessageParams[DwnInterface.RecordsDelete], 'signer'>;
-}
+};
 
 /**
  * Encapsulates a request to query records from a Decentralized Web Node (DWN).
@@ -165,7 +165,7 @@ export type RecordsQueryRequest = {
 
   /** The parameters for the query operation, detailing the criteria for selecting records. */
   message: Omit<DwnMessageParams[DwnInterface.RecordsQuery], 'signer'>;
-}
+};
 
 /**
  * Represents the response from a records query operation, including status, records, and an
@@ -177,7 +177,7 @@ export type RecordsQueryResponse = DwnResponseStatus & {
 
   /** If there are additional results, the messageCid of the last record will be returned as a pagination cursor. */
   cursor?: DwnPaginationCursor;
-}
+};
 
 /**
  * Represents a request to read a specific record from a Decentralized Web Node (DWN).
@@ -195,7 +195,7 @@ export type RecordsReadRequest = {
 
   /** The parameters for the read operation, detailing the criteria for selecting the record. */
   message: Omit<DwnMessageParams[DwnInterface.RecordsRead], 'signer'>;
-}
+};
 
 /**
  * Encapsulates the response from a record read operation, combining the general operation status
@@ -204,7 +204,7 @@ export type RecordsReadRequest = {
 export type RecordsReadResponse = DwnResponseStatus & {
   /** The record retrieved by the read operation. */
   record: Record;
-}
+};
 
 /** Subscription handler for Records */
 export type RecordsSubscriptionHandler = (record: Record) => void;
@@ -227,7 +227,7 @@ export type RecordsSubscribeRequest = {
 
   /** The handler to process the subscription events */
   subscriptionHandler: RecordsSubscriptionHandler;
-}
+};
 
 /** Encapsulates the response from a DWN RecordsSubscriptionRequest */
 export type RecordsSubscribeResponse = DwnResponseStatus & {
@@ -236,7 +236,7 @@ export type RecordsSubscribeResponse = DwnResponseStatus & {
    *
    * */
   subscription?: DwnMessageSubscription;
-}
+};
 
 /**
  * Defines a request to write (create) a record to a Decentralized Web Node (DWN).
@@ -262,7 +262,7 @@ export type RecordsWriteRequest = {
    * signed, and returned but not persisted.
    */
   store?: boolean;
-}
+};
 
 /**
  * Encapsulates the response from a record write operation to a Decentralized Web Node (DWN).
@@ -282,7 +282,7 @@ export type RecordsWriteResponse = DwnResponseStatus & {
    * DWN as a result of the write operation.
    */
   record?: Record
-}
+};
 
 /**
  * Interface to interact with DWN Records and Protocols
@@ -321,7 +321,12 @@ export class DwnApi {
    *
    * @beta
    */
-  get permissions() {
+  get permissions(): {
+      request: (request: Omit<CreateRequestParams, 'author'>) => Promise<PermissionRequest>;
+      grant: (request: Omit<CreateGrantParams, 'author'>) => Promise<PermissionGrant>;
+      queryRequests: (request?: FetchRequestsRequest) => Promise<PermissionRequest[]>;
+      queryGrants: (request?: FetchGrantsRequest) => Promise<PermissionGrant[]>;
+      } {
     return {
       /**
        * Request permission for a specific scope.
@@ -406,7 +411,7 @@ export class DwnApi {
 
           if (checkRevoked) {
             const grantRecordId = permission.grant.id;
-            if(await this.permissionsApi.isGrantRevoked({ author, target, grantRecordId, remote })) {
+            if (await this.permissionsApi.isGrantRevoked({ author, target, grantRecordId, remote })) {
               continue;
             }
           }
@@ -421,7 +426,10 @@ export class DwnApi {
   /**
    * API to interact with DWN protocols (e.g., `dwn.protocols.configure()`).
    */
-  get protocols() {
+  get protocols(): {
+      configure: (request: ProtocolsConfigureRequest) => Promise<ProtocolsConfigureResponse>;
+      query: (request: ProtocolsQueryRequest) => Promise<ProtocolsQueryResponse>;
+      } {
     return {
       /**
        * Configure method, used to setup a new protocol (or update) with the passed definitions
@@ -454,7 +462,7 @@ export class DwnApi {
 
         const agentResponse = await this.agent.processDwnRequest(agentRequest);
 
-        const { message, messageCid, reply: { status }} = agentResponse;
+        const { message, messageCid, reply: { status } } = agentResponse;
         const response: ProtocolsConfigureResponse = { status };
 
         if (status.code < 300) {
@@ -494,7 +502,7 @@ export class DwnApi {
               permissionGrantId
             };
             agentRequest.granteeDid = this.delegateDid;
-          } catch(_error:any) {
+          } catch {
             // if a grant is not found, we should author the request as the delegated DID to get public protocols
             agentRequest.author = this.delegateDid;
           }
@@ -509,7 +517,7 @@ export class DwnApi {
         }
 
         const reply = agentResponse.reply;
-        const { entries = [], status  } = reply;
+        const { entries = [], status } = reply;
 
         const protocols = entries.map((entry) => {
           const metadata = { author: this.connectedDid };
@@ -524,7 +532,15 @@ export class DwnApi {
   /**
    * API to interact with DWN records (e.g., `dwn.records.create()`).
    */
-  get records() {
+  get records(): {
+      create: (request: RecordsCreateRequest) => Promise<RecordsCreateResponse>;
+      createFrom: (request: RecordsCreateFromRequest) => Promise<RecordsWriteResponse>;
+      delete: (request: RecordsDeleteRequest) => Promise<DwnResponseStatus>;
+      query: (request: RecordsQueryRequest) => Promise<RecordsQueryResponse>;
+      read: (request: RecordsReadRequest) => Promise<RecordsReadResponse>;
+      subscribe: (request: RecordsSubscribeRequest) => Promise<RecordsSubscribeResponse>;
+      write: (request: RecordsWriteRequest) => Promise<RecordsWriteResponse>;
+      } {
 
     return {
       /**
@@ -659,7 +675,7 @@ export class DwnApi {
               delegatedGrant
             };
             agentRequest.granteeDid = this.delegateDid;
-          } catch(_error:any) {
+          } catch {
             // if a grant is not found, we should author the request as the delegated DID to get public records
             agentRequest.author = this.delegateDid;
           }
@@ -751,7 +767,7 @@ export class DwnApi {
               delegatedGrant
             };
             agentRequest.granteeDid = this.delegateDid;
-          } catch(_error:any) {
+          } catch {
             // if a grant is not found, we should author the request as the delegated DID to get public records
             agentRequest.author = this.delegateDid;
           }
@@ -857,7 +873,7 @@ export class DwnApi {
               delegatedGrant
             };
             agentRequest.granteeDid = this.delegateDid;
-          } catch(_error:any) {
+          } catch {
             // if a grant is not found, we should author the request as the delegated DID to get public records
             agentRequest.author = this.delegateDid;
           }

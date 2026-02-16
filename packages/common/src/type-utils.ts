@@ -197,7 +197,7 @@ export type RequireOnly<T, K extends keyof T, O extends keyof T = never> = Requi
  *   https://github.com/angus-c
  *   https://javascriptweblog.wordpress.com/2011/08/08/fixing-the-javascript-typeof-operator/
  */
-export function universalTypeOf(value: unknown) {
+export function universalTypeOf(value: unknown): string {
   // Returns '[Object Type]' string.
   const typeString = Object.prototype.toString.call(value);
   // Returns ['Object', 'Type'] array or null.

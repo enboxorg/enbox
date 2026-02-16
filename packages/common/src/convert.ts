@@ -4,7 +4,7 @@ import { base32z } from 'multiformats/bases/base32';
 import { base58btc } from 'multiformats/bases/base58';
 import { base64url } from 'multiformats/bases/base64';
 
-import { isAsyncIterable, isArrayBufferSlice, universalTypeOf } from './type-utils.js';
+import { isArrayBufferSlice, isAsyncIterable, universalTypeOf } from './type-utils.js';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -344,12 +344,12 @@ export class Convert {
         for await (const chunk of (this.data as AsyncIterable<any>)) {
           // If the chunk is already a string, concatenate it directly.
           if (typeof chunk === 'string')
-            str += chunk;
+          {str += chunk;}
           else
           // If the chunk is a Uint8Array or similar, use the decoder to convert it to a string.
           // The `stream: true` option lets the decoder handle multi-byte characters spanning
           // multiple chunks.
-            str += textDecoder.decode(chunk, { stream: true });
+          {str += textDecoder.decode(chunk, { stream: true });}
         }
 
         // Finalize the decoding process to handle any remaining bytes and signal the end of the stream.

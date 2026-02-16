@@ -1,11 +1,11 @@
-import { expect } from 'chai';
 import { Convert } from '@enbox/common';
+import { expect } from 'chai';
 
 import type { Jwk } from '../../src/jose/jwk.js';
 
-import { isChrome } from '../utils/runtimes.js';
-import { CryptoUtils } from '../../src/utils.js';
 import { AesCtrAlgorithm } from '../../src/algorithms/aes-ctr.js';
+import { CryptoUtils } from '../../src/utils.js';
+import { isChrome } from '../utils/runtimes.js';
 
 describe('AesCtrAlgorithm', () => {
   let aesCtr: AesCtrAlgorithm;
@@ -73,20 +73,20 @@ describe('AesCtrAlgorithm', () => {
       for (const algorithm of algorithms) {
         const privateKey = await aesCtr.generateKey({ algorithm });
         expect(privateKey).to.have.property('alg', algorithm);
-        if (!privateKey.k) throw new Error('Expected privateKey to have a `k` property'); // TypeScript type guard.
+        if (!privateKey.k) {throw new Error('Expected privateKey to have a `k` property');} // TypeScript type guard.
         const privateKeyBytes = Convert.base64Url(privateKey.k).toUint8Array();
         expect(privateKeyBytes.byteLength * 8).to.equal(parseInt(algorithm.slice(1, 4)));
       }
     });
 
     it(`supports 'A192CTR' algorithm in all supported runtimes except Chrome browser`, async function () {
-      if (isChrome) this.skip();
+      if (isChrome) {this.skip();}
 
       const algorithms = ['A192CTR'] as const;
       for (const algorithm of algorithms) {
         const privateKey = await aesCtr.generateKey({ algorithm });
         expect(privateKey).to.have.property('alg', algorithm);
-        if (!privateKey.k) throw new Error('Expected privateKey to have a `k` property'); // TypeScript type guard.
+        if (!privateKey.k) {throw new Error('Expected privateKey to have a `k` property');} // TypeScript type guard.
         const privateKeyBytes = Convert.base64Url(privateKey.k).toUint8Array();
         expect(privateKeyBytes.byteLength * 8).to.equal(parseInt(algorithm.slice(1, 4)));
       }

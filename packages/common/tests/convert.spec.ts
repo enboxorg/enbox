@@ -8,36 +8,36 @@ describe('Convert', () =>{
   describe('from: ArrayBuffer', () => {
     it('to: Base58Btc', () => {
       // Test Vector 1.
-      let input = (new Uint8Array([51, 52, 53])).buffer;
-      let output = 'JCXv';
+      const input = (new Uint8Array([51, 52, 53])).buffer;
+      const output = 'JCXv';
 
-      let result = Convert.arrayBuffer(input).toBase58Btc();
+      const result = Convert.arrayBuffer(input).toBase58Btc();
 
       expect(result).to.deep.equal(output);
     });
 
     it('to: Base64Url', () => {
       // Test Vector 1.
-      let input = (new Uint8Array([51, 52, 53])).buffer;
-      let output = 'MzQ1';
+      const input = (new Uint8Array([51, 52, 53])).buffer;
+      const output = 'MzQ1';
 
-      let result = Convert.arrayBuffer(input).toBase64Url();
+      const result = Convert.arrayBuffer(input).toBase64Url();
 
       expect(result).to.deep.equal(output);
     });
 
     it('to: Hex', () => {
       // Test Vector 1.
-      let input = (new Uint8Array([0xab, 0xba, 0xfa, 0xab])).buffer;
-      let output = 'abbafaab';
+      const input = (new Uint8Array([0xab, 0xba, 0xfa, 0xab])).buffer;
+      const output = 'abbafaab';
       const result = Convert.arrayBuffer(input).toHex();
       expect(result).to.deep.equal(output);
     });
 
     it('to: String', () => {
       // Test Vector 1.
-      let input = (new Uint8Array([102, 111, 111])).buffer;
-      let output = 'foo';
+      const input = (new Uint8Array([102, 111, 111])).buffer;
+      const output = 'foo';
 
       const result = Convert.arrayBuffer(input).toString();
 
@@ -46,10 +46,10 @@ describe('Convert', () =>{
 
     it('to: Uint8Array', () => {
       // Test Vector 1.
-      let input = (new Uint8Array([102, 111, 111])).buffer;
-      let output = new Uint8Array([102, 111, 111]);
+      const input = (new Uint8Array([102, 111, 111])).buffer;
+      const output = new Uint8Array([102, 111, 111]);
 
-      let result = Convert.arrayBuffer(input).toUint8Array();
+      const result = Convert.arrayBuffer(input).toUint8Array();
 
       expect(result).to.deep.equal(output);
     });
@@ -61,20 +61,20 @@ describe('Convert', () =>{
     let asyncIterableString: AsyncIterable<Uint8Array>;
 
     // Create a generator function that yields two Uint8Array chunks.
-    async function* generateBytesData() {
+    async function* generateBytesData(): AsyncGenerator<Uint8Array> {
       yield new Uint8Array([1, 2, 3]);
       yield new Uint8Array([4, 5, 6]);
     }
 
     // Create a generator function that yields parts of a JSON string.
-    async function* generateJsonData() {
+    async function* generateJsonData(): AsyncGenerator<string> {
       yield '{"foo":';
       yield '"bar"';
       yield '}';
     }
 
     // Create a generator function that yields Uint8Array chunks of encoded string data.
-    async function* generateStringData() {
+    async function* generateStringData(): AsyncGenerator<Uint8Array> {
       yield textEncoder.encode('Hello, ');
       yield textEncoder.encode('world!');
     }
@@ -157,30 +157,30 @@ describe('Convert', () =>{
   describe('from: Base58Btc', () => {
     it('to: ArrayBuffer', () => {
       // Test Vector 1.
-      let input = 'JCXv';
-      let output = (new Uint8Array([51, 52, 53])).buffer;
+      const input = 'JCXv';
+      const output = (new Uint8Array([51, 52, 53])).buffer;
 
-      let result = Convert.base58Btc(input).toArrayBuffer();
+      const result = Convert.base58Btc(input).toArrayBuffer();
 
       expect(result).to.deep.equal(output);
     });
 
     it('to: Multibase', () => {
       // Test Vector 1.
-      let input = '6MkugFXawZ8fvt5Q9gXkrtSZdTRg9W9M1hBpEh8HpF7wjSZ';
-      let output = 'z6MkugFXawZ8fvt5Q9gXkrtSZdTRg9W9M1hBpEh8HpF7wjSZ';
+      const input = '6MkugFXawZ8fvt5Q9gXkrtSZdTRg9W9M1hBpEh8HpF7wjSZ';
+      const output = 'z6MkugFXawZ8fvt5Q9gXkrtSZdTRg9W9M1hBpEh8HpF7wjSZ';
 
-      let result = Convert.base58Btc(input).toMultibase();
+      const result = Convert.base58Btc(input).toMultibase();
 
       expect(result).to.deep.equal(output);
     });
 
     it('to: Uint8Array', () => {
       // Test Vector 1.
-      let input = 'JCXv';
-      let output = new Uint8Array([51, 52, 53]);
+      const input = 'JCXv';
+      const output = new Uint8Array([51, 52, 53]);
 
-      let result = Convert.base58Btc(input).toUint8Array();
+      const result = Convert.base58Btc(input).toUint8Array();
 
       expect(result).to.deep.equal(output);
     });
@@ -189,36 +189,36 @@ describe('Convert', () =>{
   describe('from: Base64Url', () => {
     it('to: ArrayBuffer', () => {
       // Test Vector 1.
-      let input = 'MzQ1';
-      let output = (new Uint8Array([51, 52, 53])).buffer;
+      const input = 'MzQ1';
+      const output = (new Uint8Array([51, 52, 53])).buffer;
 
-      let result = Convert.base64Url(input).toArrayBuffer();
+      const result = Convert.base64Url(input).toArrayBuffer();
 
       expect(result).to.deep.equal(output);
     });
 
     it('to: Hex', () => {
       // Test Vector 1.
-      let input = 'eyJmb28iOiJiYXIifQ';
-      let output = '7b22666f6f223a22626172227d';
+      const input = 'eyJmb28iOiJiYXIifQ';
+      const output = '7b22666f6f223a22626172227d';
       const result = Convert.base64Url(input).toHex();
       expect(result).to.deep.equal(output);
     });
 
     it('to: Object', () => {
       // Test Vector 1.
-      let input = 'eyJmb28iOiJiYXIifQ';
-      let output = { foo: 'bar' };
+      const input = 'eyJmb28iOiJiYXIifQ';
+      const output = { foo: 'bar' };
 
-      let result = Convert.base64Url(input).toObject();
+      const result = Convert.base64Url(input).toObject();
 
       expect(result).to.deep.equal(output);
     });
 
     it('to: String', () => {
       // Test Vector 1.
-      let input = 'Zm9v';
-      let output = 'foo';
+      const input = 'Zm9v';
+      const output = 'foo';
 
       const result = Convert.base64Url(input).toString();
 
@@ -227,10 +227,10 @@ describe('Convert', () =>{
 
     it('to: Uint8Array', () => {
       // Test Vector 1.
-      let input = 'MzQ1';
-      let output = new Uint8Array([51, 52, 53]);
+      const input = 'MzQ1';
+      const output = new Uint8Array([51, 52, 53]);
 
-      let result = Convert.base64Url(input).toUint8Array();
+      const result = Convert.base64Url(input).toUint8Array();
 
       expect(result).to.deep.equal(output);
     });
@@ -239,15 +239,15 @@ describe('Convert', () =>{
   describe('from: Base64Z', () => {
     it('to: Uint8Array', () => {
       // Test Vector 1.
-      let input = '5umembtazeybqcd7grysfp711g1z56wzo8irzhae494hh58zguhy';
-      let output = new Uint8Array([
-        220, 214, 133, 134,  56, 186,   0,  23,
-        48,  125,  49,   1,  98, 183, 178, 145,
-        165, 125, 250, 151, 129, 234,  75, 243,
-        8,   215, 245, 206, 108, 247,  52, 248
+      const input = '5umembtazeybqcd7grysfp711g1z56wzo8irzhae494hh58zguhy';
+      const output = new Uint8Array([
+        220, 214, 133, 134, 56, 186, 0, 23,
+        48, 125, 49, 1, 98, 183, 178, 145,
+        165, 125, 250, 151, 129, 234, 75, 243,
+        8, 215, 245, 206, 108, 247, 52, 248
       ]);
 
-      let result = Convert.base32Z(input).toUint8Array();
+      const result = Convert.base32Z(input).toUint8Array();
 
       expect(result).to.deep.equal(output);
     });
@@ -256,124 +256,124 @@ describe('Convert', () =>{
   describe('from: BufferSource', () => {
     it('to: ArrayBuffer', () => {
       // Test Vector 1 - BufferSource is Uint8Array.
-      let inputT1 = new Uint8Array([101, 111, 111]);
-      let outputT1 = (new Uint8Array([101, 111, 111])).buffer;
-      let resultT1 = Convert.bufferSource(inputT1).toArrayBuffer();
+      const inputT1 = new Uint8Array([101, 111, 111]);
+      const outputT1 = (new Uint8Array([101, 111, 111])).buffer;
+      const resultT1 = Convert.bufferSource(inputT1).toArrayBuffer();
       expect(resultT1).to.deep.equal(outputT1);
 
       // Test Vector 2 - BufferSource is ArrayBuffer.
-      let inputT2 = (new Uint8Array([102, 111, 111])).buffer;
-      let outputT2 = (new Uint8Array([102, 111, 111])).buffer;
-      let resultT2 = Convert.bufferSource(inputT2).toArrayBuffer();
+      const inputT2 = (new Uint8Array([102, 111, 111])).buffer;
+      const outputT2 = (new Uint8Array([102, 111, 111])).buffer;
+      const resultT2 = Convert.bufferSource(inputT2).toArrayBuffer();
       expect(resultT2).to.deep.equal(outputT2);
 
       // Test Vector 3 - BufferSource is DataView.
-      let inputT3 = new DataView((new Uint8Array([103, 111, 111])).buffer);
-      let outputT3 = (new Uint8Array([103, 111, 111])).buffer;
-      let resultT3 = Convert.bufferSource(inputT3).toArrayBuffer();
+      const inputT3 = new DataView((new Uint8Array([103, 111, 111])).buffer);
+      const outputT3 = (new Uint8Array([103, 111, 111])).buffer;
+      const resultT3 = Convert.bufferSource(inputT3).toArrayBuffer();
       expect(resultT3).to.deep.equal(outputT3);
 
       // Test Vector 4 - BufferSource is an unsigned, 16-bit Typed Array.
-      let inputT4 = new Uint16Array([299]);
-      let outputT4 = (new Uint8Array([43, 1])).buffer;
-      let resultT4 = Convert.bufferSource(inputT4).toArrayBuffer();
+      const inputT4 = new Uint16Array([299]);
+      const outputT4 = (new Uint8Array([43, 1])).buffer;
+      const resultT4 = Convert.bufferSource(inputT4).toArrayBuffer();
       expect(resultT4).to.deep.equal(outputT4);
 
       // Test Vector 5 - BufferSource is a signed, 32-bit Typed Array.
-      let inputT5 = new Int32Array([1111]);
-      let outputT5 = (new Uint8Array([87, 4, 0, 0])).buffer;
-      let resultT5 = Convert.bufferSource(inputT5).toArrayBuffer();
+      const inputT5 = new Int32Array([1111]);
+      const outputT5 = (new Uint8Array([87, 4, 0, 0])).buffer;
+      const resultT5 = Convert.bufferSource(inputT5).toArrayBuffer();
       expect(resultT5).to.deep.equal(outputT5);
 
       // Test Vector 6 - BufferSource is a slice of a Typed Array.
-      let inputT6 = (new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7])).slice(1, 6);
-      let outputT6 = (new Uint8Array([1, 2, 3, 4, 5])).buffer;
-      let resultT6 = Convert.bufferSource(inputT6).toArrayBuffer();
+      const inputT6 = (new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7])).slice(1, 6);
+      const outputT6 = (new Uint8Array([1, 2, 3, 4, 5])).buffer;
+      const resultT6 = Convert.bufferSource(inputT6).toArrayBuffer();
       expect(resultT6).to.deep.equal(outputT6);
 
       // Test Vector 7 - BufferSource is a slice of a DataView.
-      let dataView = new DataView((new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7])).buffer);
-      let inputT7 = new DataView(dataView.buffer, dataView.byteOffset + 1, 6 - 1);
-      let outputT7 = (new Uint8Array([1, 2, 3, 4, 5])).buffer;
-      let resultT7 = Convert.bufferSource(inputT7).toArrayBuffer();
+      const dataView = new DataView((new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7])).buffer);
+      const inputT7 = new DataView(dataView.buffer, dataView.byteOffset + 1, 6 - 1);
+      const outputT7 = (new Uint8Array([1, 2, 3, 4, 5])).buffer;
+      const resultT7 = Convert.bufferSource(inputT7).toArrayBuffer();
       expect(resultT7).to.deep.equal(outputT7);
 
       // Test Vector 8 - BufferSource is Uint8Array.
-      let inputT8 = 'not BufferSource type';
+      const inputT8 = 'not BufferSource type';
       // @ts-expect-error because incorrect input data type is intentionally being used to trigger error.
       expect (() => Convert.bufferSource(inputT8).toArrayBuffer()).to.throw(TypeError, 'value is not of type');
     });
 
     it('to: Base64Url', () => {
       // Test Vector 1 - BufferSource is Uint8Array.
-      let inputT1 = new Uint8Array([102, 111, 111]);
-      let outputT1 = 'Zm9v';
-      let resultT1 = Convert.bufferSource(inputT1).toBase64Url();
+      const inputT1 = new Uint8Array([102, 111, 111]);
+      const outputT1 = 'Zm9v';
+      const resultT1 = Convert.bufferSource(inputT1).toBase64Url();
       expect(resultT1).to.deep.equal(outputT1);
 
       // Test Vector 2 - BufferSource is ArrayBuffer.
-      let inputT2 = (new Uint8Array([50, 51, 52, 53])).buffer;
-      let outputT2 = 'MjM0NQ';
-      let resultT2 = Convert.bufferSource(inputT2).toBase64Url();
+      const inputT2 = (new Uint8Array([50, 51, 52, 53])).buffer;
+      const outputT2 = 'MjM0NQ';
+      const resultT2 = Convert.bufferSource(inputT2).toBase64Url();
       expect(resultT2).to.deep.equal(outputT2);
 
       // Test Vector 3 - BufferSource is DataView.
-      let inputT3 = new DataView((new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 0])).buffer);
-      let outputT3 = 'AQIDBAUGBwgJAA';
-      let resultT3 = Convert.bufferSource(inputT3).toBase64Url();
+      const inputT3 = new DataView((new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 0])).buffer);
+      const outputT3 = 'AQIDBAUGBwgJAA';
+      const resultT3 = Convert.bufferSource(inputT3).toBase64Url();
       expect(resultT3).to.deep.equal(outputT3);
 
       // Test Vector 4 - BufferSource is an unsigned, 16-bit Typed Array.
-      let inputT4 = new Uint16Array([299, 298, 297]);
-      let outputT4 = 'KwEqASkB';
-      let resultT4 = Convert.bufferSource(inputT4).toBase64Url();
+      const inputT4 = new Uint16Array([299, 298, 297]);
+      const outputT4 = 'KwEqASkB';
+      const resultT4 = Convert.bufferSource(inputT4).toBase64Url();
       expect(resultT4).to.deep.equal(outputT4);
 
       // Test Vector 5 - BufferSource is a signed, 32-bit Typed Array.
-      let inputT5 = new Int32Array([1111, 1000, 2000]);
-      let outputT5 = 'VwQAAOgDAADQBwAA';
-      let resultT5 = Convert.bufferSource(inputT5).toBase64Url();
+      const inputT5 = new Int32Array([1111, 1000, 2000]);
+      const outputT5 = 'VwQAAOgDAADQBwAA';
+      const resultT5 = Convert.bufferSource(inputT5).toBase64Url();
       expect(resultT5).to.deep.equal(outputT5);
 
       // Test Vector 6 - BufferSource is Uint8Array.
-      let inputT6 = 'not BufferSource type';
+      const inputT6 = 'not BufferSource type';
       // @ts-expect-error because incorrect input data type is intentionally being used to trigger error.
       expect (() => Convert.bufferSource(inputT6).toBase64Url()).to.throw(TypeError, 'value is not of type');
     });
 
     it('to: Uint8Array', () => {
       // Test Vector 1 - BufferSource is Uint8Array.
-      let inputT1 = new Uint8Array([102, 111, 111]);
-      let outputT1 = new Uint8Array([102, 111, 111]);
-      let resultT1 = Convert.bufferSource(inputT1).toUint8Array();
+      const inputT1 = new Uint8Array([102, 111, 111]);
+      const outputT1 = new Uint8Array([102, 111, 111]);
+      const resultT1 = Convert.bufferSource(inputT1).toUint8Array();
       expect(resultT1).to.deep.equal(outputT1);
 
       // Test Vector 2 - BufferSource is ArrayBuffer.
-      let inputT2 = (new Uint8Array([102, 111, 111])).buffer;
-      let outputT2 = new Uint8Array([102, 111, 111]);
-      let resultT2 = Convert.bufferSource(inputT2).toUint8Array();
+      const inputT2 = (new Uint8Array([102, 111, 111])).buffer;
+      const outputT2 = new Uint8Array([102, 111, 111]);
+      const resultT2 = Convert.bufferSource(inputT2).toUint8Array();
       expect(resultT2).to.deep.equal(outputT2);
 
       // Test Vector 3 - BufferSource is DataView.
-      let inputT3 = new DataView((new Uint8Array([102, 111, 111])).buffer);
-      let outputT3 = new Uint8Array([102, 111, 111]);
-      let resultT3 = Convert.bufferSource(inputT3).toUint8Array();
+      const inputT3 = new DataView((new Uint8Array([102, 111, 111])).buffer);
+      const outputT3 = new Uint8Array([102, 111, 111]);
+      const resultT3 = Convert.bufferSource(inputT3).toUint8Array();
       expect(resultT3).to.deep.equal(outputT3);
 
       // Test Vector 4 - BufferSource is an unsigned, 16-bit Typed Array.
-      let inputT4 = new Uint16Array([299]);
-      let outputT4 = new Uint8Array([43, 1]);
-      let resultT4 = Convert.bufferSource(inputT4).toUint8Array();
+      const inputT4 = new Uint16Array([299]);
+      const outputT4 = new Uint8Array([43, 1]);
+      const resultT4 = Convert.bufferSource(inputT4).toUint8Array();
       expect(resultT4).to.deep.equal(outputT4);
 
       // Test Vector 5 - BufferSource is a signed, 32-bit Typed Array.
-      let inputT5 = new Int32Array([1111]);
-      let outputT5 = new Uint8Array([87, 4, 0, 0]);
-      let resultT5 = Convert.bufferSource(inputT5).toUint8Array();
+      const inputT5 = new Int32Array([1111]);
+      const outputT5 = new Uint8Array([87, 4, 0, 0]);
+      const resultT5 = Convert.bufferSource(inputT5).toUint8Array();
       expect(resultT5).to.deep.equal(outputT5);
 
       // Test Vector 6 - BufferSource is Uint8Array.
-      let inputT6 = 'not BufferSource type';
+      const inputT6 = 'not BufferSource type';
       // @ts-expect-error because incorrect input data type is intentionally being used to trigger error.
       expect (() => Convert.bufferSource(inputT6).toUint8Array()).to.throw(TypeError, 'value is not of type');
     });
@@ -382,7 +382,7 @@ describe('Convert', () =>{
   describe('from: Hex', () => {
     it('throws an error if the input is not a string', () => {
       // Test Vector 1.
-      let input = 0xaf;
+      const input = 0xaf;
 
       // @ts-expect-error because error is being intentionally trigger by passing non-string input.
       expect(() => Convert.hex(input)).to.throw(TypeError, 'must be a string');
@@ -390,7 +390,7 @@ describe('Convert', () =>{
 
     it('throws an error if the input string is an odd number of characters', () => {
       // Test Vector 1.
-      let input = 'faaba';
+      const input = 'faaba';
 
       expect(() => Convert.hex(input)).to.throw(TypeError, 'must have an even number of characters');
     });
@@ -398,7 +398,7 @@ describe('Convert', () =>{
     it('to: ArrayBuffer', () => {
       // Test Vector 1.
       let input = 'abbafaab';
-      let output = (new Uint8Array([0xab, 0xba, 0xfa, 0xab])).buffer;
+      const output = (new Uint8Array([0xab, 0xba, 0xfa, 0xab])).buffer;
       const result = Convert.hex(input).toArrayBuffer();
       expect(result).to.deep.equal(output);
 
@@ -410,7 +410,7 @@ describe('Convert', () =>{
     it('to: Uint8Array', () => {
       // Test Vector 1.
       let input = 'abbafaab';
-      let output = new Uint8Array([0xab, 0xba, 0xfa, 0xab]);
+      const output = new Uint8Array([0xab, 0xba, 0xfa, 0xab]);
       const result = Convert.hex(input).toUint8Array();
       expect(result).to.deep.equal(output);
 
@@ -423,10 +423,10 @@ describe('Convert', () =>{
   describe('from: Multibase', () => {
     it('to: Base58Btc', () => {
       // Test Vector 1.
-      let input = 'z6MkugFXawZ8fvt5Q9gXkrtSZdTRg9W9M1hBpEh8HpF7wjSZ';
-      let output = '6MkugFXawZ8fvt5Q9gXkrtSZdTRg9W9M1hBpEh8HpF7wjSZ';
+      const input = 'z6MkugFXawZ8fvt5Q9gXkrtSZdTRg9W9M1hBpEh8HpF7wjSZ';
+      const output = '6MkugFXawZ8fvt5Q9gXkrtSZdTRg9W9M1hBpEh8HpF7wjSZ';
 
-      let result = Convert.multibase(input).toBase58Btc();
+      const result = Convert.multibase(input).toBase58Btc();
 
       expect(result).to.deep.equal(output);
     });
@@ -435,8 +435,8 @@ describe('Convert', () =>{
   describe('from: Object', () => {
     it('to: Base64Url', () => {
       // Test Vector 1.
-      let input = { foo: 'bar' };
-      let output = 'eyJmb28iOiJiYXIifQ';
+      const input = { foo: 'bar' };
+      const output = 'eyJmb28iOiJiYXIifQ';
 
       const result = Convert.object(input).toBase64Url();
 
@@ -445,8 +445,8 @@ describe('Convert', () =>{
 
     it('to: String', () => {
       // Test Vector 1.
-      let input = { foo: 'bar' };
-      let output = '{"foo":"bar"}';
+      const input = { foo: 'bar' };
+      const output = '{"foo":"bar"}';
 
       const result = Convert.object(input).toString();
 
@@ -455,8 +455,8 @@ describe('Convert', () =>{
 
     it('to: Uint8Array', () => {
       // Test Vector 1.
-      let input = { foo: 'bar' };
-      let output = new Uint8Array([123, 34, 102, 111, 111, 34, 58, 34, 98, 97, 114, 34, 125]);
+      const input = { foo: 'bar' };
+      const output = new Uint8Array([123, 34, 102, 111, 111, 34, 58, 34, 98, 97, 114, 34, 125]);
 
       const result = Convert.object(input).toUint8Array();
 
@@ -467,8 +467,8 @@ describe('Convert', () =>{
   describe('from: String', () => {
     it('to: ArrayBuffer', () => {
       // Test Vector 1.
-      let input = 'foo';
-      let output = (new Uint8Array([102, 111, 111])).buffer;
+      const input = 'foo';
+      const output = (new Uint8Array([102, 111, 111])).buffer;
 
       const result = Convert.string(input).toArrayBuffer();
 
@@ -477,8 +477,8 @@ describe('Convert', () =>{
 
     it('to: Base64Url', () => {
       // Test Vector 1.
-      let input = 'foo';
-      let output = 'Zm9v';
+      const input = 'foo';
+      const output = 'Zm9v';
 
       const result = Convert.string(input).toBase64Url();
 
@@ -487,8 +487,8 @@ describe('Convert', () =>{
 
     it('to: Object', () => {
       // Test Vector 1.
-      let input = '{"foo":"bar"}';
-      let output = { foo: 'bar' };
+      const input = '{"foo":"bar"}';
+      const output = { foo: 'bar' };
 
       const result = Convert.string(input).toObject();
 
@@ -497,8 +497,8 @@ describe('Convert', () =>{
 
     it('to: Uint8Array', () => {
       // Test Vector 1.
-      let input = 'foo';
-      let output = new Uint8Array([102, 111, 111]);
+      const input = 'foo';
+      const output = new Uint8Array([102, 111, 111]);
 
       const result = Convert.string(input).toUint8Array();
 
@@ -509,61 +509,61 @@ describe('Convert', () =>{
   describe('from: Uint8Array', () => {
     it('to: ArrayBuffer', () => {
       // Test Vector 1.
-      let input = new Uint8Array([102, 111, 111]);
-      let output = (new Uint8Array([102, 111, 111])).buffer;
+      const input = new Uint8Array([102, 111, 111]);
+      const output = (new Uint8Array([102, 111, 111])).buffer;
 
-      let result = Convert.uint8Array(input).toArrayBuffer();
+      const result = Convert.uint8Array(input).toArrayBuffer();
 
       expect(result).to.deep.equal(output);
     });
 
     it('to: Base32Z', () => {
       // Test Vector 1.
-      let input = new Uint8Array([
-        220, 214, 133, 134,  56, 186,   0,  23,
-        48,  125,  49,   1,  98, 183, 178, 145,
-        165, 125, 250, 151, 129, 234,  75, 243,
-        8,   215, 245, 206, 108, 247,  52, 248
+      const input = new Uint8Array([
+        220, 214, 133, 134, 56, 186, 0, 23,
+        48, 125, 49, 1, 98, 183, 178, 145,
+        165, 125, 250, 151, 129, 234, 75, 243,
+        8, 215, 245, 206, 108, 247, 52, 248
       ]);
-      let output = '5umembtazeybqcd7grysfp711g1z56wzo8irzhae494hh58zguhy';
+      const output = '5umembtazeybqcd7grysfp711g1z56wzo8irzhae494hh58zguhy';
 
-      let result = Convert.uint8Array(input).toBase32Z();
+      const result = Convert.uint8Array(input).toBase32Z();
 
       expect(result).to.deep.equal(output);
     });
 
     it('to: Base58Btc', () => {
       // Test Vector 1.
-      let input = new Uint8Array([51, 52, 53]);
-      let output = 'JCXv';
+      const input = new Uint8Array([51, 52, 53]);
+      const output = 'JCXv';
 
-      let result = Convert.uint8Array(input).toBase58Btc();
+      const result = Convert.uint8Array(input).toBase58Btc();
 
       expect(result).to.deep.equal(output);
     });
 
     it('to: Base64Url', () => {
       // Test Vector 1.
-      let input = new Uint8Array([51, 52, 53]);
-      let output = 'MzQ1';
+      const input = new Uint8Array([51, 52, 53]);
+      const output = 'MzQ1';
 
-      let result = Convert.uint8Array(input).toBase64Url();
+      const result = Convert.uint8Array(input).toBase64Url();
 
       expect(result).to.deep.equal(output);
     });
 
     it('to: Hex', () => {
       // Test Vector 1.
-      let input = new Uint8Array([0xab, 0xba, 0xfa, 0xab]);
-      let output = 'abbafaab';
+      const input = new Uint8Array([0xab, 0xba, 0xfa, 0xab]);
+      const output = 'abbafaab';
       const result = Convert.uint8Array(input).toHex();
       expect(result).to.deep.equal(output);
     });
 
     it('to: Object', () => {
       // Test Vector 1.
-      let input = new Uint8Array([123, 34, 102, 111, 111, 34, 58, 34, 98, 97, 114, 34, 125]);
-      let output = { foo: 'bar' };
+      const input = new Uint8Array([123, 34, 102, 111, 111, 34, 58, 34, 98, 97, 114, 34, 125]);
+      const output = { foo: 'bar' };
 
       const result = Convert.uint8Array(input).toObject();
 
@@ -572,8 +572,8 @@ describe('Convert', () =>{
 
     it('to: String', () => {
       // Test Vector 1.
-      let input = new Uint8Array([102, 111, 111]);
-      let output = 'foo';
+      const input = new Uint8Array([102, 111, 111]);
+      const output = 'foo';
 
       const result = Convert.uint8Array(input).toString();
 

@@ -1,45 +1,45 @@
 import type {
-  Jwk,
-  Cipher,
-  Signer,
-  KeyWrapper,
-  SignParams,
   AesGcmParams,
-  KeyGenerator,
-  VerifyParams,
-  KeyIdentifier,
-  KmsSignParams,
-  KmsDigestParams,
-  KmsVerifyParams,
-  GetPublicKeyParams,
-  KmsExportKeyParams,
-  KmsGetKeyUriParams,
-  KmsImportKeyParams,
-  KmsGenerateKeyParams,
-  KmsGetPublicKeyParams,
   AsymmetricKeyGenerator,
-} from '@enbox/crypto';
+  Cipher,
+  CryptoAlgorithm,
+  GetPublicKeyParams,
+  Jwk,
+  KeyGenerator,
+  KeyIdentifier,
+  KeyWrapper,
+  KmsDigestParams,
+  KmsExportKeyParams,
+  KmsGenerateKeyParams,
+  KmsGetKeyUriParams,
+  KmsGetPublicKeyParams,
+  KmsImportKeyParams,
+  KmsSignParams,
+  KmsVerifyParams,
+  Signer,
+  SignParams,
+
+  VerifyParams } from '@enbox/crypto';
 
 import {
-  isPrivateJwk,
-  Sha2Algorithm,
+  AesGcmAlgorithm,
+  computeJwkThumbprint,
   EcdsaAlgorithm,
   EdDsaAlgorithm,
-  AesGcmAlgorithm,
-  CryptoAlgorithm,
+  isPrivateJwk,
   KEY_URI_PREFIX_JWK,
-  computeJwkThumbprint,
+  Sha2Algorithm,
 } from '@enbox/crypto';
 
 import type { AgentDataStore } from './store-data.js';
-import type { Web5PlatformAgent } from './types/agent.js';
 import type { AgentKeyManager } from './types/key-manager.js';
 import type { InferType } from './prototyping/common/type-utils.js';
+import type { Web5PlatformAgent } from './types/agent.js';
 import type { CipherParams, UnwrapKeyParams, WrapKeyParams } from './prototyping/crypto/types/params-direct.js';
 import type { KmsCipherParams, KmsUnwrapKeyParams, KmsWrapKeyParams } from './prototyping/crypto/types/params-kms.js';
 
-import { InMemoryKeyStore } from './store-key.js';
 import { AesKwAlgorithm } from './prototyping/crypto/algorithms/aes-kw.js';
+import { InMemoryKeyStore } from './store-key.js';
 import { CryptoError, CryptoErrorCode } from './prototyping/crypto/crypto-error.js';
 
 /**
@@ -78,7 +78,7 @@ const supportedAlgorithms = {
 } satisfies {
   [key: string]: {
     implementation : typeof CryptoAlgorithm;
-    names          : readonly string[];
+    names : readonly string[];
   }
 };
 
@@ -93,10 +93,10 @@ type AlgorithmConstructor = typeof supportedAlgorithms[SupportedAlgorithm]['impl
 
 /* Helper type for supported key generator algorithms. */
 type SupportedKeyGeneratorAlgorithm =
-  | 'Ed25519'                                      // Edwards Curve Digital Signature Algorithm (EdDSA)
+  | 'Ed25519' // Edwards Curve Digital Signature Algorithm (EdDSA)
   | 'secp256k1' | 'ES256K' | 'secp256r1' | 'ES256' // Elliptic Curve Digital Signature Algorithm (ECDSA)
-  | 'A128GCM' | 'A192GCM' | 'A256GCM'              // AES GCM with a 128-bit, 192-bit, or 256-bit key
-  | 'A128KW' | 'A192KW' | 'A256KW';                // AES Key Wrap with a 128-bit, 192-bit, or 256-bit key
+  | 'A128GCM' | 'A192GCM' | 'A256GCM' // AES GCM with a 128-bit, 192-bit, or 256-bit key
+  | 'A128KW' | 'A192KW' | 'A256KW'; // AES Key Wrap with a 128-bit, 192-bit, or 256-bit key
 
 /**
  * The `LocalKmsParams` interface specifies the parameters for initializing an instance of
@@ -412,7 +412,7 @@ export class LocalKeyManager implements AgentKeyManager {
   public async importKey({ key }:
     KmsImportKeyParams
   ): Promise<KeyIdentifier> {
-    if (!isPrivateJwk(key)) throw new TypeError('Invalid key provided. Must be a private key in JWK format.');
+    if (!isPrivateJwk(key)) {throw new TypeError('Invalid key provided. Must be a private key in JWK format.');}
 
     // Make a deep copy of the key to avoid mutating the original.
     const privateKey = structuredClone(key);

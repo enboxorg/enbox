@@ -6,7 +6,7 @@ describe('Type Utils', () => {
   describe('isAsyncIterable()', () => {
     it('should return true for a valid AsyncIterable', () => {
       const asyncIterator = {
-        async *[Symbol.asyncIterator]() {
+        async *[Symbol.asyncIterator](): AsyncGenerator<number> {
           yield 1;
           yield 2;
         }
@@ -77,7 +77,7 @@ describe('Type Utils', () => {
     });
 
     it('should correctly identify Object', () => {
-      expect(universalTypeOf({a: 1, b: 2})).to.equal('Object');
+      expect(universalTypeOf({ a: 1, b: 2 })).to.equal('Object');
     });
 
     it('should correctly identify String', () => {

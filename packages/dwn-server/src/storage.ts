@@ -1,4 +1,6 @@
+import type { Dialect } from '@enbox/dwn-sql-store';
 import type { DidResolver } from '@enbox/dids';
+import type { DwnServerConfig } from './config.js';
 import type {
   DataStore,
   DwnConfig,
@@ -8,14 +10,13 @@ import type {
   ResumableTaskStore,
   TenantGate,
 } from '@enbox/dwn-sdk-js';
-import type { Dialect } from '@enbox/dwn-sql-store';
-import type { DwnServerConfig } from './config.js';
 
 import * as fs from 'fs';
 import Cursor from 'pg-cursor';
-import { createBunSqliteDatabase } from '@enbox/dwn-sql-store';
-import pg from 'pg';
 import { createPool as MySQLCreatePool } from 'mysql2';
+import pg from 'pg';
+
+import { createBunSqliteDatabase } from '@enbox/dwn-sql-store';
 import { PluginLoader } from './plugin-loader.js';
 
 import {
@@ -51,10 +52,10 @@ export enum BackendTypes {
 export type DwnStore = DataStore | EventLog | MessageStore | ResumableTaskStore;
 
 export async function getDwnConfig(
-  config  : DwnServerConfig,
+  config : DwnServerConfig,
   options : {
     didResolver? : DidResolver,
-    tenantGate?  : TenantGate,
+    tenantGate? : TenantGate,
     eventStream? : EventStream,
   }
 ): Promise<DwnConfig> {
@@ -78,8 +79,8 @@ function getLevelStore(
       });
     case StoreType.MessageStore:
       return new MessageStoreLevel({
-        blockstoreLocation: storeURI.host + storeURI.pathname + '/MESSAGESTORE',
-        indexLocation: storeURI.host + storeURI.pathname + '/INDEX',
+        blockstoreLocation : storeURI.host + storeURI.pathname + '/MESSAGESTORE',
+        indexLocation      : storeURI.host + storeURI.pathname + '/INDEX',
       });
     case StoreType.EventLog:
       return new EventLogLevel({
@@ -131,7 +132,7 @@ async function getStore(storeConfigString: string, storeType: StoreType): Promis
     return await loadStoreFromFilePath(storeConfigString, storeType);
   }
   // else treat the `storeConfigString` as a connection string
-  
+
   const storeURI = new URL(storeConfigString);
 
   switch (storeURI.protocol.slice(0, -1)) {
@@ -171,7 +172,7 @@ async function loadStoreFromFilePath(
 
 export function getDialectFromUrl(connectionUrl: URL): Dialect {
   switch (connectionUrl.protocol.slice(0, -1)) {
-    case BackendTypes.SQLITE:
+    case BackendTypes.SQLITE: {
       const path = connectionUrl.host + connectionUrl.pathname;
       console.log('SQL-lite relative path:', path ? path : undefined); // NOTE, using ? for lose equality comparison
 
@@ -186,14 +187,15 @@ export function getDialectFromUrl(connectionUrl: URL): Dialect {
       return new SqliteDialect({
         database: async () => createBunSqliteDatabase(dbPath),
       });
+    }
     case BackendTypes.MYSQL:
       return new MysqlDialect({
         pool: async () => MySQLCreatePool(connectionUrl.toString()),
       });
     case BackendTypes.POSTGRES:
       return new PostgresDialect({
-        pool: async () => new pg.Pool({ connectionString: connectionUrl.toString() }),
-        cursor: Cursor,
+        pool   : async () => new pg.Pool({ connectionString: connectionUrl.toString() }),
+        cursor : Cursor,
       });
   }
 }

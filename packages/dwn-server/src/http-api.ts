@@ -1,28 +1,29 @@
 import type { RecordsReadReply } from '@enbox/dwn-sdk-js';
-import { type Dwn, DateSort, RecordsRead, RecordsQuery, ProtocolsQuery } from '@enbox/dwn-sdk-js';
-
-import cors from 'cors';
 import type { Express, Request, Response } from 'express';
+
+import { Convert } from '@enbox/common';
+import cors from 'cors';
 import express from 'express';
-import { readFileSync } from 'fs';
 import http from 'http';
 import log from 'loglevel';
+import { readFileSync } from 'fs';
 import { register } from 'prom-client';
 import responseTime from 'response-time';
 import { v4 as uuidv4 } from 'uuid';
+import { DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
 
-import type { RequestContext } from './lib/json-rpc-router.js';
-import type { JsonRpcRequest } from './lib/json-rpc.js';
 
 import type { DwnServerConfig } from './config.js';
 import type { DwnServerError } from './dwn-error.js';
+import type { JsonRpcRequest } from './lib/json-rpc.js';
 import type { RegistrationManager } from './registration/registration-manager.js';
+import type { RequestContext } from './lib/json-rpc-router.js';
+
 import { config } from './config.js';
 import { jsonRpcRouter } from './json-rpc-api.js';
 import { Web5ConnectServer } from './web5-connect/web5-connect-server.js';
 import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from './lib/json-rpc.js';
 import { requestCounter, responseHistogram } from './metrics.js';
-import { Convert } from '@enbox/common';
 
 
 export class HttpApi {
@@ -44,7 +45,7 @@ export class HttpApi {
     httpApi.#packageInfo = {
       server: config.serverName,
     };
-    
+
     try {
       // We populate the `version` and `sdkVersion` properties from the `package.json` file.
       const packageJson = JSON.parse(readFileSync(config.packageJsonPath).toString());
@@ -65,8 +66,8 @@ export class HttpApi {
 
     // create the Web5 Connect Server
     httpApi.web5ConnectServer = await Web5ConnectServer.create({
-      baseUrl: config.baseUrl,
-      sqlTtlCacheUrl: config.ttlCacheUrl,
+      baseUrl        : config.baseUrl,
+      sqlTtlCacheUrl : config.ttlCacheUrl,
     });
 
     httpApi.#setupMiddleware();
@@ -157,20 +158,20 @@ export class HttpApi {
         for (const param in req.query) {
           const keys = param.split('.');
           const lastKey = keys.pop();
-          const lastLevelObject = keys.reduce((obj, key) => obj[key] = obj[key] || {}, queryOptions)
+          const lastLevelObject = keys.reduce((obj, key) => obj[key] = obj[key] || {}, queryOptions);
           lastLevelObject[lastKey] = req.query[param];
         }
 
         // the protocol path segment is base64url encoded, as the actual protocol is a URL
         // we decode it here in order to filter for the correct protocol
-        const protocol = Convert.base64Url(req.params.protocol).toString()
+        const protocol = Convert.base64Url(req.params.protocol).toString();
         queryOptions.filter.protocol = protocol;
         queryOptions.filter.protocolPath = req.params[0].replace(leadTailSlashRegex, '');
 
         const query = await RecordsQuery.create({
-          filter: queryOptions.filter,
-          pagination: { limit: 1 },
-          dateSort: DateSort.PublishedDescending
+          filter     : queryOptions.filter,
+          pagination : { limit: 1 },
+          dateSort   : DateSort.PublishedDescending
         });
 
         const { entries, status } = await this.dwn.processMessage(req.params.did, query.message);
@@ -190,11 +191,11 @@ export class HttpApi {
         } else {
           return res.sendStatus(status.code);
         }
-      } catch(error) {
+      } catch (error) {
         log.error(`Error processing request: ${decodeURI(req.url)}`, error);
         return res.sendStatus(400);
       }
-    })
+    });
 
     this.#api.get('/:did/read/protocols/:protocol', async (req, res) => {
       // wrap request in a try-catch block to handle any unexpected errors
@@ -202,7 +203,7 @@ export class HttpApi {
 
         // the protocol segment is base64url encoded, as the actual protocol is a URL
         // we decode it here in order to filter for the correct protocol
-        const protocol = Convert.base64Url(req.params.protocol).toString()
+        const protocol = Convert.base64Url(req.params.protocol).toString();
         const query = await ProtocolsQuery.create({
           filter: { protocol }
         });
@@ -219,11 +220,11 @@ export class HttpApi {
         } else {
           return res.sendStatus(status.code);
         }
-      } catch(error) {
+      } catch (error) {
         log.error(`Error processing request: ${decodeURI(req.url)}`, error);
         return res.sendStatus(400);
       }
-    })
+    });
 
     const recordsReadHandler = async (req, res): Promise<any> => {
       const record = await RecordsRead.create({
@@ -231,7 +232,7 @@ export class HttpApi {
       });
       const reply = await this.dwn.processMessage(req.params.did, record.message);
       return readReplyHandler(res, reply);
-    }
+    };
 
     this.#api.get('/:did/read/records/:id', recordsReadHandler);
     this.#api.get('/:did/records/:id', recordsReadHandler);
@@ -250,7 +251,7 @@ export class HttpApi {
     });
 
     this.#api.get('/:did/query', async (req, res) => {
-      
+
       try {
         // builds a nested object from flat keys with dot notation which may share the same parent path
         // e.g. "did:dht:123/query?filter.protocol=foo&filter.protocolPath=bar" becomes
@@ -264,14 +265,14 @@ export class HttpApi {
         for (const param in req.query) {
           const keys = param.split('.');
           const lastKey = keys.pop();
-          const lastLevelObject = keys.reduce((obj, key) => obj[key] = obj[key] || {}, recordsQueryOptions)
+          const lastLevelObject = keys.reduce((obj, key) => obj[key] = obj[key] || {}, recordsQueryOptions);
           lastLevelObject[lastKey] = req.query[param];
         }
-    
+
         const recordsQuery = await RecordsQuery.create({
-          filter: recordsQueryOptions.filter,
-          pagination: recordsQueryOptions.pagination,
-          dateSort: recordsQueryOptions.dateSort,
+          filter     : recordsQueryOptions.filter,
+          pagination : recordsQueryOptions.pagination,
+          dateSort   : recordsQueryOptions.dateSort,
         });
 
         // should always return a 200 status code with a JSON response
@@ -412,15 +413,15 @@ export class HttpApi {
     this.#api.post('/connect/par', async (req, res) => {
       log.info('Storing Pushed Authorization Request (PAR) request...');
 
-    // TODO: Add validation for request too large HTTP 413: https://github.com/enboxorg/enbox/issues/146
-    // TODO: Add validation for too many requests HTTP 429: https://github.com/enboxorg/enbox/issues/147
+      // TODO: Add validation for request too large HTTP 413: https://github.com/enboxorg/enbox/issues/146
+      // TODO: Add validation for too many requests HTTP 429: https://github.com/enboxorg/enbox/issues/147
 
       if (!req.body.request) {
         return res.status(400).json({
-          ok: false,
-          status: {
-            code: 400,
-            message: "Bad Request: Missing 'request' parameter",
+          ok     : false,
+          status : {
+            code    : 400,
+            message : 'Bad Request: Missing \'request\' parameter',
           },
         });
       }
@@ -428,10 +429,10 @@ export class HttpApi {
       // Validate that `request_uri` was NOT provided
       if (req.body?.request?.request_uri) {
         return res.status(400).json({
-          ok: false,
-          status: {
-            code: 400,
-            message: "Bad Request: 'request_uri' parameter is not allowed in PAR",
+          ok     : false,
+          status : {
+            code    : 400,
+            message : 'Bad Request: \'request_uri\' parameter is not allowed in PAR',
           },
         });
       }

@@ -1,5 +1,5 @@
-import { BearerDid } from '@enbox/dids';
-import { IdentityMetadata, PortableIdentity } from './types/identity.js';
+import type { BearerDid } from '@enbox/dids';
+import type { IdentityMetadata, PortableIdentity } from './types/identity.js';
 
 /**
  * Represents a Web5 Identity with its DID and metadata.

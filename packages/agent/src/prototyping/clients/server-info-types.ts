@@ -1,4 +1,4 @@
-import { KeyValueStore } from '@enbox/common';
+import type { KeyValueStore } from '@enbox/common';
 
 export type ServerInfo = {
   /** the maximum file size the user can request to store */
@@ -11,7 +11,7 @@ export type ServerInfo = {
   registrationRequirements: string[],
   /** whether web socket support is enabled on this server */
   webSocketSupport: boolean,
-}
+};
 
 export interface DwnServerInfoCache extends KeyValueStore<string, ServerInfo| undefined> {}
 

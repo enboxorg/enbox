@@ -5,7 +5,7 @@ import { CryptoAlgorithm } from '@enbox/crypto';
 import type { BytesToPrivateKeyParams, PrivateKeyToBytesParams, UnwrapKeyParams, WrapKeyParams } from '../types/params-direct.js';
 
 import { AesKw } from '../primitives/aes-kw.js';
-import { RequireOnly } from '@enbox/common';
+import type { RequireOnly } from '@enbox/common';
 
 /**
  * The `AesKwGenerateKeyParams` interface defines the algorithm-specific parameters that should be

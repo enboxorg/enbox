@@ -1,6 +1,8 @@
-import { DwnRecordSubscriptionHandler, getRecordAuthor, PermissionsApi, Web5Agent } from '@enbox/agent';
-import { RecordsSubscribeRequest } from './dwn-api.js';
+import { getRecordAuthor } from '@enbox/agent';
+import type { DwnRecordSubscriptionHandler, PermissionsApi, Web5Agent } from '@enbox/agent';
+
 import { Record } from './record.js';
+import type { RecordsSubscribeRequest } from './dwn-api.js';
 
 /**
  * Utility class for dealing with subscriptions.

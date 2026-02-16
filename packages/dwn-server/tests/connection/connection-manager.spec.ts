@@ -1,22 +1,22 @@
 import type { Dwn } from '@enbox/dwn-sdk-js';
 
 import chaiAsPromised from 'chai-as-promised';
+import sinon from 'sinon';
 import chai, { expect } from 'chai';
 
-import sinon from 'sinon';
-import { getTestDwn } from '../test-dwn.js';
-import { InMemoryConnectionManager } from '../../src/connection/connection-manager.js';
 import { config } from '../../src/config.js';
-import { WsApi } from '../../src/ws-api.js';
+import { getTestDwn } from '../test-dwn.js';
 import { HttpApi } from '../../src/http-api.js';
+import { InMemoryConnectionManager } from '../../src/connection/connection-manager.js';
 import { JsonRpcSocket } from '../../src/json-rpc-socket.js';
+import { WsApi } from '../../src/ws-api.js';
 
 chai.use(chaiAsPromised);
 
 describe('InMemoryConnectionManager', () => {
   let dwn: Dwn;
   let connectionManager: InMemoryConnectionManager;
-  let httpApi: HttpApi;  
+  let httpApi: HttpApi;
   let wsApi: WsApi;
 
   beforeEach(async () => {
@@ -55,5 +55,5 @@ describe('InMemoryConnectionManager', () => {
 
     await connectionManager.closeAll();
     expect((connectionManager as any).connections.size).to.equal(0);
-  })
+  });
 });

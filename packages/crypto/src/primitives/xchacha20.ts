@@ -1,6 +1,6 @@
 import { Convert } from '@enbox/common';
-import { xchacha20 } from '@noble/ciphers/chacha';
 import { getWebcryptoSubtle } from '@noble/ciphers/webcrypto';
+import { xchacha20 } from '@noble/ciphers/chacha';
 
 import type { Jwk } from '../jose/jwk.js';
 

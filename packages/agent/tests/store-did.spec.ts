@@ -1,15 +1,16 @@
-import { expect } from 'chai';
 import { Convert } from '@enbox/common';
-import { DidJwk, PortableDid } from '@enbox/dids';
+import { DidJwk } from '@enbox/dids';
+import { expect } from 'chai';
+import type { PortableDid } from '@enbox/dids';
 
 import type { AgentDataStore, DwnDataStore } from '../src/store-data.js';
 
 import { AgentDidApi } from '../src/did-api.js';
-import { TestAgent } from './utils/test-agent.js';
 import { DwnInterface } from '../src/types/dwn.js';
-import { PlatformAgentTestHarness } from '../src/test-harness.js';
-import { DwnDidStore, InMemoryDidStore } from '../src/store-did.js';
 import { IdentityProtocolDefinition } from '../src/store-data-protocols.js';
+import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { TestAgent } from './utils/test-agent.js';
+import { DwnDidStore, InMemoryDidStore } from '../src/store-did.js';
 
 describe('DidStore', () => {
   let testHarness: PlatformAgentTestHarness;
@@ -58,7 +59,7 @@ describe('DidStore', () => {
       describe('delete()', () => {
         it('should delete DID and return true if DID exists', async () => {
           // Create and import a DID.
-          let bearerDid = await DidJwk.create();
+          const bearerDid = await DidJwk.create();
           await testHarness.agent.did.import({ portableDid: await bearerDid.export() });
 
           // Test deleting the DID and validate the result.
@@ -72,7 +73,7 @@ describe('DidStore', () => {
 
         it('should return false if DID does not exist', async () => {
           // Test deleting a non-existent DID using the tenant of the only DID with keys.
-          const deleteResult = await didStore.delete({ id: 'non-existent',  agent: testHarness.agent });
+          const deleteResult = await didStore.delete({ id: 'non-existent', agent: testHarness.agent });
 
           // Validate that a delete could not be carried out.
           expect(deleteResult).to.be.false;
@@ -81,7 +82,7 @@ describe('DidStore', () => {
         it('throws an error if no keys exist for specified DID', async function() {
           // Skip this test for InMemoryDidStore, as checking for keys to sign DWN messages is not
           // relevant given that the store is in-memory.
-          if (DidStore.name === 'InMemoryDidStore') this.skip();
+          if (DidStore.name === 'InMemoryDidStore') {this.skip();}
 
           try {
             await didStore.delete({
@@ -101,7 +102,7 @@ describe('DidStore', () => {
       describe('get()', () => {
         it('should return a DID by identifier if it exists', async () => {
           // Create and import a DID.
-          let bearerDid = await DidJwk.create();
+          const bearerDid = await DidJwk.create();
           const importedDid = await testHarness.agent.did.import({ portableDid: await bearerDid.export() });
 
           // Test getting the DID.
@@ -124,7 +125,7 @@ describe('DidStore', () => {
         it('throws an error if no keys exist for specified DID', async function() {
           // Skip this test for InMemoryDidStore, as checking for keys to sign DWN messages is not
           // relevant given that the store is in-memory.
-          if (DidStore.name === 'InMemoryDidStore') this.skip();
+          if (DidStore.name === 'InMemoryDidStore') {this.skip();}
 
           try {
             await didStore.get({
@@ -207,7 +208,7 @@ describe('DidStore', () => {
         it('throws an error if the DID records exceed the DWN maximum data size for query results', async function() {
           // Skip this test for InMemoryDidStore, as the in-memory store returns all records
           // regardless of the size of the data.
-          if (DidStore.name === 'InMemoryDidStore') this.skip();
+          if (DidStore.name === 'InMemoryDidStore') {this.skip();}
 
           const didBytes = Convert.string(new Array(102400 + 1).join('0')).toUint8Array();
 
@@ -242,7 +243,7 @@ describe('DidStore', () => {
       describe('set()', () => {
         it('stores a DID', async () => {
           // Generate a new DID.
-          let bearerDid = await DidJwk.create();
+          const bearerDid = await DidJwk.create();
 
           // Export the DID including its private key material.
           const portableDid = await bearerDid.export();
@@ -266,8 +267,8 @@ describe('DidStore', () => {
 
         it('authors multiple entries in the store with the Agent DID', async () => {
           // Create two did:jwk DIDs to test import.
-          let bearerDid1 = await DidJwk.create();
-          let bearerDid2 = await DidJwk.create();
+          const bearerDid1 = await DidJwk.create();
+          const bearerDid2 = await DidJwk.create();
 
           // Create PortableDid versions of each DID to store.
           const portableDid1: PortableDid = { uri: bearerDid1.uri, document: bearerDid1.document, metadata: bearerDid1.metadata };
@@ -309,7 +310,7 @@ describe('DidStore', () => {
 
         it('throws an error on duplicate DID entry when preventDuplicates=true', async () => {
           // Generate a new DID.
-          let bearerDid = await DidJwk.create();
+          const bearerDid = await DidJwk.create();
 
           // Export the DID including its private key material.
           const portableDid = await bearerDid.export();
@@ -343,10 +344,10 @@ describe('DidStore', () => {
         it('throws an error if no keys exist for specified DID', async function() {
           // Skip this test for InMemoryDidStore, as checking for keys to sign DWN messages is not
           // relevant given that the store is in-memory.
-          if (DidStore.name === 'InMemoryDidStore') this.skip();
+          if (DidStore.name === 'InMemoryDidStore') {this.skip();}
 
           // Generate a new DID.
-          let bearerDid = await DidJwk.create();
+          const bearerDid = await DidJwk.create();
 
           // Export the DID including its private key material.
           const portableDid: PortableDid = { uri: bearerDid.uri, document: bearerDid.document, metadata: bearerDid.metadata };

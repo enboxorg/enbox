@@ -165,6 +165,6 @@ When working on this repository:
 4. **Always run lint and build before committing**: `bun run lint` and `bun run build` (or `bun run --filter '*' lint` / `bun run --filter '*' build` from root). Fix any errors before pushing.
 5. **Consider the monorepo structure** when adding new packages
 6. **Run scripts with `bun run`**, not `npm run` or `pnpm`
-7. **Import attributes**: Use `assert { type: 'json' }` (not `with`) for JSON imports — `@typescript-eslint/parser` v7.x cannot parse the `with` keyword. Migration to `with` requires upgrading to `@typescript-eslint` v8.
+7. **Import attributes**: Use `import ... with { type: 'json' }` (the standard syntax) for JSON imports — we use `@typescript-eslint` v8 which fully supports the `with` keyword.
 
 This repository represents a successful consolidation of a previously broken, scattered architecture into a unified, maintainable monorepo structure.

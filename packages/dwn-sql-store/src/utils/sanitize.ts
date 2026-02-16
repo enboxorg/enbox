@@ -1,5 +1,5 @@
-import { Filter } from '@enbox/dwn-sdk-js';
-import { KeyValues } from '../types.js';
+import type { Filter } from '@enbox/dwn-sdk-js';
+import type { KeyValues } from '../types.js';
 
 export function extractTagsAndSanitizeIndexes(records: KeyValues): {
   tags: KeyValues;
@@ -13,9 +13,9 @@ export function extractTagsAndSanitizeIndexes(records: KeyValues): {
 
   // tag values are prefixed with 'tag.', we extract them to be inserted separately into the tags reference tables.
   // we delete them from the `indexes` object so they are not included in the main insert.
-  for (let key in indexes) {
+  for (const key in indexes) {
     if (key.startsWith('tag.')) {
-      let value = indexes[key];
+      const value = indexes[key];
       delete indexes[key];
       tags[key.slice(4)] = value;
     }
@@ -24,9 +24,9 @@ export function extractTagsAndSanitizeIndexes(records: KeyValues): {
   return { tags, indexes };
 }
 
-export function sanitizeIndexes(records: KeyValues) {
-  for (let key in records) {
-    let value = records[key];
+export function sanitizeIndexes(records: KeyValues): void {
+  for (const key in records) {
+    const value = records[key];
     if (Array.isArray(value)) {
       const sanitizedValues: any[] = [];
       for (const valueItem of value) {
@@ -46,10 +46,10 @@ export function sanitizeIndexes(records: KeyValues) {
  */
 export function sanitizedValue(value: string | number | boolean): string | number {
   switch (typeof value) {
-  case 'boolean':
-    return value ? 1 : 0;
-  default:
-    return value;
+    case 'boolean':
+      return value ? 1 : 0;
+    default:
+      return value;
   }
 }
 
@@ -68,7 +68,7 @@ export function sanitizeFiltersAndSeparateTags(filters: Filter[]): {
     const nonTagFilter = {};
 
     // tag values are prefixed with 'tag.', we extract them to be queried separately in the tags tables.
-    for (let key in filter) {
+    for (const key in filter) {
       const value = sanitizeFilterValue(filter[key]);
 
       if (key.startsWith('tag.')) {
@@ -97,20 +97,20 @@ export function sanitizeFiltersAndSeparateTags(filters: Filter[]): {
 // TODO: export filter types from `dwn-sdk-js`
 export function sanitizeFilterValue(value: any): any {
   switch (typeof value) {
-  case 'boolean':
-    return value ? 1 : 0;
-  default:
-    return value;
+    case 'boolean':
+      return value ? 1 : 0;
+    default:
+      return value;
   }
 }
 
-export function sanitizeFilters(filters: Filter[]) {
+export function sanitizeFilters(filters: Filter[]): void {
   filters.forEach(sanitizeFilter);
 }
 
 export function sanitizeFilter(filter: Filter): Filter {
-  for (let key in filter) {
-    let value = filter[key];
+  for (const key in filter) {
+    const value = filter[key];
     filter[key] = sanitizeFilterValue(value);
   }
   return filter;

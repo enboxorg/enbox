@@ -7,7 +7,7 @@ import type {
   ResumableTaskStore,
 } from '../../src/index.js';
 
-import freeForAll from '../vectors/protocol-definitions/free-for-all.json' assert { type: 'json' };
+import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 
 import { expect } from 'chai';
 import { PermissionGrant } from '../../src/protocols/permission-grant.js';

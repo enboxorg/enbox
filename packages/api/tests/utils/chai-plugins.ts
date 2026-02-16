@@ -1,4 +1,4 @@
-import * as Chai from 'chai';
+import type * as Chai from 'chai';
 
 /**
  * Chai plugin for validating URLs.
@@ -38,12 +38,12 @@ import * as Chai from 'chai';
  */
 export const chaiUrl: Chai.ChaiPlugin = function(chai: Chai.ChaiStatic, utils: Chai.ChaiUtils) {
   const assert = chai.assert;
-  function isValidUrl() {
+  function isValidUrl(): void {
     const obj = utils.flag(this, 'object') as string;
     let isUrl = true;
     try {
       new URL(obj);
-    } catch (err) {
+    } catch {
       isUrl = false;
     }
     this.assert(
@@ -57,5 +57,5 @@ export const chaiUrl: Chai.ChaiPlugin = function(chai: Chai.ChaiStatic, utils: C
   utils.addProperty(chai.Assertion.prototype, 'url', isValidUrl);
 
   // Add the method to the Assert API.
-  assert.isUrl = (actual) => (new chai.Assertion(actual)).to.be.a.url;
+  assert.isUrl = (actual: string): void => { (new chai.Assertion(actual)).to.be.a.url; };
 };

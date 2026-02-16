@@ -1,7 +1,7 @@
 import type { Jwk } from '@enbox/crypto';
 
-import { expect } from 'chai';
 import { Convert } from '@enbox/common';
+import { expect } from 'chai';
 
 import { AesKwAlgorithm } from '../../../../src/prototyping/crypto/algorithms/aes-kw.js';
 import { isChrome } from '../../../utils/runtimes.js';

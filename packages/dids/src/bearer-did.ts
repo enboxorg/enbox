@@ -1,16 +1,16 @@
 import type {
-  Jwk,
-  Signer,
   CryptoApi,
-  KeyIdentifier,
   EnclosedSignParams,
+  EnclosedVerifyParams,
+  Jwk,
+  KeyIdentifier,
+  KeyImporterExporter,
   KmsExportKeyParams,
   KmsImportKeyParams,
-  KeyImporterExporter,
-  EnclosedVerifyParams,
+  Signer,
 } from '@enbox/crypto';
 
-import { LocalKeyManager, CryptoUtils } from '@enbox/crypto';
+import { CryptoUtils, LocalKeyManager } from '@enbox/crypto';
 
 import type { DidDocument } from './types/did-core.js';
 import type { DidMetadata, PortableDid } from './types/portable-did.js';
@@ -32,7 +32,8 @@ export interface BearerDidSigner extends Signer {
    *
    * Typically, this value is used to populate the `alg` field of a JWT or JWS header. The
    * registered algorithm names are defined in the
-   * {@link https://www.iana.org/assignments/jose/jose.xhtml#web-signature-encryption-algorithms | IANA JSON Web Signature and Encryption Algorithms registry}.
+    * {@link https://www.iana.org/assignments/jose/jose.xhtml#web-signature-encryption-algorithms |
+    * IANA JSON Web Signature and Encryption Algorithms registry}.
    *
    * @example
    * "ES256" // ECDSA using P-256 and SHA-256
@@ -129,7 +130,7 @@ export class BearerDid {
     }
 
     // Create a new `PortableDid` copy object to store the exported data.
-    let portableDid: PortableDid = JSON.parse(JSON.stringify({
+    const portableDid: PortableDid = JSON.parse(JSON.stringify({
       uri      : this.uri,
       document : this.document,
       metadata : this.metadata
@@ -138,7 +139,7 @@ export class BearerDid {
     // If the BearerDid's key manager supports exporting private keys, add them to the portable DID.
     if ('exportKey' in this.keyManager && typeof this.keyManager.exportKey === 'function') {
       const privateKeys: Jwk[] = [];
-      for (let vm of this.document.verificationMethod) {
+      for (const vm of this.document.verificationMethod) {
         if (!vm.publicKeyJwk) {
           throw new Error(`Verification method '${vm.id}' does not contain a public key in JWK format`);
         }
@@ -250,7 +251,7 @@ export class BearerDid {
     }
 
     // If given, import the private key material into the key manager.
-    for (let key of portableDid.privateKeys ?? []) {
+    for (const key of portableDid.privateKeys ?? []) {
 
       // confirm th key does not already exist before importing it to avoid failures from the key manager
       const keyUri = await keyManager.getKeyUri({ key });
@@ -262,7 +263,7 @@ export class BearerDid {
 
     // Validate that the key material for every verification method in the DID document is present
     // in the key manager.
-    for (let vm of verificationMethods) {
+    for (const vm of verificationMethods) {
       if (!vm.publicKeyJwk) {
         throw new Error(`Verification method '${vm.id}' does not contain a public key in JWK format`);
       }

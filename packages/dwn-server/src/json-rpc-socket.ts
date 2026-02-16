@@ -2,8 +2,9 @@ import log from 'loglevel';
 import { v4 as uuidv4 } from 'uuid';
 import WebSocket from 'ws';
 
-import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from "./lib/json-rpc.js";
-import { createJsonRpcSubscriptionRequest } from "./lib/json-rpc.js";
+import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from './lib/json-rpc.js';
+
+import { createJsonRpcSubscriptionRequest } from './lib/json-rpc.js';
 
 // These were arbitrarily chosen, but can be modified via connect options
 const CONNECT_TIMEOUT = 3_000;

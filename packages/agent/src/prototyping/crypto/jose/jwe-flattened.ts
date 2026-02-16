@@ -1,17 +1,17 @@
 import type { Jwk, KeyIdentifier } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
-import { LocalKeyManager, CryptoUtils } from '@enbox/crypto';
+import { CryptoUtils, LocalKeyManager } from '@enbox/crypto';
 
 import type { CryptoApi } from '../types/crypto-api.js';
 import type { KeyManager } from '../types/key-manager.js';
 import type { JweDecryptOptions, JweEncryptOptions, JweHeaderParams } from './jwe.js';
 
-import { isCipher } from '../utils.js';
 import { AgentCryptoApi } from '../../../crypto-api.js';
-import { JweKeyManagement, isValidJweHeader } from './jwe.js';
 import { hasDuplicateProperties } from '../../common/object.js';
+import { isCipher } from '../utils.js';
 import { CryptoError, CryptoErrorCode } from '../crypto-error.js';
+import { isValidJweHeader, JweKeyManagement } from './jwe.js';
 
 /**
  * Parameters required for decrypting a flattened JWE.
@@ -125,10 +125,10 @@ export interface FlattenedJweParams {
  */
 function decodeHeaderParam(param: string, value?: string): Uint8Array | undefined {
   // If the parameter value is not present, return undefined.
-  if (value === undefined) return undefined;
+  if (value === undefined) {return undefined;}
 
   try {
-    if (typeof value !== 'string') throw new Error();
+    if (typeof value !== 'string') {throw new Error();}
     return Convert.base64Url(value).toUint8Array();
   } catch {
     throw new CryptoError(CryptoErrorCode.InvalidJwe,
@@ -446,13 +446,13 @@ export class FlattenedJwe {
     const jwe = new FlattenedJwe({
       ciphertext: Convert.uint8Array(ciphertext).toBase64Url(),
     });
-    if (encryptedKey) jwe.encrypted_key = Convert.uint8Array(encryptedKey).toBase64Url();
-    if (protectedHeader) jwe.protected = encodedProtectedHeader;
-    if (sharedUnprotectedHeader) jwe.unprotected = sharedUnprotectedHeader;
-    if (unprotectedHeader) jwe.header = unprotectedHeader;
-    if (iv) jwe.iv = Convert.uint8Array(iv).toBase64Url();
-    if (encodedAad) jwe.aad = encodedAad;
-    if (authenticationTag) jwe.tag = Convert.uint8Array(authenticationTag).toBase64Url();
+    if (encryptedKey) {jwe.encrypted_key = Convert.uint8Array(encryptedKey).toBase64Url();}
+    if (protectedHeader) {jwe.protected = encodedProtectedHeader;}
+    if (sharedUnprotectedHeader) {jwe.unprotected = sharedUnprotectedHeader;}
+    if (unprotectedHeader) {jwe.header = unprotectedHeader;}
+    if (iv) {jwe.iv = Convert.uint8Array(iv).toBase64Url();}
+    if (encodedAad) {jwe.aad = encodedAad;}
+    if (authenticationTag) {jwe.tag = Convert.uint8Array(authenticationTag).toBase64Url();}
 
     return jwe;
   }

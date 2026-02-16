@@ -1,24 +1,23 @@
-
-import type { Dwn, MessageEvent } from '@enbox/dwn-sdk-js';
-import { DataStream, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
-
-import { expect } from 'chai';
-import { base64url } from 'multiformats/bases/base64';
 import type { SinonFakeTimers } from 'sinon';
+import type { Dwn, MessageEvent } from '@enbox/dwn-sdk-js';
+
+import { base64url } from 'multiformats/bases/base64';
+import { expect } from 'chai';
 import { useFakeTimers } from 'sinon';
 import { v4 as uuidv4 } from 'uuid';
+import { DataStream, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
+import { config } from '../src/config.js';
+import { getTestDwn } from './test-dwn.js';
+import { HttpApi } from '../src/http-api.js';
+import { JsonRpcSocket } from '../src/json-rpc-socket.js';
+import { WsApi } from '../src/ws-api.js';
 import {
   createJsonRpcRequest,
   createJsonRpcSubscriptionRequest,
   JsonRpcErrorCodes,
 } from '../src/lib/json-rpc.js';
-import { config } from '../src/config.js';
-import { WsApi } from '../src/ws-api.js';
-import { getTestDwn } from './test-dwn.js';
-import { createRecordsWriteMessage, sendWsMessage, sendHttpMessage } from './utils.js';
-import { HttpApi } from '../src/http-api.js';
-import { JsonRpcSocket } from '../src/json-rpc-socket.js';
+import { createRecordsWriteMessage, sendHttpMessage, sendWsMessage } from './utils.js';
 
 
 describe('websocket api', function () {
@@ -37,7 +36,7 @@ describe('websocket api', function () {
 
   beforeEach(async function () {
     dwn = await getTestDwn({ withEvents: true });
-    httpApi =  await HttpApi.create(config, dwn);
+    httpApi = await HttpApi.create(config, dwn);
     await httpApi.start(9002);
     wsApi = new WsApi(httpApi.server, dwn);
     wsApi.start();
@@ -77,14 +76,14 @@ describe('websocket api', function () {
 
     const requestId = uuidv4();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
-      message: recordsWrite.toJSON(),
-      target: alice.did,
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
       encodedData,
     });
 
     const connection = await JsonRpcSocket.connect('ws://127.0.0.1:9002');
     const response = await connection.request(dwnRequest);
-    
+
     expect(response.id).to.equal(requestId);
     expect(response.error).to.not.be.undefined;
     expect(response.error.code).to.equal(JsonRpcErrorCodes.InvalidParams);
@@ -95,22 +94,22 @@ describe('websocket api', function () {
     const alice = await TestDataGenerator.generateDidKeyPersona();
 
     const { message } = await TestDataGenerator.generateRecordsSubscribe({
-      author: alice,
-      filter: {
+      author : alice,
+      filter : {
         schema: 'foo/bar'
       }
     });
 
     const records: string[] = [];
     const subscriptionHandler = async (event: MessageEvent): Promise<void> => {
-      const { message } = event
+      const { message } = event;
       records.push(await Message.getCid(message));
     };
 
     const requestId = uuidv4();
     const dwnRequest = createJsonRpcSubscriptionRequest(requestId, 'rpc.subscribe.dwn.processMessage', {
-      message: message,
-      target: alice.did,
+      message : message,
+      target  : alice.did,
     });
 
     const connection = await JsonRpcSocket.connect('ws://127.0.0.1:9002');
@@ -118,7 +117,7 @@ describe('websocket api', function () {
       const { event } = response.result;
       subscriptionHandler(event);
     });
-    
+
     expect(response.error).to.be.undefined;
     expect(response.result.reply.status.code).to.equal(200);
     expect(close).to.not.be.undefined;
@@ -130,10 +129,10 @@ describe('websocket api', function () {
     });
 
     const writeResult1 = await sendHttpMessage({
-      url       : 'http://localhost:9002',
-      target    : alice.did,
-      message   : write1Message.message,
-      data      : write1Message.dataBytes,
+      url     : 'http://localhost:9002',
+      target  : alice.did,
+      message : write1Message.message,
+      data    : write1Message.dataBytes,
     });
     expect(writeResult1.status.code).to.equal(202);
 
@@ -144,11 +143,11 @@ describe('websocket api', function () {
     });
 
     const writeResult2 = await sendHttpMessage({
-      url       : 'http://localhost:9002',
-      target    : alice.did,
-      message   : write2Message.message,
-      data      : write2Message.dataBytes, 
-    }) 
+      url     : 'http://localhost:9002',
+      target  : alice.did,
+      message : write2Message.message,
+      data    : write2Message.dataBytes,
+    });
     expect(writeResult2.status.code).to.equal(202);
 
     // close the subscription
@@ -165,8 +164,8 @@ describe('websocket api', function () {
     const alice = await TestDataGenerator.generateDidKeyPersona();
 
     const { message } = await TestDataGenerator.generateRecordsSubscribe({
-      author: alice,
-      filter: {
+      author : alice,
+      filter : {
         schema: 'foo/bar'
       }
     });
@@ -180,8 +179,8 @@ describe('websocket api', function () {
     const requestId = uuidv4();
     const subscribeId = uuidv4();
     const dwnRequest = createJsonRpcSubscriptionRequest(requestId, 'rpc.subscribe.dwn.processMessage', {
-      message: message,
-      target: alice.did,
+      message : message,
+      target  : alice.did,
     }, subscribeId);
 
     const connection = await JsonRpcSocket.connect('ws://127.0.0.1:9002');
@@ -201,10 +200,10 @@ describe('websocket api', function () {
     });
 
     const writeResult1 = await sendHttpMessage({
-      url       : 'http://localhost:9002',
-      target    : alice.did,
-      message   : write1Message.message,
-      data      : write1Message.dataBytes,
+      url     : 'http://localhost:9002',
+      target  : alice.did,
+      message : write1Message.message,
+      data    : write1Message.dataBytes,
     });
     expect(writeResult1.status.code).to.equal(202);
 
@@ -219,11 +218,11 @@ describe('websocket api', function () {
     });
 
     const writeResult2 = await sendHttpMessage({
-      url       : 'http://localhost:9002',
-      target    : alice.did,
-      message   : write2Message.message,
-      data      : write2Message.dataBytes, 
-    }) 
+      url     : 'http://localhost:9002',
+      target  : alice.did,
+      message : write2Message.message,
+      data    : write2Message.dataBytes,
+    });
     expect(writeResult2.status.code).to.equal(202);
 
     const write3Message = await TestDataGenerator.generateRecordsWrite({
@@ -233,11 +232,11 @@ describe('websocket api', function () {
     });
 
     const writeResult3 = await sendHttpMessage({
-      url       : 'http://localhost:9002',
-      target    : alice.did,
-      message   : write3Message.message,
-      data      : write3Message.dataBytes, 
-    }) 
+      url     : 'http://localhost:9002',
+      target  : alice.did,
+      message : write3Message.message,
+      data    : write3Message.dataBytes,
+    });
     expect(writeResult3.status.code).to.equal(202);
 
     await new Promise(resolve => setTimeout(resolve, 5)); // wait for records to be processed
@@ -248,23 +247,23 @@ describe('websocket api', function () {
     const alice = await TestDataGenerator.generateDidKeyPersona();
 
     const { message } = await TestDataGenerator.generateRecordsSubscribe({
-      author: alice,
-      filter: {
+      author : alice,
+      filter : {
         schema: 'foo/bar'
       }
     });
 
     const records: string[] = [];
     const subscriptionHandler = async (event: MessageEvent): Promise<void> => {
-      const { message } = event
+      const { message } = event;
       records.push(await Message.getCid(message));
     };
 
     const requestId = uuidv4();
     const subscribeId = uuidv4();
     const dwnRequest = createJsonRpcSubscriptionRequest(requestId, 'rpc.subscribe.dwn.processMessage', {
-      message: message,
-      target: alice.did
+      message : message,
+      target  : alice.did
     }, subscribeId);
 
     const connection = await JsonRpcSocket.connect('ws://127.0.0.1:9002');
@@ -278,8 +277,8 @@ describe('websocket api', function () {
     // We are checking for the subscription Id not the request Id
     const request2Id = uuidv4();
     const dwnRequest2 = createJsonRpcSubscriptionRequest(request2Id, 'rpc.subscribe.dwn.processMessage', {
-      message: message2,
-      target: alice.did
+      message : message2,
+      target  : alice.did
     }, subscribeId);
 
     const { response: response2 } = await connection.subscribe(dwnRequest2, (response) => {
@@ -297,10 +296,10 @@ describe('websocket api', function () {
     });
 
     const writeResult1 = await sendHttpMessage({
-      url       : 'http://localhost:9002',
-      target    : alice.did,
-      message   : write1Message.message,
-      data      : write1Message.dataBytes,
+      url     : 'http://localhost:9002',
+      target  : alice.did,
+      message : write1Message.message,
+      data    : write1Message.dataBytes,
     });
     expect(writeResult1.status.code).to.equal(202);
 
@@ -311,11 +310,11 @@ describe('websocket api', function () {
     });
 
     const writeResult2 = await sendHttpMessage({
-      url       : 'http://localhost:9002',
-      target    : alice.did,
-      message   : write2Message.message,
-      data      : write2Message.dataBytes, 
-    }) 
+      url     : 'http://localhost:9002',
+      target  : alice.did,
+      message : write2Message.message,
+      data    : write2Message.dataBytes,
+    });
     expect(writeResult2.status.code).to.equal(202);
 
     // close the subscription
@@ -339,25 +338,25 @@ describe('websocket api', function () {
     });
 
     const writeResult1 = await sendHttpMessage({
-      url       : 'http://localhost:9002',
-      target    : alice.did,
-      message   : initialWrite.message,
-      data      : initialWrite.dataBytes,
+      url     : 'http://localhost:9002',
+      target  : alice.did,
+      message : initialWrite.message,
+      data    : initialWrite.dataBytes,
     });
     expect(writeResult1.status.code).to.equal(202);
 
     // subscribe to 'foo/bar' messages
     const { message } = await TestDataGenerator.generateRecordsSubscribe({
-      author: alice,
-      filter: {
+      author : alice,
+      filter : {
         schema: 'foo/bar'
       }
     });
 
     const records: string[] = [];
     const subscriptionHandler = async (event: MessageEvent): Promise<void> => {
-      const { message, initialWrite } = event
-      if (initialWrite)  {
+      const { message, initialWrite } = event;
+      if (initialWrite) {
         records.push(await Message.getCid(initialWrite));
       }
       records.push(await Message.getCid(message));
@@ -366,8 +365,8 @@ describe('websocket api', function () {
     const requestId = uuidv4();
     const subscribeId = uuidv4();
     const dwnRequest = createJsonRpcSubscriptionRequest(requestId, 'rpc.subscribe.dwn.processMessage', {
-      message: message,
-      target: alice.did
+      message : message,
+      target  : alice.did
     }, subscribeId);
 
     const connection = await JsonRpcSocket.connect('ws://127.0.0.1:9002');
@@ -387,10 +386,10 @@ describe('websocket api', function () {
     });
 
     const updateResult = await sendHttpMessage({
-      url       : 'http://localhost:9002',
-      target    : alice.did,
-      message   : updatedMessage.message,
-      data      : updatedMessage.dataBytes,
+      url     : 'http://localhost:9002',
+      target  : alice.did,
+      message : updatedMessage.message,
+      data    : updatedMessage.dataBytes,
     });
     expect(updateResult.status.code).to.equal(202);
 

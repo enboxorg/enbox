@@ -1,19 +1,19 @@
-import { expect, use } from 'chai';
 import chaiAsPromised from 'chai-as-promised';
+import { expect, use } from 'chai';
 
 import type { Jwk } from '../../src/jose/jwk.js';
 
+import { jwkToThumbprintTestVectors } from '../fixtures/test-vectors/jwk.js';
 import {
-  isPublicJwk,
-  isPrivateJwk,
-  isEcPublicJwk,
+  computeJwkThumbprint,
   isEcPrivateJwk,
-  isOkpPublicJwk,
+  isEcPublicJwk,
   isOctPrivateJwk,
   isOkpPrivateJwk,
-  computeJwkThumbprint,
+  isOkpPublicJwk,
+  isPrivateJwk,
+  isPublicJwk,
 } from '../../src/jose/jwk.js';
-import { jwkToThumbprintTestVectors } from '../fixtures/test-vectors/jwk.js';
 
 use(chaiAsPromised);
 
@@ -31,7 +31,7 @@ describe('JWK', () => {
     it('throws an error if unsupported key type has been passed', async () => {
       await expect(
         // @ts-expect-error because an invalid key type is being intentionally passed.
-        computeJwkThumbprint({ jwk: { crv: 'X25519', kty: 'unsupported' }})
+        computeJwkThumbprint({ jwk: { crv: 'X25519', kty: 'unsupported' } })
       ).to.eventually.be.rejectedWith(Error, `Unsupported key type: unsupported`);
     });
   });

@@ -1,13 +1,10 @@
-
-
-import sinon from 'sinon';
-
 import { expect } from 'chai';
-import { useFakeTimers } from 'sinon';
-import { v4 as uuidv4 } from 'uuid';
-import { ProofOfWorkManager } from '../..//src/registration/proof-of-work-manager.js';
 import { randomBytes } from 'crypto';
+import { v4 as uuidv4 } from 'uuid';
+import sinon, { useFakeTimers } from 'sinon';
+
 import { ProofOfWork } from '../../src/registration/proof-of-work.js';
+import { ProofOfWorkManager } from '../../src/registration/proof-of-work-manager.js';
 
 describe('ProofOfWorkManager', function () {
   let clock;
@@ -39,7 +36,7 @@ describe('ProofOfWorkManager', function () {
     const stub = (): void => {
       // Generate a random number between 0 and 1
       const random = Math.random();
-    
+
       // If the random number is less than 0.5, throw an error
       if (random < 0.5) {
         throw new Error('Random error');
@@ -81,25 +78,25 @@ describe('ProofOfWorkManager', function () {
 
     // Expect to accept response nonce generated using previous challenge nonce.
     const responseNonceUsingPreviousChallengeNonce = ProofOfWork.findQualifiedResponseNonce({
-      challengeNonce: previousChallengeNonce,
-      maximumAllowedHashValue: initialMaximumAllowedHashValue,
+      challengeNonce          : previousChallengeNonce,
+      maximumAllowedHashValue : initialMaximumAllowedHashValue,
       requestData
     });
     await proofOfWorkManager.verifyProofOfWork({
-      challengeNonce: previousChallengeNonce,
-      responseNonce: responseNonceUsingPreviousChallengeNonce,
+      challengeNonce : previousChallengeNonce,
+      responseNonce  : responseNonceUsingPreviousChallengeNonce,
       requestData
     });
 
     // Expect to accept response nonce generated using next challenge nonce.
     const responseNonceUsingNextChallengeNonce = ProofOfWork.findQualifiedResponseNonce({
-      challengeNonce: nextChallengeNonce,
-      maximumAllowedHashValue: initialMaximumAllowedHashValue,
+      challengeNonce          : nextChallengeNonce,
+      maximumAllowedHashValue : initialMaximumAllowedHashValue,
       requestData
     });
     await proofOfWorkManager.verifyProofOfWork({
-      challengeNonce: nextChallengeNonce,
-      responseNonce: responseNonceUsingNextChallengeNonce,
+      challengeNonce : nextChallengeNonce,
+      responseNonce  : responseNonceUsingNextChallengeNonce,
       requestData
     });
   });

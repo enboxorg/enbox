@@ -1,5 +1,5 @@
-import { expect, use } from 'chai';
 import chaiAsPromised from 'chai-as-promised';
+import { expect, use } from 'chai';
 
 import { canonicalize } from '../../src/jose/utils.js';
 

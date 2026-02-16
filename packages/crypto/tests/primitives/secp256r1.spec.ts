@@ -1,18 +1,17 @@
-import { expect, use } from 'chai';
-import { Convert } from '@enbox/common';
 import chaiAsPromised from 'chai-as-promised';
+import { Convert } from '@enbox/common';
+import { expect, use } from 'chai';
 
 import type { Jwk, JwkParamsEcPrivate } from '../../src/jose/jwk.js';
 
-import secp256r1GetCurvePoints from '../fixtures/test-vectors/secp256r1/get-curve-points.json' assert { type: 'json' };
-import secp256r1BytesToPublicKey from '../fixtures/test-vectors/secp256r1/bytes-to-public-key.json' assert { type: 'json' };
-import secp256r1PublicKeyToBytes from '../fixtures/test-vectors/secp256r1/public-key-to-bytes.json' assert { type: 'json' };
-import secp256r1ValidatePublicKey from '../fixtures/test-vectors/secp256r1/validate-public-key.json' assert { type: 'json' };
-import secp256r1BytesToPrivateKey from '../fixtures/test-vectors/secp256r1/bytes-to-private-key.json' assert { type: 'json' };
-import secp256r1PrivateKeyToBytes from '../fixtures/test-vectors/secp256r1/private-key-to-bytes.json' assert { type: 'json' };
-import secp256r1ValidatePrivateKey from '../fixtures/test-vectors/secp256r1/validate-private-key.json' assert { type: 'json' };
-
 import { Secp256r1 } from '../../src/primitives/secp256r1.js';
+import secp256r1BytesToPrivateKey from '../fixtures/test-vectors/secp256r1/bytes-to-private-key.json' with { type: 'json' };
+import secp256r1BytesToPublicKey from '../fixtures/test-vectors/secp256r1/bytes-to-public-key.json' with { type: 'json' };
+import secp256r1GetCurvePoints from '../fixtures/test-vectors/secp256r1/get-curve-points.json' with { type: 'json' };
+import secp256r1PrivateKeyToBytes from '../fixtures/test-vectors/secp256r1/private-key-to-bytes.json' with { type: 'json' };
+import secp256r1PublicKeyToBytes from '../fixtures/test-vectors/secp256r1/public-key-to-bytes.json' with { type: 'json' };
+import secp256r1ValidatePrivateKey from '../fixtures/test-vectors/secp256r1/validate-private-key.json' with { type: 'json' };
+import secp256r1ValidatePublicKey from '../fixtures/test-vectors/secp256r1/validate-public-key.json' with { type: 'json' };
 
 use(chaiAsPromised);
 
@@ -37,8 +36,12 @@ describe('Secp256r1', () => {
     });
 
     it('returns the low-S form given a high-S signature', async () => {
-      // Source: https://github.com/paulmillr/noble-curves/blob/37eab5a28a43c35b87e9e95a12ae6086393ac38b/test/wycheproof/ecdsa_secp256r1_sha256_test.json#L209-L218
-      const signatureHighS = Convert.hex('2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18b329f479a2bbd0a5c384ee1493b1f5186a87139cac5df4087c134b49156847db').toUint8Array();
+      // Source: https://github.com/paulmillr/noble-curves/blob/37eab5a28a43c35b87e9e95a12ae6086393ac38b
+      //   /test/wycheproof/ecdsa_secp256r1_sha256_test.json#L209-L218
+      const signatureHighS = Convert.hex(
+        '2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18' +
+        'b329f479a2bbd0a5c384ee1493b1f5186a87139cac5df4087c134b49156847db'
+      ).toUint8Array();
 
       const adjustedSignature = await Secp256r1.adjustSignatureToLowS({ signature: signatureHighS });
 
@@ -46,8 +49,12 @@ describe('Secp256r1', () => {
     });
 
     it('returns the signature unmodified if already in low-S form', async () => {
-      // Source: https://github.com/paulmillr/noble-curves/blob/37eab5a28a43c35b87e9e95a12ae6086393ac38b/test/wycheproof/ecdsa_secp256r1_sha256_test.json#L189-L198
-      const signatureLowS = Convert.hex('2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e184cd60b855d442f5b3c7b11eb6c4e0ae7525fe710fab9aa7c77a67f79e6fadd76').toUint8Array();
+      // Source: https://github.com/paulmillr/noble-curves/blob/37eab5a28a43c35b87e9e95a12ae6086393ac38b
+      //   /test/wycheproof/ecdsa_secp256r1_sha256_test.json#L189-L198
+      const signatureLowS = Convert.hex(
+        '2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18' +
+        '4cd60b855d442f5b3c7b11eb6c4e0ae7525fe710fab9aa7c77a67f79e6fadd76'
+      ).toUint8Array();
 
       const adjustedSignature = await Secp256r1.adjustSignatureToLowS({ signature: signatureLowS });
 
@@ -55,12 +62,22 @@ describe('Secp256r1', () => {
     });
 
     it('returns signatures that can be verified regardless of low- or high-S form', async () => {
-      // Source: https://github.com/paulmillr/noble-curves/blob/37eab5a28a43c35b87e9e95a12ae6086393ac38b/test/wycheproof/ecdsa_secp256r1_sha256_test.json#L176-L198
-      const publicKeyBytes = Convert.hex('042927b10512bae3eddcfe467828128bad2903269919f7086069c8c4df6c732838c7787964eaac00e5921fb1498a60f4606766b3d9685001558d1a974e7341513e').toUint8Array();
+      // Source: https://github.com/paulmillr/noble-curves/blob/37eab5a28a43c35b87e9e95a12ae6086393ac38b
+      //   /test/wycheproof/ecdsa_secp256r1_sha256_test.json#L176-L198
+      const publicKeyBytes = Convert.hex(
+        '042927b10512bae3eddcfe467828128bad2903269919f7086069c8c4df6c732838' +
+        'c7787964eaac00e5921fb1498a60f4606766b3d9685001558d1a974e7341513e'
+      ).toUint8Array();
       const publicKey = await Secp256r1.bytesToPublicKey({ publicKeyBytes });
       const data = Convert.hex('313233343030').toUint8Array();
-      const signatureLowS = Convert.hex('2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e184cd60b855d442f5b3c7b11eb6c4e0ae7525fe710fab9aa7c77a67f79e6fadd76').toUint8Array();
-      const signatureHighS = Convert.hex('2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18b329f479a2bbd0a5c384ee1493b1f5186a87139cac5df4087c134b49156847db').toUint8Array();
+      const signatureLowS = Convert.hex(
+        '2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18' +
+        '4cd60b855d442f5b3c7b11eb6c4e0ae7525fe710fab9aa7c77a67f79e6fadd76'
+      ).toUint8Array();
+      const signatureHighS = Convert.hex(
+        '2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18' +
+        'b329f479a2bbd0a5c384ee1493b1f5186a87139cac5df4087c134b49156847db'
+      ).toUint8Array();
 
       // Verify that the returned signature is valid when input in low-S form.
       let adjustedSignature = await Secp256r1.adjustSignatureToLowS({ signature: signatureLowS });
@@ -193,11 +210,18 @@ describe('Secp256r1', () => {
     });
 
     it('passes Wycheproof test vector', async () => {
-      // Source: https://github.com/paulmillr/noble-curves/blob/37eab5a28a43c35b87e9e95a12ae6086393ac38b/test/wycheproof/ecdsa_secp256r1_sha256_test.json#L189-L198
-      const publicKeyBytes = Convert.hex('042927b10512bae3eddcfe467828128bad2903269919f7086069c8c4df6c732838c7787964eaac00e5921fb1498a60f4606766b3d9685001558d1a974e7341513e').toUint8Array();
+      // Source: https://github.com/paulmillr/noble-curves/blob/37eab5a28a43c35b87e9e95a12ae6086393ac38b
+      //   /test/wycheproof/ecdsa_secp256r1_sha256_test.json#L189-L198
+      const publicKeyBytes = Convert.hex(
+        '042927b10512bae3eddcfe467828128bad2903269919f7086069c8c4df6c732838' +
+        'c7787964eaac00e5921fb1498a60f4606766b3d9685001558d1a974e7341513e'
+      ).toUint8Array();
       const publicKey = await Secp256r1.bytesToPublicKey({ publicKeyBytes });
       const message = Convert.hex('313233343030').toUint8Array();
-      const derSignature = Convert.hex('304402202ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e1802204cd60b855d442f5b3c7b11eb6c4e0ae7525fe710fab9aa7c77a67f79e6fadd76').toUint8Array();
+      const derSignature = Convert.hex(
+        '304402202ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18' +
+        '02204cd60b855d442f5b3c7b11eb6c4e0ae7525fe710fab9aa7c77a67f79e6fadd76'
+      ).toUint8Array();
 
       const compactSignature = await Secp256r1.convertDerToCompactSignature({ derSignature });
 
@@ -212,8 +236,12 @@ describe('Secp256r1', () => {
 
     it('throws an error for an invalid ASN.1 DER encoded ECDSA signature due to incorrect length', async () => {
       // Invalid ASN.1 DER encoded ECDSA signature.
-      // Source: https://github.com/paulmillr/noble-curves/blob/37eab5a28a43c35b87e9e95a12ae6086393ac38b/test/wycheproof/ecdsa_secp256r1_sha256_test.json#L239-L248
-      const invalidDerSignature = Convert.hex('304602202ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18022100b329f479a2bbd0a5c384ee1493b1f5186a87139cac5df4087c134b49156847db').toUint8Array();
+      // Source: https://github.com/paulmillr/noble-curves/blob/37eab5a28a43c35b87e9e95a12ae6086393ac38b
+      //   /test/wycheproof/ecdsa_secp256r1_sha256_test.json#L239-L248
+      const invalidDerSignature = Convert.hex(
+        '304602202ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18' +
+        '022100b329f479a2bbd0a5c384ee1493b1f5186a87139cac5df4087c134b49156847db'
+      ).toUint8Array();
 
       try {
         await Secp256r1.convertDerToCompactSignature({ derSignature: invalidDerSignature });
@@ -226,8 +254,12 @@ describe('Secp256r1', () => {
 
     it('throws an error for an invalid ASN.1 DER encoded ECDSA signature due to appending zeros to sequence', async () => {
       // Invalid ASN.1 DER encoded ECDSA signature.
-      // Source: https://github.com/paulmillr/noble-curves/blob/37eab5a28a43c35b87e9e95a12ae6086393ac38b/test/wycheproof/ecdsa_secp256r1_sha256_test.json#L369-L378
-      const invalidDerSignature = Convert.hex('304702202ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18022100b329f479a2bbd0a5c384ee1493b1f5186a87139cac5df4087c134b49156847db0000').toUint8Array();
+      // Source: https://github.com/paulmillr/noble-curves/blob/37eab5a28a43c35b87e9e95a12ae6086393ac38b
+      //   /test/wycheproof/ecdsa_secp256r1_sha256_test.json#L369-L378
+      const invalidDerSignature = Convert.hex(
+        '304702202ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18' +
+        '022100b329f479a2bbd0a5c384ee1493b1f5186a87139cac5df4087c134b49156847db0000'
+      ).toUint8Array();
 
       try {
         await Secp256r1.convertDerToCompactSignature({ derSignature: invalidDerSignature });
@@ -527,9 +559,7 @@ describe('Secp256r1', () => {
     it('accepts input data as Uint8Array', async () => {
       const data = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
       const key = privateKey;
-      let signature: Uint8Array;
-
-      signature = await Secp256r1.sign({ key, data });
+      const signature = await Secp256r1.sign({ key, data });
       expect(signature).to.be.instanceOf(Uint8Array);
     });
   });
@@ -566,12 +596,9 @@ describe('Secp256r1', () => {
 
     it('accepts input data as Uint8Array', async () => {
       const data = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
-      let isValid: boolean;
-      let signature: Uint8Array;
-
       // TypedArray - Uint8Array
-      signature = await Secp256r1.sign({ key: privateKey, data });
-      isValid = await Secp256r1.verify({ key: publicKey, signature, data });
+      const signature = await Secp256r1.sign({ key: privateKey, data });
+      const isValid = await Secp256r1.verify({ key: publicKey, signature, data });
       expect(isValid).to.be.true;
     });
   });

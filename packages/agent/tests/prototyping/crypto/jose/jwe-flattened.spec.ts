@@ -5,15 +5,15 @@ import { expect } from 'chai';
 import type { Web5PlatformAgent } from '../../../../src/types/agent.js';
 
 import { AgentCryptoApi } from '../../../../src/crypto-api.js';
-import { LocalKeyManager } from '../../../../src/local-key-manager.js';
 import { FlattenedJwe } from '../../../../src/prototyping/crypto/jose/jwe-flattened.js';
+import { LocalKeyManager } from '../../../../src/local-key-manager.js';
 
 describe('FlattenedJwe', () => {
-  let crypto = new AgentCryptoApi();
+  const crypto = new AgentCryptoApi();
   let keyManager: LocalKeyManager;
 
   beforeEach(async () => {
-    keyManager = new LocalKeyManager({ agent: {} as Web5PlatformAgent});
+    keyManager = new LocalKeyManager({ agent: {} as Web5PlatformAgent });
   });
 
   describe('decrypt()', () => {

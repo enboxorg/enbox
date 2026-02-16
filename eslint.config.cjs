@@ -2,23 +2,21 @@ const eslint = require("@eslint/js");
 const globals = require("globals");
 const tsParser = require("@typescript-eslint/parser");
 const tsPlugin = require("@typescript-eslint/eslint-plugin");
+const stylisticPlugin = require("@stylistic/eslint-plugin");
 const mochaPlugin = require("eslint-plugin-mocha");
 
-/** @type {import('eslint').ESLint.ConfigData} */
+/** @type {import('eslint').Linter.Config[]} */
 module.exports = [
   eslint.configs.recommended,
   mochaPlugin.configs.flat.recommended,
-  // tsPlugin.configs.flat.recommended, // @typescript-eslint v7.9.0 doesn't have a recommended config yet, v8 alpha build has it, so should be available soon.
   {
-    // extends       : ['eslint:recommended', 'plugin:@typescript-eslint/recommended'],
     languageOptions: {
       parser: tsParser,
       parserOptions: {
         ecmaFeatures: { modules: true },
-        ecmaVersion: "2022",
-        project: [
-          "tests/tsconfig.json", // this is the config that includes both `src` and `tests` directories
-        ],
+        ecmaVersion: "latest",
+        project: true,
+        tsconfigRootDir: __dirname,
       },
       globals: {
         ...globals.node,
@@ -29,6 +27,7 @@ module.exports = [
     },
     plugins: {
       "@typescript-eslint": tsPlugin,
+      "@stylistic": stylisticPlugin,
       mocha: mochaPlugin,
     },
     files: ["**/*.ts"],
@@ -36,48 +35,71 @@ module.exports = [
     // To exclude *.js files entirely, you need to have a separate config object altogether. (See another `ignores` below.)
     ignores: ["**/*.d.ts"],
     rules: {
-      "no-undef": "off",
-      "no-redeclare": "off",
+      "curly"      : ["error", "all"],
+      "no-console" : "off",
+      "no-undef"   : "off",
+      "indent"     : ["error", 2, { SwitchCase: 1 }],
+
+      "object-curly-spacing" : ["error", "always"],
+      "no-multi-spaces"      : ["error"],
+      "no-trailing-spaces"   : ["error"],
+
       "key-spacing": [
         "error",
         {
           align: {
-            afterColon: true,
-            beforeColon: true,
-            on: "colon",
+            afterColon  : true,
+            beforeColon : true,
+            on          : "colon",
           },
         },
       ],
-      quotes: ["error", "single", { allowTemplateLiterals: true }],
-      semi: ["error", "always"],
-      indent: ["error", 2, { SwitchCase: 1 }],
-      "no-unused-vars": "off",
-      "prefer-const": "off",
-      "@typescript-eslint/no-unused-vars": [
+
+      "keyword-spacing" : ["error", { before: true, after: true }],
+      "quotes"          : ["error", "single", { allowTemplateLiterals: true }],
+      "max-len"         : ["error", { code: 150, ignoreStrings: true }],
+
+      "@stylistic/semi" : ["error", "always"],
+      "semi"            : ["off"],
+
+      "no-unused-vars"                    : "off",
+      "no-redeclare"                      : "off",
+      "no-dupe-class-members"             : "off",
+      "@typescript-eslint/no-unused-vars" : [
         "error",
         {
-          vars: "all",
-          args: "after-used",
-          ignoreRestSiblings: true,
-          argsIgnorePattern: "^_",
-          varsIgnorePattern: "^_",
+          vars               : "all",
+          args               : "after-used",
+          ignoreRestSiblings : true,
+          argsIgnorePattern  : "^_",
+          varsIgnorePattern  : "^_",
         },
       ],
-      "no-dupe-class-members": "off",
-      "no-trailing-spaces": ["error"],
-      "@typescript-eslint/no-explicit-any": "off",
-      "@typescript-eslint/no-non-null-assertion": "off",
-      "@typescript-eslint/ban-ts-comment": "off",
-      "@typescript-eslint/no-unused-vars": "off",
-      // TODO: Revisit new default mocha rules that were disabled in #579 - https://github.com/enboxorg/enbox/issues/580
-      "mocha/no-exclusive-tests": "warn",
-      "mocha/no-setup-in-describe": "off",
-      "mocha/no-mocha-arrows": "off",
-      "mocha/max-top-level-suites": "off",
-      "mocha/no-identical-title": "off",
-      "mocha/no-pending-tests": "off",
-      "mocha/no-skipped-tests": "off",
-      "mocha/no-sibling-hooks": "off",
+
+      "@typescript-eslint/explicit-function-return-type" : ["error"],
+      "@typescript-eslint/consistent-type-imports"       : "error",
+      "@typescript-eslint/no-explicit-any"               : "off",
+      "@typescript-eslint/no-non-null-assertion"         : "off",
+      "@typescript-eslint/ban-ts-comment"                : "off",
+
+      "prefer-const" : ["error", { destructuring: "all" }],
+      "sort-imports" : ["error", {
+        ignoreCase            : true,
+        ignoreDeclarationSort : false,
+        ignoreMemberSort      : false,
+        memberSyntaxSortOrder : ["none", "all", "single", "multiple"],
+        allowSeparatedGroups  : true,
+      }],
+
+      // mocha rules
+      "mocha/no-exclusive-tests"   : "warn",
+      "mocha/no-setup-in-describe" : "off",
+      "mocha/no-mocha-arrows"      : "off",
+      "mocha/max-top-level-suites" : "off",
+      "mocha/no-identical-title"   : "off",
+      "mocha/no-pending-tests"     : "off",
+      "mocha/no-skipped-tests"     : "off",
+      "mocha/no-sibling-hooks"     : "off",
     },
   },
   {

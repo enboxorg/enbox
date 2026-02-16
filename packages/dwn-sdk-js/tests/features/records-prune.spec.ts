@@ -11,8 +11,8 @@ import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
 import chai, { expect } from 'chai';
 
-import messageProtocolDefinition from '../vectors/protocol-definitions/message.json' assert { type: 'json' };
-import nestedProtocolDefinition from '../vectors/protocol-definitions/nested.json' assert { type: 'json' };
+import messageProtocolDefinition from '../vectors/protocol-definitions/message.json' with { type: 'json' };
+import nestedProtocolDefinition from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
 
 import { DwnInterfaceName } from '../../src/enums/dwn-interface-method.js';
 import { Message } from '../../src/core/message.js';

@@ -1,20 +1,21 @@
 import type { DidResolver } from '@enbox/dids';
+import type { DwnServerConfig } from './config.js';
 import type { EventStream } from '@enbox/dwn-sdk-js';
 import type { ProcessHandlers } from './process-handlers.js';
 import type { Server } from 'http';
 import type { WebSocketServer } from 'ws';
-import type { DwnServerConfig } from './config.js';
 
 import log from 'loglevel';
 import prefix from 'loglevel-plugin-prefix';
+import { Dwn, EventEmitterStream } from '@enbox/dwn-sdk-js';
+
 import { config as defaultConfig } from './config.js';
 import { getDwnConfig } from './storage.js';
-import { HttpServerShutdownHandler } from './lib/http-server-shutdown-handler.js';
 import { HttpApi } from './http-api.js';
+import { HttpServerShutdownHandler } from './lib/http-server-shutdown-handler.js';
 import { PluginLoader } from './plugin-loader.js';
 import { RegistrationManager } from './registration/registration-manager.js';
 import { WsApi } from './ws-api.js';
-import { Dwn, EventEmitterStream } from '@enbox/dwn-sdk-js';
 import { removeProcessHandlers, setProcessHandlers } from './process-handlers.js';
 
 /**
@@ -43,7 +44,7 @@ enum DwnServerState {
 export class DwnServer {
   serverState = DwnServerState.Stopped;
   processHandlers: ProcessHandlers;
-  
+
   /**
    * A custom DID resolver to use in the DWN.
    * Mainly for testing purposes. Ignored if `dwn` is provided.
@@ -93,10 +94,10 @@ export class DwnServer {
     if (!this.dwn) {
       // undefined registrationStoreUrl is used as a signal that there is no need for tenant registration, DWN is open for all.
       registrationManager = await RegistrationManager.create({
-        registrationStoreUrl: this.config.registrationStoreUrl,
-        termsOfServiceFilePath: this.config.termsOfServiceFilePath,
-        proofOfWorkChallengeNonceSeed: this.config.registrationProofOfWorkSeed,
-        proofOfWorkInitialMaximumAllowedHash: this.config.registrationProofOfWorkInitialMaxHash,
+        registrationStoreUrl                 : this.config.registrationStoreUrl,
+        termsOfServiceFilePath               : this.config.termsOfServiceFilePath,
+        proofOfWorkChallengeNonceSeed        : this.config.registrationProofOfWorkSeed,
+        proofOfWorkInitialMaximumAllowedHash : this.config.registrationProofOfWorkInitialMaxHash,
       });
 
       let eventStream: EventStream | undefined;
@@ -111,10 +112,10 @@ export class DwnServer {
       }
 
       const dwnConfig = await getDwnConfig(this.config, {
-        didResolver: this.didResolver,
-        tenantGate: registrationManager,
+        didResolver : this.didResolver,
+        tenantGate  : registrationManager,
         eventStream,
-      })
+      });
       this.dwn = await Dwn.create(dwnConfig);
     }
 

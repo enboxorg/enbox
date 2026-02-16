@@ -1,14 +1,14 @@
-import type { Hasher } from './hasher.js';
-import type { Signer } from './signer.js';
-import type { KeyIdentifier } from './identifier.js';
 import type { AsymmetricKeyGenerator } from './key-generator.js';
+import type { Hasher } from './hasher.js';
+import type { KeyIdentifier } from './identifier.js';
+import type { Signer } from './signer.js';
 import type {
-  KmsSignParams,
   KmsDigestParams,
-  KmsVerifyParams,
-  KmsGetKeyUriParams,
   KmsGenerateKeyParams,
+  KmsGetKeyUriParams,
   KmsGetPublicKeyParams,
+  KmsSignParams,
+  KmsVerifyParams,
 } from './params-kms.js';
 
 /**

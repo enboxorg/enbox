@@ -1,11 +1,11 @@
 import type {
-  Jwk,
   CryptoApi,
+  InferKeyGeneratorAlgorithm,
+  Jwk,
   KeyIdentifier,
+  KeyImporterExporter,
   KmsExportKeyParams,
   KmsImportKeyParams,
-  KeyImporterExporter,
-  InferKeyGeneratorAlgorithm,
 } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
@@ -15,11 +15,11 @@ import type { PortableDid } from '../types/portable-did.js';
 import type { DidCreateOptions, DidCreateVerificationMethod } from './did-method.js';
 import type { DidDocument, DidResolutionOptions, DidResolutionResult, DidVerificationMethod } from '../types/did-core.js';
 
+import { BearerDid } from '../bearer-did.js';
 import { Did } from '../did.js';
 import { DidMethod } from './did-method.js';
-import { BearerDid } from '../bearer-did.js';
-import { DidError, DidErrorCode } from '../did-error.js';
 import { EMPTY_DID_RESOLUTION_RESULT } from '../types/did-resolution.js';
+import { DidError, DidErrorCode } from '../did-error.js';
 
 /**
  * Defines the set of options available when creating a new Decentralized Identifier (DID) with the

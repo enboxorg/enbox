@@ -4,7 +4,7 @@ import { varint } from 'multiformats';
 import { Multicodec } from '../src/multicodec.js';
 
 describe('Multicodec', () => {
-  let mockEd25519PublicKey = (new Uint8Array(32)).fill(9);
+  const mockEd25519PublicKey = (new Uint8Array(32)).fill(9);
 
   describe('addPrefix()', () => {
     it('returns Uint8Array with prefixed codec by code', () => {

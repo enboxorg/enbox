@@ -1,15 +1,12 @@
 
 import type { PushedAuthResponse } from './oidc.js';
-import type { DwnPermissionScope, DwnProtocolDefinition, Web5Agent, Web5ConnectAuthResponse } from './index.js';
+import type { DwnPermissionScope, DwnProtocolDefinition, Web5ConnectAuthResponse } from './index.js';
 
-import {
-  Oidc,
-} from './oidc.js';
-import { pollWithTtl } from './utils.js';
-
-import { Convert, logger } from '@enbox/common';
 import { CryptoUtils } from '@enbox/crypto';
 import { DidJwk } from '@enbox/dids';
+import { Oidc } from './oidc.js';
+import { pollWithTtl } from './utils.js';
+import { Convert, logger } from '@enbox/common';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 /**
@@ -23,7 +20,11 @@ async function initClient({
   permissionRequests,
   onWalletUriReady,
   validatePin,
-}: WalletConnectOptions) {
+}: WalletConnectOptions): Promise<{
+  delegateGrants: Web5ConnectAuthResponse['delegateGrants'];
+  delegatePortableDid: Web5ConnectAuthResponse['delegatePortableDid'];
+  connectedDid: string;
+} | undefined> {
   // ephemeral client did for ECDH, signing, verification
   // TODO: use separate keys for ECDH vs. sign/verify. could maybe use secp256k1.
   const clientDid = await DidJwk.create();

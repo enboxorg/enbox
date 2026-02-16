@@ -1,6 +1,5 @@
 import { expect } from 'chai';
-import { Web5UserAgent } from '@enbox/agent';
-import { PlatformAgentTestHarness } from '@enbox/agent';
+import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
 
 import { VcApi } from '../src/vc-api.js';
 
@@ -39,7 +38,7 @@ describe('VcApi', () => {
       try {
         await vc.create();
         expect.fail('Expected method to throw, but it did not.');
-      } catch(e) {
+      } catch (e) {
         expect(e.message).to.include('Not implemented.');
       }
     });

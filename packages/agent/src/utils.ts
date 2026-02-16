@@ -1,10 +1,10 @@
 import type { DidUrlDereferencer } from '@enbox/dids';
-import { Jws, PaginationCursor, RecordsDeleteMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { Readable } from '@enbox/common';
+import type { PaginationCursor, RecordsDeleteMessage, RecordsWrite, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
-import { Readable } from '@enbox/common';
 import { utils as didUtils } from '@enbox/dids';
 import { ReadableWebToNodeStream } from 'readable-web-to-node-stream';
-import { DateSort, DwnInterfaceName, DwnMethodName, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { DateSort, DwnInterfaceName, DwnMethodName, Jws, Message } from '@enbox/dwn-sdk-js';
 
 export function blobToIsomorphicNodeReadable(blob: Blob): Readable {
   return webReadableToIsomorphicNodeReadable(blob.stream() as ReadableStream<any>);
@@ -52,7 +52,7 @@ export function getRecordProtocolRole(message: RecordsWriteMessage | RecordsDele
 
 export function isRecordsWrite(obj: unknown): obj is RecordsWrite {
   // Validate that the given value is an object.
-  if (!obj || typeof obj !== 'object' || obj === null) return false;
+  if (!obj || typeof obj !== 'object' || obj === null) {return false;}
 
   // Validate that the object has the necessary properties of RecordsWrite.
   return (
@@ -90,7 +90,7 @@ export async function getPaginationCursor(message: RecordsWriteMessage, dateSort
   };
 }
 
-export function webReadableToIsomorphicNodeReadable(webReadable: ReadableStream<any>) {
+export function webReadableToIsomorphicNodeReadable(webReadable: ReadableStream<any>): Readable {
   return new ReadableWebToNodeStream(webReadable);
 }
 
@@ -123,8 +123,8 @@ export function pollWithTtl(
       });
     }
 
-    async function poll() {
-      if (!isPolling) return;
+    async function poll(): Promise<void> {
+      if (!isPolling) {return;}
 
       const remainingTime = endTime - Date.now();
 

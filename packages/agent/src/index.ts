@@ -24,7 +24,7 @@ export * from './store-identity.js';
 export * from './store-key.js';
 export * from './sync-api.js';
 export * from './sync-engine-level.js';
-export * from  './test-harness.js';
+export * from './test-harness.js';
 export * from './utils.js';
 export * from './connect.js';
 export * from './oidc.js';

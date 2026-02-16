@@ -3,6 +3,7 @@ import type { Dwn, MessageSubscriptionHandler } from '@enbox/dwn-sdk-js';
 import type { Readable } from 'node:stream';
 
 import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from './json-rpc.js';
+
 import type { SocketConnection } from '../connection/socket-connection.js';
 
 export type RequestContext = {
@@ -12,7 +13,7 @@ export type RequestContext = {
   socketConnection?: SocketConnection;
   subscriptionRequest?: {
     /** The JsonRpcId of the subscription handler */
-    id: JsonRpcId; 
+    id: JsonRpcId;
     /** The `MessageEvent` handler associated with a subscription request, only used in `ws` requests */
     subscriptionHandler: MessageSubscriptionHandler;
   }

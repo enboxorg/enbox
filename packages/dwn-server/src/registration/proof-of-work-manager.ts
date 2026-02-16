@@ -1,6 +1,7 @@
-import { DwnServerError, DwnServerErrorCode } from "../dwn-error.js";
-import type { ProofOfWorkChallengeModel } from "./proof-of-work-types.js";
-import { ProofOfWork } from "./proof-of-work.js";
+import type { ProofOfWorkChallengeModel } from './proof-of-work-types.js';
+
+import { ProofOfWork } from './proof-of-work.js';
+import { DwnServerError, DwnServerErrorCode } from '../dwn-error.js';
 
 /**
  * Manages proof-of-work challenge difficulty and lifecycle based on solve rate.
@@ -122,8 +123,8 @@ export class ProofOfWorkManager {
 
   public getProofOfWorkChallenge(): ProofOfWorkChallengeModel {
     return {
-      challengeNonce: this.challengeNonces.currentChallengeNonce,
-      maximumAllowedHashValue: ProofOfWorkManager.bigIntToHexString(this.currentMaximumAllowedHashValue),
+      challengeNonce          : this.challengeNonces.currentChallengeNonce,
+      maximumAllowedHashValue : ProofOfWorkManager.bigIntToHexString(this.currentMaximumAllowedHashValue),
     };
   }
 
@@ -228,7 +229,7 @@ export class ProofOfWorkManager {
   /**
    * Refreshes the difficulty by changing the max hash value.
    * The higher the number, the easier. Scale 1 (hardest) to 2^256 (easiest), represented in HEX.
-   * 
+   *
    * If solve rate rate is higher than expected, the difficulty will increase rapidly.
    * If solve rate is lower than expected, the difficulty will decrease gradually.
    * The difficulty will never be lower than the initial difficulty.
@@ -247,16 +248,16 @@ export class ProofOfWorkManager {
     //       and harder difficulty is represented by a smaller max allowed hash value.
     if (latestSolveCountPerMinute > this.desiredSolveCountPerMinute) {
       // if solve rate is higher than desired, make difficulty harder by making the max allowed hash value smaller
-      
+
       const currentSolveRateInFractionOfDesiredSolveRate = latestSolveCountPerMinute / this.desiredSolveCountPerMinute;
       const newMaximumAllowedHashValueAsBigIntPriorToMultiplierAdjustment
-        = (this.currentMaximumAllowedHashValueAsBigInt * BigInt(scaleFactor)) / 
+        = (this.currentMaximumAllowedHashValueAsBigInt * BigInt(scaleFactor)) /
           (BigInt(Math.floor(currentSolveRateInFractionOfDesiredSolveRate * this.difficultyIncreaseMultiplier * scaleFactor)));
 
       const hashValueDecreaseAmountPriorToEvaluationFrequencyAdjustment
         = (this.currentMaximumAllowedHashValueAsBigInt - newMaximumAllowedHashValueAsBigIntPriorToMultiplierAdjustment) *
           (BigInt(Math.floor(this.difficultyIncreaseMultiplier * scaleFactor)) / BigInt(scaleFactor));
-          
+
       // Adjustment based on the reevaluation frequency to provide more-or-less consistent behavior regardless of the reevaluation frequency.
       const hashValueDecreaseAmount = hashValueDecreaseAmountPriorToEvaluationFrequencyAdjustment / BigInt(difficultyEvaluationsPerMinute);
 

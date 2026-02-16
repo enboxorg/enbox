@@ -1,8 +1,8 @@
-import { Transaction } from 'kysely';
+import type { Transaction } from 'kysely';
 
 import type { DwnDatabaseType, KeyValues } from '../types.js';
 
-import { Dialect } from '../dialect/dialect.js';
+import type { Dialect } from '../dialect/dialect.js';
 import { sanitizedValue } from './sanitize.js';
 
 /**
@@ -12,7 +12,8 @@ export class TagTables {
 
   /**
    * @param dialect the target dialect, necessary for returning the `insertId`
-   * @param table the DB Table in order to index the tags and values in the correct tables. Choice between `messageStoreMessages` and `eventLogMessages`
+   * @param table the DB Table in order to index the tags and values in the correct tables.
+   * Choice between `messageStoreMessages` and `eventLogMessages`
    */
   constructor(private dialect: Dialect, private table: 'messageStoreMessages' | 'eventLogMessages'){}
 
@@ -31,7 +32,7 @@ export class TagTables {
       const tagValues = tags[tag];
       const values = Array.isArray(tagValues) ? tagValues : [ tagValues ];
 
-      for(const value of values) {
+      for (const value of values) {
         const tagInsertValue = sanitizedValue(value);
         const insertValues = {
           tag,

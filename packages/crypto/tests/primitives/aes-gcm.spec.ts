@@ -1,13 +1,14 @@
-import { expect, use } from 'chai';
-import { Convert } from '@enbox/common';
 import chaiAsPromised from 'chai-as-promised';
+import { Convert } from '@enbox/common';
+import { expect, use } from 'chai';
 
+import type { AES_GCM_TAG_LENGTHS } from '../../src/primitives/aes-gcm.js';
 import type { Jwk, JwkParamsOctPrivate } from '../../src/jose/jwk.js';
 
+import { AesGcm } from '../../src/primitives/aes-gcm.js';
+import AesGcmDecryptTestVector from '../fixtures/test-vectors/aes-gcm/decrypt.json' with { type: 'json' };
+import AesGcmEncryptTestVector from '../fixtures/test-vectors/aes-gcm/encrypt.json' with { type: 'json' };
 import { isChrome } from '../utils/runtimes.js';
-import { AesGcm, AES_GCM_TAG_LENGTHS } from '../../src/primitives/aes-gcm.js';
-import AesGcmDecryptTestVector from '../fixtures/test-vectors/aes-gcm/decrypt.json' assert { type: 'json' };
-import AesGcmEncryptTestVector from '../fixtures/test-vectors/aes-gcm/encrypt.json' assert { type: 'json' };
 
 use(chaiAsPromised);
 
@@ -246,14 +247,11 @@ describe('AesGcm', () => {
     });
 
     it('supports key lengths of 192 bits in all supported runtimes except Chrome browser', async function () {
-      if (isChrome) this.skip();
-
-      let privateKey: JwkParamsOctPrivate;
-      let privateKeyBytes: Uint8Array;
+      if (isChrome) {this.skip();}
 
       // 192 bits
-      privateKey = await AesGcm.generateKey({ length: 192 }) as JwkParamsOctPrivate;
-      privateKeyBytes = Convert.base64Url(privateKey.k).toUint8Array();
+      const privateKey: JwkParamsOctPrivate = await AesGcm.generateKey({ length: 192 }) as JwkParamsOctPrivate;
+      const privateKeyBytes: Uint8Array = Convert.base64Url(privateKey.k).toUint8Array();
       expect(privateKeyBytes.byteLength).to.equal(24);
     });
 

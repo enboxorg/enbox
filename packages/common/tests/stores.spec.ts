@@ -1,6 +1,6 @@
+import chaiAsPromised from 'chai-as-promised';
 import { Level } from 'level';
 import { expect, use } from 'chai';
-import chaiAsPromised from 'chai-as-promised';
 
 use(chaiAsPromised);
 
