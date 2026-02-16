@@ -28,17 +28,17 @@ if (!globalThis.crypto) {
 }
 
 describe('Registration scenarios', function () {
-  const dwnMessageEndpoint = 'http://localhost:3000';
-  const termsOfUseEndpoint = 'http://localhost:3000/registration/terms-of-service';
-  const proofOfWorkEndpoint = 'http://localhost:3000/registration/proof-of-work';
-  const registrationEndpoint = 'http://localhost:3000/registration';
+  let dwnMessageEndpoint: string;
+  let termsOfUseEndpoint: string;
+  let proofOfWorkEndpoint: string;
+  let registrationEndpoint: string;
 
   // let didResolverCache = new DidResolverCacheLevel({ location: 'RESOLVERCACHE' });
   let alice: Persona;
   let registrationManager: RegistrationManager;
   let clock;
   let dwnServer: DwnServer;
-  const dwnServerConfig = { ...config }; // not touching the original config
+  const dwnServerConfig: DwnServerConfig = { ...config, port: 0 }; // not touching the original config
 
   before(async function () {
     clock = useFakeTimers({ shouldAdvanceTime: true });
@@ -70,6 +70,12 @@ describe('Registration scenarios', function () {
     dwnServer = new DwnServer({ config: dwnServerConfig, didResolver });
     await dwnServer.start();
     registrationManager = dwnServer.registrationManager;
+
+    const baseUrl = `http://localhost:${dwnServer.httpServer.port}`;
+    dwnMessageEndpoint = baseUrl;
+    termsOfUseEndpoint = `${baseUrl}/registration/terms-of-service`;
+    proofOfWorkEndpoint = `${baseUrl}/registration/proof-of-work`;
+    registrationEndpoint = `${baseUrl}/registration`;
   });
 
   after(async () => {
@@ -560,7 +566,7 @@ describe('Registration scenarios', function () {
     const configClone = {
       ...dwnServerConfig,
       registrationStoreUrl           : '', // set to empty to disable tenant registration
-      port                           : 3002,
+      port                           : 0,
       registrationProofOfWorkEnabled : false,
       termsOfServiceFilePath         : undefined,
     };
@@ -569,7 +575,7 @@ describe('Registration scenarios', function () {
 
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
 
-    const writeResponse = await fetch('http://localhost:3002', {
+    const writeResponse = await fetch(`http://localhost:${dwnServer.httpServer.port}`, {
       method  : 'POST',
       headers : {
         'dwn-request': JSON.stringify(jsonRpcRequest),

@@ -31,7 +31,7 @@ describe('Dynamic DWN plugin loading', function () {
   });
 
   it('should fail dynamically loading a non-existent plugin', async () => {
-    const dwnServerConfigCopy = { ...config }; // not touching the original config
+    const dwnServerConfigCopy = { ...config, port: 0 }; // not touching the original config
     dwnServerConfigCopy.dataStore = './non-existent-plugin.js';
 
     const invalidDwnServer = new DwnServer({ config: dwnServerConfigCopy });
@@ -52,7 +52,7 @@ describe('Dynamic DWN plugin loading', function () {
     const customEventStreamConstructorSpy = sinon.spy(EventStreamInMemory, 'spyingTheConstructor');
 
     // 1. Configure DWN to load a custom data store plugin.
-    const dwnServerConfigCopy = { ...config }; // not touching the original config
+    const dwnServerConfigCopy = { ...config, port: 0 }; // not touching the original config
 
     // TODO: remove below after https://github.com/enboxorg/enbox/issues/144 is resolved
     // The default config is not reliable because other tests modify it.
@@ -82,6 +82,7 @@ describe('Dynamic DWN plugin loading', function () {
     expect(customEventStreamConstructorSpy.calledOnce).to.be.true;
 
     // 3. Validate that the DWN instance is using the custom data store plugin.
-    await CommonScenarioValidator.sanityTestDwnReadWrite(dwnServerConfigCopy.baseUrl);
+    const testBaseUrl = `http://localhost:${dwnServer.httpServer.port}`;
+    await CommonScenarioValidator.sanityTestDwnReadWrite(testBaseUrl);
   });
 });

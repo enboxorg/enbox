@@ -29,6 +29,12 @@ interface KyselySqliteDatabase {
 const READER_PREFIXES = /^\s*(SELECT|PRAGMA|EXPLAIN|WITH)\b/i;
 
 /**
+ * Detects `RETURNING` clause in DML statements (INSERT/UPDATE/DELETE ... RETURNING).
+ * These produce rows like a SELECT, so the statement must use `all()` not `run()`.
+ */
+const HAS_RETURNING = /\bRETURNING\b/i;
+
+/**
  * Creates a Kysely-compatible SQLite database backed by `bun:sqlite`.
  *
  * @param path - File path or `":memory:"` for in-memory database.
@@ -50,7 +56,7 @@ export function createBunSqliteDatabase(
 
     prepare(sql: string): KyselySqliteStatement {
       const stmt = db.prepare(sql);
-      const isReader = READER_PREFIXES.test(sql);
+      const isReader = READER_PREFIXES.test(sql) || HAS_RETURNING.test(sql);
 
       return {
         get reader(): boolean {

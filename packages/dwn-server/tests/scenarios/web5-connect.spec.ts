@@ -14,11 +14,11 @@ if (!globalThis.crypto) {
 }
 
 describe('Web5 Connect scenarios', function () {
-  const web5ConnectBaseUrl = 'http://localhost:3000';
+  let web5ConnectBaseUrl: string;
 
   let clock: sinon.SinonFakeTimers;
   let dwnServer: DwnServer;
-  const dwnServerConfig = { ...config }; // not touching the original config
+  const dwnServerConfig = { ...config, port: 0 }; // not touching the original config
 
   before(async function () {
 
@@ -42,6 +42,7 @@ describe('Web5 Connect scenarios', function () {
     // IMPORTANT: MUST be called AFTER `sinon.restore()` because `sinon.restore()` resets fake timers
     clock = useFakeTimers({ shouldAdvanceTime: true });
     await dwnServer.start();
+    web5ConnectBaseUrl = `http://localhost:${dwnServer.httpServer.port}`;
   });
 
   afterEach(async () => {
@@ -69,9 +70,12 @@ describe('Web5 Connect scenarios', function () {
     expect(postWeb5ConnectRequestResult.status).to.equal(201);
 
     // 2. Identity Provider (wallet) fetches the Web5 Connect Request object from the Web5 Connect server.
-    const requestUrl = (await postWeb5ConnectRequestResult.json() as any).request_uri;
-    const regex = /^http:\/\/localhost:3000\/connect\/authorize\/[a-zA-Z0-9-]{21,}\.jwt$/;
-    expect(requestUrl).to.match(regex);
+    const rawRequestUrl = (await postWeb5ConnectRequestResult.json() as any).request_uri;
+    const regex = /^http:\/\/localhost:\d+\/connect\/authorize\/[a-zA-Z0-9-]{21,}\.jwt$/;
+    expect(rawRequestUrl).to.match(regex);
+
+    // Replace the port in the returned URL with the actual server port (baseUrl uses config.baseUrl).
+    const requestUrl = rawRequestUrl.replace(/localhost:\d+/, `localhost:${dwnServer.httpServer.port}`);
 
     let getWeb5ConnectRequestResult;
     await Poller.pollUntilSuccessOrTimeout(async () => {
@@ -152,7 +156,9 @@ describe('Web5 Connect scenarios', function () {
     await clock.tickAsync(Web5ConnectServer.ttlInSeconds * 1000);
 
     // 3. Should receive 404 when fetching the expired Web5 Connect Request.
-    const requestUrl = (await postWeb5ConnectRequestResult.json() as any).request_uri;
+    const rawRequestUrl = (await postWeb5ConnectRequestResult.json() as any).request_uri;
+    // Replace the port in the returned URL with the actual server port
+    const requestUrl = rawRequestUrl.replace(/localhost:\d+/, `localhost:${dwnServer.httpServer.port}`);
     const getWeb5ConnectRequestResult = await fetch(requestUrl, {
       method: 'GET',
     });

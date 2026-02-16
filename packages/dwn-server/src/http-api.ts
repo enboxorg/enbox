@@ -1,18 +1,13 @@
 import type { RecordsReadReply } from '@enbox/dwn-sdk-js';
-import type { Express, Request, Response } from 'express';
+import type { Server, ServerWebSocket } from 'bun';
 
-import cors from 'cors';
-import express from 'express';
-import http from 'http';
 import log from 'loglevel';
-import responseTime from 'response-time';
 
 import { Convert } from '@enbox/common';
-import { Readable } from 'node:stream';
 import { readFileSync } from 'fs';
 import { register } from 'prom-client';
 import { v4 as uuidv4 } from 'uuid';
-import { DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
+import { DataStream, DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
 
 
 import type { DwnServerConfig } from './config.js';
@@ -20,6 +15,7 @@ import type { DwnServerError } from './dwn-error.js';
 import type { JsonRpcRequest } from './lib/json-rpc.js';
 import type { RegistrationManager } from './registration/registration-manager.js';
 import type { RequestContext } from './lib/json-rpc-router.js';
+import type { SocketConnection } from './connection/socket-connection.js';
 
 import { config } from './config.js';
 import { jsonRpcRouter } from './json-rpc-api.js';
@@ -27,19 +23,27 @@ import { Web5ConnectServer } from './web5-connect/web5-connect-server.js';
 import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from './lib/json-rpc.js';
 import { requestCounter, responseHistogram } from './metrics.js';
 
+/** Data attached to each Bun WebSocket via `ws.data`. */
+export interface WsData {
+  connection: SocketConnection;
+}
 
 export class HttpApi {
   #config: DwnServerConfig;
   #packageInfo: { version?: string, sdkVersion?: string, server: string };
-  #api: Express;
-  #server: http.Server;
+  #server!: Server<WsData>;
   web5ConnectServer: Web5ConnectServer;
   registrationManager: RegistrationManager;
   dwn: Dwn;
 
+  /** Called by WsApi/ConnectionManager when a new WS connection is established. */
+  onWebSocketConnection?: (ws: ServerWebSocket<WsData>) => void;
+
   private constructor() { }
 
-  public static async create(config: DwnServerConfig, dwn: Dwn, registrationManager?: RegistrationManager): Promise<HttpApi> {
+  public static async create(
+    config: DwnServerConfig, dwn: Dwn, registrationManager?: RegistrationManager
+  ): Promise<HttpApi> {
     const httpApi = new HttpApi();
 
     log.info(config);
@@ -49,505 +53,592 @@ export class HttpApi {
     };
 
     try {
-      // We populate the `version` and `sdkVersion` properties from the `package.json` file.
       const packageJson = JSON.parse(readFileSync(config.packageJsonPath).toString());
       httpApi.#packageInfo.version = packageJson.version;
-      httpApi.#packageInfo.sdkVersion = packageJson.dependencies ? packageJson.dependencies['@enbox/dwn-sdk-js'] : undefined;
+      httpApi.#packageInfo.sdkVersion = packageJson.dependencies
+        ? packageJson.dependencies['@enbox/dwn-sdk-js']
+        : undefined;
     } catch (error: any) {
       log.info('could not read `package.json` for version info', error);
     }
 
     httpApi.#config = config;
-    httpApi.#api = express();
-    httpApi.#server = http.createServer(httpApi.#api);
     httpApi.dwn = dwn;
 
     if (registrationManager !== undefined) {
       httpApi.registrationManager = registrationManager;
     }
 
-    // create the Web5 Connect Server
     httpApi.web5ConnectServer = await Web5ConnectServer.create({
       baseUrl        : config.baseUrl,
       sqlTtlCacheUrl : config.ttlCacheUrl,
     });
 
-    httpApi.#setupMiddleware();
-    httpApi.#setupRoutes();
-
     return httpApi;
   }
 
-  get server(): http.Server {
+  get server(): Server<WsData> {
     return this.#server;
   }
 
-  get api(): Express {
-    return this.#api;
-  }
+  // ---------------------------------------------------------------------------
+  // HTTP request handler
+  // ---------------------------------------------------------------------------
 
-  #setupMiddleware(): void {
-    this.#api.use(cors({ exposedHeaders: 'dwn-response' }));
-    this.#api.use(express.json());
+  async start(port: number): Promise<void> {
+    const self = this; // capture for closures
 
-    // We enable the formData middleware to handle multipart/form-data requests.
-    // This is necessary for the endpoints used by the Web5 Connect Server/OIDC flow.
-    this.#api.use(express.urlencoded({ extended: true }));
-    this.#api.use(
-      responseTime((req: Request, res: Response, time) => {
-        const url = req.url === '/' ? '/jsonrpc' : req.url;
-        const route = (req.method + url)
+    this.#server = Bun.serve<WsData>({
+      port,
+
+      async fetch(req: Request, server): Promise<Response | undefined> {
+        const startTime = performance.now();
+        const url = new URL(req.url);
+        const path = url.pathname;
+        const method = req.method;
+
+        // --- WebSocket upgrade ---
+        if (method === 'GET' && req.headers.get('upgrade') === 'websocket') {
+          const upgraded = server.upgrade(req, { data: { connection: null } });
+          if (upgraded) {
+            return undefined;
+          }
+          return new Response('WebSocket upgrade failed', { status: 400 });
+        }
+
+        // --- Route matching ---
+        let response: Response;
+        try {
+          response = await self.#route(req, url, path, method);
+        } catch (error) {
+          log.error(`Unhandled error on ${method} ${path}:`, error);
+          response = new Response('Internal Server Error', { status: 500 });
+        }
+
+        // --- CORS headers ---
+        response.headers.set('access-control-allow-origin', '*');
+        response.headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
+        response.headers.set('access-control-allow-headers', '*');
+        response.headers.set('access-control-expose-headers', 'dwn-response');
+
+        // --- Response-time metrics ---
+        const elapsed = performance.now() - startTime;
+        const routeLabel = (method + (path === '/' ? '/jsonrpc' : path))
           .toLowerCase()
           .replace(/[:.]/g, '')
           .replace(/\//g, '_');
+        responseHistogram.labels(routeLabel, String(response.status)).observe(elapsed);
+        log.info(method, decodeURI(path), response.status);
 
-        const statusCode = res.statusCode.toString();
-        responseHistogram.labels(route, statusCode).observe(time);
-        log.info(req.method, decodeURI(req.url), res.statusCode);
-      }),
-    );
+        return response;
+      },
+
+      websocket: {
+        open(ws: ServerWebSocket<WsData>): void {
+          if (self.onWebSocketConnection) {
+            self.onWebSocketConnection(ws);
+          }
+        },
+        message(ws: ServerWebSocket<WsData>, msg: string | Buffer): void {
+          const connection = ws.data?.connection;
+          if (connection) {
+            connection.message(typeof msg === 'string' ? Buffer.from(msg) : msg as Buffer);
+          }
+        },
+        close(ws: ServerWebSocket<WsData>): void {
+          const connection = ws.data?.connection;
+          if (connection) {
+            connection.close();
+          }
+        },
+        // Bun automatically responds to pings with pongs
+      },
+    });
   }
 
-  /**
-   * Configures the HTTP server's request handlers.
-   */
-  #setupRoutes(): void {
+  async close(): Promise<void> {
+    if (this.#server) {
+      this.#server.stop(true); // close all connections immediately
+    }
+  }
 
-    const leadTailSlashRegex = /^\/|\/$/;
+  // ---------------------------------------------------------------------------
+  // Router
+  // ---------------------------------------------------------------------------
 
-    function readReplyHandler(res, reply: RecordsReadReply): any {
-      if (reply.status.code === 200) {
-        if (reply?.entry?.data) {
-          // DWN SDK now returns Web ReadableStream; convert to Node Readable for piping to Express response
-          const nodeStream = Readable.fromWeb(reply.entry.data as any);
+  async #route(req: Request, url: URL, path: string, method: string): Promise<Response> {
+    // --- CORS preflight ---
+    if (method === 'OPTIONS') {
+      return new Response(null, { status: 204 });
+    }
 
-          res.setHeader('content-type', reply.entry.recordsWrite.descriptor.dataFormat);
-          res.setHeader('dwn-response', JSON.stringify(reply));
+    // --- Static routes ---
+    if (method === 'GET' && path === '/health') {
+      return Response.json({ ok: true });
+    }
 
-          return nodeStream.pipe(res);
-        } else {
-          return res.sendStatus(400);
-        }
-      } else if (reply.status.code === 401) {
-        return res.sendStatus(404);
-      } else {
-        return res.status(reply.status.code).send(reply);
+    if (method === 'GET' && path === '/metrics') {
+      try {
+        const metricsBody = await register.metrics();
+        return new Response(metricsBody, {
+          headers: { 'content-type': register.contentType },
+        });
+      } catch (e) {
+        return new Response(String(e), { status: 500 });
       }
     }
 
-    this.#api.get('/health', (_req, res) => {
-      // return 200 ok
-      return res.json({ ok: true });
-    });
+    if (method === 'GET' && path === '/') {
+      return new Response(
+        'please use am enbox client, for example: https://github.com/enboxorg/enbox ',
+        { headers: { 'content-type': 'text/plain' } },
+      );
+    }
 
-    this.#api.get('/metrics', async (req, res) => {
-      try {
-        res.set('Content-Type', register.contentType);
-        res.end(await register.metrics());
-      } catch (e) {
-        res.status(500).end(e);
+    if (method === 'GET' && path === '/info') {
+      return this.#handleInfo();
+    }
+
+    // --- JSON-RPC POST ---
+    if (method === 'POST' && path === '/') {
+      return this.#handleJsonRpcPost(req);
+    }
+
+    // --- Registration routes ---
+    const registrationResponse = await this.#matchRegistrationRoutes(req, path, method);
+    if (registrationResponse) {
+      return registrationResponse;
+    }
+
+    // --- Web5 Connect routes ---
+    const connectResponse = await this.#matchWeb5ConnectRoutes(req, path, method);
+    if (connectResponse) {
+      return connectResponse;
+    }
+
+    // --- DID routes (parameterized) ---
+    return this.#matchDidRoutes(req, url, path);
+  }
+
+  // ---------------------------------------------------------------------------
+  // DID convenience routes
+  // ---------------------------------------------------------------------------
+
+  async #matchDidRoutes(req: Request, url: URL, path: string): Promise<Response> {
+    const leadTailSlashRegex = /^\/|\/$/g;
+
+    // /:did/read/protocols/:protocol/*  (also matches trailing slash with empty path)
+    {
+      const match = path.match(/^\/([^/]+)\/read\/protocols\/([^/]+)\/(.*)$/);
+      if (match && req.method === 'GET') {
+        const [, did, protocolParam, protocolPathRaw] = match;
+        return this.#handleReadProtocolRecord(did, protocolParam, protocolPathRaw, url, leadTailSlashRegex);
       }
-    });
+    }
 
-    // Returns the data for the most recently published record under a given protocol path collection, if one is present
-    this.#api.get('/:did/read/protocols/:protocol/*', async (req, res) => {
-      if (!req.params[0]) {
-        return res.status(400).send('protocol path is required');
+    // /:did/read/protocols/:protocol
+    {
+      const match = path.match(/^\/([^/]+)\/read\/protocols\/([^/]+)$/);
+      if (match && req.method === 'GET') {
+        const [, did, protocolParam] = match;
+        return this.#handleReadProtocol(did, protocolParam);
       }
+    }
 
-      // wrap request in a try-catch block to handle any unexpected errors
-      try {
-        const queryOptions: Record<string, any> = { filter: {} };
-        for (const param in req.query) {
-          const keys = param.split('.');
-          const lastKey = keys.pop();
-          const nestObj = (obj: Record<string, any>, key: string): Record<string, any> =>
-            obj[key] = obj[key] || {};
-          const lastLevelObject = keys.reduce(nestObj, queryOptions);
-          lastLevelObject[lastKey!] = req.query[param];
-        }
-
-        // the protocol path segment is base64url encoded, as the actual protocol is a URL
-        // we decode it here in order to filter for the correct protocol
-        const protocol = Convert.base64Url(req.params.protocol).toString();
-        queryOptions.filter.protocol = protocol;
-        queryOptions.filter.protocolPath = req.params[0].replace(leadTailSlashRegex, '');
-
-        const query = await RecordsQuery.create({
-          filter     : queryOptions.filter,
-          pagination : { limit: 1 },
-          dateSort   : DateSort.PublishedDescending
-        });
-
-        const { entries, status } = await this.dwn.processMessage(req.params.did, query.message);
-
-        if (status.code === 200) {
-          if (entries[0]) {
-            const record = await RecordsRead.create({
-              filter: { recordId: entries[0].recordId },
-            });
-            const reply = await this.dwn.processMessage(req.params.did, record.toJSON());
-            return readReplyHandler(res, reply);
-          } else {
-            return res.sendStatus(404);
-          }
-        } else if (status.code === 401) {
-          return res.sendStatus(404);
-        } else {
-          return res.sendStatus(status.code);
-        }
-      } catch (error) {
-        log.error(`Error processing request: ${decodeURI(req.url)}`, error);
-        return res.sendStatus(400);
+    // /:did/read/records/:id  OR  /:did/records/:id
+    {
+      const match = path.match(/^\/([^/]+)\/(?:read\/)?records\/([^/]+)$/);
+      if (match && req.method === 'GET') {
+        const [, did, recordId] = match;
+        return this.#handleReadRecord(did, recordId);
       }
-    });
+    }
 
-    this.#api.get('/:did/read/protocols/:protocol', async (req, res) => {
-      // wrap request in a try-catch block to handle any unexpected errors
-      try {
-
-        // the protocol segment is base64url encoded, as the actual protocol is a URL
-        // we decode it here in order to filter for the correct protocol
-        const protocol = Convert.base64Url(req.params.protocol).toString();
-        const query = await ProtocolsQuery.create({
-          filter: { protocol }
-        });
-        const { entries, status } = await this.dwn.processMessage(req.params.did, query.message);
-        if (status.code === 200) {
-          if (entries.length) {
-            res.status(status.code);
-            res.json(entries[0]);
-          } else {
-            return res.sendStatus(404);
-          }
-        } else if (status.code === 401) {
-          return res.sendStatus(404);
-        } else {
-          return res.sendStatus(status.code);
-        }
-      } catch (error) {
-        log.error(`Error processing request: ${decodeURI(req.url)}`, error);
-        return res.sendStatus(400);
+    // /:did/query/protocols
+    {
+      const match = path.match(/^\/([^/]+)\/query\/protocols$/);
+      if (match && req.method === 'GET') {
+        const [, did] = match;
+        return this.#handleQueryProtocols(did);
       }
-    });
+    }
 
-    const recordsReadHandler = async (req, res): Promise<any> => {
-      const record = await RecordsRead.create({
-        filter: { recordId: req.params.id },
-      });
-      const reply = await this.dwn.processMessage(req.params.did, record.message);
-      return readReplyHandler(res, reply);
+    // /:did/query
+    {
+      const match = path.match(/^\/([^/]+)\/query$/);
+      if (match && req.method === 'GET') {
+        const [, did] = match;
+        return this.#handleQueryRecords(did, url);
+      }
+    }
+
+    return new Response('Not Found', { status: 404 });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Handlers
+  // ---------------------------------------------------------------------------
+
+  #handleInfo(): Response {
+    const registrationRequirements: string[] = [];
+    if (config.registrationProofOfWorkEnabled) {
+      registrationRequirements.push('proof-of-work-sha256-v0');
+    }
+    if (config.termsOfServiceFilePath !== undefined) {
+      registrationRequirements.push('terms-of-service');
+    }
+
+    return Response.json({
+      url                      : config.baseUrl,
+      server                   : this.#packageInfo.server,
+      maxFileSize              : config.maxRecordDataSize,
+      registrationRequirements : registrationRequirements,
+      version                  : this.#packageInfo.version,
+      sdkVersion               : this.#packageInfo.sdkVersion,
+      webSocketSupport         : config.webSocketSupport,
+    });
+  }
+
+  async #handleJsonRpcPost(req: Request): Promise<Response> {
+    const dwnRpcRequestString = req.headers.get('dwn-request');
+
+    if (!dwnRpcRequestString) {
+      const reply = createJsonRpcErrorResponse(
+        uuidv4(), JsonRpcErrorCodes.BadRequest, 'request payload required.'
+      );
+      return Response.json(reply, { status: 400 });
+    }
+
+    let dwnRpcRequest: JsonRpcRequest;
+    try {
+      dwnRpcRequest = JSON.parse(dwnRpcRequestString);
+    } catch (e) {
+      const reply = createJsonRpcErrorResponse(
+        uuidv4(), JsonRpcErrorCodes.BadRequest, (e as Error).message
+      );
+      return Response.json(reply, { status: 400 });
+    }
+
+    // Read the request body into bytes first, then wrap in a fresh ReadableStream.
+    // Bun's native Request.body stream has an incompatible reader.releaseLock()
+    // that breaks DWN SDK's DataStream.toBytes(), so we materialise the body here.
+    const contentLength = req.headers.get('content-length');
+    const transferEncoding = req.headers.get('transfer-encoding');
+    let requestDataStream: ReadableStream<Uint8Array> | undefined;
+    if (parseInt(contentLength ?? '0') > 0 || transferEncoding !== null) {
+      const bodyBytes = new Uint8Array(await req.arrayBuffer());
+      requestDataStream = DataStream.fromBytes(bodyBytes);
+    }
+
+    const requestContext: RequestContext = {
+      dwn        : this.dwn,
+      transport  : 'http',
+      dataStream : requestDataStream,
     };
+    const { jsonRpcResponse, dataStream: responseDataStream } =
+      await jsonRpcRouter.handle(dwnRpcRequest, requestContext);
 
-    this.#api.get('/:did/read/records/:id', recordsReadHandler);
-    this.#api.get('/:did/records/:id', recordsReadHandler);
+    if (jsonRpcResponse.error) {
+      requestCounter.inc({ method: dwnRpcRequest.method, error: 1 });
+      return Response.json(jsonRpcResponse, { status: 500 });
+    }
 
-    this.#api.get('/:did/query/protocols', async (req, res) => {
-      const query = await ProtocolsQuery.create({});
-      const { entries, status } = await this.dwn.processMessage(req.params.did, query.message);
+    requestCounter.inc({
+      method : dwnRpcRequest.method,
+      status : jsonRpcResponse?.result?.reply?.status?.code || 0,
+    });
+
+    if (responseDataStream) {
+      return new Response(responseDataStream, {
+        headers: {
+          'content-type' : 'application/octet-stream',
+          'dwn-response' : JSON.stringify(jsonRpcResponse),
+        },
+      });
+    } else {
+      return Response.json(jsonRpcResponse);
+    }
+  }
+
+  #readReplyToResponse(reply: RecordsReadReply): Response {
+    if (reply.status.code === 200) {
+      if (reply?.entry?.data) {
+        return new Response(reply.entry.data, {
+          headers: {
+            'content-type' : reply.entry.recordsWrite.descriptor.dataFormat,
+            'dwn-response' : JSON.stringify(reply),
+          },
+        });
+      } else {
+        return new Response(null, { status: 400 });
+      }
+    } else if (reply.status.code === 401) {
+      return new Response(null, { status: 404 });
+    } else {
+      return Response.json(reply, { status: reply.status.code });
+    }
+  }
+
+  async #handleReadRecord(did: string, recordId: string): Promise<Response> {
+    const record = await RecordsRead.create({
+      filter: { recordId },
+    });
+    const reply = await this.dwn.processMessage(did, record.message);
+    return this.#readReplyToResponse(reply);
+  }
+
+  async #handleReadProtocolRecord(
+    did: string, protocolParam: string, protocolPathRaw: string,
+    url: URL, leadTailSlashRegex: RegExp
+  ): Promise<Response> {
+    if (!protocolPathRaw || protocolPathRaw.replace(leadTailSlashRegex, '') === '') {
+      return new Response('protocol path is required', { status: 400 });
+    }
+
+    try {
+      const queryOptions: Record<string, any> = { filter: {} };
+      for (const [param, value] of url.searchParams) {
+        const keys = param.split('.');
+        const lastKey = keys.pop();
+        const nestObj = (obj: Record<string, any>, key: string): Record<string, any> =>
+          obj[key] = obj[key] || {};
+        const lastLevelObject = keys.reduce(nestObj, queryOptions);
+        lastLevelObject[lastKey!] = value;
+      }
+
+      const protocol = Convert.base64Url(protocolParam).toString();
+      queryOptions.filter.protocol = protocol;
+      queryOptions.filter.protocolPath = protocolPathRaw.replace(leadTailSlashRegex, '');
+
+      const query = await RecordsQuery.create({
+        filter     : queryOptions.filter,
+        pagination : { limit: 1 },
+        dateSort   : DateSort.PublishedDescending,
+      });
+
+      const { entries, status } = await this.dwn.processMessage(did, query.message);
+
       if (status.code === 200) {
-        res.status(status.code);
-        res.json(entries);
+        if (entries[0]) {
+          const record = await RecordsRead.create({
+            filter: { recordId: entries[0].recordId },
+          });
+          const reply = await this.dwn.processMessage(did, record.toJSON());
+          return this.#readReplyToResponse(reply);
+        } else {
+          return new Response(null, { status: 404 });
+        }
       } else if (status.code === 401) {
-        return res.sendStatus(404);
+        return new Response(null, { status: 404 });
       } else {
-        return res.sendStatus(status.code);
+        return new Response(null, { status: status.code });
       }
-    });
+    } catch (error) {
+      log.error(`Error processing request: ${decodeURI(url.pathname)}`, error);
+      return new Response('Bad Request', { status: 400 });
+    }
+  }
 
-    this.#api.get('/:did/query', async (req, res) => {
+  async #handleReadProtocol(did: string, protocolParam: string): Promise<Response> {
+    try {
+      const protocol = Convert.base64Url(protocolParam).toString();
+      const query = await ProtocolsQuery.create({
+        filter: { protocol },
+      });
+      const { entries, status } = await this.dwn.processMessage(did, query.message);
+      if (status.code === 200) {
+        if (entries.length) {
+          return Response.json(entries[0], { status: status.code });
+        } else {
+          return new Response(null, { status: 404 });
+        }
+      } else if (status.code === 401) {
+        return new Response(null, { status: 404 });
+      } else {
+        return new Response(null, { status: status.code });
+      }
+    } catch (error) {
+      log.error(`Error processing request`, error);
+      return new Response('Bad Request', { status: 400 });
+    }
+  }
+
+  async #handleQueryProtocols(did: string): Promise<Response> {
+    const query = await ProtocolsQuery.create({});
+    const { entries, status } = await this.dwn.processMessage(did, query.message);
+    if (status.code === 200) {
+      return Response.json(entries, { status: status.code });
+    } else if (status.code === 401) {
+      return new Response(null, { status: 404 });
+    } else {
+      return new Response(null, { status: status.code });
+    }
+  }
+
+  async #handleQueryRecords(did: string, url: URL): Promise<Response> {
+    try {
+      const recordsQueryOptions: Record<string, any> = {};
+      for (const [param, value] of url.searchParams) {
+        const keys = param.split('.');
+        const lastKey = keys.pop();
+        const nestObj = (obj: Record<string, any>, key: string): Record<string, any> =>
+          obj[key] = obj[key] || {};
+        const lastLevelObject = keys.reduce(nestObj, recordsQueryOptions);
+        lastLevelObject[lastKey!] = value;
+      }
+
+      const recordsQuery = await RecordsQuery.create({
+        filter     : recordsQueryOptions.filter,
+        pagination : recordsQueryOptions.pagination,
+        dateSort   : recordsQueryOptions.dateSort,
+      });
+
+      const reply = await this.dwn.processMessage(did, recordsQuery.message);
+      return Response.json(reply, {
+        headers: { 'content-type': 'application/json' },
+      });
+    } catch (error) {
+      return Response.json(error, { status: 400 });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Registration routes
+  // ---------------------------------------------------------------------------
+
+  async #matchRegistrationRoutes(
+    req: Request, path: string, method: string
+  ): Promise<Response | null> {
+    if (method === 'GET' && path === '/registration/proof-of-work'
+      && this.#config.registrationProofOfWorkEnabled) {
+      const proofOfWorkChallenge = this.registrationManager.getProofOfWorkChallenge();
+      return Response.json(proofOfWorkChallenge);
+    }
+
+    if (method === 'GET' && path === '/registration/terms-of-service'
+      && this.#config.termsOfServiceFilePath !== undefined) {
+      return new Response(this.registrationManager.getTermsOfService());
+    }
+
+    if (method === 'POST' && path === '/registration'
+      && this.#config.registrationStoreUrl !== undefined) {
+      const requestBody = await req.json();
+      log.info('Registration request:', requestBody);
 
       try {
-        // builds a nested object from flat keys with dot notation which may share the same parent path
-        // e.g. "did:dht:123/query?filter.protocol=foo&filter.protocolPath=bar" becomes
-        // {
-        //   filter: {
-        //     protocol: 'foo',
-        //     protocolPath: 'bar'
-        //   }
-        // }
-        const recordsQueryOptions: Record<string, any> = {};
-        for (const param in req.query) {
-          const keys = param.split('.');
-          const lastKey = keys.pop();
-          const nestObj = (obj: Record<string, any>, key: string): Record<string, any> =>
-            obj[key] = obj[key] || {};
-          const lastLevelObject = keys.reduce(nestObj, recordsQueryOptions);
-          lastLevelObject[lastKey!] = req.query[param];
-        }
-
-        const recordsQuery = await RecordsQuery.create({
-          filter     : recordsQueryOptions.filter,
-          pagination : recordsQueryOptions.pagination,
-          dateSort   : recordsQueryOptions.dateSort,
-        });
-
-        // should always return a 200 status code with a JSON response
-        const reply = await this.dwn.processMessage(req.params.did, recordsQuery.message);
-
-        res.setHeader('content-type', 'application/json');
-        return res.json(reply);
+        await this.registrationManager.handleRegistrationRequest(requestBody);
+        return Response.json({ success: true }, { status: 200 });
       } catch (error) {
-        // error should only occur when we are unable to create the RecordsQuery message internally, making it a client error
-        return res.status(400).send(error);
-      }
-    });
-
-    this.#api.get('/', (_req, res) => {
-      // return a plain text string
-      res.setHeader('content-type', 'text/plain');
-      return res.send('please use am enbox client, for example: https://github.com/enboxorg/enbox ');
-    });
-
-    this.#api.post('/', async (req: Request, res) => {
-      const dwnRpcRequestString = req.headers['dwn-request'] as string;
-
-      if (!dwnRpcRequestString) {
-        const reply = createJsonRpcErrorResponse(uuidv4(), JsonRpcErrorCodes.BadRequest, 'request payload required.');
-
-        return res.status(400).json(reply);
-      }
-
-      let dwnRpcRequest: JsonRpcRequest;
-      try {
-        dwnRpcRequest = JSON.parse(dwnRpcRequestString);
-      } catch (e) {
-        const reply = createJsonRpcErrorResponse(uuidv4(), JsonRpcErrorCodes.BadRequest, e.message);
-
-        return res.status(400).json(reply);
-      }
-
-      // Check whether data was provided in the request body
-      const contentLength = req.headers['content-length'];
-      const transferEncoding = req.headers['transfer-encoding'];
-      // Convert Node.js IncomingMessage (Readable) to Web ReadableStream at the HTTP boundary
-      const requestDataStream = parseInt(contentLength) > 0 || transferEncoding !== undefined
-        ? Readable.toWeb(req) as ReadableStream<Uint8Array>
-        : undefined;
-
-      const requestContext: RequestContext = {
-        dwn        : this.dwn,
-        transport  : 'http',
-        dataStream : requestDataStream,
-      };
-      const { jsonRpcResponse, dataStream: responseDataStream } = await jsonRpcRouter.handle(dwnRpcRequest, requestContext as RequestContext);
-
-      // If the handler catches a thrown exception and returns a JSON RPC InternalError, return the equivalent
-      // HTTP 500 Internal Server Error with the response.
-      if (jsonRpcResponse.error) {
-        requestCounter.inc({ method: dwnRpcRequest.method, error: 1 });
-        return res.status(500).json(jsonRpcResponse);
-      }
-
-      requestCounter.inc({
-        method : dwnRpcRequest.method,
-        status : jsonRpcResponse?.result?.reply?.status?.code || 0,
-      });
-      if (responseDataStream) {
-        res.setHeader('content-type', 'application/octet-stream');
-        res.setHeader('dwn-response', JSON.stringify(jsonRpcResponse));
-
-        // Convert Web ReadableStream back to Node Readable for piping to Express response
-        return Readable.fromWeb(responseDataStream as any).pipe(res);
-      } else {
-        return res.json(jsonRpcResponse);
-      }
-    });
-
-    this.#setupRegistrationRoutes();
-
-    this.#api.get('/info', (req, res) => {
-      res.setHeader('content-type', 'application/json');
-      const registrationRequirements: string[] = [];
-      if (config.registrationProofOfWorkEnabled) {
-        registrationRequirements.push('proof-of-work-sha256-v0');
-      }
-      if (config.termsOfServiceFilePath !== undefined) {
-        registrationRequirements.push('terms-of-service');
-      }
-
-      res.json({
-        url                      : config.baseUrl,
-        server                   : this.#packageInfo.server,
-        maxFileSize              : config.maxRecordDataSize,
-        registrationRequirements : registrationRequirements,
-        version                  : this.#packageInfo.version,
-        sdkVersion               : this.#packageInfo.sdkVersion,
-        webSocketSupport         : config.webSocketSupport,
-      });
-    });
-
-    this.#setupWeb5ConnectServerRoutes();
-  }
-
-  #setupRegistrationRoutes(): void {
-    if (this.#config.registrationProofOfWorkEnabled) {
-      this.#api.get('/registration/proof-of-work', async (_req: Request, res: Response) => {
-        const proofOfWorkChallenge = this.registrationManager.getProofOfWorkChallenge();
-        res.json(proofOfWorkChallenge);
-      });
-    }
-
-    if (this.#config.termsOfServiceFilePath !== undefined) {
-      this.#api.get('/registration/terms-of-service', (_req: Request, res: Response) => res.send(this.registrationManager.getTermsOfService()));
-    }
-
-    if (this.#config.registrationStoreUrl !== undefined) {
-      this.#api.post('/registration', async (req: Request, res: Response) => {
-        const requestBody = req.body;
-        log.info('Registration request:', requestBody);
-
-        try {
-          await this.registrationManager.handleRegistrationRequest(requestBody);
-          res.status(200).json({ success: true });
-        } catch (error) {
-          const dwnServerError = error as DwnServerError;
-
-          if (dwnServerError.code !== undefined) {
-            res.status(400).json(dwnServerError);
-          } else {
-            log.info('Error handling registration request:', error);
-            res.status(500).json({ success: false });
-          }
+        const dwnServerError = error as DwnServerError;
+        if (dwnServerError.code !== undefined) {
+          return Response.json(dwnServerError, { status: 400 });
+        } else {
+          log.info('Error handling registration request:', error);
+          return Response.json({ success: false }, { status: 500 });
         }
-      });
+      }
     }
+
+    return null;
   }
 
-  #setupWeb5ConnectServerRoutes(): void {
-    /**
-    * Endpoint allows a Client app (RP) to submit an Authorization Request.
-    * The Authorization Request is stored on the server, and a unique `request_uri` is returned to the Client app.
-    * The Client app can then provide this `request_uri` to the Provider app (wallet).
-    * The Provider app uses the `request_uri` to retrieve the stored Authorization Request.
-    */
-    this.#api.post('/connect/par', async (req, res) => {
+  // ---------------------------------------------------------------------------
+  // Web5 Connect routes
+  // ---------------------------------------------------------------------------
+
+  async #matchWeb5ConnectRoutes(
+    req: Request, path: string, method: string
+  ): Promise<Response | null> {
+    // POST /connect/par
+    if (method === 'POST' && path === '/connect/par') {
       log.info('Storing Pushed Authorization Request (PAR) request...');
+      const body = await req.json();
 
-      // TODO: Add validation for request too large HTTP 413: https://github.com/enboxorg/enbox/issues/146
-      // TODO: Add validation for too many requests HTTP 429: https://github.com/enboxorg/enbox/issues/147
-
-      if (!req.body.request) {
-        return res.status(400).json({
+      if (!body.request) {
+        return Response.json({
           ok     : false,
-          status : {
-            code    : 400,
-            message : 'Bad Request: Missing \'request\' parameter',
-          },
-        });
+          status : { code: 400, message: 'Bad Request: Missing \'request\' parameter' },
+        }, { status: 400 });
       }
 
-      // Validate that `request_uri` was NOT provided
-      if (req.body?.request?.request_uri) {
-        return res.status(400).json({
+      if (body?.request?.request_uri) {
+        return Response.json({
           ok     : false,
-          status : {
-            code    : 400,
-            message : 'Bad Request: \'request_uri\' parameter is not allowed in PAR',
-          },
-        });
+          status : { code: 400, message: 'Bad Request: \'request_uri\' parameter is not allowed in PAR' },
+        }, { status: 400 });
       }
 
-      const result = await this.web5ConnectServer.setWeb5ConnectRequest(req.body.request);
-      res.status(201).json(result);
-    });
+      const result = await this.web5ConnectServer.setWeb5ConnectRequest(body.request);
+      return Response.json(result, { status: 201 });
+    }
 
-    /**
-    * Endpoint for the Provider to retrieve the Authorization Request from the request_uri
-    */
-    this.#api.get('/connect/authorize/:requestId.jwt', async (req, res) => {
-      log.info(`Retrieving Web5 Connect Request object of ID: ${req.params.requestId}...`);
+    // GET /connect/authorize/:requestId.jwt
+    {
+      const match = path.match(/^\/connect\/authorize\/([^/]+)\.jwt$/);
+      if (match && method === 'GET') {
+        const requestId = match[1];
+        log.info(`Retrieving Web5 Connect Request object of ID: ${requestId}...`);
 
-      // Look up the request object based on the requestId.
-      const requestObjectJwt = await this.web5ConnectServer.getWeb5ConnectRequest(req.params.requestId);
-
-      if (!requestObjectJwt) {
-        res.status(404).json({
-          ok     : false,
-          status : { code: 404, message: 'Not Found' }
-        });
-      } else {
-        res.set('Content-Type', 'application/jwt');
-        res.send(requestObjectJwt);
+        const requestObjectJwt = await this.web5ConnectServer.getWeb5ConnectRequest(requestId);
+        if (!requestObjectJwt) {
+          return Response.json({
+            ok     : false,
+            status : { code: 404, message: 'Not Found' },
+          }, { status: 404 });
+        } else {
+          const body = typeof requestObjectJwt === 'string'
+            ? requestObjectJwt
+            : JSON.stringify(requestObjectJwt);
+          return new Response(body, {
+            headers: { 'content-type': 'application/jwt' },
+          });
+        }
       }
-    });
+    }
 
-    /**
-    * Endpoint that the Provider sends the Authorization Response to
-    */
-    this.#api.post('/connect/callback', async (req, res) => {
+    // POST /connect/callback
+    if (method === 'POST' && path === '/connect/callback') {
       log.info('Storing Identity Provider (wallet) pushed response with ID token...');
-
-      // Store the ID token.
-      const idToken = req.body.id_token;
-      const state = req.body.state;
+      const body = await req.json();
+      const idToken = body.id_token;
+      const state = body.state;
 
       if (idToken !== undefined && state != undefined) {
-
         await this.web5ConnectServer.setWeb5ConnectResponse(state, idToken);
-
-        res.status(201).json({
+        return Response.json({
           ok     : true,
-          status : { code: 201, message: 'Created' }
-        });
-
+          status : { code: 201, message: 'Created' },
+        }, { status: 201 });
       } else {
-        res.status(400).json({
+        return Response.json({
           ok     : false,
-          status : { code: 400, message: 'Bad Request' }
-        });
+          status : { code: 400, message: 'Bad Request' },
+        }, { status: 400 });
       }
-    });
+    }
 
-    /**
-    * Endpoint for the connecting Client to retrieve the Authorization Response
-    */
-    this.#api.get('/connect/token/:state.jwt', async (req, res) => {
-      log.info(`Retrieving ID token for state: ${req.params.state}...`);
+    // GET /connect/token/:state.jwt
+    {
+      const match = path.match(/^\/connect\/token\/([^/]+)\.jwt$/);
+      if (match && method === 'GET') {
+        const state = match[1];
+        log.info(`Retrieving ID token for state: ${state}...`);
 
-      // Look up the ID token.
-      const idToken = await this.web5ConnectServer.getWeb5ConnectResponse(req.params.state);
-
-      if (!idToken) {
-        res.status(404).json({
-          ok     : false,
-          status : { code: 404, message: 'Not Found' }
-        });
-      } else {
-        res.set('Content-Type', 'application/jwt');
-        res.send(idToken);
-      }
-    });
-  }
-
-  /**
-   * Starts the HTTP API endpoint on the given port.
-   * @returns The HTTP server instance.
-   */
-  async start(port: number): Promise<void> {
-    // promisify http.Server.listen() and await on it
-    await new Promise<void>((resolve) => {
-      this.#server.listen(port, () => {
-        resolve();
-      });
-    });
-  }
-
-  /**
-   * Stops the HTTP API endpoint.
-   */
-  async close(): Promise<void> {
-    // promisify http.Server.close() and await on it
-    await new Promise<void>((resolve, reject) => {
-      this.#server.close((err?: Error) => {
-        if (err) {
-          reject(err);
+        const idToken = await this.web5ConnectServer.getWeb5ConnectResponse(state);
+        if (!idToken) {
+          return Response.json({
+            ok     : false,
+            status : { code: 404, message: 'Not Found' },
+          }, { status: 404 });
         } else {
-          resolve();
+          const body = typeof idToken === 'string' ? idToken : JSON.stringify(idToken);
+          return new Response(body, {
+            headers: { 'content-type': 'application/jwt' },
+          });
         }
-      });
-    });
+      }
+    }
 
-    this.server.closeAllConnections();
+    return null;
   }
 }

@@ -25,6 +25,8 @@ describe('websocket api', function () {
   let wsApi: WsApi;
   let dwn: Dwn;
   let clock: SinonFakeTimers;
+  let wsUrl: string;
+  let httpUrl: string;
 
   before(() => {
     clock = useFakeTimers({ shouldAdvanceTime: true });
@@ -37,8 +39,11 @@ describe('websocket api', function () {
   beforeEach(async function () {
     dwn = await getTestDwn({ withEvents: true });
     httpApi = await HttpApi.create(config, dwn);
-    await httpApi.start(9002);
-    wsApi = new WsApi(httpApi.server, dwn);
+    await httpApi.start(0);
+    const port = httpApi.server.port;
+    wsUrl = `ws://127.0.0.1:${port}`;
+    httpUrl = `http://localhost:${port}`;
+    wsApi = new WsApi(httpApi, dwn);
     wsApi.start();
   });
 
@@ -49,7 +54,7 @@ describe('websocket api', function () {
   });
 
   it('returns an error response if no request payload is provided', async function () {
-    const data = await sendWsMessage('ws://127.0.0.1:9002', Buffer.from(''));
+    const data = await sendWsMessage(wsUrl, Buffer.from(''));
 
     const resp = JSON.parse(data.toString());
     expect(resp.error.code).to.equal(JsonRpcErrorCodes.BadRequest);
@@ -58,7 +63,7 @@ describe('websocket api', function () {
 
   it('returns an error response if parsing dwn request fails', async function () {
     const data = await sendWsMessage(
-      'ws://127.0.0.1:9002',
+      wsUrl,
       Buffer.from('@#$%^&*&%$#'),
     );
 
@@ -81,7 +86,7 @@ describe('websocket api', function () {
       encodedData,
     });
 
-    const connection = await JsonRpcSocket.connect('ws://127.0.0.1:9002');
+    const connection = await JsonRpcSocket.connect(wsUrl);
     const response = await connection.request(dwnRequest);
 
     expect(response.id).to.equal(requestId);
@@ -112,7 +117,7 @@ describe('websocket api', function () {
       target  : alice.did,
     });
 
-    const connection = await JsonRpcSocket.connect('ws://127.0.0.1:9002');
+    const connection = await JsonRpcSocket.connect(wsUrl);
     const { response, close } = await connection.subscribe(dwnRequest, (response) => {
       const { event } = response.result;
       subscriptionHandler(event);
@@ -129,7 +134,7 @@ describe('websocket api', function () {
     });
 
     const writeResult1 = await sendHttpMessage({
-      url     : 'http://localhost:9002',
+      url     : httpUrl,
       target  : alice.did,
       message : write1Message.message,
       data    : write1Message.dataBytes,
@@ -143,7 +148,7 @@ describe('websocket api', function () {
     });
 
     const writeResult2 = await sendHttpMessage({
-      url     : 'http://localhost:9002',
+      url     : httpUrl,
       target  : alice.did,
       message : write2Message.message,
       data    : write2Message.dataBytes,
@@ -183,7 +188,7 @@ describe('websocket api', function () {
       target  : alice.did,
     }, subscribeId);
 
-    const connection = await JsonRpcSocket.connect('ws://127.0.0.1:9002');
+    const connection = await JsonRpcSocket.connect(wsUrl);
     const { response, close } = await connection.subscribe(dwnRequest, (response) => {
       const { event } = response.result;
       subscriptionHandler(event);
@@ -200,7 +205,7 @@ describe('websocket api', function () {
     });
 
     const writeResult1 = await sendHttpMessage({
-      url     : 'http://localhost:9002',
+      url     : httpUrl,
       target  : alice.did,
       message : write1Message.message,
       data    : write1Message.dataBytes,
@@ -218,7 +223,7 @@ describe('websocket api', function () {
     });
 
     const writeResult2 = await sendHttpMessage({
-      url     : 'http://localhost:9002',
+      url     : httpUrl,
       target  : alice.did,
       message : write2Message.message,
       data    : write2Message.dataBytes,
@@ -232,7 +237,7 @@ describe('websocket api', function () {
     });
 
     const writeResult3 = await sendHttpMessage({
-      url     : 'http://localhost:9002',
+      url     : httpUrl,
       target  : alice.did,
       message : write3Message.message,
       data    : write3Message.dataBytes,
@@ -266,7 +271,7 @@ describe('websocket api', function () {
       target  : alice.did
     }, subscribeId);
 
-    const connection = await JsonRpcSocket.connect('ws://127.0.0.1:9002');
+    const connection = await JsonRpcSocket.connect(wsUrl);
     const { close } = await connection.subscribe(dwnRequest, (response) => {
       const { event } = response.result;
       subscriptionHandler(event);
@@ -296,7 +301,7 @@ describe('websocket api', function () {
     });
 
     const writeResult1 = await sendHttpMessage({
-      url     : 'http://localhost:9002',
+      url     : httpUrl,
       target  : alice.did,
       message : write1Message.message,
       data    : write1Message.dataBytes,
@@ -310,7 +315,7 @@ describe('websocket api', function () {
     });
 
     const writeResult2 = await sendHttpMessage({
-      url     : 'http://localhost:9002',
+      url     : httpUrl,
       target  : alice.did,
       message : write2Message.message,
       data    : write2Message.dataBytes,
@@ -338,7 +343,7 @@ describe('websocket api', function () {
     });
 
     const writeResult1 = await sendHttpMessage({
-      url     : 'http://localhost:9002',
+      url     : httpUrl,
       target  : alice.did,
       message : initialWrite.message,
       data    : initialWrite.dataBytes,
@@ -369,7 +374,7 @@ describe('websocket api', function () {
       target  : alice.did
     }, subscribeId);
 
-    const connection = await JsonRpcSocket.connect('ws://127.0.0.1:9002');
+    const connection = await JsonRpcSocket.connect(wsUrl);
     const { close } = await connection.subscribe(dwnRequest, (response) => {
       const { event } = response.result;
       subscriptionHandler(event);
@@ -386,7 +391,7 @@ describe('websocket api', function () {
     });
 
     const updateResult = await sendHttpMessage({
-      url     : 'http://localhost:9002',
+      url     : httpUrl,
       target  : alice.did,
       message : updatedMessage.message,
       data    : updatedMessage.dataBytes,
