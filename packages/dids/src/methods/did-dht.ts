@@ -552,7 +552,7 @@ export class DidDht extends DidMethod {
     if (!verificationMethodsToAdd?.some(vm => vm.id?.split('#').pop() === '0')) {
       // Add the Identity Key to the beginning of the key set.
       verificationMethodsToAdd.unshift({
-        algorithm : 'Ed25519' as any,
+        algorithm : 'Ed25519' as DidCreateVerificationMethod<TKms>['algorithm'],
         id        : '0',
         purposes  : ['authentication', 'assertionMethod', 'capabilityDelegation', 'capabilityInvocation']
       });
@@ -1298,8 +1298,8 @@ export class DidDhtDocument {
     // Add verification relationships to the root record.
     Object.keys(DidVerificationRelationship).forEach(relationship => {
       // Collect the verification method IDs for the given relationship.
-      const dnsRecordIds = (didDocument[relationship as keyof DidDocument] as any[])
-        ?.map(id => idLookup.get(id.split('#').pop()));
+      const dnsRecordIds = (didDocument[relationship as keyof DidDocument] as string[] | undefined)
+        ?.map((id: string): string | undefined => idLookup.get(id.split('#').pop()!));
 
       // If the relationship includes verification methods, add them to the root record.
       if (dnsRecordIds) {

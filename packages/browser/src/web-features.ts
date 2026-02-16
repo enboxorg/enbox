@@ -119,14 +119,14 @@ async function cacheResponse(drl: any, url: any, response: any, cache: any): Pro
 /* Service Worker-based features */
 
 async function installWorker(options: any = {}): Promise<void> {
-  const workerSelf = self as any;
   try {
     // Check to see if we are in a Service Worker already, if so, proceed
     // You can call the activatePolyfills() function in your own worker, or standalone as a root worker
     if (
       typeof ServiceWorkerGlobalScope !== 'undefined' &&
-      workerSelf instanceof ServiceWorkerGlobalScope
+      self instanceof ServiceWorkerGlobalScope
     ) {
+      const workerSelf = self as ServiceWorkerGlobalScope;
       workerSelf.skipWaiting();
       workerSelf.addEventListener('activate', (event) => {
         // Claim clients to make the service worker take control immediately

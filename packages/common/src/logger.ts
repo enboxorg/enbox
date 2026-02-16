@@ -65,6 +65,10 @@ export const logger = new Web5Logger();
 
 // Attach logger to the global window object in browser environment for easy access to the logger instance.
 // e.g. can call `web5logger.setLogLevel('debug');` directly in browser console.
+declare global {
+  interface Window { web5logger?: Web5Logger }
+}
+
 if (typeof window !== 'undefined') {
-  (window as any).web5logger = logger; // Makes `web5Logger` accessible globally in browser
+  window.web5logger = logger;
 }

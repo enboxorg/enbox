@@ -70,12 +70,12 @@ export class Message {
     // but we can remove this method entirely if the code becomes stable and it is apparent that the wrapper is not needed
 
     // ^--- seems like we might need to keep this around for now.
-    const rawMessage = { ...message } as any;
+    const rawMessage = { ...message };
     if (rawMessage.encodedData) {
       delete rawMessage.encodedData;
     }
 
-    const cid = await Cid.computeCid(rawMessage as GenericMessage);
+    const cid = await Cid.computeCid(rawMessage);
     return cid;
   }
 

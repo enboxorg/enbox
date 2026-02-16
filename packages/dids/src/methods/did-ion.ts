@@ -393,7 +393,7 @@ export class DidIon extends DidMethod {
 
     // If no verification methods were specified, generate a default Ed25519 verification method.
     const defaultVerificationMethod: DidCreateVerificationMethod<TKms> = {
-      algorithm : 'Ed25519' as any,
+      algorithm : 'Ed25519' as DidCreateVerificationMethod<TKms>['algorithm'],
       purposes  : ['authentication', 'assertionMethod', 'capabilityDelegation', 'capabilityInvocation']
     };
 
