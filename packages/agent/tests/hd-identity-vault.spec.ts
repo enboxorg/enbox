@@ -524,7 +524,7 @@ describe('HdIdentityVault', () => {
           // Create a completely fresh vault with the same recovery phrase but
           // a different password — the encryption key should be identical.
           await vaultStore.clear();
-          identityVault = new HdIdentityVault({ keyValueStore: vaultStore, keyDerivationWorkFactor: 1 });
+          identityVault = new HdIdentityVault({ store: vaultStore, keyDerivationWorkFactor: 1 });
           await identityVault.initialize({
             password       : 'different-password',
             dwnEndpoints   : ['https://dwn.example.com'],

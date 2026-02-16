@@ -5,6 +5,8 @@ import sinon from 'sinon';
 import { expect } from 'chai';
 import { Convert } from '@enbox/common';
 import { CryptoUtils, Ed25519 } from '@enbox/crypto';
+import type { PrivateJwk } from '@enbox/dwn-sdk-js';
+
 import { Encryption, HdKey, Secp256k1 } from '@enbox/dwn-sdk-js';
 
 import type { Web5PlatformAgent } from '../src/types/agent.js';
@@ -521,7 +523,7 @@ describe('LocalKeyManager', () => {
           const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
 
           // Get the private key for encryption setup
-          const storedPrivateKey = await testHarness.agent.keyManager['getPrivateKey']({ keyUri });
+          const storedPrivateKey = await testHarness.agent.keyManager['getPrivateKey']({ keyUri }) as PrivateJwk;
           const privateKeyBytes = Secp256k1.privateJwkToBytes(storedPrivateKey);
 
           // Derive the same key that will be used for decryption
@@ -555,7 +557,7 @@ describe('LocalKeyManager', () => {
           const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
 
           // Get the private key for encryption setup
-          const storedPrivateKey = await testHarness.agent.keyManager['getPrivateKey']({ keyUri });
+          const storedPrivateKey = await testHarness.agent.keyManager['getPrivateKey']({ keyUri }) as PrivateJwk;
           const privateKeyBytes = Secp256k1.privateJwkToBytes(storedPrivateKey);
 
           // Derive a key for encryption
