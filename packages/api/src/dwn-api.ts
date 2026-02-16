@@ -127,10 +127,17 @@ export type RecordsCreateFromRequest = {
   author: string;
   /** The new data for the record. */
   data: unknown;
-  /** ptional additional parameters for the record write operation */
+  /** Optional additional parameters for the record write operation */
   message?: Omit<DwnMessageParams[DwnInterface.RecordsWrite], 'signer'>;
   /** The existing record instance that is being used as a basis for the new record. */
   record: Record;
+  /**
+   * Controls whether the new record should be auto-encrypted.
+   *
+   * If omitted, auto-detected from the source record: if the source record was
+   * encrypted, the new record is automatically encrypted with a fresh DEK.
+   */
+  encryption?: boolean;
 };
 
 /**
@@ -590,12 +597,17 @@ export class DwnApi {
           delete inheritedProperties.recordId;
         }
 
+        // Auto-detect encryption from the source record if not explicitly set.
+        const shouldEncrypt = request.encryption
+          ?? (request.record.encryption !== undefined);
+
         return this.records.write({
           data    : request.data,
           message : {
             ...inheritedProperties,
             ...request.message,
           },
+          encryption: shouldEncrypt || undefined,
         });
       },
 

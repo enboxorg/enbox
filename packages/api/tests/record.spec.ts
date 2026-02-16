@@ -3244,6 +3244,97 @@ describe('Record', () => {
       sendAuthorizationRole = getRecordProtocolRole(record);
       expect(sendAuthorizationRole).to.equal('note/coAuthor');
     });
+
+    it('should auto-re-encrypt data when updating an encrypted record', async () => {
+      // Define a simple protocol for encrypted notes
+      const encProtocol: DwnProtocolDefinition = {
+        published : true,
+        protocol  : `http://encrypted-notes.xyz/${TestDataGenerator.randomString(15)}`,
+        types     : {
+          note: {
+            schema      : 'https://schemas.xyz/note',
+            dataFormats : ['text/plain']
+          }
+        },
+        structure: {
+          note: {}
+        }
+      };
+
+      // Configure with encryption
+      const { status: configStatus } = await dwnAlice.protocols.configure({
+        message    : { definition: encProtocol },
+        encryption : true,
+      });
+      expect(configStatus.code).to.equal(202);
+
+      // Write initial encrypted record
+      const initialPlaintext = 'Initial secret note';
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data    : initialPlaintext,
+        message : {
+          protocol     : encProtocol.protocol,
+          protocolPath : 'note',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/note',
+        },
+        encryption: true,
+      });
+      expect(writeStatus.code).to.equal(202);
+      expect(record).to.exist;
+      expect(record!.encryption).to.exist;
+
+      // Save original encryption metadata for comparison
+      const originalIV = record!.encryption!.initializationVector;
+
+      // Update the record — encryption should be auto-detected
+      const updatedPlaintext = 'Updated secret note';
+      const { status: updateStatus } = await record!.update({ data: updatedPlaintext });
+      expect(updateStatus.code).to.equal(202);
+
+      // Verify the record's encryption metadata was updated
+      expect(record!.encryption).to.exist;
+      expect(record!.encryption!.initializationVector).to.not.equal(originalIV);
+
+      // Read back with decryption to verify the updated plaintext
+      const { status: readStatus, record: readRecord } = await dwnAlice.records.read({
+        message    : { filter: { recordId: record!.id } },
+        encryption : true,
+      });
+      expect(readStatus.code).to.equal(200);
+      expect(readRecord).to.exist;
+
+      const decryptedText = await readRecord!.data.text();
+      expect(decryptedText).to.equal(updatedPlaintext);
+    });
+
+    it('should not encrypt updates when encryption is explicitly set to false', async () => {
+      // Write a non-encrypted record
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data    : 'Not encrypted',
+        message : {
+          schema     : 'test/plain',
+          dataFormat : 'text/plain',
+        },
+      });
+      expect(writeStatus.code).to.equal(202);
+      expect(record).to.exist;
+      expect(record!.encryption).to.be.undefined;
+
+      // Update — should remain non-encrypted since original was not encrypted
+      const { status: updateStatus } = await record!.update({ data: 'Still not encrypted' });
+      expect(updateStatus.code).to.equal(202);
+
+      // Read back to verify no encryption
+      const { status: readStatus, record: readRecord } = await dwnAlice.records.read({
+        message: { filter: { recordId: record!.id } },
+      });
+      expect(readStatus.code).to.equal(200);
+
+      const readText = await readRecord!.data.text();
+      expect(readText).to.equal('Still not encrypted');
+      expect(readRecord!.encryption).to.be.undefined;
+    });
   });
 
   describe('delete()', () => {

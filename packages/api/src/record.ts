@@ -166,6 +166,15 @@ export type RecordUpdateParams = {
 
   /** The tags associated with the updated record */
   tags?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['tags'];
+
+  /**
+   * Controls whether the updated record should be auto-encrypted.
+   *
+   * If omitted, auto-detected from the original record: if the record was
+   * originally encrypted, the update is automatically re-encrypted with a
+   * fresh DEK. Set to `false` explicitly to skip encryption on the update.
+   */
+  encryption?: boolean;
 };
 
 /**
@@ -726,11 +735,15 @@ export class Record implements RecordModel {
    *
    * @beta
    */
-  async update({ dateModified, data, protocolRole, store = true, ...params }: RecordUpdateParams): Promise<DwnResponseStatus> {
+  async update({ dateModified, data, encryption, protocolRole, store = true, ...params }: RecordUpdateParams): Promise<DwnResponseStatus> {
 
     if (this.deleted) {
       throw new Error('Record: Cannot revive a deleted record.');
     }
+
+    // Auto-detect encryption: if the record was originally encrypted and the
+    // caller didn't explicitly set `encryption`, default to re-encrypting.
+    const shouldEncrypt = encryption ?? (this._encryption !== undefined);
 
     // if there is a parentId, we remove it from the descriptor and set a parentContextId
     const { parentId, ...descriptor } = this._recordsWriteDescriptor;
@@ -780,7 +793,8 @@ export class Record implements RecordModel {
       messageParams : { ...updateMessage },
       messageType   : DwnInterface.RecordsWrite,
       target        : this._connectedDid,
-      store
+      store,
+      encryption    : shouldEncrypt || undefined,
     };
 
     if (this._delegateDid) {
@@ -811,6 +825,7 @@ export class Record implements RecordModel {
 
       // Only update the local Record instance mutable properties if the record was successfully (over)written.
       this._authorization = responseMessage.authorization;
+      this._encryption = responseMessage.encryption;
       this._protocolRole = updateMessage.protocolRole;
       mutableDescriptorProperties.forEach(property => {
         this._descriptor[property] = responseMessage.descriptor[property];
