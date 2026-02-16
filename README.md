@@ -102,21 +102,28 @@ For production deployments:
 4. Configure backup strategies
 5. Set resource limits for containers
 
-## Railway Deployment
+## Fly.io Deployment
 
-Deploy the DWN server to Railway (Platform-as-a-Service) with managed PostgreSQL in minutes:
+Deploy the DWN server to Fly.io with managed PostgreSQL:
 
 ### Setup
-See the complete [Railway Deployment Guide](./RAILWAY.md) for detailed instructions.
+See the complete [Fly.io Deployment Guide](./FLY.md) for detailed instructions.
 
 **Quick summary:**
 1. Fork this repository
-2. Connect to Railway and create project from your fork
-3. Add PostgreSQL database service
-4. Configure environment variables
-5. Deploy automatically
+2. Create a Fly app and Postgres cluster
+3. Attach Postgres and configure secrets
+4. Deploy with `fly deploy`
 
-For complete Railway deployment instructions, troubleshooting, and production tips, see **[RAILWAY.md](./RAILWAY.md)**.
+### Fly.io Benefits
+- Managed PostgreSQL with automatic failover
+- Global edge deployment across 30+ regions
+- SSL certificates automatically managed
+- Git-based deployments via GitHub Actions
+- Built-in metrics, logs, and monitoring
+- WebSocket and UDP support
+
+For complete Fly.io deployment instructions, troubleshooting, and production tips, see **[FLY.md](./FLY.md)**.
 
 ## Package Dependencies
 
