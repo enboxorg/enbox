@@ -442,7 +442,7 @@ describe('ProtocolsConfigure', () => {
           .to.be.rejectedWith(DwnErrorCode.ProtocolsConfigureInvalidActionMissingOf);
       });
 
-      it('rejects protocol definitions with `can query` in non-role rules', async () => {
+      it('rejects `who`-based rules with `of` that have partial read actions (query without read+subscribe)', async () => {
         const definition = {
           published : true,
           protocol  : 'http://example.com',
@@ -468,7 +468,94 @@ describe('ProtocolsConfigure', () => {
         });
 
         await expect(createProtocolsConfigurePromise)
-          .to.be.rejected;
+          .to.be.rejectedWith(DwnErrorCode.ProtocolsConfigureWhoReadActionMissing);
+      });
+
+      it('rejects `who`-based rules with `of` that have read+query but not subscribe', async () => {
+        const definition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {
+            message: {},
+          },
+          structure: {
+            message: {
+              $actions: [{
+                who : 'recipient',
+                of  : 'message',
+                can : ['read', 'query']
+              }]
+            }
+          }
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        const createProtocolsConfigurePromise = ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition
+        });
+
+        await expect(createProtocolsConfigurePromise)
+          .to.be.rejectedWith(DwnErrorCode.ProtocolsConfigureWhoReadActionMissing);
+      });
+
+      it('allows `who`-based rules with `of` that have all read actions (read+query+subscribe)', async () => {
+        const definition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {
+            message: {},
+          },
+          structure: {
+            message: {
+              $actions: [{
+                who : 'recipient',
+                of  : 'message',
+                can : ['read', 'query', 'subscribe']
+              }]
+            }
+          }
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        const createProtocolsConfigurePromise = ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition
+        });
+
+        await expect(createProtocolsConfigurePromise)
+          .to.eventually.exist;
+      });
+
+      it('allows `who`-based rules with `of` that have read actions alongside other actions', async () => {
+        const definition = {
+          published : true,
+          protocol  : 'http://example.com',
+          types     : {
+            message: {},
+          },
+          structure: {
+            message: {
+              $actions: [{
+                who : 'author',
+                of  : 'message',
+                can : ['create', 'read', 'query', 'subscribe']
+              }]
+            }
+          }
+        };
+
+        const alice = await TestDataGenerator.generatePersona();
+
+        const createProtocolsConfigurePromise = ProtocolsConfigure.create({
+          signer: Jws.createSigner(alice),
+          definition
+        });
+
+        await expect(createProtocolsConfigurePromise)
+          .to.eventually.exist;
       });
 
       it('allows $size min and max to be set on a protocol path', async () => {

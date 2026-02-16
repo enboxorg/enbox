@@ -223,7 +223,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       // - `write` - Entails ability to create and update.
       //             Since `of` is undefined, it implies the recipient of THIS record,
       //             there is no 'recipient' until this record has been created, so it makes no sense to allow recipient to write this record.
-      // - `query` - Only authorized using roles, so allowing direct recipients to query is outside the scope.
+      // - `query`/`subscribe` - Without `of`, there is no relational context to scope the query.
       if (actionRule.who === ProtocolActor.Recipient && actionRule.of === undefined) {
 
         // throw if `can` contains a value that is not `co-update`, `co-delete`, or `co-prune`
@@ -244,6 +244,18 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
           DwnErrorCode.ProtocolsConfigureInvalidActionMissingOf,
           `'of' is required when 'author' is specified as 'who'`
         );
+      }
+
+      // For `who`-based rules with `of`, enforce that read-type actions (read, query, subscribe)
+      // are all-or-nothing, same as the role-based rule constraint above.
+      if (actionRule.who !== undefined && actionRule.of !== undefined) {
+        const readActions = [ProtocolAction.Read, ProtocolAction.Query, ProtocolAction.Subscribe];
+        if (readActions.find(action => actionRule.can.includes(action)) && !readActions.every(action => actionRule.can.includes(action))) {
+          throw new DwnError(
+            DwnErrorCode.ProtocolsConfigureWhoReadActionMissing,
+            `Action ${JSON.stringify(actionRule)} for rule set ${ruleSetProtocolPath} must contain all read actions (${readActions.join(', ')}).`
+          );
+        }
       }
 
       // validate that if `can` contains `update` or `delete`, it must also contain `create`

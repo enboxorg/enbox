@@ -56,7 +56,9 @@
                     "create",
                     "delete",
                     "prune",
+                    "query",
                     "read",
+                    "subscribe",
                     "update"
                   ]
                 }

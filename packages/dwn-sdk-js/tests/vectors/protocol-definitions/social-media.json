@@ -88,7 +88,9 @@
             "who": "author",
             "of": "image",
             "can": [
-              "read"
+              "read",
+              "query",
+              "subscribe"
             ]
           },
           {

@@ -2996,6 +2996,109 @@ export function testRecordsQueryHandler(): void {
           expect(chatQueryReply.status.code).to.eq(401);
           expect(chatQueryReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
         });
+
+        it('allows `who`-based recipient query without invoking a role', async () => {
+          // scenario:
+          // 1. Alice installs a protocol with `who: recipient, of: message, can: [read, query, subscribe]`
+          // 2. Alice writes messages with Bob as recipient and Carol as recipient
+          // 3. Bob queries Alice's DWN for messages — should only see messages where Bob is recipient
+          // 4. Carol queries Alice's DWN — should only see messages where Carol is recipient
+          // 5. Dave queries Alice's DWN — should see no messages
+
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          const carol = await TestDataGenerator.generateDidKeyPersona();
+          const dave = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolDefinition: ProtocolDefinition = {
+            published : true,
+            protocol  : 'http://who-query-test.xyz',
+            types     : {
+              message: {
+                dataFormats: ['text/plain'],
+              },
+            },
+            structure: {
+              message: {
+                $actions: [
+                  { who: 'anyone', can: ['create'] },
+                  { who: 'recipient', of: 'message', can: ['read', 'query', 'subscribe'] },
+                ],
+              },
+            },
+          };
+
+          // 1. Alice installs the protocol
+          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            author: alice,
+            protocolDefinition,
+          });
+          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+          expect(protocolsConfigureReply.status.code).to.equal(202);
+
+          // 2. Alice writes 2 messages for Bob and 1 for Carol
+          for (let i = 0; i < 2; i++) {
+            const msg = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              recipient    : bob.did,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'message',
+              published    : false,
+              dataFormat   : 'text/plain',
+              data         : new TextEncoder().encode(`message for bob ${i}`),
+            });
+            const reply = await dwn.processMessage(alice.did, msg.message, { dataStream: msg.dataStream });
+            expect(reply.status.code).to.equal(202);
+          }
+
+          const carolMsg = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            recipient    : carol.did,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'message',
+            published    : false,
+            dataFormat   : 'text/plain',
+            data         : new TextEncoder().encode('message for carol'),
+          });
+          const carolReply = await dwn.processMessage(alice.did, carolMsg.message, { dataStream: carolMsg.dataStream });
+          expect(carolReply.status.code).to.equal(202);
+
+          // 3. Bob queries — should see 2 messages where he is recipient
+          const bobQuery = await TestDataGenerator.generateRecordsQuery({
+            author : bob,
+            filter : {
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'message',
+            },
+          });
+          const bobQueryReply = await dwn.processMessage(alice.did, bobQuery.message) as RecordsQueryReply;
+          expect(bobQueryReply.status.code).to.equal(200);
+          expect(bobQueryReply.entries?.length).to.equal(2);
+
+          // 4. Carol queries — should see 1 message where she is recipient
+          const carolQuery = await TestDataGenerator.generateRecordsQuery({
+            author : carol,
+            filter : {
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'message',
+            },
+          });
+          const carolQueryReply = await dwn.processMessage(alice.did, carolQuery.message) as RecordsQueryReply;
+          expect(carolQueryReply.status.code).to.equal(200);
+          expect(carolQueryReply.entries?.length).to.equal(1);
+
+          // 5. Dave queries — should see no messages (he is neither author nor recipient)
+          const daveQuery = await TestDataGenerator.generateRecordsQuery({
+            author : dave,
+            filter : {
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'message',
+            },
+          });
+          const daveQueryReply = await dwn.processMessage(alice.did, daveQuery.message) as RecordsQueryReply;
+          expect(daveQueryReply.status.code).to.equal(200);
+          expect(daveQueryReply.entries?.length).to.equal(0);
+        });
       });
     });
 
