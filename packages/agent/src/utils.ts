@@ -3,11 +3,11 @@ import type { Readable } from '@enbox/common';
 import type { PaginationCursor, RecordsDeleteMessage, RecordsWrite, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { utils as didUtils } from '@enbox/dids';
-import { ReadableWebToNodeStream } from 'readable-web-to-node-stream';
+import { NodeStream } from '@enbox/common';
 import { DateSort, DwnInterfaceName, DwnMethodName, Jws, Message } from '@enbox/dwn-sdk-js';
 
 export function blobToIsomorphicNodeReadable(blob: Blob): Readable {
-  return webReadableToIsomorphicNodeReadable(blob.stream() as ReadableStream<any>);
+  return NodeStream.fromWebReadable({ readableStream: blob.stream() as ReadableStream<any> });
 }
 
 export async function getDwnServiceEndpointUrls(didUri: string, dereferencer: DidUrlDereferencer): Promise<string[]> {
@@ -91,7 +91,7 @@ export async function getPaginationCursor(message: RecordsWriteMessage, dateSort
 }
 
 export function webReadableToIsomorphicNodeReadable(webReadable: ReadableStream<any>): Readable {
-  return new ReadableWebToNodeStream(webReadable);
+  return NodeStream.fromWebReadable({ readableStream: webReadable });
 }
 
 /**

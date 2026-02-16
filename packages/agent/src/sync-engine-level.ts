@@ -1,3 +1,4 @@
+import type { Readable } from '@enbox/common';
 import type { ULIDFactory } from 'ulidx';
 import type { AbstractBatchOperation, AbstractLevel } from 'abstract-level';
 import type {
@@ -184,12 +185,15 @@ export class SyncEngineLevel implements SyncEngine {
 
       const replyEntry = reply.entry;
       const message = replyEntry.message;
-      // if the message includes data we convert it to a Node readable stream
-      // otherwise we set it as undefined, as the message does not include data
-      // this occurs when the message is a RecordsWrite message that has been updated
-      const dataStream = isRecordsWrite(replyEntry) && replyEntry.data ?
-        NodeStream.fromWebReadable({ readableStream: replyEntry.data as unknown as ReadableStream })
-        : undefined;
+      // If the message includes data, ensure it is a Node Readable stream for the DWN engine.
+      // The RPC layer may return either a Web ReadableStream (from HTTP fetch) or a Node Readable,
+      // depending on the transport, so we handle both cases.
+      let dataStream: Readable | undefined;
+      if (isRecordsWrite(replyEntry) && replyEntry.data) {
+        dataStream = NodeStream.isReadableStream(replyEntry.data)
+          ? replyEntry.data
+          : NodeStream.fromWebReadable({ readableStream: replyEntry.data as unknown as ReadableStream });
+      }
 
       const pullReply = await this.agent.dwn.node.processMessage(did, message, { dataStream: dataStream as any });
       if (SyncEngineLevel.syncMessageReplyIsSuccessful(pullReply)) {

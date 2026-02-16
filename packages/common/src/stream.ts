@@ -2,6 +2,56 @@ import { Convert } from './convert.js';
 
 export class Stream {
   /**
+   * Creates a `ReadableStream<Uint8Array>` from a `Blob`.
+   *
+   * This is a convenience method that wraps `Blob.stream()` with proper typing. It's useful when
+   * you have a `Blob` and need a `ReadableStream<Uint8Array>` for streaming consumption.
+   *
+   * @example
+   * ```ts
+   * const blob = new Blob(['Hello, World!'], { type: 'text/plain' });
+   * const readableStream = Stream.fromBlob(blob);
+   * ```
+   *
+   * @param blob - The `Blob` to create a `ReadableStream` from.
+   * @returns A `ReadableStream<Uint8Array>` containing the blob's data.
+   */
+  public static fromBlob(blob: Blob): ReadableStream<Uint8Array> {
+    return blob.stream() as ReadableStream<Uint8Array>;
+  }
+
+  /**
+   * Creates a `ReadableStream<Uint8Array>` from a `Uint8Array`.
+   *
+   * This method creates a `ReadableStream` that emits the provided bytes in chunks. It's the
+   * Web Streams equivalent of creating a Node.js `Readable` from a buffer.
+   *
+   * @example
+   * ```ts
+   * const bytes = new Uint8Array([1, 2, 3, 4, 5]);
+   * const readableStream = Stream.fromBytes(bytes);
+   * ```
+   *
+   * @param bytes - The `Uint8Array` to create a `ReadableStream` from.
+   * @param chunkLength - Optional chunk size in bytes. Defaults to 100,000 bytes.
+   * @returns A `ReadableStream<Uint8Array>` that emits the bytes in chunks.
+   */
+  public static fromBytes(bytes: Uint8Array, chunkLength: number = 100_000): ReadableStream<Uint8Array> {
+    let offset = 0;
+    return new ReadableStream<Uint8Array>({
+      pull(controller): void {
+        if (offset >= bytes.length) {
+          controller.close();
+          return;
+        }
+        const end = Math.min(offset + chunkLength, bytes.length);
+        controller.enqueue(bytes.subarray(offset, end));
+        offset = end;
+      }
+    });
+  }
+
+  /**
    * Transforms a `ReadableStream` into an `AsyncIterable`. This allows for the asynchronous
    * iteration over the stream's data chunks.
    *
