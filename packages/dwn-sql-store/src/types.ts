@@ -1,6 +1,7 @@
 import type { Generated } from 'kysely';
+import type { KeyValues } from '@enbox/dwn-sdk-js';
 
-export type KeyValues = { [key:string]: string | number | boolean | string[] | number[] };
+export type { KeyValues };
 
 type EventLogTable = {
   watermark: Generated<number>;

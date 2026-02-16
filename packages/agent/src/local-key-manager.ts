@@ -32,7 +32,7 @@ import {
   Sha2Algorithm,
 } from '@enbox/crypto';
 
-import type { PrivateJwk } from '@enbox/dwn-sdk-js';
+import type { PrivateKeyJwk } from '@enbox/dwn-sdk-js';
 
 import { Encryption, HdKey, Secp256k1 } from '@enbox/dwn-sdk-js';
 
@@ -740,7 +740,7 @@ export class LocalKeyManager implements AgentKeyManager {
   private async getSecp256k1PrivateKeyBytes({ keyUri }: {
     keyUri: KeyIdentifier;
   }): Promise<Uint8Array> {
-    const privateKeyJwk = await this.getPrivateKey({ keyUri }) as PrivateJwk;
+    const privateKeyJwk = await this.getPrivateKey({ keyUri }) as PrivateKeyJwk;
     return Secp256k1.privateJwkToBytes(privateKeyJwk);
   }
 

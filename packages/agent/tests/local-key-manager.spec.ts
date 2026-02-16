@@ -1,5 +1,5 @@
 import type { BearerDid } from '@enbox/dids';
-import type { PrivateJwk } from '@enbox/dwn-sdk-js';
+import type { PrivateKeyJwk } from '@enbox/dwn-sdk-js';
 import type { Jwk, JwkParamsEcPublic } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
@@ -521,7 +521,7 @@ describe('LocalKeyManager', () => {
           const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
 
           // Get the private key for encryption setup
-          const storedPrivateKey = await testHarness.agent.keyManager['getPrivateKey']({ keyUri }) as PrivateJwk;
+          const storedPrivateKey = await testHarness.agent.keyManager['getPrivateKey']({ keyUri }) as PrivateKeyJwk;
           const privateKeyBytes = Secp256k1.privateJwkToBytes(storedPrivateKey);
 
           // Derive the same key that will be used for decryption
@@ -552,7 +552,7 @@ describe('LocalKeyManager', () => {
           const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
 
           // Get the private key for encryption setup
-          const storedPrivateKey = await testHarness.agent.keyManager['getPrivateKey']({ keyUri }) as PrivateJwk;
+          const storedPrivateKey = await testHarness.agent.keyManager['getPrivateKey']({ keyUri }) as PrivateKeyJwk;
           const privateKeyBytes = Secp256k1.privateJwkToBytes(storedPrivateKey);
 
           // Derive a key for encryption
@@ -661,7 +661,7 @@ describe('LocalKeyManager', () => {
 
           // Compute public key from private key bytes and verify they match
           const publicKeyBytesFromPrivate = await Secp256k1.getPublicKey(privateKeyBytes);
-          const publicKeyFromBytes = await Secp256k1.publicKeyToJwk(publicKeyBytesFromPrivate);
+          const publicKeyFromBytes = await Secp256k1.publicKeyToJwk(publicKeyBytesFromPrivate) as JwkParamsEcPublic;
 
           expect(publicKeyFromBytes.x).to.equal(publicKey.x);
           expect(publicKeyFromBytes.y).to.equal(publicKey.y);
