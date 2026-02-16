@@ -16,6 +16,7 @@ import type { DwnPermissionScope } from '../src/types/dwn.js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
+import { KeyDeliveryProtocolDefinition } from '../src/store-data-protocols.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
@@ -3220,6 +3221,241 @@ describe('Encryption Callback Factories', () => {
       expect(readReply.status.code).to.equal(200);
       const rawBytes = await DataStream.toBytes(readReply.entry!.data!);
       expect(Convert.uint8Array(rawBytes).toString()).to.not.equal(plaintextString);
+    });
+  });
+});
+
+describe('Key Delivery Protocol Infrastructure (PR A)', () => {
+  let testHarness: PlatformAgentTestHarness;
+  let alice: BearerIdentity;
+
+  before(async () => {
+    testHarness = await PlatformAgentTestHarness.setup({
+      agentClass  : TestAgent,
+      agentStores : 'dwn'
+    });
+  });
+
+  beforeEach(async () => {
+    await testHarness.clearStorage();
+    await testHarness.createAgentDid();
+    alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
+  });
+
+  after(async () => {
+    await testHarness.clearStorage();
+    await testHarness.closeStorage();
+  });
+
+  describe('ensureKeyDeliveryProtocol()', () => {
+    it('should install the key delivery protocol on first call', async () => {
+      // Before: verify protocol is not installed
+      const { reply: beforeReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : {
+          filter: { protocol: KeyDeliveryProtocolDefinition.protocol }
+        }
+      });
+      expect(beforeReply.entries).to.have.length(0);
+
+      // Act: install key delivery protocol
+      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
+
+      // After: verify protocol is installed with $encryption keys
+      const { reply: afterReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : {
+          filter: { protocol: KeyDeliveryProtocolDefinition.protocol }
+        }
+      });
+      expect(afterReply.entries).to.have.length(1);
+
+      const definition = afterReply.entries![0].descriptor.definition;
+      expect(definition.protocol).to.equal('https://enbox.org/protocols/key-delivery');
+
+      // Verify $encryption keys were injected at the contextKey path
+      const contextKeyRuleSet = definition.structure.contextKey as any;
+      expect(contextKeyRuleSet).to.have.property('$encryption');
+      expect(contextKeyRuleSet.$encryption).to.have.property('rootKeyId');
+      expect(contextKeyRuleSet.$encryption).to.have.property('publicKeyJwk');
+      expect(contextKeyRuleSet.$encryption.rootKeyId).to.include('#enc');
+    });
+
+    it('should skip installation on subsequent calls (cache hit)', async () => {
+      // First call — installs
+      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
+
+      // Spy on processRequest to detect further calls
+      const processRequestSpy = sinon.spy(testHarness.agent.dwn, 'processRequest');
+
+      // Second call — should be cached, no processRequest for ProtocolsConfigure
+      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
+
+      // processRequest should not have been called at all (cache returns early)
+      expect(processRequestSpy.callCount).to.equal(0);
+
+      processRequestSpy.restore();
+    });
+  });
+
+  describe('writeContextKeyRecord()', () => {
+    it('should write an encrypted contextKey record with correct tags', async () => {
+      const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
+
+      // Ensure Bob's key delivery protocol is also installed (for recipient key resolution)
+      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(bob.did.uri);
+
+      // Create a mock DerivedPrivateJwk payload
+      const mockContextKey = {
+        rootKeyId         : `${alice.did.uri}#enc`,
+        derivationScheme  : 'protocolContext',
+        derivationPath    : ['protocolContext', 'mock-context-id-123'],
+        derivedPrivateKey : { kty: 'EC', crv: 'secp256k1', x: 'test', d: 'test' },
+      };
+
+      const recordId = await testHarness.agent.dwn.writeContextKeyRecord({
+        tenantDid       : alice.did.uri,
+        recipientDid    : bob.did.uri,
+        contextKeyData  : mockContextKey as any,
+        sourceProtocol  : 'https://protocol.xyz/multi-party-chat',
+        sourceContextId : 'mock-context-id-123',
+      });
+
+      expect(recordId).to.be.a('string');
+      expect(recordId).to.not.be.empty;
+
+      // Verify the record was written — query as Alice (the owner)
+      const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            protocol     : KeyDeliveryProtocolDefinition.protocol,
+            protocolPath : 'contextKey',
+          }
+        }
+      });
+
+      expect(queryReply.entries).to.have.length(1);
+
+      const entry = queryReply.entries![0] as RecordsWriteMessage;
+      expect(entry.recordId).to.equal(recordId);
+
+      // Verify the record is encrypted
+      expect(entry).to.have.property('encryption');
+      expect(entry.encryption).to.have.property('keyEncryption');
+      expect(entry.encryption!.keyEncryption).to.have.length(1);
+
+      // Verify it uses ProtocolPath derivation (encrypted to the path key)
+      expect(entry.encryption!.keyEncryption[0].derivationScheme).to.equal('protocolPath');
+
+      // Verify recipient
+      expect(entry.descriptor).to.have.property('recipient', bob.did.uri);
+    });
+  });
+
+  describe('fetchContextKeyRecord()', () => {
+    it('should round-trip write + fetch for the local path (owner queries own DWN)', async () => {
+      const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
+
+      // Install key delivery protocol for both Alice and Bob
+      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
+      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(bob.did.uri);
+
+      // Create a realistic DerivedPrivateJwk payload
+      const mockContextKey = {
+        rootKeyId         : `${alice.did.uri}#enc`,
+        derivationScheme  : 'protocolContext',
+        derivationPath    : ['protocolContext', 'test-context-id-456'],
+        derivedPrivateKey : { kty: 'EC', crv: 'secp256k1', x: 'AAAA', d: 'BBBB' },
+      };
+
+      // Write the contextKey record (encrypted)
+      await testHarness.agent.dwn.writeContextKeyRecord({
+        tenantDid       : alice.did.uri,
+        recipientDid    : alice.did.uri, // Alice is the recipient for local test
+        contextKeyData  : mockContextKey as any,
+        sourceProtocol  : 'https://protocol.xyz/chat',
+        sourceContextId : 'test-context-id-456',
+      });
+
+      // Fetch it back — local path (ownerDid === requesterDid)
+      const result = await testHarness.agent.dwn.fetchContextKeyRecord({
+        ownerDid        : alice.did.uri,
+        requesterDid    : alice.did.uri,
+        sourceProtocol  : 'https://protocol.xyz/chat',
+        sourceContextId : 'test-context-id-456',
+      });
+
+      expect(result).to.not.be.undefined;
+      expect(result!.rootKeyId).to.equal(mockContextKey.rootKeyId);
+      expect(result!.derivationScheme).to.equal(mockContextKey.derivationScheme);
+      expect(result!.derivationPath).to.deep.equal(mockContextKey.derivationPath);
+      expect(result!.derivedPrivateKey).to.deep.equal(mockContextKey.derivedPrivateKey);
+    });
+
+    it('should return undefined when no matching contextKey record exists', async () => {
+      const result = await testHarness.agent.dwn.fetchContextKeyRecord({
+        ownerDid        : alice.did.uri,
+        requesterDid    : alice.did.uri,
+        sourceProtocol  : 'https://protocol.xyz/nonexistent',
+        sourceContextId : 'nonexistent-context-id',
+      });
+
+      expect(result).to.be.undefined;
+    });
+
+    it('should find contextKey by specific tag filters (protocol + contextId)', async () => {
+      const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
+      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
+      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(bob.did.uri);
+
+      // Write two contextKey records for different contexts
+      const contextKey1 = {
+        rootKeyId         : `${alice.did.uri}#enc`,
+        derivationScheme  : 'protocolContext',
+        derivationPath    : ['protocolContext', 'context-aaa'],
+        derivedPrivateKey : { kty: 'EC', crv: 'secp256k1', x: 'key1x', d: 'key1d' },
+      };
+      const contextKey2 = {
+        rootKeyId         : `${alice.did.uri}#enc`,
+        derivationScheme  : 'protocolContext',
+        derivationPath    : ['protocolContext', 'context-bbb'],
+        derivedPrivateKey : { kty: 'EC', crv: 'secp256k1', x: 'key2x', d: 'key2d' },
+      };
+
+      await testHarness.agent.dwn.writeContextKeyRecord({
+        tenantDid       : alice.did.uri,
+        recipientDid    : alice.did.uri,
+        contextKeyData  : contextKey1 as any,
+        sourceProtocol  : 'https://protocol.xyz/chat',
+        sourceContextId : 'context-aaa',
+      });
+
+      await testHarness.agent.dwn.writeContextKeyRecord({
+        tenantDid       : alice.did.uri,
+        recipientDid    : alice.did.uri,
+        contextKeyData  : contextKey2 as any,
+        sourceProtocol  : 'https://protocol.xyz/chat',
+        sourceContextId : 'context-bbb',
+      });
+
+      // Fetch context-bbb specifically
+      const result = await testHarness.agent.dwn.fetchContextKeyRecord({
+        ownerDid        : alice.did.uri,
+        requesterDid    : alice.did.uri,
+        sourceProtocol  : 'https://protocol.xyz/chat',
+        sourceContextId : 'context-bbb',
+      });
+
+      expect(result).to.not.be.undefined;
+      expect(result!.derivationPath).to.deep.equal(['protocolContext', 'context-bbb']);
+      expect(result!.derivedPrivateKey).to.deep.equal(contextKey2.derivedPrivateKey);
     });
   });
 });
