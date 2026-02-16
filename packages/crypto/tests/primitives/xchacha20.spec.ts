@@ -1,6 +1,6 @@
-import { expect, use } from 'chai';
-import { Convert } from '@enbox/common';
 import chaiAsPromised from 'chai-as-promised';
+import { Convert } from '@enbox/common';
+import { expect, use } from 'chai';
 
 import type { Jwk } from '../../src/jose/jwk.js';
 
@@ -46,7 +46,7 @@ describe('XChaCha20', () => {
     });
 
     it('passes test vectors', async () => {
-      const privateKeyBytes =  Convert.hex('79c99798ac67300bbb2704c95c341e3245f3dcb21761b98e52ff45b24f304fc4').toUint8Array();
+      const privateKeyBytes = Convert.hex('79c99798ac67300bbb2704c95c341e3245f3dcb21761b98e52ff45b24f304fc4').toUint8Array();
       const privateKey = await XChaCha20.bytesToPrivateKey({ privateKeyBytes });
 
       const input = {
@@ -80,7 +80,7 @@ describe('XChaCha20', () => {
     });
 
     it('passes test vectors', async () => {
-      const privateKeyBytes =  Convert.hex('79c99798ac67300bbb2704c95c341e3245f3dcb21761b98e52ff45b24f304fc4').toUint8Array();
+      const privateKeyBytes = Convert.hex('79c99798ac67300bbb2704c95c341e3245f3dcb21761b98e52ff45b24f304fc4').toUint8Array();
       const privateKey = await XChaCha20.bytesToPrivateKey({ privateKeyBytes });
 
       const input = {

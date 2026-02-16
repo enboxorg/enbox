@@ -9,6 +9,7 @@ import type {
 } from '@enbox/dwn-sdk-js';
 
 import ms from 'ms';
+
 import { Level } from 'level';
 import { monotonicFactory } from 'ulidx';
 import { NodeStream } from '@enbox/common';
@@ -17,19 +18,19 @@ import {
   DwnMethodName,
 } from '@enbox/dwn-sdk-js';
 
+import type { PermissionsApi } from './types/permissions.js';
 import type { SyncEngine, SyncIdentityOptions } from './types/sync.js';
 import type { Web5Agent, Web5PlatformAgent } from './types/agent.js';
 
+import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnInterface } from './types/dwn.js';
 import { getDwnServiceEndpointUrls, isRecordsWrite } from './utils.js';
-import { PermissionsApi } from './types/permissions.js';
-import { AgentPermissionsApi } from './permissions-api.js';
 
 export type SyncEngineLevelParams = {
   agent?: Web5PlatformAgent;
   dataPath?: string;
   db?: AbstractLevel<string | Buffer | Uint8Array>;
-}
+};
 
 type LevelBatchOperation = AbstractBatchOperation<AbstractLevel<string | Buffer | Uint8Array>, string, string>;
 
@@ -41,7 +42,7 @@ type SyncState = {
   dwnUrl: string;
   cursor?: PaginationCursor,
   protocol?: string;
-}
+};
 
 type SyncMessageParams = {
   did: string;
@@ -51,7 +52,7 @@ type SyncMessageParams = {
   delegateDid?: string;
   cursor?: PaginationCursor,
   protocol?: string;
-}
+};
 
 export class SyncEngineLevel implements SyncEngine {
   /**
@@ -117,7 +118,7 @@ export class SyncEngineLevel implements SyncEngine {
     const deleteOperations: LevelBatchOperation[] = [];
     const errored: Set<string> = new Set();
 
-    for (let job of pullJobs) {
+    for (const job of pullJobs) {
       const [key] = job;
       const { did, dwnUrl, messageCid, delegateDid, protocol } = SyncEngineLevel.parseSyncMessageParamsKey(key);
       // If a particular DWN service endpoint is unreachable, skip subsequent pull operations.
@@ -145,7 +146,7 @@ export class SyncEngineLevel implements SyncEngine {
 
           permissionGrantId = messagesReadGrant.grant.id;
           granteeDid = delegateDid;
-        } catch(error:any) {
+        } catch (error:any) {
           console.error('SyncEngineLevel: pull - Error fetching MessagesRead permission grant for delegate DID', error);
           continue;
         }
@@ -167,10 +168,10 @@ export class SyncEngineLevel implements SyncEngine {
 
       try {
         reply = await this.agent.rpc.sendDwnRequest({
-          dwnUrl,          targetDid : did,
+          dwnUrl, targetDid : did,
           message   : messagesRead.message,
         }) as MessagesReadReply;
-      } catch(e) {
+      } catch {
         errored.add(dwnUrl);
         continue;
       }
@@ -210,7 +211,7 @@ export class SyncEngineLevel implements SyncEngine {
     const deleteOperations: LevelBatchOperation[] = [];
     const errored: Set<string> = new Set();
 
-    for (let job of pushJobs) {
+    for (const job of pushJobs) {
       const [key] = job;
       const { did, delegateDid, protocol, dwnUrl, messageCid } = SyncEngineLevel.parseSyncMessageParamsKey(key);
       // If a particular DWN service endpoint is unreachable, skip subsequent push operations.
@@ -286,7 +287,7 @@ export class SyncEngineLevel implements SyncEngine {
       if (options) {
         return JSON.parse(options) as SyncIdentityOptions;
       }
-    } catch(error) {
+    } catch (error) {
       const e = error as { code: string };
       // `Level`` throws an error if the key is not present.  Return `undefined` in this case.
       if (e.code === 'LEVEL_NOT_FOUND') {
@@ -331,7 +332,7 @@ export class SyncEngineLevel implements SyncEngine {
     // Convert the interval string to milliseconds.
     const intervalMilliseconds = ms(interval);
 
-    const intervalSync = async () => {
+    const intervalSync = async (): Promise<void> => {
       if (this._syncLock) {
         return;
       }
@@ -370,7 +371,7 @@ export class SyncEngineLevel implements SyncEngine {
   public async stopSync(timeout: number = 2000): Promise<void> {
     let elapsedTimeout = 0;
 
-    while(this._syncLock) {
+    while (this._syncLock) {
       if (elapsedTimeout >= timeout) {
         throw new Error(`SyncEngineLevel: Existing sync operation did not complete within ${timeout} milliseconds.`);
       }
@@ -409,7 +410,7 @@ export class SyncEngineLevel implements SyncEngine {
   private async enqueueOperations({ syncDirection, syncPeerState }: {
     syncDirection: SyncDirection,
     syncPeerState: SyncState[]
-  }) {
+  }): Promise<void> {
     const enqueueOps = await Promise.allSettled(syncPeerState.map(async (syncState) => {
       // Get the event log from the remote DWN if pull sync, or local DWN if push sync.
       const eventLog = await this.getDwnEventLog({
@@ -423,7 +424,7 @@ export class SyncEngineLevel implements SyncEngine {
 
       const syncOperations: LevelBatchOperation[] = [];
 
-      for (let messageCid of eventLog) {
+      for (const messageCid of eventLog) {
         const watermark = this._ulidFactory();
         const operationKey = SyncEngineLevel.generateSyncMessageParamsKey({
           ...syncState,
@@ -479,7 +480,7 @@ export class SyncEngineLevel implements SyncEngine {
     syncDirection: SyncDirection,
     cursor?: PaginationCursor
     protocol?: string
-  }) {
+  }): Promise<string[]> {
     let messagesReply = {} as MessagesQueryReply;
     let permissionGrantId: string | undefined;
     if (delegateDid) {
@@ -494,7 +495,7 @@ export class SyncEngineLevel implements SyncEngine {
         });
 
         permissionGrantId = messagesQueryGrant.grant.id;
-      } catch(error:any) {
+      } catch (error:any) {
         console.error('SyncEngineLevel: Error fetching MessagesQuery permission grant for delegate DID', error);
         return [];
       }
@@ -562,13 +563,13 @@ export class SyncEngineLevel implements SyncEngine {
         });
 
         permissionGrantId = messagesReadGrant.grant.id;
-      } catch(error:any) {
+      } catch (error:any) {
         console.error('SyncEngineLevel: push - Error fetching MessagesRead permission grant for delegate DID', error);
         return;
       }
     }
 
-    let { reply } = await this.agent.dwn.processRequest({
+    const { reply } = await this.agent.dwn.processRequest({
       author        : author,
       target        : author,
       messageType   : DwnInterface.MessagesRead,
@@ -586,7 +587,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
     const messageEntry = reply.entry!;
 
-    let dwnMessageWithBlob: { message: GenericMessage, data?: Blob } = { message: messageEntry.message };
+    const dwnMessageWithBlob: { message: GenericMessage, data?: Blob } = { message: messageEntry.message };
 
     // If the message is a RecordsWrite, either data will be present,
     // OR we have to fetch it using a RecordsRead.
@@ -612,7 +613,7 @@ export class SyncEngineLevel implements SyncEngine {
         try {
           const { protocols, delegateDid } = JSON.parse(options) as SyncIdentityOptions;
           resolve({ protocols, delegateDid });
-        } catch(error: any) {
+        } catch {
           resolve({ protocols: [] });
         }
       });
@@ -627,7 +628,7 @@ export class SyncEngineLevel implements SyncEngine {
 
       // Get the cursor (or undefined) for each (DID, DWN service endpoint, sync direction)
       // combination and add it to the sync peer state array.
-      for (let dwnUrl of dwnEndpointUrls) {
+      for (const dwnUrl of dwnEndpointUrls) {
         if (protocols.length === 0) {
           const cursor = await this.getCursor(did, dwnUrl, syncDirection);
           syncPeerState.push({ did, delegateDid, dwnUrl, cursor });
@@ -655,7 +656,7 @@ export class SyncEngineLevel implements SyncEngine {
       if (cursorValue) {
         return JSON.parse(cursorValue) as PaginationCursor;
       }
-    } catch(error: any) {
+    } catch (error: any) {
       // Don't throw when a key wasn't found.
       if (error.notFound) {
         return undefined;
@@ -663,7 +664,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private async setCursor(did: string, dwnUrl: string, direction: SyncDirection, cursor: PaginationCursor, protocol?: string) {
+  private async setCursor(did: string, dwnUrl: string, direction: SyncDirection, cursor: PaginationCursor, protocol?: string): Promise<void> {
     const cursorKey = protocol ? `${did}~${dwnUrl}~${direction}-${protocol}` :
       `${did}~${dwnUrl}~${direction}`;
     const cursorsStore = this.getCursorStore();
@@ -675,7 +676,7 @@ export class SyncEngineLevel implements SyncEngine {
    * After a message is confirmed to already be synchronized on the local DWN, its CID is added
    * to the message store to ensure that any subsequent pull attempts are skipped.
    */
-  private async messageExists(did: string, messageCid: string) {
+  private async messageExists(did: string, messageCid: string): Promise<boolean> {
     const messageStore = this.getMessageStore(did);
 
     // If the `messageCid` exists in this DID's store, return true. Otherwise, return false.
@@ -690,25 +691,25 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private async addMessage(did: string, messageCid: string) {
+  private async addMessage(did: string, messageCid: string): Promise<void> {
     const messageStore = this.getMessageStore(did);
 
     return await messageStore.put(messageCid, '');
   }
 
-  private getMessageStore(did: string) {
+  private getMessageStore(did: string): AbstractLevel<string | Buffer | Uint8Array, string, string> {
     return this._db.sublevel('history').sublevel(did).sublevel('messages');
   }
 
-  private getCursorStore() {
+  private getCursorStore(): AbstractLevel<string | Buffer | Uint8Array, string, string> {
     return this._db.sublevel('cursors');
   }
 
-  private getPushQueue() {
+  private getPushQueue(): AbstractLevel<string | Buffer | Uint8Array, string, string> {
     return this._db.sublevel('pushQueue');
   }
 
-  private getPullQueue() {
+  private getPullQueue(): AbstractLevel<string | Buffer | Uint8Array, string, string> {
     return this._db.sublevel('pullQueue');
   }
 }

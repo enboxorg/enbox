@@ -1,6 +1,6 @@
 import { Convert } from '@enbox/common';
-import { xchacha20poly1305 } from '@noble/ciphers/chacha';
 import { getWebcryptoSubtle } from '@noble/ciphers/webcrypto';
+import { xchacha20poly1305 } from '@noble/ciphers/chacha';
 
 import type { Jwk } from '../jose/jwk.js';
 
@@ -186,7 +186,7 @@ export class XChaCha20Poly1305 {
    * @returns A Promise that resolves to a byte array containing the encrypted data and the
    *          authentication tag.
    */
-  public static async encrypt({ data, key, nonce, additionalData}: {
+  public static async encrypt({ data, key, nonce, additionalData }: {
     additionalData?: Uint8Array;
     data: Uint8Array;
     key: Jwk;

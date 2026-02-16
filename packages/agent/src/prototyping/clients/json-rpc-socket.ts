@@ -1,6 +1,8 @@
+import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from './json-rpc.js';
+
 import { CryptoUtils } from '@enbox/crypto';
 import IsomorphicWebSocket from 'isomorphic-ws';
-import { JsonRpcId, JsonRpcRequest, JsonRpcResponse, createJsonRpcSubscriptionRequest, parseJson } from './json-rpc.js';
+import { createJsonRpcSubscriptionRequest, parseJson } from './json-rpc.js';
 
 // These were arbitrarily chosen, but can be modified via connect options
 const CONNECT_TIMEOUT = 3_000;

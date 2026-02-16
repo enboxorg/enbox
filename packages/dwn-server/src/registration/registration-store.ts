@@ -1,6 +1,7 @@
-import { Kysely } from 'kysely';
-import type { RegistrationData } from './registration-types.js';
 import type { Dialect } from '@enbox/dwn-sql-store';
+import type { RegistrationData } from './registration-types.js';
+
+import { Kysely } from 'kysely';
 
 /**
  * The RegistrationStore is responsible for storing and retrieving tenant registration information.
@@ -27,11 +28,11 @@ export class RegistrationStore {
 
   private async initialize(): Promise<void> {
     await this.db.schema
-    .createTable(RegistrationStore.registeredTenantTableName)
-    .ifNotExists()
-    .addColumn('did', 'text', (column) => column.primaryKey())
-    .addColumn('termsOfServiceHash', 'text')
-    .execute();
+      .createTable(RegistrationStore.registeredTenantTableName)
+      .ifNotExists()
+      .addColumn('did', 'text', (column) => column.primaryKey())
+      .addColumn('termsOfServiceHash', 'text')
+      .execute();
   }
 
   /**

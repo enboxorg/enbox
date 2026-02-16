@@ -1,5 +1,5 @@
-import { expect } from 'chai';
 import { DidResolverCacheNoop } from '../../src/resolver/resolver-cache-noop.js';
+import { expect } from 'chai';
 
 describe('DidResolverCacheNoop', function() {
   it('returns null for get method', async function() {

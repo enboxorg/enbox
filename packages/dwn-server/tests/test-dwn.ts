@@ -24,23 +24,18 @@ export async function getTestDwn(options: {
 
   // NOTE: no resolver cache used here to avoid locking LevelDB
   const didResolver = new UniversalResolver({
-    didResolvers : [DidDht, DidIon, DidKey],
+    didResolvers: [DidDht, DidIon, DidKey],
   });
 
-  let dwn: Dwn;
-  try {
-    dwn = await Dwn.create({
-      eventLog,
-      dataStore,
-      messageStore,
-      resumableTaskStore,
-      eventStream,
-      tenantGate,
-      didResolver
-    });
-  } catch (e) {
-    throw e;
-  }
+  const dwn = await Dwn.create({
+    eventLog,
+    dataStore,
+    messageStore,
+    resumableTaskStore,
+    eventStream,
+    tenantGate,
+    didResolver
+  });
 
   return dwn;
 }

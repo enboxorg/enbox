@@ -3,16 +3,16 @@ import type { Jwk } from '@enbox/crypto';
 import type { PortableDid } from '../../src/types/portable-did.js';
 
 import chaiAsPromised from 'chai-as-promised';
-import sinon from 'sinon';
 import { computeJwkThumbprint } from '@enbox/crypto';
-import { DidIon } from '../../src/methods/did-ion.js';
 import { vectors as CreateTestVector } from '../fixtures/test-vectors/did-ion/create.js';
+import { DidIon } from '../../src/methods/did-ion.js';
 import { vectors as ResolveTestVector } from '../fixtures/test-vectors/did-ion/resolve.js';
+import sinon from 'sinon';
 import { expect, use } from 'chai';
 
 use(chaiAsPromised);
 // Helper function to create a mocked fetch response that fails and returns a 404 Not Found.
-const fetchNotFoundResponse = () => ({
+const fetchNotFoundResponse = (): { status: number; statusText: string; ok: boolean } => ({
   status     : 404,
   statusText : 'Not Found',
   ok         : false
@@ -20,11 +20,13 @@ const fetchNotFoundResponse = () => ({
 
 // Helper function to create a mocked fetch response that is successful and returns the given
 // response.
-const fetchOkResponse = (response?: any) => ({
+const fetchOkResponse = (response?: any): {
+  status: number; statusText: string; ok: boolean; json: () => Promise<any>
+} => ({
   status     : 200,
   statusText : 'OK',
   ok         : true,
-  json       : async () => Promise.resolve(response)
+  json       : async (): Promise<any> => Promise.resolve(response)
 });
 
 const ION_OPERATIONS_ENDPOINT = 'https://ion.tbd.engineering/operations';
@@ -530,7 +532,7 @@ describe('DidIon', () => {
 
     beforeEach(() => {
       // Define a DID to use for the test.
-      portableDid =  {
+      portableDid = {
         uri      : 'did:ion:EiB82xs9NseP908Y4amd7oW3jstZuTBQwk2q1ZhdLU9-Sg:eyJkZWx0YSI6eyJwYXRjaGVzIjpbeyJhY3Rpb24iOiJyZXBsYWNlIiwiZG9jdW1lbnQiOnsicHVibGljS2V5cyI6W3siaWQiOiJ3N0tPN1hCMTB5VDZ2RFRTVEh5UWtGaG5VcEZmcVd6eGtkNzB3ZHdDY1ZnIiwicHVibGljS2V5SndrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiOHJXb0xxR1lyLWxjOUZXUC1peWdDbHZ4R1lNRHJBOEF3NVAwR3ZuOC05RSJ9LCJwdXJwb3NlcyI6WyJhdXRoZW50aWNhdGlvbiIsImFzc2VydGlvbk1ldGhvZCIsImNhcGFiaWxpdHlEZWxlZ2F0aW9uIiwiY2FwYWJpbGl0eUludm9jYXRpb24iXSwidHlwZSI6Ikpzb25XZWJLZXkyMDIwIn1dLCJzZXJ2aWNlcyI6W119fV0sInVwZGF0ZUNvbW1pdG1lbnQiOiJFaUFDdWppZ084N3oyOUJ0N2pjRlViMUdXeUJBTlNuSlA2NF9QS0ctVzVwc19RIn0sInN1ZmZpeERhdGEiOnsiZGVsdGFIYXNoIjoiRWlDN2haUmh3elBTQlE0bkxnbm5TcmRuWE5FWGRZYnk2VUQ1VXNzTkhNSG9rQSIsInJlY292ZXJ5Q29tbWl0bWVudCI6IkVpQU5UXzdkbVBFbklQMUlUNERqaUQxeVJ2VDVrMlg2V3owcVRNZ1k3TU9vRGcifX0',
         document : {
           id         : 'did:ion:EiB82xs9NseP908Y4amd7oW3jstZuTBQwk2q1ZhdLU9-Sg:eyJkZWx0YSI6eyJwYXRjaGVzIjpbeyJhY3Rpb24iOiJyZXBsYWNlIiwiZG9jdW1lbnQiOnsicHVibGljS2V5cyI6W3siaWQiOiJ3N0tPN1hCMTB5VDZ2RFRTVEh5UWtGaG5VcEZmcVd6eGtkNzB3ZHdDY1ZnIiwicHVibGljS2V5SndrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiOHJXb0xxR1lyLWxjOUZXUC1peWdDbHZ4R1lNRHJBOEF3NVAwR3ZuOC05RSJ9LCJwdXJwb3NlcyI6WyJhdXRoZW50aWNhdGlvbiIsImFzc2VydGlvbk1ldGhvZCIsImNhcGFiaWxpdHlEZWxlZ2F0aW9uIiwiY2FwYWJpbGl0eUludm9jYXRpb24iXSwidHlwZSI6Ikpzb25XZWJLZXkyMDIwIn1dLCJzZXJ2aWNlcyI6W119fV0sInVwZGF0ZUNvbW1pdG1lbnQiOiJFaUFDdWppZ084N3oyOUJ0N2pjRlViMUdXeUJBTlNuSlA2NF9QS0ctVzVwc19RIn0sInN1ZmZpeERhdGEiOnsiZGVsdGFIYXNoIjoiRWlDN2haUmh3elBTQlE0bkxnbm5TcmRuWE5FWGRZYnk2VUQ1VXNzTkhNSG9rQSIsInJlY292ZXJ5Q29tbWl0bWVudCI6IkVpQU5UXzdkbVBFbklQMUlUNERqaUQxeVJ2VDVrMlg2V3owcVRNZ1k3TU9vRGcifX0',

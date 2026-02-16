@@ -1,16 +1,16 @@
 import type { BearerDid } from '@enbox/dids';
 
-import type { Web5Rpc } from '../rpc-client.js';
-import type { AgentDwnApi } from '../dwn-api.js';
-import type { AgentSyncApi } from '../sync-api.js';
 import type { AgentCryptoApi } from '../crypto-api.js';
-import type { AgentKeyManager } from './key-manager.js';
-import type { IdentityVault } from './identity-vault.js';
+import type { AgentDwnApi } from '../dwn-api.js';
 import type { AgentIdentityApi } from '../identity-api.js';
+import type { AgentKeyManager } from './key-manager.js';
 import type { AgentPermissionsApi } from '../permissions-api.js';
-import type { ProcessVcRequest, SendVcRequest, VcResponse } from './vc.js';
+import type { AgentSyncApi } from '../sync-api.js';
+import type { IdentityVault } from './identity-vault.js';
+import type { Web5Rpc } from '../rpc-client.js';
 import type { AgentDidApi, DidInterface, DidRequest, DidResponse } from '../did-api.js';
 import type { DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './dwn.js';
+import type { ProcessVcRequest, SendVcRequest, VcResponse } from './vc.js';
 
 
 /**

@@ -1,6 +1,6 @@
 import type { DidMethodResolver } from '../methods/did-method.js';
-import type { DidResolver, DidResolverCache, DidUrlDereferencer } from '../types/did-resolution.js';
 import type { DidDereferencingOptions, DidDereferencingResult, DidResolutionOptions, DidResolutionResult, DidResource } from '../types/did-core.js';
+import type { DidResolver, DidResolverCache, DidUrlDereferencer } from '../types/did-resolution.js';
 
 import { Did } from '../did.js';
 import { DidErrorCode } from '../did-error.js';
@@ -33,7 +33,7 @@ export type UniversalResolverParams = {
    * which effectively disables caching.
    */
   cache?: DidResolverCache;
-}
+};
 
 /**
  * The `DidResolver` class provides mechanisms for resolving Decentralized Identifiers (DIDs) to
@@ -206,7 +206,7 @@ export class UniversalResolver implements DidResolver, DidUrlDereferencer {
     let didResource: DidResource | undefined;
 
     // Find the first matching verification method in the DID document.
-    for (let vm of verificationMethod) {
+    for (const vm of verificationMethod) {
       if (idSet.has(vm.id)) {
         didResource = vm;
         break;
@@ -214,7 +214,7 @@ export class UniversalResolver implements DidResolver, DidUrlDereferencer {
     }
 
     // Find the first matching service in the DID document.
-    for (let svc of service) {
+    for (const svc of service) {
       if (idSet.has(svc.id)) {
         didResource = svc;
         break;

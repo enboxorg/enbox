@@ -17,7 +17,7 @@ export type IdentityVaultBackup = {
 
   /** Encrypted vault contents. */
   data: string;
-}
+};
 
 /**
  * Represents the detailed data structure of a backup for an {@link IdentityVault}.
@@ -51,7 +51,7 @@ export type IdentityVaultParams = {
 
   /** Optionally specifies a custom key-value store for persisting the vault's encrypted data. */
   store?: KeyValueStore<string, any>;
-}
+};
 
 export interface IdentityVault<T extends Record<string, any> = { InitializeResult: any }> {
   /**
@@ -134,4 +134,4 @@ export type IdentityVaultStatus = {
    * The timestamp of the last restore.
    */
   lastRestore: string | null;
-}
+};

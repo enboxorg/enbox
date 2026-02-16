@@ -203,7 +203,7 @@ export class AesGcm {
       name: 'AES-GCM',
       iv,
       ...(tagLength && { tagLength }),
-      ...(additionalData && { additionalData})
+      ...(additionalData && { additionalData })
     };
 
     // Decrypt the data.
@@ -279,7 +279,7 @@ export class AesGcm {
       name: 'AES-GCM',
       iv,
       ...(tagLength && { tagLength }),
-      ...(additionalData && { additionalData})
+      ...(additionalData && { additionalData })
     };
 
     // Encrypt the data.

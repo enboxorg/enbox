@@ -1,29 +1,40 @@
-import type { KeyValueStore } from '@enbox/common';
 import type { AbstractLevel } from 'abstract-level';
-
-import { Level } from 'level';
-import { LevelStore, MemoryStore } from '@enbox/common';
-import { DataStoreLevel, Dwn, EventEmitterStream, EventLogLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js';
-import { DidDht, DidJwk, DidResolutionResult, DidResolverCache } from '@enbox/dids';
-
+import type { BearerIdentity } from './bearer-identity.js';
+import type { DidResolverCache } from '@enbox/dids';
+import type { Dwn } from '@enbox/dwn-sdk-js';
+import type { KeyValueStore } from '@enbox/common';
 import type { Web5PlatformAgent } from './types/agent.js';
 
+import { Level } from 'level';
+import { DataStoreLevel, EventEmitterStream, EventLogLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js';
+import { DidDht, DidJwk } from '@enbox/dids';
+import { LevelStore, MemoryStore } from '@enbox/common';
+
+import { AgentCryptoApi } from './crypto-api.js';
 import { AgentDidApi } from './did-api.js';
 import { AgentDidResolverCache } from './agent-did-resolver-cache.js';
 import { AgentDwnApi } from './dwn-api.js';
-import { AgentSyncApi } from './sync-api.js';
-import { Web5RpcClient } from './rpc-client.js';
-import { AgentCryptoApi } from './crypto-api.js';
 import { AgentIdentityApi } from './identity-api.js';
-import { BearerIdentity } from './bearer-identity.js';
+import { AgentPermissionsApi } from './permissions-api.js';
+import { AgentSyncApi } from './sync-api.js';
+import { DidResolverCacheMemory } from './prototyping/dids/resolver-cache-memory.js';
 import { HdIdentityVault } from './hd-identity-vault.js';
 import { LocalKeyManager } from './local-key-manager.js';
 import { SyncEngineLevel } from './sync-engine-level.js';
+import { Web5RpcClient } from './rpc-client.js';
 import { DwnDidStore, InMemoryDidStore } from './store-did.js';
-import { DwnKeyStore, InMemoryKeyStore } from './store-key.js';
 import { DwnIdentityStore, InMemoryIdentityStore } from './store-identity.js';
-import { DidResolverCacheMemory } from './prototyping/dids/resolver-cache-memory.js';
-import { AgentPermissionsApi } from './permissions-api.js';
+import { DwnKeyStore, InMemoryKeyStore } from './store-key.js';
+
+type StoreSetupResult = {
+  agentVault: HdIdentityVault;
+  didApi: AgentDidApi;
+  didResolverCache: DidResolverCache;
+  identityApi: AgentIdentityApi<LocalKeyManager>;
+  keyManager: LocalKeyManager;
+  permissionsApi: AgentPermissionsApi;
+  vaultStore: KeyValueStore<string, string>;
+};
 
 type PlatformAgentTestHarnessParams = {
   agent: Web5PlatformAgent<LocalKeyManager>
@@ -43,7 +54,7 @@ type PlatformAgentTestHarnessParams = {
     didStore: DwnDidStore;
     clear: () => void;
   }
-}
+};
 
 export class PlatformAgentTestHarness {
   public agent: Web5PlatformAgent<LocalKeyManager>;
@@ -171,14 +182,14 @@ export class PlatformAgentTestHarness {
   }
 
   public static async setup({ agentClass, agentStores, testDataLocation }: {
-      agentClass: new (params: any) => Web5PlatformAgent<LocalKeyManager>
-      agentStores?: 'dwn' | 'memory';
-      testDataLocation?: string;
-    }): Promise<PlatformAgentTestHarness> {
+    agentClass: new (params: any) => Web5PlatformAgent<LocalKeyManager>
+    agentStores?: 'dwn' | 'memory';
+    testDataLocation?: string;
+  }): Promise<PlatformAgentTestHarness> {
     agentStores ??= 'memory';
     testDataLocation ??= '__TESTDATA__';
 
-    const testDataPath = (path: string) => `${testDataLocation}/${path}`;
+    const testDataPath = (path: string): string => `${testDataLocation}/${path}`;
 
     // Instantiate Agent's Crypto API.
     const cryptoApi = new AgentCryptoApi();
@@ -269,15 +280,15 @@ export class PlatformAgentTestHarness {
   }
 
   private static useDiskStores({ agent, testDataLocation, stores }: {
-    agent?: Web5PlatformAgent;
+    agent?: Web5PlatformAgent<LocalKeyManager>;
     stores: {
       keyStore: DwnKeyStore;
       identityStore: DwnIdentityStore;
       didStore: DwnDidStore;
     }
     testDataLocation: string;
-  }) {
-    const testDataPath = (path: string) => `${testDataLocation}/${path}`;
+  }): StoreSetupResult {
+    const testDataPath = (path: string): string => `${testDataLocation}/${path}`;
 
     const vaultStore = new LevelStore<string, string>({ location: testDataPath('VAULT_STORE') });
     const agentVault = new HdIdentityVault({ keyDerivationWorkFactor: 1, store: vaultStore });
@@ -296,7 +307,7 @@ export class PlatformAgentTestHarness {
       store         : didStore
     });
 
-    const identityApi = new AgentIdentityApi({ agent, store: identityStore });
+    const identityApi = new AgentIdentityApi<LocalKeyManager>({ agent, store: identityStore });
 
     const keyManager = new LocalKeyManager({ agent, keyStore: keyStore });
 
@@ -305,7 +316,7 @@ export class PlatformAgentTestHarness {
     return { agentVault, didApi, didResolverCache, identityApi, keyManager, permissionsApi, vaultStore };
   }
 
-  private static useMemoryStores({ agent }: { agent?: Web5PlatformAgent<LocalKeyManager> } = {}) {
+  private static useMemoryStores({ agent }: { agent?: Web5PlatformAgent<LocalKeyManager> } = {}): StoreSetupResult {
     const vaultStore = new MemoryStore<string, string>();
     const agentVault = new HdIdentityVault({ keyDerivationWorkFactor: 1, store: vaultStore });
 

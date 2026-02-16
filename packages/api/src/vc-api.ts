@@ -23,7 +23,7 @@ export class VcApi {
   /**
    * Issues a VC (Not implemented yet)
    */
-  async create() {
+  async create(): Promise<void> {
     // TODO: implement
     throw new Error('Not implemented.');
   }

@@ -6,7 +6,7 @@ export type MulticodecDefinition<MulticodecCode> = {
   code: MulticodecCode;
   // codeBytes: Uint8Array;
   name: string;
-}
+};
 
 /**
  * The `Multicodec` class provides an interface to prepend binary data
@@ -140,7 +140,7 @@ export class Multicodec {
    *
    * @param codec - The codec to be registered.
    */
-  public static registerCodec(codec: MulticodecDefinition<MulticodecCode>) {
+  public static registerCodec(codec: MulticodecDefinition<MulticodecCode>): void {
     Multicodec.codeToName.set(codec.code, codec.name);
     Multicodec.nameToCode.set(codec.name, codec.code);
   }

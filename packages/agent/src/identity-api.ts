@@ -1,16 +1,15 @@
 import type { RequireOnly } from '@enbox/common';
 
 import type { AgentDataStore } from './store-data.js';
-import type { Web5PlatformAgent } from './types/agent.js';
-import type { DidMethodCreateOptions } from './did-api.js';
 import type { AgentKeyManager } from './types/key-manager.js';
+import type { DidMethodCreateOptions } from './did-api.js';
+import type { Web5PlatformAgent } from './types/agent.js';
 import type { IdentityMetadata, PortableIdentity } from './types/identity.js';
 
 import { BearerIdentity } from './bearer-identity.js';
-import { isPortableDid } from './prototyping/dids/utils.js';
-import { InMemoryIdentityStore } from './store-identity.js';
 import { getDwnServiceEndpointUrls } from './utils.js';
-import { PortableDid } from '@enbox/dids';
+import { InMemoryIdentityStore } from './store-identity.js';
+import { isPortableDid } from './prototyping/dids/utils.js';
 
 export interface IdentityApiParams<TKeyManager extends AgentKeyManager> {
   agent?: Web5PlatformAgent<TKeyManager>;
@@ -144,7 +143,7 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
     const storedIdentity = await this._store.get({ id: didUri, agent: this.agent, useCache: true });
 
     // If the Identity is not found in the store, return undefined.
-    if (!storedIdentity) return undefined;
+    if (!storedIdentity) {return undefined;}
 
     // Retrieve the DID from the Agent's DID store using the tenant value from the stored
     // Identity's metadata.

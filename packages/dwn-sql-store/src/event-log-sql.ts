@@ -1,11 +1,12 @@
+import type { Dialect } from './dialect/dialect.js';
+import type { Transaction } from 'kysely';
 import type { DwnDatabaseType, KeyValues } from './types.js';
 import type { EventLog, Filter, PaginationCursor } from '@enbox/dwn-sdk-js';
 
-import { Dialect } from './dialect/dialect.js';
-import { filterSelectQuery } from './utils/filter.js';
-import { Kysely, Transaction } from 'kysely';
 import { executeWithRetryIfDatabaseIsLocked } from './utils/transaction.js';
 import { extractTagsAndSanitizeIndexes } from './utils/sanitize.js';
+import { filterSelectQuery } from './utils/filter.js';
+import { Kysely } from 'kysely';
 import { TagTables } from './utils/tags.js';
 
 export class EventLogSql implements EventLog {
@@ -159,7 +160,7 @@ export class EventLogSql implements EventLog {
       query = filterSelectQuery(filters, query);
     }
 
-    if(cursor !== undefined) {
+    if (cursor !== undefined) {
       // eventLogMessages in the sql store uses the watermark cursor value which is a number in SQL
       // if not we will return empty results
       const cursorValue = cursor.value as number;
@@ -177,13 +178,13 @@ export class EventLogSql implements EventLog {
     // we always return a cursor with the event log query, so we set the return cursor to the properties of the last item.
     let returnCursor: PaginationCursor | undefined;
     if (this.#dialect.isStreamingSupported) {
-      for await (let { messageCid, watermark: value } of query.stream()) {
+      for await (const { messageCid, watermark: value } of query.stream()) {
         events.push(messageCid);
         returnCursor = { messageCid, value };
       }
     } else {
       const results = await query.execute();
-      for (let { messageCid, watermark: value } of results) {
+      for (const { messageCid, watermark: value } of results) {
         events.push(messageCid);
         returnCursor = { messageCid, value };
       }

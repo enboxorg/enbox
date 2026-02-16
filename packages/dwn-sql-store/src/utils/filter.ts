@@ -1,7 +1,9 @@
-import { Filter } from '@enbox/dwn-sdk-js';
-import { DynamicModule, ExpressionBuilder, OperandExpression, SelectQueryBuilder, SqlBool } from 'kysely';
-import { sanitizeFiltersAndSeparateTags, sanitizedValue } from './sanitize.js';
-import { DwnDatabaseType } from '../types.js';
+import type { DwnDatabaseType } from '../types.js';
+import type { Filter } from '@enbox/dwn-sdk-js';
+import type { ExpressionBuilder, OperandExpression, SelectQueryBuilder, SqlBool } from 'kysely';
+
+import { DynamicModule } from 'kysely';
+import { sanitizedValue, sanitizeFiltersAndSeparateTags } from './sanitize.js';
 
 /**
  * Takes multiple Filters and returns a single query.
@@ -44,7 +46,7 @@ function processFilter<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
   andOperands: OperandExpression<SqlBool>[],
   filter: Filter
 ): void {
-  for (let property in filter) {
+  for (const property in filter) {
     const value = filter[property];
     const column = new DynamicModule().ref(property);
     if (Array.isArray(value)) { // OneOfFilter
@@ -87,7 +89,7 @@ function processTags<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
   const valueString = new DynamicModule().ref('valueString');
 
   // process each tag and add it to the andOperands from the rest of the filters
-  for (let property in tags) {
+  for (const property in tags) {
     andOperands.push(eb(tagColumn, '=', property));
     const value = tags[property];
     if (Array.isArray(value)) { // OneOfFilter

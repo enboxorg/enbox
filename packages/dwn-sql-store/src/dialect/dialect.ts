@@ -1,13 +1,13 @@
-import {
+import type {
   ColumnBuilderCallback,
   ColumnDataType,
   CreateTableBuilder,
-  Dialect as KyselyDialect,
-  Kysely,
   InsertObject,
   InsertQueryBuilder,
-  Selection,
+  Kysely,
+  Dialect as KyselyDialect,
   SelectExpression,
+  Selection,
   Transaction,
 } from 'kysely';
 

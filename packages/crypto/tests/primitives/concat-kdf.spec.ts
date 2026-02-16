@@ -1,6 +1,6 @@
-import { expect, use } from 'chai';
-import { Convert } from '@enbox/common';
 import chaiAsPromised from 'chai-as-promised';
+import { Convert } from '@enbox/common';
+import { expect, use } from 'chai';
 
 import { ConcatKdf } from '../../src/primitives/concat-kdf.js';
 
@@ -43,7 +43,7 @@ describe('ConcatKdf', () => {
         partyUInfo  : 'Alice',
         partyVInfo  : 'Bob',
         suppPubInfo : 128
-      }};
+      } };
       let derivedKeyingMaterial = await ConcatKdf.deriveKey(inputString);
       expect(derivedKeyingMaterial).to.be.an('Uint8Array');
       expect(derivedKeyingMaterial.byteLength).to.equal(32);
@@ -54,7 +54,7 @@ describe('ConcatKdf', () => {
         partyUInfo  : Convert.string('Alice').toUint8Array(),
         partyVInfo  : Convert.string('Bob').toUint8Array(),
         suppPubInfo : 128
-      }};
+      } };
       derivedKeyingMaterial = await ConcatKdf.deriveKey(inputTypedArray);
       expect(derivedKeyingMaterial).to.be.an('Uint8Array');
       expect(derivedKeyingMaterial.byteLength).to.equal(32);

@@ -1,5 +1,5 @@
-import { expect } from 'chai';
 import { Convert } from '@enbox/common';
+import { expect } from 'chai';
 
 import { Sha2Algorithm } from '../../src/algorithms/sha-2.js';
 

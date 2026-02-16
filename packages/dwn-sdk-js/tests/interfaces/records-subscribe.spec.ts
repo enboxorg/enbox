@@ -1,7 +1,7 @@
 import chaiAsPromised from 'chai-as-promised';
 import chai, { expect } from 'chai';
 
-import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' assert { type: 'json' };
+import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
 import { Jws } from '../../src/utils/jws.js';
 import { RecordsSubscribe } from '../../src/interfaces/records-subscribe.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';

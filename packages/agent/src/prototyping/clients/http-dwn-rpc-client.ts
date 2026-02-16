@@ -1,10 +1,10 @@
 import type { JsonRpcResponse } from './json-rpc.js';
 import type { DwnRpc, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
+import type { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
 
-import { createJsonRpcRequest, parseJson } from './json-rpc.js';
 import { CryptoUtils } from '@enbox/crypto';
-import { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
 import { DwnServerInfoCacheMemory } from './dwn-server-info-cache-memory.js';
+import { createJsonRpcRequest, parseJson } from './json-rpc.js';
 
 /**
  * HTTP client that can be used to communicate with Dwn Servers
@@ -15,7 +15,7 @@ export class HttpDwnRpcClient implements DwnRpc {
     this.serverInfoCache = serverInfoCache ?? new DwnServerInfoCacheMemory();
   }
 
-  get transportProtocols() { return ['http:', 'https:']; }
+  get transportProtocols(): string[] { return ['http:', 'https:']; }
 
   async sendDwnRequest(request: DwnRpcRequest): Promise<DwnRpcResponse> {
     const requestId = CryptoUtils.randomUuid();
@@ -88,7 +88,7 @@ export class HttpDwnRpcClient implements DwnRpc {
 
     try {
       const response = await fetch(url.toString());
-      if(response.ok) {
+      if (response.ok) {
         const results = await response.json() as ServerInfo;
 
         // explicitly return and cache only the desired properties.
@@ -103,7 +103,7 @@ export class HttpDwnRpcClient implements DwnRpc {
       } else {
         throw new Error(`HTTP (${response.status}) - ${response.statusText}`);
       }
-    } catch(error: any) {
+    } catch (error: any) {
       throw new Error(`Error encountered while processing response from ${url.toString()}: ${error.message}`);
     }
   }

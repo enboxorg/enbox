@@ -1,6 +1,8 @@
+import type { TypedArray } from '@noble/hashes/utils';
+
+import { concatBytes } from '@noble/hashes/utils';
 import { sha256 } from '@noble/hashes/sha256';
 import { Convert, universalTypeOf } from '@enbox/common';
-import { TypedArray, concatBytes } from '@noble/hashes/utils';
 
 /**
  * ConcatKDF FixedInfo Parameters.
@@ -45,7 +47,7 @@ export type ConcatKdfFixedInfo = {
    * to the key agreement.
    */
   suppPrivInfo?: string | TypedArray;
-}
+};
 
 /**
  * An implementation of the Concatenation Key Derivation Function (ConcatKDF)

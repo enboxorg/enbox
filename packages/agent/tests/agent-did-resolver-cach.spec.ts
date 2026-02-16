@@ -3,11 +3,12 @@ import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 
 import sinon from 'sinon';
-import { expect } from 'chai';
-import { BearerDid, DidJwk } from '@enbox/dids';
-import { logger } from '@enbox/common';
 
-describe('AgentDidResolverCache',  () => {
+import { expect } from 'chai';
+import { logger } from '@enbox/common';
+import { BearerDid, DidJwk } from '@enbox/dids';
+
+describe('AgentDidResolverCache', () => {
   let resolverCache: AgentDidResolverCache;
   let testHarness: PlatformAgentTestHarness;
 

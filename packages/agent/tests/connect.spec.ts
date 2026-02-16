@@ -1,19 +1,24 @@
-import { expect } from 'chai';
 import sinon from 'sinon';
-import { CryptoUtils } from '@enbox/crypto';
-import { type BearerDid, DidDht, DidJwk, PortableDid } from '@enbox/dids';
+
+import { expect } from 'chai';
+import type { PortableDid } from '@enbox/dids';
+import type { RecordsPermissionScope } from '@enbox/dwn-sdk-js';
+
 import { Convert } from '@enbox/common';
+import { CryptoUtils } from '@enbox/crypto';
+import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { TestAgent } from './utils/test-agent.js';
+import { testDwnUrl } from './utils/test-config.js';
+import { type BearerDid, DidDht, DidJwk } from '@enbox/dids';
+import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 import {
   Oidc,
   type Web5ConnectAuthRequest,
   type Web5ConnectAuthResponse,
 } from '../src/oidc.js';
-import { PlatformAgentTestHarness } from '../src/test-harness.js';
-import { TestAgent } from './utils/test-agent.js';
-import { testDwnUrl } from './utils/test-config.js';
-import { BearerIdentity, DwnInterface, DwnMessage, DwnProtocolDefinition,  WalletConnect } from '../src/index.js';
-import { RecordsPermissionScope } from '@enbox/dwn-sdk-js';
-import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
+
+import type { BearerIdentity, DwnMessage, DwnProtocolDefinition } from '../src/index.js';
+import { DwnInterface, WalletConnect } from '../src/index.js';
 
 describe('web5 connect', function () {
   this.timeout(20000);
@@ -77,7 +82,7 @@ describe('web5 connect', function () {
     ],
   };
 
-  let permissionGrants: any[] = [
+  const permissionGrants: any[] = [
     {
       reply   : { status: { code: 202, detail: 'Accepted' } },
       message : {
@@ -214,7 +219,7 @@ describe('web5 connect', function () {
     // });
 
     it('should create an authrequest with the code challenge and client did', async () => {
-      const randomBytesStub = sinon
+      const _randomBytesStub = sinon
         .stub(CryptoUtils, 'randomBytes')
         .returns(authRequestEncryptionKey);
 
@@ -542,7 +547,7 @@ describe('web5 connect', function () {
 
       const processDwnRequestStub = sinon
         .stub(testHarness.agent, 'processDwnRequest')
-        .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [ protocolMessage ]} });
+        .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [ protocolMessage ] } });
 
       // call submitAuthResponse
       await Oidc.submitAuthResponse(
@@ -667,7 +672,7 @@ describe('web5 connect', function () {
       });
 
       // return without any entries
-      const processDwnRequestStub = sinon
+      const _processDwnRequestStub = sinon
         .stub(testHarness.agent, 'processDwnRequest')
         .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' } } });
 
@@ -769,7 +774,7 @@ describe('web5 connect', function () {
       // mock returning the protocol entry
       const processDwnRequestStub = sinon
         .stub(testHarness.agent, 'processDwnRequest')
-        .resolves({ messageCid: '', reply: { status: { code: 500, detail: 'Some Error'}, } });
+        .resolves({ messageCid: '', reply: { status: { code: 500, detail: 'Some Error' }, } });
 
       try {
         // call submitAuthResponse
@@ -849,11 +854,21 @@ describe('web5 connect', function () {
       });
 
       expect(permissionRequests.protocolDefinition).to.deep.equal(protocol);
-      expect(permissionRequests.permissionScopes.length).to.equal(4); // only includes the sync permissions + protocol query permission
-      expect(permissionRequests.permissionScopes.find(scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Read)).to.not.be.undefined;
-      expect(permissionRequests.permissionScopes.find(scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Query)).to.not.be.undefined;
-      expect(permissionRequests.permissionScopes.find(scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Subscribe)).to.not.be.undefined;
-      expect(permissionRequests.permissionScopes.find(scope => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Query)).to.not.be.undefined;
+      // only includes the sync permissions + protocol query permission
+      expect(permissionRequests.permissionScopes.length).to.equal(4);
+      const scopes = permissionRequests.permissionScopes;
+      expect(scopes.find(
+        scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Read
+      )).to.not.be.undefined;
+      expect(scopes.find(
+        scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Query
+      )).to.not.be.undefined;
+      expect(scopes.find(
+        scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Subscribe
+      )).to.not.be.undefined;
+      expect(scopes.find(
+        scope => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Query
+      )).to.not.be.undefined;
     });
 
     it('should add requested permissions to the request', async () => {
@@ -879,8 +894,12 @@ describe('web5 connect', function () {
 
       // the 3 sync permissions plus the 2 requested permissions, and a protocol query permission
       expect(permissionRequests.permissionScopes.length).to.equal(6);
-      expect(permissionRequests.permissionScopes.find(scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read)).to.not.be.undefined;
-      expect(permissionRequests.permissionScopes.find(scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Write)).to.not.be.undefined;
+      expect(permissionRequests.permissionScopes.find(
+        scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read
+      )).to.not.be.undefined;
+      expect(permissionRequests.permissionScopes.find(
+        scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Write
+      )).to.not.be.undefined;
     });
 
     it('supports requesting `read`, `write`, `delete`, `query`, `subscribe` and `configure` permissions', async () => {
@@ -906,13 +925,28 @@ describe('web5 connect', function () {
 
       // the 3 sync permissions plus the 5 requested permissions
       expect(permissionRequests.permissionScopes.length).to.equal(10);
-      expect(permissionRequests.permissionScopes.find(scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read)).to.not.be.undefined;
-      expect(permissionRequests.permissionScopes.find(scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Write)).to.not.be.undefined;
-      expect(permissionRequests.permissionScopes.find(scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Delete)).to.not.be.undefined;
-      expect(permissionRequests.permissionScopes.find(scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Query)).to.not.be.undefined;
-      expect(permissionRequests.permissionScopes.find(scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Subscribe)).to.not.be.undefined;
-      expect(permissionRequests.permissionScopes.find(scope => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Query)).to.not.be.undefined;
-      expect(permissionRequests.permissionScopes.find(scope => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Configure)).to.not.be.undefined;
+      const ps = permissionRequests.permissionScopes;
+      expect(ps.find(
+        scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read
+      )).to.not.be.undefined;
+      expect(ps.find(
+        scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Write
+      )).to.not.be.undefined;
+      expect(ps.find(
+        scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Delete
+      )).to.not.be.undefined;
+      expect(ps.find(
+        scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Query
+      )).to.not.be.undefined;
+      expect(ps.find(
+        scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Subscribe
+      )).to.not.be.undefined;
+      expect(ps.find(
+        scope => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Query
+      )).to.not.be.undefined;
+      expect(ps.find(
+        scope => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Configure
+      )).to.not.be.undefined;
     });
   });
 });

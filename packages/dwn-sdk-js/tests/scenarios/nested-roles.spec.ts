@@ -4,7 +4,7 @@ import type { DataStore, EventLog, MessageStore, ResumableTaskStore } from '../.
 
 import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
-import slackProtocolDefinition from '../vectors/protocol-definitions/slack.json' assert { type: 'json' };
+import slackProtocolDefinition from '../vectors/protocol-definitions/slack.json' with { type: 'json' };
 import chai, { expect } from 'chai';
 
 import { Dwn } from '../../src/dwn.js';

@@ -13,6 +13,7 @@ import {
   DwnInterface,
   DwnPermissionGrant,
 } from '@enbox/agent';
+
 import { PermissionGrantRevocation } from './grant-revocation.js';
 
 /**

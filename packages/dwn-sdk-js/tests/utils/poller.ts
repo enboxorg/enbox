@@ -32,7 +32,7 @@ export class Poller {
       try {
         // Attempt to execute the delegate function
         return await delegate();
-      } catch (error) {
+      } catch {
         // Check if the timeout has been exceeded
         if (Date.now() - startTime >= timeout) {
           throw new Error('Operation timed out');

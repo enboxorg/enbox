@@ -1,6 +1,15 @@
-import { AgentPermissionsApi, DwnDataEncodedRecordsWriteMessage, DwnPermissionConditions, DwnPermissionRequest, DwnPermissionScope, DwnResponseStatus, SendDwnRequest, Web5Agent } from '@enbox/agent';
-import { DwnInterface } from '@enbox/agent';
+import type {
+  DwnDataEncodedRecordsWriteMessage,
+  DwnPermissionConditions,
+  DwnPermissionScope,
+  DwnResponseStatus,
+  SendDwnRequest,
+  Web5Agent,
+} from '@enbox/agent';
+
 import { Convert } from '@enbox/common';
+import { AgentPermissionsApi, DwnInterface, DwnPermissionRequest } from '@enbox/agent';
+
 import { PermissionGrant } from './permission-grant.js';
 
 /**
@@ -92,32 +101,32 @@ export class PermissionRequest implements PermissionRequestModel {
   }
 
   /** The request's ID, which is also the underlying record's ID  */
-  get id() {
+  get id(): string {
     return this._request.id;
   }
 
   /** The DID that is requesting a permission */
-  get requester() {
+  get requester(): string {
     return this._request.requester;
   }
 
   /** (optional) Description of the permission request */
-  get description() {
+  get description(): string | undefined {
     return this._request.description;
   }
 
   /** Whether or not the permission request can be used to impersonate the grantor */
-  get delegated() {
+  get delegated(): boolean | undefined {
     return this._request.delegated;
   }
 
   /** The permission scope under which the requested grant would be valid */
-  get scope() {
+  get scope(): DwnPermissionScope {
     return this._request.scope;
   }
 
   /** The conditions under which the requested grant would be valid */
-  get conditions() {
+  get conditions(): DwnPermissionConditions | undefined {
     return this._request.conditions;
   }
 

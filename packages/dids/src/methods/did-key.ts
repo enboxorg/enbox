@@ -1,25 +1,26 @@
-import type { MulticodecCode, MulticodecDefinition, RequireOnly } from '@enbox/common';
 import type {
-  Jwk,
+  AsymmetricKeyConverter,
   CryptoApi,
+  InferKeyGeneratorAlgorithm,
+  Jwk,
   KeyCompressor,
   KeyIdentifier,
+  KeyImporterExporter,
   KmsExportKeyParams,
   KmsImportKeyParams,
-  KeyImporterExporter,
-  AsymmetricKeyConverter,
-  InferKeyGeneratorAlgorithm,
 } from '@enbox/crypto';
+import type { MulticodecCode, MulticodecDefinition, RequireOnly } from '@enbox/common';
 
-import { Multicodec, universalTypeOf } from '@enbox/common';
 import {
-  X25519,
   Ed25519,
+  LocalKeyManager,
   Secp256k1,
   Secp256r1,
-  LocalKeyManager,
+  X25519,
 } from '@enbox/crypto';
+import { Multicodec, universalTypeOf } from '@enbox/common';
 
+import type { KeyWithMulticodec } from '../types/multibase.js';
 import type { PortableDid } from '../types/portable-did.js';
 import type { DidCreateOptions, DidCreateVerificationMethod } from './did-method.js';
 import type {
@@ -29,12 +30,11 @@ import type {
   DidVerificationMethod,
 } from '../types/did-core.js';
 
+import { BearerDid } from '../bearer-did.js';
 import { Did } from '../did.js';
 import { DidMethod } from './did-method.js';
-import { BearerDid } from '../bearer-did.js';
-import { DidError, DidErrorCode } from '../did-error.js';
-import { KeyWithMulticodec } from '../types/multibase.js';
 import { EMPTY_DID_RESOLUTION_RESULT } from '../types/did-resolution.js';
+import { DidError, DidErrorCode } from '../did-error.js';
 import { getVerificationMethodTypes, keyBytesToMultibaseId, multibaseIdToKeyBytes } from '../utils.js';
 
 /**
@@ -491,7 +491,7 @@ export class DidKey extends DidMethod {
 
     } catch (error: any) {
       // Rethrow any unexpected errors that are not a `DidError`.
-      if (!(error instanceof DidError)) throw new Error(error);
+      if (!(error instanceof DidError)) {throw new Error(error);}
 
       // Return a DID Resolution Result with the appropriate error code.
       return {
@@ -512,7 +512,7 @@ export class DidKey extends DidMethod {
    * @param options
    * @returns - A DID dodcument.
    */
-  private static async createDocument({ didUri, options = {}}: {
+  private static async createDocument({ didUri, options = {} }: {
     didUri: string;
     options?: Exclude<DidKeyCreateOptions<CryptoApi>, 'algorithm' | 'verificationMethods'> | DidResolutionOptions;
   }): Promise<DidDocument> {
@@ -718,7 +718,7 @@ export class DidKey extends DidMethod {
     verificationMethod.id = `${didUri}#${kemMultibaseValue}`;
     try {
       new URL(verificationMethod.id);
-    } catch (error: any) {
+    } catch {
       throw new DidError(DidErrorCode.InvalidDidUrl, 'Verification Method ID is not a valid DID URL.');
     }
 
@@ -739,7 +739,10 @@ export class DidKey extends DidMethod {
     const StandardPublicKeyTypes = ['Multikey', 'JsonWebKey2020', 'X25519KeyAgreementKey2020'];
     if (enableExperimentalPublicKeyTypes === false
       && !(StandardPublicKeyTypes.includes(publicKeyFormat))) {
-      throw new DidError(DidErrorCode.InvalidPublicKeyType, `Specified '${publicKeyFormat}' without setting enableExperimentalPublicKeyTypes to true.`);
+      throw new DidError(
+        DidErrorCode.InvalidPublicKeyType,
+        `Specified '${publicKeyFormat}' without setting enableExperimentalPublicKeyTypes to true.`
+      );
     }
 
     /**
@@ -849,7 +852,7 @@ export class DidKey extends DidMethod {
     verificationMethod.id = `${didUri}#${multibaseValue}`;
     try {
       new URL(verificationMethod.id);
-    } catch (error: any) {
+    } catch {
       throw new DidError(DidErrorCode.InvalidDidUrl, 'Verification Method ID is not a valid DID URL.');
     }
 
@@ -870,7 +873,10 @@ export class DidKey extends DidMethod {
     const StandardPublicKeyTypes = ['Multikey', 'JsonWebKey2020', 'Ed25519VerificationKey2020'];
     if (enableExperimentalPublicKeyTypes === false
       && !(StandardPublicKeyTypes.includes(publicKeyFormat))) {
-      throw new DidError(DidErrorCode.InvalidPublicKeyType, `Specified '${publicKeyFormat}' without setting enableExperimentalPublicKeyTypes to true.`);
+      throw new DidError(
+        DidErrorCode.InvalidPublicKeyType,
+        `Specified '${publicKeyFormat}' without setting enableExperimentalPublicKeyTypes to true.`
+      );
     }
 
     /**
@@ -900,7 +906,7 @@ export class DidKey extends DidMethod {
      */
     if (publicKeyFormat === 'JsonWebKey2020') {
       const { crv } = await DidKeyUtils.multicodecToJwk({ code: multicodecValue });
-      verificationMethod.publicKeyJwk = await DidKeyUtils.keyConverter(crv!).bytesToPublicKey({ publicKeyBytes});
+      verificationMethod.publicKeyJwk = await DidKeyUtils.keyConverter(crv!).bytesToPublicKey({ publicKeyBytes });
     }
 
     /**
@@ -1066,12 +1072,12 @@ export class DidKeyUtils {
    * ```
    */
   private static MULTICODEC_TO_JWK: { [key: string]: Jwk } = {
-    'ed25519-pub'    : { crv: 'Ed25519',   kty: 'OKP', x: '' },
-    'ed25519-priv'   : { crv: 'Ed25519',   kty: 'OKP', x: '',        d: '' },
-    'secp256k1-pub'  : { crv: 'secp256k1', kty: 'EC',  x: '', y: ''},
-    'secp256k1-priv' : { crv: 'secp256k1', kty: 'EC',  x: '', y: '', d: '' },
-    'x25519-pub'     : { crv: 'X25519',    kty: 'OKP', x: '' },
-    'x25519-priv'    : { crv: 'X25519',    kty: 'OKP', x: '',        d: '' },
+    'ed25519-pub'    : { crv: 'Ed25519', kty: 'OKP', x: '' },
+    'ed25519-priv'   : { crv: 'Ed25519', kty: 'OKP', x: '', d: '' },
+    'secp256k1-pub'  : { crv: 'secp256k1', kty: 'EC', x: '', y: '' },
+    'secp256k1-priv' : { crv: 'secp256k1', kty: 'EC', x: '', y: '', d: '' },
+    'x25519-pub'     : { crv: 'X25519', kty: 'OKP', x: '' },
+    'x25519-priv'    : { crv: 'X25519', kty: 'OKP', x: '', d: '' },
   };
 
   /**
@@ -1130,7 +1136,7 @@ export class DidKeyUtils {
 
     const compressor = compressors[curve];
 
-    if (!compressor) throw new DidError(DidErrorCode.InvalidPublicKeyType, `Unsupported curve: ${curve}`);
+    if (!compressor) {throw new DidError(DidErrorCode.InvalidPublicKeyType, `Unsupported curve: ${curve}`);}
 
     return compressor;
   }
@@ -1151,7 +1157,7 @@ export class DidKeyUtils {
 
     const converter = converters[curve];
 
-    if (!converter) throw new DidError(DidErrorCode.InvalidPublicKeyType, `Unsupported curve: ${curve}`);
+    if (!converter) {throw new DidError(DidErrorCode.InvalidPublicKeyType, `Unsupported curve: ${curve}`);}
 
     return converter;
   }

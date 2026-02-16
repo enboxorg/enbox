@@ -1,4 +1,4 @@
-import { DwnDataEncodedRecordsWriteMessage, DwnInterface, DwnPermissionGrant, DwnPermissionRequest, DwnPermissionScope } from './dwn.js';
+import type { DwnDataEncodedRecordsWriteMessage, DwnInterface, DwnPermissionGrant, DwnPermissionRequest, DwnPermissionScope } from './dwn.js';
 
 export type FetchPermissionsParams = {
   author: string;
@@ -7,35 +7,35 @@ export type FetchPermissionsParams = {
   grantor?: string;
   protocol?: string;
   remote?: boolean;
-}
+};
 
 export type FetchPermissionRequestParams = {
   author: string;
   target: string;
   protocol?: string;
   remote?: boolean;
-}
+};
 
 export type IsGrantRevokedParams = {
   author: string;
   target: string;
   grantRecordId: string;
   remote?: boolean;
-}
+};
 
 export type PermissionGrantEntry = {
   grant: DwnPermissionGrant;
   message: DwnDataEncodedRecordsWriteMessage;
-}
+};
 
 export type PermissionRequestEntry = {
   request: DwnPermissionRequest;
   message: DwnDataEncodedRecordsWriteMessage;
-}
+};
 
 export type PermissionRevocationEntry = {
   message: DwnDataEncodedRecordsWriteMessage;
-}
+};
 
 export type CreateGrantParams = {
   store?: boolean;
@@ -46,7 +46,7 @@ export type CreateGrantParams = {
   grantedTo: string;
   scope: DwnPermissionScope;
   delegated?: boolean;
-}
+};
 
 export type CreateRequestParams = {
   store?: boolean;
@@ -54,14 +54,14 @@ export type CreateRequestParams = {
   description?: string;
   scope: DwnPermissionScope;
   delegated?: boolean;
-}
+};
 
 export type CreateRevocationParams = {
   store?: boolean;
   author: string;
   grant: DwnPermissionGrant;
   description?: string;
-}
+};
 
 export type GetPermissionParams = {
   connectedDid: string;
@@ -70,7 +70,7 @@ export type GetPermissionParams = {
   protocol?: string;
   cached?: boolean;
   delegate?: boolean;
-}
+};
 
 export interface PermissionsApi {
   /**

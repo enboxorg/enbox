@@ -537,7 +537,7 @@ describe('DidKey', () => {
           crv : 'Ed25519',
           kty : 'OKP',
           x   : '', // x value would be populated with actual key material in real use
-          d   : ''  // d value would be populated with actual key material in real use
+          d   : '' // d value would be populated with actual key material in real use
         });
       });
 
@@ -547,7 +547,7 @@ describe('DidKey', () => {
           crv : 'secp256k1',
           kty : 'EC',
           x   : '', // x value would be populated with actual key material in real use
-          y   : ''  // y value would be populated with actual key material in real use
+          y   : '' // y value would be populated with actual key material in real use
         });
       });
 
@@ -558,7 +558,7 @@ describe('DidKey', () => {
           kty : 'EC',
           x   : '', // x value would be populated with actual key material in real use
           y   : '', // y value would be populated with actual key material in real use
-          d   : ''  // d value would be populated with actual key material in real use
+          d   : '' // d value would be populated with actual key material in real use
         });
       });
 
@@ -577,7 +577,7 @@ describe('DidKey', () => {
           crv : 'X25519',
           kty : 'OKP',
           x   : '', // x value would be populated with actual key material in real use
-          d   : ''  // d value would be populated with actual key material in real use
+          d   : '' // d value would be populated with actual key material in real use
         });
       });
 

@@ -1,5 +1,5 @@
 import Ajv from 'ajv';
-import definitions from '../../../json-schemas/definitions.json' assert { type: 'json' };
+import definitions from '../../../json-schemas/definitions.json' with { type: 'json' };
 
 import { expect } from 'chai';
 

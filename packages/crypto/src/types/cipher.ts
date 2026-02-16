@@ -1,4 +1,4 @@
-import type { EnclosedEncryptParams, EnclosedDecryptParams } from './params-enclosed.js';
+import type { EnclosedDecryptParams, EnclosedEncryptParams } from './params-enclosed.js';
 
 /**
  * The `Cipher` interface provides methods for encrypting and decrypting data.

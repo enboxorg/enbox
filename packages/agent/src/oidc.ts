@@ -1,22 +1,28 @@
-import { Convert, logger, RequireOnly } from '@enbox/common';
+import type { ConnectPermissionRequest } from './connect.js';
+import type { RequireOnly } from '@enbox/common';
+import type { Web5Agent } from './types/agent.js';
+import type { DidDocument, PortableDid } from '@enbox/dids';
+import type { DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnProtocolDefinition } from './types/dwn.js';
+import type {
+  JoseHeaderParams,
+  Jwk } from '@enbox/crypto';
+
+import { xchacha20poly1305 } from '@noble/ciphers/chacha';
+import { type BearerDid, DidJwk } from '@enbox/dids';
+import { Convert, logger } from '@enbox/common';
 import {
+  CryptoUtils,
   Ed25519,
   EdDsaAlgorithm,
-  JoseHeaderParams,
-  Jwk,
   Sha256,
   X25519,
-  CryptoUtils,
 } from '@enbox/crypto';
-import { concatenateUrl } from './utils.js';
-import { xchacha20poly1305 } from '@noble/ciphers/chacha';
-import type { ConnectPermissionRequest } from './connect.js';
-import { DidDocument, DidJwk, PortableDid, type BearerDid } from '@enbox/dids';
-import { DwnDataEncodedRecordsWriteMessage, DwnInterface, DwnPermissionScope, DwnProtocolDefinition } from './types/dwn.js';
-import { AgentPermissionsApi } from './permissions-api.js';
-import type { Web5Agent } from './types/agent.js';
-import { isRecordPermissionScope } from './dwn-api.js';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
+
+import { AgentPermissionsApi } from './permissions-api.js';
+import { concatenateUrl } from './utils.js';
+import { DwnInterface } from './types/dwn.js';
+import { isRecordPermissionScope } from './dwn-api.js';
 
 /**
  * Sent to an OIDC server to authorize a client. Allows clients
@@ -198,7 +204,7 @@ function buildOidcUrl({
   endpoint: OidcEndpoint;
   authParam?: string;
   tokenParam?: string;
-}) {
+}): string {
   switch (endpoint) {
     /** 1. client sends {@link PushedAuthRequest} & client receives {@link PushedAuthResponse} */
     case 'pushedAuthorizationRequest':
@@ -206,9 +212,9 @@ function buildOidcUrl({
     /** 2. provider gets {@link Web5ConnectAuthRequest} */
     case 'authorize':
       if (!authParam)
-        throw new Error(
-          `authParam must be providied when building a token URL`
-        );
+      {throw new Error(
+        `authParam must be providied when building a token URL`
+      );}
       return concatenateUrl(baseURL, `authorize/${authParam}.jwt`);
     /** 3. provider sends {@link Web5ConnectAuthResponse} */
     case 'callback':
@@ -216,9 +222,9 @@ function buildOidcUrl({
     /**  4. client gets {@link Web5ConnectAuthResponse */
     case 'token':
       if (!tokenParam)
-        throw new Error(
-          `tokenParam must be providied when building a token URL`
-        );
+      {throw new Error(
+        `tokenParam must be providied when building a token URL`
+      );}
       return concatenateUrl(baseURL, `token/${tokenParam}.jwt`);
     // TODO: metadata endpoints?
     default:
@@ -232,7 +238,7 @@ function buildOidcUrl({
  *
  * @see {@link https://datatracker.ietf.org/doc/html/rfc7636#section-4.2 | RFC 7636 }
  */
-async function generateCodeChallenge() {
+async function generateCodeChallenge(): Promise<{ codeChallengeBytes: Uint8Array; codeChallengeBase64Url: string }> {
   const codeVerifierBytes = CryptoUtils.randomBytes(32);
   const codeChallengeBytes = await Sha256.digest({ data: codeVerifierBytes });
   const codeChallengeBase64Url =
@@ -247,7 +253,7 @@ async function createAuthRequest(
     Web5ConnectAuthRequest,
     'client_id' | 'scope' | 'redirect_uri' | 'permissionRequests' | 'displayName'
   >
-) {
+): Promise<Web5ConnectAuthRequest> {
   // Generate a random state value to associate the authorization request with the response.
   const stateBytes = CryptoUtils.randomBytes(16);
 
@@ -275,7 +281,7 @@ async function encryptAuthRequest({
 }: {
   jwt: string;
   encryptionKey: Uint8Array;
-}) {
+}): Promise<string> {
   const protectedHeader = {
     alg : 'dir',
     cty : 'JWT',
@@ -310,7 +316,7 @@ async function createResponseObject(
     Web5ConnectAuthResponse,
     'iss' | 'sub' | 'aud' | 'delegateGrants' | 'delegatePortableDid'
   >
-) {
+): Promise<Web5ConnectAuthResponse> {
   const currentTimeInSeconds = Math.floor(Date.now() / 1000);
 
   const responseObject: Web5ConnectAuthResponse = {
@@ -329,7 +335,7 @@ async function signJwt({
 }: {
   did: BearerDid;
   data: Record<string, unknown>;
-}) {
+}): Promise<string> {
   const header = Convert.object({
     alg : 'EdDSA',
     kid : did.document.verificationMethod![0].id,
@@ -352,24 +358,24 @@ async function signJwt({
 }
 
 /** Take the decrypted JWT and verify it was signed by its public DID. Return parsed object. */
-async function verifyJwt({ jwt }: { jwt: string }) {
+async function verifyJwt({ jwt }: { jwt: string }): Promise<Record<string, unknown>> {
   const [headerB64U, payloadB64U, signatureB64U] = jwt.split('.');
 
   // Convert the header back to a JOSE object and verify that the 'kid' header value is present.
   const header: JoseHeaderParams = Convert.base64Url(headerB64U).toObject();
 
   if (!header.kid)
-    throw new Error(
-      `OIDC: Object could not be verified due to missing 'kid' header value.`
-    );
+  {throw new Error(
+    `OIDC: Object could not be verified due to missing 'kid' header value.`
+  );}
 
   // Resolve the Client DID document.
   const { didDocument } = await DidJwk.resolve(header.kid.split('#')[0]);
 
   if (!didDocument)
-    throw new Error(
-      'OIDC: Object could not be verified due to Client DID resolution issue.'
-    );
+  {throw new Error(
+    'OIDC: Object could not be verified due to Client DID resolution issue.'
+  );}
 
   // Get the public key used to sign the Object from the DID document.
   const { publicKeyJwk } =
@@ -378,9 +384,9 @@ async function verifyJwt({ jwt }: { jwt: string }) {
     }) ?? {};
 
   if (!publicKeyJwk)
-    throw new Error(
-      'OIDC: Object could not be verified due to missing public key in DID document.'
-    );
+  {throw new Error(
+    'OIDC: Object could not be verified due to missing public key in DID document.'
+  );}
 
   const EdDsa = new EdDsaAlgorithm();
   const isValid = await EdDsa.verify({
@@ -390,11 +396,11 @@ async function verifyJwt({ jwt }: { jwt: string }) {
   });
 
   if (!isValid)
-    throw new Error(
-      'OIDC: Object failed verification due to invalid signature.'
-    );
+  {throw new Error(
+    'OIDC: Object failed verification due to invalid signature.'
+  );}
 
-  const object = Convert.base64Url(payloadB64U).toObject();
+  const object = Convert.base64Url(payloadB64U).toObject() as Record<string, unknown>;
 
   return object;
 }
@@ -403,7 +409,7 @@ async function verifyJwt({ jwt }: { jwt: string }) {
  * Fetches the {@Web5ConnectAuthRequest} from the authorize endpoint and decrypts it
  * using the encryption key passed via QR code.
  */
-const getAuthRequest = async (request_uri: string, encryption_key: string) => {
+const getAuthRequest = async (request_uri: string, encryption_key: string): Promise<Web5ConnectAuthRequest> => {
   const authRequest = await fetch(request_uri);
   const jwe = await authRequest.text();
   const jwt = decryptAuthRequest({
@@ -424,7 +430,7 @@ function decryptAuthRequest({
 }: {
   jwe: string;
   encryption_key: string;
-}) {
+}): string {
   const [
     protectedHeaderB64U,
     ,
@@ -467,7 +473,7 @@ async function decryptAuthResponse(
   clientDid: BearerDid,
   jwe: string,
   pin: string
-) {
+): Promise<string> {
   const [
     protectedHeaderB64U,
     ,
@@ -514,7 +520,7 @@ async function decryptAuthResponse(
 async function deriveSharedKey(
   privateKeyDid: BearerDid,
   publicKeyDid: DidDocument
-) {
+): Promise<Uint8Array> {
   const privatePortableDid = await privateKeyDid.export();
 
   const publicJwk = publicKeyDid.verificationMethod?.[0].publicKeyJwk!;
@@ -570,7 +576,7 @@ function encryptAuthResponse({
   encryptionKey: Uint8Array;
   delegateDidKeyId: string;
   randomPin: string;
-}) {
+}): string {
   const protectedHeader = {
     alg : 'dir',
     cty : 'JWT',
@@ -627,7 +633,7 @@ async function createPermissionGrants(
   delegateBearerDid: BearerDid,
   agent: Web5Agent,
   scopes: DwnPermissionScope[],
-) {
+): Promise<DwnDataEncodedRecordsWriteMessage[]> {
   const permissionsApi = new AgentPermissionsApi({ agent });
 
   // TODO: cleanup all grants if one fails by deleting them from the DWN: https://github.com/enboxorg/enbox/issues/849
@@ -759,7 +765,7 @@ async function submitAuthResponse(
   authRequest: Web5ConnectAuthRequest,
   randomPin: string,
   agent: Web5Agent
-) {
+): Promise<void> {
   const delegateBearerDid = await DidJwk.create();
   const delegatePortableDid = await delegateBearerDid.export();
 

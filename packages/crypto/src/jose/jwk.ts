@@ -106,7 +106,7 @@ export type JwkType =
    * A type of public key that is used with algorithms such as EdDSA (Ed25519 and
    * Ed448 curves) and ECDH (X25519 and X448 curves).
    */
-  | 'OKP'
+  | 'OKP';
 
 /**
  * JSON Web Key Elliptic Curve
@@ -155,7 +155,7 @@ export type JwkParamsAnyKeyType = {
   'x5t#S256'?: string;
   /** JWK X.509 URL Parameter */
   x5u?: string;
-}
+};
 
 /** Parameters used with "EC" (elliptic curve) public keys. */
 export type JwkParamsEcPublic = Omit<JwkParamsAnyKeyType, 'alg' | 'kty'> & {
@@ -194,7 +194,7 @@ export type JwkParamsEcPublic = Omit<JwkParamsAnyKeyType, 'alg' | 'kty'> & {
    * MUST be present only for secp256k1 public keys.
    */
   y?: string;
-}
+};
 
 /** Parameters used with "EC" (elliptic curve) private keys. */
 export type JwkParamsEcPrivate = JwkParamsEcPublic & {
@@ -205,7 +205,7 @@ export type JwkParamsEcPrivate = JwkParamsEcPublic & {
    * MUST be present for all EC private keys.
    */
   d: string;
-}
+};
 
 /** Parameters used with "OKP" (octet key pair) public keys. */
 export type JwkParamsOkpPublic =
@@ -229,7 +229,7 @@ export type JwkParamsOkpPublic =
    * strings as private and public keys.
    */
   kty: 'OKP';
-}
+};
 
 /** Parameters used with "OKP" (octet key pair) private keys. */
 export type JwkParamsOkpPrivate = JwkParamsOkpPublic & {
@@ -288,7 +288,7 @@ export type JwkParamsOctPrivate = Omit<JwkParamsAnyKeyType, 'alg' | 'kty'> & {
    * symmetric signature algorithms.
    */
   kty: 'oct';
-}
+};
 
 /** Parameters Used with "RSA" public keys. */
 export type JwkParamsRsaPublic = Omit<JwkParamsAnyKeyType, 'kty'> & {
@@ -519,11 +519,11 @@ export async function computeJwkThumbprint({ jwk }: {
  * @returns True if the object is a valid EC private JWK; otherwise, false.
  */
 export function isEcPrivateJwk(obj: unknown): obj is JwkParamsEcPrivate {
-  if (!obj || typeof obj !== 'object') return false;
-  if (!('kty' in obj && 'crv' in obj && 'x' in obj && 'd' in obj)) return false;
-  if (obj.kty !== 'EC') return false;
-  if (typeof obj.d !== 'string') return false;
-  if (typeof obj.x !== 'string') return false;
+  if (!obj || typeof obj !== 'object') {return false;}
+  if (!('kty' in obj && 'crv' in obj && 'x' in obj && 'd' in obj)) {return false;}
+  if (obj.kty !== 'EC') {return false;}
+  if (typeof obj.d !== 'string') {return false;}
+  if (typeof obj.x !== 'string') {return false;}
   return true;
 }
 
@@ -534,11 +534,11 @@ export function isEcPrivateJwk(obj: unknown): obj is JwkParamsEcPrivate {
  * @returns True if the object is a valid EC public JWK; otherwise, false.
  */
 export function isEcPublicJwk(obj: unknown): obj is JwkParamsEcPublic {
-  if (!obj || typeof obj !== 'object') return false;
-  if (!('kty' in obj && 'crv' in obj && 'x' in obj)) return false;
-  if ('d' in obj) return false;
-  if (obj.kty !== 'EC') return false;
-  if (typeof obj.x !== 'string') return false;
+  if (!obj || typeof obj !== 'object') {return false;}
+  if (!('kty' in obj && 'crv' in obj && 'x' in obj)) {return false;}
+  if ('d' in obj) {return false;}
+  if (obj.kty !== 'EC') {return false;}
+  if (typeof obj.x !== 'string') {return false;}
   return true;
 }
 
@@ -549,10 +549,10 @@ export function isEcPublicJwk(obj: unknown): obj is JwkParamsEcPublic {
  * @returns True if the object is a valid oct private JWK; otherwise, false.
  */
 export function isOctPrivateJwk(obj: unknown): obj is JwkParamsOctPrivate {
-  if (!obj || typeof obj !== 'object') return false;
-  if (!('kty' in obj && 'k' in obj)) return false;
-  if (obj.kty !== 'oct') return false;
-  if (typeof obj.k !== 'string') return false;
+  if (!obj || typeof obj !== 'object') {return false;}
+  if (!('kty' in obj && 'k' in obj)) {return false;}
+  if (obj.kty !== 'oct') {return false;}
+  if (typeof obj.k !== 'string') {return false;}
   return true;
 }
 
@@ -563,11 +563,11 @@ export function isOctPrivateJwk(obj: unknown): obj is JwkParamsOctPrivate {
  * @returns True if the object is a valid OKP private JWK; otherwise, false.
  */
 export function isOkpPrivateJwk(obj: unknown): obj is JwkParamsOkpPrivate {
-  if (!obj || typeof obj !== 'object') return false;
-  if (!('kty' in obj && 'crv' in obj && 'x' in obj && 'd' in obj)) return false;
-  if (obj.kty !== 'OKP') return false;
-  if (typeof obj.d !== 'string') return false;
-  if (typeof obj.x !== 'string') return false;
+  if (!obj || typeof obj !== 'object') {return false;}
+  if (!('kty' in obj && 'crv' in obj && 'x' in obj && 'd' in obj)) {return false;}
+  if (obj.kty !== 'OKP') {return false;}
+  if (typeof obj.d !== 'string') {return false;}
+  if (typeof obj.x !== 'string') {return false;}
   return true;
 }
 
@@ -578,11 +578,11 @@ export function isOkpPrivateJwk(obj: unknown): obj is JwkParamsOkpPrivate {
  * @returns True if the object is a valid OKP public JWK; otherwise, false.
  */
 export function isOkpPublicJwk(obj: unknown): obj is JwkParamsOkpPublic {
-  if (!obj || typeof obj !== 'object') return false;
-  if ('d' in obj) return false;
-  if (!('kty' in obj && 'crv' in obj && 'x' in obj)) return false;
-  if (obj.kty !== 'OKP') return false;
-  if (typeof obj.x !== 'string') return false;
+  if (!obj || typeof obj !== 'object') {return false;}
+  if ('d' in obj) {return false;}
+  if (!('kty' in obj && 'crv' in obj && 'x' in obj)) {return false;}
+  if (obj.kty !== 'OKP') {return false;}
+  if (typeof obj.x !== 'string') {return false;}
   return true;
 }
 
@@ -593,7 +593,7 @@ export function isOkpPublicJwk(obj: unknown): obj is JwkParamsOkpPublic {
  * @returns True if the object is a valid private JWK; otherwise, false.
  */
 export function isPrivateJwk(obj: unknown): obj is PrivateKeyJwk {
-  if (!obj || typeof obj !== 'object') return false;
+  if (!obj || typeof obj !== 'object') {return false;}
 
   const kty = (obj as { kty: string }).kty;
 
@@ -616,7 +616,7 @@ export function isPrivateJwk(obj: unknown): obj is PrivateKeyJwk {
  * @returns True if the object is a valid public JWK; otherwise, false.
  */
 export function isPublicJwk(obj: unknown): obj is PublicKeyJwk {
-  if (!obj || typeof obj !== 'object') return false;
+  if (!obj || typeof obj !== 'object') {return false;}
 
   const kty = (obj as { kty: string }).kty;
 

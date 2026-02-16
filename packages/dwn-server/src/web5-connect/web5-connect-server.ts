@@ -1,6 +1,7 @@
-import { getDialectFromUrl } from "../storage.js";
 import { CryptoUtils } from '@enbox/crypto';
-import { SqlTtlCache } from "./sql-ttl-cache.js";
+
+import { getDialectFromUrl } from '../storage.js';
+import { SqlTtlCache } from './sql-ttl-cache.js';
 
 /**
  * The Web5 Connect Request object.
@@ -25,7 +26,7 @@ export type SetWeb5ConnectRequestResult = {
    * The time in seconds that the Request URI is valid for.
    */
   expires_in: number;
-}
+};
 
 /**
  * The Web5 Connect Server is responsible for handling the Web5 Connect flow.
@@ -69,13 +70,13 @@ export class Web5ConnectServer {
     // Generate a request URI
     const requestId = CryptoUtils.randomUuid();
     const request_uri = `${this.baseUrl}/connect/authorize/${requestId}.jwt`;
-  
+
     // Store the Request Object.
     this.cache.insert(`request:${requestId}`, request, Web5ConnectServer.ttlInSeconds);
-  
+
     return {
       request_uri,
-      expires_in  : Web5ConnectServer.ttlInSeconds,
+      expires_in: Web5ConnectServer.ttlInSeconds,
     };
   }
 

@@ -1,13 +1,13 @@
-import { expect, use } from 'chai';
-import { Convert } from '@enbox/common';
 import chaiAsPromised from 'chai-as-promised';
+import { Convert } from '@enbox/common';
+import { expect, use } from 'chai';
 
 import type { Jwk, JwkParamsOkpPrivate } from '../../src/jose/jwk.js';
 
-import x25519BytesToPublicKey from '../fixtures/test-vectors/x25519/bytes-to-public-key.json' assert { type: 'json' };
-import x25519BytesToPrivateKey from '../fixtures/test-vectors/x25519/bytes-to-private-key.json' assert { type: 'json' };
-import x25519PrivateKeyToBytes from '../fixtures/test-vectors/x25519/private-key-to-bytes.json' assert { type: 'json' };
-import x25519PublicKeyToBytes from '../fixtures/test-vectors/x25519/public-key-to-bytes.json' assert { type: 'json' };
+import x25519BytesToPrivateKey from '../fixtures/test-vectors/x25519/bytes-to-private-key.json' with { type: 'json' };
+import x25519BytesToPublicKey from '../fixtures/test-vectors/x25519/bytes-to-public-key.json' with { type: 'json' };
+import x25519PrivateKeyToBytes from '../fixtures/test-vectors/x25519/private-key-to-bytes.json' with { type: 'json' };
+import x25519PublicKeyToBytes from '../fixtures/test-vectors/x25519/public-key-to-bytes.json' with { type: 'json' };
 
 import { X25519 } from '../../src/primitives/x25519.js';
 

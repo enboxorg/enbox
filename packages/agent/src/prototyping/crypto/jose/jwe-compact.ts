@@ -6,9 +6,9 @@ import type { CryptoApi } from '../types/crypto-api.js';
 import type { KeyManager } from '../types/key-manager.js';
 import type { JweDecryptOptions, JweEncryptOptions, JweHeaderParams } from './jwe.js';
 
-import { isValidJweHeader } from './jwe.js';
-import { FlattenedJwe } from './jwe-flattened.js';
 import { AgentCryptoApi } from '../../../crypto-api.js';
+import { FlattenedJwe } from './jwe-flattened.js';
+import { isValidJweHeader } from './jwe.js';
 import { CryptoError, CryptoErrorCode } from '../crypto-error.js';
 
 /**

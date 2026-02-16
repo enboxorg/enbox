@@ -2,8 +2,8 @@ import sinon from 'sinon';
 
 import { expect } from 'chai';
 
-import { DwnServerInfoCache, ServerInfo } from '../../../src/prototyping/clients/server-info-types.js';
 import { DwnServerInfoCacheMemory } from '../../../src/prototyping/clients/dwn-server-info-cache-memory.js';
+import type { DwnServerInfoCache, ServerInfo } from '../../../src/prototyping/clients/server-info-types.js';
 
 describe('DwnServerInfoCache', () => {
 
@@ -93,8 +93,9 @@ describe('DwnServerInfoCache', () => {
 
     it('returns undefined after ttl', async function () {
       // NOTE: tried very hard to use sinon.useFakeTimers() but couldn't get it to work with `TtlCache` implementation in `DwnServerInfoCacheMemory`.
-      // I sanity added a setInterval here, and it obeys the fake time ticks and its callback is fired, but the `TtlCache` just ignores the fake timer ticks.
-      cache = new DwnServerInfoCacheMemory({ ttl: '100ms'});
+      // I sanity added a setInterval here, and it obeys the fake time ticks and its callback
+      // is fired, but the `TtlCache` just ignores the fake timer ticks.
+      cache = new DwnServerInfoCacheMemory({ ttl: '100ms' });
 
       const key = 'some-key1';
       await cache.set(key, { ...exampleInfo });

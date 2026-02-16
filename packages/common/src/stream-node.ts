@@ -1,8 +1,8 @@
 import type { Duplex, ReadableStateOptions, Transform, Writable } from 'readable-stream';
 
+import { Convert } from './convert.js';
 import { Readable } from 'readable-stream';
 import { Stream } from './stream.js';
-import { Convert } from './convert.js';
 
 export { Readable } from 'readable-stream';
 
@@ -142,7 +142,7 @@ export class NodeStream {
     const nodeReadable = new Readable({
       ...readableOptions,
 
-      read: function () {
+      read: function (): void {
         reader.read().then(({ done, value }) => {
           if (done) {
             this.push(null); // Push null to signify end of stream.
@@ -158,8 +158,8 @@ export class NodeStream {
         });
       },
 
-      destroy: function (error, callback) {
-        function done() {
+      destroy: function (error, callback): void {
+        function done(): void {
           callback(error);
         }
 
@@ -318,7 +318,7 @@ export class NodeStream {
    * @param obj - The object to be checked for being a Node.js stream.
    * @returns `true` if the object is a Node.js stream (`Duplex`, `Readable`, `Writable`, or `Transform`); otherwise, `false`.
    */
-  public static isStream(obj: unknown): obj is Duplex | Readable | Writable | Transform  {
+  public static isStream(obj: unknown): obj is Duplex | Readable | Writable | Transform {
     return (
       typeof obj === 'object' && obj !== null &&
       ('_readableState' in obj || '_writableState' in obj)
@@ -359,7 +359,7 @@ export class NodeStream {
     }
 
     return new ReadableStream({
-      start(controller) {
+      start(controller): void {
         readable.on('data', (chunk) => {
           controller.enqueue(chunk);
         });
@@ -373,7 +373,7 @@ export class NodeStream {
         });
       },
 
-      cancel() {
+      cancel(): void {
         readable.destroy();
       }
     });

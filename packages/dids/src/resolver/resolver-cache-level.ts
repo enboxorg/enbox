@@ -1,7 +1,7 @@
 import type { AbstractLevel } from 'abstract-level';
 
-import ms from 'ms';
 import { Level } from 'level';
+import ms from 'ms';
 
 import type { DidResolutionResult } from '../types/did-core.js';
 import type { DidResolverCache } from '../types/did-resolution.js';
@@ -31,7 +31,7 @@ export type DidResolverCacheLevelParams = {
    * to '15m' if not specified.
    */
   ttl?: string;
-}
+};
 
 /**
  * Encapsulates a DID resolution result along with its expiration information for caching purposes.
@@ -54,7 +54,7 @@ type CachedDidResolutionResult = {
    * This object contains the resolved DID document and associated metadata.
    */
   value: DidResolutionResult;
-}
+};
 
 /**
  * A Level-based cache implementation for storing and retrieving DID resolution results.
@@ -109,7 +109,7 @@ export class DidResolverCacheLevel implements DidResolverCache {
         return cachedDidResolutionResult.value;
       }
 
-    } catch(error: any) {
+    } catch (error: any) {
       // Don't throw when a key wasn't found.
       if (error.notFound) {
         return;

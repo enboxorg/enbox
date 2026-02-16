@@ -1,4 +1,4 @@
-import type { DidResolverCache, DidResolutionResult } from '@enbox/dids';
+import type { DidResolutionResult, DidResolverCache } from '@enbox/dids';
 
 import ms from 'ms';
 import { TtlCache } from '@enbox/common';
@@ -16,7 +16,7 @@ export type DidResolverCacheMemoryParams = {
    * Defaults to '15m' if not specified.
    */
   ttl?: string;
-}
+};
 
 export class DidResolverCacheMemory implements DidResolverCache {
   private cache: TtlCache<string, DidResolutionResult>;

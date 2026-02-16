@@ -1,18 +1,18 @@
 import type { Jwk } from '@enbox/crypto';
 import type { RequireOnly } from '@enbox/common';
 
-import { Convert, Multicodec } from '@enbox/common';
 import { computeJwkThumbprint } from '@enbox/crypto';
+import { Convert, Multicodec } from '@enbox/common';
 
 import type { KeyWithMulticodec } from './types/multibase.js';
-
-import { DidError, DidErrorCode } from './did-error.js';
-import {
-  DidService,
+import type {
   DidDocument,
+  DidService,
   DidVerificationMethod,
-  DidVerificationRelationship,
 } from './types/did-core.js';
+
+import { DidVerificationRelationship } from './types/did-core.js';
+import { DidError, DidErrorCode } from './did-error.js';
 
 /**
  * Represents a Decentralized Web Node (DWN) service in a DID Document.
@@ -76,8 +76,8 @@ export interface DwnDidService extends DidService {
  *          without a '#', and complex data structures.
  */
 export function extractDidFragment(input: unknown): string | undefined {
-  if (typeof input !== 'string') return undefined;
-  if (input.length === 0) return undefined;
+  if (typeof input !== 'string') {return undefined;}
+  if (input.length === 0) {return undefined;}
   return input.split('#').pop();
 }
 
@@ -97,8 +97,10 @@ export function extractDidFragment(input: unknown): string | undefined {
  *
  * @param params - An object containing input parameters for retrieving services.
  * @param params.didDocument - The DID document from which services are retrieved.
- * @param params.id - Optional. A string representing the specific service ID to match. If provided, only the service with this ID will be returned.
- * @param params.type - Optional. A string representing the specific service type to match. If provided, only the service(s) of this type will be returned.
+ * @param params.id - Optional. A string representing the specific service ID to match. If provided,
+ * only the service with this ID will be returned.
+ * @param params.type - Optional. A string representing the specific service type to match.
+ * If provided, only the service(s) of this type will be returned.
  * @returns An array of services. If no matching service is found, an empty array is returned.
  */
 export function getServices({ didDocument, id, type }: {
@@ -107,8 +109,8 @@ export function getServices({ didDocument, id, type }: {
   type?: string;
 }): DidService[] {
   return didDocument?.service?.filter(service => {
-    if (id && service.id !== id) return false;
-    if (type && service.type !== type) return false;
+    if (id && service.id !== id) {return false;}
+    if (type && service.type !== type) {return false;}
     return true;
   }) ?? [];
 }
@@ -150,7 +152,7 @@ export async function getVerificationMethodByKey({ didDocument, publicKeyJwk, pu
   // Collect all verification methods from the DID document.
   const verificationMethods = getVerificationMethods({ didDocument });
 
-  for (let method of verificationMethods) {
+  for (const method of verificationMethods) {
     if (publicKeyJwk && method.publicKeyJwk) {
       const publicKeyThumbprint = await computeJwkThumbprint({ jwk: publicKeyJwk });
       if (publicKeyThumbprint === await computeJwkThumbprint({ jwk: method.publicKeyJwk })) {
@@ -191,7 +193,7 @@ export async function getVerificationMethodByKey({ didDocument, publicKeyJwk, pu
 export function getVerificationMethods({ didDocument }: {
   didDocument: DidDocument;
 }): DidVerificationMethod[] {
-  if (!didDocument) throw new TypeError(`Required parameter missing: 'didDocument'`);
+  if (!didDocument) {throw new TypeError(`Required parameter missing: 'didDocument'`);}
 
   const verificationMethods: DidVerificationMethod[] = [];
 
@@ -356,7 +358,7 @@ export function getVerificationRelationshipsById({ didDocument, methodId }: {
  */
 export function isDidService(obj: unknown): obj is DidService {
   // Validate that the given value is an object.
-  if (!obj || typeof obj !== 'object' || obj === null) return false;
+  if (!obj || typeof obj !== 'object' || obj === null) {return false;}
 
   // Validate that the object has the necessary properties of DidService.
   return 'id' in obj && 'type' in obj && 'serviceEndpoint' in obj;
@@ -412,13 +414,13 @@ export function isDidService(obj: unknown): obj is DidService {
  */
 export function isDwnDidService(obj: unknown): obj is DwnDidService {
   // Validate that the given value is a {@link DidService}.
-  if (!isDidService(obj)) return false;
+  if (!isDidService(obj)) {return false;}
 
   // Validate that the `type` property is `DecentralizedWebNode`.
-  if (obj.type !== 'DecentralizedWebNode') return false;
+  if (obj.type !== 'DecentralizedWebNode') {return false;}
 
   // Validate that the given object has the `enc` and `sig` properties.
-  if (!('enc' in obj && 'sig' in obj)) return false;
+  if (!('enc' in obj && 'sig' in obj)) {return false;}
 
   // Validate that the `enc` and `sig` properties are either strings or arrays of strings.
   const isStringOrStringArray = (prop: any): boolean =>
@@ -453,14 +455,14 @@ export function isDwnDidService(obj: unknown): obj is DwnDidService {
  */
 export function isDidVerificationMethod(obj: unknown): obj is DidVerificationMethod {
   // Validate that the given value is an object.
-  if (!obj || typeof obj !== 'object' || obj === null) return false;
+  if (!obj || typeof obj !== 'object' || obj === null) {return false;}
 
   // Validate that the object has the necessary properties of a DidVerificationMethod.
-  if (!('id' in obj && 'type' in obj && 'controller' in obj)) return false;
+  if (!('id' in obj && 'type' in obj && 'controller' in obj)) {return false;}
 
-  if (typeof obj.id !== 'string') return false;
-  if (typeof obj.type !== 'string') return false;
-  if (typeof obj.controller !== 'string') return false;
+  if (typeof obj.id !== 'string') {return false;}
+  if (typeof obj.type !== 'string') {return false;}
+  if (typeof obj.controller !== 'string') {return false;}
 
   return true;
 }
@@ -526,7 +528,7 @@ export function multibaseIdToKeyBytes({ multibaseKeyId }: {
     const { code, data, name } = Multicodec.removePrefix({ prefixedData: prefixedKey });
 
     return { keyBytes: data, multicodecCode: code, multicodecName: name };
-  } catch (error: any) {
+  } catch {
     throw new DidError(DidErrorCode.InvalidDid, `Invalid multibase identifier: ${multibaseKeyId}`);
   }
 }

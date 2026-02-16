@@ -1,15 +1,17 @@
-import { Dialect } from './dialect.js';
-import {
+import type { Dialect } from './dialect.js';
+import type {
   ColumnBuilderCallback,
   ColumnDataType,
   CreateTableBuilder,
-  Kysely,
   InsertObject,
   InsertQueryBuilder,
+  Kysely,
   SelectExpression,
   Selection,
-  SqliteDialect as KyselySqliteDialect,
-  Transaction,
+  Transaction } from 'kysely';
+
+import {
+  SqliteDialect as KyselySqliteDialect
 } from 'kysely';
 
 export class SqliteDialect extends KyselySqliteDialect implements Dialect {
@@ -58,7 +60,10 @@ export class SqliteDialect extends KyselySqliteDialect implements Dialect {
     referenceColumnName: string,
     onDeleteAction: 'cascade' | 'no action' | 'restrict' | 'set null' | 'set default',
   ): CreateTableBuilder<TB & string> {
-    return builder.addColumn(columnName, columnType, (col) => col.notNull().references(`${referenceTable}.${referenceColumnName}`).onDelete(onDeleteAction));
+    return builder.addColumn(
+      columnName, columnType,
+      (col) => col.notNull().references(`${referenceTable}.${referenceColumnName}`).onDelete(onDeleteAction),
+    );
   }
 
   insertThenReturnId<DB, TB extends keyof DB = keyof DB, SE extends SelectExpression<DB, TB & string> = any>(

@@ -1,12 +1,14 @@
-import { ProofOfWorkManager } from "./proof-of-work-manager.js";
-import { ProofOfWork } from "./proof-of-work.js";
-import { RegistrationStore } from "./registration-store.js";
-import type { RegistrationData, RegistrationRequest } from "./registration-types.js";
-import type { ProofOfWorkChallengeModel } from "./proof-of-work-types.js";
-import { DwnServerError, DwnServerErrorCode } from "../dwn-error.js";
-import type { ActiveTenantCheckResult, TenantGate } from "@enbox/dwn-sdk-js";
-import { getDialectFromUrl } from "../storage.js";
-import { readFileSync } from "fs";
+import type { ProofOfWorkChallengeModel } from './proof-of-work-types.js';
+import type { ActiveTenantCheckResult, TenantGate } from '@enbox/dwn-sdk-js';
+import type { RegistrationData, RegistrationRequest } from './registration-types.js';
+
+import { readFileSync } from 'fs';
+
+import { getDialectFromUrl } from '../storage.js';
+import { ProofOfWork } from './proof-of-work.js';
+import { ProofOfWorkManager } from './proof-of-work-manager.js';
+import { RegistrationStore } from './registration-store.js';
+import { DwnServerError, DwnServerErrorCode } from '../dwn-error.js';
 
 /**
  * The RegistrationManager is responsible for managing the registration of tenants.
@@ -27,7 +29,7 @@ export class RegistrationManager implements TenantGate {
   }
 
   /**
-   * The terms-of-service hash. 
+   * The terms-of-service hash.
    */
   public getTermsOfServiceHash(): string | undefined {
     return this.termsOfServiceHash;
@@ -45,7 +47,7 @@ export class RegistrationManager implements TenantGate {
    * Creates a new RegistrationManager instance.
    * @param input.registrationStoreUrl - The URL of the registration store.
    * Set to `undefined` or empty string if tenant registration is not required (ie. DWN is open for all).
-   * 
+   *
    */
   public static async create(input: {
     registrationStoreUrl?: string,
@@ -70,17 +72,17 @@ export class RegistrationManager implements TenantGate {
 
     // Initialize and start ProofOfWorkManager.
     registrationManager.proofOfWorkManager = await ProofOfWorkManager.create({
-      autoStart: true,
-      desiredSolveCountPerMinute: 10,
-      initialMaximumAllowedHashValue: input.proofOfWorkInitialMaximumAllowedHash,
-      challengeSeed: input.proofOfWorkChallengeNonceSeed,
+      autoStart                      : true,
+      desiredSolveCountPerMinute     : 10,
+      initialMaximumAllowedHashValue : input.proofOfWorkInitialMaximumAllowedHash,
+      challengeSeed                  : input.proofOfWorkChallengeNonceSeed,
     });
 
     // Initialize RegistrationStore.
     const sqlDialect = getDialectFromUrl(new URL(registrationStoreUrl));
     const registrationStore = await RegistrationStore.create(sqlDialect);
     registrationManager.registrationStore = registrationStore;
-    
+
     return registrationManager;
   }
 
@@ -136,18 +138,18 @@ export class RegistrationManager implements TenantGate {
 
     if (tenantRegistration === undefined) {
       return {
-        isActiveTenant: false,
-        detail: 'Not a registered tenant.'
+        isActiveTenant : false,
+        detail         : 'Not a registered tenant.'
       };
     }
 
     if (tenantRegistration.termsOfServiceHash !== this.termsOfServiceHash) {
       return {
-        isActiveTenant: false,
-        detail: 'Agreed terms-of-service is outdated.'
+        isActiveTenant : false,
+        detail         : 'Agreed terms-of-service is outdated.'
       };
     }
 
-    return { isActiveTenant: true }
+    return { isActiveTenant: true };
   }
 }

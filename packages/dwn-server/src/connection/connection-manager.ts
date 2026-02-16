@@ -1,9 +1,9 @@
-import type { Dwn } from "@enbox/dwn-sdk-js";
+import type { Dwn } from '@enbox/dwn-sdk-js';
 
-import type { IncomingMessage } from "http";
+import type { IncomingMessage } from 'http';
 import type { WebSocket } from 'ws';
 
-import { SocketConnection } from "./socket-connection.js";
+import { SocketConnection } from './socket-connection.js';
 
 /**
  * Interface for managing `WebSocket` connections as they arrive.

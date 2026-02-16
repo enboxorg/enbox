@@ -1,11 +1,12 @@
 import type { Dwn } from '@enbox/dwn-sdk-js';
 
+import { expect } from 'chai';
+import { Poller } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
+
 import { config } from '../src/config.js';
 import { DwnServer } from '../src/dwn-server.js';
-import { expect } from 'chai';
 import { getTestDwn } from './test-dwn.js';
-import { Poller } from '@enbox/dwn-sdk-js';
 
 describe('Process Handlers', function () {
   let dwn: Dwn;
@@ -57,7 +58,7 @@ describe('Process Handlers', function () {
 
     dwnServer = new DwnServer({ dwn, config: config });
     await dwnServer.start();
-    
+
     const consoleErrorStub = sinon.stub(console, 'error'); // Stub console.error
     const errorMessage = 'Test uncaught exception';
     const error = new Error(errorMessage);

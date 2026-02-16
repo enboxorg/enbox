@@ -1,24 +1,23 @@
 import type { BearerDid } from '@enbox/dids';
 
-import type { Web5PlatformAgent } from '../../src/types/agent.js';
-import type { DidRequest, DidResponse } from '../../src/did-api.js';
-import type { VcResponse, SendVcRequest, ProcessVcRequest } from '../../src/types/vc.js';
-import type {
-  DwnResponse,
-  DwnInterface,
-  SendDwnRequest,
-  ProcessDwnRequest,
-} from '../../src/types/dwn.js';
-
-import type { Web5Rpc } from '../../src/rpc-client.js';
-import type { AgentDwnApi } from '../../src/dwn-api.js';
-import type { AgentSyncApi } from '../../src/sync-api.js';
 import type { AgentCryptoApi } from '../../src/crypto-api.js';
+import type { AgentDwnApi } from '../../src/dwn-api.js';
 import type { AgentIdentityApi } from '../../src/identity-api.js';
-import type { AgentDidApi, DidInterface } from '../../src/did-api.js';
 import type { AgentKeyManager } from '../../src/types/key-manager.js';
+import type { AgentPermissionsApi } from '../../src/permissions-api.js';
+import type { AgentSyncApi } from '../../src/sync-api.js';
 import type { IdentityVault } from '../../src/types/identity-vault.js';
-import { AgentPermissionsApi } from '../../src/permissions-api.js';
+import type { Web5PlatformAgent } from '../../src/types/agent.js';
+import type { Web5Rpc } from '../../src/rpc-client.js';
+import type { AgentDidApi, DidInterface } from '../../src/did-api.js';
+import type { DidRequest, DidResponse } from '../../src/did-api.js';
+import type {
+  DwnInterface,
+  DwnResponse,
+  ProcessDwnRequest,
+  SendDwnRequest,
+} from '../../src/types/dwn.js';
+import type { ProcessVcRequest, SendVcRequest, VcResponse } from '../../src/types/vc.js';
 
 type TestAgentParams<TKeyManager extends AgentKeyManager> = {
   agentVault: IdentityVault;
@@ -30,7 +29,7 @@ type TestAgentParams<TKeyManager extends AgentKeyManager> = {
   permissionsApi: AgentPermissionsApi;
   rpcClient: Web5Rpc;
   syncApi: AgentSyncApi;
-}
+};
 
 export class TestAgent<TKeyManager extends AgentKeyManager> implements Web5PlatformAgent<TKeyManager> {
   public crypto: AgentCryptoApi;

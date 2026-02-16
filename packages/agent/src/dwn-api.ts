@@ -1,22 +1,23 @@
 import type { Readable } from '@enbox/common';
 
+import type {
+  DwnConfig,
+  GenericMessage } from '@enbox/dwn-sdk-js';
+
+import { CryptoUtils } from '@enbox/crypto';
+import { NodeStream } from '@enbox/common';
 import {
   Cid,
   DataStoreLevel,
   Dwn,
-  DwnConfig,
   DwnInterfaceName,
   DwnMethodName,
   EventEmitterStream,
   EventLogLevel,
-  GenericMessage,
   Message,
   MessageStoreLevel,
   ResumableTaskStoreLevel
 } from '@enbox/dwn-sdk-js';
-
-import { NodeStream } from '@enbox/common';
-import { CryptoUtils } from '@enbox/crypto';
 import { DidDht, DidJwk, DidResolverCacheLevel, UniversalResolver } from '@enbox/dids';
 
 import type { Web5PlatformAgent } from './types/agent.js';
@@ -37,18 +38,18 @@ import type {
   SendDwnRequest
 } from './types/dwn.js';
 
-import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
 import { blobToIsomorphicNodeReadable, getDwnServiceEndpointUrls, isRecordsWrite, webReadableToIsomorphicNodeReadable } from './utils.js';
+import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
 
 export type DwnMessageWithBlob<T extends DwnInterface> = {
   message: DwnMessage[T];
   data?: Blob;
-}
+};
 
 export type DwnApiParams = {
   agent?: Web5PlatformAgent;
   dwn: Dwn;
-}
+};
 
 export interface DwnApiCreateDwnParams extends Partial<DwnConfig> {
   dataPath?: string;
@@ -287,7 +288,7 @@ export class AgentDwnApi {
         });
 
         return dwnReply;
-      } catch(error: any) {
+      } catch (error: any) {
         errorMessages.push({
           url     : dwnUrl,
           message : (error instanceof Error) ? error.message : 'Unknown error',
@@ -387,7 +388,7 @@ export class AgentDwnApi {
       return {
         algorithm : signer.algorithm,
         keyId     : signer.keyId,
-        sign      : async (data: Uint8Array) => {
+        sign      : async (data: Uint8Array): Promise<Uint8Array> => {
           return await signer.sign({ data });
         }
       };
@@ -413,7 +414,7 @@ export class AgentDwnApi {
         return {
           algorithm : CryptoUtils.getJoseSignatureAlgorithmFromPublicKey(publicKey),
           keyId     : signingMethod.id,
-          sign      : async (data: Uint8Array) => {
+          sign      : async (data: Uint8Array): Promise<Uint8Array> => {
             return await keyManager.sign({ data, keyUri: keyUri! });
           }
         };
@@ -449,7 +450,7 @@ export class AgentDwnApi {
     const messageEntry = result.entry!;
     const message = messageEntry.message as DwnMessage[T];
 
-    let dwnMessageWithBlob: DwnMessageWithBlob<T> = { message };
+    const dwnMessageWithBlob: DwnMessageWithBlob<T> = { message };
     // If the message is a RecordsWrite, data will be present in the form of a stream
 
     if (isRecordsWrite(messageEntry) && messageEntry.data) {

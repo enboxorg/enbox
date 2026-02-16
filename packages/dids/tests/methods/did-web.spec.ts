@@ -1,13 +1,13 @@
 import type { UnwrapPromise } from '@enbox/common';
 
-import sinon from 'sinon';
+import DidWebResolveTestVector from '../fixtures/web5-spec-vectors/did_web/resolve.json' with { type: 'json' };
 import { expect } from 'chai';
+import sinon from 'sinon';
 
 import { DidWeb } from '../../src/methods/did-web.js';
-import DidWebResolveTestVector from '../fixtures/web5-spec-vectors/did_web/resolve.json' assert { type: 'json' };
 
 // Helper function to create a mocked fetch response that fails and returns a 404 Not Found.
-const fetchNotFoundResponse = () => ({
+const fetchNotFoundResponse = (): { status: number; statusText: string; ok: boolean } => ({
   status     : 404,
   statusText : 'Not Found',
   ok         : false
@@ -15,11 +15,13 @@ const fetchNotFoundResponse = () => ({
 
 // Helper function to create a mocked fetch response that is successful and returns the given
 // response.
-const fetchOkResponse = (response: any) => ({
+const fetchOkResponse = (response: any): {
+  status: number; statusText: string; ok: boolean; json: () => Promise<any>
+} => ({
   status     : 200,
   statusText : 'OK',
   ok         : true,
-  json       : async () => Promise.resolve(response)
+  json       : async (): Promise<any> => Promise.resolve(response)
 });
 
 describe('DidWeb', () => {
@@ -30,7 +32,7 @@ describe('DidWeb', () => {
   describe('resolve()', () => {
     it(`returns a 'notFound' error if the HTTP GET response is not status code 200`, async () => {
       // Setup stub so that a mocked response is returned rather than calling over the network.
-      let fetchStub = sinon.stub(globalThis as any, 'fetch');
+      const fetchStub = sinon.stub(globalThis as any, 'fetch');
       fetchStub.callsFake(() => Promise.resolve(fetchNotFoundResponse()));
 
       const resolutionResult = await DidWeb.resolve('did:web:non-existent-domain.com');
@@ -70,7 +72,7 @@ describe('DidWeb', () => {
         if (vector.input.mockServer) {
           const mockResponses = vector.input.mockServer;
           fetchStub.callsFake((url: string) => {
-            if (url in mockResponses) return Promise.resolve(fetchOkResponse(mockResponses[url]));
+            if (url in mockResponses) {return Promise.resolve(fetchOkResponse(mockResponses[url]));}
           });
         }
 

@@ -33,7 +33,7 @@ type EventLogTable = {
   permissionGrantId: string | null;
   prune: boolean | null;
   // "indexes" end
-}
+};
 
 type MessageStoreTable = {
   id: Generated<number>;
@@ -66,7 +66,7 @@ type MessageStoreTable = {
   permissionGrantId: string | null;
   prune: boolean | null;
   // "indexes" end
-}
+};
 
 type MessageStoreRecordsTagsTable = {
   id: Generated<number>;
@@ -90,14 +90,14 @@ type DataStoreTable = {
   recordId: string;
   dataCid: string;
   data: Uint8Array;
-}
+};
 
 type ResumableTaskTable = {
   id: string;
   task: string;
   timeout: number;
   retryCount: number;
-}
+};
 
 export type DwnDatabaseType = {
   eventLogMessages: EventLogTable;
@@ -106,4 +106,4 @@ export type DwnDatabaseType = {
   messageStoreRecordsTags: MessageStoreRecordsTagsTable;
   dataStore: DataStoreTable;
   resumableTasks: ResumableTaskTable;
-}
+};

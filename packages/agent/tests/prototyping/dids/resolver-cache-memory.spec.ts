@@ -1,6 +1,7 @@
 import type { DidResolver, DidResolverCache } from '@enbox/dids';
 
 import sinon from 'sinon';
+
 import { expect } from 'chai';
 import { DidJwk, UniversalResolver } from '@enbox/dids';
 
@@ -109,7 +110,7 @@ describe('DidResolverCacheMemory', () => {
 
       await cache.close();
 
-      let valueInCache = await cache.get(testDid1);
+      const valueInCache = await cache.get(testDid1);
       expect(valueInCache).to.deep.equal(testDidResolutionResult);
     });
   });

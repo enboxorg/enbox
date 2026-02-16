@@ -29,7 +29,7 @@ export class Stream {
     try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {break;}
         yield value;
       }
     } finally {
@@ -181,7 +181,7 @@ export class Stream {
     let bytesRemaining = streamLength ?? Infinity;
     let controller: ReadableStreamDefaultController<Uint8Array>;
 
-    function enqueueChunk() {
+    function enqueueChunk(): void {
       const currentChunkLength = Math.min(bytesRemaining, chunkLength ?? Infinity);
       bytesRemaining -= currentChunkLength;
 
@@ -211,11 +211,11 @@ export class Stream {
     }
 
     return new ReadableStream<Uint8Array>({
-      start(c) {
+      start(c): void {
         controller = c;
         enqueueChunk();
       },
-      pull() {
+      pull(): void {
         enqueueChunk();
       },
     });
@@ -284,7 +284,7 @@ export class Stream {
       // If successful, immediately release the lock.
       reader.releaseLock();
       return true;
-    } catch (error) {
+    } catch {
       // If an error occurs (e.g., the stream is not readable), return false.
       return false;
     }

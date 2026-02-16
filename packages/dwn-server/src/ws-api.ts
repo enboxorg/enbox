@@ -13,7 +13,7 @@ import { InMemoryConnectionManager } from './connection/connection-manager.js';
 export class WsApi {
   #wsServer: WebSocketServer;
   dwn: Dwn;
-  #connectionManager: ConnectionManager
+  #connectionManager: ConnectionManager;
 
   constructor(server: Server, dwn: Dwn, connectionManager?: ConnectionManager) {
     this.dwn = dwn;

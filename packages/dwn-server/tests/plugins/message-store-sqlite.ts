@@ -1,6 +1,7 @@
-import type { MessageStore } from "@enbox/dwn-sdk-js";
-import { MessageStoreSql } from "@enbox/dwn-sql-store";
-import { getDialectFromUrl } from "../../src/storage.js";
+import type { MessageStore } from '@enbox/dwn-sdk-js';
+
+import { getDialectFromUrl } from '../../src/storage.js';
+import { MessageStoreSql } from '@enbox/dwn-sql-store';
 
 /**
  * An example of a plugin. Used for testing.

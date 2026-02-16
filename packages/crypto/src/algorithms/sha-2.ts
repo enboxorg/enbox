@@ -1,8 +1,8 @@
-import type { Hasher } from '../types/hasher.js';
 import type { DigestParams } from '../types/params-direct.js';
+import type { Hasher } from '../types/hasher.js';
 
-import { Sha256 } from '../primitives/sha256.js';
 import { CryptoAlgorithm } from './crypto-algorithm.js';
+import { Sha256 } from '../primitives/sha256.js';
 
 /**
  * The `Sha2DigestParams` interface defines the algorithm-specific parameters that should be

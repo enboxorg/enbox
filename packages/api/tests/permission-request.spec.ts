@@ -1,15 +1,14 @@
-import sinon from 'sinon';
 import { expect } from 'chai';
+import sinon from 'sinon';
 
-import { testDwnUrl } from './utils/test-config.js';
-
-import { BearerDid } from '@enbox/dids';
-import { DwnApi } from '../src/dwn-api.js';
-import { PlatformAgentTestHarness } from '@enbox/agent';
-import { Web5UserAgent } from '@enbox/agent';
+import type { BearerDid } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName, Time } from '@enbox/dwn-sdk-js';
+import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
+
+import { DwnApi } from '../src/dwn-api.js';
 import { PermissionRequest } from '../src/permission-request.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
+import { testDwnUrl } from './utils/test-config.js';
 
 const testDwnUrls = [testDwnUrl];
 
@@ -213,7 +212,7 @@ describe('PermissionRequest', () => {
       expect(sentToAlice.status.code).to.equal(202);
 
       // Alice fetches requests
-      let requests = await aliceDwn.permissions.queryRequests({
+      const requests = await aliceDwn.permissions.queryRequests({
         from     : aliceDid.uri,
         protocol : protocolUri
       });
@@ -248,7 +247,7 @@ describe('PermissionRequest', () => {
       expect(sentToAlice.status.code).to.equal(202);
 
       // Alice fetches requests
-      let requests = await aliceDwn.permissions.queryRequests({
+      const requests = await aliceDwn.permissions.queryRequests({
         from     : aliceDid.uri,
         protocol : protocolUri
       });

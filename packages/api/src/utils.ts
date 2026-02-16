@@ -98,7 +98,7 @@ export class SendCache {
    * @returns A boolean indicating whether the record has been sent to the target.
    */
   public static check(id: string, target: string): boolean {
-    let targetCache = SendCache.cache.get(id);
+    const targetCache = SendCache.cache.get(id);
     return targetCache ? targetCache.has(target) : false;
   }
 
@@ -111,7 +111,7 @@ export class SendCache {
    * @param target - The DID of the target to which the record has been sent.
    */
   public static set(id: string, target: string): void {
-    let targetCache = SendCache.cache.get(id) || new Set();
+    const targetCache = SendCache.cache.get(id) || new Set();
     SendCache.cache.delete(id);
     SendCache.cache.set(id, targetCache);
     if (this.cache.size > SendCache.sendCacheLimit) {

@@ -1,5 +1,5 @@
-import type { EventStream } from "@enbox/dwn-sdk-js";
-import { EventEmitterStream } from "@enbox/dwn-sdk-js";
+import { EventEmitterStream } from '@enbox/dwn-sdk-js';
+import type { EventStream } from '@enbox/dwn-sdk-js';
 
 /**
  * An example of a plugin that is used for testing.

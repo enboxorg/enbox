@@ -1,16 +1,18 @@
-import { Dialect } from './dialect.js';
-import {
+import type { Dialect } from './dialect.js';
+import type {
   AnyColumn,
+  ColumnBuilderCallback,
   ColumnDataType,
   CreateTableBuilder,
-  ColumnBuilderCallback,
   InsertObject,
   InsertQueryBuilder,
+  Kysely,
   SelectExpression,
   Selection,
-  Transaction,
-  MysqlDialect as KyselyMysqlDialect,
-  Kysely,
+  Transaction } from 'kysely';
+
+import {
+  MysqlDialect as KyselyMysqlDialect
 } from 'kysely';
 
 export class MysqlDialect extends KyselyMysqlDialect implements Dialect {

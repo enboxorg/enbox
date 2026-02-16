@@ -1,12 +1,11 @@
 import type { Persona } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
+
 import { expect } from 'chai';
-
-import { RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { HttpDwnRpcClient } from '../../../src/prototyping/clients/http-dwn-rpc-client.js';
-
 import { testDwnUrl } from '../../utils/test-config.js';
+import { RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 describe('HttpDwnRpcClient', () => {
   const client = new HttpDwnRpcClient();
@@ -97,7 +96,7 @@ describe('HttpDwnRpcClient', () => {
           data      : dataBytes,
         });
         expect.fail('Expected an error to be thrown');
-      } catch(error:any) {
+      } catch (error:any) {
         expect(error.message).to.include('failed to parse json rpc response.');
       }
     });
@@ -122,7 +121,7 @@ describe('HttpDwnRpcClient', () => {
           data      : dataBytes,
         });
         expect.fail('Expected an error to be thrown');
-      } catch(error: any) {
+      } catch (error: any) {
         expect(error.message).to.include('(code) - message');
       }
     });

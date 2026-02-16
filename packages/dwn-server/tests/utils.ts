@@ -1,14 +1,15 @@
-import type { GenericMessage, Persona, UnionMessageReply } from '@enbox/dwn-sdk-js';
+import type { Readable } from 'readable-stream';
 import { Cid, DataStream, RecordsWrite } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, Persona, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
+import { fileURLToPath } from 'url';
 import fs from 'node:fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import type { Readable } from 'readable-stream';
-import { fileURLToPath } from 'url';
 import { WebSocket } from 'ws';
 
 import type { JsonRpcResponse } from '../src/lib/json-rpc.js';
+
 import { createJsonRpcRequest } from '../src/lib/json-rpc.js';
 
 // __filename and __dirname are not defined in ES module scope
@@ -50,8 +51,8 @@ export async function createRecordsWriteMessage(
 
   const recordsWrite = await RecordsWrite.create({
     ...overrides,
-    dataFormat: 'application/json',
-    signer: signer.signer,
+    dataFormat : 'application/json',
+    signer     : signer.signer,
   });
 
   let dataStream: Readable | undefined;

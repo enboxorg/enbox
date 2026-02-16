@@ -51,7 +51,7 @@ function normalizeUrl(url: string): string {
     result.search = '';
     result.hash = '';
     return removeTrailingSlash(result.href);
-  } catch (e) {
+  } catch {
     throw new DwnError(DwnErrorCode.UrlProtocolNotNormalizable, 'Could not normalize protocol URI');
   }
 }

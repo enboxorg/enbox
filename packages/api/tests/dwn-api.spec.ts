@@ -1,23 +1,23 @@
-import type { BearerDid } from '@enbox/dids';
+import type { BearerDid, PortableDid } from '@enbox/dids';
+import type { DwnProtocolDefinition, ProcessDwnRequest } from '@enbox/agent';
 
-import sinon from 'sinon';
 import { expect } from 'chai';
-import { Web5UserAgent } from '@enbox/agent';
-import { AgentPermissionsApi, DwnDateSort, DwnInterface, DwnProtocolDefinition, getRecordAuthor, Oidc, PlatformAgentTestHarness, ProcessDwnRequest, WalletConnect } from '@enbox/agent';
+import sinon from 'sinon';
+
+import { AgentPermissionsApi, DwnDateSort, DwnInterface, getRecordAuthor, Oidc, PlatformAgentTestHarness, WalletConnect, Web5UserAgent } from '@enbox/agent';
+import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, PermissionsProtocol, Poller, Time } from '@enbox/dwn-sdk-js';
 
 import { DwnApi } from '../src/dwn-api.js';
-import { testDwnUrl } from './utils/test-config.js';
-import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' assert { type: 'json' };
-import photosProtocolDefinition from './fixtures/protocol-definitions/photos.json' assert { type: 'json' };
-import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json' assert { type: 'json' };
-import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, PermissionsProtocol, Poller, Time } from '@enbox/dwn-sdk-js';
+import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
+import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json' with { type: 'json' };
 import { PermissionGrant } from '../src/permission-grant.js';
-import { Record } from '../src/record.js';
+import photosProtocolDefinition from './fixtures/protocol-definitions/photos.json' with { type: 'json' };
+import type { Record } from '../src/record.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
-import { PortableDid } from '@enbox/dids';
+import { testDwnUrl } from './utils/test-config.js';
 import { Web5 } from '../src/web5.js';
 
-let testDwnUrls: string[] = [testDwnUrl];
+const testDwnUrls: string[] = [testDwnUrl];
 
 describe('DwnApi', () => {
   let aliceDid: BearerDid;
@@ -139,7 +139,8 @@ describe('DwnApi', () => {
       });
 
       // alice and bob both configure the protocol
-      const { status: aliceConfigStatus, protocol: aliceNotesProtocol } = await dwnAlice.protocols.configure({ message: { definition: notesProtocol } });
+      const { status: aliceConfigStatus, protocol: aliceNotesProtocol } =
+        await dwnAlice.protocols.configure({ message: { definition: notesProtocol } });
       expect(aliceConfigStatus.code).to.equal(202);
       const { status: aliceNotesProtocolSend } = await aliceNotesProtocol.send(aliceDid.uri);
       expect(aliceNotesProtocolSend.code).to.equal(202);
@@ -262,7 +263,7 @@ describe('DwnApi', () => {
       it('should subscribe to records with a delegated grant', async () => {
         // subscribe to all messages from the protocol
         const records: Map<string, Record> = new Map();
-        const subscriptionHandler = async (record: Record) => {
+        const subscriptionHandler = async (record: Record): Promise<void> => {
           records.set(record.id, record);
         };
 
@@ -341,7 +342,7 @@ describe('DwnApi', () => {
         const { status: aliceConfigStatus, protocol: aliceOtherProtocol } = await dwnAlice.protocols.configure({ message: { definition: {
           ...notesProtocol,
           protocol: `http://other-protocol.xyz/protocol/${TestDataGenerator.randomString(15)}`
-        }} });
+        } } });
         expect(aliceConfigStatus.code).to.equal(202);
         const { status: aliceOtherProtocolSend } = await aliceOtherProtocol.send(aliceDid.uri);
         expect(aliceOtherProtocolSend.code).to.equal(202);
@@ -454,7 +455,7 @@ describe('DwnApi', () => {
         const { status: aliceConfigStatus, protocol: aliceOtherProtocol } = await dwnAlice.protocols.configure({ message: { definition: {
           ...notesProtocol,
           protocol: `http://other-protocol.xyz/protocol/${TestDataGenerator.randomString(15)}`
-        }} });
+        } } });
         expect(aliceConfigStatus.code).to.equal(202);
         const { status: aliceOtherProtocolSend } = await aliceOtherProtocol.send(aliceDid.uri);
         expect(aliceOtherProtocolSend.code).to.equal(202);
@@ -556,14 +557,14 @@ describe('DwnApi', () => {
         const { status: aliceConfigStatus, protocol: aliceOtherProtocol } = await dwnAlice.protocols.configure({ message: { definition: {
           ...notesProtocol,
           protocol: `http://other-protocol.xyz/protocol/${TestDataGenerator.randomString(15)}`
-        }} });
+        } } });
         expect(aliceConfigStatus.code).to.equal(202);
         const { status: aliceOtherProtocolSend } = await aliceOtherProtocol.send(aliceDid.uri);
         expect(aliceOtherProtocolSend.code).to.equal(202);
 
         // delegatedDwn subscribes to both protocols
         const permissionedNotesRecords: Map<string, Record> = new Map();
-        const permissionedNotesSubscriptionHandler = async (record: Record) => {
+        const permissionedNotesSubscriptionHandler = async (record: Record): Promise<void> => {
           permissionedNotesRecords.set(record.id, record);
         };
         const permissionedNotesSubscribeResult = await delegateDwn.records.subscribe({
@@ -579,7 +580,7 @@ describe('DwnApi', () => {
         expect(permissionedNotesSubscribeResult.status.code).to.equal(200);
 
         const otherProtocolRecords: Map<string, Record> = new Map();
-        const otherProtocolSubscriptionHandler = async (record: Record) => {
+        const otherProtocolSubscriptionHandler = async (record: Record): Promise<void> => {
           otherProtocolRecords.set(record.id, record);
         };
         const otherProtocolSubscribeResult = await delegateDwn.records.subscribe({
@@ -596,7 +597,7 @@ describe('DwnApi', () => {
 
         // alice subscribes to the other protocol as a sanity
         const aliceOtherProtocolRecords: Map<string, Record> = new Map();
-        const aliceOtherProtocolSubscriptionHandler = async (record: Record) => {
+        const aliceOtherProtocolSubscriptionHandler = async (record: Record): Promise<void> => {
           aliceOtherProtocolRecords.set(record.id, record);
         };
         const aliceOtherProtocolSubscribeResult = await dwnAlice.records.subscribe({
@@ -693,7 +694,7 @@ describe('DwnApi', () => {
             }
           });
           expect.fail('Expected an error to be thrown.');
-        } catch(error: any) {
+        } catch (error: any) {
           expect(error.message).to.equal(`CachedPermissions: No permissions found for ProtocolsConfigure: ${protocolUri}`);
         }
 
@@ -982,7 +983,9 @@ describe('DwnApi', () => {
   describe('records.create()', () => {
     beforeEach(async() => {
       // Configure the protocol on both DWNs
-      const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({ message: { definition: protocolDefinition } });
+      const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
+        message: { definition: protocolDefinition }
+      });
       expect(aliceProtocolStatus.code).to.equal(202);
       expect(aliceProtocol).to.exist;
       const { status: aliceProtocolSendStatus } = await aliceProtocol.send(aliceDid.uri);
@@ -1040,7 +1043,7 @@ describe('DwnApi', () => {
       });
 
       it('creates a record with JSON data', async () => {
-        const dataJson = { hello: 'world!'};
+        const dataJson = { hello: 'world!' };
         const result = await dwnAlice.records.create({
           data    : dataJson,
           message : {
@@ -1068,7 +1071,8 @@ describe('DwnApi', () => {
          *    2. Alice creates a role-based 'friend' record for Bob, updates it, then sends it to her remote DWN.
          *    3. Bob creates an album record using the role 'friend', adds Alice as a `participant` of the album and sends the records to Alice.
          *    4. Alice fetches the album, and the `participant` record to store it on her local DWN.
-         *    5. Alice adds Bob as an `updater` of the album and sends the record to Bob and her own remote node. This allows bob to edit photos in the album.
+         *    5. Alice adds Bob as an `updater` of the album and sends the record to Bob and her own remote node.
+         *       This allows bob to edit photos in the album.
          *    6. Alice creates a photo using her participant role and sends it to her own DWN and Bob's DWN.
          *    7. Bob updates the photo using his updater role and sends it to Alice and his own DWN.
          *    8. Alice fetches the photo and stores it on her local DWN.
@@ -1094,7 +1098,7 @@ describe('DwnApi', () => {
         expect(aliceRemoteProtocolStatus.code).to.equal(202);
 
         // Alice creates a role-based 'friend' record, updates it, then sends it to her remote DWN.
-        const { status: friendCreateStatus, record: friendRecord} = await dwnAlice.records.create({
+        const { status: friendCreateStatus, record: friendRecord } = await dwnAlice.records.create({
           data    : 'test',
           message : {
             recipient    : bobDid.uri,
@@ -1111,7 +1115,7 @@ describe('DwnApi', () => {
         expect(aliceFriendSendStatus.code).to.equal(202);
 
         // Bob creates an album record using the role 'friend' and sends it to Alice
-        const { status: albumCreateStatus, record: albumRecord} = await dwnBob.records.create({
+        const { status: albumCreateStatus, record: albumRecord } = await dwnBob.records.create({
           data    : 'test',
           message : {
             recipient    : aliceDid.uri,
@@ -1129,7 +1133,7 @@ describe('DwnApi', () => {
         expect(aliceAlbumSendStatus.code).to.equal(202);
 
         // Bob makes Alice a `participant` and sends the record to her and his own remote node.
-        const { status: participantCreateStatus, record: participantRecord} = await dwnBob.records.create({
+        const { status: participantCreateStatus, record: participantRecord } = await dwnBob.records.create({
           data    : 'test',
           message : {
             parentContextId : albumRecord.contextId,
@@ -1175,7 +1179,7 @@ describe('DwnApi', () => {
 
         // Using the participant role, Alice can make Bob an `updater` and send the record to him and her own remote node.
         // Only updater roles can update the photo record after it's been created.
-        const { status: updaterCreateStatus, record: updaterRecord} = await dwnAlice.records.create({
+        const { status: updaterCreateStatus, record: updaterRecord } = await dwnAlice.records.create({
           data    : 'test',
           message : {
             parentContextId : albumRecord.contextId,
@@ -1194,7 +1198,7 @@ describe('DwnApi', () => {
         expect(aliceUpdaterSendStatus.code).to.equal(202);
 
         // Alice creates a photo using her participant role and sends it to her own DWN and Bob's DWN.
-        const { status: photoCreateStatus, record: photoRecord} = await dwnAlice.records.create({
+        const { status: photoCreateStatus, record: photoRecord } = await dwnAlice.records.create({
           data    : 'test',
           message : {
             parentContextId : albumRecord.contextId,
@@ -1212,7 +1216,7 @@ describe('DwnApi', () => {
         expect(bobPhotoSendStatus.code).to.equal(202);
 
         // Bob updates the photo using his updater role and sends it to Alice and his own DWN.
-        const { status: photoUpdateStatus, record: photoUpdateRecord} = await dwnBob.records.write({
+        const { status: photoUpdateStatus, record: photoUpdateRecord } = await dwnBob.records.write({
           data    : 'test again',
           store   : false,
           message : {
@@ -1341,7 +1345,9 @@ describe('DwnApi', () => {
   describe('records.delete()', () => {
     beforeEach(async() => {
       // Configure the protocol on both DWNs
-      const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({ message: { definition: protocolDefinition } });
+      const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
+        message: { definition: protocolDefinition }
+      });
       expect(aliceProtocolStatus.code).to.equal(202);
       expect(aliceProtocol).to.exist;
       const { status: aliceProtocolSendStatus } = await aliceProtocol.send(aliceDid.uri);
@@ -1355,7 +1361,7 @@ describe('DwnApi', () => {
 
     describe('agent', () => {
       it('deletes a record', async () => {
-        const { status: writeStatus, record }  = await dwnAlice.records.write({
+        const { status: writeStatus, record } = await dwnAlice.records.write({
           data    : 'Hello, world!',
           message : {
             protocol     : protocolUri,
@@ -1471,7 +1477,7 @@ describe('DwnApi', () => {
       });
 
       it('returns a 404 when the specified record does not exist', async () => {
-        let deleteResult = await dwnAlice.records.delete({
+        const deleteResult = await dwnAlice.records.delete({
           protocol : protocolUri,
           message  : {
             recordId: 'abcd1234'
@@ -1509,7 +1515,7 @@ describe('DwnApi', () => {
 
     describe('from: did', () => {
       it('deletes a record', async () => {
-        const { status: writeStatus, record }  = await dwnAlice.records.write({
+        const { status: writeStatus, record } = await dwnAlice.records.write({
           data    : 'Hello, world!',
           message : {
             schema     : 'foo/bar',
@@ -1588,7 +1594,7 @@ describe('DwnApi', () => {
         /**
          *   3. Alice creates a record, but doesn't store it locally.
          */
-        const { status: createStatus, record: testRecord} = await dwnAlice.records.create({
+        const { status: createStatus, record: testRecord } = await dwnAlice.records.create({
           store   : false,
           data    : 'test',
           message : {
@@ -1622,7 +1628,9 @@ describe('DwnApi', () => {
   describe('records.query()', () => {
     beforeEach(async() => {
       // Configure the protocol on both DWNs
-      const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({ message: { definition: protocolDefinition } });
+      const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
+        message: { definition: protocolDefinition }
+      });
       expect(aliceProtocolStatus.code).to.equal(202);
       expect(aliceProtocol).to.exist;
       const { status: aliceProtocolSendStatus } = await aliceProtocol.send(aliceDid.uri);
@@ -1667,7 +1675,7 @@ describe('DwnApi', () => {
       });
 
       it('returns cursor when there are additional results', async () => {
-        for(let i = 0; i < 3; i++ ) {
+        for (let i = 0; i < 3; i++ ) {
           const writeResult = await dwnAlice.records.write({
             data    : `Hello, world ${i + 1}!`,
             message : {
@@ -1708,7 +1716,7 @@ describe('DwnApi', () => {
               schema       : protocolDefinition.types.thread.schema,
               dataFormat   : 'text/plain'
             },
-            pagination: { limit: 2, cursor: results.cursor}
+            pagination: { limit: 2, cursor: results.cursor }
           }
         });
         expect(additionalResults.status.code).to.equal(200);
@@ -1722,7 +1730,7 @@ describe('DwnApi', () => {
 
         const items = [];
         const publishedItems = [];
-        for(let i = 0; i < 6; i++ ) {
+        for (let i = 0; i < 6; i++ ) {
           const writeResult = await dwnAlice.records.write({
             data    : `Hello, world ${i + 1}!`,
             message : {
@@ -1966,7 +1974,7 @@ describe('DwnApi', () => {
         /**
          *   3. Alice creates a record, but doesn't store it locally.
          */
-        const { status: createStatus, record: testRecord} = await dwnAlice.records.create({
+        const { status: createStatus, record: testRecord } = await dwnAlice.records.create({
           store   : false,
           data    : 'test',
           message : {
@@ -2122,7 +2130,7 @@ describe('DwnApi', () => {
         }
 
         // Bob makes Alice a `friend` to allow her to read and comment on his notes
-        const { status: friendCreateStatus, record: friendRecord} = await dwnBob.records.create({
+        const { status: friendCreateStatus, record: friendRecord } = await dwnBob.records.create({
           data    : 'friend!',
           message : {
             recipient    : aliceDid.uri,
@@ -2178,7 +2186,9 @@ describe('DwnApi', () => {
   describe('records.read()', () => {
     beforeEach(async() => {
       // Configure the protocol on both DWNs
-      const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({ message: { definition: protocolDefinition } });
+      const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
+        message: { definition: protocolDefinition }
+      });
       expect(aliceProtocolStatus.code).to.equal(202);
       expect(aliceProtocol).to.exist;
       const { status: aliceProtocolSendStatus } = await aliceProtocol.send(aliceDid.uri);
@@ -2324,7 +2334,7 @@ describe('DwnApi', () => {
         /**
          *   3. Alice creates a record, but doesn't store it locally.
          */
-        const { status: createStatus, record: testRecord} = await dwnAlice.records.create({
+        const { status: createStatus, record: testRecord } = await dwnAlice.records.create({
           store   : false,
           data    : 'test',
           message : {
@@ -2371,7 +2381,7 @@ describe('DwnApi', () => {
 
         // subscribe to all messages from the protocol
         const records: Map<string, Record> = new Map();
-        const subscriptionHandler = async (record: Record) => {
+        const subscriptionHandler = async (record: Record): Promise<void> => {
           records.set(record.id, record);
         };
 
@@ -2465,7 +2475,7 @@ describe('DwnApi', () => {
 
         // subscribe to all messages from the protocol
         const records: Map<string, Record> = new Map();
-        const subscriptionHandler = async (record: Record) => {
+        const subscriptionHandler = async (record: Record): Promise<void> => {
           records.set(record.id, record);
         };
 
@@ -2560,7 +2570,7 @@ describe('DwnApi', () => {
 
 
         // Bob makes Alice a `friend` to allow her to read and comment on his notes
-        const { status: friendCreateStatus, record: friendRecord} = await dwnBob.records.create({
+        const { status: friendCreateStatus, record: friendRecord } = await dwnBob.records.create({
           data    : 'friend!',
           message : {
             recipient    : aliceDid.uri,
@@ -2898,7 +2908,7 @@ describe('DwnApi', () => {
       expect(fetchedRequests.records!.length).to.equal(0);
 
       // store the request
-      const storeDeviceXRequest =  await deviceXRequest.store();
+      const storeDeviceXRequest = await deviceXRequest.store();
       expect(storeDeviceXRequest.status.code).to.equal(202);
 
       // query for the requests again
@@ -3166,7 +3176,7 @@ describe('DwnApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : protocolUri + '-1'  // protocol 1
+          protocol  : protocolUri + '-1' // protocol 1
         }
       });
 
@@ -3177,7 +3187,7 @@ describe('DwnApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : protocolUri + '-2'  // protocol 2
+          protocol  : protocolUri + '-2' // protocol 2
         }
       });
 

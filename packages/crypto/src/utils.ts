@@ -158,7 +158,7 @@ export class CryptoUtils {
       const rejectionRange = Math.pow(10, length);
       do {
         // Adjust the byte generation based on length.
-        const randomBuffer = CryptoUtils.randomBytes(Math.ceil(length / 2) );  // 2 digits per byte.
+        const randomBuffer = CryptoUtils.randomBytes(Math.ceil(length / 2) ); // 2 digits per byte.
         const view = new DataView(randomBuffer.buffer);
         // Convert the buffer to integer and take modulus based on length.
         pin = view.getUint16(0, false) % rejectionRange;
@@ -172,7 +172,7 @@ export class CryptoUtils {
         const view = new DataView(randomBuffer.buffer);
         // Transform bytes to number (big endian).
         pin = view.getUint32(0, false) % rejectionRange;
-      } while (pin > max);  // Reject if the number is outside the desired range.
+      } while (pin > max); // Reject if the number is outside the desired range.
     }
 
     // Pad the PIN with leading zeros to the desired length.

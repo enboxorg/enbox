@@ -1,21 +1,21 @@
 import type { BearerDid } from '@enbox/dids';
 
-import sinon from 'sinon';
 import { expect } from 'chai';
-import { Web5UserAgent } from '@enbox/agent';
-import { testDwnUrl } from './utils/test-config.js';
+import sinon from 'sinon';
+
+import { DwnInterfaceName, DwnMethodName, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
+import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
 
 // NOTE: @noble/secp256k1 requires globalThis.crypto polyfill for node.js <=18: https://github.com/paulmillr/noble-secp256k1/blob/main/README.md#usage
 // Remove when we move off of node.js v18 to v20, earliest possible time would be Oct 2023: https://github.com/nodejs/release#release-schedule
-import { webcrypto } from 'node:crypto';
-import { PlatformAgentTestHarness } from '@enbox/agent';
-import { DwnInterfaceName, DwnMethodName, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
-import { PermissionGrant } from '../src/permission-grant.js';
 import { DwnApi } from '../src/dwn-api.js';
+import { PermissionGrant } from '../src/permission-grant.js';
+import { testDwnUrl } from './utils/test-config.js';
+import { webcrypto } from 'node:crypto';
 // @ts-ignore
-if (!globalThis.crypto) globalThis.crypto = webcrypto;
+if (!globalThis.crypto) {globalThis.crypto = webcrypto;}
 
-let testDwnUrls: string[] = [testDwnUrl];
+const testDwnUrls: string[] = [testDwnUrl];
 
 describe('PermissionGrant', () => {
   let aliceDid: BearerDid;
@@ -220,14 +220,14 @@ describe('PermissionGrant', () => {
       expect(sent.status.code).to.equal(202);
 
       // bob queries alice's remote for a grant
-      let fetchedFromAlice = await bobDwn.permissions.queryGrants({
+      const fetchedFromAlice = await bobDwn.permissions.queryGrants({
         from     : aliceDid.uri,
         protocol : protocolUri,
       });
       expect(fetchedFromAlice.length).to.equal(1);
 
       // attempt to store it without importing, should fail
-      let fetchedGrant = fetchedFromAlice[0];
+      const fetchedGrant = fetchedFromAlice[0];
       let stored = await fetchedGrant.store();
       expect(stored.status.code).to.equal(401);
 
@@ -263,7 +263,7 @@ describe('PermissionGrant', () => {
       expect(sent.status.code).to.equal(202);
 
       // bob queries alice's remote for a grant
-      let fetchedFromAlice = await bobDwn.permissions.queryGrants({
+      const fetchedFromAlice = await bobDwn.permissions.queryGrants({
         from     : aliceDid.uri,
         protocol : protocolUri,
       });
@@ -282,7 +282,7 @@ describe('PermissionGrant', () => {
       expect(sentToBob.status.code).to.equal(401);
 
       // import the grant without storing it
-      let imported = await fetchedGrant.import(false);
+      const imported = await fetchedGrant.import(false);
       expect(imported.status.code).to.equal(202);
 
       // fetch from local to ensure it was not stored
@@ -316,7 +316,7 @@ describe('PermissionGrant', () => {
       expect(sent.status.code).to.equal(202);
 
       // bob queries alice's remote for a grant
-      let fetchedFromAlice = await bobDwn.permissions.queryGrants({
+      const fetchedFromAlice = await bobDwn.permissions.queryGrants({
         from     : aliceDid.uri,
         protocol : protocolUri,
       });
@@ -324,14 +324,14 @@ describe('PermissionGrant', () => {
       const fetchedGrant = fetchedFromAlice[0];
 
       // confirm the grant does not yet exist in bob's remote
-      let fetchedRemote = await bobDwn.permissions.queryGrants({
+      const fetchedRemote = await bobDwn.permissions.queryGrants({
         from     : bobDid.uri,
         protocol : protocolUri,
       });
       expect(fetchedRemote.length).to.equal(0);
 
       // import the grant and store it
-      let imported = await fetchedGrant.import(true);
+      const imported = await fetchedGrant.import(true);
       expect(imported.status.code).to.equal(202);
 
       // fetch from local to ensure it was stored

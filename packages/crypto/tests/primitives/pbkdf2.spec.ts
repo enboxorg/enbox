@@ -1,6 +1,6 @@
-import { expect, use } from 'chai';
-import { Convert } from '@enbox/common';
 import chaiAsPromised from 'chai-as-promised';
+import { Convert } from '@enbox/common';
+import { expect, use } from 'chai';
 
 import { Pbkdf2 } from '../../src/primitives/pbkdf2.js';
 
