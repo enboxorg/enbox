@@ -489,7 +489,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     });
 
     // Derive the signing key using index 1 and convert to JWK format.
-    let signingHdKey = rootHdKey.derive(`m/44'/0'/1708523827'/0'/1'`);
+    const signingHdKey = rootHdKey.derive(`m/44'/0'/1708523827'/0'/1'`);
     const signingPrivateKey = await this.crypto.bytesToPrivateKey({
       algorithm       : 'Ed25519',
       privateKeyBytes : signingHdKey.privateKey
@@ -525,7 +525,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       ]
     } as DidDhtCreateOptions<DeterministicKeyGenerator>;
 
-    if(dwnEndpoints && !!dwnEndpoints.length) {
+    if (dwnEndpoints && !!dwnEndpoints.length) {
       options.services = [
         {
           id              : 'dwn',

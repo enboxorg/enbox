@@ -5,6 +5,7 @@ import sinon from 'sinon';
 import { expect } from 'chai';
 import { Convert } from '@enbox/common';
 import { CryptoUtils, Ed25519 } from '@enbox/crypto';
+import { Encryption, HdKey, Secp256k1 } from '@enbox/dwn-sdk-js';
 
 import type { Web5PlatformAgent } from '../src/types/agent.js';
 
@@ -427,7 +428,7 @@ describe('LocalKeyManager', () => {
       });
 
       describe('derivePublicKey()', () => {
-        it('derives a public key from a stored secp256k1 private key', async () => {
+        it('should derive a public key from a stored secp256k1 private key', async () => {
           // Generate a secp256k1 key
           const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
 
@@ -445,7 +446,7 @@ describe('LocalKeyManager', () => {
           expect(derivedPublicKey).to.not.have.property('d'); // Should be public only
         });
 
-        it('derives different keys for different derivation paths', async () => {
+        it('should derive different keys for different derivation paths', async () => {
           // Generate a secp256k1 key
           const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
 
@@ -465,7 +466,7 @@ describe('LocalKeyManager', () => {
           expect(derivedKey1.y).to.not.equal(derivedKey2.y);
         });
 
-        it('derives the same key for the same derivation path', async () => {
+        it('should derive the same key for the same derivation path', async () => {
           // Generate a secp256k1 key
           const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
 
@@ -484,13 +485,38 @@ describe('LocalKeyManager', () => {
           expect(derivedKey1.x).to.equal(derivedKey2.x);
           expect(derivedKey1.y).to.equal(derivedKey2.y);
         });
+
+        it('should throw an error when keyUri does not exist', async () => {
+          const nonExistentKeyUri = 'urn:jwk:nonexistent';
+
+          try {
+            await testHarness.agent.keyManager.derivePublicKey({
+              keyUri         : nonExistentKeyUri,
+              derivationPath : ['test']
+            });
+            expect.fail('Expected an error to be thrown.');
+          } catch (error: any) {
+            expect(error).to.exist;
+            expect(error.message).to.include('Key not found');
+          }
+        });
+
+        it('should handle empty derivation path', async () => {
+          const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
+
+          // Empty derivation path should return the root key's public key
+          const derivedKey = await testHarness.agent.keyManager.derivePublicKey({
+            keyUri,
+            derivationPath: []
+          });
+
+          expect(derivedKey).to.have.property('kty', 'EC');
+          expect(derivedKey).to.have.property('crv', 'secp256k1');
+        });
       });
 
       describe('eciesSecp256k1Decrypt()', () => {
-        it('decrypts an ECIES-encrypted payload using a derived key', async () => {
-          // Import encryption utilities from DWN SDK
-          const { Encryption, HdKey, Secp256k1 } = await import('@enbox/dwn-sdk-js');
-
+        it('should decrypt an ECIES-encrypted payload using a derived key', async () => {
           // Generate a secp256k1 key
           const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
 
@@ -524,10 +550,7 @@ describe('LocalKeyManager', () => {
           expect(Convert.uint8Array(decrypted).toString()).to.equal('Hello, ECIES!');
         });
 
-        it('fails to decrypt with wrong derivation path', async () => {
-          // Import encryption utilities from DWN SDK
-          const { Encryption, HdKey, Secp256k1 } = await import('@enbox/dwn-sdk-js');
-
+        it('should fail to decrypt with wrong derivation path', async () => {
           // Generate a secp256k1 key
           const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
 
@@ -561,14 +584,13 @@ describe('LocalKeyManager', () => {
             });
             expect.fail('Expected decryption to fail with wrong derivation path');
           } catch (error: any) {
-            // Decryption should fail
             expect(error).to.exist;
           }
         });
       });
 
       describe('derivePrivateKeyBytes()', () => {
-        it('derives private key bytes from a stored secp256k1 private key', async () => {
+        it('should derive private key bytes from a stored secp256k1 private key', async () => {
           // Generate a secp256k1 key
           const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
 
@@ -583,7 +605,7 @@ describe('LocalKeyManager', () => {
           expect(derivedKeyBytes.length).to.equal(32); // secp256k1 private keys are 32 bytes
         });
 
-        it('derives different keys for different derivation paths', async () => {
+        it('should derive different keys for different derivation paths', async () => {
           // Generate a secp256k1 key
           const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
 
@@ -604,7 +626,7 @@ describe('LocalKeyManager', () => {
           );
         });
 
-        it('derives the same key for the same derivation path', async () => {
+        it('should derive the same key for the same derivation path', async () => {
           // Generate a secp256k1 key
           const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
 
@@ -625,10 +647,7 @@ describe('LocalKeyManager', () => {
           );
         });
 
-        it('matches the private key bytes used by derivePublicKey', async () => {
-          // Import Secp256k1 utilities
-          const { Secp256k1 } = await import('@enbox/dwn-sdk-js');
-
+        it('should match the private key bytes used by derivePublicKey', async () => {
           // Generate a secp256k1 key
           const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
 
