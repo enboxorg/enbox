@@ -202,6 +202,11 @@ export type ProcessDwnRequest<T extends DwnInterface> = DwnRequest<T> & {
   signAsOwnerDelegate?: boolean;
   granteeDid?: string;
   subscriptionHandler?: MessageHandler[T];
+  /**
+   * If true, automatically encrypt protocol records and inject $encryption keys.
+   * Requires the identity to have a secp256k1 keyAgreement key.
+   */
+  encryption?: boolean;
 };
 
 export type SendDwnRequest<T extends DwnInterface> = DwnRequest<T> & (ProcessDwnRequest<T> | { messageCid: string });

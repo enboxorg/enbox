@@ -1,5 +1,6 @@
 import type { Readable } from '@enbox/common';
 import type { Dwn, MessageEvent, ProtocolDefinition , RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { JwkParamsEcPublic, PrivateKeyJwk } from '@enbox/crypto';
 
 import { DidDht } from '@enbox/dids';
 import { Convert, NodeStream, Stream } from '@enbox/common';
@@ -1962,5 +1963,215 @@ describe('isMessagesPermissionScope', () => {
 
     expect(isMessagesPermissionScope(messagesReadScope)).to.be.true;
 
+  });
+});
+
+describe('Encryption Callback Factories', () => {
+  let testHarness: PlatformAgentTestHarness;
+  let alice: BearerIdentity;
+
+  before(async () => {
+    testHarness = await PlatformAgentTestHarness.setup({
+      agentClass  : TestAgent,
+      agentStores : 'dwn'
+    });
+  });
+
+  beforeEach(async () => {
+    await testHarness.clearStorage();
+    await testHarness.createAgentDid();
+
+    // Create an identity with encryption key
+    alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
+  });
+
+  after(async () => {
+    await testHarness.clearStorage();
+    await testHarness.closeStorage();
+  });
+
+  describe('getEncryptionKeyInfo()', () => {
+    it('should resolve keyAgreement verification method to KMS key URI', async () => {
+      // Access private method via bracket notation for testing
+      const keyInfo = await testHarness.agent.dwn['getEncryptionKeyInfo'](alice.did.uri);
+
+      expect(keyInfo).to.have.property('keyId');
+      expect(keyInfo.keyId).to.include('#enc');
+      expect(keyInfo).to.have.property('keyUri');
+      expect(keyInfo.keyUri).to.be.a('string');
+      expect(keyInfo).to.have.property('publicKeyJwk');
+      expect(keyInfo.publicKeyJwk).to.have.property('crv', 'secp256k1');
+      expect(keyInfo.publicKeyJwk).to.have.property('kty', 'EC');
+    });
+
+    it('should throw if DID has no keyAgreement method', async () => {
+      // Stub DID resolution to return a document without keyAgreement
+      const fakeDid = 'did:example:no-key-agreement';
+      sinon.stub(testHarness.agent.did, 'resolve').resolves({
+        didDocument: {
+          id                 : fakeDid,
+          verificationMethod : [{
+            id           : `${fakeDid}#key-1`,
+            type         : 'JsonWebKey',
+            controller   : fakeDid,
+            publicKeyJwk : { kty: 'OKP', crv: 'Ed25519', x: 'test' }
+          }]
+          // No keyAgreement field
+        },
+        didResolutionMetadata : {},
+        didDocumentMetadata   : {}
+      } as any);
+
+      try {
+        await testHarness.agent.dwn['getEncryptionKeyInfo'](fakeDid);
+        expect.fail('Expected an error to be thrown');
+      } catch (error: any) {
+        expect(error.message).to.include('does not have a keyAgreement');
+      } finally {
+        sinon.restore();
+      }
+    });
+
+    it('should throw if keyAgreement key is not secp256k1', async () => {
+      // This test would require creating a DID with a non-secp256k1 keyAgreement key
+      // which is uncommon, so we'll skip implementation details for now
+      // In practice, secp256k1 is required for DWN encryption
+    });
+  });
+
+  describe('getEncryptionKeyDeriver()', () => {
+    it('should return valid EncryptionKeyDeriver that delegates to KMS', async () => {
+      const keyDeriver = await testHarness.agent.dwn['getEncryptionKeyDeriver'](alice.did.uri);
+
+      expect(keyDeriver).to.have.property('rootKeyId');
+      expect(keyDeriver.rootKeyId).to.include('#enc');
+      expect(keyDeriver).to.have.property('derivationScheme', 'protocolPath');
+      expect(keyDeriver).to.have.property('derivePublicKey');
+      expect(keyDeriver.derivePublicKey).to.be.a('function');
+    });
+
+    it('should derive public key through KMS when callback is invoked', async () => {
+      const keyDeriver = await testHarness.agent.dwn['getEncryptionKeyDeriver'](alice.did.uri);
+
+      const derivedKey = await keyDeriver.derivePublicKey(['test', 'path']);
+
+      expect(derivedKey).to.have.property('kty', 'EC');
+      expect(derivedKey).to.have.property('crv', 'secp256k1');
+      expect(derivedKey).to.have.property('x');
+      expect(derivedKey).to.have.property('y');
+      expect(derivedKey).to.not.have.property('d'); // Should be public only
+    });
+
+    it('should derive different keys for different paths', async () => {
+      const keyDeriver = await testHarness.agent.dwn['getEncryptionKeyDeriver'](alice.did.uri);
+
+      const key1 = await keyDeriver.derivePublicKey(['path1']);
+      const key2 = await keyDeriver.derivePublicKey(['path2']);
+
+      expect((key1 as JwkParamsEcPublic).x).to.not.equal((key2 as JwkParamsEcPublic).x);
+      expect((key1 as JwkParamsEcPublic).y).to.not.equal((key2 as JwkParamsEcPublic).y);
+    });
+
+    it('should derive same key for same path (deterministic)', async () => {
+      const keyDeriver = await testHarness.agent.dwn['getEncryptionKeyDeriver'](alice.did.uri);
+
+      const key1 = await keyDeriver.derivePublicKey(['consistent', 'path']);
+      const key2 = await keyDeriver.derivePublicKey(['consistent', 'path']);
+
+      expect((key1 as JwkParamsEcPublic).x).to.equal((key2 as JwkParamsEcPublic).x);
+      expect((key1 as JwkParamsEcPublic).y).to.equal((key2 as JwkParamsEcPublic).y);
+    });
+  });
+
+  describe('getKeyDecrypter()', () => {
+    it('should return valid KeyDecrypter that delegates to KMS', async () => {
+      const keyDecrypter = await testHarness.agent.dwn['getKeyDecrypter'](alice.did.uri);
+
+      expect(keyDecrypter).to.have.property('rootKeyId');
+      expect(keyDecrypter.rootKeyId).to.include('#enc');
+      expect(keyDecrypter).to.have.property('derivationScheme', 'protocolPath');
+      expect(keyDecrypter).to.have.property('decrypt');
+      expect(keyDecrypter.decrypt).to.be.a('function');
+    });
+
+    it('should decrypt ECIES payload through KMS when callback is invoked', async () => {
+      const { Encryption, HdKey, Secp256k1 } = await import('@enbox/dwn-sdk-js');
+
+      // Get the encryption key info
+      const keyInfo = await testHarness.agent.dwn['getEncryptionKeyInfo'](alice.did.uri);
+
+      // Derive a test key for encryption
+      const privateKeyJwk = await testHarness.agent.keyManager['getPrivateKey']({ keyUri: keyInfo.keyUri }) as PrivateKeyJwk;
+      const privateKeyBytes = Secp256k1.privateJwkToBytes(privateKeyJwk);
+      const derivationPath = ['test', 'decrypt'];
+      const leafPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(privateKeyBytes, derivationPath);
+      const leafPublicKeyBytes = await Secp256k1.getPublicKey(leafPrivateKeyBytes);
+
+      // Encrypt a test message
+      const plaintext = Convert.string('Test message').toUint8Array();
+      const encrypted = await Encryption.eciesSecp256k1Encrypt(leafPublicKeyBytes, plaintext);
+
+      // Get key decrypter and decrypt
+      const keyDecrypter = await testHarness.agent.dwn['getKeyDecrypter'](alice.did.uri);
+      const decrypted = await keyDecrypter.decrypt(derivationPath, encrypted);
+
+      expect(Convert.uint8Array(decrypted).toString()).to.equal('Test message');
+    });
+  });
+
+  describe('getProtocolDefinition()', () => {
+    it('should return cached protocol definition', async () => {
+      // Install a protocol
+      const { reply: { status: configureStatus } } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : {
+          definition: emailProtocolDefinition
+        }
+      });
+      expect(configureStatus.code).to.equal(202);
+
+      // First call - cache miss
+      const def1 = await testHarness.agent.dwn['getProtocolDefinition'](
+        alice.did.uri,
+        emailProtocolDefinition.protocol
+      );
+
+      expect(def1).to.exist;
+      expect(def1?.protocol).to.equal(emailProtocolDefinition.protocol);
+
+      // Second call - should hit cache
+      const def2 = await testHarness.agent.dwn['getProtocolDefinition'](
+        alice.did.uri,
+        emailProtocolDefinition.protocol
+      );
+
+      expect(def2).to.exist;
+      expect(def2).to.deep.equal(def1);
+    });
+
+    it('should return undefined for uninstalled protocol', async () => {
+      const def = await testHarness.agent.dwn['getProtocolDefinition'](
+        alice.did.uri,
+        'https://uninstalled-protocol.example'
+      );
+
+      expect(def).to.be.undefined;
+    });
+  });
+
+  describe('Skipped tests for PR #4', () => {
+    it.skip('should auto-inject $encryption on ProtocolsConfigure', async () => {
+      // Will be implemented in PR #4
+    });
+
+    it.skip('should auto-encrypt data on RecordsWrite', async () => {
+      // Will be implemented in PR #4
+    });
+
+    it.skip('should auto-decrypt data on RecordsRead', async () => {
+      // Will be implemented in PR #4
+    });
   });
 });

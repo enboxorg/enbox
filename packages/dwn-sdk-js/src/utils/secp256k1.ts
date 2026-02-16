@@ -1,4 +1,4 @@
-import type { JwkParamsEcPublic } from '@enbox/crypto';
+import type { JwkParamsEcPrivate, JwkParamsEcPublic } from '@enbox/crypto';
 import type { PrivateKeyJwk, PublicKeyJwk } from '../types/jose-types.js';
 
 import * as secp256k1 from '@noble/secp256k1';
@@ -17,7 +17,7 @@ export class Secp256k1 {
    * @throws {Error} if fails validation.
    */
   public static validateKey(jwk: PrivateKeyJwk | PublicKeyJwk): void {
-    if (jwk.kty !== 'EC' || jwk.crv !== 'secp256k1') {
+    if (jwk.kty !== 'EC' || (jwk as JwkParamsEcPublic).crv !== 'secp256k1') {
       throw new DwnError(DwnErrorCode.Secp256k1KeyNotValid, 'Invalid SECP256K1 JWK: `kty` MUST be `EC`. `crv` MUST be `secp256k1`');
     }
   }
@@ -62,7 +62,7 @@ export class Secp256k1 {
     const publicKeyBytes = await Secp256k1.getPublicKey(privateKeyBytes);
 
     const jwk = await Secp256k1.publicKeyToJwk(publicKeyBytes);
-    (jwk as PrivateKeyJwk).d = Encoder.bytesToBase64Url(privateKeyBytes);
+    (jwk as JwkParamsEcPrivate).d = Encoder.bytesToBase64Url(privateKeyBytes);
 
     return jwk as PrivateKeyJwk;
   }
@@ -85,7 +85,7 @@ export class Secp256k1 {
    * Creates a private key in raw bytes from the given SECP256K1 JWK.
    */
   public static privateJwkToBytes(privateJwk: PrivateKeyJwk): Uint8Array {
-    const privateKey = Encoder.base64UrlToBytes(privateJwk.d);
+    const privateKey = Encoder.base64UrlToBytes((privateJwk as JwkParamsEcPrivate).d);
     return privateKey;
   }
 
@@ -152,8 +152,8 @@ export class Secp256k1 {
    */
   public static async getPublicJwk(privateKeyJwk: PrivateKeyJwk): Promise<PublicKeyJwk> {
     // strip away `d`
-    const { d: _d, ...publicKey } = privateKeyJwk;
-    return publicKey;
+    const { d: _d, ...publicKey } = privateKeyJwk as JwkParamsEcPrivate;
+    return publicKey as PublicKeyJwk;
   }
 }
 

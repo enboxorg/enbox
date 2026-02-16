@@ -248,10 +248,11 @@ export class Records {
    *       so we will only derive SECP256K1 key without additional conditional checks
    */
   public static async derivePrivateKey(ancestorPrivateKey: DerivedPrivateJwk, fullDescendantDerivationPath: string[]): Promise<Uint8Array> {
-    if (ancestorPrivateKey.derivedPrivateKey.crv !== 'secp256k1') {
+    const crv = 'crv' in ancestorPrivateKey.derivedPrivateKey ? ancestorPrivateKey.derivedPrivateKey.crv : undefined;
+    if (crv !== 'secp256k1') {
       throw new DwnError(
         DwnErrorCode.RecordsDerivePrivateKeyUnSupportedCurve,
-        `Curve ${ancestorPrivateKey.derivedPrivateKey.crv} is not supported.`
+        `Curve ${crv} is not supported.`
       );
     }
 

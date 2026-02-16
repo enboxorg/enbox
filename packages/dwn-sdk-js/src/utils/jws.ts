@@ -37,7 +37,7 @@ export class Jws {
    * @returns `true` if signature is valid; `false` otherwise
    */
   public static async verifySignature(base64UrlPayload: string, signatureEntry: SignatureEntry, jwkPublic: PublicKeyJwk): Promise<boolean> {
-    const signatureAlgorithm = signatureAlgorithms[jwkPublic.crv as SupportedCurve];
+    const signatureAlgorithm = signatureAlgorithms[('crv' in jwkPublic ? jwkPublic.crv : undefined) as SupportedCurve];
 
     if (!signatureAlgorithm) {
       throw new DwnError(DwnErrorCode.JwsVerifySignatureUnsupportedCrv, `unsupported crv. crv must be one of ${Object.keys(signatureAlgorithms)}`);
