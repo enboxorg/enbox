@@ -143,15 +143,14 @@ export class RecordsWriteHandler implements MethodHandler {
         this.eventStream.emit(tenant, { message, initialWrite }, indexes);
       }
     } catch (error) {
-      const e = error as any;
-      if (e.code !== undefined) {
-        if (e.code === DwnErrorCode.RecordsWriteMissingEncodedDataInPrevious ||
-          e.code === DwnErrorCode.RecordsWriteMissingDataInPrevious ||
-          e.code === DwnErrorCode.RecordsWriteNotAllowedAfterDelete ||
-          e.code === DwnErrorCode.RecordsWriteDataCidMismatch ||
-          e.code === DwnErrorCode.RecordsWriteDataSizeMismatch ||
-          e.code.startsWith('PermissionsProtocolValidate') ||
-          e.code.startsWith('SchemaValidator')) {
+      if (error instanceof DwnError) {
+        if (error.code === DwnErrorCode.RecordsWriteMissingEncodedDataInPrevious ||
+          error.code === DwnErrorCode.RecordsWriteMissingDataInPrevious ||
+          error.code === DwnErrorCode.RecordsWriteNotAllowedAfterDelete ||
+          error.code === DwnErrorCode.RecordsWriteDataCidMismatch ||
+          error.code === DwnErrorCode.RecordsWriteDataSizeMismatch ||
+          error.code.startsWith('PermissionsProtocolValidate') ||
+          error.code.startsWith('SchemaValidator')) {
           return messageReplyFromError(error, 400);
         }
       }

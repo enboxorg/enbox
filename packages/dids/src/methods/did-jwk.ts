@@ -341,7 +341,7 @@ export class DidJwk extends DidMethod {
     // Attempt to decode the Base64URL-encoded JWK.
     let publicKey: Jwk | undefined;
     try {
-      publicKey = Convert.base64Url(parsedDid!.id).toObject() as Jwk;
+      publicKey = parsedDid ? Convert.base64Url(parsedDid.id).toObject() as Jwk : undefined;
     } catch { /* Consume the error so that a DID resolution error can be returned later. */ }
 
     // If parsing or decoding failed, the DID is invalid.

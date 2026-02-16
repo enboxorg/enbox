@@ -587,7 +587,7 @@ export class DidDht extends DidMethod {
       // Add the verification method to the specified purpose properties of the DID document.
       for (const purpose of verificationMethod.purposes ?? []) {
         // Initialize the purpose property if it does not already exist.
-        if (!document[purpose]) {document[purpose] = [];}
+        document[purpose] ??= [];
         // Add the verification method to the purpose property.
         document[purpose]!.push(methodId);
       }

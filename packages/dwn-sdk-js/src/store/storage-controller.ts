@@ -140,10 +140,12 @@ export class StorageController {
         recordId = (message as RecordsDeleteMessage).descriptor.recordId;
       }
 
-      if (!recordIdToMessagesMap.has(recordId)) {
-        recordIdToMessagesMap.set(recordId, []);
+      const existingMessages = recordIdToMessagesMap.get(recordId);
+      if (existingMessages) {
+        existingMessages.push(message);
+      } else {
+        recordIdToMessagesMap.set(recordId, [message]);
       }
-      recordIdToMessagesMap.get(recordId)!.push(message);
     }
 
     // purge all child's descendants first
