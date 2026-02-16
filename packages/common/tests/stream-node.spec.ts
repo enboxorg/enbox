@@ -414,6 +414,47 @@ describe('NodeStream', () => {
       }
     });
 
+    it('tracks bytesRead as data is consumed from the stream', async () => {
+      const inputBytes = new Uint8Array([10, 20, 30, 40, 50]);
+      const webStream = new ReadableStream({
+        start(controller): void {
+          controller.enqueue(inputBytes);
+          controller.close();
+        }
+      });
+
+      const nodeReadable = NodeStream.fromWebReadable({ readableStream: webStream });
+
+      // Before reading, bytesRead should be 0.
+      expect(nodeReadable.bytesRead).to.equal(0);
+
+      // Consume the entire stream.
+      const bytes = await NodeStream.consumeToBytes({ readable: nodeReadable });
+
+      // After consuming, bytesRead should equal total bytes.
+      expect(nodeReadable.bytesRead).to.equal(5);
+      expect(bytes).to.deep.equal(inputBytes);
+    });
+
+    it('tracks bytesRead across multiple chunks', async () => {
+      const chunk1 = new Uint8Array(100).fill(1);
+      const chunk2 = new Uint8Array(200).fill(2);
+      const chunk3 = new Uint8Array(50).fill(3);
+      const webStream = new ReadableStream({
+        start(controller): void {
+          controller.enqueue(chunk1);
+          controller.enqueue(chunk2);
+          controller.enqueue(chunk3);
+          controller.close();
+        }
+      });
+
+      const nodeReadable = NodeStream.fromWebReadable({ readableStream: webStream });
+
+      await NodeStream.consumeToBytes({ readable: nodeReadable });
+      expect(nodeReadable.bytesRead).to.equal(350);
+    });
+
     it('calls reader.cancel() if the stream is destroyed before closing', function (done): void {
       // Create a Web ReadableStream.
       const webStream = new ReadableStream({
