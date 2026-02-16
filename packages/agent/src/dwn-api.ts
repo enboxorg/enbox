@@ -460,13 +460,11 @@ export class AgentDwnApi {
         }
 
         if (!rawMessage && messageParams) {
-          // @ts-ignore — dataCid is set dynamically
           messageParams.dataCid = await Cid.computeDagPbCidFromStream(forCid!);
           // Compute data size by consuming forCid (already consumed by computeDagPbCidFromStream)
           // and using the Blob/stream size if available.
           if (messageParams.dataSize === undefined) {
             if (dataStream instanceof Blob) {
-              // @ts-ignore — dataSize is set dynamically
               messageParams.dataSize = dataStream.size;
             }
             // For ReadableStream without known size, the SDK will compute it during processMessage.
@@ -647,9 +645,7 @@ export class AgentDwnApi {
 
         // 8. Replace plaintext with encrypted data
         const encryptedCidStream = DataStream.fromBytes(encryptedBytes);
-        // @ts-ignore — dataCid is set dynamically above
         messageParams.dataCid = await Cid.computeDagPbCidFromStream(encryptedCidStream);
-        // @ts-ignore — dataSize is set dynamically above
         messageParams.dataSize = encryptedBytes.length;
         delete messageParams.data;
         readableStream = DataStream.fromBytes(encryptedBytes);
