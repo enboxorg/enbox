@@ -33,7 +33,9 @@
           "who": "author",
           "of": "contribution",
           "can": [
-            "read"
+            "read",
+            "query",
+            "subscribe"
           ]
         }
       ]

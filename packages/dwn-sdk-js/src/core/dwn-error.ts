@@ -92,6 +92,7 @@ export enum DwnErrorCode {
   ProtocolsConfigureRecordNestingDepthExceeded = 'ProtocolsConfigureRecordNestingDepthExceeded',
   ProtocolsConfigureRoleDoesNotExistAtGivenPath = 'ProtocolsConfigureRoleDoesNotExistAtGivenPath',
   ProtocolsConfigureRoleReadActionMissing = 'ProtocolsConfigureRoleReadActionMissing',
+  ProtocolsConfigureWhoReadActionMissing = 'ProtocolsConfigureWhoReadActionMissing',
   ProtocolsGrantAuthorizationQueryProtocolScopeMismatch = 'ProtocolsGrantAuthorizationQueryProtocolScopeMismatch',
   ProtocolsGrantAuthorizationScopeProtocolMismatch = 'ProtocolsGrantAuthorizationScopeProtocolMismatch',
   ProtocolsQueryUnauthorized = 'ProtocolsQueryUnauthorized',
