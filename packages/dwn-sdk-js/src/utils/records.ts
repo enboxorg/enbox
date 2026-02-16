@@ -1,4 +1,5 @@
 import type { DerivedPrivateJwk } from './hd-key.js';
+import type { KeyDecrypter } from '../types/encryption-types.js';
 import type { Readable } from 'readable-stream';
 import type { Filter, KeyValues, StartsWithFilter } from '../types/query-types.js';
 import type { GenericMessage, GenericSignaturePayload } from '../types/message-types.js';
@@ -35,47 +36,96 @@ export class Records {
   }
 
   /**
-   * Decrypts the encrypted data in a message reply using the given ancestor private key.
+   * Decrypts the encrypted data in a message reply.
+   *
+   * Overload 1 (callback-based): Accepts a KeyDecrypter that performs
+   * HKDF derivation + ECIES decryption internally.
+   */
+  public static async decrypt(
+    recordsWrite: RecordsWriteMessage,
+    keyDecrypter: KeyDecrypter,
+    cipherStream: Readable,
+  ): Promise<Readable>;
+
+  /**
+   * Overload 2 (raw-key, existing): Takes DerivedPrivateJwk directly.
    * @param ancestorPrivateKey Any ancestor private key in the key derivation path.
    */
   public static async decrypt(
     recordsWrite: RecordsWriteMessage,
     ancestorPrivateKey: DerivedPrivateJwk,
-    cipherStream: Readable
+    cipherStream: Readable,
+  ): Promise<Readable>;
+
+  // Implementation dispatches based on argument type
+  public static async decrypt(
+    recordsWrite: RecordsWriteMessage,
+    keyOrDecrypter: DerivedPrivateJwk | KeyDecrypter,
+    cipherStream: Readable,
   ): Promise<Readable> {
     const { encryption } = recordsWrite;
+    const isCallback = 'decrypt' in keyOrDecrypter;
 
-    // look for an encrypted symmetric key that is encrypted by the public key corresponding to the given private key
+    // Find matching key encryption entry
     const matchingEncryptedKey = encryption!.keyEncryption.find(key =>
-      key.rootKeyId === ancestorPrivateKey.rootKeyId &&
-      key.derivationScheme === ancestorPrivateKey.derivationScheme
+      key.rootKeyId === keyOrDecrypter.rootKeyId &&
+      key.derivationScheme === keyOrDecrypter.derivationScheme
     );
     if (matchingEncryptedKey === undefined) {
       throw new DwnError(
         DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound,
         `Unable to find a symmetric key encrypted using key \
-        with ID '${ancestorPrivateKey.rootKeyId}' and '${ancestorPrivateKey.derivationScheme}' derivation scheme.`
+        with ID '${keyOrDecrypter.rootKeyId}' and '${keyOrDecrypter.derivationScheme}' derivation scheme.`
       );
     }
 
-    const fullDerivationPath = Records.constructKeyDerivationPath(matchingEncryptedKey.derivationScheme, recordsWrite);
+    // Construct the full derivation path (reused for both paths)
+    const fullDerivationPath = Records.constructKeyDerivationPath(
+      matchingEncryptedKey.derivationScheme, recordsWrite,
+    );
 
-    // NOTE: right now only `ECIES-ES256K` algorithm is supported for asymmetric encryption,
-    // so we will assume that's the algorithm without additional switch/if statements
-    const leafPrivateKey = await Records.derivePrivateKey(ancestorPrivateKey, fullDerivationPath);
-    const encryptedKeyBytes = Encoder.base64UrlToBytes(matchingEncryptedKey.encryptedKey);
-    const ephemeralPublicKey = Secp256k1.publicJwkToBytes(matchingEncryptedKey.ephemeralPublicKey);
-    const keyEncryptionInitializationVector = Encoder.base64UrlToBytes(matchingEncryptedKey.initializationVector);
-    const messageAuthenticationCode = Encoder.base64UrlToBytes(matchingEncryptedKey.messageAuthenticationCode);
-    const dataEncryptionKey = await Encryption.eciesSecp256k1Decrypt({
-      ciphertext           : encryptedKeyBytes,
-      ephemeralPublicKey,
-      initializationVector : keyEncryptionInitializationVector,
-      messageAuthenticationCode,
-      privateKey           : leafPrivateKey
-    });
+    let dataEncryptionKey: Uint8Array;
 
+    if (isCallback) {
+      // Callback-based: delegate HKDF + ECIES to the KeyDecrypter
+      const encryptedKeyBytes = Encoder.base64UrlToBytes(
+        matchingEncryptedKey.encryptedKey,
+      );
+      const ephemeralPublicKeyBytes = Secp256k1.publicJwkToBytes(
+        matchingEncryptedKey.ephemeralPublicKey,
+      );
+      const iv = Encoder.base64UrlToBytes(
+        matchingEncryptedKey.initializationVector,
+      );
+      const mac = Encoder.base64UrlToBytes(
+        matchingEncryptedKey.messageAuthenticationCode,
+      );
 
+      dataEncryptionKey = await keyOrDecrypter.decrypt(fullDerivationPath, {
+        ciphertext                : encryptedKeyBytes,
+        ephemeralPublicKey        : ephemeralPublicKeyBytes,
+        initializationVector      : iv,
+        messageAuthenticationCode : mac,
+      });
+    } else {
+      // Raw-key path (existing logic, unchanged)
+      // NOTE: right now only `ECIES-ES256K` algorithm is supported for asymmetric encryption,
+      // so we will assume that's the algorithm without additional switch/if statements
+      const leafPrivateKey = await Records.derivePrivateKey(keyOrDecrypter, fullDerivationPath);
+      const encryptedKeyBytes = Encoder.base64UrlToBytes(matchingEncryptedKey.encryptedKey);
+      const ephemeralPublicKey = Secp256k1.publicJwkToBytes(matchingEncryptedKey.ephemeralPublicKey);
+      const keyEncryptionInitializationVector = Encoder.base64UrlToBytes(matchingEncryptedKey.initializationVector);
+      const messageAuthenticationCode = Encoder.base64UrlToBytes(matchingEncryptedKey.messageAuthenticationCode);
+      dataEncryptionKey = await Encryption.eciesSecp256k1Decrypt({
+        ciphertext           : encryptedKeyBytes,
+        ephemeralPublicKey,
+        initializationVector : keyEncryptionInitializationVector,
+        messageAuthenticationCode,
+        privateKey           : leafPrivateKey
+      });
+    }
+
+    // AES decrypt data (shared by both paths)
     // NOTE: right now only `A256CTR` algorithm is supported for symmetric encryption,
     // so we will assume that's the algorithm without additional switch/if statements
     const dataEncryptionInitializationVector = Encoder.base64UrlToBytes(encryption!.initializationVector);

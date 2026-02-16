@@ -365,27 +365,27 @@ describe('web5 connect', function () {
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
-      const formEncodedRequest = new URLSearchParams({
-        id_token : authResponseJwe,
-        state    : authRequest.state,
-      }).toString();
-
       const callbackUrl = Oidc.buildOidcUrl({
         baseURL  : 'http://localhost:3000',
         endpoint : 'callback',
       });
       expect(callbackUrl).to.equal('http://localhost:3000/callback');
 
-      const fetchSpy = sinon.spy(globalThis, 'fetch').withArgs(
-        callbackUrl,
-        sinon.match({
-          method  : 'POST',
-          headers : {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: formEncodedRequest,
-        })
-      );
+      // Stub agent DWN methods so prepareProtocol (called inside submitAuthResponse)
+      // succeeds without needing a real DWN server or network access.
+      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({
+        messageCid : '',
+        reply      : { status: { code: 200, detail: 'OK' }, entries: [{ descriptor: { interface: 'Protocols', method: 'Configure' } }] },
+      } as any);
+      sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
+        messageCid : '',
+        reply      : { status: { code: 202, detail: 'Accepted' } },
+      } as any);
+
+      // Stub fetch to capture the callback POST without making a real HTTP call.
+      // The body contains a time-dependent JWE (the JWT includes `iat`/`exp`
+      // from Date.now()) so we verify structure rather than exact content.
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(new Response());
 
       const selectedDid = providerIdentity.did.uri;
       await Oidc.submitAuthResponse(
@@ -394,7 +394,21 @@ describe('web5 connect', function () {
         randomPin,
         testHarness.agent
       );
-      expect(fetchSpy.calledOnce).to.be.true;
+
+      // Find the call to the callback URL
+      const callbackCall = fetchStub.getCalls().find(
+        call => call.args[0] === callbackUrl
+      );
+      expect(callbackCall).to.not.be.undefined;
+      const options = callbackCall!.args[1] as RequestInit;
+      expect(options.method).to.equal('POST');
+      expect(options.headers).to.deep.equal({
+        'Content-Type': 'application/x-www-form-urlencoded',
+      });
+      // Verify the body contains the expected state and an id_token
+      const body = new URLSearchParams(options.body as string);
+      expect(body.get('state')).to.equal(authRequest.state);
+      expect(body.get('id_token')).to.be.a('string').and.have.length.greaterThan(0);
     });
   });
 
