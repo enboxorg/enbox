@@ -85,27 +85,16 @@ The Enbox Crypto API is distributed as `@enbox/crypto` via [npmjs.com][crypto-np
 [jsdelivr.com][crypto-jsdelivr-link], [unpkg.com][crypto-unpkg-link], and
 [github.com][crypto-repo-link].
 
-### Node.js
+### Node.js / Bun
 
-This library is designed and tested for the _active_ (`v20`) and _maintenance_
-(`v18`) [LTS releases](https://nodejs.org/en/about/previous-releases) of Node.js
-
-Install the latest version of `@enbox/crypto` using `npm` or your preferred package manager:
+Install using `bun` or your preferred package manager:
 
 ```shell
-npm install @enbox/crypto
+bun add @enbox/crypto
 ```
-
-Example ESM import:
 
 ```js
 import { Ed25519 } from "@enbox/crypto";
-```
-
-Example CJS require:
-
-```js
-const { Ed25519 } = require("@enbox/crypto");
 ```
 
 ### Web Browsers
