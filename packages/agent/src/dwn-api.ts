@@ -3,6 +3,8 @@ import type {
   DwnConfig,
   EncryptionInput,
   EncryptionKeyDeriver,
+  EventLog,
+  EventStream,
   GenericMessage,
   KeyDecrypter,
   MessageStore,
@@ -1440,14 +1442,22 @@ export class AgentDwnApi {
     // the handler's conflict resolution which doesn't support same-timestamp
     // owner-augmented replacements. The data is unchanged — only the encryption
     // metadata and authorization are updated.
-    const messageStore = (this._dwn as any).messageStore as MessageStore;
+    //
+    // We must also update the event log and event stream to keep sync and
+    // real-time subscribers consistent — without this, the upgraded record
+    // would never propagate to remote DWNs or notify subscribers.
+    const dwnInternal = this._dwn as any;
+    const messageStore = dwnInternal.messageStore as MessageStore;
+    const eventLog = dwnInternal.eventLog as EventLog;
+    const eventStream = dwnInternal.eventStream as EventStream | undefined;
 
     // Fetch the stored original (which carries encodedData for small payloads)
     const originalCid = await Message.getCid(recordsWrite);
     const storedOriginal = await messageStore.get(tenantDid, originalCid) as RecordsQueryReplyEntry | undefined;
 
-    // Delete the original message
+    // Remove the original message and its event log entry
     await messageStore.delete(tenantDid, originalCid);
+    await eventLog.deleteEventsByCid(tenantDid, [originalCid]);
 
     // Build indexes for the upgraded message (mark as latest base state)
     const isLatestBaseState = true;
@@ -1460,7 +1470,15 @@ export class AgentDwnApi {
       upgradedMessage.encodedData = storedOriginal.encodedData;
     }
 
+    // Store the upgraded message and append its event
     await messageStore.put(tenantDid, upgradedMessage, upgradedIndexes);
+    const upgradedCid = await Message.getCid(upgradedMessage);
+    await eventLog.append(tenantDid, upgradedCid, upgradedIndexes);
+
+    // Notify real-time subscribers (mirrors handler behavior)
+    if (eventStream !== undefined) {
+      eventStream.emit(tenantDid, { message: upgradedMessage }, upgradedIndexes);
+    }
 
     // Cache context key info for subsequent writes in this context
     this._contextKeyCache.set(contextId, { keyId, keyUri, contextDerivationPath });
