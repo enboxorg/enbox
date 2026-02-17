@@ -5,12 +5,12 @@ import { Convert, Stream, TtlCache } from '@enbox/common';
 
 import type { DwnMessageParams } from './types/dwn.js';
 import type { Web5PlatformAgent } from './types/agent.js';
-import type { ProtocolDefinition, Protocols, RecordsReadReplyEntry } from '@enbox/dwn-sdk-js';
+import type { ProtocolDefinition, RecordsReadReplyEntry } from '@enbox/dwn-sdk-js';
+
+import { Protocols } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
 import { getDataStoreTenant, TENANT_SEPARATOR } from './utils-internal.js';
-
-type ProtocolsType = typeof Protocols;
 
 export type DataStoreTenantParams = {
   agent: Web5PlatformAgent;
@@ -328,7 +328,6 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
         // Attempt to derive encryption keys — this will succeed only if the
         // tenant DID has a secp256k1 keyAgreement key.
         const keyDeriver = await agent.dwn.getEncryptionKeyDeriver(tenant);
-        const { Protocols } = await import('@enbox/dwn-sdk-js') as { Protocols: ProtocolsType };
         definition = await Protocols.deriveAndInjectPublicEncryptionKeys(
           definition, keyDeriver,
         );
