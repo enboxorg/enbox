@@ -3,7 +3,6 @@ import type {
   DwnConfig,
   EncryptionInput,
   EncryptionKeyDeriver,
-  EventLog,
   EventStream,
   GenericMessage,
   KeyDecrypter,
@@ -15,7 +14,8 @@ import type {
   RecordsQueryReplyEntry,
   RecordsReadReply,
   RecordsWrite,
-  RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+  RecordsWriteMessage,
+  StateIndex } from '@enbox/dwn-sdk-js';
 import type { KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
 import { CryptoUtils } from '@enbox/crypto';
@@ -1502,21 +1502,21 @@ export class AgentDwnApi {
     // owner-augmented replacements. The data is unchanged — only the encryption
     // metadata and authorization are updated.
     //
-    // We must also update the event log and event stream to keep sync and
+    // We must also update the state index and event stream to keep sync and
     // real-time subscribers consistent — without this, the upgraded record
     // would never propagate to remote DWNs or notify subscribers.
     const dwnInternal = this._dwn as any;
     const messageStore = dwnInternal.messageStore as MessageStore;
-    const eventLog = dwnInternal.eventLog as EventLog;
+    const stateIndex = dwnInternal.stateIndex as StateIndex;
     const eventStream = dwnInternal.eventStream as EventStream | undefined;
 
     // Fetch the stored original (which carries encodedData for small payloads)
     const originalCid = await Message.getCid(recordsWrite);
     const storedOriginal = await messageStore.get(tenantDid, originalCid) as RecordsQueryReplyEntry | undefined;
 
-    // Remove the original message and its event log entry
+    // Remove the original message and its state index entry
     await messageStore.delete(tenantDid, originalCid);
-    await eventLog.deleteEventsByCid(tenantDid, [originalCid]);
+    await stateIndex.delete(tenantDid, [originalCid]);
 
     // Build indexes for the upgraded message (mark as latest base state)
     const isLatestBaseState = true;
@@ -1529,10 +1529,10 @@ export class AgentDwnApi {
       upgradedMessage.encodedData = storedOriginal.encodedData;
     }
 
-    // Store the upgraded message and append its event
+    // Store the upgraded message and insert into state index
     await messageStore.put(tenantDid, upgradedMessage, upgradedIndexes);
     const upgradedCid = await Message.getCid(upgradedMessage);
-    await eventLog.append(tenantDid, upgradedCid, upgradedIndexes);
+    await stateIndex.insert(tenantDid, upgradedCid, upgradedIndexes);
 
     // Notify real-time subscribers (mirrors handler behavior)
     if (eventStream !== undefined) {
