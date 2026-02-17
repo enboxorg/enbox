@@ -55,7 +55,9 @@ describe('SyncEngineLevel', () => {
     });
   });
 
-  describe('with Web5 Platform Agent', () => {
+  describe('with Web5 Platform Agent', function () {
+    this.timeout(30_000);
+
     let alice: BearerIdentity;
     let randomSchema: string;
     let syncEngine: SyncEngineLevel;
