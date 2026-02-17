@@ -1,5 +1,6 @@
 import type { Jwk } from '@enbox/crypto';
 
+import { Convert } from '@enbox/common';
 import { expect } from 'chai';
 
 import { DwnInterface } from '../src/types/dwn.js';
@@ -34,15 +35,21 @@ describe('e2e: two-layer encryption recovery', function () {
   let originalKeyUris: string[];
   let originalKeys: Jwk[];
 
-  after(async () => {
+  after(async function () {
     // Final cleanup: remove all test data by setting up and tearing down a harness.
-    const cleanupHarness = await PlatformAgentTestHarness.setup({
-      agentClass  : Web5UserAgent,
-      agentStores : 'dwn',
-      testDataLocation,
-    });
-    await cleanupHarness.clearStorage();
-    await cleanupHarness.closeStorage();
+    // Wrapped in try/catch to avoid masking test failures if cleanup itself fails
+    // (e.g., when the entire suite was skipped due to DHT publish failures).
+    try {
+      const cleanupHarness = await PlatformAgentTestHarness.setup({
+        agentClass  : Web5UserAgent,
+        agentStores : 'dwn',
+        testDataLocation,
+      });
+      await cleanupHarness.clearStorage();
+      await cleanupHarness.closeStorage();
+    } catch {
+      // Cleanup failure is non-fatal; test data may remain on disk.
+    }
   });
 
   describe('Phase 1: initialize agent and generate encrypted keys', () => {
@@ -68,6 +75,43 @@ describe('e2e: two-layer encryption recovery', function () {
       expect(originalAgentDidUri).to.match(/^did:dht:/);
     });
 
+    it('should have Ed25519 (#sig) and secp256k1 (#enc) verification methods', async () => {
+      // The agent DID must have both verification methods for the two-layer
+      // encryption to function. Ed25519 #sig is for signing; secp256k1 #enc is
+      // the keyAgreement key used by Layer 2 (ECIES encryption of DWN records).
+      const doc = harness.agent.agentDid.document;
+
+      // Verify #sig (Ed25519) exists and is in authentication.
+      const sigKey = doc.verificationMethod?.find(
+        (vm: any): boolean => vm.id.endsWith('#sig')
+      );
+      expect(sigKey).to.exist;
+      expect(sigKey?.publicKeyJwk).to.have.property('kty', 'OKP');
+      expect(sigKey?.publicKeyJwk).to.have.property('crv', 'Ed25519');
+      expect(doc.authentication).to.be.an('array').that.satisfies(
+        (refs: string[]): boolean => refs.some((r: string): boolean => r.endsWith('#sig'))
+      );
+
+      // Verify #enc (secp256k1) exists and is in keyAgreement.
+      const encKey = doc.verificationMethod?.find(
+        (vm: any): boolean => vm.id.endsWith('#enc')
+      );
+      expect(encKey).to.exist;
+      expect(encKey?.publicKeyJwk).to.have.property('kty', 'EC');
+      expect(encKey?.publicKeyJwk).to.have.property('crv', 'secp256k1');
+      expect(encKey?.publicKeyJwk).to.have.property('x');
+      expect(encKey?.publicKeyJwk).to.have.property('y');
+      expect(encKey?.publicKeyJwk).to.not.have.property('d'); // public only in document
+      expect(doc.keyAgreement).to.be.an('array').that.satisfies(
+        (refs: string[]): boolean => refs.some((r: string): boolean => r.endsWith('#enc'))
+      );
+
+      // Verify #enc is NOT in authentication (it's only for keyAgreement).
+      expect(doc.authentication ?? []).to.not.satisfy(
+        (refs: string[]): boolean => refs.some((r: string): boolean => r.endsWith('#enc'))
+      );
+    });
+
     it('should generate keys that are encrypted at the DWN level (Layer 2)', async () => {
       // Generate multiple keys through the key manager — each is stored via
       // DwnKeyStore which encrypts them using the protocol's $encryption keys.
@@ -86,7 +130,36 @@ describe('e2e: two-layer encryption recovery', function () {
       }
     });
 
-    it('should have encryption metadata on raw DWN records', async () => {
+    it('should have $encryption injected into the installed JWK protocol', async () => {
+      // The JwkProtocolDefinition has `encryptionRequired: true` on the privateJwk
+      // type. When installed, DwnDataStore.installProtocol() derives and injects
+      // `$encryption` keys into the protocol structure. Verify this happened.
+      const { reply } = await harness.agent.dwn.processRequest({
+        author        : originalAgentDidUri,
+        target        : originalAgentDidUri,
+        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : {
+          filter: { protocol: JwkProtocolDefinition.protocol }
+        },
+      });
+
+      expect(reply.status.code).to.equal(200);
+      expect(reply.entries).to.have.length(1);
+
+      // Verify $encryption was injected into the privateJwk rule set.
+      const installedDefinition = reply.entries![0].descriptor.definition;
+      const privateJwkRuleSet = installedDefinition.structure.privateJwk;
+      expect(privateJwkRuleSet).to.have.property('$encryption');
+      const encryptionBlock = privateJwkRuleSet.$encryption;
+      expect(encryptionBlock).to.have.property('rootKeyId');
+      expect(encryptionBlock).to.have.property('publicKeyJwk');
+
+      // The rootKeyId should reference the agent DID's #enc key.
+      expect(encryptionBlock!.rootKeyId).to.include(originalAgentDidUri);
+      expect(encryptionBlock!.rootKeyId).to.include('#enc');
+    });
+
+    it('should have encryption metadata on raw DWN records with ciphertext', async () => {
       // Query the raw DWN records to verify they carry encryption metadata,
       // proving data is not stored in plaintext.
       const { reply } = await harness.agent.dwn.processRequest({
@@ -105,8 +178,29 @@ describe('e2e: two-layer encryption recovery', function () {
       expect(reply.entries).to.have.length(3);
 
       for (const entry of reply.entries!) {
+        // Verify encryption metadata is present.
         expect(entry.encryption).to.exist;
         expect(entry.encryption!.algorithm).to.equal('A256CTR');
+
+        // Verify the raw data is ciphertext, not readable JSON. Encrypted records
+        // may have encodedData (base64url ciphertext) — if present, decoding it
+        // should NOT produce valid JSON with key material.
+        if (entry.encodedData) {
+          const rawBytes = Convert.base64Url(entry.encodedData).toUint8Array();
+          let parsedAsJson: any;
+          try {
+            parsedAsJson = JSON.parse(new TextDecoder().decode(rawBytes));
+          } catch {
+            // Expected: ciphertext is not valid JSON. This is correct.
+            parsedAsJson = null;
+          }
+          // If by chance the ciphertext decodes as JSON, it must NOT contain
+          // private key material (the 'd' field).
+          if (parsedAsJson !== null) {
+            expect(parsedAsJson).to.not.have.property('d',
+              'Raw DWN record data contains unencrypted private key material');
+          }
+        }
       }
     });
 
@@ -126,6 +220,9 @@ describe('e2e: two-layer encryption recovery', function () {
         agentStores : 'dwn',
         testDataLocation,
       });
+
+      // The vault should be locked since we just created a fresh agent instance.
+      expect((harness.agent as Web5UserAgent).vault.isLocked()).to.be.true;
     });
 
     it('should recover the agent DID using the seed phrase (Layer 1)', async () => {
@@ -138,11 +235,33 @@ describe('e2e: two-layer encryption recovery', function () {
       });
       expect(returnedPhrase).to.equal(recoveryPhrase);
 
+      // Verify the vault reports as initialized after recovery.
+      expect(await (harness.agent as Web5UserAgent).vault.isInitialized()).to.be.true;
+
       // Start the agent with the new password.
       await (harness.agent as Web5UserAgent).start({ password: newPassword });
 
       // The recovered agent DID should be identical to the original.
       expect(harness.agent.agentDid.uri).to.equal(originalAgentDidUri);
+    });
+
+    it('should reject the old password after recovery (Layer 1 re-encryption)', async () => {
+      // After recovery with a new password, the vault CEK was re-encrypted.
+      // Attempting to start with the old password must fail, proving Layer 1
+      // re-encryption was effective.
+
+      // Lock the vault first to simulate a fresh start attempt.
+      await (harness.agent as Web5UserAgent).vault.lock();
+
+      try {
+        await (harness.agent as Web5UserAgent).start({ password });
+        expect.fail('Expected an error when using the old password');
+      } catch (error: any) {
+        expect(error.message).to.include('incorrect password');
+      }
+
+      // Re-unlock with the correct (new) password to continue the test.
+      await (harness.agent as Web5UserAgent).start({ password: newPassword });
     });
 
     it('should read back all encrypted keys with exact match (Layer 2)', async () => {
@@ -159,6 +278,10 @@ describe('e2e: two-layer encryption recovery', function () {
         expect(recovered.crv).to.equal(originalKeys[i].crv);
         expect(recovered.d).to.equal(originalKeys[i].d);
         expect(recovered.x).to.equal(originalKeys[i].x);
+        // secp256k1 keys have a `y` coordinate; Ed25519 keys do not.
+        if (originalKeys[i].y !== undefined) {
+          expect(recovered.y).to.equal(originalKeys[i].y);
+        }
       }
     });
 
