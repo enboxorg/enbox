@@ -155,10 +155,11 @@ describe('websocket api', function () {
     });
     expect(writeResult2.status.code).to.equal(202);
 
+    await new Promise(resolve => setTimeout(resolve, 5)); // wait for records to be processed
+
     // close the subscription
     await close();
 
-    await new Promise(resolve => setTimeout(resolve, 5)); // wait for records to be processed
     expect(records).to.have.members([
       await Message.getCid(write1Message.message),
       await Message.getCid(write2Message.message)
@@ -322,10 +323,11 @@ describe('websocket api', function () {
     });
     expect(writeResult2.status.code).to.equal(202);
 
+    await new Promise(resolve => setTimeout(resolve, 5)); // wait for records to be processed
+
     // close the subscription
     await close();
 
-    await new Promise(resolve => setTimeout(resolve, 5)); // wait for records to be processed
     expect(records).to.have.members([
       await Message.getCid(write1Message.message),
       await Message.getCid(write2Message.message)
@@ -398,9 +400,10 @@ describe('websocket api', function () {
     });
     expect(updateResult.status.code).to.equal(202);
 
-    await close();
-
     await new Promise(resolve => setTimeout(resolve, 5)); // wait for records to be processed
+
+    // close the subscription
+    await close();
 
     // both initial and update should exist now
     expect(records).to.have.members([
