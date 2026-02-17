@@ -396,7 +396,11 @@ describe('e2e: multi-party encrypted thread with key delivery', function () {
     structure: {
       thread: {
         participant : { $role: true },
-        chat        : {},
+        chat        : {
+          $actions: [
+            { role: 'thread/participant', can: ['create', 'read', 'query', 'subscribe'] },
+          ],
+        },
       },
     },
   };
