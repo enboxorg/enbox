@@ -1,5 +1,7 @@
 # Enbox Browser
 
+> **Research Preview** — Enbox is under active development. APIs may change without notice.
+
 | Browser-specific tools and features for building decentralized web applications |
 | ------------------------------------------------------------------------------ |
 

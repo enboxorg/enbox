@@ -1,58 +1,144 @@
 # Enbox
 
-A comprehensive toolkit for decentralized identity and data management.
+> **Research Preview** — Enbox is under active development. APIs may change without notice.
 
-## Architecture Overview
+A toolkit for decentralized identity and encrypted personal data storage.
 
-This monorepo contains the following packages under the `@enbox` namespace:
+## How It Works
 
-### Core DWN (Decentralized Web Node) Packages
-- **`@enbox/dwn-sdk-js`** - Core DWN SDK implementation (client/server compatible)
-- **`@enbox/dwn-sql-store`** - SQL-backed implementations of DWN MessageStore, DataStore, and StateIndex
-- **`@enbox/dwn-server`** - Express.js server implementation for DWN
+Enbox gives each user an **agent** — a local software component that manages their decentralized identity (DID), cryptographic keys, and personal data. Data is stored in **Decentralized Web Nodes (DWNs)**: protocol-driven datastores that the user controls.
 
-### SDK Packages
-- **`@enbox/api`** - Main API entry point for building decentralized applications
-- **`@enbox/agent`** - Agent implementation for decentralized identity management
-- **`@enbox/common`** - Shared utilities and common functionality
-- **`@enbox/crypto`** - Cryptographic library and JOSE implementation
-- **`@enbox/dids`** - Decentralized Identifiers (DID) library
-- **`@enbox/browser`** - Browser-specific tools and features
+### The Key Components
 
-## System Flow
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Your Application                                           │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  @enbox/api  (Enbox.connect() → enbox.dwn.records.*)  │  │
+│  └──────────────────────┬────────────────────────────────┘  │
+│                         │                                   │
+│  ┌──────────────────────▼────────────────────────────────┐  │
+│  │  @enbox/agent                                         │  │
+│  │  ┌──────────┐ ┌───────────┐ ┌──────────────────────┐  │  │
+│  │  │ Identity │ │ Key Mgmt  │ │ Sync Engine          │  │  │
+│  │  │ Vault    │ │ (DWN-     │ │ (local ↔ remote DWN) │  │  │
+│  │  │ (seed    │ │  backed,  │ │                      │  │  │
+│  │  │  phrase) │ │  encrypt- │ └──────────────────────┘  │  │
+│  │  │          │ │  ed)      │                           │  │
+│  │  └──────────┘ └───────────┘                           │  │
+│  └──────────────────────┬────────────────────────────────┘  │
+│                         │                                   │
+│  ┌──────────────────────▼────────────────────────────────┐  │
+│  │  @enbox/dwn-sdk-js  (local DWN instance)              │  │
+│  │  Protocol engine · Message handlers · Storage          │  │
+│  └───────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+                          │ sync
+                          ▼
+            ┌──────────────────────────┐
+            │  @enbox/dwn-server       │
+            │  Remote DWN (Bun.serve)  │
+            │  + SQL storage           │
+            │  (@enbox/dwn-sql-store)  │
+            └──────────────────────────┘
+```
 
-The system is designed to work as follows:
+**Agent**: Manages identities (DIDs), keys, and DWN interactions. Holds a seed-phrase-based identity vault for key recovery.
 
-1. **Server Setup**: Run `@enbox/dwn-server` connected to a SQL database
-2. **Client Integration**: Import `@enbox/api` in frontend applications
-3. **Communication**: The API uses `@enbox/dwn-sdk-js` + agents to communicate with the DWN server
+**DWN (Decentralized Web Node)**: A personal datastore defined by [protocol rules](#protocols). Each user has a local DWN and one or more remote DWNs. The agent syncs data between them.
+
+**DWN Server**: A multi-tenant remote DWN accessible over HTTP and WebSocket (JSON-RPC). Backed by SQL (PostgreSQL, SQLite, MySQL) or LevelDB.
+
+**Sync**: The agent's sync engine keeps the local DWN and remote DWN(s) in lockstep. Runs automatically (default: every 2 minutes) or can be configured.
+
+### Protocols
+
+DWN records are organized by **protocols** — declarative schemas that define what record types exist, who can read/write them, and whether they require encryption. For example:
+
+```typescript
+{
+  protocol: 'https://example.org/social',
+  types: {
+    post:    { schema: 'https://example.org/post',    dataFormats: ['application/json'] },
+    comment: { schema: 'https://example.org/comment', dataFormats: ['application/json'] },
+  },
+  structure: {
+    post: {
+      comment: {
+        $actions: [{ who: 'anyone', can: ['create'] }],
+      },
+    },
+  },
+}
+```
+
+Protocols are installed on a DWN via `ProtocolsConfigure` messages and enforced by the DWN engine.
+
+### Two-Layer Encryption
+
+All sensitive data is encrypted at rest through two independent layers:
+
+1. **Vault encryption** (Layer 1): A 12-word BIP-39 seed phrase deterministically derives the agent's DID and keys. A user-chosen password encrypts the agent's portable DID as a compact JWE (AES-256-GCM via PBKDF2).
+
+2. **DWN record-level encryption** (Layer 2): Protocol types with `encryptionRequired: true` are encrypted using ECIES with the tenant's secp256k1 `#enc` key. Encryption keys are derived and injected into the protocol definition at install time.
+
+**Recovery**: Given only the seed phrase, the agent DID is deterministically regenerated, yielding the secp256k1 `#enc` key needed to decrypt all DWN key records.
+
+## Packages
+
+### Build Order (dependency graph)
+
+```
+@enbox/common
+  └─ @enbox/crypto
+       └─ @enbox/dids
+            ├─ @enbox/dwn-sdk-js
+            │    ├─ @enbox/agent
+            │    │    └─ @enbox/api
+            │    └─ @enbox/dwn-sql-store
+            │         └─ @enbox/dwn-server
+            └─ @enbox/browser
+```
+
+| Package | Description |
+|---|---|
+| `@enbox/common` | Shared utilities, `TtlCache`, `LevelStore` |
+| `@enbox/crypto` | Ed25519, secp256k1, AES, PBKDF2, JWE |
+| `@enbox/dids` | DID methods (`did:dht`, `did:jwk`), resolution |
+| `@enbox/dwn-sdk-js` | DWN protocol engine, message handlers, stores |
+| `@enbox/agent` | Agent framework: identity vault, key management, DWN stores, sync |
+| `@enbox/api` | High-level SDK for applications (`Enbox.connect()`) |
+| `@enbox/dwn-sql-store` | SQL-backed DWN storage (PostgreSQL, SQLite, MySQL) |
+| `@enbox/dwn-server` | Multi-tenant remote DWN server (HTTP/WS via Bun.serve) |
+| `@enbox/browser` | Browser-specific DID tools |
 
 ## Quick Start
 
 ### Prerequisites
+
 - [Bun](https://bun.sh) >= 1.0
 
 ### Installation
+
 ```bash
-# Clone the repository
 git clone https://github.com/enboxorg/enbox.git
 cd enbox
-
-# Install dependencies
 bun install
-
-# Build all packages
 bun run build
 ```
 
 ### Development
+
 ```bash
-# Run tests
+# Run all tests
 bun run test:node
 
-# Lint code
+# Lint
 bun run lint
 bun run lint:fix
+
+# Build a specific package
+bun run --filter @enbox/agent build
 
 # Clean build artifacts
 bun run clean
@@ -60,109 +146,54 @@ bun run clean
 
 ## Docker Setup
 
-The easiest way to get started with the DWN server is using Docker Compose, which sets up both the DWN server and PostgreSQL database.
+The easiest way to run a remote DWN server is with Docker Compose, which sets up both the DWN server and PostgreSQL.
 
-### Quick Start with Docker
 ```bash
-# Start the DWN server with PostgreSQL
+# Start
 docker-compose up -d
 
 # View logs
 docker-compose logs -f dwn-server
 
-# Stop services
+# Stop
 docker-compose down
 ```
 
-The DWN server will be available at `http://localhost:3000` with the following endpoints:
-- `/info` - Server information
-- `/` - DWN protocol endpoints
+The DWN server will be available at `http://localhost:3000`.
 
-### Customizing the Setup
-Copy `docker.env.example` to `.env` and customize the configuration:
+### Configuration
+
+Copy `docker.env.example` to `.env` and customize:
+
 ```bash
 cp docker.env.example .env
-# Edit .env with your preferred settings
 ```
 
-### Data Persistence
-Both PostgreSQL data and DWN data are persisted in Docker volumes:
-- `postgres_data` - PostgreSQL database files (accessible on port 5433)
-- `dwn_data` - DWN server data files
+**Ports**: DWN server on `3000`, PostgreSQL on `5433` (avoids conflicts with package-level testing).
 
-### Port Configuration
-- **DWN Server**: `http://localhost:3000`
-- **PostgreSQL**: `localhost:5433` (avoids conflicts with package-level testing)
+**Volumes**: `postgres_data` (database files), `dwn_data` (DWN server data).
 
 ### Production Considerations
-For production deployments:
+
 1. Change default passwords in `.env`
-2. Use external PostgreSQL service for better scalability
+2. Use external PostgreSQL for better scalability
 3. Set up SSL/TLS termination (reverse proxy)
 4. Configure backup strategies
 5. Set resource limits for containers
 
 ## Fly.io Deployment
 
-Deploy the DWN server to Fly.io with managed PostgreSQL:
+Deploy the DWN server to Fly.io with managed PostgreSQL. See the complete [Fly.io Deployment Guide](./FLY.md).
 
-### Setup
-See the complete [Fly.io Deployment Guide](./FLY.md) for detailed instructions.
+**Quick summary**: Fork repo, create Fly app + Postgres cluster, attach Postgres, configure secrets, `fly deploy`.
 
-**Quick summary:**
-1. Fork this repository
-2. Create a Fly app and Postgres cluster
-3. Attach Postgres and configure secrets
-4. Deploy with `fly deploy`
+## AI / LLM Agent Context
 
-### Fly.io Benefits
-- Managed PostgreSQL with automatic failover
-- Global edge deployment across 30+ regions
-- SSL certificates automatically managed
-- Git-based deployments via GitHub Actions
-- Built-in metrics, logs, and monitoring
-- WebSocket and UDP support
-
-For complete Fly.io deployment instructions, troubleshooting, and production tips, see **[FLY.md](./FLY.md)**.
-
-## Package Dependencies
-
-### Internal Dependencies
-- `@enbox/dwn-sql-store` depends on `@enbox/dwn-sdk-js`
-- `@enbox/dwn-server` depends on `@enbox/dwn-sdk-js` and `@enbox/dwn-sql-store`
-- `@enbox/api` depends on `@enbox/agent`, `@enbox/common`, `@enbox/crypto`, `@enbox/dids`
-- `@enbox/agent` depends on `@enbox/dwn-sdk-js`, `@enbox/common`, `@enbox/crypto`, `@enbox/dids`
-- All packages use workspace dependencies for internal packages
-
-## Repository Structure
-
-```
-enbox/
-├── package.json              # Root monorepo configuration
-├── bunfig.toml              # Bun configuration
-├── tsconfig.json            # TypeScript configuration
-├── eslint.config.cjs        # ESLint configuration
-├── README.md                # This file
-├── AGENT_CONTEXT.md         # AI/LLM context documentation
-├── .gitignore              # Git ignore rules
-└── packages/               # All packages
-    ├── dwn-sdk-js/        # Core DWN SDK
-    ├── dwn-sql-store/     # SQL implementations
-    ├── dwn-server/        # Express server
-    ├── api/               # Main API entry point
-    ├── agent/             # Agent implementation
-    ├── common/            # Shared utilities
-    ├── crypto/            # Cryptographic library
-    ├── dids/              # DID library
-    └── browser/           # Browser tools
-```
+For detailed architecture notes, coding style, test patterns, and build instructions see [`CLAUDE.md`](./CLAUDE.md). It covers the package dependency graph, two-layer encryption internals, store inheritance, naming conventions, and how to run tests.
 
 ## Contributing
 
-This repository consolidates packages from the decentralized identity ecosystem. For detailed contribution guidelines, see the original repositories:
-
-- [dwn-sdk-js Contributing](https://github.com/decentralized-identity/dwn-sdk-js/blob/main/CONTRIBUTING.md)
-- [decentralized-identity Contributing](https://github.com/decentralized-identity/web5-js/blob/main/CONTRIBUTING.md)
+See the [contribution guide](https://github.com/enboxorg/enbox/blob/main/CONTRIBUTING.md).
 
 ## License
 
