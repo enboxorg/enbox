@@ -1079,6 +1079,9 @@ export class Record implements RecordModel {
       messageParams : { filter: { recordId: this.id }, protocolRole: this._protocolRole },
       messageType   : DwnInterface.RecordsRead,
       target,
+      // If the record is encrypted, enable auto-decryption so re-fetched
+      // data is returned as plaintext rather than ciphertext.
+      ...(this._encryption ? { encryption: true } : {}),
     };
 
     if (this._delegateDid) {
