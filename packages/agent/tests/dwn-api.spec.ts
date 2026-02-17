@@ -3371,6 +3371,114 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
       expect(payload.rootKeyId).to.equal(mockContextKey.rootKeyId);
       expect(payload.derivationScheme).to.equal(mockContextKey.derivationScheme);
     }).timeout(10000);
+
+    it('should eagerly send the contextKey record to the tenant\'s remote DWN', async () => {
+      const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
+      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
+
+      // Stub DID dereference to return a DWN service endpoint for Alice
+      sinon.stub(testHarness.agent.did, 'dereference').resolves({
+        dereferencingMetadata : {},
+        contentMetadata       : {},
+        contentStream         : {
+          id              : '#dwn',
+          type            : 'DecentralizedWebNode',
+          serviceEndpoint : ['https://dwn.example.com'],
+          enc             : '#enc',
+          sig             : '#sig',
+        }
+      });
+
+      // Stub the RPC sendDwnRequest to capture the eager send call
+      const sendDwnRequestStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves({
+        status: { code: 202, detail: 'Accepted' },
+      });
+
+      const mockContextKey = {
+        rootKeyId         : `${alice.did.uri}#enc`,
+        derivationScheme  : 'protocolContext',
+        derivationPath    : ['protocolContext', 'eager-send-context-id'],
+        derivedPrivateKey : { kty: 'EC', crv: 'secp256k1', x: 'test', d: 'test' },
+      };
+
+      const recordId = await testHarness.agent.dwn.writeContextKeyRecord({
+        tenantDid       : alice.did.uri,
+        recipientDid    : bob.did.uri,
+        contextKeyData  : mockContextKey as any,
+        sourceProtocol  : 'https://protocol.xyz/eager-test',
+        sourceContextId : 'eager-send-context-id',
+      });
+
+      expect(recordId).to.be.a('string');
+
+      // The eager send is fire-and-forget — wait a tick for the async call to complete
+      await new Promise((resolve: (value: void) => void) => setTimeout(resolve, 100));
+
+      // Verify the RPC send was called with the contextKey message
+      expect(sendDwnRequestStub.called).to.be.true;
+      const rpcCallArgs = sendDwnRequestStub.firstCall.args[0];
+      expect(rpcCallArgs.targetDid).to.equal(alice.did.uri);
+      expect(rpcCallArgs.dwnUrl).to.equal('https://dwn.example.com');
+      expect(rpcCallArgs.message).to.have.property('recordId', recordId);
+      // Verify data blob is included (the encrypted contextKey payload)
+      expect(rpcCallArgs.data).to.be.instanceOf(Blob);
+    }).timeout(10000);
+
+    it('should not fail when eager send encounters an error', async () => {
+      const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
+      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
+
+      // Stub DID dereference to return a DWN service endpoint
+      sinon.stub(testHarness.agent.did, 'dereference').resolves({
+        dereferencingMetadata : {},
+        contentMetadata       : {},
+        contentStream         : {
+          id              : '#dwn',
+          type            : 'DecentralizedWebNode',
+          serviceEndpoint : ['https://dwn.example.com'],
+          enc             : '#enc',
+          sig             : '#sig',
+        }
+      });
+
+      // Stub RPC to reject — simulating a network error
+      sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').rejects(
+        new Error('Network error: connection refused')
+      );
+
+      // Capture console.warn to verify the warning message
+      const warnStub = sinon.stub(console, 'warn');
+
+      const mockContextKey = {
+        rootKeyId         : `${alice.did.uri}#enc`,
+        derivationScheme  : 'protocolContext',
+        derivationPath    : ['protocolContext', 'error-context-id'],
+        derivedPrivateKey : { kty: 'EC', crv: 'secp256k1', x: 'test', d: 'test' },
+      };
+
+      // Should NOT throw despite the RPC error — the local write succeeds
+      const recordId = await testHarness.agent.dwn.writeContextKeyRecord({
+        tenantDid       : alice.did.uri,
+        recipientDid    : bob.did.uri,
+        contextKeyData  : mockContextKey as any,
+        sourceProtocol  : 'https://protocol.xyz/error-test',
+        sourceContextId : 'error-context-id',
+      });
+
+      expect(recordId).to.be.a('string');
+
+      // Wait for the fire-and-forget to complete
+      await new Promise((resolve: (value: void) => void) => setTimeout(resolve, 100));
+
+      // Verify a warning was logged about the failed eager send
+      expect(warnStub.called).to.be.true;
+      const warnMessage = warnStub.args.find(
+        (args: any[]) => typeof args[0] === 'string' && args[0].includes('Eager send')
+      );
+      expect(warnMessage).to.not.be.undefined;
+
+      warnStub.restore();
+    }).timeout(10000);
   });
 
   describe('fetchContextKeyRecord()', () => {

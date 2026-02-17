@@ -1063,7 +1063,7 @@ export class AgentDwnApi {
    * @param didUri - The DID URI to create the key deriver for
    * @returns An EncryptionKeyDeriver callback object
    */
-  private async getEncryptionKeyDeriver(
+  public async getEncryptionKeyDeriver(
     didUri: string
   ): Promise<EncryptionKeyDeriver> {
     const { keyId, keyUri } = await this.getEncryptionKeyInfo(didUri);
@@ -1909,7 +1909,52 @@ export class AgentDwnApi {
       );
     }
 
+    // Eagerly send the contextKey record to the tenant's remote DWN so that
+    // participants can fetch it immediately without waiting for sync.
+    // This is fire-and-forget — sync will guarantee eventual consistency.
+    this.eagerSendContextKeyRecord(tenantDid, message).catch((err: Error) => {
+      console.warn(
+        `AgentDwnApi: Eager send of contextKey record '${message.recordId}' ` +
+        `to remote DWN failed: ${err.message}. Sync will deliver it later.`
+      );
+    });
+
     return message.recordId;
+  }
+
+  /**
+   * Eagerly sends a contextKey record to the tenant's remote DWN.
+   * This is best-effort — sync guarantees eventual consistency regardless.
+   */
+  private async eagerSendContextKeyRecord(
+    tenantDid: string,
+    contextKeyMessage: DwnMessage[DwnInterface.RecordsWrite],
+  ): Promise<void> {
+    let dwnEndpointUrls: string[];
+    try {
+      dwnEndpointUrls = await getDwnServiceEndpointUrls(tenantDid, this.agent.did);
+    } catch {
+      // DID resolution or endpoint lookup failed — not fatal, sync will handle it.
+      return;
+    }
+
+    if (dwnEndpointUrls.length === 0) {
+      return;
+    }
+
+    // Read the full message (including data blob) from the local DWN
+    const { data } = await this.getDwnMessage({
+      author      : tenantDid,
+      messageType : DwnInterface.RecordsWrite,
+      messageCid  : await Message.getCid(contextKeyMessage),
+    });
+
+    await this.sendDwnRpcRequest({
+      targetDid : tenantDid,
+      dwnEndpointUrls,
+      message   : contextKeyMessage,
+      data,
+    });
   }
 
   /**

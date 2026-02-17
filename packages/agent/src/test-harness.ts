@@ -140,9 +140,10 @@ export class PlatformAgentTestHarness {
   }
 
   public async createAgentDid(): Promise<void> {
-    // Create a DID for the Agent.
+    // Create a DID for the Agent using secp256k1, which supports both signing
+    // and keyAgreement (required by DwnKeyStore for record-level encryption).
     this.agent.agentDid = await DidJwk.create({
-      options: { algorithm: 'Ed25519' }
+      options: { algorithm: 'secp256k1' }
     });
   }
 
