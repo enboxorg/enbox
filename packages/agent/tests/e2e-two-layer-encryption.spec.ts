@@ -226,6 +226,12 @@ describe('e2e: two-layer encryption recovery', function () {
     });
 
     it('should recover the agent DID using the seed phrase (Layer 1)', async () => {
+      // Clear the vault store to simulate the recovery scenario: the vault data
+      // is gone (e.g., app reinstalled) but DWN records persist on disk.
+      // This is required because HdIdentityVault.initialize() rejects if the
+      // vault is already initialized.
+      await harness.vaultStore.clear();
+
       // Re-initialize with the original recovery phrase but a NEW password.
       // The seed phrase deterministically re-derives the same agent DID, and the
       // new password re-encrypts the vault.
@@ -257,6 +263,8 @@ describe('e2e: two-layer encryption recovery', function () {
         await (harness.agent as Web5UserAgent).start({ password });
         expect.fail('Expected an error when using the old password');
       } catch (error: any) {
+        // Re-throw AssertionError from expect.fail() so it isn't swallowed.
+        if (error.name === 'AssertionError') { throw error; }
         expect(error.message).to.include('incorrect password');
       }
 
