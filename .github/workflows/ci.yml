@@ -79,10 +79,10 @@ jobs:
           retention-days: 1
 
   # ---------------------------------------------------------------------------
-  # Lightweight packages: common, crypto, dids (no external services needed)
+  # Lightweight packages: common, crypto (no external services needed)
   # ---------------------------------------------------------------------------
   test-lightweight:
-    name: 'Test: common / crypto / dids'
+    name: 'Test: common / crypto'
     runs-on: ubuntu-latest
     needs: setup
 
@@ -116,7 +116,6 @@ jobs:
         run: |
           bun run --filter @enbox/common  test:node
           bun run --filter @enbox/crypto  test:node
-          bun run --filter @enbox/dids    test:node
 
       - name: Upload coverage
         if: always()
@@ -126,7 +125,6 @@ jobs:
           path: |
             packages/common/coverage/
             packages/crypto/coverage/
-            packages/dids/coverage/
           retention-days: 7
 
   # ---------------------------------------------------------------------------
@@ -175,10 +173,10 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------------------
-  # Agent + API: need a live dwn-server (backed by Postgres) and Pkarr relay
+  # dids + Agent + API: need a live Pkarr relay and dwn-server (backed by Postgres)
   # ---------------------------------------------------------------------------
   test-agent-api:
-    name: 'Test: agent / api'
+    name: 'Test: dids / agent / api'
     runs-on: ubuntu-latest
     needs: setup
 
@@ -261,7 +259,8 @@ jobs:
       - name: Run tests
         run: |
           export DID_DHT_GATEWAY_URI=http://localhost:7527
-          bun run --filter @enbox/agent test:node
+          bun run --filter @enbox/dids   test:node
+          bun run --filter @enbox/agent  test:node
           bun run --filter @enbox/api    test:node
 
       - name: Stop services
@@ -278,131 +277,10 @@ jobs:
         with:
           name: coverage-agent-api
           path: |
+            packages/dids/coverage/
             packages/agent/coverage/
             packages/api/coverage/
           retention-days: 7
-
-  # ---------------------------------------------------------------------------
-  # SQL Store: needs Postgres + MySQL for dialect-specific tests
-  # ---------------------------------------------------------------------------
-  test-sql-store:
-    name: 'Test: dwn-sql-store'
-    runs-on: ubuntu-latest
-    needs: setup
-
-    services:
-      postgres:
-        image: postgres:13.3
-        env:
-          POSTGRES_DB: dwn
-          POSTGRES_USER: root
-          POSTGRES_PASSWORD: dwn
-          POSTGRES_INITDB_ARGS: '--lc-collate=C --lc-ctype=C'
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: dwn
-          MYSQL_DATABASE: dwn
-          MYSQL_ALLOW_EMPTY_PASSWORD: true
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=3
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Restore bun cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-store-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Download build outputs
-        uses: actions/download-artifact@v4
-        with:
-          name: workspace-build
-          path: packages
-
-      - name: Run tests
-        run: bun run --filter @enbox/dwn-sql-store test
-
-      - name: Upload coverage
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-sql-store
-          path: packages/dwn-sql-store/coverage/
-          retention-days: 7
-          if-no-files-found: ignore
-
-  # ---------------------------------------------------------------------------
-  # DWN Server: self-contained tests (SQLite in-memory, no external services)
-  # ---------------------------------------------------------------------------
-  test-dwn-server:
-    name: 'Test: dwn-server'
-    runs-on: ubuntu-latest
-    needs: setup
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Restore bun cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-store-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Download build outputs
-        uses: actions/download-artifact@v4
-        with:
-          name: workspace-build
-          path: packages
-
-      - name: Run tests
-        run: bun run --filter @enbox/dwn-server test
-
-      - name: Upload coverage
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-dwn-server
-          path: packages/dwn-server/coverage/
-          retention-days: 7
-          if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
   # Coverage: download all coverage artifacts and check thresholds (PRs only)
@@ -410,7 +288,7 @@ jobs:
   coverage:
     name: Coverage Check
     runs-on: ubuntu-latest
-    needs: [test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server]
+    needs: [test-lightweight, test-dwn-sdk, test-agent-api]
     if: github.event_name == 'pull_request'
 
     steps:
@@ -513,7 +391,7 @@ jobs:
   ci-passed:
     name: CI Passed
     runs-on: ubuntu-latest
-    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server, coverage]
+    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, coverage]
     if: always()
     steps:
       - name: Check results
@@ -535,14 +413,6 @@ jobs:
           fi
           if [ "${{ needs.test-agent-api.result }}" != "success" ]; then
             echo "::error::test-agent-api failed"
-            exit 1
-          fi
-          if [ "${{ needs.test-sql-store.result }}" != "success" ]; then
-            echo "::error::test-sql-store failed"
-            exit 1
-          fi
-          if [ "${{ needs.test-dwn-server.result }}" != "success" ]; then
-            echo "::error::test-dwn-server failed"
             exit 1
           fi
 
