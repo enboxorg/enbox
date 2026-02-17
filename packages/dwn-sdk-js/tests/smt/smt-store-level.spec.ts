@@ -115,4 +115,23 @@ describe('SMTStoreLevel', () => {
     expect(hashEquals(root, defaultHashes[0])).to.be.true;
     expect(await smt.has('bafyreiA')).to.be.false;
   });
+
+  it('should throw when calling methods before open()', async () => {
+    const uninitStore = new SMTStoreLevel({ location: uniqueLocation('uninit') });
+
+    try {
+      await uninitStore.getNode(new Uint8Array(32));
+      expect.fail('Expected an error');
+    } catch (e: any) {
+      expect(e.message).to.include('not initialized');
+    }
+  });
+
+  it('should return undefined for a non-existent node hash', async () => {
+    // This tests the early-return path at lines 72-74 of smt-store-level.ts
+    const randomHash = new Uint8Array(32);
+    randomHash[0] = 0xff; // ensure it's not all zeros
+    const node = await store.getNode(randomHash);
+    expect(node).to.be.undefined;
+  });
 });

@@ -14,6 +14,7 @@ import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
 import { MessagesSync } from '../../src/interfaces/messages-sync.js';
 import { MessagesSyncHandler } from '../../src/handlers/messages-sync.js';
+import sinon from 'sinon';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
@@ -498,6 +499,92 @@ export function testMessagesSyncHandler(): void {
         expect(reply.status.code).to.equal(400);
         // the JSON schema validator catches the invalid action before the handler switch/case
         expect(reply.status.detail).to.include('SchemaValidatorFailure');
+      });
+
+      it('returns 400 for unknown action that bypasses schema validation (default case)', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const { message } = await MessagesSync.create({
+          signer : Jws.createSigner(alice),
+          action : 'root',
+        });
+
+        // Stub MessagesSync.parse to skip schema validation
+        const parseStub = sinon.stub(MessagesSync, 'parse').resolves({
+          author           : alice.did,
+          message          : message,
+          signaturePayload : { descriptorCid: 'test' },
+        } as any);
+
+        try {
+          // Override action to something that passes the stub but hits the default case
+          (message.descriptor as any).action = 'bogusAction';
+
+          const handler = new MessagesSyncHandler(didResolver, messageStore, stateIndex);
+          const reply = await handler.handle({ tenant: alice.did, message });
+          expect(reply.status.code).to.equal(400);
+          expect(reply.status.detail).to.include('Unknown action');
+        } finally {
+          parseStub.restore();
+        }
+      });
+
+      it('returns 500 for invalid prefix with non-binary characters (via stubbed parse)', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const { message } = await MessagesSync.create({
+          signer : Jws.createSigner(alice),
+          action : 'subtree',
+          prefix : '0',
+        });
+
+        // Stub parse to skip schema validation
+        const parseStub = sinon.stub(MessagesSync, 'parse').resolves({
+          author           : alice.did,
+          message          : message,
+          signaturePayload : { descriptorCid: 'test' },
+        } as any);
+
+        try {
+          // Override prefix to contain invalid characters
+          (message.descriptor as any).prefix = 'abc';
+
+          const handler = new MessagesSyncHandler(didResolver, messageStore, stateIndex);
+          const reply = await handler.handle({ tenant: alice.did, message });
+          expect(reply.status.code).to.equal(500);
+          expect(reply.status.detail).to.include('MessagesSyncInvalidPrefix');
+        } finally {
+          parseStub.restore();
+        }
+      });
+
+      it('returns 500 for prefix exceeding 256 characters (via stubbed parse)', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const { message } = await MessagesSync.create({
+          signer : Jws.createSigner(alice),
+          action : 'subtree',
+          prefix : '0',
+        });
+
+        // Stub parse to skip schema validation
+        const parseStub = sinon.stub(MessagesSync, 'parse').resolves({
+          author           : alice.did,
+          message          : message,
+          signaturePayload : { descriptorCid: 'test' },
+        } as any);
+
+        try {
+          // Override prefix to be too long
+          (message.descriptor as any).prefix = '0'.repeat(257);
+
+          const handler = new MessagesSyncHandler(didResolver, messageStore, stateIndex);
+          const reply = await handler.handle({ tenant: alice.did, message });
+          expect(reply.status.code).to.equal(500);
+          expect(reply.status.detail).to.include('MessagesSyncInvalidPrefix');
+        } finally {
+          parseStub.restore();
+        }
       });
     });
 

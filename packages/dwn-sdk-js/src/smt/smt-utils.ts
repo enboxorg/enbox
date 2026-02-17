@@ -35,6 +35,15 @@ export function getDefaultHashes(): Hash[] {
 }
 
 /**
+ * Reset the cached default hashes. Only used by tests to verify the
+ * uninitialized code path in `getDefaultHashes()`.
+ * @internal
+ */
+export function resetDefaultHashesForTesting(): void {
+  _defaultHashes = undefined;
+}
+
+/**
  * Initialize the default hashes array. Must be called once before using the SMT.
  * This is async because sha256.digest is async.
  */

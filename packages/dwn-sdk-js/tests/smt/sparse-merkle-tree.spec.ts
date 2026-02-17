@@ -4,7 +4,7 @@ import type { Hash, SMTNodeStore } from '../../src/types/smt-types.js';
 
 import { SMTStoreMemory } from '../../src/smt/smt-store-memory.js';
 import { SparseMerkleTree } from '../../src/smt/sparse-merkle-tree.js';
-import { getBit, getDefaultHashes, hashEquals, hashKey, hashLeaf, initDefaultHashes, SMT_DEPTH, ZERO_HASH } from '../../src/smt/smt-utils.js';
+import { getBit, getDefaultHashes, hashEquals, hashKey, hashLeaf, initDefaultHashes, resetDefaultHashesForTesting, SMT_DEPTH, ZERO_HASH } from '../../src/smt/smt-utils.js';
 
 describe('SparseMerkleTree', () => {
   let store: SMTStoreMemory;
@@ -614,9 +614,67 @@ describe('SparseMerkleTree', () => {
       await smtB.close();
     });
 
-    it('should handle diff with corrupted/missing nodes via fallback', async () => {
-      // Create a custom store that returns undefined for specific node lookups
+    it('should detect both-are-leaves diff when each tree has one unique element', async () => {
+      // When each tree has exactly one element, the root IS a leaf hash.
+      // diffAtNode at depth 0 encounters two leaf nodes → hits lines 632-643.
+      const storeB = new SMTStoreMemory();
+      const smtB = new SparseMerkleTree(storeB);
+      await smtB.initialize();
+
+      // Each tree has exactly one unique element (different keys → line 633-636)
+      await smt.insert('bafyreiOnlyInLocal');
+      await smtB.insert('bafyreiOnlyInRemote');
+
+      const diff = await smt.diff(smtB);
+      expect(diff.onlyLocal).to.deep.equal(['bafyreiOnlyInLocal']);
+      expect(diff.onlyRemote).to.deep.equal(['bafyreiOnlyInRemote']);
+
+      await smtB.close();
+    });
+
+    it('should detect both-are-leaves diff with same key but different value', async () => {
+      // Test lines 637-640: same keyHash, different valueCid.
+      // Since keyHash = hash(valueCid), this can't happen organically.
+      // We simulate it by directly placing leaf nodes in the store.
+      const storeA = new SMTStoreMemory();
+      const smtA = new SparseMerkleTree(storeA);
+      await smtA.initialize();
+
+      const storeB = new SMTStoreMemory();
+      const smtB = new SparseMerkleTree(storeB);
+      await smtB.initialize();
+
+      // Insert the same CID into both, then manually alter one tree's leaf to have a different valueCid
+      // but the same keyHash, by manipulating the store directly.
+      const sharedKeyHash = await hashKey('bafyreiSharedKey');
+
+      const leafHashA = await hashLeaf(sharedKeyHash, 'valueCidA');
+      const leafNodeA = { type: 'leaf' as const, keyHash: sharedKeyHash, valueCid: 'valueCidA' };
+      await storeA.putNode(leafHashA, leafNodeA);
+      await storeA.setRoot(leafHashA);
+
+      const leafHashB = await hashLeaf(sharedKeyHash, 'valueCidB');
+      const leafNodeB = { type: 'leaf' as const, keyHash: sharedKeyHash, valueCid: 'valueCidB' };
+      await storeB.putNode(leafHashB, leafNodeB);
+      await storeB.setRoot(leafHashB);
+
+      const diff = await smtA.diff(smtB);
+      // Same key, different value → both appear as unique
+      expect(diff.onlyLocal).to.deep.equal(['valueCidA']);
+      expect(diff.onlyRemote).to.deep.equal(['valueCidB']);
+
+      await smtA.close();
+      await smtB.close();
+    });
+
+    it('should handle diff with selectively corrupted nodes via fallback', async () => {
+      // To hit lines 687-696, we need both trees to have internal root nodes
+      // (so the recursion goes through line 682-684 into children), and then
+      // at the child level, one node is missing (getNode returns undefined).
       const realStore = new SMTStoreMemory();
+      let corruptDuringDiff = false;
+      let lookupCount = 0;
+
       const corruptStore: SMTNodeStore = {
         open       : (): Promise<void> => realStore.open(),
         close      : (): Promise<void> => realStore.close(),
@@ -626,38 +684,109 @@ describe('SparseMerkleTree', () => {
         putNode    : (hash: Hash, node: any): Promise<void> => realStore.putNode(hash, node),
         deleteNode : (hash: Hash): Promise<void> => realStore.deleteNode(hash),
         getNode    : async (hash: Hash): Promise<any> => {
-          // Return nodes normally during insertion, but after we
-          // switch to diff mode, return undefined for the root node
           if (corruptDuringDiff) {
-            return undefined;
+            lookupCount++;
+            // Return the root node (first lookup) but corrupt child nodes
+            if (lookupCount > 1) {
+              return undefined;
+            }
           }
           return realStore.getNode(hash);
         },
       };
 
-      let corruptDuringDiff = false;
-
-      // Build a tree using the corrupt store
+      // Build the corrupt tree with multiple elements (so root = internal node)
       const corruptSmt = new SparseMerkleTree(corruptStore);
       await corruptSmt.initialize();
       await corruptSmt.insert('bafyreiCorrupt1');
       await corruptSmt.insert('bafyreiCorrupt2');
+      await corruptSmt.insert('bafyreiCorrupt3');
 
-      // Build a normal tree with different elements
+      // Build normal tree with multiple elements (so root = internal node too)
       const normalStore = new SMTStoreMemory();
       const normalSmt = new SparseMerkleTree(normalStore);
       await normalSmt.initialize();
       await normalSmt.insert('bafyreiNormal1');
+      await normalSmt.insert('bafyreiNormal2');
+      await normalSmt.insert('bafyreiNormal3');
 
-      // Now corrupt the store during diff
+      // Corrupt the store so child nodes are missing during diff
       corruptDuringDiff = true;
+      lookupCount = 0;
 
-      // The diff should still complete — the fallback handles missing nodes
       const diff = await normalSmt.diff(corruptSmt);
 
-      // Normal tree's elements should be in onlyLocal since the corrupt
-      // tree returns no data
-      expect(diff.onlyLocal).to.include('bafyreiNormal1');
+      // The diff should still complete — fallback collects leaves from the other side
+      // Normal tree's elements should be in onlyLocal
+      expect(diff.onlyLocal.sort()).to.deep.equal(
+        ['bafyreiNormal1', 'bafyreiNormal2', 'bafyreiNormal3'].sort()
+      );
+
+      corruptDuringDiff = false;
+      await corruptSmt.close();
+      await normalSmt.close();
+    });
+
+    it('should handle diff where local node is missing but remote exists', async () => {
+      // Test lines 689-692: localNode is undefined while remoteNode exists.
+      // Both trees need non-default hashes at the SAME child position so the
+      // recursion reaches line 628 (both load nodes). We achieve this by sharing
+      // elements so both trees have populated subtrees at the same positions.
+      const realStore = new SMTStoreMemory();
+      let corruptDuringDiff = false;
+      let lookupCount = 0;
+
+      const corruptStore: SMTNodeStore = {
+        open       : (): Promise<void> => realStore.open(),
+        close      : (): Promise<void> => realStore.close(),
+        clear      : (): Promise<void> => realStore.clear(),
+        getRoot    : (): Promise<Hash | undefined> => realStore.getRoot(),
+        setRoot    : (hash: Hash): Promise<void> => realStore.setRoot(hash),
+        putNode    : (hash: Hash, node: any): Promise<void> => realStore.putNode(hash, node),
+        deleteNode : (hash: Hash): Promise<void> => realStore.deleteNode(hash),
+        getNode    : async (hash: Hash): Promise<any> => {
+          if (corruptDuringDiff) {
+            lookupCount++;
+            // Return the root internal node (first lookup) but corrupt children
+            if (lookupCount > 1) {
+              return undefined;
+            }
+          }
+          return realStore.getNode(hash);
+        },
+      };
+
+      // Build corrupt tree (local) with shared + unique elements
+      const corruptSmt = new SparseMerkleTree(corruptStore);
+      await corruptSmt.initialize();
+      // Add many shared elements so both subtrees (left/right) are populated
+      for (let i = 0; i < 20; i++) {
+        await corruptSmt.insert(`bafyreiShared-${i}`);
+      }
+      await corruptSmt.insert('bafyreiCorruptOnly');
+
+      // Build normal tree (remote) with the same shared elements + different unique
+      const normalStore = new SMTStoreMemory();
+      const normalSmt = new SparseMerkleTree(normalStore);
+      await normalSmt.initialize();
+      for (let i = 0; i < 20; i++) {
+        await normalSmt.insert(`bafyreiShared-${i}`);
+      }
+      await normalSmt.insert('bafyreiNormalOnly');
+
+      // corruptSmt is local, normalSmt is remote
+      // The roots differ (different unique elements), both are internal nodes,
+      // and both have non-default children at the same positions (shared elements).
+      // When diffAtNode recurses into children, localNode will be undefined (corrupt)
+      // while remoteNode will be a real internal/leaf node → hits lines 689-692.
+      corruptDuringDiff = true;
+      lookupCount = 0;
+
+      const diff = await corruptSmt.diff(normalSmt);
+
+      // The diff should complete. Remote leaves should appear in onlyRemote
+      // since the corrupt local can't prove they exist locally.
+      expect(diff.onlyRemote.length).to.be.greaterThan(0);
 
       corruptDuringDiff = false;
       await corruptSmt.close();
@@ -688,6 +817,21 @@ describe('SMT Utility Functions', () => {
       const hashes = getDefaultHashes();
       expect(hashes).to.have.length(SMT_DEPTH + 1);
       expect(hashEquals(hashes[SMT_DEPTH], ZERO_HASH)).to.be.true;
+    });
+
+    it('should throw when called before initDefaultHashes()', async () => {
+      // Reset the module-level cache
+      resetDefaultHashesForTesting();
+
+      try {
+        getDefaultHashes();
+        expect.fail('Expected an error');
+      } catch (e: any) {
+        expect(e.message).to.include('Default hashes not initialized');
+      }
+
+      // Re-initialize so subsequent tests aren't affected
+      await initDefaultHashes();
     });
   });
 
