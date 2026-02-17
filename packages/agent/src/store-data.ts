@@ -79,21 +79,11 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
   protected _recordProtocolDefinition!: ProtocolDefinition;
 
   /**
-   * When true, the store **requires** DWN record-level encryption using the
-   * tenant's ProtocolPath-derived encryption key. The tenant DID must have a
-   * secp256k1 keyAgreement key; if it does not, protocol installation will
-   * fail with an error rather than falling back to plaintext storage.
-   *
-   * Subclasses set this to `true` to opt in (e.g., DwnKeyStore).
-   */
-  protected _encryptionDesired = false;
-
-  /**
    * Per-tenant encryption resolution cache. Populated during `initialize()`:
    * `true` if the tenant supports encryption (has secp256k1 keyAgreement).
-   * When `_encryptionDesired` is `true`, this will always be `true` after
-   * successful initialization (since installation fails if encryption is not
-   * possible).
+   * When any type in `_recordProtocolDefinition` has `encryptionRequired: true`,
+   * this will always be `true` after successful initialization (since
+   * installation fails if encryption is not possible).
    */
   private _tenantEncryptionActive: TtlCache<string, boolean> = new TtlCache({ ttl: ms('21 days'), max: 1000 });
 
@@ -247,7 +237,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     if (entries?.length === 0) {
       // protocol is not installed, install it
       await this.installProtocol(tenantDid, agent);
-    } else if (this._encryptionDesired && !this._tenantEncryptionActive.has(tenantDid)) {
+    } else if (this.encryptionRequired && !this._tenantEncryptionActive.has(tenantDid)) {
       // Protocol already installed — determine if it has $encryption keys
       // by inspecting the installed definition.
       const definition = entries![0].descriptor?.definition;
@@ -257,6 +247,14 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     }
 
     this._protocolInitializedCache.set(tenantDid, true);
+  }
+
+  /**
+   * Returns `true` if any type in the protocol definition has `encryptionRequired: true`.
+   */
+  private get encryptionRequired(): boolean {
+    return Object.values(this._recordProtocolDefinition.types)
+      .some((type): boolean => type.encryptionRequired === true);
   }
 
   /**
@@ -316,15 +314,16 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
 
   /**
    * Install the protocol for the given tenant using a `ProtocolsConfigure` message.
-   * When `_encryptionDesired` is `true`, `$encryption` keys are derived and
-   * injected into the protocol definition. If the tenant DID lacks a secp256k1
-   * keyAgreement key, the error propagates — plaintext fallback is not allowed.
+   * When any type in the protocol definition has `encryptionRequired: true`,
+   * `$encryption` keys are derived and injected into the protocol definition.
+   * If the tenant DID lacks a secp256k1 keyAgreement key, the error propagates
+   * — plaintext fallback is not allowed.
    */
   private async installProtocol(tenant: string, agent: Web5PlatformAgent): Promise<void> {
     let definition = this._recordProtocolDefinition;
     let encryptionActive = false;
 
-    if (this._encryptionDesired) {
+    if (this.encryptionRequired) {
       // Derive encryption keys — requires the tenant DID to have a secp256k1
       // keyAgreement key. If it does not, the error propagates to the caller.
       const keyDeriver = await agent.dwn.getEncryptionKeyDeriver(tenant);

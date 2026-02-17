@@ -403,9 +403,9 @@ describe('KeyStore', () => {
     });
 
     describe('encryption required — Ed25519-only agent DID rejection', () => {
-      // These tests verify that DwnKeyStore (which sets _encryptionDesired = true)
-      // refuses to operate when the agent DID lacks a secp256k1 keyAgreement key.
-      // No plaintext fallback is allowed.
+      // These tests verify that DwnKeyStore (whose protocol definition has
+      // encryptionRequired: true) refuses to operate when the agent DID lacks a
+      // secp256k1 keyAgreement key. No plaintext fallback is allowed.
       let ed25519Harness: PlatformAgentTestHarness;
       let ed25519KeyStore: AgentDataStore<Jwk>;
 

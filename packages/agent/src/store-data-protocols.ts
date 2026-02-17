@@ -51,10 +51,9 @@ export const JwkProtocolDefinition: ProtocolDefinition = {
   published : false,
   types     : {
     privateJwk: {
-      schema      : 'https://identity.foundation/schemas/web5/private-jwk',
-      dataFormats : [
-        'application/json'
-      ]
+      schema             : 'https://identity.foundation/schemas/web5/private-jwk',
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
     },
   },
   structure: {
