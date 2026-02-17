@@ -307,14 +307,27 @@ export class AgentDwnApi {
                 derivedPrivateKey : contextDerivedPrivateJwk as PrivateKeyJwk,
               };
 
+              // Extract the author's key delivery public key from the record
+              // so we can encrypt the contextKey directly to the external author.
+              const authorKeyDeliveryPubKey =
+                recordsWriteMessage.authorization?.authorKeyDeliveryPublicKey;
+
               for (const participantDid of newParticipants) {
                 try {
+                  // Use the author's key delivery public key when delivering
+                  // to the external author; for other participants (e.g.
+                  // recipient, role holders) fall back to owner-key encryption.
+                  const recipientKey = (participantDid === authorDid && authorKeyDeliveryPubKey)
+                    ? authorKeyDeliveryPubKey
+                    : undefined;
+
                   await this.writeContextKeyRecord({
-                    tenantDid       : request.target,
-                    recipientDid    : participantDid,
-                    contextKeyData  : contextKeyPayload,
-                    sourceProtocol  : writeParams.protocol,
-                    sourceContextId : rootContextId,
+                    tenantDid                     : request.target,
+                    recipientDid                  : participantDid,
+                    contextKeyData                : contextKeyPayload,
+                    sourceProtocol                : writeParams.protocol,
+                    sourceContextId               : rootContextId,
+                    recipientKeyDeliveryPublicKey : recipientKey,
                   });
                 } catch (keyDeliveryError: any) {
                   console.warn(
@@ -609,9 +622,17 @@ export class AgentDwnApi {
 
         // 3. Classify the record
         const rootPathSegment = messageParams.protocolPath.split('/')[0];
-        const isMultiPartyContext = this.isMultiPartyContext(
-          protocolDefinition, rootPathSegment,
-        );
+        // The key-delivery protocol must always use ProtocolPath encryption so
+        // that recipients can decrypt contextKey records with their own derived
+        // key.  Treating it as multi-party would trigger ProtocolContext
+        // encryption, but no one delivers context keys FOR the key-delivery
+        // protocol itself (excluded at line 246 to prevent infinite recursion),
+        // making the records undecryptable by recipients.
+        const isKeyDeliveryProtocol =
+          messageParams.protocol === KeyDeliveryProtocolDefinition.protocol;
+        const isMultiPartyContext = isKeyDeliveryProtocol
+          ? false
+          : this.isMultiPartyContext(protocolDefinition, rootPathSegment);
         const isRootRecord = !messageParams.parentContextId;
 
         // 4. Get plaintext bytes (normalize from all supported input types)
@@ -766,6 +787,27 @@ export class AgentDwnApi {
         } else {
           // Deferred — store info for post-creation encryption
           deferredContextEncryption = { dataEncryptionKey, dataEncryptionIV, encryptedBytes };
+        }
+
+        // 9. For cross-DWN writes in multi-party contexts, attach the author's
+        //    key-delivery ProtocolPath public key so the DWN owner can encrypt
+        //    context keys back to the author without querying the author's DWN.
+        if (isCrossDwn && isMultiPartyContext) {
+          const { keyId: authorKeyId, keyUri: authorKeyUri } =
+            await this.getEncryptionKeyInfo(request.author);
+          const keyDeliveryDerivationPath = [
+            KeyDerivationScheme.ProtocolPath,
+            KeyDeliveryProtocolDefinition.protocol,
+            'contextKey',
+          ];
+          const authorKeyDeliveryPubKey = await this.agent.keyManager.derivePublicKey({
+            keyUri         : authorKeyUri,
+            derivationPath : keyDeliveryDerivationPath,
+          });
+          messageParams.authorKeyDeliveryPublicKey = {
+            rootKeyId    : authorKeyId,
+            publicKeyJwk : authorKeyDeliveryPubKey,
+          };
         }
       }
     }
@@ -1772,22 +1814,33 @@ export class AgentDwnApi {
    * Writes a `contextKey` record to the owner's DWN, delivering an encrypted
    * context key to a participant.
    *
-   * The `contextKey` record contains a `DerivedPrivateJwk` payload encrypted to
-   * the recipient's ProtocolPath-derived key on the key-delivery protocol.
+   * The payload is encrypted to the **recipient's** ProtocolPath-derived public
+   * key on the key-delivery protocol, so only the recipient can decrypt it.
+   * The recipient's key is supplied via `recipientKeyDeliveryPublicKey` (which
+   * the external author attached as `authorKeyDeliveryPublicKey` on the
+   * original cross-DWN record).
+   *
+   * When `recipientKeyDeliveryPublicKey` is not provided (e.g. the owner is
+   * writing a contextKey for themselves), the record is encrypted to the
+   * owner's own ProtocolPath key using the generic `processRequest` path.
    *
    * @param params.tenantDid      - The DWN owner's DID (who is delivering the key)
    * @param params.recipientDid   - The participant's DID (who will receive the key)
-   * @param params.contextKeyData - The `DerivedPrivateJwk` to deliver (will be encrypted automatically)
+   * @param params.contextKeyData - The `DerivedPrivateJwk` to deliver
    * @param params.sourceProtocol - The URI of the source protocol (tag)
    * @param params.sourceContextId - The root context ID (tag)
+   * @param params.recipientKeyDeliveryPublicKey - The recipient's ProtocolPath-
+   *        derived public key for `key-delivery/contextKey`. When provided,
+   *        the contextKey record is encrypted directly to this key.
    * @returns The recordId of the written contextKey record
    */
-  async writeContextKeyRecord({ tenantDid, recipientDid, contextKeyData, sourceProtocol, sourceContextId }: {
+  async writeContextKeyRecord({ tenantDid, recipientDid, contextKeyData, sourceProtocol, sourceContextId, recipientKeyDeliveryPublicKey }: {
     tenantDid: string;
     recipientDid: string;
     contextKeyData: DerivedPrivateJwk;
     sourceProtocol: string;
     sourceContextId: string;
+    recipientKeyDeliveryPublicKey?: { rootKeyId: string; publicKeyJwk: PublicKeyJwk };
   }): Promise<string> {
     // Ensure the key delivery protocol is installed on the owner's DWN
     await this.ensureKeyDeliveryProtocol(tenantDid);
@@ -1795,33 +1848,91 @@ export class AgentDwnApi {
     const protocolUri = KeyDeliveryProtocolDefinition.protocol;
 
     // Serialize the payload to JSON bytes
-    const dataBytes = new TextEncoder().encode(JSON.stringify(contextKeyData));
-    const dataBlob = new Blob([dataBytes], { type: 'application/json' });
+    const plaintextBytes = new TextEncoder().encode(JSON.stringify(contextKeyData));
 
-    // Write the contextKey record — encryption is handled by processRequest
-    // because the key-delivery protocol has $encryption keys injected.
-    const { message, reply: { status } } = await this.processRequest({
-      author        : tenantDid,
-      target        : tenantDid,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol     : protocolUri,
-        protocolPath : 'contextKey',
-        dataFormat   : 'application/json',
-        recipient    : recipientDid,
-        tags         : { protocol: sourceProtocol, contextId: sourceContextId },
-      },
-      dataStream : dataBlob,
-      encryption : true,
-    });
+    if (recipientKeyDeliveryPublicKey) {
+      // --- Encrypt to the recipient's ProtocolPath key (cross-DWN delivery) ---
+      // Manually build encryption input targeting the recipient's key so the
+      // record is decryptable only by the recipient.
+      const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
+      const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(16));
 
-    if (!(message && status.code === 202)) {
-      throw new Error(
-        `AgentDwnApi: Failed to write contextKey record for ${recipientDid}: ${status.code} - ${status.detail}`
+      // Encrypt the data with AES-256-CTR
+      const plaintextStream = DataStream.fromBytes(plaintextBytes);
+      const encryptedStream = await Encryption.aes256CtrEncrypt(
+        dataEncryptionKey, dataEncryptionIV, plaintextStream,
       );
-    }
+      const encryptedBytes = await DataStream.toBytes(encryptedStream);
 
-    return message.recordId;
+      // Compute dataCid and dataSize from the encrypted bytes
+      const cidStream = DataStream.fromBytes(encryptedBytes);
+      const dataCid = await Cid.computeDagPbCidFromStream(cidStream);
+      const dataSize = encryptedBytes.length;
+
+      const encryptionInput: EncryptionInput = {
+        initializationVector : dataEncryptionIV,
+        key                  : dataEncryptionKey,
+        keyEncryptionInputs  : [{
+          publicKeyId      : recipientKeyDeliveryPublicKey.rootKeyId,
+          publicKey        : recipientKeyDeliveryPublicKey.publicKeyJwk,
+          derivationScheme : KeyDerivationScheme.ProtocolPath,
+        }],
+      };
+
+      // Write the pre-encrypted record via processRequest without encryption: true
+      const { message, reply: { status } } = await this.processRequest({
+        author        : tenantDid,
+        target        : tenantDid,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : protocolUri,
+          protocolPath : 'contextKey',
+          dataFormat   : 'application/json',
+          recipient    : recipientDid,
+          tags         : { protocol: sourceProtocol, contextId: sourceContextId },
+          dataCid,
+          dataSize,
+          encryptionInput,
+        },
+        dataStream: new Blob([encryptedBytes]),
+      });
+
+      if (!(message && status.code === 202)) {
+        throw new Error(
+          `AgentDwnApi: Failed to write contextKey record for ${recipientDid}: ${status.code} - ${status.detail}`,
+        );
+      }
+
+      return message.recordId;
+    } else {
+      // --- Fallback: encrypt to the owner's key (local self-delivery) ---
+      // When no recipient key is provided, use the generic processRequest
+      // encryption path which encrypts to the DWN owner's ProtocolPath key.
+      const dataBlob = new Blob([plaintextBytes], { type: 'application/json' });
+
+      const { message, reply: { status } } = await this.processRequest({
+        author        : tenantDid,
+        target        : tenantDid,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : protocolUri,
+          protocolPath : 'contextKey',
+          dataFormat   : 'application/json',
+          recipient    : recipientDid,
+          tags         : { protocol: sourceProtocol, contextId: sourceContextId },
+        },
+        dataStream : dataBlob,
+        encryption : true,
+      });
+
+      if (!(message && status.code === 202)) {
+        throw new Error(
+          `AgentDwnApi: Failed to write contextKey record for ${recipientDid}: ${status.code} - ${status.detail}`,
+        );
+      }
+
+      return message.recordId;
+    }
   }
 
   /**

@@ -1,4 +1,5 @@
 import type { GeneralJws } from './jws-types.js';
+import type { PublicKeyJwk } from './jose-types.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import type { PaginationCursor, SortDirection } from './query-types.js';
 
@@ -41,6 +42,19 @@ export type AuthorizationModel = {
    * The delegated grant required when the message is signed by an owner-delegate.
    */
   ownerDelegatedGrant?: DelegatedGrantRecordsWriteMessage;
+
+  /**
+   * The author's ProtocolPath-derived public key for the key-delivery protocol's
+   * `contextKey` path.  Included by external authors on cross-DWN encrypted
+   * protocol records so the DWN owner can encrypt a context key back to them
+   * without needing to query the author's DWN.
+   */
+  authorKeyDeliveryPublicKey?: {
+    /** Fully-qualified verification method ID (e.g. `did:example:bob#enc`). */
+    rootKeyId: string;
+    /** The author's ProtocolPath-derived public key in JWK format. */
+    publicKeyJwk: PublicKeyJwk;
+  };
 };
 
 export type DelegatedGrantRecordsWriteMessage = {

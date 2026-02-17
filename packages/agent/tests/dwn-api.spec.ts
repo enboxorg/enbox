@@ -1,9 +1,9 @@
-import type { Dwn, MessageEvent, ProtocolDefinition , RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { Dwn, MessageEvent, ProtocolDefinition, RecordsReadReply, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type { JwkParamsEcPublic, PrivateKeyJwk } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
 import { DidDht } from '@enbox/dids';
-import { DataStream, DwnInterfaceName, DwnMethodName, Message, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnInterfaceName, DwnMethodName, Message, Records, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -3237,6 +3237,13 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
   });
 
   beforeEach(async () => {
+    sinon.restore();
+    // Stub DidDht.publish so tests work without a DHT gateway
+    sinon.stub(DidDht, 'publish').resolves({
+      didDocumentMetadata   : { published: true },
+      didDocument           : {} as any,
+      didResolutionMetadata : {},
+    } as any);
     await testHarness.clearStorage();
     await testHarness.createAgentDid();
     alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
@@ -3303,7 +3310,7 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
   });
 
   describe('writeContextKeyRecord()', () => {
-    it('should write an encrypted contextKey record with correct tags', async () => {
+    it('should write an encrypted contextKey record with correct tags (fallback path)', async () => {
       const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
 
       // Ensure Bob's key delivery protocol is also installed (for recipient key resolution)
@@ -3317,6 +3324,7 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
         derivedPrivateKey : { kty: 'EC', crv: 'secp256k1', x: 'test', d: 'test' },
       };
 
+      // No recipientKeyDeliveryPublicKey → fallback to owner's ProtocolPath key
       const recordId = await testHarness.agent.dwn.writeContextKeyRecord({
         tenantDid       : alice.did.uri,
         recipientDid    : bob.did.uri,
@@ -3351,11 +3359,85 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
       expect(entry.encryption).to.have.property('keyEncryption');
       expect(entry.encryption!.keyEncryption).to.have.length(1);
 
-      // Verify it uses ProtocolContext derivation (key-delivery protocol has relational who/of rules)
-      expect(entry.encryption!.keyEncryption[0].derivationScheme).to.equal('protocolContext');
+      // Fallback path encrypts to the owner's ProtocolPath key
+      expect(entry.encryption!.keyEncryption[0].derivationScheme).to.equal('protocolPath');
 
       // Verify recipient
       expect(entry.descriptor).to.have.property('recipient', bob.did.uri);
+    }).timeout(10000);
+
+    it('should encrypt contextKey to the recipient\'s key when recipientKeyDeliveryPublicKey is provided', async () => {
+      const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
+
+      // Install key delivery protocol for both
+      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
+      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(bob.did.uri);
+
+      // Derive Bob's key-delivery ProtocolPath public key
+      const bobKeyInfo = await (testHarness.agent.dwn as any).getEncryptionKeyInfo(bob.did.uri);
+      const bobKeyDeliveryPubKey = await testHarness.agent.keyManager.derivePublicKey({
+        keyUri         : bobKeyInfo.keyUri,
+        derivationPath : ['protocolPath', KeyDeliveryProtocolDefinition.protocol, 'contextKey'],
+      });
+
+      const mockContextKey = {
+        rootKeyId         : `${alice.did.uri}#enc`,
+        derivationScheme  : 'protocolContext',
+        derivationPath    : ['protocolContext', 'test-context-id-789'],
+        derivedPrivateKey : { kty: 'EC', crv: 'secp256k1', x: 'test', d: 'test' },
+      };
+
+      const recordId = await testHarness.agent.dwn.writeContextKeyRecord({
+        tenantDid                     : alice.did.uri,
+        recipientDid                  : bob.did.uri,
+        contextKeyData                : mockContextKey as any,
+        sourceProtocol                : 'https://protocol.xyz/multi-party-chat',
+        sourceContextId               : 'test-context-id-789',
+        recipientKeyDeliveryPublicKey : {
+          rootKeyId    : bobKeyInfo.keyId,
+          publicKeyJwk : bobKeyDeliveryPubKey,
+        },
+      });
+
+      expect(recordId).to.be.a('string');
+
+      // Verify encryption uses ProtocolPath with Bob's rootKeyId
+      const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            protocol     : KeyDeliveryProtocolDefinition.protocol,
+            protocolPath : 'contextKey',
+          }
+        }
+      });
+
+      const entry = queryReply.entries![0] as RecordsWriteMessage;
+      expect(entry.encryption!.keyEncryption[0].derivationScheme).to.equal('protocolPath');
+      expect(entry.encryption!.keyEncryption[0].rootKeyId).to.equal(bobKeyInfo.keyId);
+
+      // Verify Bob can decrypt it
+      const { reply: readReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : { filter: { recordId } },
+      });
+
+      const readResult = readReply as RecordsReadReply;
+      const recordsWrite = readResult.entry!.recordsWrite!;
+      const keyDecrypter = await (testHarness.agent.dwn as any).getKeyDecrypter(bob.did.uri);
+      const decryptedStream = await Records.decrypt(
+        recordsWrite,
+        keyDecrypter,
+        readResult.entry!.data as ReadableStream<Uint8Array>,
+      );
+      const decryptedBytes = await DataStream.toBytes(decryptedStream);
+      const payload = JSON.parse(new TextDecoder().decode(decryptedBytes));
+      expect(payload.rootKeyId).to.equal(mockContextKey.rootKeyId);
+      expect(payload.derivationScheme).to.equal(mockContextKey.derivationScheme);
     }).timeout(10000);
   });
 
@@ -4729,8 +4811,6 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       encryption : true,
     });
     const threadRecordId = (threadMessage as RecordsWriteMessage).recordId;
-    const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
-    const rootContextId = threadContextId.split('/')[0];
 
     // Verify reactive upgrade occurred (ProtocolContext entry was appended)
     const { reply: aliceRead } = await testHarness.agent.dwn.processRequest({
@@ -4746,7 +4826,7 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       (k: { derivationScheme: string }) => k.derivationScheme === 'protocolContext'
     )).to.be.true;
 
-    // Verify contextKey was delivered for Bob
+    // Verify contextKey was delivered for Bob and is encrypted to Bob's key
     const { reply: ckQuery } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
@@ -4760,39 +4840,47 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       }
     });
     expect(ckQuery.entries).to.have.length.greaterThanOrEqual(1);
+    const ckEntry = ckQuery.entries![0] as RecordsWriteMessage;
+    expect(ckEntry.encryption!.keyEncryption[0].derivationScheme).to.equal('protocolPath');
 
-    // Read the contextKey and copy to Bob's local DWN (simulating sync)
-    const ckRecordId = ckQuery.entries![0].recordId;
+    // Bob decrypts the contextKey directly from Alice's DWN using his own key.
+    // This simulates the remote fetchContextKeyRecord path: Bob reads the
+    // record and decrypts with his ProtocolPath key.
+    const ckRecordId = ckEntry.recordId;
     const { reply: ckRead } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsRead,
       messageParams : { filter: { recordId: ckRecordId } },
-      encryption    : true,
     });
-    const ckDataBytes = await DataStream.toBytes((ckRead as any).entry.data);
+    const ckReadResult = ckRead as RecordsReadReply;
+    const bobKeyDecrypter = await (testHarness.agent.dwn as any).getKeyDecrypter(bob.did.uri);
+    const decryptedCkStream = await Records.decrypt(
+      ckReadResult.entry!.recordsWrite!,
+      bobKeyDecrypter,
+      ckReadResult.entry!.data as ReadableStream<Uint8Array>,
+    );
+    const ckDataBytes = await DataStream.toBytes(decryptedCkStream);
     const contextKeyPayload = JSON.parse(new TextDecoder().decode(ckDataBytes));
 
-    await testHarness.agent.dwn.ensureKeyDeliveryProtocol(bob.did.uri);
-    await testHarness.agent.dwn.writeContextKeyRecord({
-      tenantDid       : bob.did.uri,
-      recipientDid    : bob.did.uri,
-      contextKeyData  : contextKeyPayload,
-      sourceProtocol  : emailProtocol.protocol,
-      sourceContextId : rootContextId,
-    });
+    // Use the contextKey to decrypt the thread record
+    expect(contextKeyPayload).to.have.property('derivationScheme', 'protocolContext');
+    expect(contextKeyPayload).to.have.property('derivedPrivateKey');
 
-    // Bob reads the thread from Alice's DWN with encryption — should auto-decrypt
-    const { reply: bobRead } = await testHarness.agent.dwn.processRequest({
-      author        : bob.did.uri,
+    // Bob reads the thread from Alice's DWN and decrypts using the contextKey
+    const { reply: bobThreadRead } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsRead,
       messageParams : { filter: { recordId: threadRecordId } },
-      encryption    : true,
     });
-    const bobReadResult = bobRead as any;
-    expect(bobReadResult.status.code).to.equal(200);
-    const decryptedBytes = await DataStream.toBytes(bobReadResult.entry.data);
+    const bobThreadResult = bobThreadRead as RecordsReadReply;
+    const decryptedStream = await Records.decrypt(
+      bobThreadResult.entry!.recordsWrite!,
+      contextKeyPayload,
+      bobThreadResult.entry!.data as ReadableStream<Uint8Array>,
+    );
+    const decryptedBytes = await DataStream.toBytes(decryptedStream);
     const decryptedText = new TextDecoder().decode(decryptedBytes);
     expect(decryptedText).to.equal(threadText);
   }).timeout(30000);
