@@ -73,7 +73,7 @@
     "@enbox/crypto": "workspace:*",
     "@enbox/dids": "workspace:*",
     "abstract-level": "1.0.3",
-    "ajv": "8.12.0",
+    "ajv": "8.18.0",
     "eciesjs": "0.4.5",
     "interface-blockstore": "5.2.3",
     "interface-store": "5.1.2",
