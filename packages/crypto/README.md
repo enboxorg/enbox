@@ -1,5 +1,7 @@
 # Enbox Crypto API
 
+> **Research Preview** — Enbox is under active development. APIs may change without notice.
+
 | A cryptography and JOSE library for building secure decentralized applications |
 | ------------------------------------------------------------------------------ |
 

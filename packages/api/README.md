@@ -1,5 +1,7 @@
 # Enbox API SDK
 
+> **Research Preview** — Enbox is under active development. APIs may change without notice.
+
 The high-level SDK for building decentralized applications with identity and data management.
 
 ## Installation

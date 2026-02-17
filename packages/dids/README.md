@@ -1,5 +1,7 @@
 # Enbox DID
 
+> **Research Preview** — Enbox is under active development. APIs may change without notice.
+
 A comprehensive library for working with Decentralized Identifiers (DIDs) in the Enbox ecosystem.
 
 ## Overview

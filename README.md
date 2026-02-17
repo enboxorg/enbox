@@ -1,5 +1,7 @@
 # Enbox
 
+> **Research Preview** — Enbox is under active development. APIs may change without notice.
+
 A toolkit for decentralized identity and encrypted personal data storage.
 
 ## How It Works

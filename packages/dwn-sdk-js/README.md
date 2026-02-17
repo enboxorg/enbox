@@ -1,5 +1,7 @@
 # Decentralized Web Node (DWN) SDK
 
+> **Research Preview** — Enbox is under active development. APIs may change without notice.
+
 A TypeScript implementation of [Decentralized Web Nodes](https://identity.foundation/decentralized-web-node/spec/) — protocol-driven personal datastores that users control.
 
 ## Overview

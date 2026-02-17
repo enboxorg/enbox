@@ -1,5 +1,7 @@
 # DWN Server
 
+> **Research Preview** — Enbox is under active development. APIs may change without notice.
+
 A multi-tenant Decentralized Web Node exposed via JSON-RPC over HTTP and WebSocket, powered by `Bun.serve()`.
 
 - [Supported DBs](#supported-dbs)
