@@ -213,6 +213,9 @@ describe('websocket api', function () {
     });
     expect(writeResult1.status.code).to.equal(202);
 
+    // wait for the subscription event to arrive via WebSocket before closing
+    await new Promise(resolve => setTimeout(resolve, 10));
+
     // close the subscription after only 1 message
     await close();
 

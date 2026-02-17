@@ -26,7 +26,6 @@ async function initClient({
   connectedDid: string;
 } | undefined> {
   // ephemeral client did for ECDH, signing, verification
-  // TODO: use separate keys for ECDH vs. sign/verify. could maybe use secp256k1.
   const clientDid = await DidJwk.create();
 
   // TODO: properly implement PKCE. this implementation is lacking server side validations and more.

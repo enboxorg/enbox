@@ -7,8 +7,6 @@
  * - `stateIndexNodes`: stores SMT nodes (internal + leaf), keyed by (tenant, scope, nodeHash)
  * - `stateIndexRoots`: stores the current root hash per (tenant, scope)
  * - `stateIndexMeta`:  reverse lookup from messageCid → protocol (for deletion)
- *
- * The old `eventLogMessages` / `eventLogRecordsTags` tables are no longer created or used.
  */
 
 import type { Dialect } from './dialect/dialect.js';
@@ -70,9 +68,13 @@ export class StateIndexSql implements StateIndex {
         .addColumn('leafValueCid', 'varchar(60)')
         .execute();
 
-      await this.createIndexes(this.#db, nodesTableName, [
-        ['tenant', 'scope', 'nodeHash'],
-      ]);
+      // Not UNIQUE because the delete-then-insert upsert pattern in SMTStoreSql
+      // can race under concurrent access, causing duplicate key violations.
+      await this.#db.schema
+        .createIndex('index_stateIndexNodes_tenant_scope_nodeHash')
+        .on(nodesTableName)
+        .columns(['tenant', 'scope', 'nodeHash'])
+        .execute();
     }
 
     // ─── Create stateIndexRoots table ─────────────────────────────────────
@@ -87,9 +89,11 @@ export class StateIndexSql implements StateIndex {
         .addColumn('rootHash', 'varchar(64)', (col) => col.notNull())
         .execute();
 
-      await this.createIndexes(this.#db, rootsTableName, [
-        ['tenant', 'scope'],
-      ]);
+      await this.#db.schema
+        .createIndex('index_stateIndexRoots_tenant_scope')
+        .on(rootsTableName)
+        .columns(['tenant', 'scope'])
+        .execute();
     }
 
     // ─── Create stateIndexMeta table ──────────────────────────────────────
@@ -104,9 +108,11 @@ export class StateIndexSql implements StateIndex {
         .addColumn('protocol', 'varchar(200)')
         .execute();
 
-      await this.createIndexes(this.#db, metaTableName, [
-        ['tenant', 'messageCid'],
-      ]);
+      await this.#db.schema
+        .createIndex('index_stateIndexMeta_tenant_messageCid')
+        .on(metaTableName)
+        .columns(['tenant', 'messageCid'])
+        .execute();
     }
   }
 
@@ -272,20 +278,6 @@ export class StateIndexSql implements StateIndex {
     return smt;
   }
 
-  /**
-   * Creates indexes on the given table.
-   * Follows the same pattern used by MessageStoreSql.
-   */
-  private async createIndexes<T>(database: Kysely<T>, tableName: string, indexes: string[][]): Promise<void> {
-    for (const columnNames of indexes) {
-      const indexName = 'index_' + tableName + '_' + columnNames.join('_');
-      await database.schema
-        .createIndex(indexName)
-        .on(tableName)
-        .columns(columnNames)
-        .execute();
-    }
-  }
 }
 
 

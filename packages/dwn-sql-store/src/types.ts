@@ -25,7 +25,6 @@ type MessageStoreTable = {
   entryId: string | null;
   datePublished: string | null;
   protocol: string | null;
-  permissionsRequestId: string | null;
   attester: string | null;
   protocolPath: string | null;
   recipient: string | null;
