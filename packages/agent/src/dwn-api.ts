@@ -1495,6 +1495,7 @@ export class AgentDwnApi {
   private async resolveKeyDecrypter(
     authorDid: string,
     recordsWrite: RecordsWriteMessage,
+    targetDid?: string,
   ): Promise<KeyDecrypter> {
     const { encryption } = recordsWrite;
 
@@ -1553,9 +1554,12 @@ export class AgentDwnApi {
       sourceContextId : rootContextId,
     });
 
-    // Try remote: query the context owner's DWN for my contextKey record
+    // Try remote: query the DWN owner's DWN for my contextKey record.
+    // For cross-DWN records, targetDid is the DWN owner (e.g., Alice) where the
+    // contextKey was written. For same-DWN records, fall back to the record's
+    // authorization signer.
     if (!contextDerivedPrivateKey) {
-      const contextOwnerDid = Jws.getSignerDid(
+      const contextOwnerDid = targetDid ?? Jws.getSignerDid(
         recordsWrite.authorization.signature.signatures[0]
       );
       contextDerivedPrivateKey = await this.fetchContextKeyRecord({
@@ -1624,7 +1628,7 @@ export class AgentDwnApi {
           && readReply.entry?.recordsWrite?.encryption
           && readReply.entry?.data) {
         const keyDecrypter = await this.resolveKeyDecrypter(
-          request.author, readReply.entry.recordsWrite,
+          request.author, readReply.entry.recordsWrite, request.target,
         );
 
         try {
@@ -1650,7 +1654,7 @@ export class AgentDwnApi {
         for (const entry of queryReply.entries) {
           if (entry.encryption && entry.encodedData) {
             const keyDecrypter = await this.resolveKeyDecrypter(
-              request.author, entry as RecordsWriteMessage,
+              request.author, entry as RecordsWriteMessage, request.target,
             );
 
             try {
