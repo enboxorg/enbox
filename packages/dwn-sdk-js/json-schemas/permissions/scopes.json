@@ -116,7 +116,8 @@
           "type": "string"
         },
         "contextId": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 600
         },
         "protocolPath": {
           "type": "string"
@@ -141,7 +142,8 @@
           "type": "string"
         },
         "contextId": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 600
         },
         "protocolPath": {
           "type": "string"
@@ -166,7 +168,8 @@
           "type": "string"
         },
         "contextId": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 600
         },
         "protocolPath": {
           "type": "string"
@@ -191,7 +194,8 @@
           "type": "string"
         },
         "contextId": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 600
         },
         "protocolPath": {
           "type": "string"
@@ -216,7 +220,8 @@
           "type": "string"
         },
         "contextId": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 600
         },
         "protocolPath": {
           "type": "string"

@@ -15,7 +15,8 @@
       "type": "string"
     },
     "contextId": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 600
     },
     "attestationCid": {
       "type": "string"
