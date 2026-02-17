@@ -74,8 +74,7 @@ export class MessageStoreSql implements MessageStore {
         .addColumn('dataSize', 'integer')
         .addColumn('encodedData', 'text') // we optionally store encoded data if it is below a threshold
         .addColumn('attester', 'text')
-        .addColumn('permissionGrantId', 'varchar(60)')
-        .addColumn('latest', 'text'); // TODO: obsolete, remove once `dwn-sdk-js` tests are updated
+        .addColumn('permissionGrantId', 'varchar(60)');
 
       // Add columns that have dialect-specific constraints
       createMessagesTable = this.#dialect.addAutoIncrementingColumn(createMessagesTable, 'id', (col) => col.primaryKey());

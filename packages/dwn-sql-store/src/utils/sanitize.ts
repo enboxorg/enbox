@@ -94,7 +94,6 @@ export function sanitizeFiltersAndSeparateTags(filters: Filter[]): {
  * NOTE: sqlite3 we use does not support inserting boolean values,
  *       so we convert them to a number during insertions/updates, as a result we need to align the filter values in queries.
 */
-// TODO: export filter types from `dwn-sdk-js`
 export function sanitizeFilterValue(value: any): any {
   switch (typeof value) {
     case 'boolean':

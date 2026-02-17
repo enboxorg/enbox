@@ -7,8 +7,6 @@
  * - `stateIndexNodes`: stores SMT nodes (internal + leaf), keyed by (tenant, scope, nodeHash)
  * - `stateIndexRoots`: stores the current root hash per (tenant, scope)
  * - `stateIndexMeta`:  reverse lookup from messageCid → protocol (for deletion)
- *
- * The old `eventLogMessages` / `eventLogRecordsTags` tables are no longer created or used.
  */
 
 import type { Dialect } from './dialect/dialect.js';
