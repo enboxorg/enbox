@@ -15,7 +15,6 @@ import * as cbor from '@ipld/dag-cbor';
 import { executeWithRetryIfDatabaseIsLocked } from './utils/transaction.js';
 import { extractTagsAndSanitizeIndexes } from './utils/sanitize.js';
 import { filterSelectQuery } from './utils/filter.js';
-import { Kysely } from 'kysely';
 import { sha256 } from 'multiformats/hashes/sha2';
 import { TagTables } from './utils/tags.js';
 import {
@@ -24,6 +23,7 @@ import {
   executeUnlessAborted,
   SortDirection
 } from '@enbox/dwn-sdk-js';
+import { Kysely, sql } from 'kysely';
 
 
 export class MessageStoreSql implements MessageStore {
@@ -59,7 +59,7 @@ export class MessageStoreSql implements MessageStore {
         .addColumn('parentId', 'varchar(60)')
         .addColumn('protocol', 'varchar(200)')
         .addColumn('protocolPath', 'varchar(200)')
-        .addColumn('contextId', 'varchar(500)')
+        .addColumn('contextId', 'varchar(600)')
         .addColumn('schema', 'varchar(200)')
         .addColumn('author', 'varchar(255)')
         .addColumn('recipient', 'varchar(255)')
@@ -89,7 +89,6 @@ export class MessageStoreSql implements MessageStore {
         ['tenant', 'parentId'], // used to walk down hierarchy of records, use cases include purging of records
         ['tenant', 'protocol', 'published', 'messageTimestamp'], // index used for basically every external query.
         ['tenant', 'interface'], // mainly for fast fetch of ProtocolsConfigure for authorization, not needed if protocol was a DWN Record
-        ['tenant', 'contextId', 'messageTimestamp'], // expected to be used for common query pattern
         ['tenant', 'permissionGrantId'], // for deleting grant-authorized messages though pending https://github.com/enboxorg/enbox/issues/716
         // other potential indexes
         // ['tenant', 'author'],
@@ -100,6 +99,22 @@ export class MessageStoreSql implements MessageStore {
         // ['tenant', 'messageCid'],
         // ['tenant', 'protocolPath'],
       ]);
+
+      // contextId index created separately because MySQL requires a prefix length to fit within
+      // the 3072-byte InnoDB index key limit. contextId is varchar(600) × 4 bytes (utf8mb4) = 2400 bytes,
+      // which combined with tenant (255 × 4 = 1020) and messageTimestamp (30 × 4 = 120) = 3540 bytes,
+      // exceeding the limit. A prefix of 480 chars (1920 bytes) brings the total to 3060 bytes.
+      // contextId values only contain ASCII chars [a-zA-Z0-9/], so a 480-char prefix is sufficient
+      // to distinguish most records (covers ~8 nesting levels of 59-char CID segments).
+      if (this.#dialect.name === 'MySQL') {
+        await sql`CREATE INDEX index_tenant_contextId_messageTimestamp
+          ON ${sql.table(messagesTableName)} (tenant, contextId(480), messageTimestamp)`
+          .execute(this.#db);
+      } else {
+        await this.createIndexes(this.#db, messagesTableName, [
+          ['tenant', 'contextId', 'messageTimestamp'], // expected to be used for common query pattern
+        ]);
+      }
     }
 
     // create tags table

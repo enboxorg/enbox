@@ -1,8 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   workflow_call:
@@ -12,9 +10,285 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Test
+  # ---------------------------------------------------------------------------
+  # Detect whether source code changed. Docs-only PRs skip the entire pipeline
+  # but the ci-passed gate job still reports success (required for branch protection).
+  # ---------------------------------------------------------------------------
+  changes:
+    name: Detect Changes
     runs-on: ubuntu-latest
+    outputs:
+      src: ${{ steps.filter.outputs.src }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for source changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            src:
+              - '**'
+              - '!**/*.md'
+              - '!docs/**'
+              - '!LICENSE'
+              - '!.changeset/**'
+
+  # ---------------------------------------------------------------------------
+  # Shared setup: install, lint, build, then upload the workspace as an artifact
+  # so downstream test jobs don't each have to rebuild.
+  # ---------------------------------------------------------------------------
+  setup:
+    name: Lint & Build
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Restore bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-store-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Build
+        run: bun run build
+
+      - name: Upload build outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-build
+          path: packages/*/dist/
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # Lightweight packages: common, crypto (no external services needed)
+  # ---------------------------------------------------------------------------
+  test-lightweight:
+    name: 'Test: common / crypto'
+    runs-on: ubuntu-latest
+    needs: setup
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Restore bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-store-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: workspace-build
+          path: packages
+
+      - name: Run tests
+        run: |
+          bun run --filter @enbox/common  test:node
+          bun run --filter @enbox/crypto  test:node
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lightweight
+          path: |
+            packages/common/coverage/
+            packages/crypto/coverage/
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # DWN SDK: large test suite, but no external services (LevelDB in-process)
+  # ---------------------------------------------------------------------------
+  test-dwn-sdk:
+    name: 'Test: dwn-sdk-js'
+    runs-on: ubuntu-latest
+    needs: setup
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Restore bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-store-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: workspace-build
+          path: packages
+
+      - name: Run tests
+        run: bun run --filter @enbox/dwn-sdk-js test:node
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-dwn-sdk
+          path: packages/dwn-sdk-js/coverage/
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # dids + Agent + API: need a live Pkarr relay and dwn-server (backed by Postgres)
+  # ---------------------------------------------------------------------------
+  test-agent-api:
+    name: 'Test: dids / agent / api'
+    runs-on: ubuntu-latest
+    needs: setup
+
+    services:
+      postgres-dwn-server:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: dwn
+          POSTGRES_USER: dwn_user
+          POSTGRES_PASSWORD: dwn_password
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Restore bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-store-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: workspace-build
+          path: packages
+
+      - name: Start Pkarr relay
+        run: |
+          docker run -d --name pkarr-relay -p 7527:15411 synonymsoft/pkarr pkarr-relay --testnet
+          echo "Waiting for Pkarr relay..."
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:7527/ >/dev/null 2>&1 || [ $? -eq 22 ]; then
+              echo "Pkarr relay is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Start dwn-server
+        run: |
+          export DS_PORT=3000
+          export DWN_BASE_URL=http://localhost:3000
+          export DWN_TTL_CACHE_URL=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_STORAGE_STATE_INDEX=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DID_DHT_GATEWAY_URI=http://localhost:7527
+
+          bun packages/dwn-server/dist/esm/src/main.js &
+          echo "DWN_SERVER_PID=$!" >> $GITHUB_ENV
+
+          echo "Waiting for dwn-server..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/info >/dev/null 2>&1; then
+              echo "dwn-server is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Run tests
+        run: |
+          export DID_DHT_GATEWAY_URI=http://localhost:7527
+          bun run --filter @enbox/dids   test:node
+          bun run --filter @enbox/agent  test:node
+          bun run --filter @enbox/api    test:node
+
+      - name: Stop services
+        if: always()
+        run: |
+          if [ -n "$DWN_SERVER_PID" ]; then
+            kill "$DWN_SERVER_PID" || true
+          fi
+          docker rm -f pkarr-relay || true
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-agent-api
+          path: |
+            packages/dids/coverage/
+            packages/agent/coverage/
+            packages/api/coverage/
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # SQL Store: needs Postgres + MySQL for dialect-specific tests
+  # ---------------------------------------------------------------------------
+  test-sql-store:
+    name: 'Test: dwn-sql-store'
+    runs-on: ubuntu-latest
+    needs: setup
 
     services:
       postgres:
@@ -26,20 +300,6 @@ jobs:
           POSTGRES_INITDB_ARGS: '--lc-collate=C --lc-ctype=C'
         ports:
           - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      postgres-dwn-server:
-        image: postgres:15-alpine
-        env:
-          POSTGRES_DB: dwn
-          POSTGRES_USER: dwn_user
-          POSTGRES_PASSWORD: dwn_password
-        ports:
-          - 5433:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -69,7 +329,7 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Setup bun cache
+      - name: Restore bun cache
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
@@ -80,99 +340,89 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Lint
-        run: bun run lint
-
-      - name: Build
-        run: bun run build
-
-      - name: Start Pkarr relay
-        run: |
-          docker run -d --name pkarr-relay -p 7527:15411 synonymsoft/pkarr pkarr-relay --testnet
-          echo "Waiting for Pkarr relay..."
-          for i in $(seq 1 20); do
-            if curl -sf http://localhost:7527/ >/dev/null 2>&1 || [ $? -eq 22 ]; then
-              echo "Pkarr relay is ready"
-              break
-            fi
-            sleep 2
-          done
-
-      - name: Start dwn-server
-        run: |
-          cd packages/dwn-server
-
-          export DS_PORT=3000
-          export DWN_BASE_URL=http://localhost:3000
-          export DWN_TTL_CACHE_URL=postgres://dwn_user:dwn_password@localhost:5433/dwn
-          export DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@localhost:5433/dwn
-          export DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@localhost:5433/dwn
-          export DWN_STORAGE_STATE_INDEX=postgres://dwn_user:dwn_password@localhost:5433/dwn
-          export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
-          export DID_DHT_GATEWAY_URI=http://localhost:7527
-
-          bun dist/esm/src/main.js &
-          echo "DWN_SERVER_PID=$!" >> $GITHUB_ENV
-
-          echo "Waiting for dwn-server..."
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:3000/info >/dev/null 2>&1; then
-              echo "dwn-server is ready"
-              break
-            fi
-            sleep 2
-          done
-
-          cd ../..
+      - name: Download build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: workspace-build
+          path: packages
 
       - name: Run tests
-        run: |
-          export DB_HOST=localhost
-          export DB_PORT=5432
-          export DB_USER=root
-          export DB_PASSWORD=dwn
-          export DB_NAME=dwn
-          export MYSQL_HOST=localhost
-          export MYSQL_PORT=3306
-          export MYSQL_USER=root
-          export MYSQL_PASSWORD=dwn
-          export MYSQL_DATABASE=dwn
-          export DID_DHT_GATEWAY_URI=http://localhost:7527
+        run: bun run --filter @enbox/dwn-sql-store test
 
-          bun run test:node
-
-      - name: Stop dwn-server
-        if: always()
-        run: |
-          if [ -n "$DWN_SERVER_PID" ]; then
-            kill "$DWN_SERVER_PID" || true
-          fi
-          docker rm -f pkarr-relay || true
-
-      - name: Upload coverage reports
+      - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-reports
-          path: |
-            packages/*/coverage/
+          name: coverage-sql-store
+          path: packages/dwn-sql-store/coverage/
           retention-days: 7
+          if-no-files-found: ignore
 
+  # ---------------------------------------------------------------------------
+  # DWN Server: self-contained tests (SQLite in-memory, no external services)
+  # ---------------------------------------------------------------------------
+  test-dwn-server:
+    name: 'Test: dwn-server'
+    runs-on: ubuntu-latest
+    needs: setup
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Restore bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-store-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: workspace-build
+          path: packages
+
+      - name: Run tests
+        run: bun run --filter @enbox/dwn-server test
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-dwn-server
+          path: packages/dwn-server/coverage/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Coverage: download all coverage artifacts and check thresholds (PRs only)
+  # ---------------------------------------------------------------------------
   coverage:
     name: Coverage Check
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server]
     if: github.event_name == 'pull_request'
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download coverage reports
+      - name: Download all coverage reports
         uses: actions/download-artifact@v4
         with:
-          name: coverage-reports
+          pattern: coverage-*
           path: coverage-artifacts
+          merge-multiple: true
 
       - name: Check coverage thresholds
         id: coverage-check
@@ -185,10 +435,10 @@ jobs:
           failed=false
           threshold=80
 
-          for report in coverage-artifacts/*/coverage/cobertura-coverage.xml; do
+          for report in coverage-artifacts/packages/*/coverage/cobertura-coverage.xml; do
             [ -f "$report" ] || continue
 
-            pkg=$(echo "$report" | sed 's|coverage-artifacts/\([^/]*\)/.*|\1|')
+            pkg=$(echo "$report" | sed 's|coverage-artifacts/packages/\([^/]*\)/.*|\1|')
 
             coverage=$(python3 -c "
           import xml.etree.ElementTree as ET
@@ -256,21 +506,50 @@ jobs:
               });
             }
 
-  # Gate job for branch protection -- require this to pass before merging
+  # ---------------------------------------------------------------------------
+  # Gate job for branch protection — always runs so required checks pass even
+  # when the pipeline is skipped (e.g. docs-only changes).
+  # ---------------------------------------------------------------------------
   ci-passed:
     name: CI Passed
     runs-on: ubuntu-latest
-    needs: [test, coverage]
+    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server, coverage]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" != "success" ]; then
-            echo "::error::Tests failed"
+          # Docs-only change — nothing to test
+          if [ "${{ needs.changes.outputs.src }}" != "true" ]; then
+            echo "Skipped: docs-only change"
+            exit 0
+          fi
+
+          # All test jobs must succeed
+          if [ "${{ needs.test-lightweight.result }}" != "success" ]; then
+            echo "::error::test-lightweight failed"
             exit 1
           fi
+          if [ "${{ needs.test-dwn-sdk.result }}" != "success" ]; then
+            echo "::error::test-dwn-sdk failed"
+            exit 1
+          fi
+          if [ "${{ needs.test-agent-api.result }}" != "success" ]; then
+            echo "::error::test-agent-api failed"
+            exit 1
+          fi
+          if [ "${{ needs.test-sql-store.result }}" != "success" ]; then
+            echo "::error::test-sql-store failed"
+            exit 1
+          fi
+          if [ "${{ needs.test-dwn-server.result }}" != "success" ]; then
+            echo "::error::test-dwn-server failed"
+            exit 1
+          fi
+
+          # Coverage must pass on PRs
           if [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ needs.coverage.result }}" != "success" ]; then
             echo "::error::Coverage check failed"
             exit 1
           fi
+
           echo "All checks passed"

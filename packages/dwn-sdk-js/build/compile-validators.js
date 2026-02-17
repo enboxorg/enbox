@@ -95,7 +95,24 @@ for (const schemaName in schemas) {
   ajv.addSchema(schemas[schemaName], schemaName);
 }
 
-const moduleCode = standaloneCode(ajv);
+let moduleCode = standaloneCode(ajv);
+
+// Ajv standalone code generator emits `require()` calls for runtime helpers (e.g. `ucs2length`
+// used by `maxLength`) even when `esm: true` is set. Since this package uses `"type": "module"`,
+// Node's ESM loader rejects `require()`. Convert CJS requires to top-level ESM imports.
+const importStatements = [];
+moduleCode = moduleCode.replace(
+  /(?:const|var)\s+(\w+)\s*=\s*require\("([^"]+)"\)\.default;/g,
+  (_match, varName, modulePath) => {
+    const modAlias = `${varName}Mod`;
+    const esmPath = modulePath.endsWith('.js') ? modulePath : `${modulePath}.js`;
+    importStatements.push(`import ${modAlias} from "${esmPath}";`);
+    return `const ${varName} = ${modAlias}.default ?? ${modAlias};`;
+  }
+);
+if (importStatements.length > 0) {
+  moduleCode = importStatements.join('\n') + '\n' + moduleCode;
+}
 
 const __dirname = url.fileURLToPath(new URL('.', import.meta.url));
 
