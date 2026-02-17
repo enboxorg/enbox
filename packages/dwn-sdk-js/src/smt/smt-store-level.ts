@@ -5,17 +5,16 @@
  * - Nodes are stored under the 'nodes' sublevel, keyed by hex-encoded hash
  * - The root hash is stored under the 'meta' sublevel with key 'root'
  * - Node values are JSON-serialized, with Uint8Array fields encoded as hex strings
+ *
+ * This store wraps a LevelWrapper sublevel provided by the parent (e.g. StateIndexLevel).
+ * The parent manages the LevelDB lifecycle; open()/close() here only handle partition setup.
  */
 
 import type { Hash, SMTInternalNode, SMTLeafNode, SMTNode, SMTNodeStore } from '../types/smt-types.js';
 
-import { createLevelDatabase, LevelWrapper } from '../store/level-wrapper.js';
-import { hashToHex, hexToHash } from './smt-utils.js';
+import type { LevelWrapper } from '../store/level-wrapper.js';
 
-export type SMTStoreLevelConfig = {
-  location? : string;
-  createLevelDatabase? : typeof createLevelDatabase;
-};
+import { hashToHex, hexToHash } from './smt-utils.js';
 
 type SerializedInternalNode = {
   type : 'internal';
@@ -37,23 +36,17 @@ export class SMTStoreLevel implements SMTNodeStore {
   private metaPartition!: LevelWrapper<string>;
   private initialized = false;
 
-  constructor(config?: SMTStoreLevelConfig) {
-    this.db = new LevelWrapper<string>({
-      location            : config?.location ?? 'SMT_STORE',
-      createLevelDatabase : config?.createLevelDatabase ?? createLevelDatabase,
-      keyEncoding         : 'utf8',
-    });
+  constructor(sublevel: LevelWrapper<string>) {
+    this.db = sublevel;
   }
 
   async open(): Promise<void> {
-    await this.db.open();
     this.nodesPartition = await this.db.partition('nodes');
     this.metaPartition = await this.db.partition('meta');
     this.initialized = true;
   }
 
   async close(): Promise<void> {
-    await this.db.close();
     this.initialized = false;
   }
 

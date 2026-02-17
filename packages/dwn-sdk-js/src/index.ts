@@ -66,7 +66,7 @@ export { EventEmitterStream, EventEmitterStreamConfig } from './event-stream/eve
 export type { StateIndex } from './types/state-index.js';
 export { StateIndexLevel, StateIndexLevelConfig } from './state-index/state-index-level.js';
 export { SparseMerkleTree } from './smt/sparse-merkle-tree.js';
-export { SMTStoreLevel, SMTStoreLevelConfig } from './smt/smt-store-level.js';
+export { SMTStoreLevel } from './smt/smt-store-level.js';
 export { SMTStoreMemory } from './smt/smt-store-memory.js';
 export type { Hash, SMTNode, SMTInternalNode, SMTLeafNode, SMTProof, SMTDiffResult, SMTNodeStore } from './types/smt-types.js';
 export { hashChildren, hashEquals, hashKey, hashLeaf, hashToHex, hexToHash, getBit, initDefaultHashes, getDefaultHashes, SMT_DEPTH, ZERO_HASH } from './smt/smt-utils.js';

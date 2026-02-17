@@ -3,7 +3,7 @@
  *
  * Manages per-tenant Sparse Merkle Trees (global + per-protocol sub-trees).
  *
- * Storage layout within a single LevelDB instance:
+ * All data lives within a single LevelDB instance, partitioned by sublevels:
  *   {tenant}/global/        -> SMT nodes + root for the tenant's global tree
  *   {tenant}/proto/{proto}/ -> SMT nodes + root for a protocol-scoped tree
  *   {tenant}/meta/{cid}     -> JSON(indexes) for reverse lookup during deletion
@@ -65,15 +65,6 @@ export class StateIndexLevel implements StateIndex {
   }
 
   async close(): Promise<void> {
-    // Close all cached SMTs
-    for (const smtPromise of this.globalTrees.values()) {
-      const smt = await smtPromise;
-      await smt.close();
-    }
-    for (const smtPromise of this.protocolTrees.values()) {
-      const smt = await smtPromise;
-      await smt.close();
-    }
     this.globalTrees.clear();
     this.protocolTrees.clear();
 
@@ -81,15 +72,6 @@ export class StateIndexLevel implements StateIndex {
   }
 
   async clear(): Promise<void> {
-    // Close all cached SMTs before clearing
-    for (const smtPromise of this.globalTrees.values()) {
-      const smt = await smtPromise;
-      await smt.close();
-    }
-    for (const smtPromise of this.protocolTrees.values()) {
-      const smt = await smtPromise;
-      await smt.close();
-    }
     this.globalTrees.clear();
     this.protocolTrees.clear();
 
@@ -171,7 +153,7 @@ export class StateIndexLevel implements StateIndex {
   /**
    * Get or create the global SMT for a tenant.
    * Uses a promise-based cache to prevent concurrent callers from racing to
-   * open the same LevelDB database twice.
+   * initialize the same tenant's SMT twice.
    */
   private getGlobalTree(tenant: string): Promise<SparseMerkleTree> {
     let smtPromise = this.globalTrees.get(tenant);
@@ -179,7 +161,7 @@ export class StateIndexLevel implements StateIndex {
       return smtPromise;
     }
 
-    smtPromise = this.createTree(`${this.config.location!}/${tenant}/global`);
+    smtPromise = this.createTree(this.db, [tenant, 'global']);
     this.globalTrees.set(tenant, smtPromise);
     return smtPromise;
   }
@@ -187,7 +169,7 @@ export class StateIndexLevel implements StateIndex {
   /**
    * Get or create a protocol-scoped SMT for a tenant.
    * Uses a promise-based cache to prevent concurrent callers from racing to
-   * open the same LevelDB database twice.
+   * initialize the same tenant's SMT twice.
    */
   private getProtocolTree(tenant: string, protocol: string): Promise<SparseMerkleTree> {
     const cacheKey = `${tenant}\x00${protocol}`;
@@ -196,21 +178,22 @@ export class StateIndexLevel implements StateIndex {
       return smtPromise;
     }
 
-    // Use a hash-derived subdirectory to avoid filesystem issues with protocol URIs
-    const protoHash = this.sanitizeProtocolForPath(protocol);
-    smtPromise = this.createTree(`${this.config.location!}/${tenant}/proto/${protoHash}`);
+    smtPromise = this.createTree(this.db, [tenant, 'proto', protocol]);
     this.protocolTrees.set(cacheKey, smtPromise);
     return smtPromise;
   }
 
   /**
-   * Create and initialize a new SparseMerkleTree backed by LevelDB at the given location.
+   * Create and initialize a new SparseMerkleTree backed by a sublevel chain
+   * within the single LevelDB instance.
    */
-  private async createTree(location: string): Promise<SparseMerkleTree> {
-    const store = new SMTStoreLevel({
-      location,
-      createLevelDatabase: this.config.createLevelDatabase,
-    });
+  private async createTree(db: LevelWrapper<string>, sublevels: string[]): Promise<SparseMerkleTree> {
+    let partition = db;
+    for (const name of sublevels) {
+      partition = await partition.partition(name);
+    }
+
+    const store = new SMTStoreLevel(partition);
     const smt = new SparseMerkleTree(store);
     await smt.initialize();
     return smt;
@@ -254,23 +237,5 @@ export class StateIndexLevel implements StateIndex {
    */
   private async getMetaPartition(tenant: string): Promise<LevelWrapper<string>> {
     return (await this.db.partition(tenant)).partition('meta');
-  }
-
-  /**
-   * Compute a collision-resistant directory name from a protocol URI.
-   * Uses a simple hash to avoid filesystem issues with special characters
-   * while preventing different URIs from mapping to the same path.
-   */
-  private sanitizeProtocolForPath(protocol: string): string {
-    // FNV-1a 32-bit hash for a compact, deterministic path name.
-    // Combined with a truncated sanitized prefix for debuggability.
-    let hash = 0x811c9dc5;
-    for (let i = 0; i < protocol.length; i++) {
-      hash ^= protocol.charCodeAt(i);
-      hash = Math.imul(hash, 0x01000193);
-    }
-    const hashHex = (hash >>> 0).toString(16).padStart(8, '0');
-    const prefix = protocol.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 32);
-    return `${prefix}_${hashHex}`;
   }
 }

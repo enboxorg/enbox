@@ -3,6 +3,7 @@ import { expect } from 'chai';
 import { SMTStoreLevel } from '../../src/smt/smt-store-level.js';
 import { SMTStoreMemory } from '../../src/smt/smt-store-memory.js';
 import { SparseMerkleTree } from '../../src/smt/sparse-merkle-tree.js';
+import { createLevelDatabase, LevelWrapper } from '../../src/store/level-wrapper.js';
 import { hashEquals, initDefaultHashes } from '../../src/smt/smt-utils.js';
 
 let testCounter = 0;
@@ -10,12 +11,27 @@ function uniqueLocation(prefix: string): string {
   return `TEST-SMT-LEVEL-${prefix}-${Date.now()}-${testCounter++}`;
 }
 
+/** Create an opened LevelWrapper and return a sublevel partition from it. */
+async function createSublevel(prefix: string): Promise<{ db: LevelWrapper<string>; sublevel: LevelWrapper<string> }> {
+  const db = new LevelWrapper<string>({
+    location            : uniqueLocation(prefix),
+    createLevelDatabase : createLevelDatabase,
+    keyEncoding         : 'utf8',
+  });
+  await db.open();
+  const sublevel = await db.partition('smt');
+  return { db, sublevel };
+}
+
 describe('SMTStoreLevel', () => {
+  let parentDb: LevelWrapper<string>;
   let store: SMTStoreLevel;
   let smt: SparseMerkleTree;
 
   beforeEach(async () => {
-    store = new SMTStoreLevel({ location: uniqueLocation('main') });
+    const { db, sublevel } = await createSublevel('main');
+    parentDb = db;
+    store = new SMTStoreLevel(sublevel);
     smt = new SparseMerkleTree(store);
     await smt.initialize();
   });
@@ -23,6 +39,7 @@ describe('SMTStoreLevel', () => {
   afterEach(async () => {
     await smt.clear();
     await smt.close();
+    await parentDb.close();
   });
 
   it('should persist root hash across operations', async () => {
@@ -53,11 +70,13 @@ describe('SMTStoreLevel', () => {
   });
 
   it('should produce order-independent roots with LevelDB', async () => {
-    const storeA = new SMTStoreLevel({ location: uniqueLocation('order-A') });
+    const helperA = await createSublevel('order-A');
+    const storeA = new SMTStoreLevel(helperA.sublevel);
     const smtA = new SparseMerkleTree(storeA);
     await smtA.initialize();
 
-    const storeB = new SMTStoreLevel({ location: uniqueLocation('order-B') });
+    const helperB = await createSublevel('order-B');
+    const storeB = new SMTStoreLevel(helperB.sublevel);
     const smtB = new SparseMerkleTree(storeB);
     await smtB.initialize();
 
@@ -79,8 +98,10 @@ describe('SMTStoreLevel', () => {
 
     await smtA.clear();
     await smtA.close();
+    await helperA.db.close();
     await smtB.clear();
     await smtB.close();
+    await helperB.db.close();
   });
 
   it('should support diff between LevelDB-backed and in-memory trees', async () => {
@@ -117,7 +138,8 @@ describe('SMTStoreLevel', () => {
   });
 
   it('should throw when calling methods before open()', async () => {
-    const uninitStore = new SMTStoreLevel({ location: uniqueLocation('uninit') });
+    const { db, sublevel } = await createSublevel('uninit');
+    const uninitStore = new SMTStoreLevel(sublevel);
 
     try {
       await uninitStore.getNode(new Uint8Array(32));
@@ -125,6 +147,8 @@ describe('SMTStoreLevel', () => {
     } catch (e: any) {
       expect(e.message).to.include('not initialized');
     }
+
+    await db.close();
   });
 
   it('should return undefined for a non-existent node hash', async () => {

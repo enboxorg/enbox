@@ -139,8 +139,9 @@ describe('KeyStore', () => {
 
     before(async () => {
       testHarness = await PlatformAgentTestHarness.setup({
-        agentClass  : TestAgent,
-        agentStores : 'memory'
+        agentClass       : TestAgent,
+        agentStores      : 'memory',
+        testDataLocation : '__TESTDATA__/dwn-key-store'
       });
       secp256k1Did = await DidJwk.create({
         options: { algorithm: 'secp256k1' }
