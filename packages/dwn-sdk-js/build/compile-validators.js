@@ -105,7 +105,8 @@ moduleCode = moduleCode.replace(
   /(?:const|var)\s+(\w+)\s*=\s*require\("([^"]+)"\)\.default;/g,
   (_match, varName, modulePath) => {
     const modAlias = `${varName}Mod`;
-    importStatements.push(`import ${modAlias} from "${modulePath}";`);
+    const esmPath = modulePath.endsWith('.js') ? modulePath : `${modulePath}.js`;
+    importStatements.push(`import ${modAlias} from "${esmPath}";`);
     return `const ${varName} = ${modAlias}.default ?? ${modAlias};`;
   }
 );
