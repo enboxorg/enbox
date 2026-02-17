@@ -92,13 +92,13 @@ DWN SDK includes a polyfilled distribution that can imported in a `module` scrip
   <script type="module">
      // Import necessary modules from external sources using ES6 modules.
     import { Dwn, DataStream, DidKeyResolver, Jws, RecordsWrite } from 'https://cdn.jsdelivr.net/npm/@enbox/dwn-sdk-js@0.1.1/dist/bundles/dwn.js'
-    import { MessageStoreLevel, DataStoreLevel, EventLogLevel } from 'https://cdn.jsdelivr.net/npm/@enbox/dwn-sdk-js@0.1.1/dist/bundles/level-stores.js'
+    import { MessageStoreLevel, DataStoreLevel, StateIndexLevel } from 'https://cdn.jsdelivr.net/npm/@enbox/dwn-sdk-js@0.1.1/dist/bundles/level-stores.js'
 
     // Create instances of various components from the imported modules.
     const messageStore = new MessageStoreLevel();
     const dataStore = new DataStoreLevel();
-    const eventLog = new EventLogLevel();
-    const dwn = await Dwn.create({ messageStore, dataStore, eventLog });
+    const stateIndex = new StateIndexLevel();
+    const dwn = await Dwn.create({ messageStore, dataStore, stateIndex });
 
     // Generate a did:key DID (Decentralized Identifier).
     const didKey = await TestDataGenerator.generateDidKeyPersona();
@@ -200,13 +200,13 @@ esbuild.build({
 ```ts
 
 import { Dwn, DataStream, DidKeyResolver, Jws, RecordsWrite } from '@enbox/dwn-sdk-js';
-import { DataStoreLevel, EventLogLevel, MessageStoreLevel } from '@enbox/dwn-sdk-js/stores';
+import { DataStoreLevel, StateIndexLevel, MessageStoreLevel } from '@enbox/dwn-sdk-js/stores';
 
 // Initialize the required stores and components for the DWN SDK.
 const messageStore = new MessageStoreLevel();
 const dataStore = new DataStoreLevel();
-const eventLog = new EventLogLevel();
-const dwn = await Dwn.create({ messageStore, dataStore, eventLog });
+const stateIndex = new StateIndexLevel();
+const dwn = await Dwn.create({ messageStore, dataStore, stateIndex });
 
 // Generate a did:key DID (Decentralized Identifier).
 const didKey = await TestDataGenerator.generateDidKeyPersona();
@@ -250,7 +250,7 @@ const result = await window.enbox.dwn.processMessage({
 ### Custom Tenant Gating
 By default, all DIDs are allowed as tenants. A custom tenant gate implementation can be provided when initializing the DWN.
 ```ts
-import { ActiveTenantCheckResult, Dwn, TenantGate, DataStoreLevel, EventLogLevel, MessageStoreLevel } from '@enbox/dwn-sdk-js';
+import { ActiveTenantCheckResult, Dwn, TenantGate, DataStoreLevel, StateIndexLevel, MessageStoreLevel } from '@enbox/dwn-sdk-js';
 
 // Define a custom implementation of the TenantGate interface.
 class CustomTenantGate implements TenantGate {
@@ -262,11 +262,11 @@ class CustomTenantGate implements TenantGate {
 // Initialize the required stores and components for the DWN SDK.
 const messageStore = new MessageStoreLevel();
 const dataStore = new DataStoreLevel();
-const eventLog = new EventLogLevel();
+const stateIndex = new StateIndexLevel();
 // Create an instance of the custom TenantGate.
 const tenantGate = new CustomTenantGate();
-// Create a DWN instance with configured stores, logs, and the custom TenantGate.
-const dwn = await Dwn.create({ messageStore, dataStore, eventLog, tenantGate });
+// Create a DWN instance with configured stores and the custom TenantGate.
+const dwn = await Dwn.create({ messageStore, dataStore, stateIndex, tenantGate });
 ```
 
 ### Custom Signature Signer

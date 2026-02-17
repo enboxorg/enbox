@@ -68,6 +68,32 @@ describe('ProtocolsConfigure', () => {
       expect(protocolsConfigure.message.descriptor.messageTimestamp).to.equal(currentTime);
     });
 
+    it('should include permissionGrantId in the descriptor when provided', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const grantId = 'grant-proto-789';
+
+      const definition = { ...dexProtocolDefinition };
+      const protocolsConfigure = await ProtocolsConfigure.create({
+        definition,
+        signer            : Jws.createSigner(alice),
+        permissionGrantId : grantId,
+      });
+
+      expect(protocolsConfigure.message.descriptor.permissionGrantId).to.equal(grantId);
+    });
+
+    it('should not include permissionGrantId in the descriptor when not provided', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+
+      const definition = { ...dexProtocolDefinition };
+      const protocolsConfigure = await ProtocolsConfigure.create({
+        definition,
+        signer: Jws.createSigner(alice),
+      });
+
+      expect(protocolsConfigure.message.descriptor.permissionGrantId).to.be.undefined;
+    });
+
     it('should auto-normalize protocol URI', async () => {
       const alice = await TestDataGenerator.generatePersona();
 

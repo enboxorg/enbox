@@ -3,11 +3,11 @@ import type { EventStream } from '../../src/types/subscriptions.js';
 import type { GenerateProtocolsConfigureOutput } from '../utils/test-data-generator.js';
 import type {
   DataStore,
-  EventLog,
   MessageStore,
   ProtocolDefinition,
   ProtocolsConfigureDescriptor,
   ResumableTaskStore,
+  StateIndex,
 } from '../../src/index.js';
 
 import chaiAsPromised from 'chai-as-promised';
@@ -38,7 +38,7 @@ export function testProtocolsConfigureHandler(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let eventLog: EventLog;
+    let stateIndex: StateIndex;
     let eventStream: EventStream;
     let dwn: Dwn;
 
@@ -53,10 +53,10 @@ export function testProtocolsConfigureHandler(): void {
         messageStore = stores.messageStore;
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
-        eventLog = stores.eventLog;
+        stateIndex = stores.stateIndex;
         eventStream = TestEventStream.get();
 
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, eventStream, resumableTaskStore });
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
       });
 
       beforeEach(async () => {
@@ -66,7 +66,7 @@ export function testProtocolsConfigureHandler(): void {
         await messageStore.clear();
         await dataStore.clear();
         await resumableTaskStore.clear();
-        await eventLog.clear();
+        await stateIndex.clear();
       });
 
       after(async () => {
@@ -708,7 +708,7 @@ export function testProtocolsConfigureHandler(): void {
         });
       });
 
-      describe('event log', () => {
+      describe('state index', () => {
         it('should add event for ProtocolsConfigure', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const { message } = await TestDataGenerator.generateProtocolsConfigure({ author: alice });
@@ -716,7 +716,7 @@ export function testProtocolsConfigureHandler(): void {
           const reply = await dwn.processMessage(alice.did, message);
           expect(reply.status.code).to.equal(202);
 
-          const { events } = await eventLog.getEvents(alice.did);
+          const events = await stateIndex.getLeaves(alice.did, []);
           expect(events.length).to.equal(1);
 
           const messageCid = await Message.getCid(message);
@@ -735,7 +735,7 @@ export function testProtocolsConfigureHandler(): void {
           reply = await dwn.processMessage(alice.did, newestWrite.message);
           expect(reply.status.code).to.equal(202);
 
-          const { events } = await eventLog.getEvents(alice.did);
+          const events = await stateIndex.getLeaves(alice.did, []);
           expect(events.length).to.equal(1);
 
           const newestMessageCid = await Message.getCid(newestWrite.message);

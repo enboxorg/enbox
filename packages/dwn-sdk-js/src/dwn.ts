@@ -1,24 +1,24 @@
 
 import type { DataStore } from './types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
-import type { EventLog } from './types/event-log.js';
 import type { EventStream } from './types/subscriptions.js';
 import type { MessageStore } from './types/message-store.js';
 import type { MethodHandler } from './types/method-handler.js';
 import type { ResumableTaskStore } from './types/resumable-task-store.js';
+import type { StateIndex } from './types/state-index.js';
 import type { TenantGate } from './core/tenant-gate.js';
 import type { UnionMessageReply } from './core/message-reply.js';
 import type { GenericMessage, GenericMessageReply } from './types/message-types.js';
-import type { MessagesQueryMessage, MessagesQueryReply, MessagesReadMessage, MessagesReadReply, MessagesSubscribeMessage, MessagesSubscribeMessageOptions, MessagesSubscribeReply, MessageSubscriptionHandler } from './types/messages-types.js';
+import type { MessagesReadMessage, MessagesReadReply, MessagesSubscribeMessage, MessagesSubscribeMessageOptions, MessagesSubscribeReply, MessagesSyncMessage, MessagesSyncReply, MessageSubscriptionHandler } from './types/messages-types.js';
 import type { ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply } from './types/protocols-types.js';
 import type { RecordsDeleteMessage, RecordsQueryMessage, RecordsQueryReply, RecordsReadMessage, RecordsReadReply, RecordsSubscribeMessage, RecordsSubscribeMessageOptions, RecordsSubscribeReply, RecordSubscriptionHandler, RecordsWriteMessage, RecordsWriteMessageOptions } from './types/records-types.js';
 
 import { AllowAllTenantGate } from './core/tenant-gate.js';
 import { Message } from './core/message.js';
 import { messageReplyFromError } from './core/message-reply.js';
-import { MessagesQueryHandler } from './handlers/messages-query.js';
 import { MessagesReadHandler } from './handlers/messages-read.js';
 import { MessagesSubscribeHandler } from './handlers/messages-subscribe.js';
+import { MessagesSyncHandler } from './handlers/messages-sync.js';
 import { ProtocolsConfigureHandler } from './handlers/protocols-configure.js';
 import { ProtocolsQueryHandler } from './handlers/protocols-query.js';
 import { RecordsDeleteHandler } from './handlers/records-delete.js';
@@ -37,7 +37,7 @@ export class Dwn {
   private messageStore: MessageStore;
   private dataStore: DataStore;
   private resumableTaskStore: ResumableTaskStore;
-  private eventLog: EventLog;
+  private stateIndex: StateIndex;
   private tenantGate: TenantGate;
   private eventStream?: EventStream;
   private storageController: StorageController;
@@ -50,12 +50,12 @@ export class Dwn {
     this.messageStore = config.messageStore;
     this.dataStore = config.dataStore;
     this.resumableTaskStore = config.resumableTaskStore;
-    this.eventLog = config.eventLog;
+    this.stateIndex = config.stateIndex;
     this.eventStream = config.eventStream;
     this.storageController = new StorageController({
       messageStore : this.messageStore,
       dataStore    : this.dataStore,
-      eventLog     : this.eventLog,
+      stateIndex   : this.stateIndex,
       eventStream  : this.eventStream
     });
     this.resumableTaskManager = new ResumableTaskManager(
@@ -64,11 +64,6 @@ export class Dwn {
     );
 
     this.methodHandlers = {
-      [DwnInterfaceName.Messages + DwnMethodName.Query]: new MessagesQueryHandler(
-        this.didResolver,
-        this.messageStore,
-        this.eventLog,
-      ),
       [DwnInterfaceName.Messages + DwnMethodName.Read]: new MessagesReadHandler(
         this.didResolver,
         this.messageStore,
@@ -79,10 +74,15 @@ export class Dwn {
         this.messageStore,
         this.eventStream,
       ),
+      [DwnInterfaceName.Messages + DwnMethodName.Sync]: new MessagesSyncHandler(
+        this.didResolver,
+        this.messageStore,
+        this.stateIndex,
+      ),
       [DwnInterfaceName.Protocols + DwnMethodName.Configure]: new ProtocolsConfigureHandler(
         this.didResolver,
         this.messageStore,
-        this.eventLog,
+        this.stateIndex,
         this.eventStream
       ),
       [DwnInterfaceName.Protocols + DwnMethodName.Query]: new ProtocolsQueryHandler(
@@ -114,7 +114,7 @@ export class Dwn {
         this.didResolver,
         this.messageStore,
         this.dataStore,
-        this.eventLog,
+        this.stateIndex,
         this.eventStream
       )
     };
@@ -142,7 +142,7 @@ export class Dwn {
     await this.messageStore.open();
     await this.dataStore.open();
     await this.resumableTaskStore.open();
-    await this.eventLog.open();
+    await this.stateIndex.open();
     await this.eventStream?.open();
 
     await this.resumableTaskManager.resumeTasksAndWaitForCompletion();
@@ -153,17 +153,17 @@ export class Dwn {
     await this.messageStore.close();
     await this.dataStore.close();
     await this.resumableTaskStore.close();
-    await this.eventLog.close();
+    await this.stateIndex.close();
   }
 
   /**
    * Processes the given DWN message and returns with a reply.
    * @param tenant The tenant DID to route the given message to.
    */
-  public async processMessage(tenant: string, rawMessage: MessagesQueryMessage): Promise<MessagesQueryReply>;
   public async processMessage(
     tenant: string, rawMessage: MessagesSubscribeMessage, options?: MessagesSubscribeMessageOptions): Promise<MessagesSubscribeReply>;
   public async processMessage(tenant: string, rawMessage: MessagesReadMessage): Promise<MessagesReadReply>;
+  public async processMessage(tenant: string, rawMessage: MessagesSyncMessage): Promise<MessagesSyncReply>;
   public async processMessage(tenant: string, rawMessage: ProtocolsConfigureMessage): Promise<GenericMessageReply>;
   public async processMessage(tenant: string, rawMessage: ProtocolsQueryMessage): Promise<ProtocolsQueryReply>;
   public async processMessage(tenant: string, rawMessage: RecordsDeleteMessage): Promise<GenericMessageReply>;
@@ -258,6 +258,6 @@ export type DwnConfig = {
 
   messageStore: MessageStore;
   dataStore: DataStore;
-  eventLog: EventLog;
+  stateIndex: StateIndex;
   resumableTaskStore: ResumableTaskStore;
 };

@@ -392,27 +392,27 @@ describe('web5 api', () => {
         });
         expect(readGrantSend.reply.status.code).to.equal(202);
 
-        // create MessagesQuery and MessagesRead grants so that sync does not fail
-        const messagesQueryGrant = await testHarness.agent.permissions.createGrant({
+        // create MessagesSync and MessagesRead grants so that sync does not fail
+        const messagesSyncGrant = await testHarness.agent.permissions.createGrant({
           store       : true,
           author      : alice.did.uri,
           grantedTo   : app.uri,
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
           scope       : {
             interface : DwnInterfaceName.Messages,
-            method    : DwnMethodName.Query,
+            method    : DwnMethodName.Sync,
           }
         });
 
-        const { encodedData: messagesQueryGrantEncodedData, ...messagesQueryGrantMessage } = messagesQueryGrant.message;
-        const messagesQueryGrantSend = await testHarness.agent.sendDwnRequest({
+        const { encodedData: messagesSyncGrantEncodedData, ...messagesSyncGrantMessage } = messagesSyncGrant.message;
+        const messagesSyncGrantSend = await testHarness.agent.sendDwnRequest({
           author      : alice.did.uri,
           target      : alice.did.uri,
           messageType : DwnInterface.RecordsWrite,
-          rawMessage  : messagesQueryGrantMessage,
-          dataStream  : new Blob([ Convert.base64Url(messagesQueryGrantEncodedData).toUint8Array() ])
+          rawMessage  : messagesSyncGrantMessage,
+          dataStream  : new Blob([ Convert.base64Url(messagesSyncGrantEncodedData).toUint8Array() ])
         });
-        expect(messagesQueryGrantSend.reply.status.code).to.equal(202);
+        expect(messagesSyncGrantSend.reply.status.code).to.equal(202);
 
         const messagesReadGrant = await testHarness.agent.permissions.createGrant({
           store       : true,
@@ -437,7 +437,7 @@ describe('web5 api', () => {
 
         // stub the walletInit method
         sinon.stub(WalletConnect, 'initClient').resolves({
-          delegateGrants      : [ writeGrant.message, readGrant.message, messagesQueryGrant.message, messagesReadGrant.message ],
+          delegateGrants      : [ writeGrant.message, readGrant.message, messagesSyncGrant.message, messagesReadGrant.message ],
           delegatePortableDid : await app.export(),
           connectedDid        : alice.did.uri
         });

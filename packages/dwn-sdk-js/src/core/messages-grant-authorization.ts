@@ -4,7 +4,7 @@ import type { MessageStore } from '../types/message-store.js';
 import type { PermissionGrant } from '../protocols/permission-grant.js';
 import type { ProtocolsConfigureMessage } from '../types/protocols-types.js';
 import type { DataEncodedRecordsWriteMessage, RecordsDeleteMessage, RecordsWriteMessage } from '../types/records-types.js';
-import type { MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage } from '../types/messages-types.js';
+import type { MessagesReadMessage, MessagesSubscribeMessage, MessagesSyncMessage } from '../types/messages-types.js';
 
 import { DwnInterfaceName } from '../enums/dwn-interface-method.js';
 import { GrantAuthorization } from './grant-authorization.js';
@@ -44,11 +44,11 @@ export class MessagesGrantAuthorization {
   }
 
   /**
-   * Authorizes the scope of a permission grant for MessagesQuery or MessagesSubscribe.
+   * Authorizes the scope of a permission grant for MessagesSubscribe or MessagesSync.
    * @param messageStore Used to check if the grant has been revoked.
    */
-  public static async authorizeQueryOrSubscribe(input: {
-    incomingMessage: MessagesQueryMessage | MessagesSubscribeMessage,
+  public static async authorizeSubscribeOrSync(input: {
+    incomingMessage: MessagesSubscribeMessage | MessagesSyncMessage,
     expectedGrantor: string,
     expectedGrantee: string,
     permissionGrant: PermissionGrant,
@@ -66,15 +66,29 @@ export class MessagesGrantAuthorization {
       messageStore
     });
 
-    // if the grant is scoped to a specific protocol, ensure that all of the query filters must include that protocol
+    // if the grant is scoped to a specific protocol, ensure that the message targets that protocol
     if (PermissionsProtocol.hasProtocolScope(permissionGrant.scope)) {
       const scopedProtocol = permissionGrant.scope.protocol;
-      for (const filter of incomingMessage.descriptor.filters) {
-        if (filter.protocol !== scopedProtocol) {
+
+      // MessagesSync uses a direct `protocol` field on the descriptor
+      if ('action' in incomingMessage.descriptor) {
+        const syncMessage = incomingMessage as MessagesSyncMessage;
+        if (syncMessage.descriptor.protocol !== scopedProtocol) {
           throw new DwnError(
             DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol,
-            `The protocol ${filter.protocol} does not match the scoped protocol ${scopedProtocol}`
+            `The protocol ${syncMessage.descriptor.protocol} does not match the scoped protocol ${scopedProtocol}`
           );
+        }
+      } else {
+        // MessagesSubscribe uses filters
+        const filteredMessage = incomingMessage as MessagesSubscribeMessage;
+        for (const filter of filteredMessage.descriptor.filters) {
+          if (filter.protocol !== scopedProtocol) {
+            throw new DwnError(
+              DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol,
+              `The protocol ${filter.protocol} does not match the scoped protocol ${scopedProtocol}`
+            );
+          }
         }
       }
     }

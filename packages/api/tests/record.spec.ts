@@ -75,7 +75,7 @@ describe('Record', () => {
     sinon.restore();
     await testHarness.syncStore.clear();
     await testHarness.dwnDataStore.clear();
-    await testHarness.dwnEventLog.clear();
+    await testHarness.dwnStateIndex.clear();
     await testHarness.dwnMessageStore.clear();
     await testHarness.dwnResumableTaskStore.clear();
     await testHarness.agent.permissions.clear();
@@ -138,7 +138,7 @@ describe('Record', () => {
       sinon.restore();
       await delegateHarness.syncStore.clear();
       await delegateHarness.dwnDataStore.clear();
-      await delegateHarness.dwnEventLog.clear();
+      await delegateHarness.dwnStateIndex.clear();
       await delegateHarness.dwnMessageStore.clear();
       await delegateHarness.dwnResumableTaskStore.clear();
       await testHarness.agent.permissions.clear();
@@ -1657,7 +1657,7 @@ describe('Record', () => {
       beforeEach(async () => {
         await testHarnessCarol.syncStore.clear();
         await testHarnessCarol.dwnDataStore.clear();
-        await testHarnessCarol.dwnEventLog.clear();
+        await testHarnessCarol.dwnStateIndex.clear();
         await testHarnessCarol.dwnMessageStore.clear();
         await testHarnessCarol.dwnResumableTaskStore.clear();
         await testHarness.agent.permissions.clear();

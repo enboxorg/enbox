@@ -225,7 +225,7 @@ function createPermissionRequestForProtocol({ definition, permissions }: Protoco
     method    : DwnMethodName.Query,
   });
 
-  // In order to enable sync, we must request permissions for `MessagesQuery`, `MessagesRead` and `MessagesSubscribe`
+  // In order to enable sync, we must request permissions for `MessagesSync`, `MessagesRead` and `MessagesSubscribe`
   requests.push({
     protocol  : definition.protocol,
     interface : DwnInterfaceName.Messages,
@@ -233,7 +233,7 @@ function createPermissionRequestForProtocol({ definition, permissions }: Protoco
   }, {
     protocol  : definition.protocol,
     interface : DwnInterfaceName.Messages,
-    method    : DwnMethodName.Query,
+    method    : DwnMethodName.Sync,
   }, {
     protocol  : definition.protocol,
     interface : DwnInterfaceName.Messages,

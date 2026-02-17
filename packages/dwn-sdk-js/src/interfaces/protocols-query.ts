@@ -38,10 +38,11 @@ export class ProtocolsQuery extends AbstractMessage<ProtocolsQueryMessage> {
   public static async create(options: ProtocolsQueryOptions): Promise<ProtocolsQuery> {
 
     const descriptor: ProtocolsQueryDescriptor = {
-      interface        : DwnInterfaceName.Protocols,
-      method           : DwnMethodName.Query,
-      messageTimestamp : options.messageTimestamp ?? Time.getCurrentTimestamp(),
-      filter           : options.filter ? ProtocolsQuery.normalizeFilter(options.filter) : undefined,
+      interface         : DwnInterfaceName.Protocols,
+      method            : DwnMethodName.Query,
+      messageTimestamp  : options.messageTimestamp ?? Time.getCurrentTimestamp(),
+      filter            : options.filter ? ProtocolsQuery.normalizeFilter(options.filter) : undefined,
+      permissionGrantId : options.permissionGrantId,
     };
 
     // delete all descriptor properties that are `undefined` else the code will encounter the following IPLD issue when attempting to generate CID:

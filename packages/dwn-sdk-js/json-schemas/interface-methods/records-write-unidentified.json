@@ -176,6 +176,9 @@
         },
         "dataFormat": {
           "type": "string"
+        },
+        "permissionGrantId": {
+          "type": "string"
         }
       },
       "additionalProperties": false,

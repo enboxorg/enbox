@@ -27,14 +27,15 @@ export class MessagesRead extends AbstractMessage<MessagesReadMessage> {
   }
 
   public static async create(options: MessagesReadOptions): Promise<MessagesRead> {
+    const { signer, permissionGrantId } = options;
+
     const descriptor: MessagesReadDescriptor = {
       interface        : DwnInterfaceName.Messages,
       method           : DwnMethodName.Read,
       messageCid       : options.messageCid,
       messageTimestamp : options.messageTimestamp ?? Time.getCurrentTimestamp(),
+      ...(permissionGrantId !== undefined && { permissionGrantId }),
     };
-
-    const { signer, permissionGrantId } = options;
     const authorization = await Message.createAuthorization({
       descriptor,
       signer,

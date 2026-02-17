@@ -3,10 +3,10 @@ import type { EventStream } from '../../src/types/subscriptions.js';
 import { ResumableTaskManager } from '../../src/core/resumable-task-manager.js';
 import type {
   DataStore,
-  EventLog,
   MessageStore,
   ProtocolDefinition,
   ResumableTaskStore,
+  StateIndex,
 } from '../../src/index.js';
 
 import chaiAsPromised from 'chai-as-promised';
@@ -41,7 +41,7 @@ export function testRecordsDeleteHandler(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let eventLog: EventLog;
+    let stateIndex: StateIndex;
     let eventStream: EventStream;
     let dwn: Dwn;
 
@@ -64,10 +64,10 @@ export function testRecordsDeleteHandler(): void {
         messageStore = stores.messageStore;
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
-        eventLog = stores.eventLog;
+        stateIndex = stores.stateIndex;
         eventStream = TestEventStream.get();
 
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, eventStream, resumableTaskStore });
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
       });
 
       beforeEach(async () => {
@@ -75,7 +75,7 @@ export function testRecordsDeleteHandler(): void {
         await messageStore.clear();
         await dataStore.clear();
         await resumableTaskStore.clear();
-        await eventLog.clear();
+        await stateIndex.clear();
       });
 
       after(async () => {
@@ -687,13 +687,12 @@ export function testRecordsDeleteHandler(): void {
         expect(messages.length).to.equal(1);
         expect(await Message.getCid(messages[0])).to.equal(deleteMessageCid);
 
-        // event log
-        const { events } = await eventLog.queryEvents(alice.did, [{ schema: normalizeSchemaUrl('testSchema'), method: DwnMethodName.Delete }]);
-        expect(events.length).to.equal(1);
-        expect(events[0]).to.equal(deleteMessageCid);
+        // state index
+        const events = await stateIndex.getLeaves(alice.did, []);
+        expect(events).to.contain(deleteMessageCid);
       });
 
-      describe('event log', () => {
+      describe('state index', () => {
         it('should include RecordsDelete event and keep initial RecordsWrite event', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
@@ -709,7 +708,7 @@ export function testRecordsDeleteHandler(): void {
           const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
           expect(deleteReply.status.code).to.equal(202);
 
-          const { events } = await eventLog.getEvents(alice.did);
+          const events = await stateIndex.getLeaves(alice.did, []);
           expect(events.length).to.equal(2);
 
           const writeMessageCid = await Message.getCid(message);
@@ -747,7 +746,7 @@ export function testRecordsDeleteHandler(): void {
           const deleteReply = await dwn.processMessage(author.did, recordsDelete.message);
           expect(deleteReply.status.code).to.equal(202);
 
-          const { events } = await eventLog.getEvents(author.did);
+          const events = await stateIndex.getLeaves(author.did, []);
           expect(events.length).to.equal(2);
 
           const deletedMessageCid = await Message.getCid(newWrite.message);

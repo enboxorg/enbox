@@ -43,10 +43,11 @@ export class MessagesSubscribe extends AbstractMessage<MessagesSubscribeMessage>
     const currentTime = Time.getCurrentTimestamp();
 
     const descriptor: MessagesSubscribeDescriptor = {
-      interface        : DwnInterfaceName.Messages,
-      method           : DwnMethodName.Subscribe,
-      filters          : options.filters ?? [],
-      messageTimestamp : options.messageTimestamp ?? currentTime,
+      interface         : DwnInterfaceName.Messages,
+      method            : DwnMethodName.Subscribe,
+      filters           : options.filters ?? [],
+      messageTimestamp  : options.messageTimestamp ?? currentTime,
+      permissionGrantId : options.permissionGrantId,
     };
 
     removeUndefinedProperties(descriptor);

@@ -7,7 +7,7 @@
 [![Chat](https://img.shields.io/badge/chat-on%20discord-7289da.svg?style=flat-square&color=9a1aff&logo=discord&logoColor=FFFFFF&sanitize=true)](https://discord.com/channels/937858703112155166/969272658501976117)
 
 
-SQL backed implementations of DWN `MessageStore`, `DataStore`, and `EventLog`. 
+SQL backed implementations of DWN `MessageStore`, `DataStore`, and `StateIndex`. 
 
 - [Supported DBs](#supported-dbs)
 - [Installation](#installation)
@@ -45,7 +45,7 @@ npm install @enbox/dwn-sql-store
 import Database from 'better-sqlite3';
 
 import { Dwn } from '@enbox/dwn-sdk-js'
-import { SqliteDialect, MessageStoreSql, DataStoreSql, EventLogSql } from '@enbox/dwn-sql-store';
+import { SqliteDialect, MessageStoreSql, DataStoreSql, StateIndexSql } from '@enbox/dwn-sql-store';
 
 const sqliteDialect = new SqliteDialect({
   database: async () => new Database('dwn.sqlite', {
@@ -55,9 +55,9 @@ const sqliteDialect = new SqliteDialect({
 
 const messageStore = new MessageStoreSql(sqliteDialect);
 const dataStore = new DataStoreSql(sqliteDialect);
-const eventLog = new EventLogSql(sqliteDialect);
+const stateIndex = new StateIndexSql(sqliteDialect);
 
-const dwn = await Dwn.create({ messageStore, dataStore, eventLog });
+const dwn = await Dwn.create({ messageStore, dataStore, stateIndex });
 ```
 
 ## MySQL
@@ -65,7 +65,7 @@ const dwn = await Dwn.create({ messageStore, dataStore, eventLog });
 ```typescript
 import { createPool } from 'mysql2';
 import { Dwn } from '@enbox/dwn-sdk-js'
-import { MysqlDialect, MessageStoreSql, DataStoreSql, EventLogSql } from '@enbox/dwn-sql-store';
+import { MysqlDialect, MessageStoreSql, DataStoreSql, StateIndexSql } from '@enbox/dwn-sql-store';
 
 const mysqlDialect = new MysqlDialect({
   pool: async () => createPool({
@@ -79,9 +79,9 @@ const mysqlDialect = new MysqlDialect({
 
 const messageStore = new MessageStoreSql(mysqlDialect);
 const dataStore = new DataStoreSql(mysqlDialect);
-const eventLog = new EventLogSql(mysqlDialect);
+const stateIndex = new StateIndexSql(mysqlDialect);
 
-const dwn = await Dwn.create({ messageStore, dataStore, eventLog });
+const dwn = await Dwn.create({ messageStore, dataStore, stateIndex });
 ```
 
 ## PostgreSQL
@@ -111,7 +111,7 @@ import pg from 'pg';
 import Cursor from 'pg-cursor';
 
 import { Dwn } from '@enbox/dwn-sdk-js'
-import { PostgresDialect, MessageStoreSql, DataStoreSql, EventLogSql } from '@enbox/dwn-sql-store';
+import { PostgresDialect, MessageStoreSql, DataStoreSql, StateIndexSql } from '@enbox/dwn-sql-store';
 
 const postgresDialect = new PostgresDialect({
   pool: async () => new pg.Pool({
@@ -126,9 +126,9 @@ const postgresDialect = new PostgresDialect({
 
 const messageStore = new MessageStoreSql(postgresDialect);
 const dataStore = new DataStoreSql(postgresDialect);
-const eventLog = new EventLogSql(postgresDialect);
+const stateIndex = new StateIndexSql(postgresDialect);
 
-const dwn = await Dwn.create({ messageStore, dataStore, eventLog });
+const dwn = await Dwn.create({ messageStore, dataStore, stateIndex });
 ```
 
 # Development

@@ -33,7 +33,7 @@ export class MessageStoreSql implements MessageStore {
 
   constructor(dialect: Dialect) {
     this.#dialect = dialect;
-    this.#tags = new TagTables(dialect, 'messageStoreMessages');
+    this.#tags = new TagTables(dialect);
   }
 
   async open(): Promise<void> {

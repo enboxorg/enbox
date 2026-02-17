@@ -25,6 +25,32 @@ describe('MessagesRead Message', () => {
       expect(messagesRead.message.descriptor.messageTimestamp).to.equal(messageTimestamp);
     });
 
+    it('includes permissionGrantId in the descriptor when provided', async () => {
+      const { author, message } = await TestDataGenerator.generateRecordsWrite();
+      const messageCid = await Message.getCid(message);
+      const grantId = 'grant-xyz-456';
+
+      const messagesRead = await MessagesRead.create({
+        signer            : await Jws.createSigner(author),
+        messageCid,
+        permissionGrantId : grantId,
+      });
+
+      expect((messagesRead.message as MessagesReadMessage).descriptor.permissionGrantId).to.equal(grantId);
+    });
+
+    it('does not include permissionGrantId in the descriptor when not provided', async () => {
+      const { author, message } = await TestDataGenerator.generateRecordsWrite();
+      const messageCid = await Message.getCid(message);
+
+      const messagesRead = await MessagesRead.create({
+        signer: await Jws.createSigner(author),
+        messageCid,
+      });
+
+      expect((messagesRead.message as MessagesReadMessage).descriptor.permissionGrantId).to.be.undefined;
+    });
+
     it('throws an error if an invalid CID is provided', async () => {
       const alice = await TestDataGenerator.generatePersona();
 

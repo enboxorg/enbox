@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventStream } from '../../src/types/subscriptions.js';
-import type { DataStore, EventLog, MessageStore, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
 import type { ProtocolDefinition, ProtocolsConfigureDescriptor } from '../../src/types/protocols-types.js';
 
 import chaiAsPromised from 'chai-as-promised';
@@ -28,7 +28,7 @@ export function testProtocolDeleteAction(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let eventLog: EventLog;
+    let stateIndex: StateIndex;
     let eventStream: EventStream;
     let dwn: Dwn;
 
@@ -41,10 +41,10 @@ export function testProtocolDeleteAction(): void {
       messageStore = stores.messageStore;
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
-      eventLog = stores.eventLog;
+      stateIndex = stores.stateIndex;
       eventStream = TestEventStream.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, eventStream, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -54,7 +54,7 @@ export function testProtocolDeleteAction(): void {
       await messageStore.clear();
       await dataStore.clear();
       await resumableTaskStore.clear();
-      await eventLog.clear();
+      await stateIndex.clear();
     });
 
     after(async () => {

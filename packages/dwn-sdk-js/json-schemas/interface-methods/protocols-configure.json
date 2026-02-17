@@ -38,6 +38,9 @@
         },
         "definition": {
           "$ref": "https://identity.foundation/dwn/json-schemas/protocol-definition.json"
+        },
+        "permissionGrantId": {
+          "type": "string"
         }
       }
     }

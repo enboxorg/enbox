@@ -75,7 +75,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
       return;
     } else if (messagesSubscribe.author !== undefined && messagesSubscribe.signaturePayload!.permissionGrantId !== undefined) {
       const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, messagesSubscribe.signaturePayload!.permissionGrantId);
-      await MessagesGrantAuthorization.authorizeQueryOrSubscribe({
+      await MessagesGrantAuthorization.authorizeSubscribeOrSync({
         incomingMessage : messagesSubscribe.message,
         expectedGrantor : tenant,
         expectedGrantee : messagesSubscribe.author,

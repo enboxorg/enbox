@@ -12,10 +12,8 @@ export class TagTables {
 
   /**
    * @param dialect the target dialect, necessary for returning the `insertId`
-   * @param table the DB Table in order to index the tags and values in the correct tables.
-   * Choice between `messageStoreMessages` and `eventLogMessages`
    */
-  constructor(private dialect: Dialect, private table: 'messageStoreMessages' | 'eventLogMessages'){}
+  constructor(private dialect: Dialect){}
 
   /**
    * Inserts the given tags associated with the given foreign `insertId`.
@@ -25,8 +23,8 @@ export class TagTables {
     tags: KeyValues,
     tx: Transaction<DwnDatabaseType>,
   ):Promise<void> {
-    const tagTable = this.table === 'messageStoreMessages' ? 'messageStoreRecordsTags' : 'eventLogRecordsTags';
-    const foreignKeyReference = tagTable === 'messageStoreRecordsTags' ? { messageInsertId: foreignInsertId } : { eventWatermark: foreignInsertId };
+    const tagTable = 'messageStoreRecordsTags' as const;
+    const foreignKeyReference = { messageInsertId: foreignInsertId };
 
     for (const tag in tags) {
       const tagValues = tags[tag];

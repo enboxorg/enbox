@@ -513,7 +513,7 @@ export class Web5 {
     }
 
     // currently we return a de-duped set of protocols represented by these grants, this is used to register protocols for sync
-    // we expect that any connected protocols will include MessagesQuery and MessagesRead grants that will allow it to sync
+    // we expect that any connected protocols will include MessagesSync and MessagesRead grants that will allow it to sync
     return [...connectedProtocols];
   }
 }

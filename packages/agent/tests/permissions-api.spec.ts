@@ -67,44 +67,44 @@ describe('AgentPermissionsApi', () => {
         await testHarness.agent.permissions.getPermissionForRequest({
           connectedDid : aliceDid.uri,
           delegateDid  : bobDid.uri,
-          messageType  : DwnInterface.MessagesQuery,
+          messageType  : DwnInterface.MessagesSync,
         });
         expect.fail('Expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).to.equal('CachedPermissions: No permissions found for MessagesQuery: undefined');
+        expect(error.message).to.equal('CachedPermissions: No permissions found for MessagesSync: undefined');
       }
 
       // create a permission grant to fetch
-      const messagesQueryGrant = await testHarness.agent.permissions.createGrant({
+      const messagesSyncGrant = await testHarness.agent.permissions.createGrant({
         store       : true,
         author      : aliceDid.uri,
         grantedTo   : bobDid.uri,
         dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
         scope       : {
           interface : DwnInterfaceName.Messages,
-          method    : DwnMethodName.Query,
+          method    : DwnMethodName.Sync,
         }
       });
 
       // store the grant as owner from bob so that it can be fetched
-      const { encodedData, ...messagesQueryGrantMessage } = messagesQueryGrant.message;
+      const { encodedData, ...messagesSyncGrantMessage } = messagesSyncGrant.message;
       const grantReply = await testHarness.agent.processDwnRequest({
         target      : bobDid.uri,
         author      : bobDid.uri,
         signAsOwner : true,
         messageType : DwnInterface.RecordsWrite,
-        rawMessage  : messagesQueryGrantMessage,
+        rawMessage  : messagesSyncGrantMessage,
         dataStream  : new Blob([ Convert.base64Url(encodedData).toUint8Array() ])
       });
       expect(grantReply.reply.status.code).to.equal(202);
 
       // fetch the grant
-      const fetchedMessagesQueryGrant = await testHarness.agent.permissions.getPermissionForRequest({
+      const fetchedMessagesSyncGrant = await testHarness.agent.permissions.getPermissionForRequest({
         connectedDid : aliceDid.uri,
         delegateDid  : bobDid.uri,
-        messageType  : DwnInterface.MessagesQuery,
+        messageType  : DwnInterface.MessagesSync,
       });
-      expect(fetchedMessagesQueryGrant.message.recordId).to.equal(messagesQueryGrant.message.recordId);
+      expect(fetchedMessagesSyncGrant.message.recordId).to.equal(messagesSyncGrant.message.recordId);
     });
 
     it('caches and returns the permission grant', async () => {
@@ -139,26 +139,26 @@ describe('AgentPermissionsApi', () => {
       const fetchGrantSpy = sinon.spy(testHarness.agent.permissions, 'fetchGrants');
 
       // get the grant
-      const fetchedMessagesQueryGrant = await testHarness.agent.permissions.getPermissionForRequest({
+      const fetchedGrant = await testHarness.agent.permissions.getPermissionForRequest({
         connectedDid : aliceDid.uri,
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.RecordsWrite,
         protocol     : protocolUri,
         cached       : true
       });
-      expect(fetchedMessagesQueryGrant.message.recordId).to.equal(recordsWriteGrant.message.recordId);
+      expect(fetchedGrant.message.recordId).to.equal(recordsWriteGrant.message.recordId);
 
       expect(fetchGrantSpy.callCount).to.equal(1, 'fetched');
 
       // get the grant again
-      const fetchedMessagesQueryGrant2 = await testHarness.agent.permissions.getPermissionForRequest({
+      const fetchedGrant2 = await testHarness.agent.permissions.getPermissionForRequest({
         connectedDid : aliceDid.uri,
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.RecordsWrite,
         protocol     : protocolUri,
         cached       : true
       });
-      expect(fetchedMessagesQueryGrant2.message.recordId).to.equal(recordsWriteGrant.message.recordId);
+      expect(fetchedGrant2.message.recordId).to.equal(recordsWriteGrant.message.recordId);
 
       // expect the fetchGrant method to not have been called again
       expect(fetchGrantSpy.callCount).to.equal(1, 'got from cache');
@@ -197,39 +197,39 @@ describe('AgentPermissionsApi', () => {
 
       // get the grant with cache set to false (default)
       // this will refresh the cache with the result anyway, but will always call fetchGrant when set to false
-      const fetchedMessagesQueryGrant = await testHarness.agent.permissions.getPermissionForRequest({
+      const fetchedGrant = await testHarness.agent.permissions.getPermissionForRequest({
         connectedDid : aliceDid.uri,
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.RecordsWrite,
         protocol     : protocolUri,
         cached       : false
       });
-      expect(fetchedMessagesQueryGrant.message.recordId).to.equal(recordsWriteGrant.message.recordId);
+      expect(fetchedGrant.message.recordId).to.equal(recordsWriteGrant.message.recordId);
 
       expect(fetchGrantSpy.callCount).to.equal(1, 'fetched');
 
       // get the grant again (with cache set to true)
-      const fetchedMessagesQueryGrant2 = await testHarness.agent.permissions.getPermissionForRequest({
+      const fetchedGrant2 = await testHarness.agent.permissions.getPermissionForRequest({
         connectedDid : aliceDid.uri,
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.RecordsWrite,
         protocol     : protocolUri,
         cached       : true
       });
-      expect(fetchedMessagesQueryGrant2.message.recordId).to.equal(recordsWriteGrant.message.recordId);
+      expect(fetchedGrant2.message.recordId).to.equal(recordsWriteGrant.message.recordId);
 
       // expect the fetchGrant method to not have been called again
       expect(fetchGrantSpy.callCount).to.equal(1, 'got from cache');
 
       // call again with cache set to false
-      const fetchedMessagesQueryGrant3 = await testHarness.agent.permissions.getPermissionForRequest({
+      const fetchedGrant3 = await testHarness.agent.permissions.getPermissionForRequest({
         connectedDid : aliceDid.uri,
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.RecordsWrite,
         protocol     : protocolUri,
         cached       : false
       });
-      expect(fetchedMessagesQueryGrant3.message.recordId).to.equal(recordsWriteGrant.message.recordId);
+      expect(fetchedGrant3.message.recordId).to.equal(recordsWriteGrant.message.recordId);
 
       // now cache was not set to true, so expect the fetchGrant method to have been called again
       expect(fetchGrantSpy.callCount).to.equal(2, 'fetched again');
@@ -869,14 +869,14 @@ describe('AgentPermissionsApi', () => {
         }
       });
 
-      const messagesQueryGrant = await grantorAgent.permissions.createGrant({
+      const messagesSyncGrant = await grantorAgent.permissions.createGrant({
         author      : grantor,
         grantedTo   : grantee,
         dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
         store       : true,
         scope       : {
           interface : DwnInterfaceName.Messages,
-          method    : DwnMethodName.Query,
+          method    : DwnMethodName.Sync,
           protocol
         }
       });
@@ -895,7 +895,7 @@ describe('AgentPermissionsApi', () => {
 
       return {
         read      : messagesReadGrant,
-        query     : messagesQueryGrant,
+        sync      : messagesSyncGrant,
         subscribe : messagesSubscribeGrant
       };
     };
@@ -979,21 +979,21 @@ describe('AgentPermissionsApi', () => {
       });
 
       const aliceDeviceXMessageGrants = [
-        messagesGrants.query,
+        messagesGrants.sync,
         messagesGrants.read,
         messagesGrants.subscribe
       ];
 
       // control: match a grant without specifying delegated
-      const queryGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
-        messageType: DwnInterface.MessagesQuery,
+      const syncGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+        messageType: DwnInterface.MessagesSync,
       }, aliceDeviceXMessageGrants);
 
-      expect(queryGrant?.message.recordId).to.equal(messagesGrants.query.message.recordId);
+      expect(syncGrant?.message.recordId).to.equal(messagesGrants.sync.message.recordId);
 
       // attempt to match non-delegated grant with delegated set to true
       const notFoundDelegated = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
-        messageType: DwnInterface.MessagesQuery,
+        messageType: DwnInterface.MessagesSync,
       }, aliceDeviceXMessageGrants, true);
 
       expect(notFoundDelegated).to.be.undefined;
@@ -1040,16 +1040,16 @@ describe('AgentPermissionsApi', () => {
       });
 
       const deviceXMessageGrants = [
-        messageGrants.query,
+        messageGrants.sync,
         messageGrants.read,
         messageGrants.subscribe
       ];
 
-      const queryGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
-        messageType: DwnInterface.MessagesQuery,
+      const syncGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+        messageType: DwnInterface.MessagesSync,
       }, deviceXMessageGrants);
 
-      expect(queryGrant?.message.recordId).to.equal(messageGrants.query.message.recordId);
+      expect(syncGrant?.message.recordId).to.equal(messageGrants.sync.message.recordId);
 
       const readGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType: DwnInterface.MessagesRead,
@@ -1097,20 +1097,20 @@ describe('AgentPermissionsApi', () => {
       });
 
       const deviceXMessageGrants = [
-        protocolMessageGrants.query,
+        protocolMessageGrants.sync,
         protocolMessageGrants.read,
         protocolMessageGrants.subscribe,
-        otherProtocolMessageGrants.query,
+        otherProtocolMessageGrants.sync,
         otherProtocolMessageGrants.read,
         otherProtocolMessageGrants.subscribe
       ];
 
-      const queryGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
-        messageType: DwnInterface.MessagesQuery,
+      const syncGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+        messageType: DwnInterface.MessagesSync,
         protocol
       }, deviceXMessageGrants);
 
-      expect(queryGrant?.message.recordId).to.equal(protocolMessageGrants.query.message.recordId);
+      expect(syncGrant?.message.recordId).to.equal(protocolMessageGrants.sync.message.recordId);
 
       const readGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType: DwnInterface.MessagesRead,
@@ -1127,18 +1127,18 @@ describe('AgentPermissionsApi', () => {
       expect(subscribeGrant?.message.recordId).to.equal(protocolMessageGrants.subscribe.message.recordId);
 
       const invalidGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
-        messageType : DwnInterface.MessagesQuery,
+        messageType : DwnInterface.MessagesSync,
         protocol    : 'http://example.com/unknown-protocol'
       }, deviceXMessageGrants);
 
       expect(invalidGrant).to.be.undefined;
 
-      const otherProtocolQueryGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
-        messageType : DwnInterface.MessagesQuery,
+      const otherProtocolSyncGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+        messageType : DwnInterface.MessagesSync,
         protocol    : otherProtocol
       }, deviceXMessageGrants);
 
-      expect(otherProtocolQueryGrant?.message.recordId).to.equal(otherProtocolMessageGrants.query.message.recordId);
+      expect(otherProtocolSyncGrant?.message.recordId).to.equal(otherProtocolMessageGrants.sync.message.recordId);
     });
 
     it('Records', async () => {

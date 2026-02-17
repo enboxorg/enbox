@@ -861,7 +861,7 @@ describe('web5 connect', function () {
         scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Read
       )).to.not.be.undefined;
       expect(scopes.find(
-        scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Query
+        scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Sync
       )).to.not.be.undefined;
       expect(scopes.find(
         scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Subscribe

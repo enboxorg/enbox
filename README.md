@@ -8,7 +8,7 @@ This monorepo contains the following packages under the `@enbox` namespace:
 
 ### Core DWN (Decentralized Web Node) Packages
 - **`@enbox/dwn-sdk-js`** - Core DWN SDK implementation (client/server compatible)
-- **`@enbox/dwn-sql-store`** - SQL-backed implementations of DWN MessageStore, DataStore, and EventLog
+- **`@enbox/dwn-sql-store`** - SQL-backed implementations of DWN MessageStore, DataStore, and StateIndex
 - **`@enbox/dwn-server`** - Express.js server implementation for DWN
 
 ### SDK Packages

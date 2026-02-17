@@ -1,16 +1,14 @@
-import type { DataStore, EventLog, EventStream, MessageStore, ResumableTaskStore } from '../src/index.js';
+import type { DataStore, EventStream, MessageStore, ResumableTaskStore, StateIndex } from '../src/index.js';
 
 import { testAuthorDelegatedGrant } from './features/author-delegated-grant.spec.js';
 import { testDeletedRecordScenarios } from './scenarios/deleted-record.spec.js';
 import { testDwnClass } from './dwn.spec.js';
 import { testEndToEndScenarios } from './scenarios/end-to-end-tests.spec.js';
-import { testEventLog } from './event-log/event-log.spec.js';
-import { testEventStream } from './event-log/event-stream.spec.js';
+import { testEventStream } from './event-stream/event-stream.spec.js';
 import { TestEventStream } from './test-event-stream.js';
-import { testMessagesQueryHandler } from './handlers/messages-query.spec.js';
-import { testMessagesQueryScenarios } from './scenarios/messages-query.spec.js';
 import { testMessagesReadHandler } from './handlers/messages-read.spec.js';
 import { testMessagesSubscribeHandler } from './handlers/messages-subscribe.spec.js';
+import { testMessagesSyncHandler } from './handlers/messages-sync.spec.js';
 import { testMessageStore } from './store/message-store.spec.js';
 import { testNestedRoleScenarios } from './scenarios/nested-roles.spec.js';
 import { testOwnerDelegatedGrant } from './features/owner-delegated-grant.spec.js';
@@ -44,7 +42,7 @@ export class TestSuite {
   public static runInjectableDependentTests(overrides?: {
     messageStore?: MessageStore,
     dataStore?: DataStore,
-    eventLog?: EventLog,
+    stateIndex?: StateIndex,
     eventStream?: EventStream,
     resumableTaskStore?: ResumableTaskStore,
   }): void {
@@ -56,13 +54,12 @@ export class TestSuite {
 
     testDwnClass();
     testMessageStore();
-    testEventLog();
     testEventStream();
 
     // handler tests
-    testMessagesQueryHandler();
     testMessagesReadHandler();
     testMessagesSubscribeHandler();
+    testMessagesSyncHandler();
     testProtocolsConfigureHandler();
     testProtocolsQueryHandler();
     testRecordsDeleteHandler();
@@ -86,7 +83,6 @@ export class TestSuite {
     // scenario tests
     testDeletedRecordScenarios();
     testEndToEndScenarios();
-    testMessagesQueryScenarios();
     testNestedRoleScenarios();
     testSubscriptionScenarios();
   }

@@ -3,9 +3,9 @@ import type { TenantGate } from '@enbox/dwn-sdk-js';
 import { getDialectFromUrl } from '../src/storage.js';
 import {
   DataStoreSql,
-  EventLogSql,
   MessageStoreSql,
   ResumableTaskStoreSql,
+  StateIndexSql,
 } from '@enbox/dwn-sql-store';
 import { DidDht, DidIon, DidKey, UniversalResolver } from '@enbox/dids';
 import { Dwn, EventEmitterStream } from '@enbox/dwn-sdk-js';
@@ -17,7 +17,7 @@ export async function getTestDwn(options: {
   const { tenantGate, withEvents = false } = options;
   const dialect = getDialectFromUrl(new URL('sqlite://'));
   const dataStore = new DataStoreSql(dialect);
-  const eventLog = new EventLogSql(dialect);
+  const stateIndex = new StateIndexSql(dialect);
   const messageStore = new MessageStoreSql(dialect);
   const resumableTaskStore = new ResumableTaskStoreSql(dialect);
   const eventStream = withEvents ? new EventEmitterStream() : undefined;
@@ -28,7 +28,7 @@ export async function getTestDwn(options: {
   });
 
   const dwn = await Dwn.create({
-    eventLog,
+    stateIndex,
     dataStore,
     messageStore,
     resumableTaskStore,

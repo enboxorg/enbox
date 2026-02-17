@@ -346,21 +346,22 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     const currentTime = Time.getCurrentTimestamp();
 
     const descriptor: RecordsWriteDescriptor = {
-      interface        : DwnInterfaceName.Records,
-      method           : DwnMethodName.Write,
-      protocol         : options.protocol !== undefined ? normalizeProtocolUrl(options.protocol) : undefined,
-      protocolPath     : options.protocolPath,
-      recipient        : options.recipient,
-      schema           : options.schema !== undefined ? normalizeSchemaUrl(options.schema) : undefined,
-      tags             : options.tags,
-      parentId         : RecordsWrite.getRecordIdFromContextId(options.parentContextId),
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      protocol          : options.protocol !== undefined ? normalizeProtocolUrl(options.protocol) : undefined,
+      protocolPath      : options.protocolPath,
+      recipient         : options.recipient,
+      schema            : options.schema !== undefined ? normalizeSchemaUrl(options.schema) : undefined,
+      tags              : options.tags,
+      parentId          : RecordsWrite.getRecordIdFromContextId(options.parentContextId),
       dataCid,
       dataSize,
-      dateCreated      : options.dateCreated ?? currentTime,
-      messageTimestamp : options.messageTimestamp ?? currentTime,
-      published        : options.published,
-      datePublished    : options.datePublished,
-      dataFormat       : options.dataFormat
+      dateCreated       : options.dateCreated ?? currentTime,
+      messageTimestamp  : options.messageTimestamp ?? currentTime,
+      published         : options.published,
+      datePublished     : options.datePublished,
+      dataFormat        : options.dataFormat,
+      permissionGrantId : options.permissionGrantId,
     };
 
     // generate `datePublished` if the message is to be published but `datePublished` is not given

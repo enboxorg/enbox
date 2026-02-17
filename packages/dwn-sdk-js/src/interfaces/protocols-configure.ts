@@ -40,7 +40,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       interface        : DwnInterfaceName.Protocols,
       method           : DwnMethodName.Configure,
       messageTimestamp : options.messageTimestamp ?? Time.getCurrentTimestamp(),
-      definition       : ProtocolsConfigure.normalizeDefinition(options.definition)
+      definition       : ProtocolsConfigure.normalizeDefinition(options.definition),
+      ...(options.permissionGrantId !== undefined && { permissionGrantId: options.permissionGrantId }),
     };
 
     const authorization = await Message.createAuthorization({
