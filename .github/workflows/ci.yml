@@ -110,6 +110,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: workspace-build
+          path: packages
 
       - name: Run tests
         run: |
@@ -160,6 +161,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: workspace-build
+          path: packages
 
       - name: Run tests
         run: bun run --filter @enbox/dwn-sdk-js test:node
@@ -219,6 +221,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: workspace-build
+          path: packages
 
       - name: Start Pkarr relay
         run: |
@@ -341,6 +344,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: workspace-build
+          path: packages
 
       - name: Run tests
         run: bun run --filter @enbox/dwn-sql-store test
@@ -386,6 +390,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: workspace-build
+          path: packages
 
       - name: Run tests
         run: bun run --filter @enbox/dwn-server test
