@@ -1,5 +1,6 @@
 import sinon from 'sinon';
 
+import { AbstractLevel } from 'abstract-level';
 import { Convert } from '@enbox/common';
 import { CryptoUtils } from '@enbox/crypto';
 import { expect } from 'chai';
@@ -9,7 +10,6 @@ import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, Time } from
 
 import type { BearerIdentity } from '../src/bearer-identity.js';
 
-import { AbstractLevel } from 'abstract-level';
 import { AgentSyncApi } from '../src/sync-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
@@ -54,84 +54,6 @@ describe('SyncEngineLevel', () => {
     });
   });
 
-  describe('generateSyncMessageParamsKey & parseSyncMessageParamsKey', () => {
-    it('parses key into sync params', () => {
-      const did = 'did:example:alice';
-      const delegateDid = 'did:example:bob';
-      const dwnUrl = 'https://dwn.example.com';
-      const protocol = 'https://protocol.example.com';
-      const watermark = '1234567890';
-      const messageCid = 'abc123';
-
-      const key = SyncEngineLevel['generateSyncMessageParamsKey']({
-        did,
-        delegateDid,
-        dwnUrl,
-        protocol,
-        watermark,
-        messageCid
-      });
-
-      const syncParams = SyncEngineLevel['parseSyncMessageParamsKey'](key);
-      expect(syncParams.did).to.equal(did);
-      expect(syncParams.delegateDid).to.equal(delegateDid);
-      expect(syncParams.dwnUrl).to.equal(dwnUrl);
-      expect(syncParams.protocol).to.equal(protocol);
-      expect(syncParams.watermark).to.equal(watermark);
-      expect(syncParams.messageCid).to.equal(messageCid);
-    });
-
-    it('returns undefined protocol if not present', () => {
-      const did = 'did:example:alice';
-      const delegateDid = 'did:example:bob';
-      const dwnUrl = 'https://dwn.example.com';
-      const watermark = '1234567890';
-      const messageCid = 'abc123';
-
-      const key = SyncEngineLevel['generateSyncMessageParamsKey']({
-        did,
-        delegateDid,
-        dwnUrl,
-        watermark,
-        messageCid
-      });
-
-      const syncParams = SyncEngineLevel['parseSyncMessageParamsKey'](key);
-      expect(syncParams.protocol).to.be.undefined;
-
-      expect(syncParams.did).to.equal(did);
-      expect(syncParams.delegateDid).to.equal(delegateDid);
-      expect(syncParams.dwnUrl).to.equal(dwnUrl);
-      expect(syncParams.watermark).to.equal(watermark);
-      expect(syncParams.messageCid).to.equal(messageCid);
-    });
-
-    it('returns undefined delegateDid if not present', () => {
-      const did = 'did:example:alice';
-      const dwnUrl = 'https://dwn.example.com';
-      const protocol = 'https://protocol.example.com';
-      const watermark = '1234567890';
-      const messageCid = 'abc123';
-
-      const key = SyncEngineLevel['generateSyncMessageParamsKey']({
-        did,
-        dwnUrl,
-        protocol,
-        watermark,
-        messageCid
-      });
-
-      const syncParams = SyncEngineLevel['parseSyncMessageParamsKey'](key);
-      expect(syncParams.delegateDid).to.be.undefined;
-
-      expect(syncParams.did).to.equal(did);
-      expect(syncParams.dwnUrl).to.equal(dwnUrl);
-      expect(syncParams.protocol).to.equal(protocol);
-      expect(syncParams.watermark).to.equal(watermark);
-      expect(syncParams.messageCid).to.equal(messageCid);
-    });
-  });
-
   describe('with Web5 Platform Agent', () => {
     let alice: BearerIdentity;
     let randomSchema: string;
@@ -157,7 +79,7 @@ describe('SyncEngineLevel', () => {
       await syncEngine.clear();
       await testHarness.syncStore.clear();
       await testHarness.dwnDataStore.clear();
-      await testHarness.dwnEventLog.clear();
+      await testHarness.dwnStateIndex.clear();
       await testHarness.dwnMessageStore.clear();
       await testHarness.dwnResumableTaskStore.clear();
       await testHarness.agent.permissions.clear();
@@ -425,47 +347,6 @@ describe('SyncEngineLevel', () => {
     }).slow(1000); // Yellow at 500ms, Red at 1000ms.
 
     describe('sync()', () => {
-      it('syncs only specified direction, or if non specified syncs both directions', async () => {
-        // spy on push and pull and stub their response
-        const pushSpy = sinon.stub(syncEngine as any, 'push').resolves();
-        const pullSpy = sinon.stub(syncEngine as any, 'pull').resolves();
-
-        // Register Alice's DID to be synchronized.
-        await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
-        });
-
-        // Execute Sync to push and pull all records from Alice's remote DWN to Alice's local DWN.
-        await syncEngine.sync();
-
-        // Verify push and pull were called once
-        expect(pushSpy.calledOnce).to.be.true;
-        expect(pullSpy.calledOnce).to.be.true;
-
-
-        // reset counts
-        pushSpy.reset();
-        pullSpy.reset();
-
-        // Execute only push sync
-        await syncEngine.sync('push');
-
-        // Verify push was called once and pull was not called
-        expect(pushSpy.calledOnce).to.be.true;
-        expect(pullSpy.notCalled).to.be.true;
-
-        // reset counts
-        pushSpy.reset();
-        pullSpy.reset();
-
-        // Execute only pull sync
-        await syncEngine.sync('pull');
-
-        // Verify pull was called once and push was not called
-        expect(pushSpy.notCalled).to.be.true;
-        expect(pullSpy.calledOnce).to.be.true;
-      });
-
       it('throws an error if the sync is currently already running', async () => {
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.registerIdentity({
@@ -473,11 +354,11 @@ describe('SyncEngineLevel', () => {
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
-        sinon.stub(syncEngine as any, 'push').resolves();
-        const pullSpy = sinon.stub(syncEngine as any, 'pull');
-        pullSpy.returns(new Promise<void>((resolve) => {
+        // Stub getSyncTargets to simulate a slow sync
+        const getSyncTargetsStub = sinon.stub(syncEngine as any, 'getSyncTargets');
+        getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
           clock.setTimeout(() => {
-            resolve();
+            resolve([]);
           }, 90);
         }));
 
@@ -487,7 +368,7 @@ describe('SyncEngineLevel', () => {
         await clock.tickAsync(50);
 
         // do not block for subsequent syncs
-        pullSpy.returns(Promise.resolve());
+        getSyncTargetsStub.returns(Promise.resolve([]));
         try {
           await syncEngine.sync();
           expect.fail('Expected an error to be thrown');
@@ -501,36 +382,6 @@ describe('SyncEngineLevel', () => {
         await syncEngine.sync();
 
         clock.restore();
-      });
-
-      it('sync logs failures when enqueueing sync operations', async () => {
-        // returns 3 DID peers to sync with
-        sinon.stub(syncEngine as any, 'getSyncPeerState').resolves([{
-          did: 'did:example:alice',
-        }, {
-          did: 'did:example:bob',
-        }, {
-          did: 'did:example:carol',
-        }]);
-
-        const getDwnEventLogSpy = sinon.stub(syncEngine as any, 'getDwnEventLog').resolves([]);
-        getDwnEventLogSpy.onCall(2).rejects(new Error('Failed to get event log'));
-
-        // spy on the console error
-        const consoleErrorSpy = sinon.stub(console, 'error').resolves();
-
-        await syncEngine.sync();
-
-        expect(consoleErrorSpy.callCount).to.equal(1);
-        expect(consoleErrorSpy.firstCall.args[0]).to.include('Error enqueuing sync operation for peerState');
-
-        // reset the error spy
-        consoleErrorSpy.resetHistory();
-
-        // sync again, this time no errors should be thrown
-        await syncEngine.sync();
-
-        expect(consoleErrorSpy.notCalled).to.be.true;
       });
     });
 
@@ -610,245 +461,6 @@ describe('SyncEngineLevel', () => {
         expect(queriedMessageCid).to.equal(updateMessageCid);
       });
 
-      it('silently ignores sendDwnRequest for a messageCid that does not exist on a remote DWN', async () => {
-        // scenario: The messageCids returned  from the remote eventLog contains a Cid that is not found in the remote DWN
-        //           this could happen when a record is updated, only the initial write and the most recent state are kept.
-        //           if this happens during a sync, the messageCid will not be found in the remote DWN and the sync should continue
-        //
-        //           We artificially return an invalid messageCid between 2 valid messageCid and ensure that the sync continues
-
-        // create a record that will not be stored or sent to the remote DWN
-        const invalidRecord = await testHarness.agent.processDwnRequest({
-          store         : false,
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsWrite,
-          messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
-          },
-          dataStream: new Blob(['Hello, invalid!'])
-        });
-
-        // create 2 records for the remote DWN to sync
-        const record1 = await testHarness.agent.sendDwnRequest({
-          store         : false,
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsWrite,
-          messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
-          },
-          dataStream: new Blob(['Hello, 1'])
-        });
-        expect(record1.reply.status.code).to.equal(202);
-
-        const record2 = await testHarness.agent.sendDwnRequest({
-          store         : false,
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsWrite,
-          messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
-          },
-          dataStream: new Blob(['Hello, 2'])
-        });
-        expect(record2.reply.status.code).to.equal(202);
-
-        // confirm that no records exist locally
-        let localQueryResponse = await testHarness.agent.processDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.MessagesQuery,
-          messageParams : {
-            filters: [] // get all messages
-          }
-        });
-        let localDwnQueryEntries = localQueryResponse.reply.entries!;
-        expect(localDwnQueryEntries.length).to.equal(0);
-
-        // spy on sendDwnRequest to the remote DWN
-        const sendDwnRequestSpy = sinon.spy(testHarness.agent.rpc, 'sendDwnRequest');
-
-        sinon.stub(syncEngine as any, 'getDwnEventLog').resolves([
-          record1.messageCid,
-          invalidRecord.messageCid, // this record will fail to be retrieved
-          record2.messageCid
-        ]);
-
-        // Register Alice's DID to be synchronized.
-        await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
-        });
-
-        // Execute Sync to pull all records from Alice's remote DWNs
-        await syncEngine.sync('pull');
-
-        // Verify sendDwnRequest was called once for each record, including the invalid record
-        //
-        // NOTE: because we stubbed `getDwnEventLog` to return the messageCids of the records,
-        //       we expect the sendDwnRequest from within the `getDwnEventLog` function to not be called
-        //       if it were not stubbed, the could would have been called an additional time
-        expect(sendDwnRequestSpy.callCount).to.equal(3);
-
-        // confirm that the two valid records exist locally
-        localQueryResponse = await testHarness.agent.processDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.MessagesQuery,
-          messageParams : {
-            filters: [] // get all messages
-          }
-        });
-        localDwnQueryEntries = localQueryResponse.reply.entries!;
-        expect(localDwnQueryEntries.length).to.equal(2);
-        expect(localDwnQueryEntries).to.have.members([
-          record1.messageCid,
-          record2.messageCid
-        ]);
-      });
-
-      it('silently ignores a messageCid that already exists on the local DWN', async () => {
-        // scenario: The messageCids returned from the remote eventLog contains a messageCid that already exists on the local DWN.
-        //           During sync, when processing the messageCid the local DWN will return a conflict response, but the sync should continue
-        //
-        //           NOTE: When deleting a message, the conflicting Delete will return a 404 instead of a 409,
-        //           the sync should still mark the message as synced and continue
-
-        // create a record and store it locally and remotely
-        const remoteAndLocalRecord = await testHarness.agent.processDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsWrite,
-          messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
-          },
-          dataStream: new Blob(['Hello, remote!'])
-        });
-
-        // send record to remote
-        await testHarness.agent.sendDwnRequest({
-          author      : alice.did.uri,
-          target      : alice.did.uri,
-          messageType : DwnInterface.RecordsWrite,
-          messageCid  : remoteAndLocalRecord.messageCid,
-        });
-
-        // delete the record both locally and remotely
-        const deleteMessage = await testHarness.agent.processDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsDelete,
-          messageParams : {
-            recordId: remoteAndLocalRecord.message!.recordId
-          }
-        });
-        // send the delete to the remote
-        await testHarness.agent.sendDwnRequest({
-          author      : alice.did.uri,
-          target      : alice.did.uri,
-          messageType : DwnInterface.RecordsDelete,
-          messageCid  : deleteMessage.messageCid,
-        });
-
-        // create 2 records stored only remotely to later sync to the local DWN
-        const record1 = await testHarness.agent.sendDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsWrite,
-          messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
-          },
-          dataStream: new Blob(['Hello, 1'])
-        });
-        expect(record1.reply.status.code).to.equal(202);
-
-        const record2 = await testHarness.agent.sendDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsWrite,
-          messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
-          },
-          dataStream: new Blob(['Hello, 2'])
-        });
-        expect(record2.reply.status.code).to.equal(202);
-
-        // confirm that only the record and it's delete exists locally
-        let localQueryResponse = await testHarness.agent.processDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.MessagesQuery,
-          messageParams : {
-            filters: [], // get all messages
-          }
-        });
-
-        let localDwnQueryEntries = localQueryResponse.reply.entries!;
-        expect(localDwnQueryEntries.length).to.equal(2);
-        expect(localDwnQueryEntries).to.have.members([
-          remoteAndLocalRecord.messageCid,
-          deleteMessage.messageCid
-        ]);
-
-        // stub getDwnEventLog to return the messageCids of the records we want to sync
-        sinon.stub(syncEngine as any, 'getDwnEventLog').resolves([
-          remoteAndLocalRecord.messageCid,
-          deleteMessage.messageCid,
-          record1.messageCid,
-          record2.messageCid
-        ]);
-
-        // Register Alice's DID to be synchronized.
-        await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
-        });
-
-        // spy on sendDwnRequest to the remote DWN
-        const sendDwnRequestSpy = sinon.spy(testHarness.agent.rpc, 'sendDwnRequest');
-        const processMessageSpy = sinon.spy(testHarness.agent.dwn.node, 'processMessage');
-
-        // Execute Sync to push records to Alice's remote node
-        await syncEngine.sync('pull');
-
-        // Verify sendDwnRequest is called for all 4 messages
-        expect(sendDwnRequestSpy.callCount).to.equal(4, 'sendDwnRequestSpy');
-        // Verify that processMessage is called for all 4 messages
-        expect(processMessageSpy.callCount).to.equal(4, 'processMessageSpy');
-
-        // Verify that the conflict response is returned for the record that already exists locally
-        expect((await processMessageSpy.firstCall.returnValue).status.code).to.equal(409);
-        // Verify that the delete message returned a 404
-        expect((await processMessageSpy.secondCall.returnValue).status.code).to.equal(404);
-
-        // Verify that the other 2 records are successfully processed
-        expect((await processMessageSpy.returnValues[2]).status.code).to.equal(202);
-        expect((await processMessageSpy.returnValues[3]).status.code).to.equal(202);
-
-        // confirm the new records exist remotely
-        localQueryResponse = await testHarness.agent.processDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.MessagesQuery,
-          messageParams : {
-            filters: [], // get all messages
-          },
-        });
-        localDwnQueryEntries = localQueryResponse.reply.entries!;
-        expect(localDwnQueryEntries.length).to.equal(4);
-        expect(localDwnQueryEntries).to.have.members([
-          remoteAndLocalRecord.messageCid,
-          deleteMessage.messageCid,
-          record1.messageCid,
-          record2.messageCid
-        ]);
-      });
-
       it('takes no action if no identities are registered', async () => {
         const didResolveSpy = sinon.spy(testHarness.agent.did, 'resolve');
         const sendDwnRequestSpy = sinon.spy(testHarness.agent.rpc, 'sendDwnRequest');
@@ -863,7 +475,7 @@ describe('SyncEngineLevel', () => {
         sendDwnRequestSpy.restore();
       });
 
-      it('logs an error if could not fetch MessagesQuery permission needed for a sync', async () => {
+      it('logs an error if could not fetch MessagesSync permission needed for a pull sync', async () => {
         // create new identity to not conflict the previous tests's remote records
         const aliceSync = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
 
@@ -886,7 +498,7 @@ describe('SyncEngineLevel', () => {
 
         await syncEngine.sync('pull');
         expect(consoleErrorSpy.called).to.be.true;
-        expect(consoleErrorSpy.args[0][0]).to.include('SyncEngineLevel: Error fetching MessagesQuery permission grant for delegate DID');
+        expect(consoleErrorSpy.args[0][0]).to.include('SyncEngineLevel: Error fetching MessagesSync permission grant for delegate DID');
       });
 
       it('logs an error if could not fetch MessagesRead permission needed for a sync', async () => {
@@ -942,27 +554,27 @@ describe('SyncEngineLevel', () => {
           metadata  : { name: 'Alice Delegate', connectedDid: aliceSync.did.uri }
         });
 
-        // write a MessagesQuery permission grant for the delegate DID
-        const messagesQueryGrant = await testHarness.agent.permissions.createGrant({
+        // write a MessagesSync permission grant for the delegate DID
+        const messagesSyncGrant = await testHarness.agent.permissions.createGrant({
           store       : true,
           author      : aliceSync.did.uri,
           grantedTo   : delegateDid.did.uri,
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
           scope       : {
             interface : DwnInterfaceName.Messages,
-            method    : DwnMethodName.Query,
+            method    : DwnMethodName.Sync,
             protocol  : 'https://protocol.xyz/foo'
           }
         });
 
-        const { encodedData: messagesQueryGrantData, ...messagesQueryGrantMessage } = messagesQueryGrant.message;
+        const { encodedData: messagesSyncGrantData, ...messagesSyncGrantMessage } = messagesSyncGrant.message;
         // send to the remote node
         const sendGrant = await testHarness.agent.sendDwnRequest({
           author      : aliceSync.did.uri,
           target      : aliceSync.did.uri,
           messageType : DwnInterface.RecordsWrite,
-          rawMessage  : messagesQueryGrantMessage,
-          dataStream  : new Blob([ Convert.base64Url(messagesQueryGrantData).toUint8Array() ]),
+          rawMessage  : messagesSyncGrantMessage,
+          dataStream  : new Blob([ Convert.base64Url(messagesSyncGrantData).toUint8Array() ]),
         });
         expect(sendGrant.reply.status.code).to.equal(202);
 
@@ -971,8 +583,8 @@ describe('SyncEngineLevel', () => {
           author      : delegateDid.did.uri,
           target      : delegateDid.did.uri,
           messageType : DwnInterface.RecordsWrite,
-          rawMessage  : messagesQueryGrantMessage,
-          dataStream  : new Blob([ Convert.base64Url(messagesQueryGrantData).toUint8Array() ]),
+          rawMessage  : messagesSyncGrantMessage,
+          dataStream  : new Blob([ Convert.base64Url(messagesSyncGrantData).toUint8Array() ]),
           signAsOwner : true
         });
         expect(processGrant.reply.status.code).to.equal(202);
@@ -1292,249 +904,6 @@ describe('SyncEngineLevel', () => {
         expect(queriedMessageCid).to.equal(updateMessageCid);
       });
 
-      it('silently ignores a messageCid from the eventLog that does not exist on the local DWN', async () => {
-        // It's important to create a new DID here to avoid conflicts with the previous test on the remote DWN,
-        // since we are not clearing the remote DWN's storage before each test.
-        const name = CryptoUtils.randomUuid();
-        const alice = await testHarness.createIdentity({ name, testDwnUrls });
-
-        // scenario: The messageCids returned from the local eventLog contains a Cid that is not found when attempting to push it to the remote DWN
-        //           this could happen when a record is updated, only the initial write and the most recent state are kept.
-        //           if this happens during a sync, the messageCid will not be found in the DWN and the sync should continue
-        //
-        //           We artificially return an invalid messageCid between 2 valid messageCid and ensure that the sync continues
-
-        // create a record that will not be stored or sent to the remote DWN
-        const invalidRecord = await testHarness.agent.processDwnRequest({
-          store         : false,
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsWrite,
-          messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
-          },
-          dataStream: new Blob(['Hello, invalid!'])
-        });
-
-        // create 2 records for the local DWN to sync to the remote DWN
-        const record1 = await testHarness.agent.processDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsWrite,
-          messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
-          },
-          dataStream: new Blob(['Hello, 1'])
-        });
-        expect(record1.reply.status.code).to.equal(202);
-
-        const record2 = await testHarness.agent.processDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsWrite,
-          messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
-          },
-          dataStream: new Blob(['Hello, 2'])
-        });
-        expect(record2.reply.status.code).to.equal(202);
-
-        // confirm that no records exist remotely
-        let remoteQueryResponse = await testHarness.agent.sendDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.MessagesQuery,
-          messageParams : {
-            filters: [] // get all messages
-          }
-        });
-        let remoteDwnQueryEntries = remoteQueryResponse.reply.entries!;
-        expect(remoteDwnQueryEntries.length).to.equal(0);
-
-        // spy on getDwnMessage that retrieves the message from the local DWN
-        const getDwnMessageSpy = sinon.spy(syncEngine as any, 'getDwnMessage');
-
-        // spy on sendDwnRequest to the remote DWN
-        const sendDwnRequestSpy = sinon.spy(testHarness.agent.rpc, 'sendDwnRequest');
-
-        // stub getDwnEventLog to return the messageCids of the records as well as the invalid one
-        sinon.stub(syncEngine as any, 'getDwnEventLog').resolves([
-          record1.messageCid,
-          invalidRecord.messageCid, // this record will fail to be retrieved
-          record2.messageCid
-        ]);
-
-        // Register Alice's DID to be synchronized.
-        await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
-        });
-
-        // Execute Sync to pull all records from Alice's remote DWNs
-        await syncEngine.sync('push');
-
-        // verify that sendDwnRequest was called once only for each valid record
-        // and getDwnMessage was called for each record, including the invalid record
-        expect(sendDwnRequestSpy.callCount).to.equal(2);
-        expect(getDwnMessageSpy.callCount).to.equal(3);
-
-        // confirm that the two valid records exist remotely
-        remoteQueryResponse = await testHarness.agent.sendDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.MessagesQuery,
-          messageParams : {
-            filters: [] // get all messages
-          }
-        });
-        remoteDwnQueryEntries = remoteQueryResponse.reply.entries!;
-        expect(remoteDwnQueryEntries.length).to.equal(2);
-        expect(remoteDwnQueryEntries).to.have.members([
-          record1.messageCid,
-          record2.messageCid
-        ]);
-      });
-
-      it('silently ignores a messageCid that already exists on the remote DWN', async () => {
-        // It's important to create a new DID here to avoid conflicts with the previous test on the remote DWN,
-        // since we are not clearing the remote DWN's storage before each test.
-        const name = CryptoUtils.randomUuid();
-        const alice = await testHarness.createIdentity({ name, testDwnUrls });
-
-        // Register Alice's DID to be synchronized.
-        await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
-        });
-
-        // scenario: The messageCids returned from the local eventLog contains a Cid that already exists in the remote DWN.
-        //           During sync, the remote DWN will return a conflict 409 status code and the sync should continue
-        //           NOTE: if the messageCid is a delete message and it is already deleted,
-        //           the remote DWN will return a 404 status code and the sync should continue
-
-        // create a record, store it and send it to the remote Dwn
-        const remoteAndLocalRecord = await testHarness.agent.processDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsWrite,
-          messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
-          },
-          dataStream: new Blob(['Hello, remote!'])
-        });
-
-        // send record to remote
-        await testHarness.agent.sendDwnRequest({
-          author      : alice.did.uri,
-          target      : alice.did.uri,
-          messageType : DwnInterface.RecordsWrite,
-          messageCid  : remoteAndLocalRecord.messageCid,
-        });
-
-        // delete the record both locally and remotely
-        const deleteMessage = await testHarness.agent.processDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsDelete,
-          messageParams : {
-            recordId: remoteAndLocalRecord.message!.recordId
-          }
-        });
-        // send the delete to the remote
-        await testHarness.agent.sendDwnRequest({
-          author      : alice.did.uri,
-          target      : alice.did.uri,
-          messageType : DwnInterface.RecordsDelete,
-          messageCid  : deleteMessage.messageCid,
-        });
-
-        // create 2 records stored only locally to sync to the remote DWN
-        const record1 = await testHarness.agent.processDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsWrite,
-          messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
-          },
-          dataStream: new Blob(['Hello, 1'])
-        });
-        expect(record1.reply.status.code).to.equal(202);
-
-        const record2 = await testHarness.agent.processDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsWrite,
-          messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
-          },
-          dataStream: new Blob(['Hello, 2'])
-        });
-        expect(record2.reply.status.code).to.equal(202);
-
-        // confirm that only record and it's delete exist remotely
-        let remoteQueryResponse = await testHarness.agent.sendDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.MessagesQuery,
-          messageParams : {
-            filters: [], // get all messages
-          }
-        });
-
-        let remoteDwnQueryEntries = remoteQueryResponse.reply.entries!;
-        expect(remoteDwnQueryEntries.length).to.equal(2);
-        expect(remoteDwnQueryEntries).to.have.members([ remoteAndLocalRecord.messageCid, deleteMessage.messageCid ]);
-
-        // stub getDwnEventLog to return the messageCids of the records we want to sync
-        // we stub this to avoid syncing the registered identity related messages
-        sinon.stub(syncEngine as any, 'getDwnEventLog').resolves([
-          remoteAndLocalRecord.messageCid,
-          deleteMessage.messageCid,
-          record1.messageCid,
-          record2.messageCid
-        ]);
-
-        // spy on sendDwnRequest to the remote DWN
-        const sendDwnRequestSpy = sinon.spy(testHarness.agent.rpc, 'sendDwnRequest');
-
-        // Execute Sync to push records to Alice's remote node
-        await syncEngine.sync('push');
-
-        // Verify sendDwnRequest was called once for each record including the ones that already exist remotely
-        expect(sendDwnRequestSpy.callCount).to.equal(4);
-
-        // Verify that the conflict response is returned for the record that already exists remotely
-        expect((await sendDwnRequestSpy.firstCall.returnValue).status.code).to.equal(409);
-        // Verify that the delete message returned a 404
-        expect((await sendDwnRequestSpy.secondCall.returnValue).status.code).to.equal(404);
-
-        // Verify that the other 2 records are successfully processed
-        expect((await sendDwnRequestSpy.returnValues[2]).status.code).to.equal(202);
-        expect((await sendDwnRequestSpy.returnValues[3]).status.code).to.equal(202);
-
-        // confirm the new records exist remotely
-        remoteQueryResponse = await testHarness.agent.sendDwnRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.MessagesQuery,
-          messageParams : {
-            filters: [], // get all messages
-          },
-        });
-        remoteDwnQueryEntries = remoteQueryResponse.reply.entries!;
-        expect(remoteDwnQueryEntries.length).to.equal(4);
-        expect(remoteDwnQueryEntries).to.have.members([
-          remoteAndLocalRecord.messageCid,
-          deleteMessage.messageCid,
-          record1.messageCid,
-          record2.messageCid
-        ]);
-      });
-
       it('takes no action if no identities are registered', async () => {
         const didResolveSpy = sinon.spy(testHarness.agent.did, 'resolve');
         const processRequestSpy = sinon.spy(testHarness.agent.dwn, 'processRequest');
@@ -1549,7 +918,7 @@ describe('SyncEngineLevel', () => {
         processRequestSpy.restore();
       });
 
-      it('logs an error if could not fetch MessagesQuery permission needed for a sync', async () => {
+      it('logs an error if could not fetch MessagesSync permission needed for a sync', async () => {
         // create new identity to not conflict the previous tests's remote records
         const aliceSync = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
 
@@ -1572,7 +941,7 @@ describe('SyncEngineLevel', () => {
 
         await syncEngine.sync('push');
         expect(consoleErrorSpy.called).to.be.true;
-        expect(consoleErrorSpy.args[0][0]).to.include('SyncEngineLevel: Error fetching MessagesQuery permission grant for delegate DID');
+        expect(consoleErrorSpy.args[0][0]).to.include('SyncEngineLevel: Error fetching MessagesSync permission grant for delegate DID');
       });
 
       it('logs an error if could not fetch MessagesRead permission needed for a sync', async () => {
@@ -1628,27 +997,27 @@ describe('SyncEngineLevel', () => {
           metadata  : { name: 'Alice Delegate', connectedDid: aliceSync.did.uri }
         });
 
-        // write a MessagesQuery permission grant for the delegate DID
-        const messagesQueryGrant = await testHarness.agent.permissions.createGrant({
+        // write a MessagesSync permission grant for the delegate DID
+        const messagesSyncGrant = await testHarness.agent.permissions.createGrant({
           store       : true,
           author      : aliceSync.did.uri,
           grantedTo   : delegateDid.did.uri,
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
           scope       : {
             interface : DwnInterfaceName.Messages,
-            method    : DwnMethodName.Query,
+            method    : DwnMethodName.Sync,
             protocol  : 'https://protocol.xyz/foo'
           }
         });
 
         // store it as the delegate DID so that it can be fetched during sync
-        const { encodedData: messagesQueryGrantData, ...messagesQueryGrantMessage } = messagesQueryGrant.message;
+        const { encodedData: messagesSyncGrantData, ...messagesSyncGrantMessage } = messagesSyncGrant.message;
         const processGrant = await testHarness.agent.processDwnRequest({
           author      : delegateDid.did.uri,
           target      : delegateDid.did.uri,
           messageType : DwnInterface.RecordsWrite,
-          rawMessage  : messagesQueryGrantMessage,
-          dataStream  : new Blob([ Convert.base64Url(messagesQueryGrantData).toUint8Array() ]),
+          rawMessage  : messagesSyncGrantMessage,
+          dataStream  : new Blob([ Convert.base64Url(messagesSyncGrantData).toUint8Array() ]),
           signAsOwner : true
         });
         expect(processGrant.reply.status.code).to.equal(202);
@@ -1884,29 +1253,24 @@ describe('SyncEngineLevel', () => {
     });
 
     describe('startSync()', () => {
-      it('calls pull() and push() in each interval', async () => {
+      it('calls sync() in each interval', async () => {
         await testHarness.agent.sync.registerIdentity({
           did: alice.did.uri,
         });
 
-        const pullSpy = sinon.stub(SyncEngineLevel.prototype as any, 'pull');
-        pullSpy.resolves();
-
-        const pushSpy = sinon.stub(SyncEngineLevel.prototype as any, 'push');
-        pushSpy.resolves();
+        const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
+        syncSpy.resolves();
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
         testHarness.agent.sync.startSync({ interval: '500ms' });
 
         await clock.tickAsync(1_400); // just under 3 intervals
-        pullSpy.restore();
-        pushSpy.restore();
+        syncSpy.restore();
         clock.restore();
 
         // one when starting the sync, and another for each interval
-        expect(pullSpy.callCount).to.equal(3, 'push');
-        expect(pushSpy.callCount).to.equal(3, 'pull');
+        expect(syncSpy.callCount).to.equal(3, 'sync');
       });
 
       it('does not call sync() again until a sync round finishes', async () => {
@@ -1916,38 +1280,31 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-        const pullSpy = sinon.stub(SyncEngineLevel.prototype as any, 'pull');
-        pullSpy.returns(new Promise<void>((resolve) => {
+        const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
+        syncSpy.returns(new Promise<void>((resolve) => {
           clock.setTimeout(() => {
             resolve();
           }, 1_500); // more than the interval
         }));
 
-        const pushSpy = sinon.stub(SyncEngineLevel.prototype as any, 'push');
-        pushSpy.resolves();
-
         testHarness.agent.sync.startSync({ interval: '500ms' });
 
-        await clock.tickAsync(1_400); // less time than the push
+        await clock.tickAsync(1_400); // less time than the sync
 
         // only once for when starting the sync
-        expect(pullSpy.callCount).to.equal(1, 'pull');
-        expect(pullSpy.callCount).to.equal(1, 'push');
+        expect(syncSpy.callCount).to.equal(1, 'sync');
 
         await clock.tickAsync(200); //remaining time and one interval
 
         // once when starting, and once for the interval
-        expect(pullSpy.callCount).to.equal(2, 'pull');
-        expect(pushSpy.callCount).to.equal(2, 'push');
+        expect(syncSpy.callCount).to.equal(2, 'sync');
 
         await clock.tickAsync(500); // one more interval
 
         // one more for the interval
-        expect(pullSpy.callCount).to.equal(3, 'pull');
-        expect(pushSpy.callCount).to.equal(3, 'push');
+        expect(syncSpy.callCount).to.equal(3, 'sync');
 
-        pullSpy.restore();
-        pushSpy.restore();
+        syncSpy.restore();
         clock.restore();
       });
 
@@ -2084,22 +1441,16 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
+        // stub getSyncTargets to return empty array so sync() completes quickly
+        // but still sets/releases the _syncLock
+        const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
+        getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
+          clock.setTimeout(() => {
+            resolve([]);
+          }, 3);
+        }));
+
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
-
-        // stub push and pull to take 3 ms each
-        const pullStub = sinon.stub(SyncEngineLevel.prototype as any, 'pull');
-        pullStub.returns(new Promise<void>((resolve) => {
-          clock.setTimeout(() => {
-            resolve();
-          }, 3);
-        }));
-
-        const pushStub = sinon.stub(SyncEngineLevel.prototype as any, 'push');
-        pushStub.returns(new Promise<void>((resolve) => {
-          clock.setTimeout(() => {
-            resolve();
-          }, 3);
-        }));
 
         testHarness.agent.sync.startSync({ interval: '500ms' });
 
@@ -2120,6 +1471,7 @@ describe('SyncEngineLevel', () => {
         expect(syncSpy.callCount).to.equal(3);
 
         syncSpy.restore();
+        getSyncTargetsStub.restore();
         clock.restore();
       });
 
@@ -2130,22 +1482,15 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
+        // stub getSyncTargets to take a controlled amount of time
+        const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
+        getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
+          clock.setTimeout(() => {
+            resolve([]);
+          }, 3);
+        }));
+
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
-
-        // stub push and pull to take 3 ms each
-        const pullStub = sinon.stub(SyncEngineLevel.prototype as any, 'pull');
-        pullStub.returns(new Promise<void>((resolve) => {
-          clock.setTimeout(() => {
-            resolve();
-          }, 3);
-        }));
-
-        const pushStub = sinon.stub(SyncEngineLevel.prototype as any, 'push');
-        pushStub.returns(new Promise<void>((resolve) => {
-          clock.setTimeout(() => {
-            resolve();
-          }, 3);
-        }));
 
         testHarness.agent.sync.startSync({ interval: '500ms' });
 
@@ -2157,10 +1502,10 @@ describe('SyncEngineLevel', () => {
         // expect 2 sync interval calls + initial sync
         expect(syncSpy.callCount).to.equal(3);
 
-        // cause pull to take longer
-        pullStub.returns(new Promise<void>((resolve) => {
+        // cause getSyncTargets to take longer
+        getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
           clock.setTimeout(() => {
-            resolve();
+            resolve([]);
           }, 1_000);
         }));
 
@@ -2188,6 +1533,7 @@ describe('SyncEngineLevel', () => {
         expect(syncSpy.callCount).to.equal(4);
 
         syncSpy.restore();
+        getSyncTargetsStub.restore();
         clock.restore();
       });
 
@@ -2198,22 +1544,15 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
+        // stub getSyncTargets to take a controlled amount of time
+        const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
+        getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
+          clock.setTimeout(() => {
+            resolve([]);
+          }, 3);
+        }));
+
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
-
-        // stub push and pull to take 3 ms each
-        const pullStub = sinon.stub(SyncEngineLevel.prototype as any, 'pull');
-        pullStub.returns(new Promise<void>((resolve) => {
-          clock.setTimeout(() => {
-            resolve();
-          }, 3);
-        }));
-
-        const pushStub = sinon.stub(SyncEngineLevel.prototype as any, 'push');
-        pushStub.returns(new Promise<void>((resolve) => {
-          clock.setTimeout(() => {
-            resolve();
-          }, 3);
-        }));
 
         testHarness.agent.sync.startSync({ interval: '500ms' });
 
@@ -2225,10 +1564,10 @@ describe('SyncEngineLevel', () => {
         // expect 2 sync interval calls + initial sync
         expect(syncSpy.callCount).to.equal(3);
 
-        // cause pull to take longer
-        pullStub.returns(new Promise<void>((resolve) => {
+        // cause getSyncTargets to take longer than the 2 second timeout
+        getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
           clock.setTimeout(() => {
-            resolve();
+            resolve([]);
           }, 2_700); // longer than the 2 seconds
         }));
 
@@ -2259,6 +1598,7 @@ describe('SyncEngineLevel', () => {
         }
 
         syncSpy.restore();
+        getSyncTargetsStub.restore();
         clock.restore();
       });
 
@@ -2269,22 +1609,15 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
+        // stub getSyncTargets to take a controlled amount of time
+        const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
+        getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
+          clock.setTimeout(() => {
+            resolve([]);
+          }, 3);
+        }));
+
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
-
-        // stub push and pull to take 3 ms each
-        const pullStub = sinon.stub(SyncEngineLevel.prototype as any, 'pull');
-        pullStub.returns(new Promise<void>((resolve) => {
-          clock.setTimeout(() => {
-            resolve();
-          }, 3);
-        }));
-
-        const pushStub = sinon.stub(SyncEngineLevel.prototype as any, 'push');
-        pushStub.returns(new Promise<void>((resolve) => {
-          clock.setTimeout(() => {
-            resolve();
-          }, 3);
-        }));
 
         testHarness.agent.sync.startSync({ interval: '500ms' });
 
@@ -2293,10 +1626,10 @@ describe('SyncEngineLevel', () => {
 
         await clock.tickAsync(10); // enough time for the sync round trip to complete
 
-        // cause pull to take longer
-        pullStub.returns(new Promise<void>((resolve) => {
+        // cause getSyncTargets to take longer than the 2 second timeout
+        getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
           clock.setTimeout(() => {
-            resolve();
+            resolve([]);
           }, 2_700); // longer than the 2 seconds
         }));
 
@@ -2336,6 +1669,7 @@ describe('SyncEngineLevel', () => {
 
         await clock.runToLastAsync();
         syncSpy.restore();
+        getSyncTargetsStub.restore();
         clock.restore();
       });
 
@@ -2846,12 +2180,12 @@ describe('SyncEngineLevel', () => {
           scope       : { protocol: protocolFoo.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read }
         });
 
-        const messagesQueryGrant = await testHarness.agent.permissions.createGrant({
+        const messagesSyncGrant = await testHarness.agent.permissions.createGrant({
           store       : true,
           author      : alice.did.uri,
           grantedTo   : aliceDeviceX.did.uri,
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
-          scope       : { protocol: protocolFoo.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Query }
+          scope       : { protocol: protocolFoo.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Sync }
         });
 
         const recordsQueryGrant = await testHarness.agent.permissions.createGrant({
@@ -2883,35 +2217,35 @@ describe('SyncEngineLevel', () => {
         });
         expect(processMessagesReadGrant.reply.status.code).to.equal(202);
 
-        const { encodedData: queryGrantData, ... messagesQueryGrantMessage } = messagesQueryGrant.message;
-        const processMessagesQueryGrantAsOwner = await aliceDeviceXHarness.agent.processDwnRequest({
+        const { encodedData: syncGrantData, ... messagesSyncGrantMessage } = messagesSyncGrant.message;
+        const processMessagesSyncGrantAsOwner = await aliceDeviceXHarness.agent.processDwnRequest({
           author      : aliceDeviceX.did.uri,
           target      : aliceDeviceX.did.uri,
           messageType : DwnInterface.RecordsWrite,
-          rawMessage  : messagesQueryGrantMessage,
-          dataStream  : new Blob([ Convert.base64Url(queryGrantData).toUint8Array() ]),
+          rawMessage  : messagesSyncGrantMessage,
+          dataStream  : new Blob([ Convert.base64Url(syncGrantData).toUint8Array() ]),
           signAsOwner : true
         });
-        expect(processMessagesQueryGrantAsOwner.reply.status.code).to.equal(202);
+        expect(processMessagesSyncGrantAsOwner.reply.status.code).to.equal(202);
 
-        const processMessagesQueryGrant = await aliceDeviceXHarness.agent.processDwnRequest({
+        const processMessagesSyncGrant = await aliceDeviceXHarness.agent.processDwnRequest({
           author      : aliceDeviceX.did.uri,
           target      : alice.did.uri,
           messageType : DwnInterface.RecordsWrite,
-          rawMessage  : messagesQueryGrantMessage,
-          dataStream  : new Blob([ Convert.base64Url(queryGrantData).toUint8Array() ]),
+          rawMessage  : messagesSyncGrantMessage,
+          dataStream  : new Blob([ Convert.base64Url(syncGrantData).toUint8Array() ]),
         });
-        expect(processMessagesQueryGrant.reply.status.code).to.equal(202);
+        expect(processMessagesSyncGrant.reply.status.code).to.equal(202);
 
         // send the grants to the remote DWN
-        const remoteMessagesQueryGrant = await testHarness.agent.sendDwnRequest({
+        const remoteMessagesSyncGrant = await testHarness.agent.sendDwnRequest({
           author      : alice.did.uri,
           target      : alice.did.uri,
           messageType : DwnInterface.RecordsWrite,
-          rawMessage  : messagesQueryGrantMessage,
-          dataStream  : new Blob([ Convert.base64Url(queryGrantData).toUint8Array() ]),
+          rawMessage  : messagesSyncGrantMessage,
+          dataStream  : new Blob([ Convert.base64Url(syncGrantData).toUint8Array() ]),
         });
-        expect(remoteMessagesQueryGrant.reply.status.code).to.equal(202);
+        expect(remoteMessagesSyncGrant.reply.status.code).to.equal(202);
 
         const remoteMessagesReadGrant = await testHarness.agent.sendDwnRequest({
           author      : alice.did.uri,

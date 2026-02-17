@@ -1,7 +1,7 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventStream } from '../../src/types/subscriptions.js';
 import type { PermissionScope } from '../../src/index.js';
-import type { DataStore, EventLog, MessageStore, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
 
 import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
@@ -28,7 +28,7 @@ export function testPermissions(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let eventLog: EventLog;
+    let stateIndex: StateIndex;
     let eventStream: EventStream;
     let dwn: Dwn;
 
@@ -41,10 +41,10 @@ export function testPermissions(): void {
       messageStore = stores.messageStore;
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
-      eventLog = stores.eventLog;
+      stateIndex = stores.stateIndex;
       eventStream = TestEventStream.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, eventStream, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -54,7 +54,7 @@ export function testPermissions(): void {
       await messageStore.clear();
       await dataStore.clear();
       await resumableTaskStore.clear();
-      await eventLog.clear();
+      await stateIndex.clear();
     });
 
     after(async () => {
@@ -480,29 +480,6 @@ export function testPermissions(): void {
 
     // These set of tets are primarily to ensure SchemaValidation passes for the various permission request and grant messages and their scopes
     describe('ensure loaded scope properties for permission requests are processed', () => {
-      it('MessagesQuery', async () => {
-        const alice = await TestDataGenerator.generateDidKeyPersona();
-        const bob = await TestDataGenerator.generateDidKeyPersona();
-
-        // create a permission grant with protocol
-        const messagesQueryPermissions = await PermissionsProtocol.createGrant({
-          signer      : Jws.createSigner(alice),
-          grantedTo   : bob.did,
-          dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
-          description : 'Requesting to query from Alice test-context',
-          scope       : {
-            interface : DwnInterfaceName.Messages,
-            method    : DwnMethodName.Query,
-            protocol  : 'https://example.com/protocol/test',
-          }
-        });
-
-        const messagesQueryPermissionsReply = await dwn.processMessage(alice.did, messagesQueryPermissions.recordsWrite.message, {
-          dataStream: DataStream.fromBytes(messagesQueryPermissions.permissionGrantBytes)
-        });
-        expect(messagesQueryPermissionsReply.status.code).to.equal(202);
-      });
-
       it('MessagesRead', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();

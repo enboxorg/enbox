@@ -1,7 +1,7 @@
 import { DataStoreSql } from '../src/data-store-sql.js';
-import { EventLogSql } from '../src/event-log-sql.js';
 import { MessageStoreSql } from '../src/message-store-sql.js';
 import { ResumableTaskStoreSql } from '../src/resumable-task-store-sql.js';
+import { StateIndexSql } from '../src/state-index-sql.js';
 import { TestSuite } from '@enbox/dwn-sdk-js/tests';
 import { testMysqlDialect, testPostgresDialect, testSqliteDialect } from './test-dialects.js';
 
@@ -16,7 +16,7 @@ describe('SQL Store Test Suite', () => {
     TestSuite.runInjectableDependentTests({
       messageStore       : new MessageStoreSql(testMysqlDialect),
       dataStore          : new DataStoreSql(testMysqlDialect),
-      eventLog           : new EventLogSql(testMysqlDialect),
+      stateIndex         : new StateIndexSql(testMysqlDialect),
       resumableTaskStore : new ResumableTaskStoreSql(testMysqlDialect),
     });
   });
@@ -25,7 +25,7 @@ describe('SQL Store Test Suite', () => {
     TestSuite.runInjectableDependentTests({
       messageStore       : new MessageStoreSql(testPostgresDialect),
       dataStore          : new DataStoreSql(testPostgresDialect),
-      eventLog           : new EventLogSql(testPostgresDialect),
+      stateIndex         : new StateIndexSql(testPostgresDialect),
       resumableTaskStore : new ResumableTaskStoreSql(testPostgresDialect),
     });
   });
@@ -34,7 +34,7 @@ describe('SQL Store Test Suite', () => {
     TestSuite.runInjectableDependentTests({
       messageStore       : new MessageStoreSql(testSqliteDialect),
       dataStore          : new DataStoreSql(testSqliteDialect),
-      eventLog           : new EventLogSql(testSqliteDialect),
+      stateIndex         : new StateIndexSql(testSqliteDialect),
       resumableTaskStore : new ResumableTaskStoreSql(testSqliteDialect),
     });
   });

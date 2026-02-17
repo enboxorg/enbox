@@ -2,10 +2,10 @@ import type { DidResolver } from '@enbox/dids';
 import type { EventStream } from '../../src/types/subscriptions.js';
 import type {
   DataStore,
-  EventLog,
   MessagesReadReply,
   MessageStore,
   ResumableTaskStore,
+  StateIndex,
 } from '../../src/index.js';
 
 import { expect } from 'chai';
@@ -27,7 +27,7 @@ export function testMessagesReadHandler(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let eventLog: EventLog;
+    let stateIndex: StateIndex;
     let eventStream: EventStream;
 
     // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
@@ -39,10 +39,10 @@ export function testMessagesReadHandler(): void {
       messageStore = stores.messageStore;
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
-      eventLog = stores.eventLog;
+      stateIndex = stores.stateIndex;
       eventStream = TestEventStream.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, eventStream, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -50,7 +50,7 @@ export function testMessagesReadHandler(): void {
       await messageStore.clear();
       await dataStore.clear();
       await resumableTaskStore.clear();
-      await eventLog.clear();
+      await stateIndex.clear();
 
       sinon.restore(); // wipe all previous stubs/spies/mocks/fakes
     });

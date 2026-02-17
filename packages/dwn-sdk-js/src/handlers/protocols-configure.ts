@@ -1,10 +1,10 @@
 import type { DidResolver } from '@enbox/dids';
-import type { EventLog } from '../types/event-log.js';
 import type { EventStream } from '../types/subscriptions.js';
 import type { GenericMessageReply } from '../types/message-types.js';
 import type { MessageStore } from '../types//message-store.js';
 import type { MethodHandler } from '../types/method-handler.js';
 import type { ProtocolsConfigureMessage } from '../types/protocols-types.js';
+import type { StateIndex } from '../types/state-index.js';
 
 import { authenticate } from '../core/auth.js';
 import { Message } from '../core/message.js';
@@ -20,7 +20,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
   constructor(
     private didResolver: DidResolver,
     private messageStore: MessageStore,
-    private eventLog: EventLog,
+    private stateIndex: StateIndex,
     private eventStream?: EventStream
   ) { }
 
@@ -66,7 +66,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
 
       await this.messageStore.put(tenant, message, indexes);
       const messageCid = await Message.getCid(message);
-      await this.eventLog.append(tenant, messageCid, indexes);
+      await this.stateIndex.insert(tenant, messageCid, indexes);
 
       // only emit if the event stream is set
       if (this.eventStream !== undefined) {
@@ -93,7 +93,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       }
     }
 
-    await this.eventLog.deleteEventsByCid(tenant, deletedMessageCids);
+    await this.stateIndex.delete(tenant, deletedMessageCids);
 
     return messageReply;
   };

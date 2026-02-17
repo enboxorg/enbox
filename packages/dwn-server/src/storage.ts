@@ -4,10 +4,10 @@ import type { DwnServerConfig } from './config.js';
 import type {
   DataStore,
   DwnConfig,
-  EventLog,
   EventStream,
   MessageStore,
   ResumableTaskStore,
+  StateIndex,
   TenantGate,
 } from '@enbox/dwn-sdk-js';
 
@@ -21,24 +21,24 @@ import { PluginLoader } from './plugin-loader.js';
 
 import {
   DataStoreLevel,
-  EventLogLevel,
   MessageStoreLevel,
   ResumableTaskStoreLevel,
+  StateIndexLevel,
 } from '@enbox/dwn-sdk-js';
 import {
   DataStoreSql,
-  EventLogSql,
   MessageStoreSql,
   MysqlDialect,
   PostgresDialect,
   ResumableTaskStoreSql,
   SqliteDialect,
+  StateIndexSql,
 } from '@enbox/dwn-sql-store';
 
 export enum StoreType {
   DataStore,
   MessageStore,
-  EventLog,
+  StateIndex,
   ResumableTaskStore,
 }
 
@@ -49,7 +49,7 @@ export enum BackendTypes {
   POSTGRES = 'postgres',
 }
 
-export type DwnStore = DataStore | EventLog | MessageStore | ResumableTaskStore;
+export type DwnStore = DataStore | StateIndex | MessageStore | ResumableTaskStore;
 
 export async function getDwnConfig(
   config : DwnServerConfig,
@@ -61,11 +61,11 @@ export async function getDwnConfig(
 ): Promise<DwnConfig> {
   const { tenantGate, eventStream, didResolver } = options;
   const dataStore: DataStore = await getStore(config.dataStore, StoreType.DataStore);
-  const eventLog: EventLog = await getStore(config.eventLog, StoreType.EventLog);
+  const stateIndex: StateIndex = await getStore(config.stateIndex, StoreType.StateIndex);
   const messageStore: MessageStore = await getStore(config.messageStore, StoreType.MessageStore);
   const resumableTaskStore: ResumableTaskStore = await getStore(config.resumableTaskStore, StoreType.ResumableTaskStore);
 
-  return { didResolver, eventStream, eventLog, dataStore, messageStore, resumableTaskStore, tenantGate };
+  return { didResolver, eventStream, stateIndex, dataStore, messageStore, resumableTaskStore, tenantGate };
 }
 
 function getLevelStore(
@@ -82,9 +82,9 @@ function getLevelStore(
         blockstoreLocation : storeURI.host + storeURI.pathname + '/MESSAGESTORE',
         indexLocation      : storeURI.host + storeURI.pathname + '/INDEX',
       });
-    case StoreType.EventLog:
-      return new EventLogLevel({
-        location: storeURI.host + storeURI.pathname + '/EVENTLOG',
+    case StoreType.StateIndex:
+      return new StateIndexLevel({
+        location: storeURI.host + storeURI.pathname + '/STATEINDEX',
       });
     case StoreType.ResumableTaskStore:
       return new ResumableTaskStoreLevel({
@@ -106,8 +106,8 @@ function getSqlStore(
       return new DataStoreSql(dialect);
     case StoreType.MessageStore:
       return new MessageStoreSql(dialect);
-    case StoreType.EventLog:
-      return new EventLogSql(dialect);
+    case StoreType.StateIndex:
+      return new StateIndexSql(dialect);
     case StoreType.ResumableTaskStore:
       return new ResumableTaskStoreSql(dialect);
     default:
@@ -124,7 +124,7 @@ function isFilePath(configString: string): boolean {
 }
 
 async function getStore(storeString: string, storeType: StoreType.DataStore): Promise<DataStore>;
-async function getStore(storeString: string, storeType: StoreType.EventLog): Promise<EventLog>;
+async function getStore(storeString: string, storeType: StoreType.StateIndex): Promise<StateIndex>;
 async function getStore(storeString: string, storeType: StoreType.MessageStore): Promise<MessageStore>;
 async function getStore(storeString: string, storeType: StoreType.ResumableTaskStore): Promise<ResumableTaskStore>;
 async function getStore(storeConfigString: string, storeType: StoreType): Promise<DwnStore> {
@@ -159,8 +159,8 @@ async function loadStoreFromFilePath(
   switch (storeType) {
     case StoreType.DataStore:
       return await PluginLoader.loadPlugin<DataStore>(filePath);
-    case StoreType.EventLog:
-      return await PluginLoader.loadPlugin<EventLog>(filePath);
+    case StoreType.StateIndex:
+      return await PluginLoader.loadPlugin<StateIndex>(filePath);
     case StoreType.MessageStore:
       return await PluginLoader.loadPlugin<MessageStore>(filePath);
     case StoreType.ResumableTaskStore:
@@ -207,7 +207,7 @@ function invalidStorageSchemeMessage(protocol: string): string {
   }
   return (
     'Unknown storage protocol ' +
-    protocol.slice(0, 1) +
+    protocol.slice(0, -1) +
     '! Please use one of: ' +
     schemes.join(', ') +
     '. For details, see README'

@@ -1,12 +1,12 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventStream } from '../src/types/subscriptions.js';
-import type { ActiveTenantCheckResult, MessagesQueryReply, TenantGate } from '../src/index.js';
-import type { DataStore, EventLog, MessageStore, ResumableTaskStore } from '../src/index.js';
+import type { ActiveTenantCheckResult, TenantGate } from '../src/index.js';
+import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../src/index.js';
 
 import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
 import chai, { expect } from 'chai';
-import { DataStoreLevel, EventEmitterStream, EventLogLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '../src/index.js';
+import { DataStoreLevel, EventEmitterStream, MessageStoreLevel, ResumableTaskStoreLevel, StateIndexLevel } from '../src/index.js';
 
 import { Dwn } from '../src/dwn.js';
 import { Message } from '../src/core/message.js';
@@ -23,7 +23,7 @@ export function testDwnClass(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let eventLog: EventLog;
+    let stateIndex: StateIndex;
     let eventStream: EventStream;
     let dwn: Dwn;
 
@@ -36,11 +36,11 @@ export function testDwnClass(): void {
       messageStore = stores.messageStore;
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
-      eventLog = stores.eventLog;
+      stateIndex = stores.stateIndex;
 
       eventStream = TestEventStream.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, eventStream, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -77,17 +77,6 @@ export function testDwnClass(): void {
 
         expect(reply.status.code).to.equal(200);
         expect(reply.entries).to.be.empty;
-      });
-
-      it('should process an MessagesQuery message', async () => {
-        const alice = await TestDataGenerator.generateDidKeyPersona();
-        const { message } = await TestDataGenerator.generateMessagesQuery({ author: alice });
-
-        const reply: MessagesQueryReply = await dwn.processMessage(alice.did, message);
-
-        expect(reply.status.code).to.equal(200);
-        expect(reply.entries).to.be.empty;
-        expect((reply as any).data).to.not.exist;
       });
 
       it('#191 - regression - should run JSON schema validation', async () => {
@@ -137,7 +126,7 @@ export function testDwnClass(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
         const resumableTaskStoreStub = sinon.createStubInstance(ResumableTaskStoreLevel);
-        const eventLogStub = sinon.createStubInstance(EventLogLevel);
+        const stateIndexStub = sinon.createStubInstance(StateIndexLevel);
         const eventStreamStub = sinon.createStubInstance(EventEmitterStream);
 
         const dwnWithConfig = await Dwn.create({
@@ -145,7 +134,7 @@ export function testDwnClass(): void {
           messageStore       : messageStoreStub,
           dataStore          : dataStoreStub,
           resumableTaskStore : resumableTaskStoreStub,
-          eventLog           : eventLogStub,
+          stateIndex         : stateIndexStub,
           eventStream        : eventStreamStub
         });
 
@@ -170,7 +159,7 @@ export function testDwnClass(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
         const resumableTaskStoreStub = sinon.createStubInstance(ResumableTaskStoreLevel);
-        const eventLogStub = sinon.createStubInstance(EventLogLevel);
+        const stateIndexStub = sinon.createStubInstance(StateIndexLevel);
         const eventStreamStub = sinon.createStubInstance(EventEmitterStream);
 
         const dwnWithConfig = await Dwn.create({
@@ -178,7 +167,7 @@ export function testDwnClass(): void {
           messageStore       : messageStoreStub,
           dataStore          : dataStoreStub,
           resumableTaskStore : resumableTaskStoreStub,
-          eventLog           : eventLogStub,
+          stateIndex         : stateIndexStub,
           eventStream        : eventStreamStub
         });
 

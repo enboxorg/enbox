@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://identity.foundation/dwn/json-schemas/messages-query.json",
+  "$id": "https://identity.foundation/dwn/json-schemas/messages-sync.json",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -18,34 +18,50 @@
         "interface",
         "method",
         "messageTimestamp",
-        "filters"
+        "action"
       ],
       "properties": {
         "interface": {
-          "enum": [
-            "Messages"
-          ],
+          "enum": ["Messages"],
           "type": "string"
         },
         "method": {
-          "enum": [
-            "Query"
-          ],
+          "enum": ["Sync"],
           "type": "string"
         },
         "messageTimestamp": {
           "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
         },
-        "filters": {
-          "type": "array",
-          "items": {
-            "$ref": "https://identity.foundation/dwn/json-schemas/messages-filter.json"
+        "action": {
+          "enum": ["root", "subtree", "leaves"],
+          "type": "string"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "prefix": {
+          "type": "string",
+          "pattern": "^[01]*$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "action": { "const": "subtree" } }
+          },
+          "then": {
+            "required": ["prefix"]
           }
         },
-        "cursor": {
-          "$ref": "https://identity.foundation/dwn/json-schemas/pagination-cursor.json"
+        {
+          "if": {
+            "properties": { "action": { "const": "leaves" } }
+          },
+          "then": {
+            "required": ["prefix"]
+          }
         }
-      }
+      ]
     }
   }
 }

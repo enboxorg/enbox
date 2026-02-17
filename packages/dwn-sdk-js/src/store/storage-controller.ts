@@ -1,8 +1,8 @@
 import type { DataStore } from '../types/data-store.js';
-import type { EventLog } from '../types/event-log.js';
 import type { EventStream } from '../types/subscriptions.js';
 import type { GenericMessage } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
+import type { StateIndex } from '../types/state-index.js';
 import type { RecordsDeleteMessage, RecordsQueryReplyEntry, RecordsWriteMessage } from '../types/records-types.js';
 
 import { DwnConstant } from '../core/dwn-constant.js';
@@ -19,24 +19,24 @@ export type ResumableRecordsDeleteData = {
 };
 
 /**
- * A class that provides an abstraction for the usage of MessageStore, DataStore, and EventLog.
+ * A class that provides an abstraction for the usage of MessageStore, DataStore, and StateIndex.
  */
 export class StorageController {
 
   private messageStore: MessageStore;
   private dataStore: DataStore;
-  private eventLog: EventLog;
+  private stateIndex: StateIndex;
   private eventStream?: EventStream;
 
-  public constructor({ messageStore, dataStore, eventLog, eventStream }: {
+  public constructor({ messageStore, dataStore, stateIndex, eventStream }: {
     messageStore: MessageStore,
     dataStore: DataStore,
-    eventLog: EventLog,
+    stateIndex: StateIndex,
     eventStream?: EventStream}
   ) {
     this.messageStore = messageStore;
     this.dataStore = dataStore;
-    this.eventLog = eventLog;
+    this.stateIndex = stateIndex;
     this.eventStream = eventStream;
   }
 
@@ -64,7 +64,7 @@ export class StorageController {
     const indexes = recordsDelete.constructIndexes(initialWrite);
     const messageCid = await Message.getCid(message);
     await this.messageStore.put(tenant, message, indexes);
-    await this.eventLog.append(tenant, messageCid, indexes);
+    await this.stateIndex.insert(tenant, messageCid, indexes);
 
     // only emit if the event stream is set
     if (this.eventStream !== undefined) {
@@ -73,12 +73,12 @@ export class StorageController {
 
     if (message.descriptor.prune) {
       // purge/hard-delete all descendent records
-      await StorageController.purgeRecordDescendants(tenant, message.descriptor.recordId, this.messageStore, this.dataStore, this.eventLog);
+      await StorageController.purgeRecordDescendants(tenant, message.descriptor.recordId, this.messageStore, this.dataStore, this.stateIndex);
     }
 
     // delete all existing messages that are not newest, except for the initial write
     await StorageController.deleteAllOlderMessagesButKeepInitialWrite(
-      tenant, existingMessages, message, this.messageStore, this.dataStore, this.eventLog
+      tenant, existingMessages, message, this.messageStore, this.dataStore, this.stateIndex
     );
   }
 
@@ -121,7 +121,7 @@ export class StorageController {
     recordId: string,
     messageStore: MessageStore,
     dataStore: DataStore,
-    eventLog: EventLog
+    stateIndex: StateIndex
   ): Promise<void> {
     const filter = {
       interface : DwnInterfaceName.Records,
@@ -151,12 +151,12 @@ export class StorageController {
     // purge all child's descendants first
     for (const childRecordId of recordIdToMessagesMap.keys()) {
       // purge the child's descendent messages first
-      await StorageController.purgeRecordDescendants(tenant, childRecordId, messageStore, dataStore, eventLog);
+      await StorageController.purgeRecordDescendants(tenant, childRecordId, messageStore, dataStore, stateIndex);
     }
 
     // then purge the child messages themselves
     for (const childRecordId of recordIdToMessagesMap.keys()) {
-      await StorageController.purgeRecordMessages(tenant, recordIdToMessagesMap.get(childRecordId)!, messageStore, dataStore, eventLog);
+      await StorageController.purgeRecordMessages(tenant, recordIdToMessagesMap.get(childRecordId)!, messageStore, dataStore, stateIndex);
     }
   }
 
@@ -169,7 +169,7 @@ export class StorageController {
     recordMessages: GenericMessage[],
     messageStore: MessageStore,
     dataStore: DataStore,
-    eventLog: EventLog
+    stateIndex: StateIndex
   ): Promise<void> {
     // delete the data from the data store first so no chance of orphaned data (not having a message referencing it) in case of server crash
     // NOTE: only the `RecordsWrite` with latest timestamp can possibly have data associated with it so we do this filtering as an optimization
@@ -185,7 +185,7 @@ export class StorageController {
 
     // then delete all events associated with the record messages before deleting the messages so we don't have orphaned events
     const messageCids = await Promise.all(recordMessages.map((message) => Message.getCid(message)));
-    await eventLog.deleteEventsByCid(tenant, messageCids);
+    await stateIndex.delete(tenant, messageCids);
 
     // finally delete all record messages
     await Promise.all(messageCids.map((messageCid) => messageStore.delete(tenant, messageCid)));
@@ -201,7 +201,7 @@ export class StorageController {
     newestMessage: GenericMessage,
     messageStore: MessageStore,
     dataStore: DataStore,
-    eventLog: EventLog
+    stateIndex: StateIndex
   ): Promise<void> {
     const deletedMessageCids: string[] = [];
 
@@ -236,7 +236,7 @@ export class StorageController {
         }
       }
 
-      await eventLog.deleteEventsByCid(tenant, deletedMessageCids);
+      await stateIndex.delete(tenant, deletedMessageCids);
     }
   }
 }

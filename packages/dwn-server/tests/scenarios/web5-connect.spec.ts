@@ -27,7 +27,7 @@ describe('Web5 Connect scenarios', function () {
     dwnServerConfig.messageStore = 'sqlite://',
     dwnServerConfig.dataStore = 'sqlite://',
     dwnServerConfig.resumableTaskStore = 'sqlite://',
-    dwnServerConfig.eventLog = 'sqlite://',
+    dwnServerConfig.stateIndex = 'sqlite://',
 
     dwnServer = new DwnServer({ config: dwnServerConfig });
   });

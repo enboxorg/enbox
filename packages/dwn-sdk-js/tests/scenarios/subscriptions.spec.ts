@@ -3,10 +3,10 @@ import type { MessageEvent } from '../../src/types/subscriptions.js';
 import type { RecordEvent } from '../../src/types/records-types.js';
 import type {
   DataStore,
-  EventLog,
   EventStream,
   MessageStore,
   ResumableTaskStore,
+  StateIndex,
 } from '../../src/index.js';
 
 import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
@@ -36,7 +36,7 @@ export function testSubscriptionScenarios(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let eventLog: EventLog;
+    let stateIndex: StateIndex;
     let eventStream: EventStream;
     let dwn: Dwn;
     // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
@@ -48,10 +48,10 @@ export function testSubscriptionScenarios(): void {
       messageStore = stores.messageStore;
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
-      eventLog = stores.eventLog;
+      stateIndex = stores.stateIndex;
       eventStream = TestEventStream.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, eventStream, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -59,7 +59,7 @@ export function testSubscriptionScenarios(): void {
       await messageStore.clear();
       await dataStore.clear();
       await resumableTaskStore.clear();
-      await eventLog.clear();
+      await stateIndex.clear();
     });
 
     after(async () => {

@@ -75,7 +75,7 @@ Happy contributing!
 ### Developing and testing custom store implementations
 Here is a guide on how to develop and test a custom implementation of the backend storage for DWN:
 
-1. Implement one or a combination of the `DataStore`, `MessageStore`, and `EventLog` interfaces.
+1. Implement one or a combination of the `DataStore`, `MessageStore`, and `StateIndex` interfaces.
 2. Import the `TestSuite` class for a new Mocha test.
 3. Invoke `TestSuite.runStoreDependentTests(...)` in Mocha; this will run all store-dependent tests.
 4. Make sure that all store-dependent tests pass.
@@ -85,13 +85,13 @@ Here is a guide on how to develop and test a custom implementation of the backen
 Example code:
 ```ts
 import { TestSuite } from '@enbox/dwn-sdk-js/tests';
-import { yourMessageStore, yourDataStore, yourEventLog } from 'your-custom-stores';
+import { yourMessageStore, yourDataStore, yourStateIndex } from 'your-custom-stores';
 
 describe('Custom data store implementation', () => {
   TestSuite.runStoreDependentTests({
-    messageStore: yourMessageStore,
-    dataStore   : yourDataStore,
-    eventLog    : yourEventLog,
+    messageStore : yourMessageStore,
+    dataStore    : yourDataStore,
+    stateIndex   : yourStateIndex,
   });
 });
 ```

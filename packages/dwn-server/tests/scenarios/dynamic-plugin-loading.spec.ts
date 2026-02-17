@@ -8,10 +8,10 @@ import CommonScenarioValidator from '../common-scenario-validator.js';
 import { config } from '../../src/config.js';
 import DataStoreSqlite from '../plugins/data-store-sqlite.js';
 import { DwnServer } from '../../src/dwn-server.js';
-import EventLogSqlite from '../plugins/event-log-sqlite.js';
 import EventStreamInMemory from '../plugins/event-stream-in-memory.js';
 import MessageStoreSqlite from '../plugins/message-store-sqlite.js';
 import ResumableTaskStoreSqlite from '../plugins/resumable-task-store-sqlite.js';
+import StateIndexSqlite from '../plugins/state-index-sqlite.js';
 
 // node.js 18 and earlier needs globalThis.crypto polyfill
 if (!globalThis.crypto) {
@@ -48,7 +48,7 @@ describe('Dynamic DWN plugin loading', function () {
     const customMessageStoreConstructorSpy = sinon.spy(MessageStoreSqlite, 'spyingTheConstructor');
     const customDataStoreConstructorSpy = sinon.spy(DataStoreSqlite, 'spyingTheConstructor');
     const customResumableTaskStoreConstructorSpy = sinon.spy(ResumableTaskStoreSqlite, 'spyingTheConstructor');
-    const customEventLogConstructorSpy = sinon.spy(EventLogSqlite, 'spyingTheConstructor');
+    const customStateIndexConstructorSpy = sinon.spy(StateIndexSqlite, 'spyingTheConstructor');
     const customEventStreamConstructorSpy = sinon.spy(EventStreamInMemory, 'spyingTheConstructor');
 
     // 1. Configure DWN to load a custom data store plugin.
@@ -61,7 +61,7 @@ describe('Dynamic DWN plugin loading', function () {
     dwnServerConfigCopy.messageStore = '../tests/plugins/message-store-sqlite.js';
     dwnServerConfigCopy.dataStore = '../tests/plugins/data-store-sqlite.js';
     dwnServerConfigCopy.resumableTaskStore = '../tests/plugins/resumable-task-store-sqlite.js';
-    dwnServerConfigCopy.eventLog = '../tests/plugins/event-log-sqlite.js';
+    dwnServerConfigCopy.stateIndex = '../tests/plugins/state-index-sqlite.js';
     dwnServerConfigCopy.eventStreamPluginPath = '../tests/plugins/event-stream-in-memory.js';
 
     // 2. Validate that the constructor of the plugin is called.
@@ -78,7 +78,7 @@ describe('Dynamic DWN plugin loading', function () {
     expect(customMessageStoreConstructorSpy.calledOnce).to.be.true;
     expect(customDataStoreConstructorSpy.calledOnce).to.be.true;
     expect(customResumableTaskStoreConstructorSpy.calledOnce).to.be.true;
-    expect(customEventLogConstructorSpy.calledOnce).to.be.true;
+    expect(customStateIndexConstructorSpy.calledOnce).to.be.true;
     expect(customEventStreamConstructorSpy.calledOnce).to.be.true;
 
     // 3. Validate that the DWN instance is using the custom data store plugin.

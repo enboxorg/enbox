@@ -1,9 +1,8 @@
 // export everything that we want to be consumable
 export type { DwnConfig } from './dwn.js';
-export type { EventLog } from './types/event-log.js';
 export type { EventListener, EventStream, EventSubscription, MessageEvent, SubscriptionReply } from './types/subscriptions.js';
 export type { AuthorizationModel, Descriptor, DelegatedGrantRecordsWriteMessage, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSort, MessageSubscription, Pagination, QueryResultEntry, Status } from './types/message-types.js';
-export type { MessagesFilter, MessagesReadMessage as MessagesReadMessage, MessagesReadReply as MessagesReadReply, MessagesReadReplyEntry as MessagesReadReplyEntry, MessagesReadDescriptor, MessagesQueryDescriptor, MessagesQueryMessage, MessagesQueryReply, MessagesSubscribeDescriptor, MessagesSubscribeMessage, MessagesSubscribeReply, MessageSubscriptionHandler, MessagesSubscribeMessageOptions } from './types/messages-types.js';
+export type { MessagesFilter, MessagesReadMessage as MessagesReadMessage, MessagesReadReply as MessagesReadReply, MessagesReadReplyEntry as MessagesReadReplyEntry, MessagesReadDescriptor, MessagesSubscribeDescriptor, MessagesSubscribeMessage, MessagesSubscribeReply, MessageSubscriptionHandler, MessagesSubscribeMessageOptions, MessagesSyncAction, MessagesSyncDescriptor, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
 export type { GT, LT, Filter, FilterValue, KeyValues, EqualFilter, OneOfFilter, RangeFilter, RangeCriterion, PaginationCursor, QueryOptions, RangeValue, StartsWithFilter } from './types/query-types.js';
 export type { ProtocolsConfigureDescriptor, ProtocolDefinition, ProtocolTypes, ProtocolRuleSet, ProtocolsQueryFilter, ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply, ProtocolActionRule, ProtocolPathEncryption, ProtocolsQueryDescriptor, ProtocolType } from './types/protocols-types.js';
 export type { DataEncodedRecordsWriteMessage, EncryptedKey, EncryptionProperty, RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsQueryReply, RecordsQueryReplyEntry, RecordsReadMessage, RecordsReadReply, RecordsSubscribeDescriptor, RecordsSubscribeMessage, RecordsSubscribeReply, RecordSubscriptionHandler, RecordsWriteDescriptor, RecordsWriteTags, RecordsWriteTagValue, RecordsWriteMessage, RecordsWriteSignaturePayload, RecordsDeleteDescriptor, RecordsQueryDescriptor, RecordsReadDescriptor, RecordsSubscribeMessageOptions, RecordsWriteMessageOptions, InternalRecordsWriteMessage, RecordEvent, RecordsWriteTagsFilter } from './types/records-types.js';
@@ -29,7 +28,7 @@ export { Jws } from './utils/jws.js';
 export { KeyMaterial, PrivateKeyJwk, PublicKeyJwk, Jwk } from './types/jose-types.js';
 export { Message } from './core/message.js';
 export { MessagesRead as MessagesRead, MessagesReadOptions as MessagesReadOptions } from './interfaces/messages-read.js';
-export { MessagesQuery, MessagesQueryOptions } from './interfaces/messages-query.js';
+export { MessagesSync, MessagesSyncOptions } from './interfaces/messages-sync.js';
 export { UnionMessageReply } from './core/message-reply.js';
 export { MessageStore, MessageStoreOptions } from './types/message-store.js';
 export { MessageInterface } from './types/message-interface.js';
@@ -57,13 +56,21 @@ export * from './types/records-types.js';
 // concrete implementations of stores and event stream
 export { BlockstoreLevel, BlockstoreLevelConfig } from './store/blockstore-level.js';
 export { DataStoreLevel, DataStoreLevelConfig } from './store/data-store-level.js';
-export { EventLogLevel, EventLogLevelConfig } from './event-log/event-log-level.js';
 export { IndexLevel, IndexLevelConfig, IndexedItem, IndexLevelOptions } from './store/index-level.js';
 export { createLevelDatabase, CreateLevelDatabaseOptions, LevelDatabase, LevelWrapper, LevelWrapperConfig, LevelWrapperBatchOperation, LevelWrapperOptions, LevelWrapperIteratorOptions } from './store/level-wrapper.js';
 export { MessageStoreLevel, MessageStoreLevelConfig } from './store/message-store-level.js';
 export { ResumableTaskStoreLevel, ResumableTaskStoreLevelConfig } from './store/resumable-task-store-level.js';
-export { EventEmitterStream, EventEmitterStreamConfig } from './event-log/event-emitter-stream.js';
+export { EventEmitterStream, EventEmitterStreamConfig } from './event-stream/event-emitter-stream.js';
+
+// Sparse Merkle Tree and StateIndex
+export type { StateIndex } from './types/state-index.js';
+export { StateIndexLevel, StateIndexLevelConfig } from './state-index/state-index-level.js';
+export { SparseMerkleTree } from './smt/sparse-merkle-tree.js';
+export { SMTStoreLevel, SMTStoreLevelConfig } from './smt/smt-store-level.js';
+export { SMTStoreMemory } from './smt/smt-store-memory.js';
+export type { Hash, SMTNode, SMTInternalNode, SMTLeafNode, SMTProof, SMTDiffResult, SMTNodeStore } from './smt/smt-types.js';
+export { hashChildren, hashEquals, hashKey, hashLeaf, hashToHex, hexToHash, getBit, initDefaultHashes, getDefaultHashes, SMT_DEPTH, ZERO_HASH } from './smt/smt-utils.js';
 
 // test library exports
-export { GenerateFromRecordsWriteOut, GenerateGrantCreateOutput, GenerateMessagesQueryOutput, GenerateMessagesReadOutput, GenerateMessagesSubscribeOutput, GenerateProtocolsConfigureOutput, GenerateProtocolsQueryOutput, GenerateRecordsDeleteOutput, GenerateRecordsQueryOutput, GenerateRecordsSubscribeOutput, GenerateRecordsWriteOutput, Persona, TestDataGenerator, GenerateFromRecordsWriteInput, GenerateGrantCreateInput, GenerateMessagesQueryInput, GenerateMessagesReadInput, GenerateMessagesSubscribeInput, GenerateProtocolsConfigureInput, GenerateProtocolsQueryInput, GenerateRecordsDeleteInput, GenerateRecordsQueryInput, GenerateRecordsSubscribeInput, GenerateRecordsWriteInput } from '../tests/utils/test-data-generator.js';
+export { GenerateFromRecordsWriteOut, GenerateGrantCreateOutput, GenerateMessagesReadOutput, GenerateMessagesSubscribeOutput, GenerateProtocolsConfigureOutput, GenerateProtocolsQueryOutput, GenerateRecordsDeleteOutput, GenerateRecordsQueryOutput, GenerateRecordsSubscribeOutput, GenerateRecordsWriteOutput, Persona, TestDataGenerator, GenerateFromRecordsWriteInput, GenerateGrantCreateInput, GenerateMessagesReadInput, GenerateMessagesSubscribeInput, GenerateProtocolsConfigureInput, GenerateProtocolsQueryInput, GenerateRecordsDeleteInput, GenerateRecordsQueryInput, GenerateRecordsSubscribeInput, GenerateRecordsWriteInput } from '../tests/utils/test-data-generator.js';
 export { Poller } from '../tests/utils/poller.js';

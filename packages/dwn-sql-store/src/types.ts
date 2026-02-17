@@ -3,39 +3,6 @@ import type { KeyValues } from '@enbox/dwn-sdk-js';
 
 export type { KeyValues };
 
-type EventLogTable = {
-  watermark: Generated<number>;
-  tenant: string;
-  messageCid: string;
-
-  // "indexes" start
-  interface: string | null;
-  method: string | null;
-  schema: string | null;
-  dataCid: string | null;
-  dataSize: number | null;
-  dateCreated: string | null;
-  messageTimestamp: string | null;
-  dataFormat: string | null;
-  isLatestBaseState: boolean | null;
-  published: boolean | null;
-  author: string | null;
-  recordId: string | null;
-  entryId: string | null;
-  datePublished: string | null;
-  latest: string | null;
-  protocol: string | null;
-  permissionsRequestId: string | null;
-  attester: string | null;
-  protocolPath: string | null;
-  recipient: string | null;
-  contextId: string | null;
-  parentId: string | null;
-  permissionGrantId: string | null;
-  prune: boolean | null;
-  // "indexes" end
-};
-
 type MessageStoreTable = {
   id: Generated<number>;
   tenant: string;
@@ -77,12 +44,29 @@ type MessageStoreRecordsTagsTable = {
   valueNumber: number | null;
 };
 
-type EventLogRecordsTagsTable = {
-  id: Generated<number>;
-  tag: string;
-  eventWatermark: number;
-  valueString: string | null;
-  valueNumber: number | null;
+// ─── StateIndex SMT tables ────────────────────────────────────────────────
+
+type StateIndexNodeTable = {
+  tenant: string;
+  scope: string;
+  nodeHash: string;
+  nodeType: string;
+  leftHash: string | null;
+  rightHash: string | null;
+  leafKeyHash: string | null;
+  leafValueCid: string | null;
+};
+
+type StateIndexRootTable = {
+  tenant: string;
+  scope: string;
+  rootHash: string;
+};
+
+type StateIndexMetaTable = {
+  tenant: string;
+  messageCid: string;
+  protocol: string | null;
 };
 
 type DataStoreTable = {
@@ -101,10 +85,11 @@ type ResumableTaskTable = {
 };
 
 export type DwnDatabaseType = {
-  eventLogMessages: EventLogTable;
-  eventLogRecordsTags: EventLogRecordsTagsTable;
   messageStoreMessages: MessageStoreTable;
   messageStoreRecordsTags: MessageStoreRecordsTagsTable;
   dataStore: DataStoreTable;
   resumableTasks: ResumableTaskTable;
+  stateIndexNodes: StateIndexNodeTable;
+  stateIndexRoots: StateIndexRootTable;
+  stateIndexMeta: StateIndexMetaTable;
 };

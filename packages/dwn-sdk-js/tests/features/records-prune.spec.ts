@@ -2,9 +2,9 @@ import type { DidResolver } from '@enbox/dids';
 import type { EventStream } from '../../src/types/subscriptions.js';
 import type {
   DataStore,
-  EventLog,
   MessageStore,
   ResumableTaskStore,
+  StateIndex,
 } from '../../src/index.js';
 
 import chaiAsPromised from 'chai-as-promised';
@@ -30,7 +30,7 @@ export function testRecordsPrune(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let eventLog: EventLog;
+    let stateIndex: StateIndex;
     let eventStream: EventStream;
     let dwn: Dwn;
 
@@ -43,10 +43,10 @@ export function testRecordsPrune(): void {
       messageStore = stores.messageStore;
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
-      eventLog = stores.eventLog;
+      stateIndex = stores.stateIndex;
       eventStream = TestEventStream.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, eventStream, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -56,7 +56,7 @@ export function testRecordsPrune(): void {
       await messageStore.clear();
       await dataStore.clear();
       await resumableTaskStore.clear();
-      await eventLog.clear();
+      await stateIndex.clear();
     });
 
     after(async () => {
@@ -162,9 +162,10 @@ export function testRecordsPrune(): void {
       const queryResult = await messageStore.query(alice.did, queryFilter);
       expect(queryResult.messages.length).to.equal(8); // 2 foos, 2 bars, 2 bazes x 2 messages each
 
-      // sanity test events are inserted in event log
-      const { events } = await eventLog.queryEvents(alice.did, queryFilter);
-      expect(events.length).to.equal(8);
+      // sanity test events are inserted in state index
+      // NOTE: getLeaves returns ALL messageCids (including ProtocolsConfigure), so count is 9 not 8
+      const events = await stateIndex.getLeaves(alice.did, []);
+      expect(events.length).to.equal(9);
 
       // sanity test data is inserted in data store
       const bar1DataGetResult = await dataStore.get(alice.did, bar1.message.recordId, bar1.message.descriptor.dataCid);
@@ -190,8 +191,9 @@ export function testRecordsPrune(): void {
       expect(queryResult2.messages[2]).to.deep.include(foo1Delete.message);
 
       // verify all bar and baz events are permanently deleted
-      const { events: events2 } = await eventLog.queryEvents(alice.did, queryFilter);
-      expect(events2.length).to.equal(3);
+      // NOTE: getLeaves returns ALL messageCids (including ProtocolsConfigure), so count is 4 not 3
+      const events2 = await stateIndex.getLeaves(alice.did, []);
+      expect(events2.length).to.equal(4);
       const foo1RecordsWriteCid = await Message.getCid(foo1.message);
       const foo2RecordsWriteCid = await Message.getCid(foo2.message);
       const foo2RecordsDeleteCid = await Message.getCid(foo1Delete.message);

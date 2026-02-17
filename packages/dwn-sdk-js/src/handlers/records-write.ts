@@ -1,10 +1,10 @@
 import type { DataStore } from '../types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
-import type { EventLog } from '../types/event-log.js';
 import type { EventStream } from '../types/subscriptions.js';
 import type { GenericMessageReply } from '../types/message-types.js';
-import type { MessageStore } from '../types//message-store.js';
+import type { MessageStore } from '../types/message-store.js';
 import type { MethodHandler } from '../types/method-handler.js';
+import type { StateIndex } from '../types/state-index.js';
 import type { RecordsQueryReplyEntry, RecordsWriteMessage } from '../types/records-types.js';
 
 import { authenticate } from '../core/auth.js';
@@ -30,7 +30,7 @@ export class RecordsWriteHandler implements MethodHandler {
     private didResolver: DidResolver,
     private messageStore: MessageStore,
     private dataStore: DataStore,
-    private eventLog: EventLog,
+    private stateIndex: StateIndex,
     private eventStream?: EventStream
   ) { }
 
@@ -134,7 +134,7 @@ export class RecordsWriteHandler implements MethodHandler {
 
       const indexes = await recordsWrite.constructIndexes(isLatestBaseState);
       await this.messageStore.put(tenant, messageWithOptionalEncodedData, indexes);
-      await this.eventLog.append(tenant, await Message.getCid(message), indexes);
+      await this.stateIndex.insert(tenant, await Message.getCid(message), indexes);
 
       // NOTE: We only emit a `RecordsWrite` when the message is the latest base state.
       // Because we allow a `RecordsWrite` which is not the latest state to be written, but not queried, we shouldn't emit it either.
@@ -170,7 +170,7 @@ export class RecordsWriteHandler implements MethodHandler {
 
     // delete all existing messages of the same record that are not newest, except for the initial write
     await StorageController.deleteAllOlderMessagesButKeepInitialWrite(
-      tenant, existingMessages, newestMessage, this.messageStore, this.dataStore, this.eventLog
+      tenant, existingMessages, newestMessage, this.messageStore, this.dataStore, this.stateIndex
     );
 
     await this.postProcessingForCoreRecordsWrite(tenant, recordsWrite);
@@ -238,7 +238,7 @@ export class RecordsWriteHandler implements MethodHandler {
         const messageCid = await Message.getCid(grantAuthorizedMessage);
         await this.messageStore.delete(tenant, messageCid);
       }
-      this.eventLog.deleteEventsByCid(tenant, grantAuthorizedMessageCidsAfterRevoke);
+      this.stateIndex.delete(tenant, grantAuthorizedMessageCidsAfterRevoke);
     }
   }
 

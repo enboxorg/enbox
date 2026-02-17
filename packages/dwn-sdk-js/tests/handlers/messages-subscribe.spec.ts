@@ -1,5 +1,5 @@
 import type { DidResolver } from '@enbox/dids';
-import type { DataStore, EventLog, MessageStore, ProtocolDefinition, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore, StateIndex } from '../../src/index.js';
 import type { EventStream, MessageEvent } from '../../src/types/subscriptions.js';
 
 import { Dwn } from '../../src/dwn.js';
@@ -30,7 +30,7 @@ export function testMessagesSubscribeHandler(): void {
       let messageStore: MessageStore;
       let dataStore: DataStore;
       let resumableTaskStore: ResumableTaskStore;
-      let eventLog: EventLog;
+      let stateIndex: StateIndex;
       let dwn: Dwn;
 
       // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
@@ -42,14 +42,14 @@ export function testMessagesSubscribeHandler(): void {
         messageStore = stores.messageStore;
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
-        eventLog = stores.eventLog;
+        stateIndex = stores.stateIndex;
 
         dwn = await Dwn.create({
           didResolver,
           messageStore,
           dataStore,
           resumableTaskStore,
-          eventLog,
+          stateIndex,
         });
 
       });
@@ -62,7 +62,7 @@ export function testMessagesSubscribeHandler(): void {
         await messageStore.clear();
         await dataStore.clear();
         await resumableTaskStore.clear();
-        await eventLog.clear();
+        await stateIndex.clear();
       });
 
       after(async () => {
@@ -71,7 +71,7 @@ export function testMessagesSubscribeHandler(): void {
 
       it('should respond with a 501 if subscriptions are not supported', async () => {
         await dwn.close(); // close the original dwn instance
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore }); // leave out eventStream
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, resumableTaskStore }); // leave out eventStream
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
         // attempt to subscribe
@@ -87,7 +87,7 @@ export function testMessagesSubscribeHandler(): void {
       let messageStore: MessageStore;
       let dataStore: DataStore;
       let resumableTaskStore: ResumableTaskStore;
-      let eventLog: EventLog;
+      let stateIndex: StateIndex;
       let eventStream: EventStream;
       let dwn: Dwn;
 
@@ -100,7 +100,7 @@ export function testMessagesSubscribeHandler(): void {
         messageStore = stores.messageStore;
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
-        eventLog = stores.eventLog;
+        stateIndex = stores.stateIndex;
         eventStream = TestEventStream.get();
 
         dwn = await Dwn.create({
@@ -108,7 +108,7 @@ export function testMessagesSubscribeHandler(): void {
           messageStore,
           dataStore,
           resumableTaskStore,
-          eventLog,
+          stateIndex,
           eventStream,
         });
 
@@ -121,7 +121,7 @@ export function testMessagesSubscribeHandler(): void {
         await messageStore.clear();
         await dataStore.clear();
         await resumableTaskStore.clear();
-        await eventLog.clear();
+        await stateIndex.clear();
       });
 
       after(async () => {
@@ -169,7 +169,7 @@ export function testMessagesSubscribeHandler(): void {
         const messageCid = await Message.getCid(messageWrite.message);
 
         // control: ensure that the event exists
-        const { events } = await eventLog.getEvents(alice.did);
+        const events = await stateIndex.getLeaves(alice.did, []);
         expect(events.length).to.equal(1);
         expect(events[0]).to.equal(messageCid);
 
@@ -314,20 +314,20 @@ export function testMessagesSubscribeHandler(): void {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
 
-          // create grant that is scoped to `MessagesQuery` for bob scoped to the `freeForAll` protocol
+          // create grant that is scoped to `MessagesSync` for bob
           const { recordsWrite: grantWrite, dataStream } = await TestDataGenerator.generateGrantCreate({
             author    : alice,
             grantedTo : bob,
             scope     : {
               interface : DwnInterfaceName.Messages,
-              method    : DwnMethodName.Query,
+              method    : DwnMethodName.Sync,
             }
           });
           const grantWriteReply = await dwn.processMessage(alice.did, grantWrite.message, { dataStream });
           expect(grantWriteReply.status.code).to.equal(204);
 
 
-          // bob attempts to use the `MessagesQuery` grant on an `MessagesSubscribe` message
+          // bob attempts to use the `MessagesSync` grant on an `MessagesSubscribe` message
           const { message: bobSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
             author            : bob,
             permissionGrantId : grantWrite.message.recordId

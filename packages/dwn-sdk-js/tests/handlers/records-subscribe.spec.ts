@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventStream } from '../../src/types/subscriptions.js';
-import type { DataStore, EventLog, MessageStore, ProtocolDefinition, RecordsWriteMessage, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ProtocolDefinition, RecordsWriteMessage, ResumableTaskStore, StateIndex } from '../../src/index.js';
 import type { RecordEvent, RecordsFilter, RecordSubscriptionHandler } from '../../src/types/records-types.js';
 
 import chaiAsPromised from 'chai-as-promised';
@@ -31,7 +31,7 @@ export function testRecordsSubscribeHandler(): void {
       let messageStore: MessageStore;
       let resumableTaskStore: ResumableTaskStore;
       let dataStore: DataStore;
-      let eventLog: EventLog;
+      let stateIndex: StateIndex;
       let dwn: Dwn;
 
       // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
@@ -43,14 +43,14 @@ export function testRecordsSubscribeHandler(): void {
         messageStore = stores.messageStore;
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
-        eventLog = stores.eventLog;
+        stateIndex = stores.stateIndex;
 
         dwn = await Dwn.create({
           didResolver,
           messageStore,
           dataStore,
           resumableTaskStore,
-          eventLog,
+          stateIndex,
         });
 
       });
@@ -63,7 +63,7 @@ export function testRecordsSubscribeHandler(): void {
         await messageStore.clear();
         await dataStore.clear();
         await resumableTaskStore.clear();
-        await eventLog.clear();
+        await stateIndex.clear();
       });
 
       after(async () => {
@@ -72,7 +72,7 @@ export function testRecordsSubscribeHandler(): void {
 
       it('should respond with a 501 if subscriptions are not supported', async () => {
         await dwn.close(); // close the original dwn instance
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore }); // leave out eventStream
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, resumableTaskStore }); // leave out eventStream
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
         // attempt to subscribe
@@ -90,7 +90,7 @@ export function testRecordsSubscribeHandler(): void {
       let messageStore: MessageStore;
       let dataStore: DataStore;
       let resumableTaskStore: ResumableTaskStore;
-      let eventLog: EventLog;
+      let stateIndex: StateIndex;
       let eventStream: EventStream;
       let dwn: Dwn;
 
@@ -103,10 +103,10 @@ export function testRecordsSubscribeHandler(): void {
         messageStore = stores.messageStore;
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
-        eventLog = stores.eventLog;
+        stateIndex = stores.stateIndex;
         eventStream = TestEventStream.get();
 
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, eventStream, resumableTaskStore });
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
       });
 
       beforeEach(async () => {
@@ -116,7 +116,7 @@ export function testRecordsSubscribeHandler(): void {
         await messageStore.clear();
         await dataStore.clear();
         await resumableTaskStore.clear();
-        await eventLog.clear();
+        await stateIndex.clear();
       });
 
       after(async () => {

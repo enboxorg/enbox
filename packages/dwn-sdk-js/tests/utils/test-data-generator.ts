@@ -2,10 +2,8 @@ import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { DidResolutionResult } from '@enbox/dids';
 import type { GeneralJws } from '../../src/types/jws-types.js';
 import type { MessageSigner } from '../../src/types/signer.js';
-import type { MessagesQueryOptions } from '../../src/interfaces/messages-query.js';
 import type { MessagesReadOptions } from '../../src/interfaces/messages-read.js';
 import type { MessagesSubscribeOptions } from '../../src/interfaces/messages-subscribe.js';
-import type { PaginationCursor } from '../../src/types/query-types.js';
 import type { PermissionGrantCreateOptions } from '../../src/protocols/permissions.js';
 import type { ProtocolsConfigureOptions } from '../../src/interfaces/protocols-configure.js';
 import type { ProtocolsQueryOptions } from '../../src/interfaces/protocols-query.js';
@@ -15,7 +13,7 @@ import type { RecordsSubscribeOptions } from '../../src/interfaces/records-subsc
 import type { AuthorizationModel, Pagination } from '../../src/types/message-types.js';
 import type { CreateFromOptions, EncryptionInput, KeyEncryptionInput, RecordsWriteOptions } from '../../src/interfaces/records-write.js';
 import type { DataEncodedRecordsWriteMessage, DateSort, RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsWriteTags } from '../../src/types/records-types.js';
-import type { MessagesFilter, MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage } from '../../src/types/messages-types.js';
+import type { MessagesFilter, MessagesReadMessage, MessagesSubscribeMessage } from '../../src/types/messages-types.js';
 import type { PermissionConditions, PermissionScope } from '../../src/types/permission-types.js';
 import type { PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js';
 import type { ProtocolDefinition, ProtocolsConfigureMessage, ProtocolsQueryMessage } from '../../src/types/protocols-types.js';
@@ -29,7 +27,6 @@ import { ed25519 } from '../../src/jose/algorithms/signing/ed25519.js';
 import { Encoder } from '../../src/utils/encoder.js';
 import { Encryption } from '../../src/utils/encryption.js';
 import { Jws } from '../../src/utils/jws.js';
-import { MessagesQuery } from '../../src/interfaces/messages-query.js';
 import { MessagesRead } from '../../src/interfaces/messages-read.js';
 import { MessagesSubscribe } from '../../src/interfaces/messages-subscribe.js';
 import { PermissionsProtocol } from '../../src/protocols/permissions.js';
@@ -214,19 +211,6 @@ export type GenerateRecordsDeleteOutput = {
   message: RecordsDeleteMessage;
 };
 
-export type GenerateMessagesQueryInput = {
-  author?: Persona;
-  filters?: MessagesFilter[];
-  cursor?: PaginationCursor;
-  permissionGrantId?: string;
-};
-
-export type GenerateMessagesQueryOutput = {
-  author: Persona;
-  messagesQuery: MessagesQuery;
-  message: MessagesQueryMessage;
-};
-
 export type GenerateMessagesSubscribeInput = {
   author: Persona;
   filters?: MessagesFilter[];
@@ -367,7 +351,7 @@ export class TestDataGenerator {
     const dateExpires = input?.dateExpires ?? Time.createOffsetTimestamp({ seconds: 10 });
     const scope = input?.scope ?? {
       interface : DwnInterfaceName.Messages,
-      method    : DwnMethodName.Query
+      method    : DwnMethodName.Read
     };
 
     const signer = Jws.createSigner(author);
@@ -721,21 +705,6 @@ export class TestDataGenerator {
       author,
       recordsDelete,
       message: recordsDelete.message
-    };
-  }
-
-  public static async generateMessagesQuery(input: GenerateMessagesQueryInput): Promise<GenerateMessagesQueryOutput> {
-    const { filters, cursor, permissionGrantId } = input;
-    const author = input.author ?? await TestDataGenerator.generatePersona();
-    const signer = Jws.createSigner(author);
-
-    const options: MessagesQueryOptions = { signer, filters, cursor, permissionGrantId };
-    const messagesQuery = await MessagesQuery.create(options);
-
-    return {
-      author,
-      messagesQuery,
-      message: messagesQuery.message
     };
   }
 

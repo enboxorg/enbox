@@ -64,7 +64,6 @@ export interface Dialect extends KyselyDialect {
    *
    *  NOTE: the `returning` value must be formatted to return an insertId value.
    *  ex. if the generated key is `id` the string should be `id as insertId`.
-   *      if the generated key is `watermark` the string should be `watermark as insertId`.
    *
    * @returns {InsertQueryBuilder} object to further modify the query or execute it.
    */

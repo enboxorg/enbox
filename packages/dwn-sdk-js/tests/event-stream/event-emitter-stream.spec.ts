@@ -2,7 +2,7 @@ import type { KeyValues } from '../../src/types/query-types.js';
 import type { MessageEvent } from '../../src/types/subscriptions.js';
 import type { MessageStore } from '../../src/index.js';
 
-import { EventEmitterStream } from '../../src/event-log/event-emitter-stream.js';
+import { EventEmitterStream } from '../../src/event-stream/event-emitter-stream.js';
 import { TestDataGenerator } from '../../src/index.js';
 import { TestStores } from '../test-stores.js';
 

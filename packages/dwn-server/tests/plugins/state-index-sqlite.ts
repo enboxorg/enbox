@@ -1,6 +1,7 @@
-import type { EventLog } from '@enbox/dwn-sdk-js';
-import { EventLogSql } from '@enbox/dwn-sql-store';
+import type { StateIndex } from '@enbox/dwn-sdk-js';
+
 import { getDialectFromUrl } from '../../src/storage.js';
+import { StateIndexSql } from '@enbox/dwn-sql-store';
 
 /**
  * An example of a plugin. Used for testing.
@@ -8,13 +9,13 @@ import { getDialectFromUrl } from '../../src/storage.js';
  * - The class must be a default export.
  * - The constructor must not take any arguments.
  */
-export default class EventLogSqlite extends EventLogSql implements EventLog {
+export default class StateIndexSqlite extends StateIndexSql implements StateIndex {
   constructor() {
     const sqliteDialect = getDialectFromUrl(new URL('sqlite://'));
     super(sqliteDialect);
 
     // NOTE: the following line is added purely to test the constructor invocation.
-    EventLogSqlite.spyingTheConstructor();
+    StateIndexSqlite.spyingTheConstructor();
   }
 
   /**

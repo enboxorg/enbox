@@ -50,7 +50,7 @@ describe('Registration scenarios', function () {
     dwnServerConfig.messageStore = 'sqlite://',
     dwnServerConfig.dataStore = 'sqlite://',
     dwnServerConfig.resumableTaskStore = 'sqlite://',
-    dwnServerConfig.eventLog = 'sqlite://',
+    dwnServerConfig.stateIndex = 'sqlite://',
 
     // registration config
     dwnServerConfig.registrationStoreUrl = 'sqlite://';

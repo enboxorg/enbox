@@ -6,7 +6,7 @@ import type { KeyValueStore } from '@enbox/common';
 import type { Web5PlatformAgent } from './types/agent.js';
 
 import { Level } from 'level';
-import { DataStoreLevel, EventEmitterStream, EventLogLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js';
+import { DataStoreLevel, EventEmitterStream, MessageStoreLevel, ResumableTaskStoreLevel, StateIndexLevel } from '@enbox/dwn-sdk-js';
 import { DidDht, DidJwk } from '@enbox/dids';
 import { LevelStore, MemoryStore } from '@enbox/common';
 
@@ -43,7 +43,7 @@ type PlatformAgentTestHarnessParams = {
   didResolverCache: DidResolverCache;
   dwn: Dwn;
   dwnDataStore: DataStoreLevel;
-  dwnEventLog: EventLogLevel;
+  dwnStateIndex: StateIndexLevel;
   dwnMessageStore: MessageStoreLevel;
   dwnResumableTaskStore: ResumableTaskStoreLevel;
   syncStore: AbstractLevel<string | Buffer | Uint8Array>;
@@ -63,7 +63,7 @@ export class PlatformAgentTestHarness {
   public didResolverCache: DidResolverCache;
   public dwn: Dwn;
   public dwnDataStore: DataStoreLevel;
-  public dwnEventLog: EventLogLevel;
+  public dwnStateIndex: StateIndexLevel;
   public dwnMessageStore: MessageStoreLevel;
   public dwnResumableTaskStore: ResumableTaskStoreLevel;
   public syncStore: AbstractLevel<string | Buffer | Uint8Array>;
@@ -87,7 +87,7 @@ export class PlatformAgentTestHarness {
     this.didResolverCache = params.didResolverCache;
     this.dwn = params.dwn;
     this.dwnDataStore = params.dwnDataStore;
-    this.dwnEventLog = params.dwnEventLog;
+    this.dwnStateIndex = params.dwnStateIndex;
     this.dwnMessageStore = params.dwnMessageStore;
     this.syncStore = params.syncStore;
     this.vaultStore = params.vaultStore;
@@ -103,7 +103,7 @@ export class PlatformAgentTestHarness {
     this.agent.agentDid = undefined;
     await this.didResolverCache.clear();
     await this.dwnDataStore.clear();
-    await this.dwnEventLog.clear();
+    await this.dwnStateIndex.clear();
     await this.dwnMessageStore.clear();
     await this.dwnResumableTaskStore.clear();
     await this.syncStore.clear();
@@ -132,7 +132,7 @@ export class PlatformAgentTestHarness {
   public async closeStorage(): Promise<void> {
     await this.didResolverCache.close();
     await this.dwnDataStore.close();
-    await this.dwnEventLog.close();
+    await this.dwnStateIndex.close();
     await this.dwnMessageStore.close();
     await this.dwnResumableTaskStore.close();
     await this.syncStore.close();
@@ -223,7 +223,7 @@ export class PlatformAgentTestHarness {
     // Instantiate custom stores to use with DWN instance.
     // Note: There is no in-memory store for DWN, so we always use LevelDB-based disk stores.
     const dwnDataStore = new DataStoreLevel({ blockstoreLocation: testDataPath('DWN_DATASTORE') });
-    const dwnEventLog = new EventLogLevel({ location: testDataPath('DWN_EVENTLOG') });
+    const dwnStateIndex = new StateIndexLevel({ location: testDataPath('DWN_STATEINDEX') });
     const dwnEventStream = new EventEmitterStream();
     const dwnResumableTaskStore = new ResumableTaskStoreLevel({ location: testDataPath('DWN_RESUMABLETASKSTORE') });
 
@@ -237,7 +237,7 @@ export class PlatformAgentTestHarness {
       dataPath           : testDataLocation,
       dataStore          : dwnDataStore,
       didResolver        : didApi,
-      eventLog           : dwnEventLog,
+      stateIndex         : dwnStateIndex,
       eventStream        : dwnEventStream,
       messageStore       : dwnMessageStore,
       resumableTaskStore : dwnResumableTaskStore
@@ -270,7 +270,7 @@ export class PlatformAgentTestHarness {
       didResolverCache,
       dwn,
       dwnDataStore,
-      dwnEventLog,
+      dwnStateIndex,
       dwnMessageStore,
       dwnResumableTaskStore,
       dwnStores,
