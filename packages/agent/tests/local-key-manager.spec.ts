@@ -669,4 +669,99 @@ describe('LocalKeyManager', () => {
       });
     });
   });
+
+  describe('getPrivateKey() agent DID keyManager fallback', () => {
+    let testHarness: PlatformAgentTestHarness;
+
+    before(async () => {
+      testHarness = await PlatformAgentTestHarness.setup({
+        agentClass  : TestAgent,
+        agentStores : 'memory'
+      });
+    });
+
+    beforeEach(async () => {
+      await testHarness.clearStorage();
+      await testHarness.createAgentDid();
+    });
+
+    after(async () => {
+      await testHarness.clearStorage();
+      await testHarness.closeStorage();
+    });
+
+    it('should return a key from the agent DID keyManager when present there', async () => {
+      // The agent DID's own keyManager (BearerDid.keyManager) holds the DID's
+      // private keys in memory. getPrivateKey() should find them without
+      // hitting the key store — this prevents infinite recursion when the
+      // DwnKeyStore is encrypted.
+      const agentDid = testHarness.agent.agentDid;
+      const vm = agentDid.document.verificationMethod?.[0];
+      expect(vm?.publicKeyJwk).to.exist;
+
+      // Compute the keyUri for the agent DID's key.
+      const keyUri = await testHarness.agent.keyManager.getKeyUri({
+        key: vm!.publicKeyJwk!
+      });
+
+      // getPrivateKey() should succeed via the agent DID keyManager fallback,
+      // even though the key was never explicitly stored in the key store.
+      const privateKey = await testHarness.agent.keyManager['getPrivateKey']({ keyUri });
+      expect(privateKey).to.exist;
+      expect(privateKey).to.have.property('d');
+      expect(privateKey.kid).to.exist;
+    });
+
+    it('should fall through to the key store when agent DID keyManager throws', async () => {
+      // Generate a key that lives in the key store, NOT in the agent DID keyManager.
+      const keyUri = await testHarness.agent.keyManager.generateKey({
+        algorithm: 'Ed25519'
+      });
+
+      // The agent DID keyManager will throw "Key not found" for this keyUri
+      // since it only holds the agent DID's own key. getPrivateKey() should
+      // catch the error and fall through to the key store where it will find it.
+      const privateKey = await testHarness.agent.keyManager['getPrivateKey']({ keyUri });
+      expect(privateKey).to.exist;
+      expect(privateKey).to.have.property('d');
+    });
+
+    it('should skip the fallback when agent DID keyManager lacks exportKey', async () => {
+      // Generate a key into the store.
+      const keyUri = await testHarness.agent.keyManager.generateKey({
+        algorithm: 'Ed25519'
+      });
+
+      // Replace the agent DID's keyManager with one that lacks exportKey.
+      const savedKeyManager = testHarness.agent.agentDid.keyManager;
+      testHarness.agent.agentDid.keyManager = {
+        generateKey  : async (): Promise<string> => '',
+        getKeyUri    : async (): Promise<string> => '',
+        getPublicKey : async (): Promise<Jwk> => ({} as Jwk),
+        sign         : async (): Promise<Uint8Array> => new Uint8Array(),
+        verify       : async (): Promise<boolean> => false,
+        digest       : async (): Promise<Uint8Array> => new Uint8Array(),
+      } as any;
+
+      try {
+        // getPrivateKey() should skip the fallback (no exportKey) and use the store.
+        const privateKey = await testHarness.agent.keyManager['getPrivateKey']({ keyUri });
+        expect(privateKey).to.exist;
+        expect(privateKey).to.have.property('d');
+      } finally {
+        testHarness.agent.agentDid.keyManager = savedKeyManager;
+      }
+    });
+
+    it('should throw "Key not found" when key is in neither agent keyManager nor store', async () => {
+      try {
+        await testHarness.agent.keyManager['getPrivateKey']({
+          keyUri: 'urn:jwk:nonexistent-key'
+        });
+        expect.fail('Expected an error to be thrown');
+      } catch (error: any) {
+        expect(error.message).to.include('Key not found');
+      }
+    });
+  });
 });

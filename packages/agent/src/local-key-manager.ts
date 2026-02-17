@@ -768,16 +768,17 @@ export class LocalKeyManager implements AgentKeyManager {
     // DwnKeyStore is encrypted: the encryption/decryption key is derived from the
     // agent DID's secp256k1 key, so looking up that key via the DwnKeyStore would
     // cause infinite recursion (decrypt → getPrivateKey → DwnKeyStore.get → decrypt…).
-    const agentKeyManager = this.agent?.agentDid?.keyManager;
-    if (agentKeyManager && typeof (agentKeyManager as any).exportKey === 'function') {
-      try {
+    try {
+      const agentKeyManager = this.agent?.agentDid?.keyManager;
+      if (agentKeyManager && typeof (agentKeyManager as any).exportKey === 'function') {
         const agentKey = await (agentKeyManager as any).exportKey({ keyUri });
         if (agentKey && isPrivateJwk(agentKey)) {
           return agentKey;
         }
-      } catch {
-        // Key not in agent DID's key manager — continue to key store lookup.
       }
+    } catch {
+      // agentDid getter may throw if uninitialized, or the key may not be in the
+      // agent DID's key manager — either way, continue to key store lookup.
     }
 
     // Get the private key from the key store.

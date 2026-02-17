@@ -3,6 +3,7 @@ import type { Jwk } from '@enbox/crypto';
 import { Convert } from '@enbox/common';
 import { DidJwk } from '@enbox/dids';
 import { expect } from 'chai';
+import sinon from 'sinon';
 
 import type { AgentDataStore, DwnDataStore } from '../src/store-data.js';
 
@@ -392,6 +393,239 @@ describe('KeyStore', () => {
         const storedKey2 = await keyStore.get({ id: keyUri2, agent: testHarness.agent });
         expect(storedKey2).to.exist;
         expect(keyUri2).to.not.equal(keyUri);
+      });
+    });
+
+    describe('plaintext fallback', () => {
+      // These tests use an Ed25519 agent DID which lacks a secp256k1
+      // keyAgreement key, so encryption cannot be activated.
+      let ed25519Harness: PlatformAgentTestHarness;
+      let ed25519KeyStore: AgentDataStore<Jwk>;
+
+      before(async () => {
+        ed25519Harness = await PlatformAgentTestHarness.setup({
+          agentClass       : TestAgent,
+          agentStores      : 'memory',
+          testDataLocation : '__TESTDATA__/plaintext-fallback'
+        });
+      });
+
+      beforeEach(async () => {
+        await ed25519Harness.clearStorage();
+        await ed25519Harness.createAgentDid(); // Ed25519 did:jwk — no secp256k1
+        ed25519KeyStore = new DwnKeyStore();
+        const keyManager = new LocalKeyManager({ agent: ed25519Harness.agent, keyStore: ed25519KeyStore });
+        ed25519Harness.agent.keyManager = keyManager;
+      });
+
+      after(async () => {
+        await ed25519Harness.clearStorage();
+        await ed25519Harness.closeStorage();
+      });
+
+      it('should store and retrieve keys in plaintext when agent DID lacks secp256k1', async () => {
+        // Generate a key — DwnKeyStore should gracefully fall back to plaintext
+        // because the Ed25519 agent DID has no secp256k1 keyAgreement key.
+        const keyUri = await ed25519Harness.agent.keyManager.generateKey({
+          algorithm: 'Ed25519'
+        });
+
+        // Verify the key can be read back.
+        const storedKey = await ed25519KeyStore.get({ id: keyUri, agent: ed25519Harness.agent });
+        expect(storedKey).to.exist;
+        expect(keyUri).to.include(storedKey!.kid);
+        expect(storedKey).to.have.property('d');
+
+        // Query the raw DWN record — should NOT have encryption metadata.
+        const { reply: queryReply } = await ed25519Harness.agent.dwn.processRequest({
+          author        : ed25519Harness.agent.agentDid.uri,
+          target        : ed25519Harness.agent.agentDid.uri,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : {
+            filter: {
+              dataFormat   : 'application/json',
+              protocol     : JwkProtocolDefinition.protocol,
+              protocolPath : 'privateJwk',
+              schema       : JwkProtocolDefinition.types.privateJwk.schema,
+            }
+          },
+        });
+
+        expect(queryReply.entries).to.have.length(1);
+        expect(queryReply.entries![0].encryption).to.not.exist;
+      });
+
+      it('should install protocol WITHOUT $encryption keys for Ed25519 agent DID', async () => {
+        // Initialize the store (triggers protocol installation).
+        await (ed25519KeyStore as DwnDataStore<Jwk>)['initialize']({ agent: ed25519Harness.agent });
+
+        // Query the installed protocol.
+        const { reply } = await ed25519Harness.agent.dwn.processRequest({
+          author        : ed25519Harness.agent.agentDid.uri,
+          target        : ed25519Harness.agent.agentDid.uri,
+          messageType   : DwnInterface.ProtocolsQuery,
+          messageParams : {
+            filter: { protocol: JwkProtocolDefinition.protocol }
+          }
+        });
+
+        expect(reply.status.code).to.equal(200);
+        expect(reply.entries).to.have.length(1);
+
+        // The protocol should NOT have $encryption since the agent DID cannot
+        // derive encryption keys.
+        const installedDefinition = reply.entries![0].descriptor.definition;
+        const privateJwkRuleSet = installedDefinition.structure.privateJwk;
+        expect(privateJwkRuleSet).to.not.have.property('$encryption');
+      });
+
+      it('should list keys in plaintext mode', async () => {
+        const keyUri1 = await ed25519Harness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
+        const keyUri2 = await ed25519Harness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
+
+        const storedKeys = await ed25519KeyStore.list({ agent: ed25519Harness.agent });
+        expect(storedKeys).to.have.length(2);
+        const storedKids = storedKeys.map((k: Jwk): string => `urn:jwk:${k.kid}`);
+        expect(storedKids).to.include(keyUri1);
+        expect(storedKids).to.include(keyUri2);
+      });
+    });
+
+    describe('protocol re-initialization', () => {
+      it('should detect $encryption from an already-installed protocol after cache clear', async () => {
+        // First call — installs the protocol with $encryption (secp256k1 agent DID).
+        await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
+
+        // Verify encryption is active.
+        const tenantDid = testHarness.agent.agentDid.uri;
+        expect((keyStore as any).isEncryptionActive(tenantDid)).to.be.true;
+
+        // Clear the protocol initialization cache (simulating agent restart).
+        (keyStore as DwnDataStore<Jwk>)['_protocolInitializedCache']?.clear();
+        // Also clear the encryption active cache so it must be re-detected.
+        (keyStore as any)._tenantEncryptionActive?.clear();
+
+        // Second call — protocol is already installed, should detect $encryption.
+        await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
+
+        // Encryption should still be detected as active.
+        expect((keyStore as any).isEncryptionActive(tenantDid)).to.be.true;
+      });
+
+      it('should detect no encryption from a legacy protocol without $encryption', async () => {
+        const tenantDid = testHarness.agent.agentDid.uri;
+
+        // Install the protocol WITHOUT $encryption (bypass the encrypted installProtocol).
+        await testHarness.agent.dwn.processRequest({
+          author        : tenantDid,
+          target        : tenantDid,
+          messageType   : DwnInterface.ProtocolsConfigure,
+          messageParams : { definition: JwkProtocolDefinition },
+        });
+
+        // Create a new DwnKeyStore (no caches populated).
+        const freshKeyStore = new DwnKeyStore();
+
+        // Initialize — should find the existing protocol and detect no $encryption.
+        await (freshKeyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
+
+        expect((freshKeyStore as any).isEncryptionActive(tenantDid)).to.be.false;
+      });
+    });
+
+    describe('getAllRecords() error handling', () => {
+      afterEach(() => {
+        sinon.restore();
+      });
+
+      it('should throw when an encrypted record read returns no data', async () => {
+        // Store an encrypted key first.
+        await testHarness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
+
+        // Stub processRequest to return a successful query (with encryption
+        // metadata) followed by a RecordsRead that returns no data.
+        const originalProcessRequest = testHarness.agent.dwn.processRequest.bind(testHarness.agent.dwn);
+        let queryCallCount = 0;
+        sinon.stub(testHarness.agent.dwn, 'processRequest').callsFake(async (request: any): Promise<any> => {
+          // Let the RecordsQuery pass through normally.
+          if (request.messageType === DwnInterface.RecordsQuery) {
+            queryCallCount++;
+            return originalProcessRequest(request);
+          }
+
+          // For RecordsRead with encryption, return a reply with no data.
+          if (request.messageType === DwnInterface.RecordsRead && request.encryption) {
+            return {
+              messageCid : 'test-cid',
+              message    : {},
+              reply      : {
+                status : { code: 200, detail: 'OK' },
+                entry  : { recordsWrite: {}, data: undefined }
+              }
+            };
+          }
+
+          // Everything else passes through.
+          return originalProcessRequest(request);
+        });
+
+        // Clear the index so getAllRecords() is called on the next list().
+        (keyStore as any)._index.clear();
+
+        try {
+          await keyStore.list({ agent: testHarness.agent });
+          expect.fail('Expected an error to be thrown');
+        } catch (error: any) {
+          expect(error.message).to.include('Failed to read encrypted key record');
+        }
+
+        expect(queryCallCount).to.be.greaterThan(0);
+      });
+
+      it('should handle mixed encrypted and unencrypted records', async () => {
+        // Step 1: Write an unencrypted record directly (simulating a legacy record).
+        await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
+        const legacyKey: Jwk = {
+          kid : 'legacy-key-1',
+          kty : 'OKP',
+          crv : 'Ed25519',
+          alg : 'EdDSA',
+          x   : 'testx',
+          d   : 'testd',
+        };
+        const legacyBytes = Convert.object(legacyKey).toUint8Array();
+        await testHarness.agent.dwn.processRequest({
+          author        : testHarness.agent.agentDid.uri,
+          target        : testHarness.agent.agentDid.uri,
+          messageType   : DwnInterface.RecordsWrite,
+          messageParams : {
+            dataFormat   : 'application/json',
+            protocol     : JwkProtocolDefinition.protocol,
+            protocolPath : 'privateJwk',
+            schema       : JwkProtocolDefinition.types.privateJwk.schema,
+          },
+          dataStream: new Blob([legacyBytes], { type: 'application/json' })
+        });
+
+        // Step 2: Write an encrypted record through the store API.
+        const encryptedKeyUri = await testHarness.agent.keyManager.generateKey({
+          algorithm: 'Ed25519'
+        });
+
+        // Step 3: List all records — should include both legacy (unencrypted)
+        // and new (encrypted) records.
+        const storedKeys = await keyStore.list({ agent: testHarness.agent });
+        expect(storedKeys.length).to.be.at.least(2);
+
+        const kids = storedKeys.map((k: Jwk): string | undefined => k.kid);
+        expect(kids).to.include('legacy-key-1');
+
+        // Verify the encrypted key is also present.
+        const encryptedKey = storedKeys.find(
+          (k: Jwk): boolean => `urn:jwk:${k.kid}` === encryptedKeyUri
+        );
+        expect(encryptedKey).to.exist;
+        expect(encryptedKey).to.have.property('d');
       });
     });
   });
