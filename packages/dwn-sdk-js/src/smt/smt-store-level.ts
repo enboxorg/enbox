@@ -7,7 +7,7 @@
  * - Node values are JSON-serialized, with Uint8Array fields encoded as hex strings
  */
 
-import type { Hash, SMTInternalNode, SMTLeafNode, SMTNode, SMTNodeStore } from './smt-types.js';
+import type { Hash, SMTInternalNode, SMTLeafNode, SMTNode, SMTNodeStore } from '../types/smt-types.js';
 
 import { createLevelDatabase, LevelWrapper } from '../store/level-wrapper.js';
 import { hashToHex, hexToHash } from './smt-utils.js';

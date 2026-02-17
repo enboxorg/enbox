@@ -14,7 +14,7 @@
  * - Root hash provides a fingerprint of the entire set for O(1) comparison
  */
 
-import type { Hash, SMTDiffResult, SMTInternalNode, SMTLeafNode, SMTNodeStore, SMTProof } from './smt-types.js';
+import type { Hash, SMTDiffResult, SMTInternalNode, SMTLeafNode, SMTNodeStore, SMTProof } from '../types/smt-types.js';
 
 import { getBit, hashChildren, hashEquals, hashKey, hashLeaf, initDefaultHashes, SMT_DEPTH } from './smt-utils.js';
 

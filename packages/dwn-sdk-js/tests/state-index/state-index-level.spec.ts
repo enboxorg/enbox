@@ -189,6 +189,45 @@ describe('StateIndexLevel', () => {
     });
   });
 
+  describe('getProtocolSubtreeHash', () => {
+    it('should return protocol-scoped subtree hashes', async () => {
+      const defaultHashes = await initDefaultHashes();
+      const tenant = 'did:test:alice';
+
+      await stateIndex.insert(tenant, 'bafyreig-chat-1', {
+        interface : 'Records',
+        method    : 'Write',
+        protocol  : 'https://example.com/chat',
+      });
+      await stateIndex.insert(tenant, 'bafyreig-chat-2', {
+        interface : 'Records',
+        method    : 'Write',
+        protocol  : 'https://example.com/chat',
+      });
+
+      const leftHash = await stateIndex.getProtocolSubtreeHash(tenant, 'https://example.com/chat', [false]);
+      const rightHash = await stateIndex.getProtocolSubtreeHash(tenant, 'https://example.com/chat', [true]);
+
+      // At least one should be non-default
+      const leftIsDefault = hashEquals(leftHash, defaultHashes[1]);
+      const rightIsDefault = hashEquals(rightHash, defaultHashes[1]);
+      expect(leftIsDefault && rightIsDefault).to.be.false;
+    });
+  });
+
+  describe('delete non-existent messageCid', () => {
+    it('should be a no-op when deleting a messageCid that was never inserted', async () => {
+      const defaultHashes = await initDefaultHashes();
+      const tenant = 'did:test:alice';
+
+      // Delete a CID that was never inserted — should not throw
+      await stateIndex.delete(tenant, ['bafyreig-nonexistent']);
+
+      const root = await stateIndex.getRoot(tenant);
+      expect(hashEquals(root, defaultHashes[0])).to.be.true;
+    });
+  });
+
   describe('getSubtreeHash', () => {
     it('should return subtree hashes for the global tree', async () => {
       const defaultHashes = await initDefaultHashes();

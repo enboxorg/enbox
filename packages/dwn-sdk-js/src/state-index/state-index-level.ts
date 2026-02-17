@@ -9,7 +9,7 @@
  *   {tenant}/meta/{cid}     -> JSON(indexes) for reverse lookup during deletion
  */
 
-import type { Hash } from '../smt/smt-types.js';
+import type { Hash } from '../types/smt-types.js';
 import type { KeyValues } from '../types/query-types.js';
 import type { StateIndex } from '../types/state-index.js';
 

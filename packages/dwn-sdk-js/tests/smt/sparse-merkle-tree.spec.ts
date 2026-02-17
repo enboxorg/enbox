@@ -1,8 +1,10 @@
 import { expect } from 'chai';
 
+import type { Hash, SMTNodeStore } from '../../src/types/smt-types.js';
+
 import { SMTStoreMemory } from '../../src/smt/smt-store-memory.js';
 import { SparseMerkleTree } from '../../src/smt/sparse-merkle-tree.js';
-import { hashEquals, hashKey, initDefaultHashes, SMT_DEPTH, ZERO_HASH } from '../../src/smt/smt-utils.js';
+import { getBit, getDefaultHashes, hashEquals, hashKey, hashLeaf, initDefaultHashes, SMT_DEPTH, ZERO_HASH } from '../../src/smt/smt-utils.js';
 
 describe('SparseMerkleTree', () => {
   let store: SMTStoreMemory;
@@ -504,6 +506,165 @@ describe('SparseMerkleTree', () => {
     });
   });
 
+  describe('getSubtreeHash with leaf at shallow depth', () => {
+    it('should return leaf hash when leaf matches the prefix', async () => {
+      // Insert a single element — the tree stores it as a leaf near the root
+      await smt.insert('bafyreiA');
+      const keyHash = await hashKey('bafyreiA');
+
+      // Build a deep prefix that follows the leaf's keyHash bits
+      const matchingPrefix: boolean[] = [];
+      for (let i = 0; i < 8; i++) {
+        matchingPrefix.push(getBit(keyHash, i));
+      }
+
+      const subtreeHash = await smt.getSubtreeHash(matchingPrefix);
+      // Should be the leaf hash (non-default) since the leaf is under this prefix
+      const expectedLeafHash = await hashLeaf(keyHash, 'bafyreiA');
+      expect(hashEquals(subtreeHash, expectedLeafHash)).to.be.true;
+    });
+
+    it('should return default hash when leaf does not match the prefix', async () => {
+      await smt.insert('bafyreiA');
+      const keyHash = await hashKey('bafyreiA');
+      const defaultHashes = await initDefaultHashes();
+
+      // Build a prefix that diverges from the leaf's keyHash at bit 0
+      const firstBit = getBit(keyHash, 0);
+      const nonMatchingPrefix = [!firstBit]; // opposite of the first bit
+
+      const subtreeHash = await smt.getSubtreeHash(nonMatchingPrefix);
+      expect(hashEquals(subtreeHash, defaultHashes[1])).to.be.true;
+    });
+  });
+
+  describe('getLeaves with leaf at shallow depth', () => {
+    it('should return the leaf CID when leaf matches the prefix', async () => {
+      await smt.insert('bafyreiA');
+      const keyHash = await hashKey('bafyreiA');
+
+      // Build a prefix that matches the leaf's keyHash bits
+      const matchingPrefix: boolean[] = [];
+      for (let i = 0; i < 4; i++) {
+        matchingPrefix.push(getBit(keyHash, i));
+      }
+
+      const leaves = await smt.getLeaves(matchingPrefix);
+      expect(leaves).to.deep.equal(['bafyreiA']);
+    });
+
+    it('should return empty when leaf does not match the prefix', async () => {
+      await smt.insert('bafyreiA');
+      const keyHash = await hashKey('bafyreiA');
+
+      // Build a prefix that diverges from the leaf's keyHash
+      const firstBit = getBit(keyHash, 0);
+      const nonMatchingPrefix = [!firstBit];
+
+      const leaves = await smt.getLeaves(nonMatchingPrefix);
+      expect(leaves).to.deep.equal([]);
+    });
+  });
+
+  describe('proof', () => {
+    it('should generate a multi-level proof with sibling hashes', async () => {
+      // Insert two elements so the tree has internal nodes
+      await smt.insert('bafyreiA');
+      await smt.insert('bafyreiB');
+
+      const proof = await smt.getProof('bafyreiA');
+      expect(proof.leafNode).to.not.be.undefined;
+      expect(proof.leafNode!.valueCid).to.equal('bafyreiA');
+      // With two elements, there should be at least one sibling hash
+      expect(proof.siblings.length).to.be.greaterThan(0);
+    });
+  });
+
+  describe('diff edge cases', () => {
+    it('should detect local leaf not present in remote subtree', async () => {
+      // We need a scenario where local has a single leaf at a node while remote
+      // has an internal subtree at the same position, and the local leaf is NOT
+      // in the remote set. This happens when:
+      //   - Remote has 2+ elements that share a prefix
+      //   - Local has 1 element with the same prefix but a different CID
+      const storeB = new SMTStoreMemory();
+      const smtB = new SparseMerkleTree(storeB);
+      await smtB.initialize();
+
+      // Insert many elements into both trees so they develop deep structure
+      const sharedCids: string[] = [];
+      for (let i = 0; i < 30; i++) {
+        const cid = `bafyreig-shared-${i}`;
+        sharedCids.push(cid);
+        await smt.insert(cid);
+        await smtB.insert(cid);
+      }
+
+      // Add unique elements to each side
+      const localOnly = 'bafyreig-local-unique-42';
+      await smt.insert(localOnly);
+
+      const remoteOnly = 'bafyreig-remote-unique-99';
+      await smtB.insert(remoteOnly);
+
+      const diff = await smt.diff(smtB);
+      expect(diff.onlyLocal).to.include(localOnly);
+      expect(diff.onlyRemote).to.include(remoteOnly);
+
+      await smtB.close();
+    });
+
+    it('should handle diff with corrupted/missing nodes via fallback', async () => {
+      // Create a custom store that returns undefined for specific node lookups
+      const realStore = new SMTStoreMemory();
+      const corruptStore: SMTNodeStore = {
+        open       : (): Promise<void> => realStore.open(),
+        close      : (): Promise<void> => realStore.close(),
+        clear      : (): Promise<void> => realStore.clear(),
+        getRoot    : (): Promise<Hash | undefined> => realStore.getRoot(),
+        setRoot    : (hash: Hash): Promise<void> => realStore.setRoot(hash),
+        putNode    : (hash: Hash, node: any): Promise<void> => realStore.putNode(hash, node),
+        deleteNode : (hash: Hash): Promise<void> => realStore.deleteNode(hash),
+        getNode    : async (hash: Hash): Promise<any> => {
+          // Return nodes normally during insertion, but after we
+          // switch to diff mode, return undefined for the root node
+          if (corruptDuringDiff) {
+            return undefined;
+          }
+          return realStore.getNode(hash);
+        },
+      };
+
+      let corruptDuringDiff = false;
+
+      // Build a tree using the corrupt store
+      const corruptSmt = new SparseMerkleTree(corruptStore);
+      await corruptSmt.initialize();
+      await corruptSmt.insert('bafyreiCorrupt1');
+      await corruptSmt.insert('bafyreiCorrupt2');
+
+      // Build a normal tree with different elements
+      const normalStore = new SMTStoreMemory();
+      const normalSmt = new SparseMerkleTree(normalStore);
+      await normalSmt.initialize();
+      await normalSmt.insert('bafyreiNormal1');
+
+      // Now corrupt the store during diff
+      corruptDuringDiff = true;
+
+      // The diff should still complete — the fallback handles missing nodes
+      const diff = await normalSmt.diff(corruptSmt);
+
+      // Normal tree's elements should be in onlyLocal since the corrupt
+      // tree returns no data
+      expect(diff.onlyLocal).to.include('bafyreiNormal1');
+
+      corruptDuringDiff = false;
+      await corruptSmt.close();
+      await normalSmt.close();
+    });
+  });
+
   describe('node storage efficiency', () => {
     it('should clean up internal nodes after deletion collapses the tree', async () => {
       await smt.insert('bafyreiA');
@@ -521,6 +682,23 @@ describe('SparseMerkleTree', () => {
 });
 
 describe('SMT Utility Functions', () => {
+  describe('getDefaultHashes', () => {
+    it('should return default hashes after initialization', async () => {
+      await initDefaultHashes();
+      const hashes = getDefaultHashes();
+      expect(hashes).to.have.length(SMT_DEPTH + 1);
+      expect(hashEquals(hashes[SMT_DEPTH], ZERO_HASH)).to.be.true;
+    });
+  });
+
+  describe('hashEquals', () => {
+    it('should return false for hashes of different lengths', () => {
+      const a = new Uint8Array(32);
+      const b = new Uint8Array(16);
+      expect(hashEquals(a, b)).to.be.false;
+    });
+  });
+
   describe('hashKey', () => {
     it('should produce consistent hashes for the same input', async () => {
       const hash1 = await hashKey('bafyreigtest');

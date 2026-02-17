@@ -1,4 +1,4 @@
-import type { Hash } from '../smt/smt-types.js';
+import type { Hash } from './smt-types.js';
 import type { KeyValues } from './query-types.js';
 
 /**

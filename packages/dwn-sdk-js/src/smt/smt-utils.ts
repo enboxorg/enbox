@@ -3,7 +3,7 @@
  * Uses SHA-256 from multiformats (already a dependency of dwn-sdk-js).
  */
 
-import type { Hash } from './smt-types.js';
+import type { Hash } from '../types/smt-types.js';
 
 import { sha256 } from 'multiformats/hashes/sha2';
 

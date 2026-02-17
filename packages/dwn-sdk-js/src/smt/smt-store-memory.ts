@@ -3,7 +3,7 @@
  * Useful for tests and lightweight/ephemeral use cases.
  */
 
-import type { Hash, SMTNode, SMTNodeStore } from './smt-types.js';
+import type { Hash, SMTNode, SMTNodeStore } from '../types/smt-types.js';
 
 import { hashToHex } from './smt-utils.js';
 
