@@ -15,6 +15,19 @@
     },
     "ownerDelegatedGrant": {
       "$ref": "https://identity.foundation/dwn/json-schemas/records-write-data-encoded.json"
+    },
+    "authorKeyDeliveryPublicKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rootKeyId", "publicKeyJwk"],
+      "properties": {
+        "rootKeyId": {
+          "type": "string"
+        },
+        "publicKeyJwk": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
+        }
+      }
     }
   },
   "description": "`signature` can exist by itself. But if `ownerSignature` is present, then `signature` must also exist",

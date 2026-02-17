@@ -72,6 +72,17 @@ export type RecordsWriteOptions = {
   attestationSigners?: MessageSigner[];
   encryptionInput?: EncryptionInput;
   permissionGrantId?: string;
+
+  /**
+   * The author's ProtocolPath-derived public key for key delivery.
+   * When set, this is attached to the authorization model so the DWN owner
+   * can encrypt context keys back to the author without querying the
+   * author's DWN.
+   */
+  authorKeyDeliveryPublicKey?: {
+    rootKeyId: string;
+    publicKeyJwk: PublicKeyJwk;
+  };
 };
 
 /**
@@ -385,10 +396,11 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
 
     if (options.signer !== undefined) {
       await recordsWrite.sign({
-        signer            : options.signer,
-        delegatedGrant    : options.delegatedGrant,
-        permissionGrantId : options.permissionGrantId,
-        protocolRole      : options.protocolRole
+        signer                     : options.signer,
+        delegatedGrant             : options.delegatedGrant,
+        permissionGrantId          : options.permissionGrantId,
+        protocolRole               : options.protocolRole,
+        authorKeyDeliveryPublicKey : options.authorKeyDeliveryPublicKey,
       });
     }
 
@@ -532,9 +544,10 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     signer: MessageSigner,
     delegatedGrant?: DataEncodedRecordsWriteMessage,
     permissionGrantId?: string,
-    protocolRole?: string
+    protocolRole?: string,
+    authorKeyDeliveryPublicKey?: { rootKeyId: string; publicKeyJwk: PublicKeyJwk },
   }): Promise<void> {
-    const { signer, delegatedGrant, permissionGrantId, protocolRole } = options;
+    const { signer, delegatedGrant, permissionGrantId, protocolRole, authorKeyDeliveryPublicKey } = options;
 
     // compute delegated grant ID and author if delegated grant is given
     let delegatedGrantId;
@@ -581,6 +594,10 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
 
     if (delegatedGrant !== undefined) {
       this._message.authorization.authorDelegatedGrant = delegatedGrant;
+    }
+
+    if (authorKeyDeliveryPublicKey !== undefined) {
+      this._message.authorization.authorKeyDeliveryPublicKey = authorKeyDeliveryPublicKey;
     }
 
     // there is opportunity to optimize here as the payload is constructed within `createAuthorization(...)`
