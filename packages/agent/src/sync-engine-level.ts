@@ -151,11 +151,11 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       // Iterate over all registered identities and their DWN endpoints.
       const syncTargets = await this.getSyncTargets();
+      const errored = new Set<string>();
 
       for (const target of syncTargets) {
         const { did, delegateDid, dwnUrl, protocol } = target;
 
-        const errored = new Set<string>();
         if (errored.has(dwnUrl)) {
           continue;
         }
@@ -331,11 +331,14 @@ export class SyncEngineLevel implements SyncEngine {
     const onlyLocal: string[] = [];
     const onlyRemote: string[] = [];
 
+    // Hoist permission grant lookup — resolved once and reused for all subtree/leaf requests.
+    const permissionGrantId = await this.getSyncPermissionGrantId(did, delegateDid, protocol);
+
     const walk = async (prefix: string): Promise<void> => {
       // Get subtree hashes for this prefix from local and remote.
       const [localHash, remoteHash] = await Promise.all([
-        this.getLocalSubtreeHash(did, prefix, delegateDid, protocol),
-        this.getRemoteSubtreeHash(did, dwnUrl, prefix, delegateDid, protocol),
+        this.getLocalSubtreeHash(did, prefix, delegateDid, protocol, permissionGrantId),
+        this.getRemoteSubtreeHash(did, dwnUrl, prefix, delegateDid, protocol, permissionGrantId),
       ]);
 
       // If hashes match, this subtree is identical — skip.
@@ -348,12 +351,12 @@ export class SyncEngineLevel implements SyncEngine {
       // into the tree — this avoids the exponential walk when the remote DWN
       // returns empty responses (e.g. auth failure or truly empty tree).
       if (!remoteHash && localHash) {
-        const localLeaves = await this.getLocalLeaves(did, prefix, delegateDid, protocol);
+        const localLeaves = await this.getLocalLeaves(did, prefix, delegateDid, protocol, permissionGrantId);
         onlyLocal.push(...localLeaves);
         return;
       }
       if (!localHash && remoteHash) {
-        const remoteLeaves = await this.getRemoteLeaves(did, dwnUrl, prefix, delegateDid, protocol);
+        const remoteLeaves = await this.getRemoteLeaves(did, dwnUrl, prefix, delegateDid, protocol, permissionGrantId);
         onlyRemote.push(...remoteLeaves);
         return;
       }
@@ -361,8 +364,8 @@ export class SyncEngineLevel implements SyncEngine {
       // If we've reached the maximum diff depth, enumerate leaves.
       if (prefix.length >= MAX_DIFF_DEPTH) {
         const [localLeaves, remoteLeaves] = await Promise.all([
-          this.getLocalLeaves(did, prefix, delegateDid, protocol),
-          this.getRemoteLeaves(did, dwnUrl, prefix, delegateDid, protocol),
+          this.getLocalLeaves(did, prefix, delegateDid, protocol, permissionGrantId),
+          this.getRemoteLeaves(did, dwnUrl, prefix, delegateDid, protocol, permissionGrantId),
         ]);
 
         const localSet = new Set(localLeaves);
@@ -381,18 +384,20 @@ export class SyncEngineLevel implements SyncEngine {
         return;
       }
 
-      // Recurse into left (0) and right (1) children.
-      await walk(prefix + '0');
-      await walk(prefix + '1');
+      // Recurse into left (0) and right (1) children in parallel.
+      await Promise.all([
+        walk(prefix + '0'),
+        walk(prefix + '1'),
+      ]);
     };
 
     await walk('');
     return { onlyLocal, onlyRemote };
   }
 
-  private async getLocalSubtreeHash(did: string, prefix: string, delegateDid?: string, protocol?: string): Promise<string> {
-    const permissionGrantId = await this.getSyncPermissionGrantId(did, delegateDid, protocol);
-
+  private async getLocalSubtreeHash(
+    did: string, prefix: string, delegateDid?: string, protocol?: string, permissionGrantId?: string
+  ): Promise<string> {
     const response = await this.agent.dwn.processRequest({
       author        : did,
       target        : did,
@@ -410,9 +415,9 @@ export class SyncEngineLevel implements SyncEngine {
     return reply.hash ?? '';
   }
 
-  private async getRemoteSubtreeHash(did: string, dwnUrl: string, prefix: string, delegateDid?: string, protocol?: string): Promise<string> {
-    const permissionGrantId = await this.getSyncPermissionGrantId(did, delegateDid, protocol);
-
+  private async getRemoteSubtreeHash(
+    did: string, dwnUrl: string, prefix: string, delegateDid?: string, protocol?: string, permissionGrantId?: string
+  ): Promise<string> {
     const syncMessage = await this.agent.dwn.processRequest({
       store         : false,
       author        : did,
@@ -436,9 +441,9 @@ export class SyncEngineLevel implements SyncEngine {
     return reply.hash ?? '';
   }
 
-  private async getLocalLeaves(did: string, prefix: string, delegateDid?: string, protocol?: string): Promise<string[]> {
-    const permissionGrantId = await this.getSyncPermissionGrantId(did, delegateDid, protocol);
-
+  private async getLocalLeaves(
+    did: string, prefix: string, delegateDid?: string, protocol?: string, permissionGrantId?: string
+  ): Promise<string[]> {
     const response = await this.agent.dwn.processRequest({
       author        : did,
       target        : did,
@@ -456,9 +461,9 @@ export class SyncEngineLevel implements SyncEngine {
     return reply.entries ?? [];
   }
 
-  private async getRemoteLeaves(did: string, dwnUrl: string, prefix: string, delegateDid?: string, protocol?: string): Promise<string[]> {
-    const permissionGrantId = await this.getSyncPermissionGrantId(did, delegateDid, protocol);
-
+  private async getRemoteLeaves(
+    did: string, dwnUrl: string, prefix: string, delegateDid?: string, protocol?: string, permissionGrantId?: string
+  ): Promise<string[]> {
     const syncMessage = await this.agent.dwn.processRequest({
       store         : false,
       author        : did,
@@ -503,19 +508,24 @@ export class SyncEngineLevel implements SyncEngine {
     // Step 2: Build dependency graph and topological sort.
     const sorted = SyncEngineLevel.topologicalSort(fetched);
 
-    // Step 3: Process messages in dependency order.
-    const retryQueue: { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> }[] = [];
+    // Step 3: Process messages in dependency order with multi-pass retry.
+    // Retry up to MAX_RETRY_PASSES times for messages that fail due to
+    // dependency ordering issues (e.g., a dependency was already local
+    // but not yet committed when the dependent was first processed).
+    const MAX_RETRY_PASSES = 3;
+    let pending = sorted;
 
-    for (const entry of sorted) {
-      const pullReply = await this.agent.dwn.node.processMessage(did, entry.message, { dataStream: entry.dataStream });
-      if (!SyncEngineLevel.syncMessageReplyIsSuccessful(pullReply)) {
-        retryQueue.push(entry);
+    for (let pass = 0; pass <= MAX_RETRY_PASSES && pending.length > 0; pass++) {
+      const retryQueue: { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> }[] = [];
+
+      for (const entry of pending) {
+        const pullReply = await this.agent.dwn.node.processMessage(did, entry.message, { dataStream: entry.dataStream });
+        if (!SyncEngineLevel.syncMessageReplyIsSuccessful(pullReply)) {
+          retryQueue.push(entry);
+        }
       }
-    }
 
-    // Step 4: Retry any that failed (dependency may already exist locally).
-    for (const entry of retryQueue) {
-      await this.agent.dwn.node.processMessage(did, entry.message, { dataStream: entry.dataStream });
+      pending = retryQueue;
     }
   }
 
@@ -548,39 +558,54 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
-    for (const messageCid of messageCids) {
-      const messagesRead = await this.agent.processDwnRequest({
-        store         : false,
-        author        : did,
-        target        : did,
-        messageType   : DwnInterface.MessagesRead,
-        granteeDid    : delegateDid,
-        messageParams : { messageCid, permissionGrantId }
-      });
+    // Fetch messages in parallel with bounded concurrency.
+    const CONCURRENCY = 10;
+    let cursor = 0;
 
-      let reply: MessagesReadReply;
-      try {
-        reply = await this.agent.rpc.sendDwnRequest({
-          dwnUrl,
-          targetDid : did,
-          message   : messagesRead.message,
-        }) as MessagesReadReply;
-      } catch {
-        // Remote unreachable for this message — skip.
-        continue;
+    while (cursor < messageCids.length) {
+      const batch = messageCids.slice(cursor, cursor + CONCURRENCY);
+      cursor += CONCURRENCY;
+
+      type FetchResult = { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> } | undefined;
+      const batchResults = await Promise.all(batch.map(async (messageCid): Promise<FetchResult> => {
+        const messagesRead = await this.agent.processDwnRequest({
+          store         : false,
+          author        : did,
+          target        : did,
+          messageType   : DwnInterface.MessagesRead,
+          granteeDid    : delegateDid,
+          messageParams : { messageCid, permissionGrantId }
+        });
+
+        let reply: MessagesReadReply;
+        try {
+          reply = await this.agent.rpc.sendDwnRequest({
+            dwnUrl,
+            targetDid : did,
+            message   : messagesRead.message,
+          }) as MessagesReadReply;
+        } catch {
+          return undefined;
+        }
+
+        if (reply.status.code !== 200 || !reply.entry?.message) {
+          return undefined;
+        }
+
+        const replyEntry = reply.entry;
+        let dataStream: ReadableStream<Uint8Array> | undefined;
+        if (isRecordsWrite(replyEntry) && replyEntry.data) {
+          dataStream = replyEntry.data;
+        }
+
+        return { message: replyEntry.message, dataStream };
+      }));
+
+      for (const result of batchResults) {
+        if (result) {
+          results.push(result);
+        }
       }
-
-      if (reply.status.code !== 200 || !reply.entry?.message) {
-        continue;
-      }
-
-      const replyEntry = reply.entry;
-      let dataStream: ReadableStream<Uint8Array> | undefined;
-      if (isRecordsWrite(replyEntry) && replyEntry.data) {
-        dataStream = replyEntry.data;
-      }
-
-      results.push({ message: replyEntry.message, dataStream });
     }
 
     return results;
@@ -851,9 +876,11 @@ export class SyncEngineLevel implements SyncEngine {
 
     // If there are nodes not in sorted (cycle), append them at the end.
     if (sorted.length < messages.length) {
+      const sortedSet = new Set(sorted);
       for (let i = 0; i < messages.length; i++) {
-        if (!sorted.includes(byIndex.get(i)!)) {
-          sorted.push(byIndex.get(i)!);
+        const entry = byIndex.get(i)!;
+        if (!sortedSet.has(entry)) {
+          sorted.push(entry);
         }
       }
     }

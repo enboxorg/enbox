@@ -1259,6 +1259,304 @@ describe('SyncEngineLevel', () => {
       }).slow(1200); // Yellow at 600ms, Red at 1200ms.
     });
 
+    describe('sync enhancements', () => {
+      it('syncs RecordsDelete messages from remote to local', async () => {
+        // Scenario: Alice writes a record to her remote DWN, syncs it locally,
+        //           then deletes it on the remote, and syncs again.
+        //           The delete should propagate to the local DWN.
+
+        // Register Alice's DID for sync.
+        await testHarness.agent.sync.registerIdentity({
+          did: alice.did.uri,
+        });
+
+        // Write a record to Alice's remote DWN.
+        const writeResponse = await testHarness.agent.dwn.sendRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsWrite,
+          messageParams : {
+            dataFormat : 'text/plain',
+            schema     : randomSchema
+          },
+          dataStream: new Blob(['Record to be deleted'])
+        });
+        expect(writeResponse.reply.status.code).to.equal(202);
+        const testRecordId = writeResponse.message!.recordId;
+
+        // Pull the record to Alice's local DWN.
+        await syncEngine.sync('pull');
+
+        // Confirm the record exists on Alice's local DWN.
+        let queryResponse = await testHarness.agent.dwn.processRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : { filter: { recordId: testRecordId } }
+        });
+        expect(queryResponse.reply.status.code).to.equal(200);
+        expect(queryResponse.reply.entries).to.have.length(1);
+
+        // Delete the record on Alice's remote DWN.
+        const deleteResponse = await testHarness.agent.dwn.sendRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsDelete,
+          messageParams : { recordId: testRecordId }
+        });
+        expect(deleteResponse.reply.status.code).to.equal(202);
+
+        // Pull again to sync the delete.
+        await syncEngine.sync('pull');
+
+        // Confirm the record no longer exists on Alice's local DWN.
+        queryResponse = await testHarness.agent.dwn.processRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : { filter: { recordId: testRecordId } }
+        });
+        expect(queryResponse.reply.status.code).to.equal(200);
+        expect(queryResponse.reply.entries).to.have.length(0);
+      });
+
+      it('syncs RecordsDelete messages from local to remote', async () => {
+        // Scenario: Alice writes a record locally, pushes it to remote,
+        //           then deletes locally, and pushes again.
+
+        // Register Alice's DID for sync.
+        await testHarness.agent.sync.registerIdentity({
+          did: alice.did.uri,
+        });
+
+        // Write a record to Alice's local DWN.
+        const writeResponse = await testHarness.agent.dwn.processRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsWrite,
+          messageParams : {
+            dataFormat : 'text/plain',
+            schema     : randomSchema
+          },
+          dataStream: new Blob(['Record to be deleted'])
+        });
+        expect(writeResponse.reply.status.code).to.equal(202);
+        const testRecordId = writeResponse.message!.recordId;
+
+        // Push to remote.
+        await syncEngine.sync('push');
+
+        // Confirm record exists on remote.
+        let remoteQuery = await testHarness.agent.dwn.sendRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : { filter: { recordId: testRecordId } }
+        });
+        expect(remoteQuery.reply.status.code).to.equal(200);
+        expect(remoteQuery.reply.entries).to.have.length(1);
+
+        // Delete the record locally.
+        const deleteResponse = await testHarness.agent.dwn.processRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsDelete,
+          messageParams : { recordId: testRecordId }
+        });
+        expect(deleteResponse.reply.status.code).to.equal(202);
+
+        // Push again to sync the delete.
+        await syncEngine.sync('push');
+
+        // Confirm record no longer exists on remote.
+        remoteQuery = await testHarness.agent.dwn.sendRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : { filter: { recordId: testRecordId } }
+        });
+        expect(remoteQuery.reply.status.code).to.equal(200);
+        expect(remoteQuery.reply.entries).to.have.length(0);
+      });
+
+      it('is idempotent — running sync twice after convergence is a no-op', async () => {
+        // Scenario: Alice writes a record locally, syncs once to converge,
+        //           then syncs again.  The second sync should short-circuit
+        //           at the root comparison and make no additional MessagesRead requests.
+
+        // Register Alice's DID for sync.
+        await testHarness.agent.sync.registerIdentity({
+          did: alice.did.uri,
+        });
+
+        // Write a record locally.
+        const writeResponse = await testHarness.agent.dwn.processRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsWrite,
+          messageParams : {
+            dataFormat : 'text/plain',
+            schema     : randomSchema
+          },
+          dataStream: new Blob(['Idempotent sync test'])
+        });
+        expect(writeResponse.reply.status.code).to.equal(202);
+
+        // First sync to push the record to remote and converge.
+        await syncEngine.sync();
+
+        // Confirm the record exists on both local and remote.
+        const localQuery = await testHarness.agent.dwn.processRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : { filter: { recordId: writeResponse.message!.recordId } }
+        });
+        expect(localQuery.reply.entries).to.have.length(1);
+
+        const remoteQuery = await testHarness.agent.dwn.sendRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : { filter: { recordId: writeResponse.message!.recordId } }
+        });
+        expect(remoteQuery.reply.entries).to.have.length(1);
+
+        // Spy on sendDwnRequest to count RPC calls during the second sync.
+        const sendDwnRequestSpy = sinon.spy(testHarness.agent.rpc, 'sendDwnRequest');
+
+        // Second sync — trees are already converged, should short-circuit.
+        await syncEngine.sync();
+
+        // The only RPC calls should be the root comparisons (one per DWN URL).
+        // There should be no MessagesRead or MessagesSync subtree/leaves calls
+        // beyond the root check.  With a single DWN URL, we expect exactly 1
+        // root call for pull + 1 for push = 2 calls total.
+        // Each call is a MessagesSync with action: 'root'.
+        const rpcCalls = sendDwnRequestSpy.args;
+        for (const call of rpcCalls) {
+          const message = call[0]?.message as any;
+          expect(message?.descriptor?.action).to.equal('root',
+            'Second sync should only make root comparison calls');
+        }
+
+        sendDwnRequestSpy.restore();
+      });
+
+      it('resolves conflicts when both sides update the same record', async () => {
+        // Scenario: Alice creates a record and syncs it to both DWNs.
+        //           Then she updates it locally AND remotely with different data.
+        //           After sync, both sides should converge to the same state.
+        //           DWN conflict resolution uses the latest messageTimestamp.
+
+        // Register Alice's DID for sync.
+        await testHarness.agent.sync.registerIdentity({
+          did: alice.did.uri,
+        });
+
+        // Write a record locally.
+        const writeResponse = await testHarness.agent.dwn.processRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsWrite,
+          messageParams : {
+            dataFormat : 'text/plain',
+            schema     : randomSchema
+          },
+          dataStream: new Blob(['Original data'])
+        });
+        expect(writeResponse.reply.status.code).to.equal(202);
+        const testRecordId = writeResponse.message!.recordId;
+        const dateCreated = writeResponse.message!.descriptor.dateCreated;
+
+        // Sync to push the record to remote.
+        await syncEngine.sync();
+
+        // Confirm it exists on both sides.
+        let localQuery = await testHarness.agent.dwn.processRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : { filter: { recordId: testRecordId } }
+        });
+        expect(localQuery.reply.entries).to.have.length(1);
+
+        let remoteQuery = await testHarness.agent.dwn.sendRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : { filter: { recordId: testRecordId } }
+        });
+        expect(remoteQuery.reply.entries).to.have.length(1);
+
+        // Update on the remote with an earlier timestamp.
+        const remoteUpdate = await testHarness.agent.dwn.sendRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsWrite,
+          messageParams : {
+            recordId    : testRecordId,
+            dataFormat  : 'text/plain',
+            schema      : randomSchema,
+            dateCreated : dateCreated,
+          },
+          dataStream: new Blob(['Remote update'])
+        });
+        expect(remoteUpdate.reply.status.code).to.equal(202);
+
+        // Update on the local with a later timestamp (by using Time offset).
+        const localUpdate = await testHarness.agent.dwn.processRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsWrite,
+          messageParams : {
+            recordId    : testRecordId,
+            dataFormat  : 'text/plain',
+            schema      : randomSchema,
+            dateCreated : dateCreated,
+          },
+          dataStream: new Blob(['Local update — later'])
+        });
+        expect(localUpdate.reply.status.code).to.equal(202);
+        const localUpdateCid = localUpdate.messageCid;
+
+        // Sync both directions.
+        await syncEngine.sync();
+
+        // After sync, both sides should have the same record version.
+        // The winner is whichever has the later messageTimestamp. Since the
+        // local update happened after the remote update chronologically,
+        // the local update should win on both sides.
+        localQuery = await testHarness.agent.dwn.processRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : { filter: { recordId: testRecordId } }
+        });
+        expect(localQuery.reply.entries).to.have.length(1);
+
+        remoteQuery = await testHarness.agent.dwn.sendRequest({
+          author        : alice.did.uri,
+          target        : alice.did.uri,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : { filter: { recordId: testRecordId } }
+        });
+        expect(remoteQuery.reply.entries).to.have.length(1);
+
+        // Both should resolve to the same message CID.
+        const { initialWrite: _localIW, ...localRawMessage } = localQuery.reply.entries![0];
+        const { initialWrite: _remoteIW, ...remoteRawMessage } = remoteQuery.reply.entries![0];
+        const localCid = await Message.getCid(localRawMessage);
+        const remoteCid = await Message.getCid(remoteRawMessage);
+
+        // Both sides should agree on the winning message.
+        expect(localCid).to.equal(remoteCid);
+
+        // The local update should be the winner (later timestamp).
+        expect(localCid).to.equal(localUpdateCid);
+      });
+    });
+
     describe('startSync()', () => {
       it('calls sync() in each interval', async () => {
         await testHarness.agent.sync.registerIdentity({

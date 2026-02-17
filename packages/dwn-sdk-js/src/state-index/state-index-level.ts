@@ -257,10 +257,20 @@ export class StateIndexLevel implements StateIndex {
   }
 
   /**
-   * Sanitize a protocol URI for use as a filesystem path component.
-   * Replaces non-alphanumeric characters with underscores.
+   * Compute a collision-resistant directory name from a protocol URI.
+   * Uses a simple hash to avoid filesystem issues with special characters
+   * while preventing different URIs from mapping to the same path.
    */
   private sanitizeProtocolForPath(protocol: string): string {
-    return protocol.replace(/[^a-zA-Z0-9]/g, '_');
+    // FNV-1a 32-bit hash for a compact, deterministic path name.
+    // Combined with a truncated sanitized prefix for debuggability.
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < protocol.length; i++) {
+      hash ^= protocol.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    const hashHex = (hash >>> 0).toString(16).padStart(8, '0');
+    const prefix = protocol.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 32);
+    return `${prefix}_${hashHex}`;
   }
 }
