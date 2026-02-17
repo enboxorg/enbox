@@ -19,10 +19,10 @@ export class DwnKeyStore extends DwnDataStore<Jwk> implements AgentDataStore<Jwk
   protected _recordProtocolDefinition = JwkProtocolDefinition;
 
   /**
-   * Private keys should be encrypted at the DWN record level using the tenant's
-   * ProtocolPath-derived encryption key (from the agent DID's #enc key).
-   * Encryption is activated at runtime if the tenant DID has a secp256k1
-   * keyAgreement key; otherwise records are stored in plaintext.
+   * Private keys are encrypted at the DWN record level using the tenant's
+   * ProtocolPath-derived encryption key (from the agent DID's secp256k1 #enc
+   * key). The tenant DID **must** have a secp256k1 keyAgreement key;
+   * protocol installation will fail with an error if it does not.
    */
   protected _encryptionDesired = true;
 

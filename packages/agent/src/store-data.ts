@@ -79,12 +79,10 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
   protected _recordProtocolDefinition!: ProtocolDefinition;
 
   /**
-   * When true, the store *attempts* DWN record-level encryption using the
-   * tenant's ProtocolPath-derived encryption key. Encryption is only activated
-   * if the tenant DID actually has a secp256k1 keyAgreement key; otherwise
-   * the store operates in plaintext mode for that tenant. This allows the store
-   * to gracefully handle agent DIDs that lack encryption-capable keys (e.g.,
-   * Ed25519-only `did:jwk` in tests).
+   * When true, the store **requires** DWN record-level encryption using the
+   * tenant's ProtocolPath-derived encryption key. The tenant DID must have a
+   * secp256k1 keyAgreement key; if it does not, protocol installation will
+   * fail with an error rather than falling back to plaintext storage.
    *
    * Subclasses set this to `true` to opt in (e.g., DwnKeyStore).
    */
@@ -92,8 +90,10 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
 
   /**
    * Per-tenant encryption resolution cache. Populated during `initialize()`:
-   * `true` if the tenant supports encryption (has secp256k1 keyAgreement),
-   * `false` otherwise.
+   * `true` if the tenant supports encryption (has secp256k1 keyAgreement).
+   * When `_encryptionDesired` is `true`, this will always be `true` after
+   * successful initialization (since installation fails if encryption is not
+   * possible).
    */
   private _tenantEncryptionActive: TtlCache<string, boolean> = new TtlCache({ ttl: ms('21 days'), max: 1000 });
 
@@ -316,28 +316,22 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
 
   /**
    * Install the protocol for the given tenant using a `ProtocolsConfigure` message.
-   * When the store desires encryption AND the tenant has a secp256k1 keyAgreement
-   * key, `$encryption` keys are derived and injected into the protocol definition.
+   * When `_encryptionDesired` is `true`, `$encryption` keys are derived and
+   * injected into the protocol definition. If the tenant DID lacks a secp256k1
+   * keyAgreement key, the error propagates — plaintext fallback is not allowed.
    */
   private async installProtocol(tenant: string, agent: Web5PlatformAgent): Promise<void> {
     let definition = this._recordProtocolDefinition;
     let encryptionActive = false;
 
     if (this._encryptionDesired) {
-      try {
-        // Attempt to derive encryption keys — this will succeed only if the
-        // tenant DID has a secp256k1 keyAgreement key.
-        const keyDeriver = await agent.dwn.getEncryptionKeyDeriver(tenant);
-        definition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-          definition, keyDeriver,
-        );
-        encryptionActive = true;
-      } catch {
-        // Tenant DID does not support encryption (e.g., Ed25519-only did:jwk
-        // in tests). Install the protocol without $encryption keys — records
-        // will be stored in plaintext.
-        encryptionActive = false;
-      }
+      // Derive encryption keys — requires the tenant DID to have a secp256k1
+      // keyAgreement key. If it does not, the error propagates to the caller.
+      const keyDeriver = await agent.dwn.getEncryptionKeyDeriver(tenant);
+      definition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+        definition, keyDeriver,
+      );
+      encryptionActive = true;
     }
 
     this._tenantEncryptionActive.set(tenant, encryptionActive);

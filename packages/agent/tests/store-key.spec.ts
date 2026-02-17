@@ -402,9 +402,10 @@ describe('KeyStore', () => {
       });
     });
 
-    describe('plaintext fallback', () => {
-      // These tests use an Ed25519 agent DID which lacks a secp256k1
-      // keyAgreement key, so encryption cannot be activated.
+    describe('encryption required — Ed25519-only agent DID rejection', () => {
+      // These tests verify that DwnKeyStore (which sets _encryptionDesired = true)
+      // refuses to operate when the agent DID lacks a secp256k1 keyAgreement key.
+      // No plaintext fallback is allowed.
       let ed25519Harness: PlatformAgentTestHarness;
       let ed25519KeyStore: AgentDataStore<Jwk>;
 
@@ -418,7 +419,10 @@ describe('KeyStore', () => {
 
       beforeEach(async () => {
         await ed25519Harness.clearStorage();
-        await ed25519Harness.createAgentDid(); // Ed25519 did:jwk — no secp256k1
+        // Explicitly create an Ed25519-only did:jwk (no secp256k1 keyAgreement).
+        ed25519Harness.agent.agentDid = await DidJwk.create({
+          options: { algorithm: 'Ed25519' }
+        });
         ed25519KeyStore = new DwnKeyStore();
         const keyManager = new LocalKeyManager({ agent: ed25519Harness.agent, keyStore: ed25519KeyStore });
         ed25519Harness.agent.keyManager = keyManager;
@@ -429,71 +433,29 @@ describe('KeyStore', () => {
         await ed25519Harness.closeStorage();
       });
 
-      it('should store and retrieve keys in plaintext when agent DID lacks secp256k1', async () => {
-        // Generate a key — DwnKeyStore should gracefully fall back to plaintext
-        // because the Ed25519 agent DID has no secp256k1 keyAgreement key.
-        const keyUri = await ed25519Harness.agent.keyManager.generateKey({
-          algorithm: 'Ed25519'
-        });
-
-        // Verify the key can be read back.
-        const storedKey = await ed25519KeyStore.get({ id: keyUri, agent: ed25519Harness.agent });
-        expect(storedKey).to.exist;
-        expect(keyUri).to.include(storedKey!.kid);
-        expect(storedKey).to.have.property('d');
-
-        // Query the raw DWN record — should NOT have encryption metadata.
-        const { reply: queryReply } = await ed25519Harness.agent.dwn.processRequest({
-          author        : ed25519Harness.agent.agentDid.uri,
-          target        : ed25519Harness.agent.agentDid.uri,
-          messageType   : DwnInterface.RecordsQuery,
-          messageParams : {
-            filter: {
-              dataFormat   : 'application/json',
-              protocol     : JwkProtocolDefinition.protocol,
-              protocolPath : 'privateJwk',
-              schema       : JwkProtocolDefinition.types.privateJwk.schema,
-            }
-          },
-        });
-
-        expect(queryReply.entries).to.have.length(1);
-        expect(queryReply.entries![0].encryption).to.not.exist;
+      it('should throw when generating a key with an Ed25519-only agent DID', async () => {
+        // DwnKeyStore requires encryption. An Ed25519-only agent DID cannot
+        // derive encryption keys, so generateKey() must throw — not silently
+        // store the key in plaintext.
+        try {
+          await ed25519Harness.agent.keyManager.generateKey({
+            algorithm: 'Ed25519'
+          });
+          expect.fail('Expected an error to be thrown');
+        } catch (error: any) {
+          expect(error.message).to.include('DWN encryption requires \'secp256k1\'');
+        }
       });
 
-      it('should install protocol WITHOUT $encryption keys for Ed25519 agent DID', async () => {
-        // Initialize the store (triggers protocol installation).
-        await (ed25519KeyStore as DwnDataStore<Jwk>)['initialize']({ agent: ed25519Harness.agent });
-
-        // Query the installed protocol.
-        const { reply } = await ed25519Harness.agent.dwn.processRequest({
-          author        : ed25519Harness.agent.agentDid.uri,
-          target        : ed25519Harness.agent.agentDid.uri,
-          messageType   : DwnInterface.ProtocolsQuery,
-          messageParams : {
-            filter: { protocol: JwkProtocolDefinition.protocol }
-          }
-        });
-
-        expect(reply.status.code).to.equal(200);
-        expect(reply.entries).to.have.length(1);
-
-        // The protocol should NOT have $encryption since the agent DID cannot
-        // derive encryption keys.
-        const installedDefinition = reply.entries![0].descriptor.definition;
-        const privateJwkRuleSet = installedDefinition.structure.privateJwk;
-        expect(privateJwkRuleSet).to.not.have.property('$encryption');
-      });
-
-      it('should list keys in plaintext mode', async () => {
-        const keyUri1 = await ed25519Harness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
-        const keyUri2 = await ed25519Harness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
-
-        const storedKeys = await ed25519KeyStore.list({ agent: ed25519Harness.agent });
-        expect(storedKeys).to.have.length(2);
-        const storedKids = storedKeys.map((k: Jwk): string => `urn:jwk:${k.kid}`);
-        expect(storedKids).to.include(keyUri1);
-        expect(storedKids).to.include(keyUri2);
+      it('should throw during protocol installation for Ed25519-only agent DID', async () => {
+        // Directly calling initialize() should throw because installProtocol()
+        // no longer catches encryption key derivation failures.
+        try {
+          await (ed25519KeyStore as DwnDataStore<Jwk>)['initialize']({ agent: ed25519Harness.agent });
+          expect.fail('Expected an error to be thrown');
+        } catch (error: any) {
+          expect(error.message).to.include('DWN encryption requires \'secp256k1\'');
+        }
       });
     });
 
