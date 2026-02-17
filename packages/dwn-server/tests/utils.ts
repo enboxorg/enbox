@@ -153,6 +153,21 @@ export async function sendHttpMessage(options: {
   return reply as UnionMessageReply;
 }
 
+/**
+ * Polls until the predicate returns true, or rejects after `timeoutMs`.
+ * Use this instead of fixed `setTimeout` delays when waiting for async events
+ * (e.g. WebSocket subscription messages) to avoid timing-dependent flakiness.
+ */
+export async function waitUntil(predicate: () => boolean, timeoutMs = 2000, intervalMs = 10): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`waitUntil timed out after ${timeoutMs}ms`);
+    }
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+}
+
 export async function sendWsMessage(
   address: string,
   message: any,
