@@ -2,5 +2,5 @@
   "enable-source-maps": true,
   "exit": true,
   "spec": ["tests/compiled/**/*.spec.js"],
-  "timeout": 5000
+  "timeout": 10000
 }

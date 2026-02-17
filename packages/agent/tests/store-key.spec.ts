@@ -1,3 +1,4 @@
+import type { BearerDid } from '@enbox/dids';
 import type { Jwk } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
@@ -132,11 +133,17 @@ describe('KeyStore', () => {
   describe('DwnKeyStore', () => {
     let testHarness: PlatformAgentTestHarness;
     let keyStore: AgentDataStore<Jwk>;
+    // Cache the secp256k1 DID across tests to avoid expensive key generation
+    // on every beforeEach. The DID object is self-contained and can be reused.
+    let secp256k1Did: BearerDid;
 
     before(async () => {
       testHarness = await PlatformAgentTestHarness.setup({
         agentClass  : TestAgent,
         agentStores : 'memory'
+      });
+      secp256k1Did = await DidJwk.create({
+        options: { algorithm: 'secp256k1' }
       });
     });
 
@@ -144,9 +151,7 @@ describe('KeyStore', () => {
       await testHarness.clearStorage();
       // Use secp256k1 for the agent DID so that DWN record-level encryption
       // (which requires a secp256k1 keyAgreement key) works correctly.
-      testHarness.agent.agentDid = await DidJwk.create({
-        options: { algorithm: 'secp256k1' }
-      });
+      testHarness.agent.agentDid = secp256k1Did;
       keyStore = new DwnKeyStore();
       const keyManager = new LocalKeyManager({ agent: testHarness.agent, keyStore });
       testHarness.agent.keyManager = keyManager;
