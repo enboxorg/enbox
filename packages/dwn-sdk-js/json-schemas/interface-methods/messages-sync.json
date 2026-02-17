@@ -42,6 +42,9 @@
         "prefix": {
           "type": "string",
           "pattern": "^[01]*$"
+        },
+        "permissionGrantId": {
+          "type": "string"
         }
       },
       "allOf": [

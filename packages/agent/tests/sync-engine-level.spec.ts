@@ -4,9 +4,10 @@ import { AbstractLevel } from 'abstract-level';
 import { Convert } from '@enbox/common';
 import { CryptoUtils } from '@enbox/crypto';
 import { expect } from 'chai';
+import type { GenericMessage } from '@enbox/dwn-sdk-js';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { SyncIdentityOptions } from '../src/index.js';
-import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, Time } from '@enbox/dwn-sdk-js';
+import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 import type { BearerIdentity } from '../src/bearer-identity.js';
 
@@ -75,6 +76,10 @@ describe('SyncEngineLevel', () => {
       randomSchema = CryptoUtils.randomUuid();
 
       sinon.restore();
+
+      // Reset the sync lock in case a previous test timed out while sync was in progress.
+      // Without this, all subsequent tests would fail with "Sync operation is already in progress."
+      syncEngine['_syncLock'] = false;
 
       await syncEngine.clear();
       await testHarness.syncStore.clear();
@@ -1280,12 +1285,31 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-        const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
-        syncSpy.returns(new Promise<void>((resolve) => {
+        // Replicate the pattern from the old pull/push test: stub an internal
+        // method so the real sync() manages _syncLock, while the slow part is
+        // a shared promise created BEFORE the interval.  The shared promise
+        // means the first sync takes ~1500ms, but subsequent syncs complete
+        // instantly (the promise is already resolved).
+        //
+        // The setTimeout is created before startSync, so at t=1500 it fires
+        // before the interval callback — this avoids timer-ordering races.
+        const walkTreeDiffStub = sinon.stub(SyncEngineLevel.prototype as any, 'walkTreeDiff');
+        walkTreeDiffStub.returns(new Promise<{ onlyLocal: string[]; onlyRemote: string[] }>((resolve) => {
           clock.setTimeout(() => {
-            resolve();
-          }, 1_500); // more than the interval
+            resolve({ onlyLocal: [], onlyRemote: [] });
+          }, 1_500);
         }));
+
+        const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
+        getSyncTargetsStub.resolves([{ did: alice.did.uri, dwnUrl: 'http://localhost:3000', delegateDid: undefined, protocol: undefined }]);
+
+        const getLocalRootStub = sinon.stub(SyncEngineLevel.prototype as any, 'getLocalRoot');
+        getLocalRootStub.resolves('aaa');
+
+        const getRemoteRootStub = sinon.stub(SyncEngineLevel.prototype as any, 'getRemoteRoot');
+        getRemoteRootStub.resolves('bbb');
+
+        const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
         testHarness.agent.sync.startSync({ interval: '500ms' });
 
@@ -1305,6 +1329,10 @@ describe('SyncEngineLevel', () => {
         expect(syncSpy.callCount).to.equal(3, 'sync');
 
         syncSpy.restore();
+        walkTreeDiffStub.restore();
+        getSyncTargetsStub.restore();
+        getLocalRootStub.restore();
+        getRemoteRootStub.restore();
         clock.restore();
       });
 
@@ -2368,6 +2396,151 @@ describe('SyncEngineLevel', () => {
         // confirm that without options the options are set to an empty protocol array
         expect(options).to.deep.equal({ protocols: [] });
       });
+    });
+  });
+
+  describe('topologicalSort', () => {
+    // Helper to create a minimal mock GenericMessage with the given descriptor fields.
+    function mockMessage(
+      overrides: Record<string, unknown>,
+      topLevel?: Record<string, unknown>
+    ): { message: GenericMessage } {
+      const descriptor = {
+        interface        : DwnInterfaceName.Records,
+        method           : DwnMethodName.Write,
+        messageTimestamp : Time.getCurrentTimestamp(),
+        ...overrides,
+      };
+      return {
+        message: { descriptor, ...topLevel } as unknown as GenericMessage,
+      };
+    }
+
+    it('returns messages unchanged when there is only one message', () => {
+      const msg = mockMessage({});
+      const result = SyncEngineLevel.topologicalSort([msg]);
+      expect(result).to.have.length(1);
+      expect(result[0]).to.equal(msg);
+    });
+
+    it('sorts ProtocolsConfigure before RecordsWrite that references the protocol', () => {
+      const protocolUrl = 'https://example.com/proto';
+      const recordsWrite = mockMessage(
+        { protocol: protocolUrl },
+        { recordId: 'rec-1' }
+      );
+      const protocolsConfigure = mockMessage({
+        interface  : DwnInterfaceName.Protocols,
+        method     : DwnMethodName.Configure,
+        definition : { protocol: protocolUrl },
+      });
+      // Pass in reverse order: records first, protocol second.
+      const result = SyncEngineLevel.topologicalSort([recordsWrite, protocolsConfigure]);
+      expect(result[0]).to.equal(protocolsConfigure);
+      expect(result[1]).to.equal(recordsWrite);
+    });
+
+    it('sorts initial write before update write for the same recordId', () => {
+      const ts1 = '2024-01-01T00:00:00.000000Z';
+      const ts2 = '2024-01-02T00:00:00.000000Z';
+      const update = mockMessage(
+        { dateCreated: ts1, messageTimestamp: ts2 },
+        { recordId: 'rec-1' }
+      );
+      const initial = mockMessage(
+        { dateCreated: ts1, messageTimestamp: ts1 },
+        { recordId: 'rec-1' }
+      );
+      // Pass update first.
+      const result = SyncEngineLevel.topologicalSort([update, initial]);
+      expect(result[0]).to.equal(initial);
+      expect(result[1]).to.equal(update);
+    });
+
+    it('sorts permission grant before a message that references it via permissionGrantId', () => {
+      const grantRecordId = 'grant-record-1';
+      const grant = mockMessage(
+        {
+          protocol         : PermissionsProtocol.uri,
+          protocolPath     : PermissionsProtocol.grantPath,
+          dateCreated      : '2024-01-01T00:00:00.000000Z',
+          messageTimestamp : '2024-01-01T00:00:00.000000Z',
+        },
+        { recordId: grantRecordId }
+      );
+      const dependent = mockMessage({
+        permissionGrantId : grantRecordId,
+        messageTimestamp  : '2024-01-02T00:00:00.000000Z',
+      });
+      // Pass dependent first, grant second.
+      const result = SyncEngineLevel.topologicalSort([dependent, grant]);
+      expect(result[0]).to.equal(grant);
+      expect(result[1]).to.equal(dependent);
+    });
+
+    it('does not crash when permissionGrantId references a grant not in the batch', () => {
+      const msg1 = mockMessage({ messageTimestamp: '2024-01-01T00:00:00.000000Z' });
+      const msg2 = mockMessage({
+        permissionGrantId : 'grant-not-in-batch',
+        messageTimestamp  : '2024-01-02T00:00:00.000000Z',
+      });
+      // Should not throw; no edge is added because the grant is not in the batch.
+      const result = SyncEngineLevel.topologicalSort([msg1, msg2]);
+      expect(result).to.have.length(2);
+    });
+
+    it('handles combined protocol, parent, and grant dependencies', () => {
+      const protocolUrl = 'https://example.com/proto';
+      const grantRecordId = 'grant-1';
+      const parentRecordId = 'parent-1';
+
+      const protocolsConfigure = mockMessage({
+        interface        : DwnInterfaceName.Protocols,
+        method           : DwnMethodName.Configure,
+        definition       : { protocol: protocolUrl },
+        messageTimestamp : '2024-01-01T00:00:00.000000Z',
+      });
+      const grant = mockMessage(
+        {
+          protocol         : PermissionsProtocol.uri,
+          protocolPath     : PermissionsProtocol.grantPath,
+          dateCreated      : '2024-01-01T00:00:00.000000Z',
+          messageTimestamp : '2024-01-01T00:00:00.000000Z',
+        },
+        { recordId: grantRecordId }
+      );
+      const parent = mockMessage(
+        {
+          protocol         : protocolUrl,
+          dateCreated      : '2024-01-02T00:00:00.000000Z',
+          messageTimestamp : '2024-01-02T00:00:00.000000Z',
+        },
+        { recordId: parentRecordId }
+      );
+      const child = mockMessage(
+        {
+          protocol          : protocolUrl,
+          parentId          : parentRecordId,
+          permissionGrantId : grantRecordId,
+          dateCreated       : '2024-01-03T00:00:00.000000Z',
+          messageTimestamp  : '2024-01-03T00:00:00.000000Z',
+        },
+        { recordId: 'child-1' }
+      );
+
+      // Pass in reverse dependency order.
+      const result = SyncEngineLevel.topologicalSort([child, parent, grant, protocolsConfigure]);
+
+      // ProtocolsConfigure must come before parent and child (both reference the protocol).
+      const configIdx = result.indexOf(protocolsConfigure);
+      const parentIdx = result.indexOf(parent);
+      const childIdx = result.indexOf(child);
+      const grantIdx = result.indexOf(grant);
+
+      expect(configIdx).to.be.lessThan(parentIdx);
+      expect(configIdx).to.be.lessThan(childIdx);
+      expect(parentIdx).to.be.lessThan(childIdx);
+      expect(grantIdx).to.be.lessThan(childIdx);
     });
   });
 });

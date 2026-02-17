@@ -37,6 +37,9 @@
         },
         "messageCid": {
           "type": "string"
+        },
+        "permissionGrantId": {
+          "type": "string"
         }
       }
     }

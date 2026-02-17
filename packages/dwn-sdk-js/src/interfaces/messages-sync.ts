@@ -32,12 +32,13 @@ export class MessagesSync extends AbstractMessage<MessagesSyncMessage> {
 
   public static async create(options: MessagesSyncOptions): Promise<MessagesSync> {
     const descriptor: MessagesSyncDescriptor = {
-      interface        : DwnInterfaceName.Messages,
-      method           : DwnMethodName.Sync,
-      messageTimestamp : options.messageTimestamp ?? Time.getCurrentTimestamp(),
-      action           : options.action,
-      protocol         : options.protocol,
-      prefix           : options.prefix,
+      interface         : DwnInterfaceName.Messages,
+      method            : DwnMethodName.Sync,
+      messageTimestamp  : options.messageTimestamp ?? Time.getCurrentTimestamp(),
+      action            : options.action,
+      protocol          : options.protocol,
+      prefix            : options.prefix,
+      permissionGrantId : options.permissionGrantId,
     };
 
     removeUndefinedProperties(descriptor);

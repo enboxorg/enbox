@@ -26,6 +26,19 @@ describe('RecordsRead', () => {
       expect(recordsRead.message.descriptor.messageTimestamp).to.equal(currentTime);
     });
 
+    it('should include permissionGrantId in the descriptor when provided', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const grantId = 'grant-abc-123';
+
+      const recordsRead = await RecordsRead.create({
+        filter            : { recordId: 'anything' },
+        signer            : Jws.createSigner(alice),
+        permissionGrantId : grantId,
+      });
+
+      expect(recordsRead.message.descriptor.permissionGrantId).to.equal(grantId);
+    });
+
     it('should auto-normalize protocol URL', async () => {
       const alice = await TestDataGenerator.generatePersona();
 

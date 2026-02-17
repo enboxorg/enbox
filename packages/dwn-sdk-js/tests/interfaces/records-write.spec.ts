@@ -47,6 +47,34 @@ describe('RecordsWrite', () => {
       await RecordsWriteHandler['authorizeRecordsWrite'](alice.did, recordsWrite, messageStoreStub);
     });
 
+    it('should include permissionGrantId in the descriptor when provided', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const grantId = await TestDataGenerator.randomCborSha256Cid();
+
+      const recordsWrite = await RecordsWrite.create({
+        data              : TestDataGenerator.randomBytes(10),
+        dataFormat        : 'application/json',
+        recordId          : await TestDataGenerator.randomCborSha256Cid(),
+        signer            : Jws.createSigner(alice),
+        permissionGrantId : grantId,
+      });
+
+      expect(recordsWrite.message.descriptor.permissionGrantId).to.equal(grantId);
+    });
+
+    it('should not include permissionGrantId in the descriptor when not provided', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+
+      const recordsWrite = await RecordsWrite.create({
+        data       : TestDataGenerator.randomBytes(10),
+        dataFormat : 'application/json',
+        recordId   : await TestDataGenerator.randomCborSha256Cid(),
+        signer     : Jws.createSigner(alice),
+      });
+
+      expect(recordsWrite.message.descriptor.permissionGrantId).to.be.undefined;
+    });
+
     it('should be able to auto-fill `datePublished` when `published` set to `true` but `datePublished` not given', async () => {
       const alice = await TestDataGenerator.generatePersona();
 

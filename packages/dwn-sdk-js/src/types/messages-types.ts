@@ -18,6 +18,7 @@ export type MessagesReadDescriptor = {
   method: DwnMethodName.Read;
   messageCid: string;
   messageTimestamp: string;
+  permissionGrantId?: string;
 };
 
 export type MessagesReadMessage = GenericMessage & {
@@ -44,6 +45,7 @@ export type MessagesSyncDescriptor = {
   action : MessagesSyncAction;
   protocol? : string; // optional protocol scope
   prefix? : string; // bit path for subtree/leaves (e.g. "0110101...")
+  permissionGrantId? : string;
 };
 
 export type MessagesSyncMessage = GenericMessage & {
@@ -77,4 +79,5 @@ export type MessagesSubscribeDescriptor = {
   method: DwnMethodName.Subscribe;
   messageTimestamp: string;
   filters: MessagesFilter[];
+  permissionGrantId?: string;
 };

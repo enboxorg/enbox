@@ -46,6 +46,9 @@
               "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/did"
             }
           }
+        },
+        "permissionGrantId": {
+          "type": "string"
         }
       }
     }

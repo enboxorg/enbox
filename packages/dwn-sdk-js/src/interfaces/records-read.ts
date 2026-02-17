@@ -60,6 +60,7 @@ export class RecordsRead extends AbstractMessage<RecordsReadMessage> {
       method           : DwnMethodName.Read,
       filter           : Records.normalizeFilter(filter),
       messageTimestamp : options.messageTimestamp ?? currentTime,
+      permissionGrantId,
     };
 
     removeUndefinedProperties(descriptor);

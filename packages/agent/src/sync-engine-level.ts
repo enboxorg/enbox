@@ -13,6 +13,8 @@ import {
   DataStream,
   DwnInterfaceName,
   DwnMethodName,
+  Message,
+  PermissionsProtocol,
 } from '@enbox/dwn-sdk-js';
 
 import type { PermissionsApi } from './types/permissions.js';
@@ -341,6 +343,21 @@ export class SyncEngineLevel implements SyncEngine {
         return;
       }
 
+      // Short-circuit: if one side is entirely empty, all entries on the other
+      // side are unique.  Enumerate leaves directly instead of recursing further
+      // into the tree — this avoids the exponential walk when the remote DWN
+      // returns empty responses (e.g. auth failure or truly empty tree).
+      if (!remoteHash && localHash) {
+        const localLeaves = await this.getLocalLeaves(did, prefix, delegateDid, protocol);
+        onlyLocal.push(...localLeaves);
+        return;
+      }
+      if (!localHash && remoteHash) {
+        const remoteLeaves = await this.getRemoteLeaves(did, dwnUrl, prefix, delegateDid, protocol);
+        onlyRemote.push(...remoteLeaves);
+        return;
+      }
+
       // If we've reached the maximum diff depth, enumerate leaves.
       if (prefix.length >= MAX_DIFF_DEPTH) {
         const [localLeaves, remoteLeaves] = await Promise.all([
@@ -575,6 +592,9 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * Reads missing messages from the local DWN and pushes them to the remote DWN.
+   * Messages are fetched first, then sorted in dependency order (topological sort)
+   * so that initial writes come before updates, and ProtocolsConfigures come before
+   * records that reference those protocols.
    */
   private async pushMessages({ did, dwnUrl, delegateDid, protocol, messageCids }: {
     did: string;
@@ -583,29 +603,58 @@ export class SyncEngineLevel implements SyncEngine {
     protocol?: string;
     messageCids: string[];
   }): Promise<void> {
+    // Step 1: Fetch all local messages.
+    const fetched: { message: GenericMessage; data?: Blob }[] = [];
     for (const messageCid of messageCids) {
       const dwnMessage = await this.getLocalMessage({ author: did, messageCid, delegateDid, protocol });
-
-      if (!dwnMessage) {
-        // Message no longer exists locally (e.g. pruned between diff and push).
-        continue;
+      if (dwnMessage) {
+        fetched.push(dwnMessage);
       }
+    }
 
+    // Step 2: Sort in dependency order using the same topological sort as pull.
+    // Adapt the fetched entries to the format expected by topologicalSort.
+    const forSort = fetched.map((entry): { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> } => ({
+      message: entry.message,
+    }));
+    const sorted = SyncEngineLevel.topologicalSort(forSort);
+
+    // Build a map from message to its Blob data so we can send it.
+    const dataByMessage = new Map<GenericMessage, Blob | undefined>();
+    for (const entry of fetched) {
+      dataByMessage.set(entry.message, entry.data);
+    }
+
+    // Step 3: Push messages in dependency order.
+    for (const entry of sorted) {
+      const data = dataByMessage.get(entry.message);
       try {
         const reply = await this.agent.rpc.sendDwnRequest({
           dwnUrl,
           targetDid : did,
-          data      : dwnMessage.data,
-          message   : dwnMessage.message
+          data,
+          message   : entry.message
         });
 
         if (!SyncEngineLevel.syncMessageReplyIsSuccessful(reply)) {
-          console.error(`SyncEngineLevel: push failed for ${messageCid}: ${reply.status.code} ${reply.status.detail}`);
+          const cid = await SyncEngineLevel.getMessageCid(entry.message);
+          console.error(`SyncEngineLevel: push failed for ${cid}: ${reply.status.code} ${reply.status.detail}`);
         }
       } catch {
         // Remote unreachable — stop pushing to this endpoint.
         throw new Error(`SyncEngineLevel: Remote DWN at ${dwnUrl} is unreachable.`);
       }
+    }
+  }
+
+  /**
+   * Helper to get the CID of a message for logging purposes.
+   */
+  private static async getMessageCid(message: GenericMessage): Promise<string> {
+    try {
+      return await Message.getCid(message);
+    } catch {
+      return 'unknown';
     }
   }
 
@@ -683,6 +732,7 @@ export class SyncEngineLevel implements SyncEngine {
     const byIndex = new Map<number, { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> }>();
     const protocolConfigureIndex = new Map<string, number>(); // protocol URL -> index
     const initialWriteIndex = new Map<string, number>(); // recordId -> index of initial write
+    const grantIndex = new Map<string, number>(); // grant recordId -> index
 
     for (let i = 0; i < messages.length; i++) {
       const entry = messages[i];
@@ -701,6 +751,15 @@ export class SyncEngineLevel implements SyncEngine {
         const isInitial = SyncEngineLevel.isInitialWrite(entry.message);
         if (isInitial && recordId) {
           initialWriteIndex.set(recordId, i);
+        }
+
+        // Index permission grants by recordId so dependents can reference them.
+        if (
+          (desc as any).protocol === PermissionsProtocol.uri &&
+          (desc as any).protocolPath === PermissionsProtocol.grantPath &&
+          recordId
+        ) {
+          grantIndex.set(recordId, i);
         }
       }
     }
@@ -759,9 +818,11 @@ export class SyncEngineLevel implements SyncEngine {
         }
       }
 
-      // NOTE: Permission grant dependency is not resolved here because the
-      // permissionGrantId is embedded in the JWT signature payload and would
-      // require decoding. The retry queue in pullMessages handles this case.
+      // Permission grant dependency: message depends on the grant it references.
+      const permissionGrantId = (desc as any).permissionGrantId;
+      if (permissionGrantId && grantIndex.has(permissionGrantId)) {
+        addEdge(grantIndex.get(permissionGrantId)!, i);
+      }
     }
 
     // Kahn's algorithm for topological sort.

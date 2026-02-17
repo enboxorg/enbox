@@ -7,6 +7,7 @@ export type ProtocolsConfigureDescriptor = {
   method: DwnMethodName.Configure;
   messageTimestamp: string;
   definition: ProtocolDefinition;
+  permissionGrantId?: string;
 };
 
 export type ProtocolDefinition = {
@@ -166,7 +167,8 @@ export type ProtocolsQueryDescriptor = {
   interface : DwnInterfaceName.Protocols,
   method: DwnMethodName.Query;
   messageTimestamp: string;
-  filter?: ProtocolsQueryFilter
+  filter?: ProtocolsQueryFilter;
+  permissionGrantId?: string;
 };
 
 export type ProtocolsQueryMessage = GenericMessage & {

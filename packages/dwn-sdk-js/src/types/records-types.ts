@@ -36,6 +36,7 @@ export type RecordsWriteDescriptor = {
   published?: boolean;
   datePublished?: string;
   dataFormat: string;
+  permissionGrantId?: string;
 };
 
 export type RecordsWriteMessageOptions = {
@@ -242,6 +243,7 @@ export type RecordsReadDescriptor = {
   method: DwnMethodName.Read;
   filter: RecordsFilter;
   messageTimestamp: string;
+  permissionGrantId?: string;
 };
 
 export type RecordsDeleteMessage = GenericMessage & {
