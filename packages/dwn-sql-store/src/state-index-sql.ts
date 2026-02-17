@@ -68,11 +68,12 @@ export class StateIndexSql implements StateIndex {
         .addColumn('leafValueCid', 'varchar(60)')
         .execute();
 
+      // Not UNIQUE because the delete-then-insert upsert pattern in SMTStoreSql
+      // can race under concurrent access, causing duplicate key violations.
       await this.#db.schema
         .createIndex('index_stateIndexNodes_tenant_scope_nodeHash')
         .on(nodesTableName)
         .columns(['tenant', 'scope', 'nodeHash'])
-        .unique()
         .execute();
     }
 
@@ -92,7 +93,6 @@ export class StateIndexSql implements StateIndex {
         .createIndex('index_stateIndexRoots_tenant_scope')
         .on(rootsTableName)
         .columns(['tenant', 'scope'])
-        .unique()
         .execute();
     }
 
@@ -112,7 +112,6 @@ export class StateIndexSql implements StateIndex {
         .createIndex('index_stateIndexMeta_tenant_messageCid')
         .on(metaTableName)
         .columns(['tenant', 'messageCid'])
-        .unique()
         .execute();
     }
   }
