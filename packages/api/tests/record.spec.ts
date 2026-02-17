@@ -3335,6 +3335,68 @@ describe('Record', () => {
       expect(readText).to.equal('Still not encrypted');
       expect(readRecord!.encryption).to.be.undefined;
     });
+
+    it('E2E: should encrypt on write and decrypt on read via API layer', async () => {
+      // Define a simple protocol for encrypted notes
+      const encProtocol: DwnProtocolDefinition = {
+        published : true,
+        protocol  : `http://encrypted-notes.xyz/${TestDataGenerator.randomString(15)}`,
+        types     : {
+          note: {
+            schema      : 'https://schemas.xyz/note',
+            dataFormats : ['text/plain']
+          }
+        },
+        structure: {
+          note: {}
+        }
+      };
+
+      // Configure with encryption
+      const { status: configStatus } = await dwnAlice.protocols.configure({
+        message    : { definition: encProtocol },
+        encryption : true,
+      });
+      expect(configStatus.code).to.equal(202);
+
+      // Write an encrypted record
+      const secretText = 'This is a secret note for E2E test';
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data    : secretText,
+        message : {
+          protocol     : encProtocol.protocol,
+          protocolPath : 'note',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/note',
+        },
+        encryption: true,
+      });
+      expect(writeStatus.code).to.equal(202);
+      expect(record).to.exist;
+      expect(record!.encryption).to.exist;
+
+      // Read back with decryption
+      const { status: readStatus, record: readRecord } = await dwnAlice.records.read({
+        message    : { filter: { recordId: record!.id } },
+        encryption : true,
+      });
+      expect(readStatus.code).to.equal(200);
+      expect(readRecord).to.exist;
+
+      const decryptedText = await readRecord!.data.text();
+      expect(decryptedText).to.equal(secretText);
+
+      // Query back with decryption
+      const { status: queryStatus, records: queryRecords } = await dwnAlice.records.query({
+        message    : { filter: { protocol: encProtocol.protocol } },
+        encryption : true,
+      });
+      expect(queryStatus.code).to.equal(200);
+      expect(queryRecords).to.have.length(1);
+
+      const queryDecryptedText = await queryRecords![0].data.text();
+      expect(queryDecryptedText).to.equal(secretText);
+    });
   });
 
   describe('delete()', () => {
