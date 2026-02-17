@@ -17,7 +17,7 @@ import {
   createJsonRpcSubscriptionRequest,
   JsonRpcErrorCodes,
 } from '../src/lib/json-rpc.js';
-import { createRecordsWriteMessage, sendHttpMessage, sendWsMessage } from './utils.js';
+import { createRecordsWriteMessage, sendHttpMessage, sendWsMessage, waitUntil } from './utils.js';
 
 
 describe('websocket api', function () {
@@ -155,7 +155,7 @@ describe('websocket api', function () {
     });
     expect(writeResult2.status.code).to.equal(202);
 
-    await new Promise(resolve => setTimeout(resolve, 5)); // wait for records to be processed
+    await waitUntil(() => records.length >= 2);
 
     // close the subscription
     await close();
@@ -214,7 +214,7 @@ describe('websocket api', function () {
     expect(writeResult1.status.code).to.equal(202);
 
     // wait for the subscription event to arrive via WebSocket before closing
-    await new Promise(resolve => setTimeout(resolve, 10));
+    await waitUntil(() => records.length >= 1);
 
     // close the subscription after only 1 message
     await close();
@@ -326,7 +326,7 @@ describe('websocket api', function () {
     });
     expect(writeResult2.status.code).to.equal(202);
 
-    await new Promise(resolve => setTimeout(resolve, 5)); // wait for records to be processed
+    await waitUntil(() => records.length >= 2);
 
     // close the subscription
     await close();
@@ -403,7 +403,7 @@ describe('websocket api', function () {
     });
     expect(updateResult.status.code).to.equal(202);
 
-    await new Promise(resolve => setTimeout(resolve, 5)); // wait for records to be processed
+    await waitUntil(() => records.length >= 2);
 
     // close the subscription
     await close();
