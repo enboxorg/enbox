@@ -1,7 +1,9 @@
 import type { Jwk } from '@enbox/crypto';
 
-import { Convert } from '@enbox/common';
+import { Convert, Stream } from '@enbox/common';
 import { isPrivateJwk, KEY_URI_PREFIX_JWK } from '@enbox/crypto';
+
+import type { RecordsReadReply } from '@enbox/dwn-sdk-js';
 
 import type { Web5PlatformAgent } from './types/agent.js';
 
@@ -15,6 +17,14 @@ export class DwnKeyStore extends DwnDataStore<Jwk> implements AgentDataStore<Jwk
   protected name = 'DwnKeyStore';
 
   protected _recordProtocolDefinition = JwkProtocolDefinition;
+
+  /**
+   * Private keys should be encrypted at the DWN record level using the tenant's
+   * ProtocolPath-derived encryption key (from the agent DID's #enc key).
+   * Encryption is activated at runtime if the tenant DID has a secp256k1
+   * keyAgreement key; otherwise records are stored in plaintext.
+   */
+  protected _encryptionDesired = true;
 
   /**
    * Properties to use when writing and querying Private Key records with the DWN store.
@@ -54,20 +64,40 @@ export class DwnKeyStore extends DwnDataStore<Jwk> implements AgentDataStore<Jwk
       author        : tenantDid,
       target        : tenantDid,
       messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: { ...this._recordProperties } }
+      messageParams : { filter: { ...this._recordProperties } },
     });
 
     // Loop through all of the stored Jwk records and accumulate the objects.
+    // Encrypted records require individual RecordsRead with decryption since
+    // query results contain ciphertext in `encodedData`.
     const storedKeys: Jwk[] = [];
     for (const record of queryReply.entries ?? []) {
-      // All Jwk records are expected to be small enough such that the data is returned
-      // with the query results. If a record is returned without `encodedData` this is unexpected so
-      // throw an error.
-      if (!record.encodedData) {
-        throw new Error(`${this.name}: Expected 'encodedData' to be present in the DWN query result entry`);
+      let storedKey: Jwk;
+
+      if (record.encryption) {
+        // Encrypted record — read individually with auto-decryption.
+        const { reply: readReply } = await agent.dwn.processRequest({
+          author        : tenantDid,
+          target        : tenantDid,
+          messageType   : DwnInterface.RecordsRead,
+          messageParams : { filter: { recordId: record.recordId } },
+          encryption    : true,
+        });
+
+        const readResult = readReply as RecordsReadReply;
+        if (!readResult.entry?.data) {
+          throw new Error(`${this.name}: Failed to read encrypted key record: ${record.recordId}`);
+        }
+
+        storedKey = await Stream.consumeToJson({ readableStream: readResult.entry.data }) as Jwk;
+      } else {
+        // Unencrypted record (legacy or non-encrypted store) — read inline.
+        if (!record.encodedData) {
+          throw new Error(`${this.name}: Expected 'encodedData' to be present in the DWN query result entry`);
+        }
+        storedKey = Convert.base64Url(record.encodedData).toObject() as Jwk;
       }
 
-      const storedKey = Convert.base64Url(record.encodedData).toObject() as Jwk;
       if (isPrivateJwk(storedKey)) {
         // Update the index with the matching record ID.
         const indexKey = `${tenantDid}${TENANT_SEPARATOR}${KEY_URI_PREFIX_JWK}${storedKey.kid}`;

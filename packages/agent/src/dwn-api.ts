@@ -1063,7 +1063,7 @@ export class AgentDwnApi {
    * @param didUri - The DID URI to create the key deriver for
    * @returns An EncryptionKeyDeriver callback object
    */
-  private async getEncryptionKeyDeriver(
+  public async getEncryptionKeyDeriver(
     didUri: string
   ): Promise<EncryptionKeyDeriver> {
     const { keyId, keyUri } = await this.getEncryptionKeyInfo(didUri);

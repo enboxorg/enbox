@@ -5,10 +5,12 @@ import { Convert, Stream, TtlCache } from '@enbox/common';
 
 import type { DwnMessageParams } from './types/dwn.js';
 import type { Web5PlatformAgent } from './types/agent.js';
-import type { ProtocolDefinition, RecordsReadReplyEntry } from '@enbox/dwn-sdk-js';
+import type { ProtocolDefinition, Protocols, RecordsReadReplyEntry } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
 import { getDataStoreTenant, TENANT_SEPARATOR } from './utils-internal.js';
+
+type ProtocolsType = typeof Protocols;
 
 export type DataStoreTenantParams = {
   agent: Web5PlatformAgent;
@@ -75,6 +77,25 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    * The protocol assigned to this storage instance.
    */
   protected _recordProtocolDefinition!: ProtocolDefinition;
+
+  /**
+   * When true, the store *attempts* DWN record-level encryption using the
+   * tenant's ProtocolPath-derived encryption key. Encryption is only activated
+   * if the tenant DID actually has a secp256k1 keyAgreement key; otherwise
+   * the store operates in plaintext mode for that tenant. This allows the store
+   * to gracefully handle agent DIDs that lack encryption-capable keys (e.g.,
+   * Ed25519-only `did:jwk` in tests).
+   *
+   * Subclasses set this to `true` to opt in (e.g., DwnKeyStore).
+   */
+  protected _encryptionDesired = false;
+
+  /**
+   * Per-tenant encryption resolution cache. Populated during `initialize()`:
+   * `true` if the tenant supports encryption (has secp256k1 keyAgreement),
+   * `false` otherwise.
+   */
+  private _tenantEncryptionActive: TtlCache<string, boolean> = new TtlCache({ ttl: ms('21 days'), max: 1000 });
 
   /**
    * Properties to use when writing and querying records with the DWN store.
@@ -172,13 +193,16 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     // Convert the store object to a byte array, which will be the data payload of the DWN record.
     const dataBytes = Convert.object(data).toUint8Array();
 
-    // Store the record in the DWN.
+    // Store the record in the DWN. If encryption is active for this tenant,
+    // the agent's auto-encryption pipeline handles DEK generation and key wrapping.
+    const encryptionActive = this.isEncryptionActive(tenantDid);
     const { message, reply: { status } } = await agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : { ...this._recordProperties, ...messageParams },
-      dataStream    : new Blob([dataBytes], { type: 'application/json' })
+      dataStream    : new Blob([dataBytes], { type: 'application/json' }),
+      ...(encryptionActive ? { encryption: true } : {}),
     });
 
     // If the write fails, throw an error.
@@ -223,9 +247,24 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     if (entries?.length === 0) {
       // protocol is not installed, install it
       await this.installProtocol(tenantDid, agent);
+    } else if (this._encryptionDesired && !this._tenantEncryptionActive.has(tenantDid)) {
+      // Protocol already installed — determine if it has $encryption keys
+      // by inspecting the installed definition.
+      const definition = entries![0].descriptor?.definition;
+      const firstType = Object.keys(definition?.structure ?? {})[0];
+      const hasEncryption = !!(firstType && definition?.structure[firstType]?.$encryption);
+      this._tenantEncryptionActive.set(tenantDid, hasEncryption);
     }
 
     this._protocolInitializedCache.set(tenantDid, true);
+  }
+
+  /**
+   * Returns `true` if DWN record-level encryption is active for the given tenant.
+   * This is resolved during `initialize()` and cached.
+   */
+  protected isEncryptionActive(tenantDid: string): boolean {
+    return this._tenantEncryptionActive.get(tenantDid) === true;
   }
 
   protected async getAllRecords(_params: {
@@ -249,12 +288,15 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
       // Otherwise, continue to read from the store.
     }
 
-    // Read the record from the store.
+    // Read the record from the store. If encryption is active for this tenant,
+    // the agent's auto-decryption pipeline handles ECIES key unwrapping and AES decryption.
+    const encryptionActive = this.isEncryptionActive(tenantDid);
     const { reply: readReply } = await agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
       messageType   : DwnInterface.RecordsRead,
-      messageParams : { filter: { recordId } }
+      messageParams : { filter: { recordId } },
+      ...(encryptionActive ? { encryption: true } : {}),
     });
 
     if (!readReply.entry?.data) {
@@ -274,15 +316,38 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
 
   /**
    * Install the protocol for the given tenant using a `ProtocolsConfigure` message.
+   * When the store desires encryption AND the tenant has a secp256k1 keyAgreement
+   * key, `$encryption` keys are derived and injected into the protocol definition.
    */
   private async installProtocol(tenant: string, agent: Web5PlatformAgent): Promise<void> {
+    let definition = this._recordProtocolDefinition;
+    let encryptionActive = false;
+
+    if (this._encryptionDesired) {
+      try {
+        // Attempt to derive encryption keys — this will succeed only if the
+        // tenant DID has a secp256k1 keyAgreement key.
+        const keyDeriver = await agent.dwn.getEncryptionKeyDeriver(tenant);
+        const { Protocols } = await import('@enbox/dwn-sdk-js') as { Protocols: ProtocolsType };
+        definition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+          definition, keyDeriver,
+        );
+        encryptionActive = true;
+      } catch {
+        // Tenant DID does not support encryption (e.g., Ed25519-only did:jwk
+        // in tests). Install the protocol without $encryption keys — records
+        // will be stored in plaintext.
+        encryptionActive = false;
+      }
+    }
+
+    this._tenantEncryptionActive.set(tenant, encryptionActive);
+
     const { reply : { status } } = await agent.dwn.processRequest({
       author        : tenant,
       target        : tenant,
       messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : {
-        definition: this._recordProtocolDefinition
-      },
+      messageParams : { definition },
     });
 
     if (status.code !== 202) {

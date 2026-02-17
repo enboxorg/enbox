@@ -762,6 +762,24 @@ export class LocalKeyManager implements AgentKeyManager {
   private async getPrivateKey({ keyUri }: {
     keyUri: KeyIdentifier;
   }): Promise<Jwk> {
+    // First, check the agent DID's own key manager. The agent DID's private keys
+    // (from the vault) are held in-memory by BearerDid.keyManager and are NOT
+    // stored in the DwnKeyStore. Checking here FIRST is critical when the
+    // DwnKeyStore is encrypted: the encryption/decryption key is derived from the
+    // agent DID's secp256k1 key, so looking up that key via the DwnKeyStore would
+    // cause infinite recursion (decrypt → getPrivateKey → DwnKeyStore.get → decrypt…).
+    const agentKeyManager = this.agent?.agentDid?.keyManager;
+    if (agentKeyManager && typeof (agentKeyManager as any).exportKey === 'function') {
+      try {
+        const agentKey = await (agentKeyManager as any).exportKey({ keyUri });
+        if (agentKey && isPrivateJwk(agentKey)) {
+          return agentKey;
+        }
+      } catch {
+        // Key not in agent DID's key manager — continue to key store lookup.
+      }
+    }
+
     // Get the private key from the key store.
     const privateKey = await this._keyStore.get({ id: keyUri, agent: this.agent, useCache: true });
 
