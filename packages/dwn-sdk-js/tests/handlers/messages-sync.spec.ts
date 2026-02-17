@@ -617,35 +617,5 @@ export function testMessagesSyncHandler(): void {
         expect(reply.status.code).to.equal(500);
       });
     });
-
-    describe('error handling', () => {
-      it('returns 500 when stateIndex throws an unexpected error', async () => {
-        const alice = await TestDataGenerator.generateDidKeyPersona();
-
-        const failingStateIndex: StateIndex = {
-          open                   : async (): Promise<void> => {},
-          close                  : async (): Promise<void> => {},
-          clear                  : async (): Promise<void> => {},
-          insert                 : async (): Promise<void> => {},
-          delete                 : async (): Promise<void> => {},
-          getRoot                : async (): Promise<any> => { throw new Error('Unexpected DB failure'); },
-          getProtocolRoot        : async (): Promise<any> => { throw new Error('Unexpected DB failure'); },
-          getSubtreeHash         : async (): Promise<any> => { throw new Error('Unexpected DB failure'); },
-          getProtocolSubtreeHash : async (): Promise<any> => { throw new Error('Unexpected DB failure'); },
-          getLeaves              : async (): Promise<any> => { throw new Error('Unexpected DB failure'); },
-          getProtocolLeaves      : async (): Promise<any> => { throw new Error('Unexpected DB failure'); },
-        };
-
-        const handler = new MessagesSyncHandler(didResolver, messageStore, failingStateIndex);
-
-        const { message } = await MessagesSync.create({
-          signer : Jws.createSigner(alice),
-          action : 'root',
-        });
-
-        const reply = await handler.handle({ tenant: alice.did, message });
-        expect(reply.status.code).to.equal(500);
-      });
-    });
   });
 }
