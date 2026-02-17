@@ -68,9 +68,12 @@ export class StateIndexSql implements StateIndex {
         .addColumn('leafValueCid', 'varchar(60)')
         .execute();
 
-      await this.createIndexes(this.#db, nodesTableName, [
-        ['tenant', 'scope', 'nodeHash'],
-      ]);
+      await this.#db.schema
+        .createIndex('index_stateIndexNodes_tenant_scope_nodeHash')
+        .on(nodesTableName)
+        .columns(['tenant', 'scope', 'nodeHash'])
+        .unique()
+        .execute();
     }
 
     // ─── Create stateIndexRoots table ─────────────────────────────────────
@@ -85,9 +88,12 @@ export class StateIndexSql implements StateIndex {
         .addColumn('rootHash', 'varchar(64)', (col) => col.notNull())
         .execute();
 
-      await this.createIndexes(this.#db, rootsTableName, [
-        ['tenant', 'scope'],
-      ]);
+      await this.#db.schema
+        .createIndex('index_stateIndexRoots_tenant_scope')
+        .on(rootsTableName)
+        .columns(['tenant', 'scope'])
+        .unique()
+        .execute();
     }
 
     // ─── Create stateIndexMeta table ──────────────────────────────────────
@@ -102,9 +108,12 @@ export class StateIndexSql implements StateIndex {
         .addColumn('protocol', 'varchar(200)')
         .execute();
 
-      await this.createIndexes(this.#db, metaTableName, [
-        ['tenant', 'messageCid'],
-      ]);
+      await this.#db.schema
+        .createIndex('index_stateIndexMeta_tenant_messageCid')
+        .on(metaTableName)
+        .columns(['tenant', 'messageCid'])
+        .unique()
+        .execute();
     }
   }
 
@@ -270,20 +279,6 @@ export class StateIndexSql implements StateIndex {
     return smt;
   }
 
-  /**
-   * Creates indexes on the given table.
-   * Follows the same pattern used by MessageStoreSql.
-   */
-  private async createIndexes<T>(database: Kysely<T>, tableName: string, indexes: string[][]): Promise<void> {
-    for (const columnNames of indexes) {
-      const indexName = 'index_' + tableName + '_' + columnNames.join('_');
-      await database.schema
-        .createIndex(indexName)
-        .on(tableName)
-        .columns(columnNames)
-        .execute();
-    }
-  }
 }
 
 

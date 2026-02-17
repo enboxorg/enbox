@@ -81,22 +81,24 @@ export class MessageStoreSql implements MessageStore {
       createMessagesTable = this.#dialect.addBlobColumn(createMessagesTable, 'encodedMessageBytes', (col) => col.notNull());
       await createMessagesTable.execute();
 
+      // add unique index for get() and delete() by messageCid — the most fundamental lookup path
+      await this.#db.schema
+        .createIndex('index_tenant_messageCid')
+        .on(messagesTableName)
+        .columns(['tenant', 'messageCid'])
+        .unique()
+        .execute();
+
       // add indexes to the table
       await this.createIndexes(this.#db, messagesTableName, [
-        ['tenant'], // baseline protection to prevent full table scans across all tenants
         ['tenant', 'recordId'], // multiple uses, notably heavily depended by record chain construction for protocol authorization
+        ['tenant', 'entryId'], // used by fetchInitialRecordsWriteMessage in RecordsRead, RecordsQuery, and RecordsDelete
         ['tenant', 'parentId'], // used to walk down hierarchy of records, use cases include purging of records
-        ['tenant', 'protocol', 'published', 'messageTimestamp'], // index used for basically every external query.
+        ['tenant', 'protocol', 'published', 'messageTimestamp'], // index used for basically every external query
         ['tenant', 'interface'], // mainly for fast fetch of ProtocolsConfigure for authorization, not needed if protocol was a DWN Record
         ['tenant', 'permissionGrantId'], // for deleting grant-authorized messages though pending https://github.com/enboxorg/enbox/issues/716
-        // other potential indexes
-        // ['tenant', 'author'],
-        // ['tenant', 'recipient'],
-        // ['tenant', 'schema', 'dataFormat'],
-        // ['tenant', 'dateCreated'],
-        // ['tenant', 'datePublished'],
-        // ['tenant', 'messageCid'],
-        // ['tenant', 'protocolPath'],
+        ['tenant', 'dateCreated'], // sort optimization for RecordsQuery with DateSort.CreatedAscending/Descending
+        ['tenant', 'datePublished'], // sort optimization for RecordsQuery with DateSort.PublishedAscending/Descending
       ]);
 
       // contextId index created separately because MySQL requires a prefix length to fit within
