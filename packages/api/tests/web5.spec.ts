@@ -437,7 +437,7 @@ describe('web5 api', () => {
 
         // stub the walletInit method
         sinon.stub(WalletConnect, 'initClient').resolves({
-          delegateGrants      : [ writeGrant.message, readGrant.message, messagesQueryGrant.message, messagesReadGrant.message ],
+          delegateGrants      : [ writeGrant.message, readGrant.message, messagesSyncGrant.message, messagesReadGrant.message ],
           delegatePortableDid : await app.export(),
           connectedDid        : alice.did.uri
         });
