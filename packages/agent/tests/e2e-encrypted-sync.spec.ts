@@ -1,0 +1,618 @@
+import type { BearerIdentity } from '../src/bearer-identity.js';
+import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+
+import { DataStream } from '@enbox/dwn-sdk-js';
+import { expect } from 'chai';
+
+import { AgentSyncApi } from '../src/sync-api.js';
+import { DwnInterface } from '../src/types/dwn.js';
+import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { SyncEngineLevel } from '../src/sync-engine-level.js';
+import { TestAgent } from './utils/test-agent.js';
+import { testDwnUrl } from './utils/test-config.js';
+import { Web5UserAgent } from '../src/web5-user-agent.js';
+import { JwkProtocolDefinition, KeyDeliveryProtocolDefinition } from '../src/store-data-protocols.js';
+
+const testDwnUrls: string[] = [testDwnUrl];
+
+/**
+ * End-to-end tests for encrypted data through sync, agent lifecycle with
+ * encrypted stores, and multi-party encrypted protocols with key delivery.
+ *
+ * These tests require:
+ * - A Pkarr gateway (for did:dht publishing via createIdentity)
+ * - A remote DWN server at localhost:3000 (for sync and sendRequest)
+ *
+ * They will fail locally without these services (~66 DHT-dependent tests also
+ * fail locally). CI has both services configured.
+ */
+
+// -------------------------------------------------------------------
+// Test 1: Encrypted data survives sync round-trip
+// -------------------------------------------------------------------
+describe('e2e: encrypted data survives sync round-trip', function () {
+  this.timeout(30_000);
+
+  let testHarness: PlatformAgentTestHarness;
+  let syncEngine: SyncEngineLevel;
+  let alice: BearerIdentity;
+
+  // A protocol with encryptionRequired for end-to-end encrypted records.
+  const encryptedNoteProtocol: ProtocolDefinition = {
+    published : true,
+    protocol  : 'https://protocol.xyz/encrypted-notes',
+    types     : {
+      note: {
+        schema             : 'https://schemas.xyz/note',
+        dataFormats        : ['text/plain'],
+        encryptionRequired : true,
+      },
+    },
+    structure: {
+      note: {},
+    },
+  };
+
+  before(async () => {
+    testHarness = await PlatformAgentTestHarness.setup({
+      agentClass       : TestAgent,
+      agentStores      : 'dwn',
+      testDataLocation : '__TESTDATA__/e2e-encrypted-sync',
+    });
+
+    await testHarness.clearStorage();
+    await testHarness.createAgentDid();
+
+    // Wire up a fresh sync engine.
+    const syncStore = testHarness.syncStore;
+    syncEngine = new SyncEngineLevel({ db: syncStore, agent: testHarness.agent });
+    const syncApi = new AgentSyncApi({ syncEngine, agent: testHarness.agent });
+    testHarness.agent.sync = syncApi;
+
+    alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
+  });
+
+  after(async () => {
+    await testHarness.clearStorage();
+    await testHarness.closeStorage();
+  });
+
+  it('should install the encrypted protocol locally with $encryption keys', async () => {
+    // Configure the protocol locally with encryption enabled.
+    const { reply } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: encryptedNoteProtocol },
+      encryption    : true,
+    });
+    expect(reply.status.code).to.equal(202);
+
+    // Verify $encryption was injected.
+    const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.ProtocolsQuery,
+      messageParams : { filter: { protocol: encryptedNoteProtocol.protocol } },
+    });
+    expect(queryReply.entries).to.have.length(1);
+    const noteRuleSet = queryReply.entries![0].descriptor.definition.structure.note;
+    expect(noteRuleSet).to.have.property('$encryption');
+  });
+
+  it('should write encrypted records locally', async () => {
+    const notes = ['Secret note 1', 'Secret note 2', 'Secret note 3'];
+
+    for (const text of notes) {
+      const { reply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : encryptedNoteProtocol.protocol,
+          protocolPath : 'note',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/note',
+        },
+        dataStream : new Blob([new TextEncoder().encode(text)]),
+        encryption : true,
+      });
+      expect(reply.status.code).to.equal(202);
+    }
+
+    // Verify records exist locally with encryption metadata.
+    const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          protocol     : encryptedNoteProtocol.protocol,
+          protocolPath : 'note',
+        }
+      },
+    });
+    expect(queryReply.entries).to.have.length(3);
+    for (const entry of queryReply.entries!) {
+      expect(entry.encryption).to.exist;
+      expect(entry.encryption!.algorithm).to.equal('A256CTR');
+    }
+  });
+
+  it('should push encrypted records to the remote DWN', async () => {
+    // Register identity and push to remote.
+    await testHarness.agent.sync.registerIdentity({ did: alice.did.uri });
+    await syncEngine.sync('push');
+
+    // Verify records exist on the remote DWN.
+    const { reply: remoteQueryReply } = await testHarness.agent.dwn.sendRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          protocol     : encryptedNoteProtocol.protocol,
+          protocolPath : 'note',
+        }
+      },
+    });
+    expect(remoteQueryReply.status.code).to.equal(200);
+    expect(remoteQueryReply.entries).to.have.length(3);
+
+    // Remote records should also have encryption metadata.
+    for (const entry of remoteQueryReply.entries!) {
+      expect(entry.encryption).to.exist;
+      expect(entry.encryption!.algorithm).to.equal('A256CTR');
+    }
+  });
+
+  it('should clear local DWN data and pull back encrypted records', async () => {
+    // Clear local DWN stores (simulating a fresh device), but keep the agent
+    // DID and sync registration intact.
+    await testHarness.dwnDataStore.clear();
+    await testHarness.dwnStateIndex.clear();
+    await testHarness.dwnMessageStore.clear();
+    await testHarness.dwnResumableTaskStore.clear();
+    testHarness.dwnStores.clear();
+
+    // Verify local is now empty.
+    const { reply: localBefore } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          protocol     : encryptedNoteProtocol.protocol,
+          protocolPath : 'note',
+        }
+      },
+    });
+    expect(localBefore.entries).to.have.length(0);
+
+    // Pull from remote.
+    await syncEngine.sync('pull');
+
+    // Verify the encrypted records were pulled back.
+    const { reply: localAfter } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          protocol     : encryptedNoteProtocol.protocol,
+          protocolPath : 'note',
+        }
+      },
+    });
+    expect(localAfter.entries).to.have.length(3);
+    for (const entry of localAfter.entries!) {
+      expect(entry.encryption).to.exist;
+    }
+  });
+
+  it('should decrypt pulled records with the original encryption key', async () => {
+    // Read each record individually with auto-decryption.
+    const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          protocol     : encryptedNoteProtocol.protocol,
+          protocolPath : 'note',
+        }
+      },
+    });
+
+    const decryptedTexts: string[] = [];
+    for (const entry of queryReply.entries!) {
+      const { reply: readReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : { filter: { recordId: entry.recordId } },
+        encryption    : true,
+      });
+      const bytes = await DataStream.toBytes(readReply.entry!.data!);
+      decryptedTexts.push(new TextDecoder().decode(bytes));
+    }
+
+    expect(decryptedTexts).to.have.members([
+      'Secret note 1',
+      'Secret note 2',
+      'Secret note 3',
+    ]);
+  });
+});
+
+// -------------------------------------------------------------------
+// Test 2: Agent lifecycle with encrypted stores
+// -------------------------------------------------------------------
+describe('e2e: agent lifecycle with encrypted stores', function () {
+  this.timeout(30_000);
+
+  const testDataLocation = '__TESTDATA__/e2e-agent-lifecycle';
+  const password = 'lifecycle-test-password';
+
+  let recoveryPhrase: string;
+  let agentDidUri: string;
+  let generatedKeyUri: string;
+  let identityDidUri: string;
+
+  after(async function () {
+    try {
+      const cleanup = await PlatformAgentTestHarness.setup({
+        agentClass  : TestAgent,
+        agentStores : 'dwn',
+        testDataLocation,
+      });
+      await cleanup.clearStorage();
+      await cleanup.closeStorage();
+    } catch {
+      // Non-fatal cleanup failure.
+    }
+  });
+
+  describe('Phase 1: initialize and populate', () => {
+    let harness: PlatformAgentTestHarness;
+
+    it('should initialize the agent with a vault and encrypted key store', async () => {
+      harness = await PlatformAgentTestHarness.setup({
+        agentClass  : Web5UserAgent,
+        agentStores : 'dwn',
+        testDataLocation,
+      });
+
+      recoveryPhrase = await (harness.agent as Web5UserAgent).initialize({ password });
+      expect(recoveryPhrase.split(' ')).to.have.length(12);
+
+      await (harness.agent as Web5UserAgent).start({ password });
+      agentDidUri = harness.agent.agentDid.uri;
+      expect(agentDidUri).to.match(/^did:dht:/);
+    });
+
+    it('should generate an encrypted private key', async () => {
+      generatedKeyUri = await harness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
+      const key = await harness.agent.keyManager.exportKey({ keyUri: generatedKeyUri });
+      expect(key).to.have.property('d');
+
+      // Verify the key record is encrypted in the DWN.
+      const { reply } = await harness.agent.dwn.processRequest({
+        author        : agentDidUri,
+        target        : agentDidUri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            protocol     : JwkProtocolDefinition.protocol,
+            protocolPath : 'privateJwk',
+          }
+        },
+      });
+      expect(reply.entries).to.have.length(1);
+      expect(reply.entries![0].encryption).to.exist;
+    });
+
+    it('should create an identity', async () => {
+      const identity = await harness.agent.identity.create({
+        didMethod : 'jwk',
+        metadata  : { name: 'Lifecycle Test Identity' },
+      });
+      identityDidUri = identity.did.uri;
+      expect(identityDidUri).to.match(/^did:jwk:/);
+
+      // Verify identity is listed.
+      const identities = await harness.agent.identity.list();
+      expect(identities).to.have.length(1);
+      expect(identities[0].did.uri).to.equal(identityDidUri);
+    });
+
+    it('should close the agent', async () => {
+      await harness.closeStorage();
+    });
+  });
+
+  describe('Phase 2: restart and verify all data intact', () => {
+    let harness: PlatformAgentTestHarness;
+
+    it('should restart the agent with the same password', async () => {
+      harness = await PlatformAgentTestHarness.setup({
+        agentClass  : Web5UserAgent,
+        agentStores : 'dwn',
+        testDataLocation,
+      });
+
+      // The vault is already initialized — just start with the password.
+      await (harness.agent as Web5UserAgent).start({ password });
+      expect(harness.agent.agentDid.uri).to.equal(agentDidUri);
+    });
+
+    it('should read back the encrypted private key', async () => {
+      const key = await harness.agent.keyManager.exportKey({ keyUri: generatedKeyUri });
+      expect(key).to.exist;
+      expect(key).to.have.property('d');
+      expect(key.crv).to.equal('Ed25519');
+    });
+
+    it('should list the identity created in Phase 1', async () => {
+      const identities = await harness.agent.identity.list();
+      expect(identities).to.have.length(1);
+      expect(identities[0].did.uri).to.equal(identityDidUri);
+      expect(identities[0].metadata.name).to.equal('Lifecycle Test Identity');
+    });
+
+    it('should generate new keys proving the agent is fully operational', async () => {
+      const newKeyUri = await harness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
+      const newKey = await harness.agent.keyManager.exportKey({ keyUri: newKeyUri });
+      expect(newKey).to.have.property('d');
+      expect(newKey.crv).to.equal('secp256k1');
+    });
+
+    it('should clean up', async () => {
+      await harness.clearStorage();
+      await harness.closeStorage();
+    });
+  });
+});
+
+// -------------------------------------------------------------------
+// Test 3: Multi-party encrypted thread with key delivery
+// -------------------------------------------------------------------
+describe('e2e: multi-party encrypted thread with key delivery', function () {
+  this.timeout(30_000);
+
+  let testHarness: PlatformAgentTestHarness;
+  let alice: BearerIdentity;
+  let bob: BearerIdentity;
+
+  // Multi-party chat protocol with $role participants and encrypted data.
+  const chatProtocol: ProtocolDefinition = {
+    published : true,
+    protocol  : 'https://protocol.xyz/e2e-chat',
+    types     : {
+      thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'] },
+      participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'] },
+      chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'] },
+    },
+    structure: {
+      thread: {
+        participant : { $role: true },
+        chat        : {
+          $actions: [
+            { role: 'thread/participant', can: ['create', 'read', 'query', 'subscribe'] },
+          ],
+        },
+      },
+    },
+  };
+
+  before(async () => {
+    testHarness = await PlatformAgentTestHarness.setup({
+      agentClass       : TestAgent,
+      agentStores      : 'dwn',
+      testDataLocation : '__TESTDATA__/e2e-multiparty-chat',
+    });
+  });
+
+  beforeEach(async () => {
+    await testHarness.clearStorage();
+    await testHarness.createAgentDid();
+    alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
+    bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
+  });
+
+  after(async () => {
+    await testHarness.clearStorage();
+    await testHarness.closeStorage();
+  });
+
+  it('should install the chat protocol with encryption for Alice', async () => {
+    const { reply } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: chatProtocol },
+      encryption    : true,
+    });
+    expect(reply.status.code).to.equal(202);
+  });
+
+  it('should let Alice create an encrypted thread and chat message', async () => {
+    // Install protocol first.
+    await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: chatProtocol },
+      encryption    : true,
+    });
+
+    // Alice creates a thread (root record).
+    const { message: threadMsg } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : chatProtocol.protocol,
+        protocolPath : 'thread',
+        dataFormat   : 'application/json',
+        schema       : 'https://schemas.xyz/thread',
+      },
+      dataStream : new Blob([new TextEncoder().encode('{"title":"Secret Chat"}')]),
+      encryption : true,
+    });
+    expect(threadMsg).to.exist;
+    const threadContextId = (threadMsg as RecordsWriteMessage).contextId!;
+
+    // Alice writes an encrypted chat message in the thread.
+    const chatText = 'Hello Bob, this is encrypted!';
+    const { reply: chatReply } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol        : chatProtocol.protocol,
+        protocolPath    : 'thread/chat',
+        parentContextId : threadContextId,
+        dataFormat      : 'text/plain',
+        schema          : 'https://schemas.xyz/chat',
+      },
+      dataStream : new Blob([new TextEncoder().encode(chatText)]),
+      encryption : true,
+    });
+    expect(chatReply.status.code).to.equal(202);
+
+    // Alice can read her own encrypted message back.
+    const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread/chat',
+        }
+      },
+    });
+    expect(queryReply.entries).to.have.length(1);
+    expect(queryReply.entries![0].encryption).to.exist;
+  });
+
+  it('should auto-deliver context key to Bob when added as participant', async () => {
+    // Full setup: install protocol, create thread, write chat, add Bob.
+    await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: chatProtocol },
+      encryption    : true,
+    });
+
+    const { message: threadMsg } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : chatProtocol.protocol,
+        protocolPath : 'thread',
+        dataFormat   : 'application/json',
+        schema       : 'https://schemas.xyz/thread',
+      },
+      dataStream : new Blob([new TextEncoder().encode('{"title":"Thread for Bob"}')]),
+      encryption : true,
+    });
+    const threadContextId = (threadMsg as RecordsWriteMessage).contextId!;
+
+    const chatText = 'Top secret message for Bob';
+    const { message: chatMsg } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol        : chatProtocol.protocol,
+        protocolPath    : 'thread/chat',
+        parentContextId : threadContextId,
+        dataFormat      : 'text/plain',
+        schema          : 'https://schemas.xyz/chat',
+      },
+      dataStream : new Blob([new TextEncoder().encode(chatText)]),
+      encryption : true,
+    });
+    const chatRecordId = (chatMsg as RecordsWriteMessage).recordId;
+
+    // Add Bob as a participant — this auto-triggers context key delivery.
+    const { reply: participantReply } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol        : chatProtocol.protocol,
+        protocolPath    : 'thread/participant',
+        parentContextId : threadContextId,
+        dataFormat      : 'application/json',
+        schema          : 'https://schemas.xyz/participant',
+        recipient       : bob.did.uri,
+      },
+      dataStream : new Blob([new TextEncoder().encode('{"name":"Bob"}')]),
+      encryption : true,
+    });
+    expect(participantReply.status.code).to.equal(202);
+
+    // Verify a contextKey record was written for Bob on Alice's DWN.
+    const { reply: ckQuery } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          protocol     : KeyDeliveryProtocolDefinition.protocol,
+          protocolPath : 'contextKey',
+          recipient    : bob.did.uri,
+        }
+      },
+    });
+    expect(ckQuery.entries).to.have.length(1);
+    expect(ckQuery.entries![0].encryption).to.exist;
+
+    // Decrypt the context key to get the DerivedPrivateJwk.
+    const ckRecordId = ckQuery.entries![0].recordId;
+    const { reply: ckRead } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId: ckRecordId } },
+      encryption    : true,
+    });
+    const ckBytes = await DataStream.toBytes(ckRead.entry!.data!);
+    const contextKeyPayload = JSON.parse(new TextDecoder().decode(ckBytes));
+    expect(contextKeyPayload).to.have.property('rootKeyId');
+    expect(contextKeyPayload).to.have.property('derivationScheme');
+    expect(contextKeyPayload).to.have.property('derivedPrivateKey');
+
+    // Simulate sync: write the context key to Bob's local DWN.
+    await testHarness.agent.dwn.ensureKeyDeliveryProtocol(bob.did.uri);
+    await testHarness.agent.dwn.writeContextKeyRecord({
+      tenantDid       : bob.did.uri,
+      recipientDid    : bob.did.uri,
+      contextKeyData  : contextKeyPayload,
+      sourceProtocol  : chatProtocol.protocol,
+      sourceContextId : threadContextId.split('/')[0],
+    });
+
+    // Bob reads Alice's encrypted chat using his role authorization.
+    const { reply: bobReadReply } = await testHarness.agent.dwn.processRequest({
+      author        : bob.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : {
+        filter       : { recordId: chatRecordId },
+        protocolRole : 'thread/participant',
+      },
+      encryption: true,
+    });
+    expect(bobReadReply.status.code).to.equal(200);
+
+    const decryptedBytes = await DataStream.toBytes(bobReadReply.entry!.data!);
+    const decryptedText = new TextDecoder().decode(decryptedBytes);
+    expect(decryptedText).to.equal(chatText);
+  });
+});
