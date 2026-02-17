@@ -23,6 +23,46 @@ describe('Messages Utils', () => {
     sinon.restore();
   });
 
+  describe('normalizeFilters', () => {
+    it('normalizes protocol URLs in filters', () => {
+      const filters: MessagesFilter[] = [
+        { protocol: 'http://example.com/protocol/' },
+      ];
+      const result = Messages.normalizeFilters(filters);
+      expect(result).to.have.length(1);
+      expect(result[0].protocol).to.equal('http://example.com/protocol');
+    });
+
+    it('removes undefined properties from filters', () => {
+      const filters: MessagesFilter[] = [
+        { interface: DwnInterfaceName.Records, protocol: undefined },
+      ];
+      const result = Messages.normalizeFilters(filters);
+      expect(result).to.have.length(1);
+      expect(result[0]).to.not.have.property('protocol');
+      expect(result[0].interface).to.equal(DwnInterfaceName.Records);
+    });
+
+    it('excludes filters that become empty after removing undefined properties', () => {
+      const filters: MessagesFilter[] = [
+        { protocol: undefined } as any,
+      ];
+      const result = Messages.normalizeFilters(filters);
+      expect(result).to.have.length(0);
+    });
+
+    it('returns multiple normalized filters', () => {
+      const filters: MessagesFilter[] = [
+        { protocol: 'http://example.com/a/' },
+        { interface: DwnInterfaceName.Records, method: DwnMethodName.Write },
+      ];
+      const result = Messages.normalizeFilters(filters);
+      expect(result).to.have.length(2);
+      expect(result[0].protocol).to.equal('http://example.com/a');
+      expect(result[1].interface).to.equal(DwnInterfaceName.Records);
+    });
+  });
+
   describe('constructPermissionRecordsFilter', () => {
     it('does not apply any tag filters to non-protocol-filtered messages', async () => {
       const messagesFilter: MessagesFilter = {

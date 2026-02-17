@@ -21,6 +21,11 @@ describe('BlockstoreMock', () => {
     blockstore = new BlockstoreMock();
   });
 
+  it('should implement open and close methods', async () => {
+    await expect(blockstore.open()).to.be.fulfilled;
+    await expect(blockstore.close()).to.be.fulfilled;
+  });
+
   it('should facilitate the same CID computation as other implementations', async () => {
 
     let dataSizeInBytes = 10;

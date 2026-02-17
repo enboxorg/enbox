@@ -578,6 +578,43 @@ describe('SparseMerkleTree', () => {
       // With two elements, there should be at least one sibling hash
       expect(proof.siblings.length).to.be.greaterThan(0);
     });
+
+    it('should return empty proof when store node is missing (corrupted store)', async () => {
+      // Test lines 503-505 of sparse-merkle-tree.ts: getNode returns undefined
+      const realStore = new SMTStoreMemory();
+      let corruptDuringProof = false;
+
+      const corruptStore: SMTNodeStore = {
+        open       : (): Promise<void> => realStore.open(),
+        close      : (): Promise<void> => realStore.close(),
+        clear      : (): Promise<void> => realStore.clear(),
+        getRoot    : (): Promise<Hash | undefined> => realStore.getRoot(),
+        setRoot    : (hash: Hash): Promise<void> => realStore.setRoot(hash),
+        putNode    : (hash: Hash, node: any): Promise<void> => realStore.putNode(hash, node),
+        deleteNode : (hash: Hash): Promise<void> => realStore.deleteNode(hash),
+        getNode    : async (hash: Hash): Promise<any> => {
+          if (corruptDuringProof) {
+            return undefined;
+          }
+          return realStore.getNode(hash);
+        },
+      };
+
+      const corruptSmt = new SparseMerkleTree(corruptStore);
+      await corruptSmt.initialize();
+      await corruptSmt.insert('bafyreiProofCorrupt');
+
+      // Now corrupt the store so getNode returns undefined during proof generation
+      corruptDuringProof = true;
+      const proof = await corruptSmt.getProof('bafyreiProofCorrupt');
+
+      // Should return a proof without a leaf node since the node is missing
+      expect(proof.leafNode).to.be.undefined;
+      expect(proof.siblings).to.have.length(0);
+
+      corruptDuringProof = false;
+      await corruptSmt.close();
+    });
   });
 
   describe('diff edge cases', () => {

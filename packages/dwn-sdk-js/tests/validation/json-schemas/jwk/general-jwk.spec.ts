@@ -1,3 +1,4 @@
+import { DwnErrorCode } from '../../../../src/core/dwn-error.js';
 import { expect } from 'chai';
 import { signatureAlgorithms } from '../../../../src/jose/algorithms/signing/signature-algorithms.js';
 import { validateJsonSchema } from '../../../../src/schema-validator.js';
@@ -44,5 +45,16 @@ describe('GeneralJwk Schema', async () => {
         () => validateJsonSchema('GeneralJwk', jwk.privateJwk)
       ).to.not.throw();
     });
+  });
+});
+
+describe('validateJsonSchema', () => {
+  it('should throw SchemaValidatorSchemaNotFound for non-existent schema', () => {
+    try {
+      validateJsonSchema('NonExistentSchema', {});
+      expect.fail('Expected an error');
+    } catch (e: any) {
+      expect(e.code).to.equal(DwnErrorCode.SchemaValidatorSchemaNotFound);
+    }
   });
 });
