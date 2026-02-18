@@ -11,7 +11,7 @@ This package provides tools and utilities for creating, resolving, and managing 
 ## Installation
 
 ```bash
-npm install @enbox/dids
+bun add @enbox/dids
 ```
 
 ## Usage
