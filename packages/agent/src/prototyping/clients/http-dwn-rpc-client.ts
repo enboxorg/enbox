@@ -3,6 +3,7 @@ import type { DwnRpc, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
 import type { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
 
 import { CryptoUtils } from '@enbox/crypto';
+import { DataStream } from '@enbox/dwn-sdk-js';
 import { DwnServerInfoCacheMemory } from './dwn-server-info-cache-memory.js';
 import { createJsonRpcRequest, parseJson } from './json-rpc.js';
 
@@ -64,13 +65,19 @@ export class HttpDwnRpcClient implements DwnRpc {
       throw new Error(`(${code}) - ${message}`);
     }
 
-    // Attach the response body stream directly — no buffering needed.
+    // Materialise the response body before attaching to the reply.
+    // Bun (<=1.3.9) has a bug where resp.body.getReader() can intermittently
+    // return undefined, crashing DataStream.toBytes() in its finally block.
+    // Buffering via arrayBuffer() is a safe workaround.
+    // TODO: https://github.com/enboxorg/enbox/issues/90 — remove once Bun ships fix
     const { reply } = dwnRpcResponse.result;
-    if (hasDataStream && resp.body) {
+    if (hasDataStream) {
+      const bodyBytes = new Uint8Array(await resp.arrayBuffer());
+      const dataStream = DataStream.fromBytes(bodyBytes);
       if (reply.record) {
-        reply.record.data = resp.body;
+        reply.record.data = dataStream;
       } else if (reply.entry) {
-        reply.entry.data = resp.body;
+        reply.entry.data = dataStream;
       }
     }
 
