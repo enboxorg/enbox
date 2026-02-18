@@ -62,7 +62,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     // write the incoming message to DB if incoming message is newest
     let messageReply: GenericMessageReply;
     if (incomingMessageIsNewest) {
-      const indexes = ProtocolsConfigureHandler.constructIndexes(protocolsConfigure);
+      const indexes = ProtocolsConfigureHandler.constructIndexes(protocolsConfigure, true);
 
       await this.messageStore.put(tenant, message, indexes);
       const messageCid = await Message.getCid(message);
@@ -77,28 +77,35 @@ export class ProtocolsConfigureHandler implements MethodHandler {
         status: { code: 202, detail: 'Accepted' }
       };
     } else {
+      // incoming message is older — still store it as a historical version (not the latest)
+      const indexes = ProtocolsConfigureHandler.constructIndexes(protocolsConfigure, false);
+
+      await this.messageStore.put(tenant, message, indexes);
+      const messageCid = await Message.getCid(message);
+      await this.stateIndex.insert(tenant, messageCid, indexes);
+
       messageReply = {
-        status: { code: 409, detail: 'Conflict' }
+        status: { code: 202, detail: 'Accepted' }
       };
     }
 
-    // delete all existing records that are smaller
-    const deletedMessageCids: string[] = [];
-    for (const message of existingMessages) {
-      if (await Message.isNewer(newestMessage, message)) {
-        const messageCid = await Message.getCid(message);
-        deletedMessageCids.push(messageCid);
+    // re-index previously-latest messages as no longer the latest base state.
+    // We must delete and re-put (not just put) to properly replace old index entries.
+    for (const existingMessage of existingMessages) {
+      if (existingMessage !== newestMessage) {
+        const existingProtocolsConfigure = await ProtocolsConfigure.parse(existingMessage as ProtocolsConfigureMessage);
+        const updatedIndexes = ProtocolsConfigureHandler.constructIndexes(existingProtocolsConfigure, false);
+        const existingCid = await Message.getCid(existingMessage);
 
-        await this.messageStore.delete(tenant, messageCid);
+        await this.messageStore.delete(tenant, existingCid);
+        await this.messageStore.put(tenant, existingMessage, updatedIndexes);
       }
     }
-
-    await this.stateIndex.delete(tenant, deletedMessageCids);
 
     return messageReply;
   };
 
-  static constructIndexes(protocolsConfigure: ProtocolsConfigure): { [key: string]: string | boolean } {
+  static constructIndexes(protocolsConfigure: ProtocolsConfigure, isLatestBaseState: boolean): { [key: string]: string | boolean } {
     // strip out `definition` as it is not indexable
     const { definition, ...propertiesToIndex } = protocolsConfigure.message.descriptor;
     const { author } = protocolsConfigure;
@@ -107,7 +114,8 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       ...propertiesToIndex,
       author    : author!,
       protocol  : definition.protocol, // retain protocol url from `definition`,
-      published : definition.published // retain published state from definition
+      published : definition.published, // retain published state from definition
+      isLatestBaseState,
     };
 
     return indexes;

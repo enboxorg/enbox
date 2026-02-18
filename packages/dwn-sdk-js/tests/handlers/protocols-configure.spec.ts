@@ -27,7 +27,7 @@ import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
 
-import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Jws, PermissionGrant, PermissionsProtocol } from '../../src/index.js';
+import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Jws, PermissionGrant, PermissionsProtocol, RecordsDelete, RecordsRead, RecordsWrite } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 chai.use(chaiAsPromised);
@@ -121,7 +121,7 @@ export function testProtocolsConfigureHandler(): void {
         expect(reply.status.detail).to.contain(DwnErrorCode.GeneralJwsVerifierInvalidSignature);
       });
 
-      it('should be able to overwrite existing protocol if timestamp is newer', async () => {
+      it('should store all protocol versions and query should only return the latest', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
         const protocolDefinition = minimalProtocolDefinition;
@@ -140,11 +140,11 @@ export function testProtocolsConfigureHandler(): void {
         const reply1 = await dwn.processMessage(alice.did, middleProtocolsConfigure.message);
         expect(reply1.status.code).to.equal(202);
 
-        // older messages will not overwrite the existing
+        // older messages are also accepted (stored as historical versions)
         const reply2 = await dwn.processMessage(alice.did, oldProtocolsConfigure.message);
-        expect(reply2.status.code).to.equal(409);
+        expect(reply2.status.code).to.equal(202);
 
-        // newer message can overwrite the existing message
+        // newer message is also accepted and becomes the latest
         const newProtocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
           author: alice,
           protocolDefinition,
@@ -152,7 +152,7 @@ export function testProtocolsConfigureHandler(): void {
         const reply3 = await dwn.processMessage(alice.did, newProtocolsConfigure.message);
         expect(reply3.status.code).to.equal(202);
 
-        // only the newest protocol should remain
+        // only the newest protocol should be returned by query (ProtocolsQuery returns only latest)
         const queryMessageData = await TestDataGenerator.generateProtocolsQuery({
           author : alice,
           filter : { protocol: protocolDefinition.protocol }
@@ -163,7 +163,7 @@ export function testProtocolsConfigureHandler(): void {
         expect(queryReply.entries?.length).to.equal(1);
       });
 
-      it('should only be able to overwrite existing protocol if new protocol is lexicographically larger and timestamps are identical', async () => {
+      it('should store all protocol versions with identical timestamps and query should only return the newest (by CID tiebreak)', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
         // Alter each protocol slightly to create lexicographic difference between them
@@ -214,15 +214,15 @@ export function testProtocolsConfigureHandler(): void {
         const reply1 = await dwn.processMessage(alice.did, middleProtocolsConfigure.message);
         expect(reply1.status.code).to.equal(202);
 
-        // test that the protocol with the smallest lexicographic value cannot be written
+        // all versions are accepted (stored as historical versions)
         const reply2 = await dwn.processMessage(alice.did, lowestProtocolsConfigure.message);
-        expect(reply2.status.code).to.equal(409);
+        expect(reply2.status.code).to.equal(202);
 
-        // test that the protocol with the largest lexicographic value can be written
+        // highest lexicographic value is also accepted and becomes the latest
         const reply3 = await dwn.processMessage(alice.did, highestProtocolsConfigure.message);
         expect(reply3.status.code).to.equal(202);
 
-        // test that lower lexicographic protocol message is removed from DB and only the newer protocol message remains
+        // query should only return the latest protocol definition (highest by CID tiebreak)
         const queryMessageData = await TestDataGenerator.generateProtocolsQuery({
           author : alice,
           filter : { protocol: protocolDefinition1.protocol }
@@ -723,7 +723,7 @@ export function testProtocolsConfigureHandler(): void {
           expect(events[0]).to.equal(messageCid);
         });
 
-        it('should delete older ProtocolsConfigure events when one is overwritten', async () => {
+        it('should retain all ProtocolsConfigure events for protocol versioning', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const oldestWrite = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: minimalProtocolDefinition });
           await Time.minimalSleep();
@@ -736,10 +736,436 @@ export function testProtocolsConfigureHandler(): void {
           expect(reply.status.code).to.equal(202);
 
           const events = await stateIndex.getLeaves(alice.did, []);
-          expect(events.length).to.equal(1);
+          expect(events.length).to.equal(2);
 
+          const oldestMessageCid = await Message.getCid(oldestWrite.message);
           const newestMessageCid = await Message.getCid(newestWrite.message);
-          expect(events[0]).to.equal(newestMessageCid);
+          expect(events).to.include(oldestMessageCid);
+          expect(events).to.include(newestMessageCid);
+        });
+      });
+
+      describe('temporal protocol versioning', () => {
+        it('should authorize records created under v1 even after re-configuring to v2 that removes the type', async () => {
+          // scenario:
+          // 1. Alice installs protocol v1 with types `post` and `comment`
+          // 2. Alice writes a `post` record under v1
+          // 3. Alice re-configures the protocol to v2 which removes the `comment` type
+          // 4. Alice should still be able to read the v1 `post` record
+          // 5. Alice should still be able to update the v1 `post` record (governed by v1 definition)
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+
+          // v1: has `post` and `comment` types
+          const protocolUri = 'https://example.com/versioned-protocol';
+          const protocolDefinitionV1: ProtocolDefinition = {
+            protocol  : protocolUri,
+            published : true,
+            types     : {
+              post    : { schema: 'https://example.com/post', dataFormats: ['application/json'] },
+              comment : { schema: 'https://example.com/comment', dataFormats: ['application/json'] },
+            },
+            structure: {
+              post: {
+                $actions : [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read, ProtocolAction.Update] }],
+                comment  : {
+                  $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }],
+                }
+              }
+            }
+          };
+
+          const configureV1 = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : protocolDefinitionV1,
+          });
+          const configureV1Reply = await dwn.processMessage(alice.did, configureV1.message);
+          expect(configureV1Reply.status.code).to.equal(202);
+
+          // write a `post` record under v1
+          const postRecord = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolUri,
+            protocolPath : 'post',
+            schema       : 'https://example.com/post',
+            dataFormat   : 'application/json',
+          });
+          const postReply = await dwn.processMessage(alice.did, postRecord.message, { dataStream: postRecord.dataStream });
+          expect(postReply.status.code).to.equal(202);
+
+          // write a `comment` record under v1
+          const commentRecord = await TestDataGenerator.generateRecordsWrite({
+            author          : alice,
+            protocol        : protocolUri,
+            protocolPath    : 'post/comment',
+            schema          : 'https://example.com/comment',
+            dataFormat      : 'application/json',
+            parentContextId : postRecord.message.contextId,
+          });
+          const commentReply = await dwn.processMessage(alice.did, commentRecord.message, { dataStream: commentRecord.dataStream });
+          expect(commentReply.status.code).to.equal(202);
+
+          await Time.minimalSleep();
+
+          // v2: removes the `comment` type entirely, changes `post` schema
+          const protocolDefinitionV2: ProtocolDefinition = {
+            protocol  : protocolUri,
+            published : true,
+            types     : {
+              post: { schema: 'https://example.com/post-v2', dataFormats: ['application/json'] },
+            },
+            structure: {
+              post: {
+                $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read, ProtocolAction.Update] }],
+              }
+            }
+          };
+
+          const configureV2 = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : protocolDefinitionV2,
+          });
+          const configureV2Reply = await dwn.processMessage(alice.did, configureV2.message);
+          expect(configureV2Reply.status.code).to.equal(202);
+
+          // read the v1 `post` record — should succeed because read authorization uses v1 definition
+          const readPost = await RecordsRead.create({
+            filter : { recordId: postRecord.message.recordId },
+            signer : Jws.createSigner(alice),
+          });
+          const readPostReply = await dwn.processMessage(alice.did, readPost.message);
+          expect(readPostReply.status.code).to.equal(200);
+
+          // read the v1 `comment` record — should succeed (governed by v1 definition where `comment` exists)
+          const readComment = await RecordsRead.create({
+            filter : { recordId: commentRecord.message.recordId },
+            signer : Jws.createSigner(alice),
+          });
+          const readCommentReply = await dwn.processMessage(alice.did, readComment.message);
+          expect(readCommentReply.status.code).to.equal(200);
+
+          // update the v1 `post` record — should succeed (governed by v1 definition)
+          const updatedData = new TextEncoder().encode('{"title":"updated post"}');
+          const updatePost = await RecordsWrite.createFrom({
+            recordsWriteMessage : postRecord.message,
+            data                : updatedData,
+            signer              : Jws.createSigner(alice),
+          });
+          const updatePostReply = await dwn.processMessage(
+            alice.did, updatePost.message, { dataStream: DataStream.fromBytes(updatedData) }
+          );
+          expect(updatePostReply.status.code).to.equal(202);
+        });
+
+        it('should authorize new records against the latest protocol definition, not an older one', async () => {
+          // scenario:
+          // 1. Alice installs protocol v1 with type `post`
+          // 2. Alice re-configures to v2 that changes `post` schema to 'https://example.com/post-v2'
+          // 3. A new record with v1 schema should be rejected (not matching the latest definition)
+          // 4. A new record with v2 schema should be accepted
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolUri = 'https://example.com/versioned-protocol-2';
+          const protocolDefinitionV1: ProtocolDefinition = {
+            protocol  : protocolUri,
+            published : true,
+            types     : {
+              post: { schema: 'https://example.com/post-v1', dataFormats: ['application/json'] },
+            },
+            structure: {
+              post: {
+                $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }],
+              }
+            }
+          };
+
+          const configureV1 = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : protocolDefinitionV1,
+          });
+          const configureV1Reply = await dwn.processMessage(alice.did, configureV1.message);
+          expect(configureV1Reply.status.code).to.equal(202);
+
+          await Time.minimalSleep();
+
+          // v2: changes `post` schema
+          const protocolDefinitionV2: ProtocolDefinition = {
+            protocol  : protocolUri,
+            published : true,
+            types     : {
+              post: { schema: 'https://example.com/post-v2', dataFormats: ['application/json'] },
+            },
+            structure: {
+              post: {
+                $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }],
+              }
+            }
+          };
+
+          const configureV2 = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : protocolDefinitionV2,
+          });
+          const configureV2Reply = await dwn.processMessage(alice.did, configureV2.message);
+          expect(configureV2Reply.status.code).to.equal(202);
+
+          // write a new record with v1 schema — should fail (latest definition requires v2 schema)
+          const postV1 = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolUri,
+            protocolPath : 'post',
+            schema       : 'https://example.com/post-v1',
+            dataFormat   : 'application/json',
+          });
+          const postV1Reply = await dwn.processMessage(alice.did, postV1.message, { dataStream: postV1.dataStream });
+          expect(postV1Reply.status.code).to.equal(400);
+          expect(postV1Reply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationInvalidSchema);
+
+          // write a new record with v2 schema — should succeed
+          const postV2 = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolUri,
+            protocolPath : 'post',
+            schema       : 'https://example.com/post-v2',
+            dataFormat   : 'application/json',
+          });
+          const postV2Reply = await dwn.processMessage(alice.did, postV2.message, { dataStream: postV2.dataStream });
+          expect(postV2Reply.status.code).to.equal(202);
+        });
+
+        it('should authorize deletes of v1 records after re-configuring to v2 that removes the type', async () => {
+          // scenario:
+          // 1. Alice installs protocol v1 with types `post` (with delete action) and `comment`
+          // 2. Alice writes a `post/comment` record
+          // 3. Alice re-configures to v2 which removes the `comment` type
+          // 4. Alice should still be able to delete the v1 `comment` record (governed by v1 definition)
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolUri = 'https://example.com/versioned-protocol-3';
+          const protocolDefinitionV1: ProtocolDefinition = {
+            protocol  : protocolUri,
+            published : true,
+            types     : {
+              post    : {},
+              comment : {},
+            },
+            structure: {
+              post: {
+                $actions : [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }],
+                comment  : {
+                  $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read, ProtocolAction.Delete] }],
+                }
+              }
+            }
+          };
+
+          const configureV1 = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : protocolDefinitionV1,
+          });
+          const configureV1Reply = await dwn.processMessage(alice.did, configureV1.message);
+          expect(configureV1Reply.status.code).to.equal(202);
+
+          // write a `post` record
+          const postRecord = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolUri,
+            protocolPath : 'post',
+          });
+          const postReply = await dwn.processMessage(alice.did, postRecord.message, { dataStream: postRecord.dataStream });
+          expect(postReply.status.code).to.equal(202);
+
+          // write a `comment` record under the post
+          const commentRecord = await TestDataGenerator.generateRecordsWrite({
+            author          : alice,
+            protocol        : protocolUri,
+            protocolPath    : 'post/comment',
+            parentContextId : postRecord.message.contextId,
+          });
+          const commentReply = await dwn.processMessage(alice.did, commentRecord.message, { dataStream: commentRecord.dataStream });
+          expect(commentReply.status.code).to.equal(202);
+
+          await Time.minimalSleep();
+
+          // v2: removes the `comment` type
+          const protocolDefinitionV2: ProtocolDefinition = {
+            protocol  : protocolUri,
+            published : true,
+            types     : {
+              post: {},
+            },
+            structure: {
+              post: {
+                $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }],
+              }
+            }
+          };
+
+          const configureV2 = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : protocolDefinitionV2,
+          });
+          const configureV2Reply = await dwn.processMessage(alice.did, configureV2.message);
+          expect(configureV2Reply.status.code).to.equal(202);
+
+          // delete the v1 `comment` record — should succeed (governed by v1 definition)
+          const deleteComment = await RecordsDelete.create({
+            signer   : Jws.createSigner(alice),
+            recordId : commentRecord.message.recordId,
+          });
+          const deleteReply = await dwn.processMessage(alice.did, deleteComment.message);
+          expect(deleteReply.status.code).to.equal(202);
+        });
+
+        it('should not retroactively apply v2 action rules to records created under v1', async () => {
+          // scenario:
+          // 1. Alice installs protocol v1 where anyone can create and update `post` records
+          // 2. Bob writes a `post` to Alice's DWN
+          // 3. Alice re-configures to v2 that restricts `post` updates to author-only (removes co-update)
+          // 4. Bob should still be able to update his own record (governed by v1 definition which had update)
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolUri = 'https://example.com/versioned-protocol-4';
+          const protocolDefinitionV1: ProtocolDefinition = {
+            protocol  : protocolUri,
+            published : true,
+            types     : {
+              post: {},
+            },
+            structure: {
+              post: {
+                $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read, ProtocolAction.Update] }],
+              }
+            }
+          };
+
+          const configureV1 = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : protocolDefinitionV1,
+          });
+          const configureV1Reply = await dwn.processMessage(alice.did, configureV1.message);
+          expect(configureV1Reply.status.code).to.equal(202);
+
+          // Bob writes a `post` record to Alice's DWN under v1
+          const postRecord = await TestDataGenerator.generateRecordsWrite({
+            author       : bob,
+            protocol     : protocolUri,
+            protocolPath : 'post',
+          });
+          const postReply = await dwn.processMessage(alice.did, postRecord.message, { dataStream: postRecord.dataStream });
+          expect(postReply.status.code).to.equal(202);
+
+          await Time.minimalSleep();
+
+          // v2: restricts actions (only create, no update for anyone)
+          const protocolDefinitionV2: ProtocolDefinition = {
+            protocol  : protocolUri,
+            published : true,
+            types     : {
+              post: {},
+            },
+            structure: {
+              post: {
+                $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }],
+              }
+            }
+          };
+
+          const configureV2 = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : protocolDefinitionV2,
+          });
+          const configureV2Reply = await dwn.processMessage(alice.did, configureV2.message);
+          expect(configureV2Reply.status.code).to.equal(202);
+
+          // Bob updates his v1 record — should succeed because v1 definition (which governs this record) allowed update
+          const updatedData = new TextEncoder().encode('updated-post-data');
+          const updatePost = await RecordsWrite.createFrom({
+            recordsWriteMessage : postRecord.message,
+            data                : updatedData,
+            signer              : Jws.createSigner(bob),
+          });
+          const updateReply = await dwn.processMessage(
+            alice.did, updatePost.message, { dataStream: DataStream.fromBytes(updatedData) }
+          );
+          expect(updateReply.status.code).to.equal(202);
+        });
+
+        it('should handle out-of-order protocol configure processing correctly', async () => {
+          // scenario:
+          // 1. Create v1 and v2 ProtocolsConfigure messages (v2 has a newer timestamp)
+          // 2. Process v2 first, then v1
+          // 3. Both should be stored; query should return only v2 (the latest)
+          // 4. A record written under v2 schema should succeed
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolUri = 'https://example.com/versioned-protocol-5';
+          const protocolDefinitionV1: ProtocolDefinition = {
+            protocol  : protocolUri,
+            published : true,
+            types     : {
+              post: { schema: 'https://example.com/post-v1', dataFormats: ['application/json'] },
+            },
+            structure: {
+              post: {
+                $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }],
+              }
+            }
+          };
+
+          const configureV1 = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : protocolDefinitionV1,
+          });
+
+          await Time.minimalSleep();
+
+          const protocolDefinitionV2: ProtocolDefinition = {
+            protocol  : protocolUri,
+            published : true,
+            types     : {
+              post: { schema: 'https://example.com/post-v2', dataFormats: ['application/json'] },
+            },
+            structure: {
+              post: {
+                $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }],
+              }
+            }
+          };
+
+          const configureV2 = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : protocolDefinitionV2,
+          });
+
+          // process v2 first (out of order)
+          const configureV2Reply = await dwn.processMessage(alice.did, configureV2.message);
+          expect(configureV2Reply.status.code).to.equal(202);
+
+          // process v1 second (older, arrives later)
+          const configureV1Reply = await dwn.processMessage(alice.did, configureV1.message);
+          expect(configureV1Reply.status.code).to.equal(202);
+
+          // query should return only v2 (the latest)
+          const queryMessageData = await TestDataGenerator.generateProtocolsQuery({
+            author : alice,
+            filter : { protocol: protocolUri }
+          });
+          const queryReply = await dwn.processMessage(alice.did, queryMessageData.message);
+          expect(queryReply.status.code).to.equal(200);
+          expect(queryReply.entries?.length).to.equal(1);
+          expect(queryReply.entries![0].descriptor.definition.types.post.schema).to.equal('https://example.com/post-v2');
+
+          // writing a new record with v2 schema should succeed (latest definition)
+          const postV2 = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolUri,
+            protocolPath : 'post',
+            schema       : 'https://example.com/post-v2',
+            dataFormat   : 'application/json',
+          });
+          const postV2Reply = await dwn.processMessage(alice.did, postV2.message, { dataStream: postV2.dataStream });
+          expect(postV2Reply.status.code).to.equal(202);
         });
       });
     });
