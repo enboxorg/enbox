@@ -504,5 +504,99 @@ export function testMessageStore(): void {
         });
       });
     });
+
+    describe('count', () => {
+      beforeAll(async () => {
+        const stores = TestStores.get();
+        messageStore = stores.messageStore;
+        await messageStore.open();
+      });
+
+      beforeEach(async () => {
+        await messageStore.clear();
+      });
+
+      afterAll(async () => {
+        await messageStore.close();
+      });
+
+      it('should return 0 when no messages match', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const count = await messageStore.count(alice.did, [{ schema: 'nonexistent' }]);
+        expect(count).toBe(0);
+      });
+
+      it('should count all matching messages', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const schema = 'https://schema.org/CountTest';
+        for (let i = 0; i < 10; i++) {
+          const { message, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ schema });
+          await messageStore.put(alice.did, message, await recordsWrite.constructIndexes(true));
+        }
+
+        // also insert messages with a different schema
+        for (let i = 0; i < 5; i++) {
+          const { message, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ schema: 'https://schema.org/Other' });
+          await messageStore.put(alice.did, message, await recordsWrite.constructIndexes(true));
+        }
+
+        const count = await messageStore.count(alice.did, [{ schema }]);
+        expect(count).toBe(10);
+      });
+
+      it('should count all messages when filter is empty', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        for (let i = 0; i < 7; i++) {
+          const { message, recordsWrite } = await TestDataGenerator.generateRecordsWrite();
+          await messageStore.put(alice.did, message, await recordsWrite.constructIndexes(true));
+        }
+
+        const count = await messageStore.count(alice.did, [{}]);
+        expect(count).toBe(7);
+      });
+
+      it('should not count messages from another tenant', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const schema = 'https://schema.org/TenantTest';
+
+        for (let i = 0; i < 3; i++) {
+          const { message, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ schema });
+          await messageStore.put(alice.did, message, await recordsWrite.constructIndexes(true));
+        }
+        for (let i = 0; i < 5; i++) {
+          const { message, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ schema });
+          await messageStore.put(bob.did, message, await recordsWrite.constructIndexes(true));
+        }
+
+        const aliceCount = await messageStore.count(alice.did, [{ schema }]);
+        expect(aliceCount).toBe(3);
+
+        const bobCount = await messageStore.count(bob.did, [{ schema }]);
+        expect(bobCount).toBe(5);
+      });
+
+      it('should count with OR (multi-filter) queries', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const schema1 = 'https://schema.org/Type1';
+        const schema2 = 'https://schema.org/Type2';
+
+        for (let i = 0; i < 4; i++) {
+          const { message, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ schema: schema1 });
+          await messageStore.put(alice.did, message, await recordsWrite.constructIndexes(true));
+        }
+        for (let i = 0; i < 3; i++) {
+          const { message, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ schema: schema2 });
+          await messageStore.put(alice.did, message, await recordsWrite.constructIndexes(true));
+        }
+
+        const count = await messageStore.count(alice.did, [{ schema: schema1 }, { schema: schema2 }]);
+        expect(count).toBe(7);
+      });
+    });
   });
 }

@@ -10,12 +10,34 @@ import { FilterSelector, FilterUtility } from '../utils/filter.js';
 
 export type IndexLevelConfig = {
   location: string,
-  createLevelDatabase?: typeof createLevelDatabase
+  createLevelDatabase?: typeof createLevelDatabase,
+  compoundIndexes?: CompoundIndexDefinition[],
 };
 
 export type IndexedItem = { messageCid: string, indexes: KeyValues };
 
+/**
+ * Defines a compound index that covers multiple filter properties and a sort property.
+ *
+ * When a query's equality filter properties match all `properties` AND its sort property
+ * matches `sortProperty`, this compound index can serve the entire query from a single
+ * LevelDB range scan — no in-memory filtering or sorting required.
+ *
+ * Key encoding: `<prop1>\x01<prop2>\x01...\x01<sortValue>\x00<messageCid>`
+ */
+export type CompoundIndexDefinition = {
+  /** Unique name for this compound index (used as the sublevel partition name). */
+  name: string;
+  /** Filter properties that must all be present as equality filters in the query. */
+  properties: string[];
+  /** The sort property embedded at the end of the compound key. */
+  sortProperty: string;
+};
+
 const INDEX_SUBLEVEL_NAME = 'index';
+
+/** Separator between compound key segments (higher than \x00 so prefix scans work correctly). */
+const COMPOUND_SEGMENT_SEPARATOR = '\x01';
 
 export interface IndexLevelOptions {
   signal?: AbortSignal;
@@ -27,12 +49,15 @@ export interface IndexLevelOptions {
 export class IndexLevel {
   db: LevelWrapper<string>;
   config: IndexLevelConfig;
+  private _compoundIndexes: CompoundIndexDefinition[];
 
   constructor(config: IndexLevelConfig) {
     this.config = {
       createLevelDatabase,
       ...config,
     };
+
+    this._compoundIndexes = config.compoundIndexes ?? [];
 
     this.db = new LevelWrapper<string>({
       location            : this.config.location,
@@ -94,6 +119,14 @@ export class IndexLevel {
       }
     }
 
+    // create compound index entries for any registered compound indexes whose properties are all present in the indexes.
+    for (const compoundIndex of this._compoundIndexes) {
+      const compoundOp = this.createCompoundIndexPutOperation(tenant, item, compoundIndex);
+      if (compoundOp !== undefined) {
+        opCreationPromises.push(compoundOp);
+      }
+    }
+
     // create a reverse lookup for the sortedIndex values. This is used during deletion and cursor starting point lookup.
     const partitionOperationPromise = this.createOperationForIndexesLookupPartition(
       tenant,
@@ -133,6 +166,14 @@ export class IndexLevel {
       } else {
         const partitionOperationPromise = this.createDeleteIndexedItemOperation(tenant, messageCid, indexName, indexValue);
         opCreationPromises.push(partitionOperationPromise);
+      }
+    }
+
+    // delete compound index entries
+    for (const compoundIndex of this._compoundIndexes) {
+      const compoundOp = this.createCompoundIndexDeleteOperation(tenant, messageCid, indexes, compoundIndex);
+      if (compoundOp !== undefined) {
+        opCreationPromises.push(compoundOp);
       }
     }
 
@@ -233,6 +274,12 @@ export class IndexLevel {
   /**
    * Queries the index for items that match the filters. If no filters are provided, all items are returned.
    *
+   * Query strategy selection (in priority order):
+   * 1. **Compound index**: If a single filter matches a registered compound index (all equality properties + sort property),
+   *    the entire query is served from a single LevelDB range scan. Supports cursors natively.
+   * 2. **In-memory paging**: For "concise" filters without cursors. Scans the most selective property index, verifies in memory.
+   * 3. **Iterator paging**: Default fallback. Scans the sort property index, testing each item against the filter.
+   *
    * @param filters Array of filters that are treated as an OR query.
    * @param queryOptions query options for sort and pagination, requires at least `sortProperty`. The default sort direction is ascending.
    * @param options IndexLevelOptions that include an AbortSignal.
@@ -240,11 +287,43 @@ export class IndexLevel {
    */
   async query(tenant: string, filters: Filter[], queryOptions: QueryOptions, options?: IndexLevelOptions): Promise<IndexedItem[]> {
 
-    // check if we should query using in-memory paging or iterator paging
+    // Strategy 1: try compound index for single-filter queries
+    if (filters.length === 1 && !isEmptyObject(filters[0])) {
+      const compoundResult = this.selectCompoundIndex(filters[0], queryOptions);
+      if (compoundResult !== undefined) {
+        return this.queryWithCompoundIndex(tenant, filters[0], queryOptions, compoundResult, options);
+      }
+    }
+
+    // Strategy 2: in-memory paging for concise filters
     if (IndexLevel.shouldQueryWithInMemoryPaging(filters, queryOptions)) {
       return this.queryWithInMemoryPaging(tenant, filters, queryOptions, options);
     }
+
+    // Strategy 3: iterator paging (default)
     return this.queryWithIteratorPaging(tenant, filters, queryOptions, options);
+  }
+
+  /**
+   * Counts the number of items that match the given filters without loading full records.
+   *
+   * When a compound index covers the query, counting is a simple key iteration without value deserialization.
+   * Otherwise, falls back to counting via the existing query strategies.
+   */
+  async count(tenant: string, filters: Filter[], queryOptions: Omit<QueryOptions, 'limit' | 'cursor'>,
+    options?: IndexLevelOptions): Promise<number> {
+
+    // try compound index for single-filter queries
+    if (filters.length === 1 && !isEmptyObject(filters[0])) {
+      const compoundResult = this.selectCompoundIndex(filters[0], { ...queryOptions });
+      if (compoundResult !== undefined) {
+        return this.countWithCompoundIndex(tenant, filters[0], compoundResult, options);
+      }
+    }
+
+    // fallback: run a full query without limit and count the results
+    const results = await this.query(tenant, filters, { ...queryOptions }, options);
+    return results.length;
   }
 
   /**
@@ -508,6 +587,10 @@ export class IndexLevel {
 
   /**
    * Returns items that match the range filter.
+   *
+   * For `lte` bounds, the encoded value is extended with a trailing `\xff` so that composite keys
+   * of the form `<encodedValue>\x00<messageCid>` are naturally included in the range scan,
+   * eliminating the need for a separate exact-match query.
    */
   private async filterRangeMatches(
     tenant: string,
@@ -518,7 +601,15 @@ export class IndexLevel {
     const iteratorOptions: LevelWrapperIteratorOptions<string> = {};
     for (const comparator in rangeFilter) {
       const comparatorName = comparator as keyof RangeFilter;
-      iteratorOptions[comparatorName] = IndexLevel.encodeValue(rangeFilter[comparatorName]!);
+      const encodedValue = IndexLevel.encodeValue(rangeFilter[comparatorName]!);
+      if (comparatorName === 'lte') {
+        // Extend the lte bound so that composite keys `<encodedValue>\x00<messageCid>` are included.
+        // Since \x00 < \xff, any key starting with encodedValue followed by the \x00 delimiter
+        // will be lexicographically less than encodedValue + \xff.
+        iteratorOptions[comparatorName] = encodedValue + '\xff';
+      } else {
+        iteratorOptions[comparatorName] = encodedValue;
+      }
     }
 
     // if there is no lower bound specified (`gt` or `gte`), we need to iterate from the upper bound,
@@ -531,22 +622,11 @@ export class IndexLevel {
     const filterPartition = await this.getIndexPartition(tenant, propertyName);
 
     for await (const [ key, value ] of filterPartition.iterator(iteratorOptions, options)) {
-      // if "greater-than" is specified, skip all keys that contains the exact value given in the "greater-than" condition
+      // if "greater-than" is specified, skip all keys that contain the exact value given in the "greater-than" condition
       if ('gt' in rangeFilter && this.extractIndexValueFromKey(key) === IndexLevel.encodeValue(rangeFilter.gt!)) {
         continue;
       }
       matches.push(JSON.parse(value) as IndexedItem);
-    }
-
-    if ('lte' in rangeFilter) {
-      // When `lte` is used, we must also query the exact match explicitly because the exact match will not be included in the iterator above.
-      // This is due to the extra data appended to the (property + value) key prefix, e.g.
-      // the key '"2023-05-25T11:22:33.000000Z"\u0000bayfreigu....'
-      // would be considered greater than `lte` value in { lte: '"2023-05-25T11:22:33.000000Z"' } iterator options,
-      // thus would not be included in the iterator even though we'd like it to be.
-      for (const item of await this.filterExactMatches(tenant, propertyName, rangeFilter.lte as EqualFilter, options)) {
-        matches.push(item);
-      }
     }
 
     return matches;
@@ -570,12 +650,14 @@ export class IndexLevel {
   }
 
   /**
-   * Find the starting position for pagination within the IndexedItem array.
-   * Returns the index of the first item found which is either greater than or less than the given cursor, depending on sort order.
+   * Find the starting position for pagination within the IndexedItem array using binary search.
+   * Returns the index of the first item after the cursor, or -1 if no such item exists.
+   *
+   * Since the array is already sorted, binary search provides O(log n) performance instead of O(n).
    */
   private findCursorStartingIndex(items: IndexedItem[], sortDirection: SortDirection, sortProperty: string, cursorStartingKey: string): number {
 
-    const firstItemAfterCursor = (item: IndexedItem): boolean => {
+    const isAfterCursor = (item: IndexedItem): boolean => {
       const { messageCid, indexes } = item;
       const sortValue = indexes[sortProperty] as string | number;
       const itemCompareValue = IndexLevel.keySegmentJoin(IndexLevel.encodeValue(sortValue), messageCid);
@@ -585,7 +667,20 @@ export class IndexLevel {
         itemCompareValue < cursorStartingKey;
     };
 
-    return items.findIndex(firstItemAfterCursor);
+    // binary search for the first item after the cursor
+    let low = 0;
+    let high = items.length;
+
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (isAfterCursor(items[mid])) {
+        high = mid;
+      } else {
+        low = mid + 1;
+      }
+    }
+
+    return low < items.length ? low : -1;
   }
 
   /**
@@ -653,6 +748,307 @@ export class IndexLevel {
       return JSON.stringify(value);
     }
   }
+
+  // =========================================================================
+  // Compound index methods
+  // =========================================================================
+
+  /**
+   * Gets the compound index partition for a given compound index definition.
+   * Compound index sublevels use the naming convention `__compound:<name>__`.
+   */
+  private async getCompoundIndexPartition(tenant: string, compoundIndex: CompoundIndexDefinition): Promise<LevelWrapper<string>> {
+    const partitionName = `__compound:${compoundIndex.name}__`;
+    return (await this.db.partition(tenant)).partition(partitionName);
+  }
+
+  /**
+   * Builds a compound index key from the given indexes and compound index definition.
+   *
+   * Key format: `<prop1>\x01<prop2>\x01...\x01<sortValue>\x00<messageCid>`
+   *
+   * @returns the compound key, or undefined if the indexes don't contain all required properties.
+   */
+  private static buildCompoundKey(messageCid: string, indexes: KeyValues, compoundIndex: CompoundIndexDefinition): string | undefined {
+    const segments: string[] = [];
+
+    for (const property of compoundIndex.properties) {
+      const value = indexes[property];
+      if (value === undefined || Array.isArray(value)) {
+        return undefined; // compound indexes don't support array values or missing properties
+      }
+      segments.push(IndexLevel.encodeValue(value));
+    }
+
+    const sortValue = indexes[compoundIndex.sortProperty];
+    if (sortValue === undefined || Array.isArray(sortValue)) {
+      return undefined;
+    }
+
+    // join prefix segments with \x01, then append sort value and messageCid with the standard delimiters
+    const prefixPart = segments.join(COMPOUND_SEGMENT_SEPARATOR);
+    const sortPart = IndexLevel.encodeValue(sortValue);
+    return prefixPart + COMPOUND_SEGMENT_SEPARATOR + sortPart + IndexLevel.delimiter + messageCid;
+  }
+
+  /**
+   * Builds the prefix portion of a compound key from filter values (without the sort/messageCid suffix).
+   * Used for range scans: all entries with this prefix match the filter.
+   */
+  private static buildCompoundPrefix(filter: Filter, compoundIndex: CompoundIndexDefinition): string | undefined {
+    const segments: string[] = [];
+
+    for (const property of compoundIndex.properties) {
+      const filterValue = filter[property];
+      if (filterValue === undefined || typeof filterValue === 'object') {
+        return undefined; // compound prefix only works with equality filters
+      }
+      segments.push(IndexLevel.encodeValue(filterValue));
+    }
+
+    return segments.join(COMPOUND_SEGMENT_SEPARATOR) + COMPOUND_SEGMENT_SEPARATOR;
+  }
+
+  /**
+   * Creates a put operation for a compound index entry.
+   * Returns undefined if the indexes don't contain all required compound index properties.
+   */
+  private createCompoundIndexPutOperation(
+    tenant: string,
+    item: IndexedItem,
+    compoundIndex: CompoundIndexDefinition
+  ): Promise<LevelWrapperBatchOperation<string>> | undefined {
+    const key = IndexLevel.buildCompoundKey(item.messageCid, item.indexes, compoundIndex);
+    if (key === undefined) {
+      return undefined;
+    }
+
+    return this.createOperationForPartition(tenant, `__compound:${compoundIndex.name}__`, {
+      type  : 'put',
+      key,
+      value : JSON.stringify(item),
+    });
+  }
+
+  /**
+   * Creates a delete operation for a compound index entry.
+   * Returns undefined if the indexes don't contain all required compound index properties.
+   */
+  private createCompoundIndexDeleteOperation(
+    tenant: string,
+    messageCid: string,
+    indexes: KeyValues,
+    compoundIndex: CompoundIndexDefinition
+  ): Promise<LevelWrapperBatchOperation<string>> | undefined {
+    const key = IndexLevel.buildCompoundKey(messageCid, indexes, compoundIndex);
+    if (key === undefined) {
+      return undefined;
+    }
+
+    return this.createOperationForPartition(tenant, `__compound:${compoundIndex.name}__`, {
+      type: 'del',
+      key,
+    });
+  }
+
+  /**
+   * Generic helper to create a batch operation for any named partition under a tenant.
+   */
+  private async createOperationForPartition(
+    tenant: string,
+    partitionName: string,
+    operation: LevelWrapperBatchOperation<string>
+  ): Promise<LevelWrapperBatchOperation<string>> {
+    const tenantPartition = await this.db.partition(tenant);
+    return tenantPartition.createPartitionOperation(partitionName, operation);
+  }
+
+  /**
+   * Selects the best compound index that covers the given filter and sort requirements.
+   *
+   * A compound index "covers" a query when:
+   * 1. Every property in the compound index definition is present in the filter as an equality filter.
+   * 2. The compound index's sort property matches the query's sort property.
+   *
+   * Among multiple matching compound indexes, the one with the most properties is preferred
+   * (more specific = fewer false positives in the prefix scan).
+   */
+  private selectCompoundIndex(filter: Filter, queryOptions: QueryOptions): CompoundIndexDefinition | undefined {
+    let bestMatch: CompoundIndexDefinition | undefined;
+    let bestPropertyCount = 0;
+
+    for (const compoundIndex of this._compoundIndexes) {
+      // check that the sort property matches
+      if (compoundIndex.sortProperty !== queryOptions.sortProperty) {
+        continue;
+      }
+
+      // check that all compound properties are present in the filter as equality filters
+      let allPropertiesMatch = true;
+      for (const property of compoundIndex.properties) {
+        const filterValue = filter[property];
+        if (filterValue === undefined || typeof filterValue === 'object') {
+          allPropertiesMatch = false;
+          break;
+        }
+      }
+
+      if (allPropertiesMatch && compoundIndex.properties.length > bestPropertyCount) {
+        bestMatch = compoundIndex;
+        bestPropertyCount = compoundIndex.properties.length;
+      }
+    }
+
+    return bestMatch;
+  }
+
+  /**
+   * Queries using a compound index. This is the most efficient query strategy: a single LevelDB
+   * range scan that filters, sorts, and paginates all at once.
+   *
+   * The compound key encodes the filter properties as a prefix and the sort property as a suffix,
+   * so iterating over keys with the filter prefix yields results in sort order.
+   *
+   * Any remaining filter properties not covered by the compound index are verified in memory.
+   */
+  private async queryWithCompoundIndex(
+    tenant: string,
+    filter: Filter,
+    queryOptions: QueryOptions,
+    compoundIndex: CompoundIndexDefinition,
+    options?: IndexLevelOptions
+  ): Promise<IndexedItem[]> {
+    const { sortDirection = SortDirection.Ascending, cursor, limit } = queryOptions;
+
+    const prefix = IndexLevel.buildCompoundPrefix(filter, compoundIndex);
+    if (prefix === undefined) {
+      // should not happen since selectCompoundIndex already validated, but guard against it
+      return this.queryWithIteratorPaging(tenant, [filter], queryOptions, options);
+    }
+
+    const partition = await this.getCompoundIndexPartition(tenant, compoundIndex);
+
+    // determine the iterator bounds from the prefix
+    const iteratorOptions: LevelWrapperIteratorOptions<string> = {};
+
+    if (cursor !== undefined) {
+      // build the full compound key for the cursor position
+      const cursorSortEncoded = IndexLevel.encodeValue(cursor.value);
+      const cursorKey = prefix + cursorSortEncoded + IndexLevel.delimiter + cursor.messageCid;
+
+      if (sortDirection === SortDirection.Ascending) {
+        iteratorOptions.gt = cursorKey;
+        // upper bound: everything with this prefix (prefix + \xff is past all valid compound keys with this prefix)
+        iteratorOptions.lt = prefix + '\xff';
+      } else {
+        iteratorOptions.lt = cursorKey;
+        iteratorOptions.gt = prefix;
+        iteratorOptions.reverse = true;
+      }
+    } else {
+      if (sortDirection === SortDirection.Ascending) {
+        iteratorOptions.gt = prefix;
+        iteratorOptions.lt = prefix + '\xff';
+      } else {
+        // for descending without cursor, start from the end of the prefix range
+        iteratorOptions.gt = prefix;
+        iteratorOptions.lt = prefix + '\xff';
+        iteratorOptions.reverse = true;
+      }
+    }
+
+    // determine which filter properties are NOT covered by the compound index
+    // (need in-memory verification for these)
+    // NOTE: the compound index equality properties are fully covered by the prefix scan,
+    // but the sort property is only covered for ordering — any range filter on the sort
+    // property must still be applied as a residual filter.
+    const coveredEqualityProperties = new Set(compoundIndex.properties);
+    const residualFilter: Filter = {};
+    let hasResidualFilter = false;
+    for (const property in filter) {
+      if (!coveredEqualityProperties.has(property)) {
+        residualFilter[property] = filter[property];
+        hasResidualFilter = true;
+      }
+    }
+
+    const matches: IndexedItem[] = [];
+    for await (const [_key, value] of partition.iterator(iteratorOptions, options)) {
+      if (limit !== undefined && matches.length === limit) {
+        break;
+      }
+
+      const item = JSON.parse(value) as IndexedItem;
+
+      // verify any residual filter properties in memory
+      if (hasResidualFilter && !FilterUtility.matchFilter(item.indexes, residualFilter)) {
+        continue;
+      }
+
+      matches.push(item);
+    }
+
+    return matches;
+  }
+
+  /**
+   * Counts items matching a compound index prefix without loading full records.
+   * Iterates only keys (not values) for maximum efficiency.
+   */
+  private async countWithCompoundIndex(
+    tenant: string,
+    filter: Filter,
+    compoundIndex: CompoundIndexDefinition,
+    options?: IndexLevelOptions
+  ): Promise<number> {
+    const prefix = IndexLevel.buildCompoundPrefix(filter, compoundIndex);
+    if (prefix === undefined) {
+      // fallback
+      const results = await this.query(tenant, [filter], { sortProperty: compoundIndex.sortProperty }, options);
+      return results.length;
+    }
+
+    const partition = await this.getCompoundIndexPartition(tenant, compoundIndex);
+
+    // determine which filter properties are NOT covered by the compound index
+    // (same logic as queryWithCompoundIndex: sort property range filters are residual)
+    const coveredEqualityProperties = new Set(compoundIndex.properties);
+    let hasResidualFilter = false;
+    const residualFilter: Filter = {};
+    for (const property in filter) {
+      if (!coveredEqualityProperties.has(property)) {
+        residualFilter[property] = filter[property];
+        hasResidualFilter = true;
+      }
+    }
+
+    const iteratorOptions: LevelWrapperIteratorOptions<string> = {
+      gt : prefix,
+      lt : prefix + '\xff',
+    };
+
+    let count = 0;
+    if (hasResidualFilter) {
+      // must read values to check residual filter
+      for await (const [_key, value] of partition.iterator(iteratorOptions, options)) {
+        const item = JSON.parse(value) as IndexedItem;
+        if (FilterUtility.matchFilter(item.indexes, residualFilter)) {
+          count++;
+        }
+      }
+    } else {
+      // no residual filter — iterate keys via iterator without parsing values
+      for await (const [_key, _value] of partition.iterator(iteratorOptions, options)) {
+        count++;
+      }
+    }
+
+    return count;
+  }
+
+  // =========================================================================
+  // Query strategy selection
+  // =========================================================================
 
   private static shouldQueryWithInMemoryPaging(filters: Filter[], queryOptions: QueryOptions): boolean {
     for (const filter of filters) {

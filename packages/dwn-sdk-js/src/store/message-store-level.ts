@@ -1,4 +1,5 @@
 
+import type { CompoundIndexDefinition } from './index-level.js';
 import type { Filter, KeyValues, PaginationCursor, QueryOptions } from '../types/query-types.js';
 import type { GenericMessage, MessageSort, Pagination } from '../types/message-types.js';
 import type { MessageStore, MessageStoreOptions } from '../types/message-store.js';
@@ -18,6 +19,51 @@ import { SortDirection } from '../types/query-types.js';
 
 
 /**
+ * Default compound indexes that cover the most common DWN query patterns.
+ * These are automatically registered unless overridden via config.
+ *
+ * Each compound index enables a single-scan query when the filter matches
+ * all equality properties and the sort matches the sort property.
+ */
+const DEFAULT_COMPOUND_INDEXES: CompoundIndexDefinition[] = [
+  {
+    // Covers: RecordsQuery with protocol + protocolPath, sorted by messageTimestamp
+    // Example: "all chat messages in protocol X, path 'chat/message', sorted by time"
+    name         : 'protocol-protocolPath-messageTimestamp',
+    properties   : ['protocol', 'protocolPath'],
+    sortProperty : 'messageTimestamp',
+  },
+  {
+    // Covers: RecordsQuery with protocol + protocolPath, sorted by dateCreated
+    name         : 'protocol-protocolPath-dateCreated',
+    properties   : ['protocol', 'protocolPath'],
+    sortProperty : 'dateCreated',
+  },
+  {
+    // Covers: RecordsQuery with schema, sorted by messageTimestamp
+    // Example: "all records with schema X, sorted by time"
+    name         : 'schema-messageTimestamp',
+    properties   : ['schema'],
+    sortProperty : 'messageTimestamp',
+  },
+  {
+    // Covers: RecordsQuery with schema, sorted by dateCreated
+    name         : 'schema-dateCreated',
+    properties   : ['schema'],
+    sortProperty : 'dateCreated',
+  },
+  {
+    // Covers: RecordsQuery with protocol + contextId, sorted by messageTimestamp
+    // Example: "all messages in a specific protocol context (conversation), sorted by time"
+    // NOTE: contextId is often a prefix/range filter. Compound indexes only support equality.
+    // This index is useful when contextId is an exact match (e.g., root-level context queries).
+    name         : 'protocol-contextId-messageTimestamp',
+    properties   : ['protocol', 'contextId'],
+    sortProperty : 'messageTimestamp',
+  },
+];
+
+/**
  * A simple implementation of {@link MessageStore} that works in both the browser and server-side.
  * Leverages LevelDB under the hood.
  */
@@ -33,6 +79,8 @@ export class MessageStoreLevel implements MessageStore {
    *  LevelDB will store its files, or in browsers, the name of the
    * {@link https://developer.mozilla.org/en-US/docs/Web/API/IDBDatabase IDBDatabase} to be opened.
    * @param {string} config.indexLocation - same as config.blockstoreLocation
+   * @param {CompoundIndexDefinition[]} config.compoundIndexes - compound indexes to register.
+   *   Defaults to DEFAULT_COMPOUND_INDEXES which cover the most common DWN query patterns.
    */
   constructor(config: MessageStoreLevelConfig = {}) {
     this.config = {
@@ -50,6 +98,7 @@ export class MessageStoreLevel implements MessageStore {
     this.index = new IndexLevel({
       location            : this.config.indexLocation!,
       createLevelDatabase : this.config.createLevelDatabase,
+      compoundIndexes     : this.config.compoundIndexes ?? DEFAULT_COMPOUND_INDEXES,
     });
   }
 
@@ -113,6 +162,18 @@ export class MessageStoreLevel implements MessageStore {
     }
 
     return { messages, cursor };
+  }
+
+  async count(
+    tenant: string,
+    filters: Filter[],
+    messageSort?: MessageSort,
+    options?: MessageStoreOptions
+  ): Promise<number> {
+    options?.signal?.throwIfAborted();
+
+    const queryOptions = MessageStoreLevel.buildQueryOptions(messageSort);
+    return this.index.count(tenant, filters, queryOptions, options);
   }
 
   /**
@@ -192,4 +253,5 @@ export type MessageStoreLevelConfig = {
   blockstoreLocation?: string,
   indexLocation?: string,
   createLevelDatabase?: typeof createLevelDatabase,
+  compoundIndexes?: CompoundIndexDefinition[],
 };
