@@ -3,7 +3,7 @@ import type { DwnDatabaseType } from './types.js';
 import type { ManagedResumableTask, ResumableTaskStore } from '@enbox/dwn-sdk-js';
 
 import { Cid } from '@enbox/dwn-sdk-js';
-import { executeWithRetryIfDatabaseIsLocked } from './utils/transaction.js';
+import { executeWithTransaction } from './utils/transaction.js';
 import { Kysely } from 'kysely';
 
 export class ResumableTaskStoreSql implements ResumableTaskStore {
@@ -103,7 +103,7 @@ export class ResumableTaskStoreSql implements ResumableTaskStore {
       }
     };
 
-    await executeWithRetryIfDatabaseIsLocked(this.#db, operation);
+    await executeWithTransaction(this.#db, operation);
 
     const tasksToReturn = tasks.map((task) => {
       return {

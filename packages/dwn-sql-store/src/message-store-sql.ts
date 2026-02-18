@@ -12,7 +12,7 @@ import type {
 
 import * as block from 'multiformats/block';
 import * as cbor from '@ipld/dag-cbor';
-import { executeWithRetryIfDatabaseIsLocked } from './utils/transaction.js';
+import { executeWithTransaction } from './utils/transaction.js';
 import { extractTagsAndSanitizeIndexes } from './utils/sanitize.js';
 import { filterSelectQuery } from './utils/filter.js';
 import { sha256 } from 'multiformats/hashes/sha2';
@@ -210,7 +210,7 @@ export class MessageStoreSql implements MessageStore {
     // if any of these inserts would throw, the whole transaction would be rolled back.
     // otherwise it is committed.
     const putMessageOperation = this.constructPutMessageOperation({ tenant, messageCid, encodedMessageBytes, encodedData, indexes });
-    await executeWithRetryIfDatabaseIsLocked(this.#db, putMessageOperation);
+    await executeWithTransaction(this.#db, putMessageOperation);
   }
 
   /**
