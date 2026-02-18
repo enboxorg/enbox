@@ -31,7 +31,7 @@ import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 
-import { DataStream, Dwn, Jws, Protocols, ProtocolsConfigure, ProtocolsQuery, Records, RecordsDelete, RecordsRead , RecordsWrite, Secp256k1 } from '../../src/index.js';
+import { DataStream, DateSort, Dwn, Jws, Protocols, ProtocolsConfigure, ProtocolsQuery, Records, RecordsDelete, RecordsRead , RecordsWrite, Secp256k1 } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 chai.use(chaiAsPromised);
@@ -617,7 +617,7 @@ export function testRecordsReadHandler(): void {
             expect(fooPathReply.entry!.recordsWrite!.recordId).to.equal(foo1Write.message.recordId);
           });
 
-          it('should throw if requested filter has more than a single result', async () => {
+          it('should return the most recently updated record when filter matches multiple results', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
 
             const protocolDefinition = { ...nestedProtocol };
@@ -634,11 +634,13 @@ export function testRecordsReadHandler(): void {
               protocolPath : 'foo',
               schema       : protocolDefinition.types.foo.schema,
               dataFormat   : protocolDefinition.types.foo.dataFormats![0],
-              data         : new TextEncoder().encode('foo'),
+              data         : new TextEncoder().encode('foo1'),
               recipient    : alice.did
             });
             const foo1WriteReply = await dwn.processMessage(alice.did, foo1Write.message, { dataStream: foo1Write.dataStream });
             expect(foo1WriteReply.status.code).to.equal(202);
+
+            await Time.minimalSleep();
 
             const foo2Write = await TestDataGenerator.generateRecordsWrite({
               author       : alice,
@@ -646,13 +648,13 @@ export function testRecordsReadHandler(): void {
               protocolPath : 'foo',
               schema       : protocolDefinition.types.foo.schema,
               dataFormat   : protocolDefinition.types.foo.dataFormats![0],
-              data         : new TextEncoder().encode('foo'),
+              data         : new TextEncoder().encode('foo2'),
               recipient    : alice.did
             });
             const foo2WriteReply = await dwn.processMessage(alice.did, foo2Write.message, { dataStream: foo2Write.dataStream });
             expect(foo2WriteReply.status.code).to.equal(202);
 
-            // Since there are two 'foo' records, this should fail.
+            // default sort is updatedDescending, so the most recently updated record should be returned
             const fooPathRead = await RecordsRead.create({
               filter: {
                 protocol     : protocolDefinition.protocol,
@@ -661,8 +663,273 @@ export function testRecordsReadHandler(): void {
               signer: Jws.createSigner(alice),
             });
             const fooPathReply = await dwn.processMessage(alice.did, fooPathRead.message);
-            expect(fooPathReply.status.code).to.equal(400);
-            expect(fooPathReply.status.detail).to.contain(DwnErrorCode.RecordsReadReturnedMultiple);
+            expect(fooPathReply.status.code).to.equal(200);
+            expect(fooPathReply.entry!.recordsWrite!.recordId).to.equal(foo2Write.message.recordId);
+          });
+
+          it('should return the oldest record when `dateSort` is `CreatedAscending` and filter matches multiple results', async () => {
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+
+            const protocolDefinition = { ...nestedProtocol };
+            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              author: alice,
+              protocolDefinition
+            });
+            const protocolConfigReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+            expect(protocolConfigReply.status.code).to.equal(202);
+
+            const foo1Write = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'foo',
+              schema       : protocolDefinition.types.foo.schema,
+              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
+              data         : new TextEncoder().encode('foo1'),
+              recipient    : alice.did
+            });
+            const foo1WriteReply = await dwn.processMessage(alice.did, foo1Write.message, { dataStream: foo1Write.dataStream });
+            expect(foo1WriteReply.status.code).to.equal(202);
+
+            await Time.minimalSleep();
+
+            const foo2Write = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'foo',
+              schema       : protocolDefinition.types.foo.schema,
+              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
+              data         : new TextEncoder().encode('foo2'),
+              recipient    : alice.did
+            });
+            const foo2WriteReply = await dwn.processMessage(alice.did, foo2Write.message, { dataStream: foo2Write.dataStream });
+            expect(foo2WriteReply.status.code).to.equal(202);
+
+            // with createdAscending sort, the oldest record should be returned
+            const fooPathRead = await RecordsRead.create({
+              filter: {
+                protocol     : protocolDefinition.protocol,
+                protocolPath : 'foo',
+              },
+              dateSort : DateSort.CreatedAscending,
+              signer   : Jws.createSigner(alice),
+            });
+            const fooPathReply = await dwn.processMessage(alice.did, fooPathRead.message);
+            expect(fooPathReply.status.code).to.equal(200);
+            expect(fooPathReply.entry!.recordsWrite!.recordId).to.equal(foo1Write.message.recordId);
+          });
+
+          it('should return the newest record when `dateSort` is `CreatedDescending` and filter matches multiple results', async () => {
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+
+            const protocolDefinition = { ...nestedProtocol };
+            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              author: alice,
+              protocolDefinition
+            });
+            const protocolConfigReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+            expect(protocolConfigReply.status.code).to.equal(202);
+
+            const foo1Write = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'foo',
+              schema       : protocolDefinition.types.foo.schema,
+              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
+              data         : new TextEncoder().encode('foo1'),
+              recipient    : alice.did
+            });
+            const foo1WriteReply = await dwn.processMessage(alice.did, foo1Write.message, { dataStream: foo1Write.dataStream });
+            expect(foo1WriteReply.status.code).to.equal(202);
+
+            await Time.minimalSleep();
+
+            const foo2Write = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'foo',
+              schema       : protocolDefinition.types.foo.schema,
+              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
+              data         : new TextEncoder().encode('foo2'),
+              recipient    : alice.did
+            });
+            const foo2WriteReply = await dwn.processMessage(alice.did, foo2Write.message, { dataStream: foo2Write.dataStream });
+            expect(foo2WriteReply.status.code).to.equal(202);
+
+            const fooPathRead = await RecordsRead.create({
+              filter: {
+                protocol     : protocolDefinition.protocol,
+                protocolPath : 'foo',
+              },
+              dateSort : DateSort.CreatedDescending,
+              signer   : Jws.createSigner(alice),
+            });
+            const fooPathReply = await dwn.processMessage(alice.did, fooPathRead.message);
+            expect(fooPathReply.status.code).to.equal(200);
+            expect(fooPathReply.entry!.recordsWrite!.recordId).to.equal(foo2Write.message.recordId);
+          });
+
+          it('should return the oldest updated record when `dateSort` is `UpdatedAscending`', async () => {
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+
+            const protocolDefinition = { ...nestedProtocol };
+            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              author: alice,
+              protocolDefinition
+            });
+            const protocolConfigReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+            expect(protocolConfigReply.status.code).to.equal(202);
+
+            const foo1Write = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'foo',
+              schema       : protocolDefinition.types.foo.schema,
+              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
+              data         : new TextEncoder().encode('foo1'),
+              recipient    : alice.did
+            });
+            const foo1WriteReply = await dwn.processMessage(alice.did, foo1Write.message, { dataStream: foo1Write.dataStream });
+            expect(foo1WriteReply.status.code).to.equal(202);
+
+            await Time.minimalSleep();
+
+            const foo2Write = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'foo',
+              schema       : protocolDefinition.types.foo.schema,
+              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
+              data         : new TextEncoder().encode('foo2'),
+              recipient    : alice.did
+            });
+            const foo2WriteReply = await dwn.processMessage(alice.did, foo2Write.message, { dataStream: foo2Write.dataStream });
+            expect(foo2WriteReply.status.code).to.equal(202);
+
+            const fooPathRead = await RecordsRead.create({
+              filter: {
+                protocol     : protocolDefinition.protocol,
+                protocolPath : 'foo',
+              },
+              dateSort : DateSort.UpdatedAscending,
+              signer   : Jws.createSigner(alice),
+            });
+            const fooPathReply = await dwn.processMessage(alice.did, fooPathRead.message);
+            expect(fooPathReply.status.code).to.equal(200);
+            expect(fooPathReply.entry!.recordsWrite!.recordId).to.equal(foo1Write.message.recordId);
+          });
+
+          it('should return the most recently updated record when `dateSort` is `UpdatedDescending`', async () => {
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+
+            const protocolDefinition = { ...nestedProtocol };
+            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              author: alice,
+              protocolDefinition
+            });
+            const protocolConfigReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+            expect(protocolConfigReply.status.code).to.equal(202);
+
+            const foo1Write = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'foo',
+              schema       : protocolDefinition.types.foo.schema,
+              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
+              data         : new TextEncoder().encode('foo1'),
+              recipient    : alice.did
+            });
+            const foo1WriteReply = await dwn.processMessage(alice.did, foo1Write.message, { dataStream: foo1Write.dataStream });
+            expect(foo1WriteReply.status.code).to.equal(202);
+
+            await Time.minimalSleep();
+
+            const foo2Write = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'foo',
+              schema       : protocolDefinition.types.foo.schema,
+              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
+              data         : new TextEncoder().encode('foo2'),
+              recipient    : alice.did
+            });
+            const foo2WriteReply = await dwn.processMessage(alice.did, foo2Write.message, { dataStream: foo2Write.dataStream });
+            expect(foo2WriteReply.status.code).to.equal(202);
+
+            const fooPathRead = await RecordsRead.create({
+              filter: {
+                protocol     : protocolDefinition.protocol,
+                protocolPath : 'foo',
+              },
+              dateSort : DateSort.UpdatedDescending,
+              signer   : Jws.createSigner(alice),
+            });
+            const fooPathReply = await dwn.processMessage(alice.did, fooPathRead.message);
+            expect(fooPathReply.status.code).to.equal(200);
+            expect(fooPathReply.entry!.recordsWrite!.recordId).to.equal(foo2Write.message.recordId);
+          });
+
+          it('should return the earliest published record when `dateSort` is `PublishedAscending`', async () => {
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+            const schema = 'aSchema';
+
+            const write1 = await TestDataGenerator.generateRecordsWrite({
+              author    : alice,
+              schema,
+              published : true,
+            });
+            const write1Reply = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
+            expect(write1Reply.status.code).to.equal(202);
+
+            await Time.minimalSleep();
+
+            const write2 = await TestDataGenerator.generateRecordsWrite({
+              author    : alice,
+              schema,
+              published : true,
+            });
+            const write2Reply = await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
+            expect(write2Reply.status.code).to.equal(202);
+
+            const read = await RecordsRead.create({
+              filter   : { schema },
+              dateSort : DateSort.PublishedAscending,
+              signer   : Jws.createSigner(alice),
+            });
+            const readReply = await dwn.processMessage(alice.did, read.message);
+            expect(readReply.status.code).to.equal(200);
+            expect(readReply.entry!.recordsWrite!.recordId).to.equal(write1.message.recordId);
+          });
+
+          it('should return the latest published record when `dateSort` is `PublishedDescending`', async () => {
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+            const schema = 'aSchema';
+
+            const write1 = await TestDataGenerator.generateRecordsWrite({
+              author    : alice,
+              schema,
+              published : true,
+            });
+            const write1Reply = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
+            expect(write1Reply.status.code).to.equal(202);
+
+            await Time.minimalSleep();
+
+            const write2 = await TestDataGenerator.generateRecordsWrite({
+              author    : alice,
+              schema,
+              published : true,
+            });
+            const write2Reply = await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
+            expect(write2Reply.status.code).to.equal(202);
+
+            const read = await RecordsRead.create({
+              filter   : { schema },
+              dateSort : DateSort.PublishedDescending,
+              signer   : Jws.createSigner(alice),
+            });
+            const readReply = await dwn.processMessage(alice.did, read.message);
+            expect(readReply.status.code).to.equal(200);
+            expect(readReply.entry!.recordsWrite!.recordId).to.equal(write2.message.recordId);
           });
         });
 

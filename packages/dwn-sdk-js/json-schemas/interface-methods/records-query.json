@@ -56,7 +56,9 @@
             "createdAscending",
             "createdDescending",
             "publishedAscending",
-            "publishedDescending"
+            "publishedDescending",
+            "updatedAscending",
+            "updatedDescending"
           ],
           "type": "string"
         }

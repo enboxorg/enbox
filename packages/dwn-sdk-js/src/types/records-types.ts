@@ -10,7 +10,9 @@ export enum DateSort {
   CreatedAscending = 'createdAscending',
   CreatedDescending = 'createdDescending',
   PublishedAscending = 'publishedAscending',
-  PublishedDescending = 'publishedDescending'
+  PublishedDescending = 'publishedDescending',
+  UpdatedAscending = 'updatedAscending',
+  UpdatedDescending = 'updatedDescending'
 }
 
 export type RecordsWriteTagValue = string | number | boolean | string[] | number[];
@@ -244,6 +246,7 @@ export type RecordsReadDescriptor = {
   filter: RecordsFilter;
   messageTimestamp: string;
   permissionGrantId?: string;
+  dateSort?: DateSort;
 };
 
 export type RecordsDeleteMessage = GenericMessage & {

@@ -40,6 +40,17 @@
         },
         "permissionGrantId": {
           "type": "string"
+        },
+        "dateSort": {
+          "enum": [
+            "createdAscending",
+            "createdDescending",
+            "publishedAscending",
+            "publishedDescending",
+            "updatedAscending",
+            "updatedDescending"
+          ],
+          "type": "string"
         }
       }
     }
