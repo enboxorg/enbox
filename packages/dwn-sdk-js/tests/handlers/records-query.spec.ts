@@ -1433,6 +1433,49 @@ export function testRecordsQueryHandler(): void {
         expect(publishedDescendingQueryReply.entries![1].recordId).to.equal(write1Data.message.recordId);
       });
 
+      it('should sort records by `updatedAscending` and `updatedDescending`', async () => {
+        // insert three messages into DB
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const schema = 'aSchema';
+        const write1Data = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
+        await Time.minimalSleep();
+        const write2Data = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
+        await Time.minimalSleep();
+        const write3Data = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
+
+        // insert data, intentionally out of order
+        const writeReply2 = await dwn.processMessage(alice.did, write2Data.message, { dataStream: write2Data.dataStream });
+        const writeReply1 = await dwn.processMessage(alice.did, write1Data.message, { dataStream: write1Data.dataStream });
+        const writeReply3 = await dwn.processMessage(alice.did, write3Data.message, { dataStream: write3Data.dataStream });
+        expect(writeReply1.status.code).to.equal(202);
+        expect(writeReply2.status.code).to.equal(202);
+        expect(writeReply3.status.code).to.equal(202);
+
+        // updatedAscending test
+        const updatedAscendingQueryData = await TestDataGenerator.generateRecordsQuery({
+          author   : alice,
+          dateSort : DateSort.UpdatedAscending,
+          filter   : { schema }
+        });
+        const updatedAscendingQueryReply = await dwn.processMessage(alice.did, updatedAscendingQueryData.message);
+        expect(updatedAscendingQueryReply.entries!.length).to.equal(3);
+        expect(updatedAscendingQueryReply.entries?.[0].recordId).to.equal(write1Data.message.recordId);
+        expect(updatedAscendingQueryReply.entries?.[1].recordId).to.equal(write2Data.message.recordId);
+        expect(updatedAscendingQueryReply.entries?.[2].recordId).to.equal(write3Data.message.recordId);
+
+        // updatedDescending test
+        const updatedDescendingQueryData = await TestDataGenerator.generateRecordsQuery({
+          author   : alice,
+          dateSort : DateSort.UpdatedDescending,
+          filter   : { schema }
+        });
+        const updatedDescendingQueryReply = await dwn.processMessage(alice.did, updatedDescendingQueryData.message);
+        expect(updatedDescendingQueryReply.entries!.length).to.equal(3);
+        expect(updatedDescendingQueryReply.entries?.[0].recordId).to.equal(write3Data.message.recordId);
+        expect(updatedDescendingQueryReply.entries?.[1].recordId).to.equal(write2Data.message.recordId);
+        expect(updatedDescendingQueryReply.entries?.[2].recordId).to.equal(write1Data.message.recordId);
+      });
+
       it('should tiebreak using `messageCid` when sorting encounters identical values', async () => {
         // setup: 3 messages with the same `dateCreated` value
         const dateCreated = Time.getCurrentTimestamp();

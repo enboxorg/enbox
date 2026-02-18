@@ -44,23 +44,19 @@ export class RecordsReadHandler implements MethodHandler {
       return messageReplyFromError(e, 401);
     }
 
-    // get the latest active messages matching the supplied filter
+    // get the latest active message matching the supplied filter, sorted and limited to 1 result
     const query: Filter = {
       // NOTE: we don't filter by `method` so that we get both RecordsWrite and RecordsDelete messages
       interface         : DwnInterfaceName.Records,
       isLatestBaseState : true,
       ...Records.convertFilter(message.descriptor.filter)
     };
-    const { messages: existingMessages } = await this.messageStore.query(tenant, [ query ]);
+    const messageSort = Records.convertDateSort(message.descriptor.dateSort);
+    const { messages: existingMessages } = await this.messageStore.query(tenant, [ query ], messageSort, { limit: 1 });
     if (existingMessages.length === 0) {
       return {
         status: { code: 404, detail: 'Not Found' }
       };
-    } else if (existingMessages.length > 1) {
-      return messageReplyFromError(new DwnError(
-        DwnErrorCode.RecordsReadReturnedMultiple,
-        'Multiple records exist for the RecordsRead filter'
-      ), 400);
     }
 
     const matchedMessage = existingMessages[0];

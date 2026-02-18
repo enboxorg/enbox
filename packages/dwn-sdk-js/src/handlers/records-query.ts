@@ -97,6 +97,10 @@ export class RecordsQueryHandler implements MethodHandler {
       return { datePublished: SortDirection.Ascending };
     case DateSort.PublishedDescending:
       return { datePublished: SortDirection.Descending };
+    case DateSort.UpdatedAscending:
+      return { messageTimestamp: SortDirection.Ascending };
+    case DateSort.UpdatedDescending:
+      return { messageTimestamp: SortDirection.Descending };
     default:
       return { dateCreated: SortDirection.Ascending };
     }

@@ -3,17 +3,20 @@ import type { MessageStore } from '../types//message-store.js';
 import type { DataEncodedRecordsWriteMessage, RecordsFilter , RecordsReadDescriptor, RecordsReadMessage, RecordsWriteMessage } from '../types/records-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
+import { DateSort } from '../types/records-types.js';
 import { Message } from '../core/message.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { removeUndefinedProperties } from '../utils/object.js';
 import { Time } from '../utils/time.js';
+import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 export type RecordsReadOptions = {
   filter: RecordsFilter;
   messageTimestamp?: string;
+  dateSort?: DateSort;
   signer?: MessageSigner;
   permissionGrantId?: string;
   /**
@@ -31,6 +34,15 @@ export type RecordsReadOptions = {
 export class RecordsRead extends AbstractMessage<RecordsReadMessage> {
 
   public static async parse(message: RecordsReadMessage): Promise<RecordsRead> {
+    if (message.descriptor.filter.published === false) {
+      if (message.descriptor.dateSort === DateSort.PublishedAscending || message.descriptor.dateSort === DateSort.PublishedDescending) {
+        throw new DwnError(
+          DwnErrorCode.RecordsReadParseFilterPublishedSortInvalid,
+          `reads must not filter for \`published:false\` and sort by ${message.descriptor.dateSort}`
+        );
+      }
+    }
+
     let signaturePayload;
     if (message.authorization !== undefined) {
       signaturePayload = await Message.validateSignatureStructure(message.authorization.signature, message.descriptor);
@@ -52,8 +64,17 @@ export class RecordsRead extends AbstractMessage<RecordsReadMessage> {
    * @throws {DwnError} when a combination of required RecordsReadOptions are missing
    */
   public static async create(options: RecordsReadOptions): Promise<RecordsRead> {
-    const { filter, signer, permissionGrantId, protocolRole } = options;
+    const { filter, signer, permissionGrantId, protocolRole, dateSort } = options;
     const currentTime = Time.getCurrentTimestamp();
+
+    if (options.filter.published === false) {
+      if (dateSort === DateSort.PublishedAscending || dateSort === DateSort.PublishedDescending) {
+        throw new DwnError(
+          DwnErrorCode.RecordsReadCreateFilterPublishedSortInvalid,
+          `reads must not filter for \`published:false\` and sort by ${dateSort}`
+        );
+      }
+    }
 
     const descriptor: RecordsReadDescriptor = {
       interface        : DwnInterfaceName.Records,
@@ -61,6 +82,7 @@ export class RecordsRead extends AbstractMessage<RecordsReadMessage> {
       filter           : Records.normalizeFilter(filter),
       messageTimestamp : options.messageTimestamp ?? currentTime,
       permissionGrantId,
+      dateSort,
     };
 
     removeUndefinedProperties(descriptor);

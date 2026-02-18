@@ -52,7 +52,7 @@ describe('RecordsQuery schema validation', () => {
 
   it('should only allows string values from the spec for `dateSort`', () => {
     // test all valid values of `dateSort`
-    const allowedDateSortValues = ['createdAscending', 'createdDescending', 'publishedAscending', 'publishedAscending'];
+    const allowedDateSortValues = ['createdAscending', 'createdDescending', 'publishedAscending', 'publishedDescending', 'updatedAscending', 'updatedDescending'];
     for (const dateSortValue of allowedDateSortValues) {
       const validMessage = {
         descriptor: {

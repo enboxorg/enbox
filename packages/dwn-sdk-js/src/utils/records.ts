@@ -1,7 +1,7 @@
 import type { DerivedPrivateJwk } from './hd-key.js';
 import type { KeyDecrypter } from '../types/encryption-types.js';
 import type { Filter, KeyValues, StartsWithFilter } from '../types/query-types.js';
-import type { GenericMessage, GenericSignaturePayload } from '../types/message-types.js';
+import type { GenericMessage, GenericSignaturePayload, MessageSort } from '../types/message-types.js';
 import type { RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteDescriptor, RecordsWriteMessage, RecordsWriteTags, RecordsWriteTagsFilter } from '../types/records-types.js';
 
 import { DateSort } from '../types/records-types.js';
@@ -13,6 +13,7 @@ import { Message } from '../core/message.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
 import { removeUndefinedProperties } from './object.js';
 import { Secp256k1 } from './secp256k1.js';
+import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { HdKey, KeyDerivationScheme } from './hd-key.js';
@@ -526,6 +527,32 @@ export class Records {
           the delegatedGrantId ${ownerSignaturePayload!.delegatedGrantId} in the owner signature.`
         );
       }
+    }
+  }
+
+  /**
+   * Convert a `DateSort` value to a `MessageSort` object accepted by the `MessageStore`.
+   * Defaults to `messageTimestamp` descending (most recently updated first) when no sort is given.
+   *
+   * @param dateSort the optional `DateSort` value.
+   * @returns a `MessageSort` for `MessageStore` sorting.
+   */
+  public static convertDateSort(dateSort?: DateSort): MessageSort {
+    switch (dateSort) {
+    case DateSort.CreatedAscending:
+      return { dateCreated: SortDirection.Ascending };
+    case DateSort.CreatedDescending:
+      return { dateCreated: SortDirection.Descending };
+    case DateSort.PublishedAscending:
+      return { datePublished: SortDirection.Ascending };
+    case DateSort.PublishedDescending:
+      return { datePublished: SortDirection.Descending };
+    case DateSort.UpdatedAscending:
+      return { messageTimestamp: SortDirection.Ascending };
+    case DateSort.UpdatedDescending:
+      return { messageTimestamp: SortDirection.Descending };
+    default:
+      return { messageTimestamp: SortDirection.Descending };
     }
   }
 
