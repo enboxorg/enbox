@@ -34,7 +34,7 @@ export const KeyDeliveryProtocolDefinition: ProtocolDefinition = {
   structure: {
     contextKey: {
       $actions: [
-        { who: 'recipient', of: 'contextKey', can: ['read', 'query', 'subscribe'] },
+        { who: 'recipient', of: 'contextKey', can: ['read'] },
       ],
       $tags: {
         $requiredTags       : ['protocol', 'contextId'],

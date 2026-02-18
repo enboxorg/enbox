@@ -3626,13 +3626,13 @@ describe('Participant Detection (PR B)', () => {
       email: {
         $actions: [
           { who: 'anyone', can: ['create'] },
-          { who: 'author', of: 'email', can: ['read', 'query', 'subscribe'] },
-          { who: 'recipient', of: 'email', can: ['read', 'query', 'subscribe'] },
+          { who: 'author', of: 'email', can: ['read'] },
+          { who: 'recipient', of: 'email', can: ['read'] },
         ],
         attachment: {
           $actions: [
-            { who: 'author', of: 'email', can: ['create', 'read', 'query', 'subscribe'] },
-            { who: 'recipient', of: 'email', can: ['read', 'query', 'subscribe'] },
+            { who: 'author', of: 'email', can: ['create', 'read'] },
+            { who: 'recipient', of: 'email', can: ['read'] },
           ],
         },
       },
@@ -3658,8 +3658,8 @@ describe('Participant Detection (PR B)', () => {
           ],
           message: {
             $actions: [
-              { role: 'community/admin', can: ['read', 'query', 'subscribe'] },
-              { who: 'recipient', of: 'community/channel/message', can: ['read', 'query', 'subscribe'] },
+              { role: 'community/admin', can: ['read'] },
+              { who: 'recipient', of: 'community/channel/message', can: ['read'] },
             ],
           },
         },
@@ -4359,15 +4359,15 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       thread: {
         $actions: [
           { who: 'anyone', can: ['create'] },
-          { who: 'author', of: 'thread', can: ['read', 'query', 'subscribe'] },
-          { who: 'recipient', of: 'thread', can: ['read', 'query', 'subscribe'] },
+          { who: 'author', of: 'thread', can: ['read'] },
+          { who: 'recipient', of: 'thread', can: ['read'] },
         ],
         email: {
           $actions: [
             { who: 'author', of: 'thread', can: ['create'] },
             { who: 'recipient', of: 'thread', can: ['create'] },
-            { who: 'author', of: 'thread/email', can: ['read', 'query', 'subscribe'] },
-            { who: 'recipient', of: 'thread/email', can: ['read', 'query', 'subscribe'] },
+            { who: 'author', of: 'thread/email', can: ['read'] },
+            { who: 'recipient', of: 'thread/email', can: ['read'] },
           ],
         },
       },
@@ -4388,7 +4388,7 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
         participant : { $role: true },
         chat        : {
           $actions: [
-            { role: 'thread/participant', can: ['create', 'read', 'query', 'subscribe'] },
+            { role: 'thread/participant', can: ['create', 'read'] },
           ],
         },
       },
