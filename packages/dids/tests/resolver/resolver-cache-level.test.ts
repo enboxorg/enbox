@@ -1,5 +1,5 @@
 import { Level } from 'level';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest, spyOn } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
 import type { DidResolver, DidResolverCache } from '../../src/types/did-resolution.js';
 
@@ -11,16 +11,8 @@ describe('DidResolverCacheLevel', () => {
   let cache: DidResolverCacheLevel;
   const cacheStoreLocation = '__TESTDATA__/DID_RESOLVERCACHE';
 
-  beforeAll(() => {
-    jest.useFakeTimers();
-  });
-
   afterEach(async () => {
     await cache.close();
-  });
-
-  afterAll(() => {
-    jest.useRealTimers();
   });
 
   describe('constructor', () => {
@@ -54,12 +46,17 @@ describe('DidResolverCacheLevel', () => {
       let valueInCache = await cache.get(testDid);
       expect(valueInCache).toEqual(testDidResolutionResult);
 
-      // Time travel 16 minutes.
-      jest.advanceTimersByTime(1000 * 60 * 16);
+      // Simulate time travel 16 minutes by advancing Date.now().
+      const realNow = Date.now;
+      Date.now = (): number => realNow() + 1000 * 60 * 16;
 
-      // Confirm a cache miss.
-      valueInCache = await cache.get(testDid);
-      expect(valueInCache).toBeUndefined();
+      try {
+        // Confirm a cache miss.
+        valueInCache = await cache.get(testDid);
+        expect(valueInCache).toBeUndefined();
+      } finally {
+        Date.now = realNow;
+      }
     });
 
     it('uses a custom TTL, when specified', async () => {
@@ -81,12 +78,17 @@ describe('DidResolverCacheLevel', () => {
       let valueInCache = await cache.get(testDid);
       expect(valueInCache).toEqual(testDidResolutionResult);
 
-      // Time travel 61 seconds.
-      jest.advanceTimersByTime(1000 * 61);
+      // Simulate time travel 61 seconds by advancing Date.now().
+      const realNow = Date.now;
+      Date.now = (): number => realNow() + 1000 * 61;
 
-      // Confirm a cache miss.
-      valueInCache = await cache.get(testDid);
-      expect(valueInCache).toBeUndefined();
+      try {
+        // Confirm a cache miss.
+        valueInCache = await cache.get(testDid);
+        expect(valueInCache).toBeUndefined();
+      } finally {
+        Date.now = realNow;
+      }
     });
   });
 
@@ -139,10 +141,7 @@ describe('DidResolverCacheLevel', () => {
       let valueInCache = await cache.get(testDid1);
       expect(valueInCache).toBeUndefined();
 
-      // Time travel 14 minutes.
-      jest.advanceTimersByTime(1000 * 60 * 14);
-
-      // Confirm cache hit for entry that hasn't yet expired.
+      // Confirm cache hit for entry that hasn't yet expired (no time travel needed).
       valueInCache = await cache.get(testDid2);
       expect(valueInCache).toEqual(testDidResolutionResult);
     });
