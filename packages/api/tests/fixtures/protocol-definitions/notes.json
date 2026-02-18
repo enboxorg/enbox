@@ -42,7 +42,7 @@
       "$actions": [
         {
           "role": "friend",
-          "can": ["read", "query", "subscribe"]
+          "can": ["read"]
         },
         {
           "role": "note/coAuthor",
@@ -53,10 +53,10 @@
         "$actions": [
           {
             "role": "friend",
-            "can": ["create", "update", "delete", "read", "query", "subscribe"]
+            "can": ["create", "update", "delete", "read"]
           }, {
             "role": "note/coAuthor",
-            "can": ["create", "update", "delete", "co-delete", "read", "query", "subscribe"]
+            "can": ["create", "update", "delete", "co-delete", "read"]
           }
         ]
       }
