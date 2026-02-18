@@ -319,9 +319,12 @@ export class HttpApi {
       return Response.json(reply, { status: 400 });
     }
 
-    // Read the request body into bytes first, then wrap in a fresh ReadableStream.
-    // Bun's native Request.body stream has an incompatible reader.releaseLock()
-    // that breaks DWN SDK's DataStream.toBytes(), so we materialise the body here.
+    // Materialise the request body before passing to DWN.
+    // Bun (<=1.3.9) has a bug where req.body.getReader() can return undefined
+    // when the stream hasn't been fully received yet, causing DataStream.toBytes()
+    // to crash in its finally block.  Buffering via arrayBuffer() is a safe
+    // workaround until Bun fixes this.
+    // TODO: https://github.com/enboxorg/enbox/issues/90 — remove once Bun ships fix
     const contentLength = req.headers.get('content-length');
     const transferEncoding = req.headers.get('transfer-encoding');
     let requestDataStream: ReadableStream<Uint8Array> | undefined;
