@@ -1,7 +1,7 @@
 import Ajv from 'ajv';
 import definitions from '../../../json-schemas/definitions.json' with { type: 'json' };
 
-import { expect } from 'chai';
+import { describe, expect, it } from 'bun:test';
 
 describe('date-time schema', async () => {
 
@@ -9,7 +9,7 @@ describe('date-time schema', async () => {
   const validateDateTime = ajv.compile(definitions.$defs['date-time']);
 
   it('should accept ISO 8601 date-time strings accepted by DWN', () => {
-    expect(validateDateTime('2022-04-29T10:30:00.123456Z')).to.be.true;
+    expect(validateDateTime('2022-04-29T10:30:00.123456Z')).toBe(true);
   });
 
   it('should reject ISO 8601 date-time strings not accepted by DWN', () => {
@@ -23,7 +23,7 @@ describe('date-time schema', async () => {
     ];
 
     for (const dateTime of unacceptableDateTimeStrings) {
-      expect(validateDateTime(dateTime)).to.be.false;
+      expect(validateDateTime(dateTime)).toBe(false);
     }
   });
 });

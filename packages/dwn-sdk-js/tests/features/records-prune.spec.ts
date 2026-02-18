@@ -7,22 +7,19 @@ import type {
   StateIndex,
 } from '../../src/index.js';
 
-import chaiAsPromised from 'chai-as-promised';
-import sinon from 'sinon';
-import chai, { expect } from 'chai';
-
 import messageProtocolDefinition from '../vectors/protocol-definitions/message.json' with { type: 'json' };
 import nestedProtocolDefinition from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
+import sinon from 'sinon';
 
 import { DwnInterfaceName } from '../../src/enums/dwn-interface-method.js';
 import { Message } from '../../src/core/message.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DataStream, Dwn, DwnConstant, DwnErrorCode, Jws, ProtocolsConfigure, RecordsDelete, RecordsQuery, RecordsWrite, SortDirection } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
-chai.use(chaiAsPromised);
 
 export function testRecordsPrune(): void {
   describe('records pruning', () => {
@@ -36,7 +33,7 @@ export function testRecordsPrune(): void {
 
     // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
     // so that different test suites can reuse the same backend store for testing
-    before(async () => {
+    beforeAll(async () => {
       didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
       const stores = TestStores.get();
@@ -59,7 +56,7 @@ export function testRecordsPrune(): void {
       await stateIndex.clear();
     });
 
-    after(async () => {
+    afterAll(async () => {
       await dwn.close();
     });
 
@@ -73,7 +70,7 @@ export function testRecordsPrune(): void {
         signer     : Jws.createSigner(alice)
       });
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // writes 2 foos, 2 bars under foo1, and 2 bazes under bar1
 
@@ -90,11 +87,11 @@ export function testRecordsPrune(): void {
 
       const foo1 = await RecordsWrite.create(fooOptions);
       const foo1WriteResponse = await dwn.processMessage(alice.did, foo1.message, { dataStream: DataStream.fromBytes(fooData) });
-      expect(foo1WriteResponse.status.code).equals(202);
+      expect(foo1WriteResponse.status.code).toBe(202);
 
       const foo2 = await RecordsWrite.create(fooOptions);
       const foo2WriteResponse = await dwn.processMessage(alice.did, foo2.message, { dataStream: DataStream.fromBytes(fooData) });
-      expect(foo2WriteResponse.status.code).equals(202);
+      expect(foo2WriteResponse.status.code).toBe(202);
 
       // write 2 bars under foo1 with data large enough to be required to be stored in the data store so we can test purge in data store
       const barData = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
@@ -110,11 +107,11 @@ export function testRecordsPrune(): void {
 
       const bar1 = await RecordsWrite.create({ ...barOptions });
       const bar1WriteResponse = await dwn.processMessage(alice.did, bar1.message, { dataStream: DataStream.fromBytes(barData) });
-      expect(bar1WriteResponse.status.code).equals(202);
+      expect(bar1WriteResponse.status.code).toBe(202);
 
       const bar2 = await RecordsWrite.create({ ...barOptions });
       const bar2WriteResponse = await dwn.processMessage(alice.did, bar2.message, { dataStream: DataStream.fromBytes(barData) });
-      expect(bar2WriteResponse.status.code).equals(202);
+      expect(bar2WriteResponse.status.code).toBe(202);
 
       // write 2 bazes under bar1, each has more than 1 message associated with the record so we can test multi-message purge
       const bazData = TestDataGenerator.randomBytes(100);
@@ -130,11 +127,11 @@ export function testRecordsPrune(): void {
 
       const baz1 = await RecordsWrite.create({ ...bazOptions });
       const baz1WriteResponse = await dwn.processMessage(alice.did, baz1.message, { dataStream: DataStream.fromBytes(bazData) });
-      expect(baz1WriteResponse.status.code).equals(202);
+      expect(baz1WriteResponse.status.code).toBe(202);
 
       const baz2 = await RecordsWrite.create({ ...bazOptions });
       const baz2WriteResponse = await dwn.processMessage(alice.did, baz2.message, { dataStream: DataStream.fromBytes(bazData) });
-      expect(baz2WriteResponse.status.code).equals(202);
+      expect(baz2WriteResponse.status.code).toBe(202);
 
       // make latest state of baz1 a `RecordsWrite`
       const newBaz1Data = TestDataGenerator.randomBytes(100);
@@ -144,7 +141,7 @@ export function testRecordsPrune(): void {
         data                : newBaz1Data
       });
       const baz1UpdateResponse = await dwn.processMessage(alice.did, baz1Update.message, { dataStream: DataStream.fromBytes(newBaz1Data) });
-      expect(baz1UpdateResponse.status.code).equals(202);
+      expect(baz1UpdateResponse.status.code).toBe(202);
 
       // make latest state of baz2 a `RecordsDelete`
       const baz2Delete = await RecordsDelete.create({
@@ -152,7 +149,7 @@ export function testRecordsPrune(): void {
         recordId : baz2.message.recordId
       });
       const baz2DeleteResponse = await dwn.processMessage(alice.did, baz2Delete.message);
-      expect(baz2DeleteResponse.status.code).equals(202);
+      expect(baz2DeleteResponse.status.code).toBe(202);
 
       // sanity test messages are inserted in message store
       const queryFilter = [{
@@ -160,18 +157,18 @@ export function testRecordsPrune(): void {
         protocol  : nestedProtocol.protocol
       }];
       const queryResult = await messageStore.query(alice.did, queryFilter);
-      expect(queryResult.messages.length).to.equal(8); // 2 foos, 2 bars, 2 bazes x 2 messages each
+      expect(queryResult.messages.length).toBe(8); // 2 foos, 2 bars, 2 bazes x 2 messages each
 
       // sanity test events are inserted in state index
       // NOTE: getLeaves returns ALL messageCids (including ProtocolsConfigure), so count is 9 not 8
       const events = await stateIndex.getLeaves(alice.did, []);
-      expect(events.length).to.equal(9);
+      expect(events.length).toBe(9);
 
       // sanity test data is inserted in data store
       const bar1DataGetResult = await dataStore.get(alice.did, bar1.message.recordId, bar1.message.descriptor.dataCid);
       const bar2DataGetResult = await dataStore.get(alice.did, bar2.message.recordId, bar2.message.descriptor.dataCid);
-      expect(bar1DataGetResult).to.not.be.undefined;
-      expect(bar2DataGetResult).to.not.be.undefined;
+      expect(bar1DataGetResult).toBeDefined();
+      expect(bar2DataGetResult).toBeDefined();
 
       // Delete foo1 with prune enabled
       const foo1Delete = await RecordsDelete.create({
@@ -181,29 +178,29 @@ export function testRecordsPrune(): void {
       });
 
       const deleteReply = await dwn.processMessage(alice.did, foo1Delete.message);
-      expect(deleteReply.status.code).to.equal(202);
+      expect(deleteReply.status.code).toBe(202);
 
       // verify all bar and baz message are permanently deleted
       const queryResult2 = await messageStore.query(alice.did, queryFilter, { messageTimestamp: SortDirection.Ascending });
-      expect(queryResult2.messages.length).to.equal(3); // foo2 RecordsWrite, foo1 RecordsWrite and RecordsDelete
-      expect(queryResult2.messages[0]).to.deep.include(foo1.message);
-      expect(queryResult2.messages[1]).to.deep.include(foo2.message);
-      expect(queryResult2.messages[2]).to.deep.include(foo1Delete.message);
+      expect(queryResult2.messages.length).toBe(3); // foo2 RecordsWrite, foo1 RecordsWrite and RecordsDelete
+      expect(queryResult2.messages[0]).toEqual(expect.objectContaining(foo1.message));
+      expect(queryResult2.messages[1]).toEqual(expect.objectContaining(foo2.message));
+      expect(queryResult2.messages[2]).toEqual(expect.objectContaining(foo1Delete.message));
 
       // verify all bar and baz events are permanently deleted
       // NOTE: getLeaves returns ALL messageCids (including ProtocolsConfigure), so count is 4 not 3
       const events2 = await stateIndex.getLeaves(alice.did, []);
-      expect(events2.length).to.equal(4);
+      expect(events2.length).toBe(4);
       const foo1RecordsWriteCid = await Message.getCid(foo1.message);
       const foo2RecordsWriteCid = await Message.getCid(foo2.message);
       const foo2RecordsDeleteCid = await Message.getCid(foo1Delete.message);
-      expect(events2).to.contain.members([foo1RecordsWriteCid, foo2RecordsWriteCid, foo2RecordsDeleteCid]);
+      expect(events2).toEqual(expect.arrayContaining([foo1RecordsWriteCid, foo2RecordsWriteCid, foo2RecordsDeleteCid]));
 
       // verify all bar data are permanently deleted
       const bar1DataGetResult2 = await dataStore.get(alice.did, bar1.message.recordId, bar1.message.descriptor.dataCid);
       const bar2DataGetResult2 = await dataStore.get(alice.did, bar2.message.recordId, bar2.message.descriptor.dataCid);
-      expect(bar1DataGetResult2).to.be.undefined;
-      expect(bar2DataGetResult2).to.be.undefined;
+      expect(bar1DataGetResult2).toBeUndefined();
+      expect(bar2DataGetResult2).toBeUndefined();
 
       // sanity test an external query will no longer return the deleted records
       const queryData = await RecordsQuery.create({
@@ -211,9 +208,9 @@ export function testRecordsPrune(): void {
         filter : { protocol: nestedProtocol.protocol }
       });
       const reply2 = await dwn.processMessage(alice.did, queryData.message);
-      expect(reply2.status.code).to.equal(200);
-      expect(reply2.entries?.length).to.equal(1); // only foo2 is left
-      expect(reply2.entries![0]).to.deep.include(foo2.message);
+      expect(reply2.status.code).toBe(200);
+      expect(reply2.entries?.length).toBe(1); // only foo2 is left
+      expect(reply2.entries![0]).toEqual(expect.objectContaining(foo2.message));
     });
 
     it('should allow pruning against a deleted record that is not already pruned', async () => {
@@ -231,7 +228,7 @@ export function testRecordsPrune(): void {
         signer     : Jws.createSigner(alice)
       });
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // 1. Alice has a record `foo` with a descendent chain
       // write foo <- bar <- baz records
@@ -247,7 +244,7 @@ export function testRecordsPrune(): void {
       };
       const foo = await RecordsWrite.create(fooOptions);
       const fooWriteResponse = await dwn.processMessage(alice.did, foo.message, { dataStream: DataStream.fromBytes(fooData) });
-      expect(fooWriteResponse.status.code).equals(202);
+      expect(fooWriteResponse.status.code).toBe(202);
 
       const barData = TestDataGenerator.randomBytes(100);
       const barOptions = {
@@ -261,7 +258,7 @@ export function testRecordsPrune(): void {
       };
       const bar = await RecordsWrite.create({ ...barOptions });
       const barWriteResponse = await dwn.processMessage(alice.did, bar.message, { dataStream: DataStream.fromBytes(barData) });
-      expect(barWriteResponse.status.code).equals(202);
+      expect(barWriteResponse.status.code).toBe(202);
 
       const bazData = TestDataGenerator.randomBytes(100);
       const bazOptions = {
@@ -276,7 +273,7 @@ export function testRecordsPrune(): void {
 
       const baz = await RecordsWrite.create({ ...bazOptions });
       const bazWriteResponse = await dwn.processMessage(alice.did, baz.message, { dataStream: DataStream.fromBytes(bazData) });
-      expect(bazWriteResponse.status.code).equals(202);
+      expect(bazWriteResponse.status.code).toBe(202);
 
       // sanity records are inserted in message store
       const queryFilter = [{
@@ -284,7 +281,7 @@ export function testRecordsPrune(): void {
         protocol  : nestedProtocol.protocol
       }];
       const messagesBeforeDelete = await messageStore.query(alice.did, queryFilter);
-      expect(messagesBeforeDelete.messages.length).to.equal(3);
+      expect(messagesBeforeDelete.messages.length).toBe(3);
 
       // sanity verify RecordsQuery returns no records
       const recordsQuery = await RecordsQuery.create({
@@ -292,8 +289,8 @@ export function testRecordsPrune(): void {
         filter : { protocol: nestedProtocol.protocol }
       });
       const recordsQueryBeforeDeleteReply = await dwn.processMessage(alice.did, recordsQuery.message);
-      expect(recordsQueryBeforeDeleteReply.status.code).to.equal(200);
-      expect(recordsQueryBeforeDeleteReply.entries?.length).to.equal(3);
+      expect(recordsQueryBeforeDeleteReply.status.code).toBe(200);
+      expect(recordsQueryBeforeDeleteReply.entries?.length).toBe(3);
 
 
       // 2. Alice deletes the record `foo` WITHOUT prune, leaving the descendants intact
@@ -304,16 +301,16 @@ export function testRecordsPrune(): void {
       });
 
       const deleteReply = await dwn.processMessage(alice.did, fooDelete.message);
-      expect(deleteReply.status.code).to.equal(202);
+      expect(deleteReply.status.code).toBe(202);
 
       // verify bar and baz messages still exists
       const messagesAfterDelete = await messageStore.query(alice.did, queryFilter, { messageTimestamp: SortDirection.Ascending });
-      expect(messagesAfterDelete.messages.length).to.equal(4); // RecordsWrite for foo, bar, baz, and RecordsDelete for foo
+      expect(messagesAfterDelete.messages.length).toBe(4); // RecordsWrite for foo, bar, baz, and RecordsDelete for foo
 
       // sanity verify RecordsQuery returns the descendants
       const recordsQueryAfterDeleteReply = await dwn.processMessage(alice.did, recordsQuery.message);
-      expect(recordsQueryAfterDeleteReply.status.code).to.equal(200);
-      expect(recordsQueryAfterDeleteReply.entries?.length).to.equal(2);
+      expect(recordsQueryAfterDeleteReply.status.code).toBe(200);
+      expect(recordsQueryAfterDeleteReply.entries?.length).toBe(2);
 
       // 3. Verify that Alice is able to perform a prune on `foo` to delete all its descendants
       const fooPrune = await RecordsDelete.create({
@@ -323,18 +320,18 @@ export function testRecordsPrune(): void {
       });
 
       const pruneReply = await dwn.processMessage(alice.did, fooPrune.message);
-      expect(pruneReply.status.code).to.equal(202);
+      expect(pruneReply.status.code).toBe(202);
 
       // verify bar and baz messages are permanently deleted
       const messagesAfterPrune = await messageStore.query(alice.did, queryFilter, { messageTimestamp: SortDirection.Ascending });
-      expect(messagesAfterPrune.messages.length).to.equal(2); // just RecordsWrite and RecordsDelete for foo
-      expect(messagesAfterPrune.messages[0]).to.deep.include(foo.message);
-      expect(messagesAfterPrune.messages[1]).to.deep.include(fooPrune.message);
+      expect(messagesAfterPrune.messages.length).toBe(2); // just RecordsWrite and RecordsDelete for foo
+      expect(messagesAfterPrune.messages[0]).toEqual(expect.objectContaining(foo.message));
+      expect(messagesAfterPrune.messages[1]).toEqual(expect.objectContaining(fooPrune.message));
 
       // sanity verify RecordsQuery returns no records
       const recordsQueryAfterPruneReply = await dwn.processMessage(alice.did, recordsQuery.message);
-      expect(recordsQueryAfterPruneReply.status.code).to.equal(200);
-      expect(recordsQueryAfterPruneReply.entries?.length).to.equal(0);
+      expect(recordsQueryAfterPruneReply.status.code).toBe(200);
+      expect(recordsQueryAfterPruneReply.entries?.length).toBe(0);
     });
 
     it('should return 404 when attempting to prune against a record that is already pruned', async () => {
@@ -352,7 +349,7 @@ export function testRecordsPrune(): void {
         signer     : Jws.createSigner(alice)
       });
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // 1. Alice has a record `foo` with a descendent chain
       // write foo <- bar <- baz records
@@ -368,7 +365,7 @@ export function testRecordsPrune(): void {
       };
       const foo = await RecordsWrite.create(fooOptions);
       const fooWriteResponse = await dwn.processMessage(alice.did, foo.message, { dataStream: DataStream.fromBytes(fooData) });
-      expect(fooWriteResponse.status.code).equals(202);
+      expect(fooWriteResponse.status.code).toBe(202);
 
       const barData = TestDataGenerator.randomBytes(100);
       const barOptions = {
@@ -382,7 +379,7 @@ export function testRecordsPrune(): void {
       };
       const bar = await RecordsWrite.create({ ...barOptions });
       const barWriteResponse = await dwn.processMessage(alice.did, bar.message, { dataStream: DataStream.fromBytes(barData) });
-      expect(barWriteResponse.status.code).equals(202);
+      expect(barWriteResponse.status.code).toBe(202);
 
       const bazData = TestDataGenerator.randomBytes(100);
       const bazOptions = {
@@ -397,7 +394,7 @@ export function testRecordsPrune(): void {
 
       const baz = await RecordsWrite.create({ ...bazOptions });
       const bazWriteResponse = await dwn.processMessage(alice.did, baz.message, { dataStream: DataStream.fromBytes(bazData) });
-      expect(bazWriteResponse.status.code).equals(202);
+      expect(bazWriteResponse.status.code).toBe(202);
 
       // sanity records are inserted in message store
       const queryFilter = [{
@@ -405,7 +402,7 @@ export function testRecordsPrune(): void {
         protocol  : nestedProtocol.protocol
       }];
       const queryResult = await messageStore.query(alice.did, queryFilter);
-      expect(queryResult.messages.length).to.equal(3);
+      expect(queryResult.messages.length).toBe(3);
 
       // sanity verify RecordsQuery returns no records
       const recordsQuery = await RecordsQuery.create({
@@ -413,8 +410,8 @@ export function testRecordsPrune(): void {
         filter : { protocol: nestedProtocol.protocol }
       });
       const recordsQueryBeforeDeleteReply = await dwn.processMessage(alice.did, recordsQuery.message);
-      expect(recordsQueryBeforeDeleteReply.status.code).to.equal(200);
-      expect(recordsQueryBeforeDeleteReply.entries?.length).to.equal(3);
+      expect(recordsQueryBeforeDeleteReply.status.code).toBe(200);
+      expect(recordsQueryBeforeDeleteReply.entries?.length).toBe(3);
 
 
       // 2. Alice prunes the record `foo`
@@ -425,7 +422,7 @@ export function testRecordsPrune(): void {
       });
 
       const prune1Reply = await dwn.processMessage(alice.did, fooPrune1.message);
-      expect(prune1Reply.status.code).to.equal(202);
+      expect(prune1Reply.status.code).toBe(202);
 
       // 3. Verify that Alice is unable to perform a prune on `foo` again
       const fooPrune2 = await RecordsDelete.create({
@@ -435,7 +432,7 @@ export function testRecordsPrune(): void {
       });
 
       const prune2Reply = await dwn.processMessage(alice.did, fooPrune2.message);
-      expect(prune2Reply.status.code).to.equal(404);
+      expect(prune2Reply.status.code).toBe(404);
     });
 
     describe('prune and co-prune protocol action', () => {
@@ -490,7 +487,7 @@ export function testRecordsPrune(): void {
           signer     : Jws.createSigner(alice)
         });
         const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).to.equal(202);
+        expect(protocolsConfigureReply.status.code).toBe(202);
 
         // 2. Bob writes a record + a descendant in Alice's DWN.
         const postData = TestDataGenerator.randomBytes(100);
@@ -504,7 +501,7 @@ export function testRecordsPrune(): void {
 
         const post = await RecordsWrite.create(postOptions);
         const postWriteResponse = await dwn.processMessage(alice.did, post.message, { dataStream: DataStream.fromBytes(postData) });
-        expect(postWriteResponse.status.code).equals(202);
+        expect(postWriteResponse.status.code).toBe(202);
 
         const attachmentData = TestDataGenerator.randomBytes(100);
         const attachmentOptions = {
@@ -518,7 +515,7 @@ export function testRecordsPrune(): void {
 
         const attachment = await RecordsWrite.create(attachmentOptions);
         const attachmentWriteResponse = await dwn.processMessage(alice.did, attachment.message, { dataStream: DataStream.fromBytes(attachmentData) });
-        expect(attachmentWriteResponse.status.code).equals(202);
+        expect(attachmentWriteResponse.status.code).toBe(202);
 
         // 3. Verify Bob cannot prune the records if `prune` is not set to `true` in RecordsDelete.
         const unauthorizedPostPrune = await RecordsDelete.create({
@@ -528,8 +525,8 @@ export function testRecordsPrune(): void {
         });
 
         const unauthorizedPostPruneReply = await dwn.processMessage(alice.did, unauthorizedPostPrune.message);
-        expect(unauthorizedPostPruneReply.status.code).to.equal(401);
-        expect(unauthorizedPostPruneReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+        expect(unauthorizedPostPruneReply.status.code).toBe(401);
+        expect(unauthorizedPostPruneReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
 
         // 4. Verify Bob can prune the records by setting `prune` to `true` in RecordsDelete.
         const postPrune = await RecordsDelete.create({
@@ -539,7 +536,7 @@ export function testRecordsPrune(): void {
         });
 
         const pruneReply = await dwn.processMessage(alice.did, postPrune.message);
-        expect(pruneReply.status.code).to.equal(202);
+        expect(pruneReply.status.code).toBe(202);
 
         // sanity test `RecordsQuery` no longer returns the deleted record
         const recordsQuery = await RecordsQuery.create({
@@ -547,8 +544,8 @@ export function testRecordsPrune(): void {
           filter : { protocol: protocolDefinition.protocol }
         });
         const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-        expect(recordsQueryReply.status.code).to.equal(200);
-        expect(recordsQueryReply.entries?.length).to.equal(0);
+        expect(recordsQueryReply.status.code).toBe(200);
+        expect(recordsQueryReply.entries?.length).toBe(0);
       });
 
       it('should not allow a non-owner author to prune if `prune` is not an authorized action', async () => {
@@ -567,7 +564,7 @@ export function testRecordsPrune(): void {
           signer     : Jws.createSigner(alice)
         });
         const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).to.equal(202);
+        expect(protocolsConfigureReply.status.code).toBe(202);
 
         // 2. Bob writes a record + a descendant in Alice's DWN.
         const messageData = TestDataGenerator.randomBytes(100);
@@ -582,7 +579,7 @@ export function testRecordsPrune(): void {
 
         const message = await RecordsWrite.create(messageOptions);
         const messageWriteResponse = await dwn.processMessage(alice.did, message.message, { dataStream: DataStream.fromBytes(messageData) });
-        expect(messageWriteResponse.status.code).equals(202);
+        expect(messageWriteResponse.status.code).toBe(202);
 
         const attachmentData = TestDataGenerator.randomBytes(100);
         const attachmentOptions = {
@@ -596,7 +593,7 @@ export function testRecordsPrune(): void {
 
         const attachment = await RecordsWrite.create(attachmentOptions);
         const attachmentWriteResponse = await dwn.processMessage(alice.did, attachment.message, { dataStream: DataStream.fromBytes(attachmentData) });
-        expect(attachmentWriteResponse.status.code).equals(202);
+        expect(attachmentWriteResponse.status.code).toBe(202);
 
         // 3. Verify Bob cannot prune the records.
         const messagePrune = await RecordsDelete.create({
@@ -606,8 +603,8 @@ export function testRecordsPrune(): void {
         });
 
         const deleteReply = await dwn.processMessage(alice.did, messagePrune.message);
-        expect(deleteReply.status.code).to.equal(401);
-        expect(deleteReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+        expect(deleteReply.status.code).toBe(401);
+        expect(deleteReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
 
         // sanity test `RecordsQuery` still returns the records
         const recordsQuery = await RecordsQuery.create({
@@ -615,8 +612,8 @@ export function testRecordsPrune(): void {
           filter : { protocol: protocolDefinition.protocol }
         });
         const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-        expect(recordsQueryReply.status.code).to.equal(200);
-        expect(recordsQueryReply.entries?.length).to.equal(2);
+        expect(recordsQueryReply.status.code).toBe(200);
+        expect(recordsQueryReply.entries?.length).toBe(2);
       });
 
       it('should allow a non-author to prune if `co-prune` is allowed and `prune` is set to `true` in RecordsDelete', async () => {
@@ -669,7 +666,7 @@ export function testRecordsPrune(): void {
           signer     : Jws.createSigner(alice)
         });
         const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).to.equal(202);
+        expect(protocolsConfigureReply.status.code).toBe(202);
 
         // 2. Bob writes a record + a descendant in Alice's DWN.
         const postData = TestDataGenerator.randomBytes(100);
@@ -683,7 +680,7 @@ export function testRecordsPrune(): void {
 
         const post = await RecordsWrite.create(postOptions);
         const postWriteResponse = await dwn.processMessage(alice.did, post.message, { dataStream: DataStream.fromBytes(postData) });
-        expect(postWriteResponse.status.code).equals(202);
+        expect(postWriteResponse.status.code).toBe(202);
 
         const attachmentData = TestDataGenerator.randomBytes(100);
         const attachmentOptions = {
@@ -697,7 +694,7 @@ export function testRecordsPrune(): void {
 
         const attachment = await RecordsWrite.create(attachmentOptions);
         const attachmentWriteResponse = await dwn.processMessage(alice.did, attachment.message, { dataStream: DataStream.fromBytes(attachmentData) });
-        expect(attachmentWriteResponse.status.code).equals(202);
+        expect(attachmentWriteResponse.status.code).toBe(202);
 
         // 3. Verify Carol cannot prune the records if `prune` is not set to `true` in RecordsDelete.
         const unauthorizedPostPrune = await RecordsDelete.create({
@@ -707,8 +704,8 @@ export function testRecordsPrune(): void {
         });
 
         const unauthorizedPostPruneReply = await dwn.processMessage(alice.did, unauthorizedPostPrune.message);
-        expect(unauthorizedPostPruneReply.status.code).to.equal(401);
-        expect(unauthorizedPostPruneReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+        expect(unauthorizedPostPruneReply.status.code).toBe(401);
+        expect(unauthorizedPostPruneReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
 
         // 4. Verify Carol can prune the records by setting `prune` to `true` in RecordsDelete.
         const postPrune = await RecordsDelete.create({
@@ -718,7 +715,7 @@ export function testRecordsPrune(): void {
         });
 
         const deleteReply = await dwn.processMessage(alice.did, postPrune.message);
-        expect(deleteReply.status.code).to.equal(202);
+        expect(deleteReply.status.code).toBe(202);
 
         // sanity test `RecordsQuery` no longer returns the deleted record
         const recordsQuery = await RecordsQuery.create({
@@ -726,8 +723,8 @@ export function testRecordsPrune(): void {
           filter : { protocol: protocolDefinition.protocol }
         });
         const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-        expect(recordsQueryReply.status.code).to.equal(200);
-        expect(recordsQueryReply.entries?.length).to.equal(0);
+        expect(recordsQueryReply.status.code).toBe(200);
+        expect(recordsQueryReply.entries?.length).toBe(0);
       });
 
       it('should not allow a non-author to prune if `prune` is allowed but `co-prune` is not allowed', async () => {
@@ -781,7 +778,7 @@ export function testRecordsPrune(): void {
           signer     : Jws.createSigner(alice)
         });
         const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).to.equal(202);
+        expect(protocolsConfigureReply.status.code).toBe(202);
 
         // 2. Bob writes a record + a descendant in Alice's DWN.
         const postData = TestDataGenerator.randomBytes(100);
@@ -795,7 +792,7 @@ export function testRecordsPrune(): void {
 
         const post = await RecordsWrite.create(postOptions);
         const postWriteResponse = await dwn.processMessage(alice.did, post.message, { dataStream: DataStream.fromBytes(postData) });
-        expect(postWriteResponse.status.code).equals(202);
+        expect(postWriteResponse.status.code).toBe(202);
 
         const attachmentData = TestDataGenerator.randomBytes(100);
         const attachmentOptions = {
@@ -809,7 +806,7 @@ export function testRecordsPrune(): void {
 
         const attachment = await RecordsWrite.create(attachmentOptions);
         const attachmentWriteResponse = await dwn.processMessage(alice.did, attachment.message, { dataStream: DataStream.fromBytes(attachmentData) });
-        expect(attachmentWriteResponse.status.code).equals(202);
+        expect(attachmentWriteResponse.status.code).toBe(202);
 
         // 3. Verify Carol cannot prune the records.
         const postPrune = await RecordsDelete.create({
@@ -819,8 +816,8 @@ export function testRecordsPrune(): void {
         });
 
         const deleteReply = await dwn.processMessage(alice.did, postPrune.message);
-        expect(deleteReply.status.code).to.equal(401);
-        expect(deleteReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+        expect(deleteReply.status.code).toBe(401);
+        expect(deleteReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
 
         // sanity test `RecordsQuery` still returns the records
         const recordsQuery = await RecordsQuery.create({
@@ -828,8 +825,8 @@ export function testRecordsPrune(): void {
           filter : { protocol: protocolDefinition.protocol }
         });
         const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-        expect(recordsQueryReply.status.code).to.equal(200);
-        expect(recordsQueryReply.entries?.length).to.equal(2);
+        expect(recordsQueryReply.status.code).toBe(200);
+        expect(recordsQueryReply.entries?.length).toBe(2);
       });
 
       it('should throw if only `delete` is allowed but received a RecordsDelete with `prune` set to `true`', async () => {
@@ -880,7 +877,7 @@ export function testRecordsPrune(): void {
           signer     : Jws.createSigner(alice)
         });
         const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).to.equal(202);
+        expect(protocolsConfigureReply.status.code).toBe(202);
 
         // 2. Bob writes a record + a descendant in Alice's DWN.
         const postData = TestDataGenerator.randomBytes(100);
@@ -894,7 +891,7 @@ export function testRecordsPrune(): void {
 
         const post = await RecordsWrite.create(postOptions);
         const postWriteResponse = await dwn.processMessage(alice.did, post.message, { dataStream: DataStream.fromBytes(postData) });
-        expect(postWriteResponse.status.code).equals(202);
+        expect(postWriteResponse.status.code).toBe(202);
 
         const attachmentData = TestDataGenerator.randomBytes(100);
         const attachmentOptions = {
@@ -908,7 +905,7 @@ export function testRecordsPrune(): void {
 
         const attachment = await RecordsWrite.create(attachmentOptions);
         const attachmentWriteResponse = await dwn.processMessage(alice.did, attachment.message, { dataStream: DataStream.fromBytes(attachmentData) });
-        expect(attachmentWriteResponse.status.code).equals(202);
+        expect(attachmentWriteResponse.status.code).toBe(202);
 
         // 3. Verify Bob cannot prune the records.
         const unauthorizedPostPrune = await RecordsDelete.create({
@@ -918,8 +915,8 @@ export function testRecordsPrune(): void {
         });
 
         const unauthorizedPostPruneReply = await dwn.processMessage(alice.did, unauthorizedPostPrune.message);
-        expect(unauthorizedPostPruneReply.status.code).to.equal(401);
-        expect(unauthorizedPostPruneReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+        expect(unauthorizedPostPruneReply.status.code).toBe(401);
+        expect(unauthorizedPostPruneReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
       });
 
       it('should not allow creation of a protocol definition with action rule containing `prune` without `create`', async () => {
@@ -949,7 +946,7 @@ export function testRecordsPrune(): void {
         });
 
         await expect(protocolsConfigureCreatePromise)
-          .to.be.rejectedWith(DwnErrorCode.ProtocolsConfigureInvalidActionPruneWithoutCreate);
+          .rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidActionPruneWithoutCreate);
       });
     });
   });

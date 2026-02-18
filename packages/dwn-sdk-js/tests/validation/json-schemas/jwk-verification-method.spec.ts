@@ -1,6 +1,6 @@
-import { expect } from 'chai';
 import { signatureAlgorithms } from '../../../src/jose/algorithms/signing/signature-algorithms.js';
 import { validateJsonSchema } from '../../../src/schema-validator.js';
+import { describe, expect, it } from 'bun:test';
 
 const { secp256k1 } = signatureAlgorithms;
 
@@ -14,7 +14,7 @@ describe('JwkVerificationMethod', async () => {
         controller   : 'did:jank:alice',
         publicKeyJwk : publicJwk
       })
-    ).to.not.throw();
+    ).not.toThrow();
   });
 
   it('should not throw an exception if verificationMethod uses \'JsonWebKey\' type', () => {
@@ -25,7 +25,7 @@ describe('JwkVerificationMethod', async () => {
         controller   : 'did:jank:alice',
         publicKeyJwk : publicJwk
       })
-    ).to.not.throw();
+    ).not.toThrow();
   });
 
   it('should not throw if `id` does not have the DID as prefix', () => {
@@ -36,7 +36,7 @@ describe('JwkVerificationMethod', async () => {
         controller   : 'did:jank:alice',
         publicKeyJwk : publicJwk
       })
-    ).to.not.throw();
+    ).not.toThrow();
   });
 
   it('should throw an exception if id isn\'t a string', () => {
@@ -47,7 +47,7 @@ describe('JwkVerificationMethod', async () => {
         controller   : 'did:jank:alice',
         publicKeyJwk : publicJwk
       })
-    ).to.throw('id: must be string');
+    ).toThrow('id: must be string');
   });
 
   it('should throw an exception if controller isn\'t a did', () => {
@@ -58,7 +58,7 @@ describe('JwkVerificationMethod', async () => {
         controller   : 'notadid:jank:alice',
         publicKeyJwk : publicJwk
       })
-    ).to.throw('controller: must match pattern');
+    ).toThrow('controller: must match pattern');
   });
 
   it('should throw an exception if publicKeyJwk isn\'t present in verificationMethod', () => {
@@ -68,7 +68,7 @@ describe('JwkVerificationMethod', async () => {
         type       : 'JsonWebKey2020',
         controller : 'did:jank:alice'
       })
-    ).to.throw('publicKeyJwk');
+    ).toThrow('publicKeyJwk');
   });
 
   it('should throw an exception if publicKeyJwk isn\'t an object', () => {
@@ -79,6 +79,6 @@ describe('JwkVerificationMethod', async () => {
         controller   : 'did:jank:alice',
         publicKeyJwk : 'notAnObject'
       })
-    ).to.throw('publicKeyJwk');
+    ).toThrow('publicKeyJwk');
   });
 });

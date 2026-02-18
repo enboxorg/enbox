@@ -1,6 +1,6 @@
-import { expect } from 'chai';
 import { signatureAlgorithms } from '../../../../src/jose/algorithms/signing/signature-algorithms.js';
 import { validateJsonSchema } from '../../../../src/schema-validator.js';
+import { describe, expect, it } from 'bun:test';
 
 const { Ed25519, secp256k1 } = signatureAlgorithms;
 
@@ -18,28 +18,28 @@ describe('PublicJwk Schema', async () => {
   it('should not throw an exception if properly formatted publicJwk', () => {
     expect(
       () => validateJsonSchema('PublicJwk', publicJwkSecp256k1)
-    ).to.not.throw();
+    ).not.toThrow();
     expect(
       () => validateJsonSchema('PublicJwk', publicJwkEd25519)
-    ).to.not.throw();
+    ).not.toThrow();
     expect(
       () => validateJsonSchema('PublicJwk', publicJwkRsa)
-    ).to.not.throw();
+    ).not.toThrow();
   });
 
   it('should throw an exception if publicJwk has private property', () => {
     expect(
       () => validateJsonSchema('PublicJwk', { ...publicJwkSecp256k1, d: 'supersecret' })
-    ).to.throw();
+    ).toThrow();
     expect(
       () => validateJsonSchema('PublicJwk', { ...publicJwkEd25519, d: 'supersecret' })
-    ).to.throw();
+    ).toThrow();
     expect(
       () => validateJsonSchema('PublicJwk', { ...publicJwkRsa, oth: {} })
-    ).to.throw();
+    ).toThrow();
     expect(
       () => validateJsonSchema('PublicJwk', { ...publicJwkRsa, d: 'supersecret', oth: {} })
-    ).to.throw();
+    ).toThrow();
   });
 
 });

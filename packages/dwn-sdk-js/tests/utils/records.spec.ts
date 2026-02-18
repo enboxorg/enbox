@@ -1,6 +1,6 @@
 import type { DerivedPrivateJwk, RecordsWriteDescriptor } from '../../src/index.js';
 
-import { expect } from 'chai';
+import { describe, expect, it } from 'bun:test';
 
 import { DateSort } from '../../src/types/records-types.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
@@ -16,7 +16,7 @@ describe('Records', () => {
         derivationScheme  : KeyDerivationScheme.ProtocolPath,
         derivedPrivateKey : (await ed25519.generateKeyPair()).privateJwk
       };
-      await expect(Records.derivePrivateKey(derivedKey, ['a'])).to.be.rejectedWith(DwnErrorCode.RecordsDerivePrivateKeyUnSupportedCurve);
+      await expect(Records.derivePrivateKey(derivedKey, ['a'])).rejects.toThrow(DwnErrorCode.RecordsDerivePrivateKeyUnSupportedCurve);
     });
   });
 
@@ -33,58 +33,58 @@ describe('Records', () => {
       };
 
       expect(() => Records.constructKeyDerivationPathUsingProtocolPathScheme(descriptor))
-        .to.throw(DwnErrorCode.RecordsProtocolPathDerivationSchemeMissingProtocol);
+        .toThrow(DwnErrorCode.RecordsProtocolPathDerivationSchemeMissingProtocol);
     });
   });
 
   describe('constructKeyDerivationPathUsingProtocolContextScheme()', () => {
     it('should throw if not given contextId', async () => {
       expect(() => Records.constructKeyDerivationPathUsingProtocolContextScheme(undefined))
-        .to.throw(DwnErrorCode.RecordsProtocolContextDerivationSchemeMissingContextId);
+        .toThrow(DwnErrorCode.RecordsProtocolContextDerivationSchemeMissingContextId);
     });
   });
 
   describe('constructKeyDerivationPathUsingSchemasScheme()', () => {
     it('should throw if not given schema', async () => {
       expect(() => Records.constructKeyDerivationPathUsingSchemasScheme(undefined))
-        .to.throw(DwnErrorCode.RecordsSchemasDerivationSchemeMissingSchema);
+        .toThrow(DwnErrorCode.RecordsSchemasDerivationSchemeMissingSchema);
     });
   });
 
   describe('convertDateSort()', () => {
     it('should return messageTimestamp descending when no dateSort is given', () => {
       const result = Records.convertDateSort(undefined);
-      expect(result).to.deep.equal({ messageTimestamp: SortDirection.Descending });
+      expect(result).toEqual({ messageTimestamp: SortDirection.Descending });
     });
 
     it('should map CreatedAscending to dateCreated ascending', () => {
       const result = Records.convertDateSort(DateSort.CreatedAscending);
-      expect(result).to.deep.equal({ dateCreated: SortDirection.Ascending });
+      expect(result).toEqual({ dateCreated: SortDirection.Ascending });
     });
 
     it('should map CreatedDescending to dateCreated descending', () => {
       const result = Records.convertDateSort(DateSort.CreatedDescending);
-      expect(result).to.deep.equal({ dateCreated: SortDirection.Descending });
+      expect(result).toEqual({ dateCreated: SortDirection.Descending });
     });
 
     it('should map PublishedAscending to datePublished ascending', () => {
       const result = Records.convertDateSort(DateSort.PublishedAscending);
-      expect(result).to.deep.equal({ datePublished: SortDirection.Ascending });
+      expect(result).toEqual({ datePublished: SortDirection.Ascending });
     });
 
     it('should map PublishedDescending to datePublished descending', () => {
       const result = Records.convertDateSort(DateSort.PublishedDescending);
-      expect(result).to.deep.equal({ datePublished: SortDirection.Descending });
+      expect(result).toEqual({ datePublished: SortDirection.Descending });
     });
 
     it('should map UpdatedAscending to messageTimestamp ascending', () => {
       const result = Records.convertDateSort(DateSort.UpdatedAscending);
-      expect(result).to.deep.equal({ messageTimestamp: SortDirection.Ascending });
+      expect(result).toEqual({ messageTimestamp: SortDirection.Ascending });
     });
 
     it('should map UpdatedDescending to messageTimestamp descending', () => {
       const result = Records.convertDateSort(DateSort.UpdatedDescending);
-      expect(result).to.deep.equal({ messageTimestamp: SortDirection.Descending });
+      expect(result).toEqual({ messageTimestamp: SortDirection.Descending });
     });
   });
 });

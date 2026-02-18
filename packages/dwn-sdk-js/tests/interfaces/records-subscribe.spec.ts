@@ -1,13 +1,9 @@
-import chaiAsPromised from 'chai-as-promised';
-import chai, { expect } from 'chai';
-
 import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
 import { Jws } from '../../src/utils/jws.js';
 import { RecordsSubscribe } from '../../src/interfaces/records-subscribe.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { Time } from '../../src/utils/time.js';
-
-chai.use(chaiAsPromised);
+import { describe, expect, it } from 'bun:test';
 
 describe('RecordsSubscribe', () => {
   describe('create()', () => {
@@ -18,12 +14,12 @@ describe('RecordsSubscribe', () => {
         filter: { datePublished: { from: randomDate, }, published: true }
       });
 
-      await expect(recordQueryControl).to.eventually.not.be.rejected;
+      await expect(recordQueryControl).resolves.toBeDefined();
 
       const recordQueryRejected = TestDataGenerator.generateRecordsQuery({
         filter: { datePublished: { from: randomDate }, published: false }
       });
-      await expect(recordQueryRejected).to.eventually.be.rejectedWith('descriptor/filter/published: must be equal to one of the allowed values');
+      await expect(recordQueryRejected).rejects.toThrow('descriptor/filter/published: must be equal to one of the allowed values');
     });
 
     it('should use `messageTimestamp` as is if given', async () => {
@@ -36,7 +32,7 @@ describe('RecordsSubscribe', () => {
         signer           : Jws.createSigner(alice),
       });
 
-      expect(recordsQuery.message.descriptor.messageTimestamp).to.equal(currentTime);
+      expect(recordsQuery.message.descriptor.messageTimestamp).toBe(currentTime);
     });
 
     it('should auto-normalize protocol URL', async () => {
@@ -54,7 +50,7 @@ describe('RecordsSubscribe', () => {
 
       const message = recordsQuery.message;
 
-      expect(message.descriptor.filter!.protocol).to.eq('http://example.com');
+      expect(message.descriptor.filter!.protocol).toBe('http://example.com');
     });
 
     it('should auto-normalize schema URL', async () => {
@@ -72,8 +68,7 @@ describe('RecordsSubscribe', () => {
 
       const message = recordsQuery.message;
 
-      expect(message.descriptor.filter!.schema).to.eq('http://example.com');
+      expect(message.descriptor.filter!.schema).toBe('http://example.com');
     });
   });
 });
-

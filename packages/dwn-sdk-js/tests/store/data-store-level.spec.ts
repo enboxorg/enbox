@@ -1,18 +1,14 @@
-import chaiAsPromised from 'chai-as-promised';
-import chai, { expect } from 'chai';
-
 import { ArrayUtility } from '../../src/utils/array.js';
 import { Cid } from '../../src/utils/cid.js';
 import { DataStoreLevel } from '../../src/store/data-store-level.js';
 import { DataStream } from '../../src/index.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-
-chai.use(chaiAsPromised);
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 let store: DataStoreLevel;
 
 describe('DataStoreLevel Test Suite', () => {
-  before(async () => {
+  beforeAll(async () => {
     store = new DataStoreLevel({ blockstoreLocation: 'TEST-DATASTORE' });
     await store.open();
   });
@@ -21,7 +17,7 @@ describe('DataStoreLevel Test Suite', () => {
     await store.clear(); // clean up before each test rather than after so that a test does not depend on other tests to do the clean up
   });
 
-  after(async () => {
+  afterAll(async () => {
     await store.close();
   });
 
@@ -40,12 +36,12 @@ describe('DataStoreLevel Test Suite', () => {
 
         const { dataSize } = await store.put(tenant, recordId, dataCid, dataStream);
 
-        expect(dataSize).to.equal(dataSizeInBytes);
+        expect(dataSize).toBe(dataSizeInBytes);
 
         const result = (await store.get(tenant, recordId, dataCid))!;
         const storedDataBytes = await DataStream.toBytes(result.dataStream);
 
-        expect(storedDataBytes).to.eql(dataBytes);
+        expect(storedDataBytes).toEqual(dataBytes);
 
         dataSizeInBytes *= 10;
       }
@@ -71,8 +67,8 @@ describe('DataStoreLevel Test Suite', () => {
       // verify that both alice and bob's blockstore have their own reference to data CID
       const blockstoreOfAliceRecord = await store['getBlockstoreForStoringData'](alice, aliceRecordId, dataCid);
       const blockstoreOfBobRecord = await store['getBlockstoreForStoringData'](bob, bobRecordId, dataCid);
-      await expect(ArrayUtility.fromAsyncGenerator(blockstoreOfAliceRecord.db.keys())).to.eventually.eql([ dataCid ]);
-      await expect(ArrayUtility.fromAsyncGenerator(blockstoreOfBobRecord.db.keys())).to.eventually.eql([ dataCid ]);
+      expect(await ArrayUtility.fromAsyncGenerator(blockstoreOfAliceRecord.db.keys())).toEqual([ dataCid ]);
+      expect(await ArrayUtility.fromAsyncGenerator(blockstoreOfBobRecord.db.keys())).toEqual([ dataCid ]);
     });
   });
 
@@ -84,7 +80,7 @@ describe('DataStoreLevel Test Suite', () => {
       const randomCid = await TestDataGenerator.randomCborSha256Cid();
       const result = await store.get(tenant, recordId, randomCid);
 
-      expect(result).to.be.undefined;
+      expect(result).toBeUndefined();
     });
 
     it('should return `undefined` if the dataCid is different than the dataStream`', async () => {
@@ -99,7 +95,7 @@ describe('DataStoreLevel Test Suite', () => {
       await store.put(tenant, recordId, randomCid, dataStream);
 
       const result = await store.get(tenant, recordId, randomCid);
-      expect(result).to.be.undefined;
+      expect(result).toBeUndefined();
     });
   });
 
@@ -115,12 +111,12 @@ describe('DataStoreLevel Test Suite', () => {
       await store.put(tenant, recordId, dataCid, dataStream);
 
       const keysBeforeDelete = await ArrayUtility.fromAsyncGenerator(store.blockstore.db.keys());
-      expect(keysBeforeDelete.length).to.equal(40);
+      expect(keysBeforeDelete.length).toBe(40);
 
       await store.delete(tenant, recordId, dataCid);
 
       const keysAfterDelete = await ArrayUtility.fromAsyncGenerator(store.blockstore.db.keys());
-      expect(keysAfterDelete.length).to.equal(0);
+      expect(keysAfterDelete.length).toBe(0);
     });
 
     it('should only delete data in the sublevel of the corresponding record', async () => {
@@ -155,24 +151,24 @@ describe('DataStoreLevel Test Suite', () => {
       const blockstoreOfRecord2 = await store['getBlockstoreForStoringData'](alice, recordId2, dataCid);
       const blockstoreOfRecord3 = await store['getBlockstoreForStoringData'](bob, recordId3, dataCid);
       const blockstoreOfRecord4 = await store['getBlockstoreForStoringData'](bob, recordId4, dataCid);
-      await expect(ArrayUtility.fromAsyncGenerator(blockstoreOfRecord1.db.keys())).to.eventually.eql([ dataCid ]);
-      await expect(ArrayUtility.fromAsyncGenerator(blockstoreOfRecord2.db.keys())).to.eventually.eql([ dataCid ]);
-      await expect(ArrayUtility.fromAsyncGenerator(blockstoreOfRecord3.db.keys())).to.eventually.eql([ dataCid ]);
-      await expect(ArrayUtility.fromAsyncGenerator(blockstoreOfRecord4.db.keys())).to.eventually.eql([ dataCid ]);
+      expect(await ArrayUtility.fromAsyncGenerator(blockstoreOfRecord1.db.keys())).toEqual([ dataCid ]);
+      expect(await ArrayUtility.fromAsyncGenerator(blockstoreOfRecord2.db.keys())).toEqual([ dataCid ]);
+      expect(await ArrayUtility.fromAsyncGenerator(blockstoreOfRecord3.db.keys())).toEqual([ dataCid ]);
+      expect(await ArrayUtility.fromAsyncGenerator(blockstoreOfRecord4.db.keys())).toEqual([ dataCid ]);
 
       // alice deletes one of the two records
       await store.delete(alice, recordId1, dataCid);
-      await expect(ArrayUtility.fromAsyncGenerator(blockstoreOfRecord1.db.keys())).to.eventually.eql([ ]);
-      await expect(ArrayUtility.fromAsyncGenerator(blockstoreOfRecord2.db.keys())).to.eventually.eql([ dataCid ]);
-      await expect(ArrayUtility.fromAsyncGenerator(blockstoreOfRecord3.db.keys())).to.eventually.eql([ dataCid ]);
-      await expect(ArrayUtility.fromAsyncGenerator(blockstoreOfRecord4.db.keys())).to.eventually.eql([ dataCid ]);
+      expect(await ArrayUtility.fromAsyncGenerator(blockstoreOfRecord1.db.keys())).toEqual([ ]);
+      expect(await ArrayUtility.fromAsyncGenerator(blockstoreOfRecord2.db.keys())).toEqual([ dataCid ]);
+      expect(await ArrayUtility.fromAsyncGenerator(blockstoreOfRecord3.db.keys())).toEqual([ dataCid ]);
+      expect(await ArrayUtility.fromAsyncGenerator(blockstoreOfRecord4.db.keys())).toEqual([ dataCid ]);
 
       // alice deletes the other record
       await store.delete(alice, recordId2, dataCid);
-      await expect(ArrayUtility.fromAsyncGenerator(blockstoreOfRecord1.db.keys())).to.eventually.eql([ ]);
-      await expect(ArrayUtility.fromAsyncGenerator(blockstoreOfRecord2.db.keys())).to.eventually.eql([ ]);
-      await expect(ArrayUtility.fromAsyncGenerator(blockstoreOfRecord3.db.keys())).to.eventually.eql([ dataCid ]);
-      await expect(ArrayUtility.fromAsyncGenerator(blockstoreOfRecord4.db.keys())).to.eventually.eql([ dataCid ]);
+      expect(await ArrayUtility.fromAsyncGenerator(blockstoreOfRecord1.db.keys())).toEqual([ ]);
+      expect(await ArrayUtility.fromAsyncGenerator(blockstoreOfRecord2.db.keys())).toEqual([ ]);
+      expect(await ArrayUtility.fromAsyncGenerator(blockstoreOfRecord3.db.keys())).toEqual([ dataCid ]);
+      expect(await ArrayUtility.fromAsyncGenerator(blockstoreOfRecord4.db.keys())).toEqual([ dataCid ]);
     });
   });
 });

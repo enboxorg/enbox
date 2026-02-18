@@ -1,13 +1,10 @@
 import type { RecordsPermissionScope } from '../../src/types/permission-types.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
-import chai, { expect } from 'chai';
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Jws } from '../../src/utils/jws.js';
 import { DwnInterfaceName, DwnMethodName, PermissionRequest, PermissionsProtocol, TestDataGenerator } from '../../src/index.js';
-
-chai.use(chaiAsPromised);
 
 describe('PermissionRequest', () => {
   afterEach(() => {
@@ -31,8 +28,8 @@ describe('PermissionRequest', () => {
     });
 
     const parsedPermissionRequest = await PermissionRequest.parse(permissionRequest.dataEncodedMessage);
-    expect (parsedPermissionRequest.id).to.equal(permissionRequest.dataEncodedMessage.recordId);
-    expect (parsedPermissionRequest.delegated).to.equal(true);
-    expect (parsedPermissionRequest.scope).to.deep.equal(scope);
+    expect (parsedPermissionRequest.id).toBe(permissionRequest.dataEncodedMessage.recordId);
+    expect (parsedPermissionRequest.delegated).toBe(true);
+    expect (parsedPermissionRequest.scope).toEqual(scope);
   });
 });

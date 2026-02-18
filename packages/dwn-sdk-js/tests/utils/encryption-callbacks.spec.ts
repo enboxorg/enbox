@@ -4,11 +4,11 @@ import type { PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js'
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Encoder } from '../../src/utils/encoder.js';
 import { Encryption } from '../../src/utils/encryption.js';
-import { expect } from 'chai';
 import { Protocols } from '../../src/utils/protocols.js';
 import { Records } from '../../src/utils/records.js';
 import { Secp256k1 } from '../../src/utils/secp256k1.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { HdKey, KeyDerivationScheme } from '../../src/utils/hd-key.js';
 
 describe('Encryption Callback Interfaces', () => {
@@ -71,21 +71,21 @@ describe('Encryption Callback Interfaces', () => {
       );
 
       // Assert A and B have identical $encryption at every path level
-      expect(resultA.structure.thread.$encryption).to.exist;
-      expect(resultB.structure.thread.$encryption).to.exist;
-      expect(resultA.structure.thread.$encryption!.rootKeyId).to.equal(
+      expect(resultA.structure.thread.$encryption).toBeDefined();
+      expect(resultB.structure.thread.$encryption).toBeDefined();
+      expect(resultA.structure.thread.$encryption!.rootKeyId).toBe(
         resultB.structure.thread.$encryption!.rootKeyId
       );
-      expect(resultA.structure.thread.$encryption!.publicKeyJwk).to.deep.equal(
+      expect(resultA.structure.thread.$encryption!.publicKeyJwk).toEqual(
         resultB.structure.thread.$encryption!.publicKeyJwk
       );
 
-      expect(resultA.structure.thread.message.$encryption).to.exist;
-      expect(resultB.structure.thread.message.$encryption).to.exist;
-      expect(resultA.structure.thread.message.$encryption!.rootKeyId).to.equal(
+      expect(resultA.structure.thread.message.$encryption).toBeDefined();
+      expect(resultB.structure.thread.message.$encryption).toBeDefined();
+      expect(resultA.structure.thread.message.$encryption!.rootKeyId).toBe(
         resultB.structure.thread.message.$encryption!.rootKeyId
       );
-      expect(resultA.structure.thread.message.$encryption!.publicKeyJwk).to.deep.equal(
+      expect(resultA.structure.thread.message.$encryption!.publicKeyJwk).toEqual(
         resultB.structure.thread.message.$encryption!.publicKeyJwk
       );
     });
@@ -133,13 +133,13 @@ describe('Encryption Callback Interfaces', () => {
 
       // Assert paths: ['protocolPath', '<url>', 'thread']
       //   and ['protocolPath', '<url>', 'thread', 'message']
-      expect(calledPaths).to.have.lengthOf(2);
-      expect(calledPaths[0]).to.deep.equal([
+      expect(calledPaths).toHaveLength(2);
+      expect(calledPaths[0]).toEqual([
         KeyDerivationScheme.ProtocolPath,
         'https://example.com/protocol/bar',
         'thread'
       ]);
-      expect(calledPaths[1]).to.deep.equal([
+      expect(calledPaths[1]).toEqual([
         KeyDerivationScheme.ProtocolPath,
         'https://example.com/protocol/bar',
         'thread',
@@ -236,9 +236,9 @@ describe('Encryption Callback Interfaces', () => {
       const plaintextB = await DataStream.toBytes(decryptedStreamB);
 
       // Assert A and B are identical
-      expect(Encoder.bytesToString(plaintextA)).to.equal(plaintext);
-      expect(Encoder.bytesToString(plaintextB)).to.equal(plaintext);
-      expect(plaintextA).to.deep.equal(plaintextB);
+      expect(Encoder.bytesToString(plaintextA)).toBe(plaintext);
+      expect(Encoder.bytesToString(plaintextB)).toBe(plaintext);
+      expect(plaintextA).toEqual(plaintextB);
     });
 
     it('throws if no matching keyEncryption entry found', async () => {
@@ -291,7 +291,7 @@ describe('Encryption Callback Interfaces', () => {
           keyDecrypter,
           encryptedRecord.dataStream!
         )
-      ).to.be.rejectedWith('Unable to find a symmetric key encrypted using key');
+      ).rejects.toThrow('Unable to find a symmetric key encrypted using key');
     });
   });
 

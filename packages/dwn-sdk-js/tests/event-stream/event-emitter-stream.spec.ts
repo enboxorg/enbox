@@ -7,24 +7,21 @@ import { TestDataGenerator } from '../../src/index.js';
 import { TestStores } from '../test-stores.js';
 
 import sinon from 'sinon';
-
-import chaiAsPromised from 'chai-as-promised';
-import chai, { expect } from 'chai';
-
-chai.use(chaiAsPromised);
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 describe('EventEmitterStream', () => {
   let messageStore: MessageStore;
 
-  before(() => {
+  beforeAll(async () => {
     ({ messageStore } = TestStores.get());
+    await messageStore.open();
   });
 
   beforeEach(async () => {
-    messageStore.clear();
+    await messageStore.clear();
   });
 
-  after(async () => {
+  afterAll(async () => {
     // Clean up after each test by closing and clearing the event stream
     await messageStore.close();
     sinon.restore();
@@ -35,14 +32,14 @@ describe('EventEmitterStream', () => {
     const emitter = eventStream['eventEmitter'];
 
     // count the `events` listeners, which represents all listeners
-    expect(emitter.listenerCount('did:alice_events')).to.equal(0);
+    expect(emitter.listenerCount('did:alice_events')).toBe(0);
 
     const sub = await eventStream.subscribe('did:alice', 'id', () => {});
-    expect(emitter.listenerCount('did:alice_events')).to.equal(1);
+    expect(emitter.listenerCount('did:alice_events')).toBe(1);
 
     // close the subscription, which should remove the listener
     await sub.close();
-    expect(emitter.listenerCount('did:alice_events')).to.equal(0);
+    expect(emitter.listenerCount('did:alice_events')).toBe(0);
   });
 
   it('logs message when the emitter experiences an error', async () => {
@@ -54,7 +51,7 @@ describe('EventEmitterStream', () => {
     const eventStream = new EventEmitterStream({ errorHandler: testHandler.errorHandler });
     const emitter = eventStream['eventEmitter'];
     emitter.emit('error', new Error('random error'));
-    expect(eventErrorSpy.callCount).to.equal(1);
+    expect(eventErrorSpy.callCount).toBe(1);
   });
 
   it('does not emit messages if event stream is closed', async () => {
@@ -76,18 +73,18 @@ describe('EventEmitterStream', () => {
     const message2 = await TestDataGenerator.generateRecordsWrite({});
     eventStream.emit('did:alice', { message: message2.message }, {});
 
-    expect(eventErrorSpy.callCount).to.equal(2);
+    expect(eventErrorSpy.callCount).toBe(2);
 
     // check that all listeners have been removed
     const eventEmitter = eventStream['eventEmitter'];
     for (const event of eventEmitter.eventNames()) {
-      expect(eventEmitter.listenerCount(event)).to.equal(0);
+      expect(eventEmitter.listenerCount(event)).toBe(0);
     }
   });
 
   it('sets max listeners to 0 which represents infinity', async () => {
     const eventStreamOne = new EventEmitterStream();
     const emitterOne = eventStreamOne['eventEmitter'];
-    expect(emitterOne.getMaxListeners()).to.equal(0);
+    expect(emitterOne.getMaxListeners()).toBe(0);
   });
 });

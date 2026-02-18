@@ -1,6 +1,3 @@
-import chaiAsPromised from 'chai-as-promised';
-import chai, { expect } from 'chai';
-
 import { DateSort } from '../../src/types/records-types.js';
 import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
@@ -8,8 +5,7 @@ import { Jws } from '../../src/index.js';
 import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { Time } from '../../src/utils/time.js';
-
-chai.use(chaiAsPromised);
+import { describe, expect, it } from 'bun:test';
 
 describe('RecordsRead', () => {
   describe('create()', () => {
@@ -25,7 +21,7 @@ describe('RecordsRead', () => {
         messageTimestamp : currentTime
       });
 
-      expect(recordsRead.message.descriptor.messageTimestamp).to.equal(currentTime);
+      expect(recordsRead.message.descriptor.messageTimestamp).toBe(currentTime);
     });
 
     it('should include permissionGrantId in the descriptor when provided', async () => {
@@ -38,7 +34,7 @@ describe('RecordsRead', () => {
         permissionGrantId : grantId,
       });
 
-      expect(recordsRead.message.descriptor.permissionGrantId).to.equal(grantId);
+      expect(recordsRead.message.descriptor.permissionGrantId).toBe(grantId);
     });
 
     it('should auto-normalize protocol URL', async () => {
@@ -56,7 +52,7 @@ describe('RecordsRead', () => {
 
       const message = recordsQuery.message;
 
-      expect(message.descriptor.filter!.protocol).to.eq('http://example.com');
+      expect(message.descriptor.filter!.protocol).toBe('http://example.com');
     });
 
     it('should auto-normalize schema URL', async () => {
@@ -74,7 +70,7 @@ describe('RecordsRead', () => {
 
       const message = recordsQuery.message;
 
-      expect(message.descriptor.filter!.schema).to.eq('http://example.com');
+      expect(message.descriptor.filter!.schema).toBe('http://example.com');
     });
 
     it('should include dateSort in the descriptor when provided', async () => {
@@ -86,7 +82,7 @@ describe('RecordsRead', () => {
         dateSort : DateSort.CreatedDescending,
       });
 
-      expect(recordsRead.message.descriptor.dateSort).to.equal(DateSort.CreatedDescending);
+      expect(recordsRead.message.descriptor.dateSort).toBe(DateSort.CreatedDescending);
     });
 
     it('should not include dateSort in the descriptor when not provided', async () => {
@@ -97,7 +93,7 @@ describe('RecordsRead', () => {
         signer : Jws.createSigner(alice),
       });
 
-      expect(recordsRead.message.descriptor.dateSort).to.be.undefined;
+      expect(recordsRead.message.descriptor.dateSort).toBeUndefined();
     });
 
     it('should throw if published is set to false and dateSort is PublishedAscending', async () => {
@@ -109,7 +105,7 @@ describe('RecordsRead', () => {
         dateSort : DateSort.PublishedAscending,
       });
 
-      await expect(createPromise).to.be.rejectedWith(DwnErrorCode.RecordsReadCreateFilterPublishedSortInvalid);
+      await expect(createPromise).rejects.toThrow(DwnErrorCode.RecordsReadCreateFilterPublishedSortInvalid);
     });
 
     it('should throw if published is set to false and dateSort is PublishedDescending', async () => {
@@ -121,7 +117,7 @@ describe('RecordsRead', () => {
         dateSort : DateSort.PublishedDescending,
       });
 
-      await expect(createPromise).to.be.rejectedWith(DwnErrorCode.RecordsReadCreateFilterPublishedSortInvalid);
+      await expect(createPromise).rejects.toThrow(DwnErrorCode.RecordsReadCreateFilterPublishedSortInvalid);
     });
   });
 
@@ -138,7 +134,7 @@ describe('RecordsRead', () => {
       recordsRead.message.descriptor.dateSort = DateSort.PublishedAscending;
 
       const parsePromise = RecordsRead.parse(recordsRead.message);
-      await expect(parsePromise).to.be.rejectedWith(DwnErrorCode.RecordsReadParseFilterPublishedSortInvalid);
+      await expect(parsePromise).rejects.toThrow(DwnErrorCode.RecordsReadParseFilterPublishedSortInvalid);
     });
 
     it('should throw if published is set to false and dateSort is PublishedDescending', async () => {
@@ -153,8 +149,7 @@ describe('RecordsRead', () => {
       recordsRead.message.descriptor.dateSort = DateSort.PublishedDescending;
 
       const parsePromise = RecordsRead.parse(recordsRead.message);
-      await expect(parsePromise).to.be.rejectedWith(DwnErrorCode.RecordsReadParseFilterPublishedSortInvalid);
+      await expect(parsePromise).rejects.toThrow(DwnErrorCode.RecordsReadParseFilterPublishedSortInvalid);
     });
   });
 });
-

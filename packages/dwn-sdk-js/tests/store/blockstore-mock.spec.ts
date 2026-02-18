@@ -1,9 +1,6 @@
 import * as Block from 'multiformats/block';
 import * as Raw from 'multiformats/codecs/raw';
-import chai from 'chai';
-import chaiAsPromised from 'chai-as-promised';
 import { CID } from 'multiformats/cid';
-import { expect } from 'chai';
 import { sha256 } from 'multiformats/hashes/sha2';
 
 import { BlockstoreMock } from '../../src/store/blockstore-mock.js';
@@ -11,8 +8,7 @@ import { DataStream } from '../../src/index.js';
 import { importer } from 'ipfs-unixfs-importer';
 import { MemoryBlockstore } from 'blockstore-core';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-
-chai.use(chaiAsPromised);
+import { beforeEach, describe, expect, it } from 'bun:test';
 
 describe('BlockstoreMock', () => {
   let blockstore: BlockstoreMock;
@@ -22,8 +18,8 @@ describe('BlockstoreMock', () => {
   });
 
   it('should implement open and close methods', async () => {
-    await expect(blockstore.open()).to.be.fulfilled;
-    await expect(blockstore.close()).to.be.fulfilled;
+    await blockstore.open();
+    await blockstore.close();
   });
 
   it('should facilitate the same CID computation as other implementations', async () => {
@@ -53,9 +49,9 @@ describe('BlockstoreMock', () => {
       for await (blockByMockBlockstore of asyncDataBlocksByMockBlockstore) { ; }
       const dataCidByMockBlockstore = blockByMockBlockstore ? blockByMockBlockstore.cid.toString() : '';
 
-      expect(dataCidByMockBlockstore).to.exist;
-      expect(dataCidByMockBlockstore.length).to.be.greaterThan(0);
-      expect(dataCidByMockBlockstore).to.be.equal(dataCidByMemoryBlockstore);
+      expect(dataCidByMockBlockstore).toBeDefined();
+      expect(dataCidByMockBlockstore.length).toBeGreaterThan(0);
+      expect(dataCidByMockBlockstore).toBe(dataCidByMemoryBlockstore);
 
       dataSizeInBytes *= 10;
     }
@@ -64,24 +60,24 @@ describe('BlockstoreMock', () => {
   it('should implement get method', async () => {
     const cid = CID.parse('bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi');
     const result = await blockstore.get(cid);
-    expect(result).to.be.instanceof(Uint8Array);
-    expect(result.length).to.equal(0);
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(result.length).toBe(0);
   });
 
   it('should implement has method', async () => {
     const cid = CID.parse('bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi');
     const result = await blockstore.has(cid);
-    expect(result).to.be.false;
+    expect(result).toBe(false);
   });
 
   it('should implement delete method', async () => {
     const cid = CID.parse('bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi');
-    await expect(blockstore.delete(cid)).to.be.fulfilled;
+    await blockstore.delete(cid);
   });
 
   it('should implement isEmpty method', async () => {
     const result = await blockstore.isEmpty();
-    expect(result).to.be.true;
+    expect(result).toBe(true);
   });
 
   it('should implement putMany method', async () => {
@@ -97,9 +93,9 @@ describe('BlockstoreMock', () => {
       results.push(cid);
     }
 
-    expect(results).to.have.lengthOf(2);
-    expect(results[0]).to.deep.equal(block1.cid);
-    expect(results[1]).to.deep.equal(block2.cid);
+    expect(results).toHaveLength(2);
+    expect(results[0]).toEqual(block1.cid);
+    expect(results[1]).toEqual(block2.cid);
   });
 
   it('should implement getMany method', async () => {
@@ -112,13 +108,13 @@ describe('BlockstoreMock', () => {
       results.push(pair);
     }
 
-    expect(results).to.have.lengthOf(2);
-    expect(results[0].cid).to.deep.equal(cid1);
-    expect(results[0].block).to.be.instanceof(Uint8Array);
-    expect(results[0].block.length).to.equal(0);
-    expect(results[1].cid).to.deep.equal(cid2);
-    expect(results[1].block).to.be.instanceof(Uint8Array);
-    expect(results[1].block.length).to.equal(0);
+    expect(results).toHaveLength(2);
+    expect(results[0].cid).toEqual(cid1);
+    expect(results[0].block).toBeInstanceOf(Uint8Array);
+    expect(results[0].block.length).toBe(0);
+    expect(results[1].cid).toEqual(cid2);
+    expect(results[1].block).toBeInstanceOf(Uint8Array);
+    expect(results[1].block.length).toBe(0);
   });
 
   it('should implement deleteMany method', async () => {
@@ -131,13 +127,13 @@ describe('BlockstoreMock', () => {
       results.push(cid);
     }
 
-    expect(results).to.have.lengthOf(2);
-    expect(results[0]).to.deep.equal(cid1);
-    expect(results[1]).to.deep.equal(cid2);
+    expect(results).toHaveLength(2);
+    expect(results[0]).toEqual(cid1);
+    expect(results[1]).toEqual(cid2);
   });
 
   it('should implement clear method', async () => {
-    await expect(blockstore.clear()).to.be.fulfilled;
+    await blockstore.clear();
   });
 
 });

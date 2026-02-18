@@ -1,6 +1,3 @@
-import chai from 'chai';
-import chaiAsPromised from 'chai-as-promised';
-import { expect } from 'chai';
 import sinon from 'sinon';
 import { UniversalResolver } from '@enbox/dids';
 
@@ -13,13 +10,12 @@ import { GeneralJwsVerifier } from '../../../src/jose/jws/general/verifier.js';
 import { Jws } from '../../../src/utils/jws.js';
 import { PrivateKeySigner } from '../../../src/index.js';
 import { signatureAlgorithms } from '../../../src/jose/algorithms/signing/signature-algorithms.js';
+import { afterEach, describe, expect, it } from 'bun:test';
 import { DwnError, DwnErrorCode } from '../../../src/core/dwn-error.js';
 
 
 const { Ed25519, secp256k1 } = signatureAlgorithms;
 const secp256r1 = signatureAlgorithms['P-256'];
-
-chai.use(chaiAsPromised);
 
 describe('General JWS Sign/Verify', () => {
   afterEach(() => {
@@ -55,8 +51,8 @@ describe('General JWS Sign/Verify', () => {
     });
 
     const verificationResult = await GeneralJwsVerifier.verifySignatures(jws, resolverStub);
-    expect(verificationResult.signers.length).to.equal(1);
-    expect(verificationResult.signers).to.include('did:jank:alice');
+    expect(verificationResult.signers.length).toBe(1);
+    expect(verificationResult.signers).toContain('did:jank:alice');
   });
 
   it('should sign and verify secp256r1 signature using a key vector correctly', async () => {
@@ -96,8 +92,8 @@ describe('General JWS Sign/Verify', () => {
       jws,
       resolverStub
     );
-    expect(verificationResult.signers.length).to.equal(1);
-    expect(verificationResult.signers).to.include('did:jank:alice');
+    expect(verificationResult.signers.length).toBe(1);
+    expect(verificationResult.signers).toContain('did:jank:alice');
   });
 
   it('should sign and verify ed25519 signature using a key vector correctly', async () => {
@@ -127,8 +123,8 @@ describe('General JWS Sign/Verify', () => {
     });
 
     const verificationResult = await GeneralJwsVerifier.verifySignatures(jws, resolverStub);
-    expect(verificationResult.signers.length).to.equal(1);
-    expect(verificationResult.signers).to.include('did:jank:alice');
+    expect(verificationResult.signers.length).toBe(1);
+    expect(verificationResult.signers).toContain('did:jank:alice');
   });
 
   it('should throw an error for invalid Ed25519 JWK', async () => {
@@ -142,11 +138,11 @@ describe('General JWS Sign/Verify', () => {
 
     try {
       await ed25519.sign(content, invalidJwk as any);
-      expect.fail('Expected an error to be thrown');
+      throw new Error('Expected an error to be thrown');
     } catch (error) {
-      expect(error).to.be.instanceOf(DwnError);
-      expect((error as DwnError).code).to.equal(DwnErrorCode.Ed25519InvalidJwk);
-      expect((error as DwnError).message).to.include('invalid jwk. kty MUST be OKP. crv MUST be Ed25519');
+      expect(error).toBeInstanceOf(DwnError);
+      expect((error as DwnError).code).toBe(DwnErrorCode.Ed25519InvalidJwk);
+      expect((error as DwnError).message).toContain('invalid jwk. kty MUST be OKP. crv MUST be Ed25519');
     }
   });
 
@@ -156,7 +152,7 @@ describe('General JWS Sign/Verify', () => {
 
     const convertedJwk = await ed25519.publicKeyToJwk(publicKeyBytes);
 
-    expect(convertedJwk).to.deep.equal(publicJwk);
+    expect(convertedJwk).toEqual(publicJwk);
   });
 
   it('should support multiple signatures using different key types', async () => {
@@ -220,9 +216,9 @@ describe('General JWS Sign/Verify', () => {
     });
 
     const verificationResult = await GeneralJwsVerifier.verifySignatures(jws, resolverStub);
-    expect(verificationResult.signers.length).to.equal(2);
-    expect(verificationResult.signers).to.include(alice.did);
-    expect(verificationResult.signers).to.include(bob.did);
+    expect(verificationResult.signers.length).toBe(2);
+    expect(verificationResult.signers).toContain(alice.did);
+    expect(verificationResult.signers).toContain(bob.did);
   });
 
   it('should not verify the same signature more than once', async () => {

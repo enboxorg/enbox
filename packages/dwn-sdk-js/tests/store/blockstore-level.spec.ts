@@ -1,9 +1,9 @@
 import * as Block from 'multiformats/block';
 import * as Raw from 'multiformats/codecs/raw';
-import { expect } from 'chai';
 import { sha256 } from 'multiformats/hashes/sha2';
 
 import { BlockstoreLevel } from '../../src/store/blockstore-level.js';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 let testCounter = 0;
 function uniqueLocation(): string {
@@ -24,12 +24,12 @@ describe('BlockstoreLevel', () => {
   });
 
   it('should report isEmpty correctly', async () => {
-    expect(await blockstore.isEmpty()).to.be.true;
+    expect(await blockstore.isEmpty()).toBe(true);
 
     const block1 = await Block.encode({ value: new TextEncoder().encode('test'), codec: Raw, hasher: sha256 });
     await blockstore.put(block1.cid, block1.bytes);
 
-    expect(await blockstore.isEmpty()).to.be.false;
+    expect(await blockstore.isEmpty()).toBe(false);
   });
 
   it('should put and get blocks', async () => {
@@ -37,7 +37,7 @@ describe('BlockstoreLevel', () => {
     await blockstore.put(block1.cid, block1.bytes);
 
     const result = await blockstore.get(block1.cid);
-    expect(result).to.deep.equal(block1.bytes);
+    expect(result).toEqual(block1.bytes);
   });
 
   it('should putMany blocks', async () => {
@@ -53,9 +53,9 @@ describe('BlockstoreLevel', () => {
       results.push(cid);
     }
 
-    expect(results).to.have.lengthOf(2);
-    expect(await blockstore.has(block1.cid)).to.be.true;
-    expect(await blockstore.has(block2.cid)).to.be.true;
+    expect(results).toHaveLength(2);
+    expect(await blockstore.has(block1.cid)).toBe(true);
+    expect(await blockstore.has(block2.cid)).toBe(true);
   });
 
   it('should getMany blocks', async () => {
@@ -69,11 +69,11 @@ describe('BlockstoreLevel', () => {
       results.push(pair);
     }
 
-    expect(results).to.have.lengthOf(2);
-    expect(results[0].cid.toString()).to.equal(block1.cid.toString());
-    expect(results[0].block).to.deep.equal(block1.bytes);
-    expect(results[1].cid.toString()).to.equal(block2.cid.toString());
-    expect(results[1].block).to.deep.equal(block2.bytes);
+    expect(results).toHaveLength(2);
+    expect(results[0].cid.toString()).toBe(block1.cid.toString());
+    expect(results[0].block).toEqual(block1.bytes);
+    expect(results[1].cid.toString()).toBe(block2.cid.toString());
+    expect(results[1].block).toEqual(block2.bytes);
   });
 
   // NOTE: getAll() is not tested because it assumes keys are binary-encoded CIDs
@@ -93,8 +93,8 @@ describe('BlockstoreLevel', () => {
       deleted.push(cid);
     }
 
-    expect(deleted).to.have.lengthOf(2);
-    expect(await blockstore.has(block1.cid)).to.be.false;
-    expect(await blockstore.has(block2.cid)).to.be.false;
+    expect(deleted).toHaveLength(2);
+    expect(await blockstore.has(block1.cid)).toBe(false);
+    expect(await blockstore.has(block2.cid)).toBe(false);
   });
 });

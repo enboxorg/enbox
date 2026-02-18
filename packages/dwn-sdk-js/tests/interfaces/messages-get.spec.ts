@@ -1,9 +1,9 @@
 import type { MessagesReadMessage } from '../../src/index.js';
 
-import { expect } from 'chai';
 import { Message } from '../../src/core/message.js';
 import { MessagesRead } from '../../src/index.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
+import { describe, expect, it } from 'bun:test';
 import { DwnErrorCode, Jws } from '../../src/index.js';
 
 describe('MessagesRead Message', () => {
@@ -19,10 +19,10 @@ describe('MessagesRead Message', () => {
         messageTimestamp,
       });
 
-      expect(messagesRead.message.authorization).to.exist;
-      expect(messagesRead.message.descriptor).to.exist;
-      expect(messagesRead.message.descriptor.messageCid).to.equal(messageCid);
-      expect(messagesRead.message.descriptor.messageTimestamp).to.equal(messageTimestamp);
+      expect(messagesRead.message.authorization).toBeDefined();
+      expect(messagesRead.message.descriptor).toBeDefined();
+      expect(messagesRead.message.descriptor.messageCid).toBe(messageCid);
+      expect(messagesRead.message.descriptor.messageTimestamp).toBe(messageTimestamp);
     });
 
     it('includes permissionGrantId in the descriptor when provided', async () => {
@@ -36,7 +36,7 @@ describe('MessagesRead Message', () => {
         permissionGrantId : grantId,
       });
 
-      expect((messagesRead.message as MessagesReadMessage).descriptor.permissionGrantId).to.equal(grantId);
+      expect((messagesRead.message as MessagesReadMessage).descriptor.permissionGrantId).toBe(grantId);
     });
 
     it('does not include permissionGrantId in the descriptor when not provided', async () => {
@@ -48,7 +48,7 @@ describe('MessagesRead Message', () => {
         messageCid,
       });
 
-      expect((messagesRead.message as MessagesReadMessage).descriptor.permissionGrantId).to.be.undefined;
+      expect((messagesRead.message as MessagesReadMessage).descriptor.permissionGrantId).toBeUndefined();
     });
 
     it('throws an error if an invalid CID is provided', async () => {
@@ -60,9 +60,9 @@ describe('MessagesRead Message', () => {
           messageCid : 'abcd'
         });
 
-        expect.fail();
+        throw new Error('Expected an error to be thrown');
       } catch (e: any) {
-        expect(e.message).to.include(DwnErrorCode.MessagesReadInvalidCid);
+        expect(e.message).toContain(DwnErrorCode.MessagesReadInvalidCid);
       }
     });
   });
@@ -78,12 +78,12 @@ describe('MessagesRead Message', () => {
       });
 
       const parsed = await MessagesRead.parse(messagesRead.message);
-      expect(parsed).to.be.instanceof(MessagesRead);
+      expect(parsed).toBeInstanceOf(MessagesRead);
 
       const expectedMessageCid = await Message.getCid(messagesRead.message);
       messageCid = await Message.getCid(parsed.message);
 
-      expect(messageCid).to.equal(expectedMessageCid);
+      expect(messageCid).toBe(expectedMessageCid);
     });
 
     it('throws an exception if messageCids contains an invalid cid', async () => {
@@ -101,9 +101,9 @@ describe('MessagesRead Message', () => {
       try {
         await MessagesRead.parse(message);
 
-        expect.fail();
+        throw new Error('Expected an error to be thrown');
       } catch (e: any) {
-        expect(e.message).to.include('is not a valid CID');
+        expect(e.message).toContain('is not a valid CID');
       }
     });
   });

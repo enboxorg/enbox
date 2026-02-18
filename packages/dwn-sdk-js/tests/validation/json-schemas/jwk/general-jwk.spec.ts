@@ -1,7 +1,7 @@
 import { DwnErrorCode } from '../../../../src/core/dwn-error.js';
-import { expect } from 'chai';
 import { signatureAlgorithms } from '../../../../src/jose/algorithms/signing/signature-algorithms.js';
 import { validateJsonSchema } from '../../../../src/schema-validator.js';
+import { describe, expect, it } from 'bun:test';
 
 const { Ed25519, secp256k1 } = signatureAlgorithms;
 
@@ -40,10 +40,10 @@ describe('GeneralJwk Schema', async () => {
     it('should not throw an exception if properly formatted jwk', () => {
       expect(
         () => validateJsonSchema('GeneralJwk', jwk.publicJwk)
-      ).to.not.throw();
+      ).not.toThrow();
       expect(
         () => validateJsonSchema('GeneralJwk', jwk.privateJwk)
-      ).to.not.throw();
+      ).not.toThrow();
     });
   });
 });
@@ -52,9 +52,9 @@ describe('validateJsonSchema', () => {
   it('should throw SchemaValidatorSchemaNotFound for non-existent schema', () => {
     try {
       validateJsonSchema('NonExistentSchema', {});
-      expect.fail('Expected an error');
+      throw new Error('Expected an error');
     } catch (e: any) {
-      expect(e.code).to.equal(DwnErrorCode.SchemaValidatorSchemaNotFound);
+      expect(e.code).toBe(DwnErrorCode.SchemaValidatorSchemaNotFound);
     }
   });
 });

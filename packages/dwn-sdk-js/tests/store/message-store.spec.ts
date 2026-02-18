@@ -2,7 +2,7 @@ import type { MessageStore } from '../../src/index.js';
 import type { PaginationCursor } from '../../src/types/query-types.js';
 import type { RecordsWriteMessage } from '../../src/types/records-types.js';
 
-import { expect } from 'chai';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { lexicographicalCompare } from '../../src/utils/string.js';
 import { Message } from '../../src/core/message.js';
@@ -18,7 +18,7 @@ export function testMessageStore(): void {
 
       // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
       // so that different test suites can reuse the same backend store for testing
-      before(async () => {
+      beforeAll(async () => {
         const stores = TestStores.get();
         messageStore = stores.messageStore;
         await messageStore.open();
@@ -28,7 +28,7 @@ export function testMessageStore(): void {
         await messageStore.clear(); // clean up before each test rather than after so that a test does not depend on other tests to do the clean up
       });
 
-      after(async () => {
+      afterAll(async () => {
         await messageStore.close();
       });
 
@@ -45,7 +45,7 @@ export function testMessageStore(): void {
         const jsonMessage = (await messageStore.get(alice.did, expectedCid))!;
         const resultCid = await Message.getCid(jsonMessage);
 
-        expect(resultCid).to.equal(expectedCid);
+        expect(resultCid).toBe(expectedCid);
       });
 
       // https://github.com/enboxorg/enbox/issues/170
@@ -59,10 +59,10 @@ export function testMessageStore(): void {
         await messageStore.put(alice.did, message, { isLatestBaseState: true, messageTimestamp });
 
         const { messages: results1 } = await messageStore.query(alice.did, [{ isLatestBaseState: true }]);
-        expect(results1.length).to.equal(1);
+        expect(results1.length).toBe(1);
 
         const { messages: results2 } = await messageStore.query(alice.did, [{ isLatestBaseState: false }]);
-        expect(results2.length).to.equal(0);
+        expect(results2.length).toBe(0);
 
         // deleting the existing indexes and replacing it indicating it is no longer the latest base state
         const cid = await Message.getCid(message);
@@ -70,10 +70,10 @@ export function testMessageStore(): void {
         await messageStore.put(alice.did, message, { isLatestBaseState: false, messageTimestamp });
 
         const { messages: results3 } = await messageStore.query(alice.did, [{ isLatestBaseState: true }]);
-        expect(results3.length).to.equal(0);
+        expect(results3.length).toBe(0);
 
         const { messages: results4 } = await messageStore.query(alice.did, [{ isLatestBaseState: false }]);
-        expect(results4.length).to.equal(1);
+        expect(results4.length).toBe(1);
       });
 
       it('should index properties with characters beyond just letters and digits', async () => {
@@ -86,7 +86,7 @@ export function testMessageStore(): void {
         await messageStore.put(alice.did, message, { schema, messageTimestamp });
 
         const { messages: results } = await messageStore.query(alice.did, [{ schema }]);
-        expect((results[0] as RecordsWriteMessage).descriptor.schema).to.equal(schema);
+        expect((results[0] as RecordsWriteMessage).descriptor.schema).toBe(schema);
       });
 
       it('should not store anything if aborted beforehand', async () => {
@@ -102,13 +102,13 @@ export function testMessageStore(): void {
         try {
           await messageStore.put(alice.did, message, { messageTimestamp }, { signal: controller.signal });
         } catch (e) {
-          expect(e).to.equal('reason');
+          expect(e).toBe('reason');
         }
 
         const expectedCid = await Message.getCid(message);
 
         const jsonMessage = await messageStore.get(alice.did, expectedCid);
-        expect(jsonMessage).to.equal(undefined);
+        expect(jsonMessage).toBe(undefined);
       });
 
       it('should not index anything if aborted during', async () => {
@@ -126,17 +126,17 @@ export function testMessageStore(): void {
         try {
           await messageStore.put(alice.did, message, { schema, messageTimestamp }, { signal: controller.signal });
         } catch (e) {
-          expect(e).to.equal('reason');
+          expect(e).toBe('reason');
         }
 
         // index should not return the message
         const { messages: results } = await messageStore.query(alice.did, [{ schema }]);
-        expect(results.length).to.equal(0);
+        expect(results.length).toBe(0);
 
         // check that message doesn't exist
         const messageCid = await Message.getCid(message);
         const fetchedMessage = await messageStore.get(alice.did, messageCid);
-        expect(fetchedMessage).to.be.undefined;
+        expect(fetchedMessage).toBeUndefined();
       });
 
       it('should not store anything if aborted beforehand', async () => {
@@ -152,13 +152,13 @@ export function testMessageStore(): void {
         try {
           await messageStore.put(alice.did, message, { messageTimestamp }, { signal: controller.signal });
         } catch (e) {
-          expect(e).to.equal('reason');
+          expect(e).toBe('reason');
         }
 
         const expectedCid = await Message.getCid(message);
 
         const jsonMessage = await messageStore.get(alice.did, expectedCid);
-        expect(jsonMessage).to.equal(undefined);
+        expect(jsonMessage).toBe(undefined);
       });
 
       it('should not delete if aborted', async () => {
@@ -170,7 +170,7 @@ export function testMessageStore(): void {
 
         const messageCid = await Message.getCid(message);
         const resultsAlice1 = await messageStore.get(alice.did, messageCid);
-        expect((resultsAlice1 as RecordsWriteMessage).recordId).to.equal((message as RecordsWriteMessage).recordId);
+        expect((resultsAlice1 as RecordsWriteMessage).recordId).toBe((message as RecordsWriteMessage).recordId);
 
         const controller = new AbortController();
         controller.signal.throwIfAborted = (): void => { }; // simulate aborting happening async
@@ -178,7 +178,7 @@ export function testMessageStore(): void {
 
         // aborted delete
         const deletePromise = messageStore.delete(alice.did, messageCid, { signal: controller.signal });
-        await expect(deletePromise).to.eventually.rejectedWith('reason');
+        await expect(deletePromise).rejects.toThrow('reason');
       });
 
       it('should not delete the message of another tenant', async () => {
@@ -192,18 +192,18 @@ export function testMessageStore(): void {
 
         const messageCid = await Message.getCid(message);
         const resultsAlice1 = await messageStore.get(alice.did, messageCid);
-        expect((resultsAlice1 as RecordsWriteMessage).recordId).to.equal((message as RecordsWriteMessage).recordId);
+        expect((resultsAlice1 as RecordsWriteMessage).recordId).toBe((message as RecordsWriteMessage).recordId);
         const resultsBob1 = await messageStore.get(bob.did, messageCid);
-        expect((resultsBob1 as RecordsWriteMessage).recordId).to.equal((message as RecordsWriteMessage).recordId);
+        expect((resultsBob1 as RecordsWriteMessage).recordId).toBe((message as RecordsWriteMessage).recordId);
 
         // bob deletes message
         await messageStore.delete(bob.did, messageCid);
         const resultsBob2 = await messageStore.get(bob.did, messageCid);
-        expect(resultsBob2).to.be.undefined;
+        expect(resultsBob2).toBeUndefined();
 
         //expect alice to retain the message
         const resultsAlice2 = await messageStore.get(alice.did, messageCid);
-        expect((resultsAlice2 as RecordsWriteMessage).recordId).to.equal((message as RecordsWriteMessage).recordId);
+        expect((resultsAlice2 as RecordsWriteMessage).recordId).toBe((message as RecordsWriteMessage).recordId);
       });
 
       it('should not clear the MessageStore index of another tenant', async () => {
@@ -218,18 +218,18 @@ export function testMessageStore(): void {
 
         const messageCid = await Message.getCid(message);
         const resultsAlice1 = await messageStore.query(alice.did, [{ isLatestBaseState: true }]);
-        expect(resultsAlice1.messages.length).to.equal(1);
+        expect(resultsAlice1.messages.length).toBe(1);
         const resultsBob1 = await messageStore.query(bob.did, [{ isLatestBaseState: true }]);
-        expect(resultsBob1.messages.length).to.equal(1);
+        expect(resultsBob1.messages.length).toBe(1);
 
         // bob deletes message
         await messageStore.delete(bob.did, messageCid);
         const resultsBob2 = await messageStore.query(bob.did, [{ isLatestBaseState: true }]);
-        expect(resultsBob2.messages.length).to.equal(0);
+        expect(resultsBob2.messages.length).toBe(0);
 
         //expect alice to retain the message
         const resultsAlice2 = await messageStore.query(alice.did, [{ isLatestBaseState: true }]);
-        expect(resultsAlice2.messages.length).to.equal(1);
+        expect(resultsAlice2.messages.length).toBe(1);
       });
     });
 
@@ -237,7 +237,7 @@ export function testMessageStore(): void {
 
       // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
       // so that different test suites can reuse the same backend store for testing
-      before(async () => {
+      beforeAll(async () => {
         const stores = TestStores.get();
         messageStore = stores.messageStore;
         await messageStore.open();
@@ -247,11 +247,11 @@ export function testMessageStore(): void {
         await messageStore.clear(); // clean up before each test rather than after so that a test does not depend on other tests to do the clean up
       });
 
-      after(async () => {
+      afterAll(async () => {
         await messageStore.close();
       });
 
-      describe('sorting', async () => {
+      describe('sorting', () => {
         it('should sort on messageTimestamp Ascending if no sort is specified', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
@@ -263,12 +263,12 @@ export function testMessageStore(): void {
           }
 
           const { messages: messageQuery } = await messageStore.query(alice.did, [{}]);
-          expect(messageQuery.length).to.equal(messages.length);
+          expect(messageQuery.length).toBe(messages.length);
 
           const sortedRecords = messages.sort((a,b) =>
             lexicographicalCompare(a.message.descriptor.messageTimestamp, b.message.descriptor.messageTimestamp));
           for (let i = 0; i < sortedRecords.length; i++) {
-            expect(sortedRecords[i].message.descriptor.messageTimestamp).to.equal(messageQuery[i].descriptor.messageTimestamp);
+            expect(sortedRecords[i].message.descriptor.messageTimestamp).toBe(messageQuery[i].descriptor.messageTimestamp);
           }
         });
 
@@ -282,12 +282,12 @@ export function testMessageStore(): void {
             await messageStore.put(alice.did, message.message, await message.recordsWrite.constructIndexes(true));
           }
           const { messages: messageQuery } = await messageStore.query(alice.did, [{}], { messageTimestamp: SortDirection.Ascending });
-          expect(messageQuery.length).to.equal(messages.length);
+          expect(messageQuery.length).toBe(messages.length);
 
           const sortedRecords = messages.sort((a,b) =>
             lexicographicalCompare(a.message.descriptor.messageTimestamp, b.message.descriptor.messageTimestamp));
           for (let i = 0; i < messages.length; i++) {
-            expect(sortedRecords[i].message.descriptor.messageTimestamp).to.equal(messageQuery[i].descriptor.messageTimestamp);
+            expect(sortedRecords[i].message.descriptor.messageTimestamp).toBe(messageQuery[i].descriptor.messageTimestamp);
           }
         });
 
@@ -301,13 +301,13 @@ export function testMessageStore(): void {
           }
 
           const { messages: messageQuery } = await messageStore.query(alice.did, [{}], { dateCreated: SortDirection.Ascending });
-          expect(messageQuery.length).to.equal(messages.length);
+          expect(messageQuery.length).toBe(messages.length);
 
           const sortedRecords = messages.sort((a,b) =>
             lexicographicalCompare(a.message.descriptor.dateCreated, b.message.descriptor.dateCreated));
 
           for (let i = 0; i < messages.length; i++) {
-            expect(await Message.getCid(sortedRecords[i].message)).to.equal(await Message.getCid(messageQuery[i]));
+            expect(await Message.getCid(sortedRecords[i].message)).toBe(await Message.getCid(messageQuery[i]));
           }
         });
 
@@ -321,13 +321,13 @@ export function testMessageStore(): void {
           }
 
           const { messages: messageQuery } = await messageStore.query(alice.did, [{}], { dateCreated: SortDirection.Descending });
-          expect(messageQuery.length).to.equal(messages.length);
+          expect(messageQuery.length).toBe(messages.length);
 
           const sortedRecords = messages.sort((a,b) =>
             lexicographicalCompare(b.message.descriptor.dateCreated, a.message.descriptor.dateCreated));
 
           for (let i = 0; i < messages.length; i++) {
-            expect(await Message.getCid(sortedRecords[i].message)).to.equal(await Message.getCid(messageQuery[i]));
+            expect(await Message.getCid(sortedRecords[i].message)).toBe(await Message.getCid(messageQuery[i]));
           }
         });
 
@@ -342,13 +342,13 @@ export function testMessageStore(): void {
           }
 
           const { messages: messageQuery } = await messageStore.query(alice.did, [{}], { datePublished: SortDirection.Ascending });
-          expect(messageQuery.length).to.equal(messages.length);
+          expect(messageQuery.length).toBe(messages.length);
 
           const sortedRecords = messages.sort((a,b) =>
             lexicographicalCompare(a.message.descriptor.datePublished!, b.message.descriptor.datePublished!));
 
           for (let i = 0; i < messages.length; i++) {
-            expect(await Message.getCid(sortedRecords[i].message)).to.equal(await Message.getCid(messageQuery[i]));
+            expect(await Message.getCid(sortedRecords[i].message)).toBe(await Message.getCid(messageQuery[i]));
           }
         });
 
@@ -363,18 +363,18 @@ export function testMessageStore(): void {
           }
 
           const { messages: messageQuery } = await messageStore.query(alice.did, [{}], { datePublished: SortDirection.Descending });
-          expect(messageQuery.length).to.equal(messages.length);
+          expect(messageQuery.length).toBe(messages.length);
 
           const sortedRecords = messages.sort((a,b) =>
             lexicographicalCompare(b.message.descriptor.datePublished!, a.message.descriptor.datePublished!));
 
           for (let i = 0; i < messages.length; i++) {
-            expect(await Message.getCid(sortedRecords[i].message)).to.equal(await Message.getCid(messageQuery[i]));
+            expect(await Message.getCid(sortedRecords[i].message)).toBe(await Message.getCid(messageQuery[i]));
           }
         });
       });
 
-      describe('pagination', async () => {
+      describe('pagination', () => {
         it('should return all records if no limit is specified', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const messages = await Promise.all(Array(10).fill({}).map((_) => TestDataGenerator.generateRecordsWrite({
@@ -385,7 +385,7 @@ export function testMessageStore(): void {
           }
 
           const { messages: limitQuery } = await messageStore.query(alice.did, [{}]);
-          expect(limitQuery.length).to.equal(messages.length);
+          expect(limitQuery.length).toBe(messages.length);
         });
 
         it('should limit records', async () => {
@@ -403,9 +403,9 @@ export function testMessageStore(): void {
           const limit = 5;
 
           const { messages: limitQuery } = await messageStore.query(alice.did, [{}], {}, { limit });
-          expect(limitQuery.length).to.equal(limit);
+          expect(limitQuery.length).toBe(limit);
           for (let i = 0; i < limitQuery.length; i++) {
-            expect(await Message.getCid(sortedRecords[i].message)).to.equal(await Message.getCid(limitQuery[i]));
+            expect(await Message.getCid(sortedRecords[i].message)).toBe(await Message.getCid(limitQuery[i]));
           }
         });
 
@@ -420,11 +420,11 @@ export function testMessageStore(): void {
 
           // get all of the records
           const allRecords = await messageStore.query(alice.did, [{}], {}, { limit: 10 });
-          expect(allRecords.cursor).to.not.exist;
+          expect(allRecords.cursor).toBeUndefined();
 
           // get only partial records
           const partialRecords = await messageStore.query(alice.did, [{}], {}, { limit: 5 });
-          expect(partialRecords.cursor).to.exist.and.to.not.be.undefined;
+          expect(partialRecords.cursor).toBeDefined();
         });
 
         it('should return all records from the cursor onwards when no limit is provided', async () => {
@@ -443,10 +443,10 @@ export function testMessageStore(): void {
           const { cursor } = await messageStore.query(alice.did, [{}], {}, { limit: 1 });
 
           const { messages: limitQuery } = await messageStore.query(alice.did, [{}], {}, { cursor });
-          expect(limitQuery.length).to.equal(sortedRecords.slice(1).length);
+          expect(limitQuery.length).toBe(sortedRecords.slice(1).length);
           for (let i = 0; i < limitQuery.length; i++) {
             const offsetIndex = i + 1; // offset for the initial request item
-            expect(await Message.getCid(sortedRecords[offsetIndex].message)).to.equal(await Message.getCid(limitQuery[i]));
+            expect(await Message.getCid(sortedRecords[offsetIndex].message)).toBe(await Message.getCid(limitQuery[i]));
           }
         });
 
@@ -467,10 +467,10 @@ export function testMessageStore(): void {
 
           const limit = 3;
           const { messages: limitQuery } = await messageStore.query(alice.did, [{}], {}, { cursor, limit });
-          expect(limitQuery.length).to.equal(limit);
+          expect(limitQuery.length).toBe(limit);
           for (let i = 0; i < limitQuery.length; i++) {
             const offsetIndex = i + 1; // offset for the initial request item
-            expect(await Message.getCid(sortedRecords[offsetIndex].message)).to.equal(await Message.getCid(limitQuery[i]));
+            expect(await Message.getCid(sortedRecords[offsetIndex].message)).toBe(await Message.getCid(limitQuery[i]));
           }
         });
 
@@ -488,18 +488,18 @@ export function testMessageStore(): void {
           let cursor: PaginationCursor | undefined;
           while (true) {
             const { messages: limitQuery, cursor: queryCursor } = await messageStore.query(alice.did, [{}], {}, { cursor, limit });
-            expect(limitQuery.length).to.be.lessThanOrEqual(limit);
+            expect(limitQuery.length).toBeLessThanOrEqual(limit);
             results.push(...limitQuery);
             cursor = queryCursor;
             if (cursor === undefined) {
               break;
             }
           }
-          expect(results.length).to.equal(messages.length);
+          expect(results.length).toBe(messages.length);
           const messageMessageIds = await Promise.all(messages.map(m => Message.getCid(m.message)));
           const resultMessageIds = await Promise.all(results.map(m => Message.getCid(m)));
           for (const recordId of messageMessageIds) {
-            expect(resultMessageIds.includes(recordId)).to.be.true;
+            expect(resultMessageIds.includes(recordId)).toBe(true);
           }
         });
       });

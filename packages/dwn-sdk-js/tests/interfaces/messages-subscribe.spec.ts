@@ -1,7 +1,7 @@
 import { MessagesSubscribe } from '../../src/interfaces/messages-subscribe.js';
 import { DwnInterfaceName, DwnMethodName, Jws, TestDataGenerator, Time } from '../../src/index.js';
 
-import { expect } from 'chai';
+import { describe, expect, it } from 'bun:test';
 
 describe('MessagesSubscribe', () => {
   describe('create()', () => {
@@ -14,10 +14,10 @@ describe('MessagesSubscribe', () => {
       });
 
       const message = messagesSubscribe.message;
-      expect(message.descriptor.interface).to.eql(DwnInterfaceName.Messages);
-      expect(message.descriptor.method).to.eql(DwnMethodName.Subscribe);
-      expect(message.authorization).to.exist;
-      expect(message.descriptor.messageTimestamp).to.equal(timestamp);
+      expect(message.descriptor.interface).toEqual(DwnInterfaceName.Messages);
+      expect(message.descriptor.method).toEqual(DwnMethodName.Subscribe);
+      expect(message.authorization).toBeDefined();
+      expect(message.descriptor.messageTimestamp).toBe(timestamp);
     });
   });
 });

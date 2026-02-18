@@ -2,10 +2,7 @@ import type { DidResolver } from '@enbox/dids';
 import type { EventStream } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, ProtocolDefinition, ProtocolsConfigureDescriptor, ResumableTaskStore, StateIndex } from '../../src/index.js';
 
-
-import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
-import chai, { expect } from 'chai';
 
 import { DidKey } from '@enbox/dids';
 import { Dwn } from '../../src/dwn.js';
@@ -18,10 +15,10 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { UniversalResolver } from '@enbox/dids';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DwnInterfaceName, DwnMethodName, Message, Time } from '../../src/index.js';
 
 
-chai.use(chaiAsPromised);
 
 export function testRecordsTags(): void {
   describe('Records Tags', () => {
@@ -35,7 +32,7 @@ export function testRecordsTags(): void {
 
     // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
     // so that different test suites can reuse the same backend store for testing
-    before(async () => {
+    beforeAll(async () => {
       didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
       const stores = TestStores.get();
@@ -58,7 +55,7 @@ export function testRecordsTags(): void {
       await stateIndex.clear();
     });
 
-    after(async () => {
+    afterAll(async () => {
       await dwn.close();
     });
 
@@ -119,7 +116,7 @@ export function testRecordsTags(): void {
             });
 
             const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-            expect(configureReply.status.code).to.equal(202);
+            expect(configureReply.status.code).toBe(202);
           });
 
           it('should reject tags that have invalid schema definitions during create', async () => {
@@ -155,7 +152,7 @@ export function testRecordsTags(): void {
               protocolDefinition : invalidSchemaProtocol,
             });
 
-            await expect(protocolConfigure).to.eventually.be.rejectedWith(DwnErrorCode.ProtocolsConfigureInvalidTagSchema);
+            await expect(protocolConfigure).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidTagSchema);
           });
 
           it('should reject tags that have invalid schema definitions during process', async () => {
@@ -201,9 +198,9 @@ export function testRecordsTags(): void {
             const protocolsConfigureMessage = { descriptor, authorization };
 
             const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfigureMessage);
-            expect(protocolsConfigureReply.status.code).to.equal(400);
-            expect(protocolsConfigureReply.status.detail).to.contain(DwnErrorCode.ProtocolsConfigureInvalidTagSchema);
-            expect(protocolsConfigureReply.status.detail).to.contain(`foo/$tags/invalidTag/contains/minimum must be number`);
+            expect(protocolsConfigureReply.status.code).toBe(400);
+            expect(protocolsConfigureReply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureInvalidTagSchema);
+            expect(protocolsConfigureReply.status.detail).toContain(`foo/$tags/invalidTag/contains/minimum must be number`);
           });
 
           describe('should reject invalid tag types', () => {
@@ -243,7 +240,7 @@ export function testRecordsTags(): void {
 
               const protocolsConfigureMessage = { descriptor, authorization };
               const objectTagsTypeConfigureReply = await dwn.processMessage(alice.did, protocolsConfigureMessage);
-              expect(objectTagsTypeConfigureReply.status.code).to.equal(400);
+              expect(objectTagsTypeConfigureReply.status.code).toBe(400);
             });
 
             it('array of objects', async () => {
@@ -284,7 +281,7 @@ export function testRecordsTags(): void {
               const protocolsConfigureMessage = { descriptor, authorization };
 
               const objectArrayTagsTypeConfigureReply = await dwn.processMessage(alice.did, protocolsConfigureMessage);
-              expect(objectArrayTagsTypeConfigureReply.status.code).to.equal(400);
+              expect(objectArrayTagsTypeConfigureReply.status.code).toBe(400);
             });
 
             it('array of booleans', async () => {
@@ -325,7 +322,7 @@ export function testRecordsTags(): void {
               const protocolsConfigureMessage = { descriptor, authorization };
 
               const booleanArrayTagsTypeConfigureReply = await dwn.processMessage(alice.did, protocolsConfigureMessage);
-              expect(booleanArrayTagsTypeConfigureReply.status.code).to.equal(400);
+              expect(booleanArrayTagsTypeConfigureReply.status.code).toBe(400);
             });
           });
         });
@@ -358,7 +355,7 @@ export function testRecordsTags(): void {
           });
 
           const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-          expect(configureReply.status.code).to.equal(202);
+          expect(configureReply.status.code).toBe(202);
 
           // write a foo record with an `unknownTag` tag.
           const fooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -372,11 +369,11 @@ export function testRecordsTags(): void {
           });
 
           const fooRecordReply = await dwn.processMessage(alice.did, fooRecord.message, { dataStream: fooRecord.dataStream });
-          expect(fooRecordReply.status.code).to.equal(400);
-          expect(fooRecordReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          expect(fooRecordReply.status.code).toBe(400);
+          expect(fooRecordReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
 
           // ensure the correct tag descriptor is in the error message
-          expect(fooRecordReply.status.detail).to.contain(`${protocolDefinition.protocol}/foo/$tags must NOT have additional properties`);
+          expect(fooRecordReply.status.detail).toContain(`${protocolDefinition.protocol}/foo/$tags must NOT have additional properties`);
 
           // write a foo record with a `knownTag` tag.
           const validFooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -391,7 +388,7 @@ export function testRecordsTags(): void {
 
           // should pass
           const validFooRecordReply = await dwn.processMessage(alice.did, validFooRecord.message, { dataStream: validFooRecord.dataStream });
-          expect(validFooRecordReply.status.code).to.equal(202);
+          expect(validFooRecordReply.status.code).toBe(202);
         });
 
         it('should reject a tag value that does not match the boolean type', async () => {
@@ -422,7 +419,7 @@ export function testRecordsTags(): void {
           });
 
           const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-          expect(configureReply.status.code).to.equal(202);
+          expect(configureReply.status.code).toBe(202);
 
           // `draft` should be a boolean type, but we are passing a string
           const fooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -436,9 +433,9 @@ export function testRecordsTags(): void {
           });
 
           const fooRecordReply = await dwn.processMessage(alice.did, fooRecord.message, { dataStream: fooRecord.dataStream });
-          expect(fooRecordReply.status.code).to.equal(400);
-          expect(fooRecordReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-          expect(fooRecordReply.status.detail).to.contain(`${protocolDefinition.protocol}/foo/$tags/draft must be boolean`);
+          expect(fooRecordReply.status.code).toBe(400);
+          expect(fooRecordReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          expect(fooRecordReply.status.detail).toContain(`${protocolDefinition.protocol}/foo/$tags/draft must be boolean`);
 
           // positive test with a boolean
           const fooRecord2 = await TestDataGenerator.generateRecordsWrite({
@@ -452,7 +449,7 @@ export function testRecordsTags(): void {
           });
 
           const fooRecord2Reply = await dwn.processMessage(alice.did, fooRecord2.message, { dataStream: fooRecord2.dataStream });
-          expect(fooRecord2Reply.status.code).to.equal(202);
+          expect(fooRecord2Reply.status.code).toBe(202);
         });
 
         it('should reject a tag value that does not match the number type', async () => {
@@ -482,7 +479,7 @@ export function testRecordsTags(): void {
             protocolDefinition
           });
           const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-          expect(configureReply.status.code).to.equal(202);
+          expect(configureReply.status.code).toBe(202);
 
           // `numberType` should be a number type, but we are passing a string
           const fooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -496,9 +493,9 @@ export function testRecordsTags(): void {
           });
 
           const fooRecordReply = await dwn.processMessage(alice.did, fooRecord.message, { dataStream: fooRecord.dataStream });
-          expect(fooRecordReply.status.code).to.equal(400);
-          expect(fooRecordReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-          expect(fooRecordReply.status.detail).to.contain(`${protocolDefinition.protocol}/foo/$tags/numberType must be number`);
+          expect(fooRecordReply.status.code).toBe(400);
+          expect(fooRecordReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          expect(fooRecordReply.status.detail).toContain(`${protocolDefinition.protocol}/foo/$tags/numberType must be number`);
 
 
           // positive tests with an integer number
@@ -513,7 +510,7 @@ export function testRecordsTags(): void {
           });
 
           const fooRecord2Reply = await dwn.processMessage(alice.did, fooRecord2.message, { dataStream: fooRecord2.dataStream });
-          expect(fooRecord2Reply.status.code).to.equal(202);
+          expect(fooRecord2Reply.status.code).toBe(202);
 
           // positive tests with a decimal number
           const fooRecord3 = await TestDataGenerator.generateRecordsWrite({
@@ -527,7 +524,7 @@ export function testRecordsTags(): void {
           });
 
           const fooRecord3Reply = await dwn.processMessage(alice.did, fooRecord3.message, { dataStream: fooRecord3.dataStream });
-          expect(fooRecord3Reply.status.code).to.equal(202);
+          expect(fooRecord3Reply.status.code).toBe(202);
         });
 
         it('should reject a tag value that does not match the integer type', async () => {
@@ -557,7 +554,7 @@ export function testRecordsTags(): void {
             protocolDefinition
           });
           const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-          expect(configureReply.status.code).to.equal(202);
+          expect(configureReply.status.code).toBe(202);
 
           // `count` should be an integer type, but we are passing decimal number
           const fooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -571,9 +568,9 @@ export function testRecordsTags(): void {
           });
 
           const fooRecordReply = await dwn.processMessage(alice.did, fooRecord.message, { dataStream: fooRecord.dataStream });
-          expect(fooRecordReply.status.code).to.equal(400);
-          expect(fooRecordReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-          expect(fooRecordReply.status.detail).to.contain(`${protocolDefinition.protocol}/foo/$tags/count must be integer`);
+          expect(fooRecordReply.status.code).toBe(400);
+          expect(fooRecordReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          expect(fooRecordReply.status.detail).toContain(`${protocolDefinition.protocol}/foo/$tags/count must be integer`);
 
           // positive test with an integer
           const fooRecord2 = await TestDataGenerator.generateRecordsWrite({
@@ -587,7 +584,7 @@ export function testRecordsTags(): void {
           });
 
           const fooRecord2Reply = await dwn.processMessage(alice.did, fooRecord2.message, { dataStream: fooRecord2.dataStream });
-          expect(fooRecord2Reply.status.code).to.equal(202);
+          expect(fooRecord2Reply.status.code).toBe(202);
         });
 
         it('should reject a record with a tag value that does not match a given enum in the protocol definition', async () => {
@@ -619,7 +616,7 @@ export function testRecordsTags(): void {
           });
 
           const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-          expect(configureReply.status.code).to.equal(202);
+          expect(configureReply.status.code).toBe(202);
 
           // write a foo record with an `unknown_status` tag value.
           const fooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -633,13 +630,13 @@ export function testRecordsTags(): void {
           });
 
           const fooRecordReply = await dwn.processMessage(alice.did, fooRecord.message, { dataStream: fooRecord.dataStream });
-          expect(fooRecordReply.status.code).to.equal(400);
-          expect(fooRecordReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-          expect(fooRecordReply.status.detail).to
-            .contain(`${protocolDefinition.protocol}/foo/$tags/status must be equal to one of the allowed values`);
+          expect(fooRecordReply.status.code).toBe(400);
+          expect(fooRecordReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          const expectedStatusMsg = `${protocolDefinition.protocol}/foo/$tags/status must be equal to one of the allowed values`;
+          expect(fooRecordReply.status.detail).toContain(expectedStatusMsg);
 
           // ensure the correct tag descriptor path is in the error message
-          expect(fooRecordReply.status.detail).to.contain(`${protocolDefinition.protocol}/foo/$tags/status`);
+          expect(fooRecordReply.status.detail).toContain(`${protocolDefinition.protocol}/foo/$tags/status`);
 
           // write a foo record with a valid `status` tag value.
           const validFooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -654,7 +651,7 @@ export function testRecordsTags(): void {
 
           // should pass
           const validFooRecordReply = await dwn.processMessage(alice.did, validFooRecord.message, { dataStream: validFooRecord.dataStream });
-          expect(validFooRecordReply.status.code).to.equal(202);
+          expect(validFooRecordReply.status.code).toBe(202);
         });
 
         it('should reject a record with a tag value that is not within the `minimum` and `maximum` range', async () => {
@@ -687,7 +684,7 @@ export function testRecordsTags(): void {
           });
 
           const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-          expect(configureReply.status.code).to.equal(202);
+          expect(configureReply.status.code).toBe(202);
 
           // write a foo record with an `score` value less than 0.
           const fooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -702,9 +699,9 @@ export function testRecordsTags(): void {
 
           // should fail
           const fooRecordReply = await dwn.processMessage(alice.did, fooRecord.message, { dataStream: fooRecord.dataStream });
-          expect(fooRecordReply.status.code).to.equal(400);
-          expect(fooRecordReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-          expect(fooRecordReply.status.detail).to.contain(`${protocolDefinition.protocol}/foo/$tags/score must be >= 0`);
+          expect(fooRecordReply.status.code).toBe(400);
+          expect(fooRecordReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          expect(fooRecordReply.status.detail).toContain(`${protocolDefinition.protocol}/foo/$tags/score must be >= 0`);
 
           // write a foo record with an `score` value greater than 100.
           const fooRecord2 = await TestDataGenerator.generateRecordsWrite({
@@ -719,9 +716,9 @@ export function testRecordsTags(): void {
 
           // should fail
           const fooRecord2Reply = await dwn.processMessage(alice.did, fooRecord2.message, { dataStream: fooRecord2.dataStream });
-          expect(fooRecord2Reply.status.code).to.equal(400);
-          expect(fooRecord2Reply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-          expect(fooRecord2Reply.status.detail).to.contain(`${protocolDefinition.protocol}/foo/$tags/score must be <= 100`);
+          expect(fooRecord2Reply.status.code).toBe(400);
+          expect(fooRecord2Reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          expect(fooRecord2Reply.status.detail).toContain(`${protocolDefinition.protocol}/foo/$tags/score must be <= 100`);
 
           // write a foo record with a maximum `score` of 100.
           const validFooMaxRecord = await TestDataGenerator.generateRecordsWrite({
@@ -736,7 +733,7 @@ export function testRecordsTags(): void {
 
           // should pass
           const validFooMaxRecordReply = await dwn.processMessage(alice.did, validFooMaxRecord.message, { dataStream: validFooMaxRecord.dataStream });
-          expect(validFooMaxRecordReply.status.code).to.equal(202);
+          expect(validFooMaxRecordReply.status.code).toBe(202);
 
           // write a foo record with a maximum `score` of 0.
           const validFooMinRecord = await TestDataGenerator.generateRecordsWrite({
@@ -750,7 +747,7 @@ export function testRecordsTags(): void {
           });
           // should pass
           const validFooMinRecordReply = await dwn.processMessage(alice.did, validFooMinRecord.message, { dataStream: validFooMinRecord.dataStream });
-          expect(validFooMinRecordReply.status.code).to.equal(202);
+          expect(validFooMinRecordReply.status.code).toBe(202);
 
           // write a foo record within the range
           const validFooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -764,7 +761,7 @@ export function testRecordsTags(): void {
           });
           // should pass
           const validFooRecordReply = await dwn.processMessage(alice.did, validFooRecord.message, { dataStream: validFooRecord.dataStream });
-          expect(validFooRecordReply.status.code).to.equal(202);
+          expect(validFooRecordReply.status.code).toBe(202);
         });
 
         it('should reject a record with a tag value that is not within the `exclusiveMinimum` and `exclusiveMaximum` range', async () => {
@@ -797,7 +794,7 @@ export function testRecordsTags(): void {
           });
 
           const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-          expect(configureReply.status.code).to.equal(202);
+          expect(configureReply.status.code).toBe(202);
 
           // write a foo record with an hour at the exclusiveMaximum
           const exclusiveMaxRecord = await TestDataGenerator.generateRecordsWrite({
@@ -812,9 +809,9 @@ export function testRecordsTags(): void {
 
           // should fail
           const exclusiveMaxReply = await dwn.processMessage(alice.did, exclusiveMaxRecord.message, { dataStream: exclusiveMaxRecord.dataStream });
-          expect(exclusiveMaxReply.status.code).to.equal(400);
-          expect(exclusiveMaxReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-          expect(exclusiveMaxReply.status.detail).to.contain(`${protocolDefinition.protocol}/foo/$tags/hours must be < 24`);
+          expect(exclusiveMaxReply.status.code).toBe(400);
+          expect(exclusiveMaxReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          expect(exclusiveMaxReply.status.detail).toContain(`${protocolDefinition.protocol}/foo/$tags/hours must be < 24`);
 
           // write a foo record with an hour at the exclusiveMinimum
           const exclusiveMinRecord = await TestDataGenerator.generateRecordsWrite({
@@ -829,9 +826,9 @@ export function testRecordsTags(): void {
 
           // should fail
           const exclusiveMinReply = await dwn.processMessage(alice.did, exclusiveMinRecord.message, { dataStream: exclusiveMinRecord.dataStream });
-          expect(exclusiveMinReply.status.code).to.equal(400);
-          expect(exclusiveMinReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-          expect(exclusiveMinReply.status.detail).to.contain(`${protocolDefinition.protocol}/foo/$tags/hours must be > 0`);
+          expect(exclusiveMinReply.status.code).toBe(400);
+          expect(exclusiveMinReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          expect(exclusiveMinReply.status.detail).toContain(`${protocolDefinition.protocol}/foo/$tags/hours must be > 0`);
 
           // write a foo record with an `hour` value within the range.
           const validFooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -846,7 +843,7 @@ export function testRecordsTags(): void {
 
           // should pass
           const validFooRecordReply = await dwn.processMessage(alice.did, validFooRecord.message, { dataStream: validFooRecord.dataStream });
-          expect(validFooRecordReply.status.code).to.equal(202);
+          expect(validFooRecordReply.status.code).toBe(202);
         });
 
         it('should reject tag values that are not within the `minLength` and `maxLength` values', async () => {
@@ -879,7 +876,7 @@ export function testRecordsTags(): void {
           });
 
           const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-          expect(configureReply.status.code).to.equal(202);
+          expect(configureReply.status.code).toBe(202);
 
 
           // write a foo record with a `stringWithLimit` value less than the minimum length
@@ -895,10 +892,10 @@ export function testRecordsTags(): void {
 
           // should fail
           const minLengthReply = await dwn.processMessage(alice.did, minLengthRecord.message, { dataStream: minLengthRecord.dataStream });
-          expect(minLengthReply.status.code).to.equal(400);
-          expect(minLengthReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-          expect(minLengthReply.status.detail).to
-            .contain(`${protocolDefinition.protocol}/foo/$tags/stringWithLimit must NOT have fewer than 5 characters`);
+          expect(minLengthReply.status.code).toBe(400);
+          expect(minLengthReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          const expectedMinMsg = `${protocolDefinition.protocol}/foo/$tags/stringWithLimit must NOT have fewer than 5 characters`;
+          expect(minLengthReply.status.detail).toContain(expectedMinMsg);
 
           // write a foo record with a `stringWithLimit` value greater than the maximum length
           const maxLengthRecord = await TestDataGenerator.generateRecordsWrite({
@@ -913,10 +910,10 @@ export function testRecordsTags(): void {
 
           // should fail
           const maxLengthReply = await dwn.processMessage(alice.did, maxLengthRecord.message, { dataStream: maxLengthRecord.dataStream });
-          expect(maxLengthReply.status.code).to.equal(400);
-          expect(maxLengthReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-          expect(maxLengthReply.status.detail).to
-            .contain(`${protocolDefinition.protocol}/foo/$tags/stringWithLimit must NOT have more than 10 characters`);
+          expect(maxLengthReply.status.code).toBe(400);
+          expect(maxLengthReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          const expectedMaxMsg = `${protocolDefinition.protocol}/foo/$tags/stringWithLimit must NOT have more than 10 characters`;
+          expect(maxLengthReply.status.detail).toContain(expectedMaxMsg);
 
           // write a foo record with a `stringWithLimit` value within the range
           const validFooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -931,7 +928,7 @@ export function testRecordsTags(): void {
 
           // should pass
           const validFooRecordReply = await dwn.processMessage(alice.did, validFooRecord.message, { dataStream: validFooRecord.dataStream });
-          expect(validFooRecordReply.status.code).to.equal(202);
+          expect(validFooRecordReply.status.code).toBe(202);
         });
 
         it('should reject tag values that do not contain the number of items within the `minItems` and `maxItems` values', async () => {
@@ -967,7 +964,7 @@ export function testRecordsTags(): void {
           });
 
           const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-          expect(configureReply.status.code).to.equal(202);
+          expect(configureReply.status.code).toBe(202);
 
 
           // write a foo record with a `numberArray` value with only 1 item, less than the `minItems` specified of 2
@@ -983,9 +980,9 @@ export function testRecordsTags(): void {
 
           // should fail
           const minLengthReply = await dwn.processMessage(alice.did, minLengthRecord.message, { dataStream: minLengthRecord.dataStream });
-          expect(minLengthReply.status.code).to.equal(400);
-          expect(minLengthReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-          expect(minLengthReply.status.detail).to.contain(`${protocolDefinition.protocol}/foo/$tags/numberArray must NOT have fewer than 2 items`);
+          expect(minLengthReply.status.code).toBe(400);
+          expect(minLengthReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          expect(minLengthReply.status.detail).toContain(`${protocolDefinition.protocol}/foo/$tags/numberArray must NOT have fewer than 2 items`);
 
           // write a foo record with a `numberArray` value with 4 items, more than the `maxItems` specified of 3
           const maxLengthRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1000,9 +997,9 @@ export function testRecordsTags(): void {
 
           // should fail
           const maxLengthReply = await dwn.processMessage(alice.did, maxLengthRecord.message, { dataStream: maxLengthRecord.dataStream });
-          expect(maxLengthReply.status.code).to.equal(400);
-          expect(maxLengthReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-          expect(maxLengthReply.status.detail).to.contain(`${protocolDefinition.protocol}/foo/$tags/numberArray must NOT have more than 3 items`);
+          expect(maxLengthReply.status.code).toBe(400);
+          expect(maxLengthReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          expect(maxLengthReply.status.detail).toContain(`${protocolDefinition.protocol}/foo/$tags/numberArray must NOT have more than 3 items`);
 
           // write a foo record with a `numberArray` value with 3 items, within the range
           const validFooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1017,7 +1014,7 @@ export function testRecordsTags(): void {
 
           // should pass
           const validFooRecordReply = await dwn.processMessage(alice.did, validFooRecord.message, { dataStream: validFooRecord.dataStream });
-          expect(validFooRecordReply.status.code).to.equal(202);
+          expect(validFooRecordReply.status.code).toBe(202);
         });
 
         it('should reject a value within an array that should only include numbers', async () => {
@@ -1050,7 +1047,7 @@ export function testRecordsTags(): void {
             protocolDefinition
           });
           const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-          expect(configureReply.status.code).to.equal(202);
+          expect(configureReply.status.code).toBe(202);
 
           // write a foo record with a `numberArray` value with a string
           const fooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1065,9 +1062,9 @@ export function testRecordsTags(): void {
 
           // should fail
           const fooRecordReply = await dwn.processMessage(alice.did, fooRecord.message, { dataStream: fooRecord.dataStream });
-          expect(fooRecordReply.status.code).to.equal(400);
-          expect(fooRecordReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-          expect(fooRecordReply.status.detail).to.contain(`${protocolDefinition.protocol}/foo/$tags/numberArray/0 must be number`);
+          expect(fooRecordReply.status.code).toBe(400);
+          expect(fooRecordReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          expect(fooRecordReply.status.detail).toContain(`${protocolDefinition.protocol}/foo/$tags/numberArray/0 must be number`);
 
           // write a foo record with a `numberArray` value with a number (both integer and decimal)
           const validFooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1082,7 +1079,7 @@ export function testRecordsTags(): void {
 
           // should pass
           const validFooRecordReply = await dwn.processMessage(alice.did, validFooRecord.message, { dataStream: validFooRecord.dataStream });
-          expect(validFooRecordReply.status.code).to.equal(202);
+          expect(validFooRecordReply.status.code).toBe(202);
         });
 
         it('should reject a value within an array that should only include integers', async () => {
@@ -1115,7 +1112,7 @@ export function testRecordsTags(): void {
             protocolDefinition
           });
           const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-          expect(configureReply.status.code).to.equal(202);
+          expect(configureReply.status.code).toBe(202);
 
           // write a foo record with a `numberArray` value with a decimal
           const fooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1130,9 +1127,9 @@ export function testRecordsTags(): void {
 
           // should fail
           const fooRecordReply = await dwn.processMessage(alice.did, fooRecord.message, { dataStream: fooRecord.dataStream });
-          expect(fooRecordReply.status.code).to.equal(400);
-          expect(fooRecordReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-          expect(fooRecordReply.status.detail).to.contain(`${protocolDefinition.protocol}/foo/$tags/numberArray/1 must be integer`);
+          expect(fooRecordReply.status.code).toBe(400);
+          expect(fooRecordReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          expect(fooRecordReply.status.detail).toContain(`${protocolDefinition.protocol}/foo/$tags/numberArray/1 must be integer`);
 
           // write a foo record with a `numberArray` value with values of integers
           const validFooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1147,7 +1144,7 @@ export function testRecordsTags(): void {
 
           // should pass
           const validFooRecordReply = await dwn.processMessage(alice.did, validFooRecord.message, { dataStream: validFooRecord.dataStream });
-          expect(validFooRecordReply.status.code).to.equal(202);
+          expect(validFooRecordReply.status.code).toBe(202);
         });
 
         it('should reject tag values that do not contain the number of items within the `minContains` and `maxContains` values', async () => {
@@ -1188,7 +1185,7 @@ export function testRecordsTags(): void {
           });
 
           const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-          expect(configureReply.status.code).to.equal(202);
+          expect(configureReply.status.code).toBe(202);
 
 
           // write a foo record with a `numberArray` value with only 1 item that matches contains contraint, less than the `minContains` of 2
@@ -1205,10 +1202,10 @@ export function testRecordsTags(): void {
 
           // should fail
           const minLengthReply = await dwn.processMessage(alice.did, minLengthRecord.message, { dataStream: minLengthRecord.dataStream });
-          expect(minLengthReply.status.code).to.equal(400);
-          expect(minLengthReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          expect(minLengthReply.status.code).toBe(400);
+          expect(minLengthReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
           expect(minLengthReply.status.detail)
-            .to.contain(`${protocolDefinition.protocol}/foo/$tags/numberArray must contain at least 2 and no more than 4 valid item(s)`);
+            .toContain(`${protocolDefinition.protocol}/foo/$tags/numberArray must contain at least 2 and no more than 4 valid item(s)`);
 
           // write a foo record with a `numberArray` value with 4 items, more than the `maxItems` specified of 3
           const maxLengthRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1223,10 +1220,10 @@ export function testRecordsTags(): void {
 
           // should fail
           const maxLengthReply = await dwn.processMessage(alice.did, maxLengthRecord.message, { dataStream: maxLengthRecord.dataStream });
-          expect(maxLengthReply.status.code).to.equal(400);
-          expect(maxLengthReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          expect(maxLengthReply.status.code).toBe(400);
+          expect(maxLengthReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
           expect(maxLengthReply.status.detail)
-            .to.contain(`${protocolDefinition.protocol}/foo/$tags/numberArray must contain at least 2 and no more than 4 valid item(s)`);
+            .toContain(`${protocolDefinition.protocol}/foo/$tags/numberArray must contain at least 2 and no more than 4 valid item(s)`);
 
           // write a foo record with a `numberArray` value with 3 items, within the range
           const validFooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1241,7 +1238,7 @@ export function testRecordsTags(): void {
 
           // should pass
           const validFooRecordReply = await dwn.processMessage(alice.did, validFooRecord.message, { dataStream: validFooRecord.dataStream });
-          expect(validFooRecordReply.status.code).to.equal(202);
+          expect(validFooRecordReply.status.code).toBe(202);
         });
 
         it('should reject tag values that do not follow the constraints of the `uniqueItems` value', async () => {
@@ -1276,7 +1273,7 @@ export function testRecordsTags(): void {
           });
 
           const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-          expect(configureReply.status.code).to.equal(202);
+          expect(configureReply.status.code).toBe(202);
 
           // write a foo record with a `uniqueStrings` value with duplicate items
           const duplicateItemsRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1292,7 +1289,7 @@ export function testRecordsTags(): void {
           // should fail
           const duplicateItemsReply =
             await dwn.processMessage(alice.did, duplicateItemsRecord.message, { dataStream: duplicateItemsRecord.dataStream });
-          expect(duplicateItemsReply.status.code).to.equal(400);
+          expect(duplicateItemsReply.status.code).toBe(400);
 
           // write a foo record with a `uniqueStrings` value with unique items
           const uniqueItemsRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1307,7 +1304,7 @@ export function testRecordsTags(): void {
 
           // should pass
           const uniqueItemsReply = await dwn.processMessage(alice.did, uniqueItemsRecord.message, { dataStream: uniqueItemsRecord.dataStream });
-          expect(uniqueItemsReply.status.code).to.equal(202);
+          expect(uniqueItemsReply.status.code).toBe(202);
         });
 
         it('should only accept a record containing tags required by $requiredTags', async () => {
@@ -1339,7 +1336,7 @@ export function testRecordsTags(): void {
           });
 
           const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-          expect(configureReply.status.code).to.equal(202);
+          expect(configureReply.status.code).toBe(202);
 
           // write a foo record without the required tag
           const fooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1350,9 +1347,9 @@ export function testRecordsTags(): void {
           });
 
           const fooRecordReply = await dwn.processMessage(alice.did, fooRecord.message, { dataStream: fooRecord.dataStream });
-          expect(fooRecordReply.status.code).to.equal(400);
-          expect(fooRecordReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-          expect(fooRecordReply.status.detail).to.contain(`${protocolDefinition.protocol}/foo/$tags must have required property 'someRequiredTag'`);
+          expect(fooRecordReply.status.code).toBe(400);
+          expect(fooRecordReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+          expect(fooRecordReply.status.detail).toContain(`${protocolDefinition.protocol}/foo/$tags must have required property 'someRequiredTag'`);
 
           // write a foo record with the required tag
           const validFooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1367,7 +1364,7 @@ export function testRecordsTags(): void {
 
           // should pass
           const validFooRecordReply = await dwn.processMessage(alice.did, validFooRecord.message, { dataStream: validFooRecord.dataStream });
-          expect(validFooRecordReply.status.code).to.equal(202);
+          expect(validFooRecordReply.status.code).toBe(202);
         });
 
         it('should accept any tag if $allowUndefinedTags is set to true', async () => {
@@ -1399,7 +1396,7 @@ export function testRecordsTags(): void {
           });
 
           const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-          expect(configureReply.status.code).to.equal(202);
+          expect(configureReply.status.code).toBe(202);
 
           // write a foo record without the required tag
           const fooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1413,7 +1410,7 @@ export function testRecordsTags(): void {
           });
 
           const fooRecordReply = await dwn.processMessage(alice.did, fooRecord.message, { dataStream: fooRecord.dataStream });
-          expect(fooRecordReply.status.code).to.equal(202);
+          expect(fooRecordReply.status.code).toBe(202);
         });
 
         describe('contains', () => {
@@ -1453,7 +1450,7 @@ export function testRecordsTags(): void {
             });
 
             const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-            expect(configureReply.status.code).to.equal(202);
+            expect(configureReply.status.code).toBe(202);
 
             // write a foo record with a `status` value that is not represented in the `enum`
             const invalidEnumRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1468,10 +1465,10 @@ export function testRecordsTags(): void {
 
             // should fail
             const invalidEnumReply = await dwn.processMessage(alice.did, invalidEnumRecord.message, { dataStream: invalidEnumRecord.dataStream });
-            expect(invalidEnumReply.status.code).to.equal(400);
-            expect(invalidEnumReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+            expect(invalidEnumReply.status.code).toBe(400);
+            expect(invalidEnumReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
             expect(invalidEnumReply.status.detail)
-              .to.contain(`${protocolDefinition.protocol}/foo/$tags/status must contain at least 1 valid item(s)`);
+              .toContain(`${protocolDefinition.protocol}/foo/$tags/status must contain at least 1 valid item(s)`);
 
             // write a foo record that now adds a valid `status` value to the array
             const validEnumRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1486,7 +1483,7 @@ export function testRecordsTags(): void {
 
             // should pass
             const validEnumReply = await dwn.processMessage(alice.did, validEnumRecord.message, { dataStream: validEnumRecord.dataStream });
-            expect(validEnumReply.status.code).to.equal(202);
+            expect(validEnumReply.status.code).toBe(202);
           });
 
           it('should reject a record tag that does not contain a value within the `minimum` and `maximum` range ', async () => {
@@ -1525,7 +1522,7 @@ export function testRecordsTags(): void {
             });
 
             const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-            expect(configureReply.status.code).to.equal(202);
+            expect(configureReply.status.code).toBe(202);
 
             // write a foo record with a `containsNumbers` value that does not have a number within the range
             const minContainsRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1540,10 +1537,10 @@ export function testRecordsTags(): void {
 
             // should fail
             const minContainsReply = await dwn.processMessage(alice.did, minContainsRecord.message, { dataStream: minContainsRecord.dataStream });
-            expect(minContainsReply.status.code).to.equal(400);
-            expect(minContainsReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+            expect(minContainsReply.status.code).toBe(400);
+            expect(minContainsReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
             expect(minContainsReply.status.detail)
-              .to.contain(`${protocolDefinition.protocol}/foo/$tags/containsNumbers must contain at least 1 valid item(s)`);
+              .toContain(`${protocolDefinition.protocol}/foo/$tags/containsNumbers must contain at least 1 valid item(s)`);
 
 
             // write a foo record with a `containsNumbers` value that has a number within the range
@@ -1559,7 +1556,7 @@ export function testRecordsTags(): void {
 
             // should pass
             const validFooRecordReply = await dwn.processMessage(alice.did, validFooRecord.message, { dataStream: validFooRecord.dataStream });
-            expect(validFooRecordReply.status.code).to.equal(202);
+            expect(validFooRecordReply.status.code).toBe(202);
           });
 
           it('should reject a record tag that does not contain a value within the `exclusiveMinimum` and `exclusiveMaximum` range ', async () => {
@@ -1598,7 +1595,7 @@ export function testRecordsTags(): void {
             });
 
             const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-            expect(configureReply.status.code).to.equal(202);
+            expect(configureReply.status.code).toBe(202);
 
             // write a foo record with a `containsNumbers` value that does not have a number within the range
             const minContainsRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1613,10 +1610,10 @@ export function testRecordsTags(): void {
 
             // should fail
             const minContainsReply = await dwn.processMessage(alice.did, minContainsRecord.message, { dataStream: minContainsRecord.dataStream });
-            expect(minContainsReply.status.code).to.equal(400);
-            expect(minContainsReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+            expect(minContainsReply.status.code).toBe(400);
+            expect(minContainsReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
             expect(minContainsReply.status.detail)
-              .to.contain(`${protocolDefinition.protocol}/foo/$tags/containsNumbers must contain at least 1 valid item(s)`);
+              .toContain(`${protocolDefinition.protocol}/foo/$tags/containsNumbers must contain at least 1 valid item(s)`);
 
 
             // write a foo record with a `containsNumbers` value that has a number within the range
@@ -1632,7 +1629,7 @@ export function testRecordsTags(): void {
 
             // should pass
             const validFooRecordReply = await dwn.processMessage(alice.did, validFooRecord.message, { dataStream: validFooRecord.dataStream });
-            expect(validFooRecordReply.status.code).to.equal(202);
+            expect(validFooRecordReply.status.code).toBe(202);
           });
 
           it('should reject a record tag that does not contain a value within the `minLength` and `maxLength` range ', async () => {
@@ -1671,7 +1668,7 @@ export function testRecordsTags(): void {
             });
 
             const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-            expect(configureReply.status.code).to.equal(202);
+            expect(configureReply.status.code).toBe(202);
 
             // write a foo record with a `firstName` value that does not have a string within the range
             const minContainsRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1686,10 +1683,10 @@ export function testRecordsTags(): void {
 
             // should fail
             const minContainsReply = await dwn.processMessage(alice.did, minContainsRecord.message, { dataStream: minContainsRecord.dataStream });
-            expect(minContainsReply.status.code).to.equal(400);
-            expect(minContainsReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-            expect(minContainsReply.status.detail).to
-              .contain(`${protocolDefinition.protocol}/foo/$tags/nickNames must contain at least 1 valid item(s)`);
+            expect(minContainsReply.status.code).toBe(400);
+            expect(minContainsReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+            const expectedContainsMsg = `${protocolDefinition.protocol}/foo/$tags/nickNames must contain at least 1 valid item(s)`;
+            expect(minContainsReply.status.detail).toContain(expectedContainsMsg);
 
             // write a foo record with a `nickNames` value that has a string within the range
             const validFooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1704,7 +1701,7 @@ export function testRecordsTags(): void {
 
             // should pass
             const validFooRecordReply = await dwn.processMessage(alice.did, validFooRecord.message, { dataStream: validFooRecord.dataStream });
-            expect(validFooRecordReply.status.code).to.equal(202);
+            expect(validFooRecordReply.status.code).toBe(202);
           });
         });
 
@@ -1742,7 +1739,7 @@ export function testRecordsTags(): void {
             });
 
             const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-            expect(configureReply.status.code).to.equal(202);
+            expect(configureReply.status.code).toBe(202);
 
             // write a foo record with a `status` value that is not represented in the `enum`
             const invalidEnumRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1757,10 +1754,10 @@ export function testRecordsTags(): void {
 
             // should fail
             const invalidEnumReply = await dwn.processMessage(alice.did, invalidEnumRecord.message, { dataStream: invalidEnumRecord.dataStream });
-            expect(invalidEnumReply.status.code).to.equal(400);
-            expect(invalidEnumReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+            expect(invalidEnumReply.status.code).toBe(400);
+            expect(invalidEnumReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
             expect(invalidEnumReply.status.detail)
-              .to.contain(`${protocolDefinition.protocol}/foo/$tags/status/1 must be equal to one of the allowed values`);
+              .toContain(`${protocolDefinition.protocol}/foo/$tags/status/1 must be equal to one of the allowed values`);
 
             // write a foo record that now includes only valid `status` values
             const validEnumRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1775,7 +1772,7 @@ export function testRecordsTags(): void {
 
             // should pass
             const validEnumReply = await dwn.processMessage(alice.did, validEnumRecord.message, { dataStream: validEnumRecord.dataStream });
-            expect(validEnumReply.status.code).to.equal(202);
+            expect(validEnumReply.status.code).toBe(202);
           });
 
           it('should reject a record tag which all items do not have a value within the `minimum` and `maximum` range ', async () => {
@@ -1811,7 +1808,7 @@ export function testRecordsTags(): void {
             });
 
             const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-            expect(configureReply.status.code).to.equal(202);
+            expect(configureReply.status.code).toBe(202);
 
             // write a foo record with a `numbers` value that is less than the minimum
             const minItemssRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1826,10 +1823,10 @@ export function testRecordsTags(): void {
 
             // should fail
             const minItemsReply = await dwn.processMessage(alice.did, minItemssRecord.message, { dataStream: minItemssRecord.dataStream });
-            expect(minItemsReply.status.code).to.equal(400);
-            expect(minItemsReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+            expect(minItemsReply.status.code).toBe(400);
+            expect(minItemsReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
             expect(minItemsReply.status.detail)
-              .to.contain(`${protocolDefinition.protocol}/foo/$tags/numbers/0 must be >= 80`);
+              .toContain(`${protocolDefinition.protocol}/foo/$tags/numbers/0 must be >= 80`);
 
             // write a foo record with a `numbers` value that is more than the maximum
             const maxItemssRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1844,10 +1841,10 @@ export function testRecordsTags(): void {
 
             // should fail
             const maxItemsReply = await dwn.processMessage(alice.did, maxItemssRecord.message, { dataStream: maxItemssRecord.dataStream });
-            expect(maxItemsReply.status.code).to.equal(400);
-            expect(maxItemsReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+            expect(maxItemsReply.status.code).toBe(400);
+            expect(maxItemsReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
             expect(maxItemsReply.status.detail)
-              .to.contain(`${protocolDefinition.protocol}/foo/$tags/numbers/1 must be <= 100`);
+              .toContain(`${protocolDefinition.protocol}/foo/$tags/numbers/1 must be <= 100`);
 
 
             // write a foo record with a `numbers` value that are within the range
@@ -1863,7 +1860,7 @@ export function testRecordsTags(): void {
 
             // should pass
             const validFooRecordReply = await dwn.processMessage(alice.did, validFooRecord.message, { dataStream: validFooRecord.dataStream });
-            expect(validFooRecordReply.status.code).to.equal(202);
+            expect(validFooRecordReply.status.code).toBe(202);
           });
 
           it('should reject a record tag which all items do not have a value within the `exclusiveMinimum` and `exclusiveMaximum` range ', async () => {
@@ -1899,7 +1896,7 @@ export function testRecordsTags(): void {
             });
 
             const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-            expect(configureReply.status.code).to.equal(202);
+            expect(configureReply.status.code).toBe(202);
 
             // write a foo record with a `numbers` value that is equal to than the exclusive minimum
             const minItemsRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1914,10 +1911,10 @@ export function testRecordsTags(): void {
 
             // should fail
             const minItemsReply = await dwn.processMessage(alice.did, minItemsRecord.message, { dataStream: minItemsRecord.dataStream });
-            expect(minItemsReply.status.code).to.equal(400);
-            expect(minItemsReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+            expect(minItemsReply.status.code).toBe(400);
+            expect(minItemsReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
             expect(minItemsReply.status.detail)
-              .to.contain(`${protocolDefinition.protocol}/foo/$tags/numbers/0 must be > 80`);
+              .toContain(`${protocolDefinition.protocol}/foo/$tags/numbers/0 must be > 80`);
 
             // write a foo record with a `numbers` value that is equal to than the exclusive maximum
             const maxContainsRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1932,10 +1929,10 @@ export function testRecordsTags(): void {
 
             // should fail
             const maxItemsReply = await dwn.processMessage(alice.did, maxContainsRecord.message, { dataStream: maxContainsRecord.dataStream });
-            expect(maxItemsReply.status.code).to.equal(400);
-            expect(maxItemsReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+            expect(maxItemsReply.status.code).toBe(400);
+            expect(maxItemsReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
             expect(maxItemsReply.status.detail)
-              .to.contain(`${protocolDefinition.protocol}/foo/$tags/numbers/1 must be < 100`);
+              .toContain(`${protocolDefinition.protocol}/foo/$tags/numbers/1 must be < 100`);
 
 
             // write a foo record with a `numbers` value that are within the range
@@ -1951,7 +1948,7 @@ export function testRecordsTags(): void {
 
             // should pass
             const validFooRecordReply = await dwn.processMessage(alice.did, validFooRecord.message, { dataStream: validFooRecord.dataStream });
-            expect(validFooRecordReply.status.code).to.equal(202);
+            expect(validFooRecordReply.status.code).toBe(202);
           });
 
           it('should reject a record tag that does not contain a value within the `minLength` and `maxLength` range ', async () => {
@@ -1987,7 +1984,7 @@ export function testRecordsTags(): void {
             });
 
             const configureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-            expect(configureReply.status.code).to.equal(202);
+            expect(configureReply.status.code).toBe(202);
 
             // write a foo record with a `firstName` value that does not have a string within the range
             const minItemsRecord = await TestDataGenerator.generateRecordsWrite({
@@ -2002,10 +1999,10 @@ export function testRecordsTags(): void {
 
             // should fail
             const minItemsReply = await dwn.processMessage(alice.did, minItemsRecord.message, { dataStream: minItemsRecord.dataStream });
-            expect(minItemsReply.status.code).to.equal(400);
-            expect(minItemsReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-            expect(minItemsReply.status.detail).to
-              .contain(`${protocolDefinition.protocol}/foo/$tags/nickNames/1 must NOT have fewer than 2 characters`);
+            expect(minItemsReply.status.code).toBe(400);
+            expect(minItemsReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+            const expectedMinItemsMsg = `${protocolDefinition.protocol}/foo/$tags/nickNames/1 must NOT have fewer than 2 characters`;
+            expect(minItemsReply.status.detail).toContain(expectedMinItemsMsg);
 
             // write a foo record with a `nickname` value this is too long
             const maxItemsRecord = await TestDataGenerator.generateRecordsWrite({
@@ -2020,10 +2017,10 @@ export function testRecordsTags(): void {
 
             // should fail
             const maxItemsReply = await dwn.processMessage(alice.did, maxItemsRecord.message, { dataStream: maxItemsRecord.dataStream });
-            expect(maxItemsReply.status.code).to.equal(400);
-            expect(maxItemsReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
-            expect(maxItemsReply.status.detail).to
-              .contain(`${protocolDefinition.protocol}/foo/$tags/nickNames/1 must NOT have more than 10 characters`);
+            expect(maxItemsReply.status.code).toBe(400);
+            expect(maxItemsReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema);
+            const expectedMaxItemsMsg = `${protocolDefinition.protocol}/foo/$tags/nickNames/1 must NOT have more than 10 characters`;
+            expect(maxItemsReply.status.detail).toContain(expectedMaxItemsMsg);
 
             // write a foo record with a `nickNames` value that has a string within the range
             const validFooRecord = await TestDataGenerator.generateRecordsWrite({
@@ -2038,7 +2035,7 @@ export function testRecordsTags(): void {
 
             // should pass
             const validFooRecordReply = await dwn.processMessage(alice.did, validFooRecord.message, { dataStream: validFooRecord.dataStream });
-            expect(validFooRecordReply.status.code).to.equal(202);
+            expect(validFooRecordReply.status.code).toBe(202);
           });
         });
       });
@@ -2067,7 +2064,7 @@ export function testRecordsTags(): void {
         });
 
         const tagsRecord1Reply = await dwn.processMessage(alice.did, tagsRecord1.message, { dataStream: tagsRecord1.dataStream });
-        expect(tagsRecord1Reply.status.code).to.equal(202);
+        expect(tagsRecord1Reply.status.code).toBe(202);
 
         // verify the record was written
         const tagsRecord1Read = await RecordsRead.create({
@@ -2078,10 +2075,10 @@ export function testRecordsTags(): void {
         });
 
         const tagsRecord1ReadReply = await dwn.processMessage(alice.did, tagsRecord1Read.message);
-        expect(tagsRecord1ReadReply.status.code).to.equal(200);
-        expect(tagsRecord1ReadReply.entry!.recordsWrite).to.not.be.undefined;
+        expect(tagsRecord1ReadReply.status.code).toBe(200);
+        expect(tagsRecord1ReadReply.entry!.recordsWrite).toBeDefined();
         expect(tagsRecord1ReadReply.entry!.recordsWrite!.descriptor.tags)
-          .to.deep.equal({ stringTag, numberTag, booleanTag, stringArrayTag, numberArrayTag });
+          .toEqual({ stringTag, numberTag, booleanTag, stringArrayTag, numberArrayTag });
       });
 
       it('should overwrite tags when updating a Record', async () => {
@@ -2102,7 +2099,7 @@ export function testRecordsTags(): void {
 
         // write the record
         const tagsRecord1Reply = await dwn.processMessage(alice.did, tagsRecord1.message, { dataStream: tagsRecord1.dataStream });
-        expect(tagsRecord1Reply.status.code).to.equal(202);
+        expect(tagsRecord1Reply.status.code).toBe(202);
 
         // verify the record was written
         const tagsRecord1Read = await RecordsRead.create({
@@ -2113,9 +2110,9 @@ export function testRecordsTags(): void {
         });
 
         const tagsRecord1ReadReply = await dwn.processMessage(alice.did, tagsRecord1Read.message);
-        expect(tagsRecord1ReadReply.status.code).to.equal(200);
-        expect(tagsRecord1ReadReply.entry!.recordsWrite).to.not.be.undefined;
-        expect(tagsRecord1ReadReply.entry!.recordsWrite!.descriptor.tags).to.deep.equal({
+        expect(tagsRecord1ReadReply.status.code).toBe(200);
+        expect(tagsRecord1ReadReply.entry!.recordsWrite).toBeDefined();
+        expect(tagsRecord1ReadReply.entry!.recordsWrite!.descriptor.tags).toEqual({
           stringTag      : 'string-value',
           numberTag      : 54566975,
           booleanTag     : false,
@@ -2134,9 +2131,9 @@ export function testRecordsTags(): void {
         });
 
         const tagsQueryMatchReply = await dwn.processMessage(alice.did, tagsQueryMatch.message);
-        expect(tagsQueryMatchReply.status.code).to.equal(200);
-        expect(tagsQueryMatchReply.entries?.length).to.equal(1);
-        expect(tagsQueryMatchReply.entries![0].recordId).to.equal(tagsRecord1.message.recordId);
+        expect(tagsQueryMatchReply.status.code).toBe(200);
+        expect(tagsQueryMatchReply.entries?.length).toBe(1);
+        expect(tagsQueryMatchReply.entries![0].recordId).toBe(tagsRecord1.message.recordId);
 
         // update the record with new tags
         const updatedRecord = await TestDataGenerator.generateFromRecordsWrite({
@@ -2145,17 +2142,17 @@ export function testRecordsTags(): void {
           tags          : { newTag: 'new-value' }
         });
         const updatedRecordReply = await dwn.processMessage(alice.did, updatedRecord.message, { dataStream: updatedRecord.dataStream });
-        expect(updatedRecordReply.status.code).to.equal(202, updatedRecordReply.status.detail);
+        expect(updatedRecordReply.status.code).toBe(202, updatedRecordReply.status.detail);
 
         const updatedRecordReadReply = await dwn.processMessage(alice.did, tagsRecord1Read.message);
-        expect(updatedRecordReadReply.status.code).to.equal(200);
-        expect(updatedRecordReadReply.entry!.recordsWrite).to.exist;
-        expect(updatedRecordReadReply.entry!.recordsWrite!.descriptor.tags).to.deep.equal({ newTag: 'new-value' });
+        expect(updatedRecordReadReply.status.code).toBe(200);
+        expect(updatedRecordReadReply.entry!.recordsWrite).toBeDefined();
+        expect(updatedRecordReadReply.entry!.recordsWrite!.descriptor.tags).toEqual({ newTag: 'new-value' });
 
         // Sanity: Query for the old tag value should return no results
         const tagsQueryMatchReply2 = await dwn.processMessage(alice.did, tagsQueryMatch.message);
-        expect(tagsQueryMatchReply2.status.code).to.equal(200);
-        expect(tagsQueryMatchReply2.entries?.length).to.equal(0);
+        expect(tagsQueryMatchReply2.status.code).toBe(200);
+        expect(tagsQueryMatchReply2.entries?.length).toBe(0);
       });
 
       it('should not index tags when the record is not `latestBaseState`', async () => {
@@ -2180,12 +2177,12 @@ export function testRecordsTags(): void {
 
         // write the record
         const tagsRecord1Reply = await dwn.processMessage(alice.did, tagsRecord1.message, { dataStream: tagsRecord1.dataStream });
-        expect(tagsRecord1Reply.status.code).to.equal(202);
+        expect(tagsRecord1Reply.status.code).toBe(202);
 
         // verify that construct Indexes was called
-        expect(constructIndexesSpy.callCount).to.equal(1);
+        expect(constructIndexesSpy.callCount).toBe(1);
         // verify that buildTagIndexes was called
-        expect(buildTagIndexSpy.callCount).to.equal(1);
+        expect(buildTagIndexSpy.callCount).toBe(1);
 
 
         // reset counters
@@ -2198,12 +2195,12 @@ export function testRecordsTags(): void {
           existingWrite : tagsRecord1.recordsWrite,
         });
         const updatedRecordReply = await dwn.processMessage(alice.did, updatedRecord.message, { dataStream: updatedRecord.dataStream });
-        expect(updatedRecordReply.status.code).to.equal(202);
+        expect(updatedRecordReply.status.code).toBe(202);
 
         // construct Indexes should be called once for the `initialWrite` and once for the updated write
-        expect(constructIndexesSpy.callCount).to.equal(2);
+        expect(constructIndexesSpy.callCount).toBe(2);
         // verify that buildTagIndexes was not called at all
-        expect(buildTagIndexSpy.callCount).to.equal(0);
+        expect(buildTagIndexSpy.callCount).toBe(0);
       });
     });
 
@@ -2222,7 +2219,7 @@ export function testRecordsTags(): void {
         });
 
         const tagsRecord1Reply = await dwn.processMessage(alice.did, tagsRecord1.message, { dataStream: tagsRecord1.dataStream });
-        expect(tagsRecord1Reply.status.code).to.equal(202);
+        expect(tagsRecord1Reply.status.code).toBe(202);
 
         const tagsQueryMatch = await TestDataGenerator.generateRecordsQuery({
           author : alice,
@@ -2234,9 +2231,9 @@ export function testRecordsTags(): void {
         });
 
         const tagsQueryMatchReply = await dwn.processMessage(alice.did, tagsQueryMatch.message);
-        expect(tagsQueryMatchReply.status.code).to.equal(200);
-        expect(tagsQueryMatchReply.entries?.length).to.equal(1);
-        expect(tagsQueryMatchReply.entries![0].recordId).to.equal(tagsRecord1.message.recordId);
+        expect(tagsQueryMatchReply.status.code).toBe(200);
+        expect(tagsQueryMatchReply.entries?.length).toBe(1);
+        expect(tagsQueryMatchReply.entries![0].recordId).toBe(tagsRecord1.message.recordId);
 
         // negative result same tag different value
         let tagsQueryNegative = await TestDataGenerator.generateRecordsQuery({
@@ -2248,8 +2245,8 @@ export function testRecordsTags(): void {
           }
         });
         let tagsQueryNegativeReply = await dwn.processMessage(alice.did, tagsQueryNegative.message);
-        expect(tagsQueryNegativeReply.status.code).to.equal(200);
-        expect(tagsQueryNegativeReply.entries?.length).to.equal(0);
+        expect(tagsQueryNegativeReply.status.code).toBe(200);
+        expect(tagsQueryNegativeReply.entries?.length).toBe(0);
 
         // negative result different tag same value
         tagsQueryNegative = await TestDataGenerator.generateRecordsQuery({
@@ -2261,8 +2258,8 @@ export function testRecordsTags(): void {
           }
         });
         tagsQueryNegativeReply = await dwn.processMessage(alice.did, tagsQueryNegative.message);
-        expect(tagsQueryNegativeReply.status.code).to.equal(200);
-        expect(tagsQueryNegativeReply.entries?.length).to.equal(0);
+        expect(tagsQueryNegativeReply.status.code).toBe(200);
+        expect(tagsQueryNegativeReply.entries?.length).toBe(0);
       });
 
       it('should be able to filter by number match', async () => {
@@ -2280,7 +2277,7 @@ export function testRecordsTags(): void {
         });
 
         const tagsRecord1Reply = await dwn.processMessage(alice.did, tagsRecord1.message, { dataStream: tagsRecord1.dataStream });
-        expect(tagsRecord1Reply.status.code).to.equal(202);
+        expect(tagsRecord1Reply.status.code).toBe(202);
 
         // do an exact match for the tag value
         const tagsQueryMatch = await TestDataGenerator.generateRecordsQuery({
@@ -2293,9 +2290,9 @@ export function testRecordsTags(): void {
         });
 
         const tagsQueryMatchReply = await dwn.processMessage(alice.did, tagsQueryMatch.message);
-        expect(tagsQueryMatchReply.status.code).to.equal(200);
-        expect(tagsQueryMatchReply.entries?.length).to.equal(1);
-        expect(tagsQueryMatchReply.entries![0].recordId).to.equal(tagsRecord1.message.recordId);
+        expect(tagsQueryMatchReply.status.code).toBe(200);
+        expect(tagsQueryMatchReply.entries?.length).toBe(1);
+        expect(tagsQueryMatchReply.entries![0].recordId).toBe(tagsRecord1.message.recordId);
 
         // negative result same tag different value
         let tagsQueryNegative = await TestDataGenerator.generateRecordsQuery({
@@ -2307,8 +2304,8 @@ export function testRecordsTags(): void {
           }
         });
         let tagsQueryNegativeReply = await dwn.processMessage(alice.did, tagsQueryNegative.message);
-        expect(tagsQueryNegativeReply.status.code).to.equal(200);
-        expect(tagsQueryNegativeReply.entries?.length).to.equal(0);
+        expect(tagsQueryNegativeReply.status.code).toBe(200);
+        expect(tagsQueryNegativeReply.entries?.length).toBe(0);
 
         // negative result different tag same value
         tagsQueryNegative = await TestDataGenerator.generateRecordsQuery({
@@ -2320,8 +2317,8 @@ export function testRecordsTags(): void {
           }
         });
         tagsQueryNegativeReply = await dwn.processMessage(alice.did, tagsQueryNegative.message);
-        expect(tagsQueryNegativeReply.status.code).to.equal(200);
-        expect(tagsQueryNegativeReply.entries?.length).to.equal(0);
+        expect(tagsQueryNegativeReply.status.code).toBe(200);
+        expect(tagsQueryNegativeReply.entries?.length).toBe(0);
       });
 
       it('should be able to filter by boolean match', async () => {
@@ -2344,7 +2341,7 @@ export function testRecordsTags(): void {
         });
 
         const tagsRecordTrueReply = await dwn.processMessage(alice.did, tagsRecordTrue.message, { dataStream: tagsRecordTrue.dataStream });
-        expect(tagsRecordTrueReply.status.code).to.equal(202);
+        expect(tagsRecordTrueReply.status.code).toBe(202);
 
         // write a record with a false boolean value tag
         const tagsRecordFalse = await TestDataGenerator.generateRecordsWrite({
@@ -2357,7 +2354,7 @@ export function testRecordsTags(): void {
         });
 
         const tagsRecordFalseReply = await dwn.processMessage(alice.did, tagsRecordFalse.message, { dataStream: tagsRecordFalse.dataStream });
-        expect(tagsRecordFalseReply.status.code).to.equal(202);
+        expect(tagsRecordFalseReply.status.code).toBe(202);
 
         // query for records with a `booleanTag` set to true, should return the record with the true tag
         const tagsQueryMatchTrue = await TestDataGenerator.generateRecordsQuery({
@@ -2370,9 +2367,9 @@ export function testRecordsTags(): void {
         });
 
         const tagsQueryMatchTrueReply = await dwn.processMessage(alice.did, tagsQueryMatchTrue.message);
-        expect(tagsQueryMatchTrueReply.status.code).to.equal(200);
-        expect(tagsQueryMatchTrueReply.entries?.length).to.equal(1);
-        expect(tagsQueryMatchTrueReply.entries![0].recordId).to.equal(tagsRecordTrue.message.recordId);
+        expect(tagsQueryMatchTrueReply.status.code).toBe(200);
+        expect(tagsQueryMatchTrueReply.entries?.length).toBe(1);
+        expect(tagsQueryMatchTrueReply.entries![0].recordId).toBe(tagsRecordTrue.message.recordId);
 
         // query for records with a `booleanTag` set to false, should return the record with the false tag
         const tagsQueryMatchFalse = await TestDataGenerator.generateRecordsQuery({
@@ -2385,9 +2382,9 @@ export function testRecordsTags(): void {
         });
 
         const tagsQueryMatchFalseReply = await dwn.processMessage(alice.did, tagsQueryMatchFalse.message);
-        expect(tagsQueryMatchFalseReply.status.code).to.equal(200);
-        expect(tagsQueryMatchFalseReply.entries?.length).to.equal(1);
-        expect(tagsQueryMatchFalseReply.entries![0].recordId).to.equal(tagsRecordFalse.message.recordId);
+        expect(tagsQueryMatchFalseReply.status.code).toBe(200);
+        expect(tagsQueryMatchFalseReply.entries?.length).toBe(1);
+        expect(tagsQueryMatchFalseReply.entries![0].recordId).toBe(tagsRecordFalse.message.recordId);
 
         // negative result for a non existent boolean tag.
         const tagsQueryNegative = await TestDataGenerator.generateRecordsQuery({
@@ -2399,8 +2396,8 @@ export function testRecordsTags(): void {
           }
         });
         const tagsQueryNegativeReply = await dwn.processMessage(alice.did, tagsQueryNegative.message);
-        expect(tagsQueryNegativeReply.status.code).to.equal(200);
-        expect(tagsQueryNegativeReply.entries?.length).to.equal(0);
+        expect(tagsQueryNegativeReply.status.code).toBe(200);
+        expect(tagsQueryNegativeReply.entries?.length).toBe(0);
       });
 
       it('should be able to range filter by string value', async () => {
@@ -2444,13 +2441,13 @@ export function testRecordsTags(): void {
         });
 
         const aliceReply = await dwn.processMessage(alice.did, aliceRecord.message, { dataStream: aliceRecord.dataStream });
-        expect(aliceReply.status.code).to.equal(202);
+        expect(aliceReply.status.code).toBe(202);
         const bobReply = await dwn.processMessage(alice.did, bobRecord.message, { dataStream: bobRecord.dataStream });
-        expect(bobReply.status.code).to.equal(202);
+        expect(bobReply.status.code).toBe(202);
         const carolReply = await dwn.processMessage(alice.did, carolRecord.message, { dataStream: carolRecord.dataStream });
-        expect(carolReply.status.code).to.equal(202);
+        expect(carolReply.status.code).toBe(202);
         const danielReply = await dwn.processMessage(alice.did, danielRecord.message, { dataStream: danielRecord.dataStream });
-        expect(danielReply.status.code).to.equal(202);
+        expect(danielReply.status.code).toBe(202);
 
         // sanity query for all
         const queryForAll = await TestDataGenerator.generateRecordsQuery({
@@ -2460,8 +2457,8 @@ export function testRecordsTags(): void {
           }
         });
         const queryForAllReply = await dwn.processMessage(alice.did, queryForAll.message);
-        expect(queryForAllReply.status.code).to.equal(200);
-        expect(queryForAllReply.entries?.length).to.equal(4); // all 4 records
+        expect(queryForAllReply.status.code).toBe(200);
+        expect(queryForAllReply.entries?.length).toBe(4); // all 4 records
 
 
         // query for first names that begin with 'a' and 'b'
@@ -2475,10 +2472,10 @@ export function testRecordsTags(): void {
           }
         });
         const queryForAtoBReply = await dwn.processMessage(alice.did, queryForAtoB.message);
-        expect(queryForAtoBReply.status.code).to.equal(200);
-        expect(queryForAtoBReply.entries?.length).to.equal(2);
+        expect(queryForAtoBReply.status.code).toBe(200);
+        expect(queryForAtoBReply.entries?.length).toBe(2);
         const atobRecordIds = queryForAtoBReply.entries!.map(entry => entry.recordId);
-        expect(atobRecordIds).to.have.members([ aliceRecord.message.recordId, bobRecord.message.recordId ]);
+        expect(atobRecordIds).toEqual(expect.arrayContaining([ aliceRecord.message.recordId, bobRecord.message.recordId ]));
 
         // query for first names greater than 'bob'(exclusive of), and less than but inclusive of 'daniel'
         const queryForBtoD = await TestDataGenerator.generateRecordsQuery({
@@ -2491,10 +2488,10 @@ export function testRecordsTags(): void {
           }
         });
         const queryForBtoDReply = await dwn.processMessage(alice.did, queryForBtoD.message);
-        expect(queryForBtoDReply.status.code).to.equal(200);
-        expect(queryForBtoDReply.entries?.length).to.equal(2);
+        expect(queryForBtoDReply.status.code).toBe(200);
+        expect(queryForBtoDReply.entries?.length).toBe(2);
         const btodRecordIds = queryForBtoDReply.entries!.map(entry => entry.recordId);
-        expect(btodRecordIds).to.have.members([ carolRecord.message.recordId, danielRecord.message.recordId ]);
+        expect(btodRecordIds).toEqual(expect.arrayContaining([ carolRecord.message.recordId, danielRecord.message.recordId ]));
 
         // query for first names that begin with 'carol' onward (inclusive).
         const queryForCarolOnward = await TestDataGenerator.generateRecordsQuery({
@@ -2507,10 +2504,10 @@ export function testRecordsTags(): void {
           }
         });
         const queryForCarolOnwardReply = await dwn.processMessage(alice.did, queryForCarolOnward.message);
-        expect(queryForCarolOnwardReply.status.code).to.equal(200);
-        expect(queryForCarolOnwardReply.entries?.length).to.equal(2);
+        expect(queryForCarolOnwardReply.status.code).toBe(200);
+        expect(queryForCarolOnwardReply.entries?.length).toBe(2);
         const onwardResults = queryForCarolOnwardReply.entries!.map(entry => entry.recordId);
-        expect(onwardResults).to.have.members([ carolRecord.message.recordId, danielRecord.message.recordId ]);
+        expect(onwardResults).toEqual(expect.arrayContaining([ carolRecord.message.recordId, danielRecord.message.recordId ]));
       });
 
       it('should be able to filter by string prefix', async () => {
@@ -2536,9 +2533,9 @@ export function testRecordsTags(): void {
         });
 
         const tagsRecord1Reply = await dwn.processMessage(alice.did, tagsRecord1.message, { dataStream: tagsRecord1.dataStream });
-        expect(tagsRecord1Reply.status.code).to.equal(202);
+        expect(tagsRecord1Reply.status.code).toBe(202);
         const tagsRecord2Reply = await dwn.processMessage(alice.did, tagsRecord2.message, { dataStream: tagsRecord2.dataStream });
-        expect(tagsRecord2Reply.status.code).to.equal(202);
+        expect(tagsRecord2Reply.status.code).toBe(202);
 
         // control record that has a different prefix
         const tagsRecord3 = await TestDataGenerator.generateRecordsWrite({
@@ -2550,7 +2547,7 @@ export function testRecordsTags(): void {
           }
         });
         const tagsRecord3Reply = await dwn.processMessage(alice.did, tagsRecord3.message, { dataStream: tagsRecord3.dataStream });
-        expect(tagsRecord3Reply.status.code).to.equal(202);
+        expect(tagsRecord3Reply.status.code).toBe(202);
 
         // a prefix search will return only the records matching the prefix
         const tagsQueryMatch = await TestDataGenerator.generateRecordsQuery({
@@ -2563,10 +2560,10 @@ export function testRecordsTags(): void {
         });
 
         const tagsQueryMatchReply = await dwn.processMessage(alice.did, tagsQueryMatch.message);
-        expect(tagsQueryMatchReply.status.code).to.equal(200);
-        expect(tagsQueryMatchReply.entries?.length).to.equal(2);
+        expect(tagsQueryMatchReply.status.code).toBe(200);
+        expect(tagsQueryMatchReply.entries?.length).toBe(2);
         const matchedRecords = tagsQueryMatchReply.entries!.map(entry => entry.recordId);
-        expect(matchedRecords).to.have.members([ tagsRecord1.message.recordId, tagsRecord2.message.recordId ]);
+        expect(matchedRecords).toEqual(expect.arrayContaining([ tagsRecord1.message.recordId, tagsRecord2.message.recordId ]));
 
         // sanity/control: a regular range query will return all
         // since `zaz-string` comes lexicographically after `string-` it will appear in the result set
@@ -2580,8 +2577,8 @@ export function testRecordsTags(): void {
         });
 
         const tagsQueryRangeReply = await dwn.processMessage(alice.did, tagsQueryRange.message);
-        expect(tagsQueryRangeReply.status.code).to.equal(200);
-        expect(tagsQueryRangeReply.entries?.length).to.equal(3); // returned all 3 records
+        expect(tagsQueryRangeReply.status.code).toBe(200);
+        expect(tagsQueryRangeReply.entries?.length).toBe(3); // returned all 3 records
       });
 
       it('should be able to range filter by number value', async () => {
@@ -2629,13 +2626,13 @@ export function testRecordsTags(): void {
         });
 
         const aliceReply = await dwn.processMessage(alice.did, aliceRecord.message, { dataStream: aliceRecord.dataStream });
-        expect(aliceReply.status.code).to.equal(202);
+        expect(aliceReply.status.code).toBe(202);
         const bobReply = await dwn.processMessage(alice.did, bobRecord.message, { dataStream: bobRecord.dataStream });
-        expect(bobReply.status.code).to.equal(202);
+        expect(bobReply.status.code).toBe(202);
         const carolReply = await dwn.processMessage(alice.did, carolRecord.message, { dataStream: carolRecord.dataStream });
-        expect(carolReply.status.code).to.equal(202);
+        expect(carolReply.status.code).toBe(202);
         const danielReply = await dwn.processMessage(alice.did, danielRecord.message, { dataStream: danielRecord.dataStream });
-        expect(danielReply.status.code).to.equal(202);
+        expect(danielReply.status.code).toBe(202);
 
         // sanity query for all
         const queryForAll = await TestDataGenerator.generateRecordsQuery({
@@ -2645,8 +2642,8 @@ export function testRecordsTags(): void {
           }
         });
         const queryForAllReply = await dwn.processMessage(alice.did, queryForAll.message);
-        expect(queryForAllReply.status.code).to.equal(200);
-        expect(queryForAllReply.entries?.length).to.equal(4); // all 4 records
+        expect(queryForAllReply.status.code).toBe(200);
+        expect(queryForAllReply.entries?.length).toBe(4); // all 4 records
 
 
         // query for all records that received higher than(not including) an 80
@@ -2661,9 +2658,9 @@ export function testRecordsTags(): void {
           }
         });
         const queryForHighReply = await dwn.processMessage(alice.did, queryForHighGrade.message);
-        expect(queryForHighReply.status.code).to.equal(200);
-        expect(queryForHighReply.entries?.length).to.equal(1);
-        expect(queryForHighReply.entries![0].recordId).to.equal(danielRecord.message.recordId);
+        expect(queryForHighReply.status.code).toBe(200);
+        expect(queryForHighReply.entries?.length).toBe(1);
+        expect(queryForHighReply.entries![0].recordId).toBe(danielRecord.message.recordId);
 
         // query for all records that received higher (and including) a 75
         // three records should match
@@ -2677,10 +2674,12 @@ export function testRecordsTags(): void {
           }
         });
         const queryForPassingGradeReply = await dwn.processMessage(alice.did, queryForPassingGrade.message);
-        expect(queryForPassingGradeReply.status.code).to.equal(200);
-        expect(queryForPassingGradeReply.entries?.length).to.equal(3);
+        expect(queryForPassingGradeReply.status.code).toBe(200);
+        expect(queryForPassingGradeReply.entries?.length).toBe(3);
         const passingRecords = queryForPassingGradeReply.entries!.map(entry => entry.recordId);
-        expect(passingRecords).to.have.members([ danielRecord.message.recordId, bobRecord.message.recordId, aliceRecord.message.recordId ]);
+        expect(passingRecords).toEqual(expect.arrayContaining([
+          danielRecord.message.recordId, bobRecord.message.recordId, aliceRecord.message.recordId
+        ]));
 
         // query for poorly performing grades (65 and below, inclusive)
         const queryForPoorGrades = await TestDataGenerator.generateRecordsQuery({
@@ -2693,9 +2692,9 @@ export function testRecordsTags(): void {
           }
         });
         const queryForPoorGradesReply = await dwn.processMessage(alice.did, queryForPoorGrades.message);
-        expect(queryForPoorGradesReply.status.code).to.equal(200);
-        expect(queryForPoorGradesReply.entries?.length).to.equal(1);
-        expect(queryForPoorGradesReply.entries![0].recordId).to.equal(carolRecord.message.recordId);
+        expect(queryForPoorGradesReply.status.code).toBe(200);
+        expect(queryForPoorGradesReply.entries?.length).toBe(1);
+        expect(queryForPoorGradesReply.entries![0].recordId).toBe(carolRecord.message.recordId);
 
         // query for passing grades that were not perfect scores
         const queryForRange = await TestDataGenerator.generateRecordsQuery({
@@ -2708,10 +2707,10 @@ export function testRecordsTags(): void {
           }
         });
         const queryForRangeReply = await dwn.processMessage(alice.did, queryForRange.message);
-        expect(queryForRangeReply.status.code).to.equal(200);
-        expect(queryForRangeReply.entries?.length).to.equal(2);
+        expect(queryForRangeReply.status.code).toBe(200);
+        expect(queryForRangeReply.entries?.length).toBe(2);
         const rangeRecords = queryForRangeReply.entries!.map(entry => entry.recordId);
-        expect(rangeRecords).to.have.members([ bobRecord.message.recordId, aliceRecord.message.recordId ]);
+        expect(rangeRecords).toEqual(expect.arrayContaining([ bobRecord.message.recordId, aliceRecord.message.recordId ]));
       });
 
       it('should return results based on the latest tag values', async () => {
@@ -2727,7 +2726,7 @@ export function testRecordsTags(): void {
         });
 
         const tagsRecord1Reply = await dwn.processMessage(alice.did, tagsRecord1.message, { dataStream: tagsRecord1.dataStream });
-        expect(tagsRecord1Reply.status.code).to.equal(202);
+        expect(tagsRecord1Reply.status.code).toBe(202);
 
         const tagsQueryMatch = await TestDataGenerator.generateRecordsQuery({
           author : alice,
@@ -2739,9 +2738,9 @@ export function testRecordsTags(): void {
         });
 
         const tagsQueryMatchReply = await dwn.processMessage(alice.did, tagsQueryMatch.message);
-        expect(tagsQueryMatchReply.status.code).to.equal(200);
-        expect(tagsQueryMatchReply.entries?.length).to.equal(1);
-        expect(tagsQueryMatchReply.entries![0].recordId).to.equal(tagsRecord1.message.recordId);
+        expect(tagsQueryMatchReply.status.code).toBe(200);
+        expect(tagsQueryMatchReply.entries?.length).toBe(1);
+        expect(tagsQueryMatchReply.entries![0].recordId).toBe(tagsRecord1.message.recordId);
 
 
         // update the record with new tags
@@ -2751,12 +2750,12 @@ export function testRecordsTags(): void {
           tags          : { otherTag: 'other-value' } // new tags
         });
         const updatedRecordReply = await dwn.processMessage(alice.did, updatedRecord.message, { dataStream: updatedRecord.dataStream });
-        expect(updatedRecordReply.status.code).to.equal(202);
+        expect(updatedRecordReply.status.code).toBe(202);
 
         // issuing the same query should return no results
         const tagsQueryMatchReply2 = await dwn.processMessage(alice.did, tagsQueryMatch.message);
-        expect(tagsQueryMatchReply2.status.code).to.equal(200);
-        expect(tagsQueryMatchReply2.entries?.length).to.equal(0);
+        expect(tagsQueryMatchReply2.status.code).toBe(200);
+        expect(tagsQueryMatchReply2.entries?.length).toBe(0);
       });
 
       it('should not return results if the record was updated with empty tags', async () => {
@@ -2772,7 +2771,7 @@ export function testRecordsTags(): void {
         });
 
         const tagsRecord1Reply = await dwn.processMessage(alice.did, tagsRecord1.message, { dataStream: tagsRecord1.dataStream });
-        expect(tagsRecord1Reply.status.code).to.equal(202);
+        expect(tagsRecord1Reply.status.code).toBe(202);
 
         const tagsQueryMatch = await TestDataGenerator.generateRecordsQuery({
           author : alice,
@@ -2784,9 +2783,9 @@ export function testRecordsTags(): void {
         });
 
         const tagsQueryMatchReply = await dwn.processMessage(alice.did, tagsQueryMatch.message);
-        expect(tagsQueryMatchReply.status.code).to.equal(200);
-        expect(tagsQueryMatchReply.entries?.length).to.equal(1);
-        expect(tagsQueryMatchReply.entries![0].recordId).to.equal(tagsRecord1.message.recordId);
+        expect(tagsQueryMatchReply.status.code).toBe(200);
+        expect(tagsQueryMatchReply.entries?.length).toBe(1);
+        expect(tagsQueryMatchReply.entries![0].recordId).toBe(tagsRecord1.message.recordId);
 
 
         // update the record without any tags
@@ -2795,12 +2794,12 @@ export function testRecordsTags(): void {
           existingWrite : tagsRecord1.recordsWrite,
         });
         const updatedRecordReply = await dwn.processMessage(alice.did, updatedRecord.message, { dataStream: updatedRecord.dataStream });
-        expect(updatedRecordReply.status.code).to.equal(202);
+        expect(updatedRecordReply.status.code).toBe(202);
 
         // issuing the same query should return no results
         const tagsQueryMatchReply2 = await dwn.processMessage(alice.did, tagsQueryMatch.message);
-        expect(tagsQueryMatchReply2.status.code).to.equal(200);
-        expect(tagsQueryMatchReply2.entries?.length).to.equal(0);
+        expect(tagsQueryMatchReply2.status.code).toBe(200);
+        expect(tagsQueryMatchReply2.entries?.length).toBe(0);
       });
     });
 
@@ -2819,7 +2818,7 @@ export function testRecordsTags(): void {
         });
 
         const tagsRecord1Reply = await dwn.processMessage(alice.did, tagsRecord1.message, { dataStream: tagsRecord1.dataStream });
-        expect(tagsRecord1Reply.status.code).to.equal(202);
+        expect(tagsRecord1Reply.status.code).toBe(202);
 
         //sanity: query for the record
         const tagsQueryMatch = await TestDataGenerator.generateRecordsQuery({
@@ -2832,9 +2831,9 @@ export function testRecordsTags(): void {
         });
 
         const tagsQueryMatchReply = await dwn.processMessage(alice.did, tagsQueryMatch.message);
-        expect(tagsQueryMatchReply.status.code).to.equal(200);
-        expect(tagsQueryMatchReply.entries?.length).to.equal(1);
-        expect(tagsQueryMatchReply.entries![0].recordId).to.equal(tagsRecord1.message.recordId);
+        expect(tagsQueryMatchReply.status.code).toBe(200);
+        expect(tagsQueryMatchReply.entries?.length).toBe(1);
+        expect(tagsQueryMatchReply.entries![0].recordId).toBe(tagsRecord1.message.recordId);
 
 
         // delete the record
@@ -2843,12 +2842,12 @@ export function testRecordsTags(): void {
           recordId : tagsRecord1.message.recordId,
         });
         const recordDeleteReply = await dwn.processMessage(alice.did, recordDelete.message);
-        expect(recordDeleteReply.status.code).to.equal(202);
+        expect(recordDeleteReply.status.code).toBe(202);
 
         // issue the the same query should return no results
         const tagsQueryMatchReply2 = await dwn.processMessage(alice.did, tagsQueryMatch.message);
-        expect(tagsQueryMatchReply2.status.code).to.equal(200);
-        expect(tagsQueryMatchReply2.entries?.length).to.equal(0);
+        expect(tagsQueryMatchReply2.status.code).toBe(200);
+        expect(tagsQueryMatchReply2.entries?.length).toBe(0);
       });
     });
   });

@@ -1,4 +1,4 @@
-import { expect } from 'chai';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { StateIndexLevel } from '../../src/state-index/state-index-level.js';
 import { hashEquals, initDefaultHashes } from '../../src/smt/smt-utils.js';
@@ -25,7 +25,7 @@ describe('StateIndexLevel', () => {
     it('should return default empty root for a new tenant', async () => {
       const defaultHashes = await initDefaultHashes();
       const root = await stateIndex.getRoot('did:test:alice');
-      expect(hashEquals(root, defaultHashes[0])).to.be.true;
+      expect(hashEquals(root, defaultHashes[0])).toBe(true);
     });
 
     it('should change the root after inserting a message', async () => {
@@ -35,7 +35,7 @@ describe('StateIndexLevel', () => {
       await stateIndex.insert(tenant, 'bafyreig-msg-1', { interface: 'Records', method: 'Write' });
 
       const root = await stateIndex.getRoot(tenant);
-      expect(hashEquals(root, defaultHashes[0])).to.be.false;
+      expect(hashEquals(root, defaultHashes[0])).toBe(false);
     });
 
     it('should maintain separate roots per tenant', async () => {
@@ -46,7 +46,7 @@ describe('StateIndexLevel', () => {
       const bobRoot = await stateIndex.getRoot('did:test:bob');
 
       // Different messages -> different roots
-      expect(hashEquals(aliceRoot, bobRoot)).to.be.false;
+      expect(hashEquals(aliceRoot, bobRoot)).toBe(false);
     });
 
     it('should produce order-independent roots', async () => {
@@ -69,7 +69,7 @@ describe('StateIndexLevel', () => {
 
       const rootA = await indexA.getRoot(tenant);
       const rootB = await indexB.getRoot(tenant);
-      expect(hashEquals(rootA, rootB)).to.be.true;
+      expect(hashEquals(rootA, rootB)).toBe(true);
 
       await indexA.clear();
       await indexA.close();
@@ -90,7 +90,7 @@ describe('StateIndexLevel', () => {
       await stateIndex.delete(tenant, ['bafyreig-1', 'bafyreig-2']);
 
       const root = await stateIndex.getRoot(tenant);
-      expect(hashEquals(root, defaultHashes[0])).to.be.true;
+      expect(hashEquals(root, defaultHashes[0])).toBe(true);
     });
 
     it('should only delete the specified messages', async () => {
@@ -105,7 +105,7 @@ describe('StateIndexLevel', () => {
 
       const root = await stateIndex.getRoot(tenant);
       // Not empty — still has bafyreig-2
-      expect(hashEquals(root, defaultHashes[0])).to.be.false;
+      expect(hashEquals(root, defaultHashes[0])).toBe(false);
     });
   });
 
@@ -128,7 +128,7 @@ describe('StateIndexLevel', () => {
       const socialRoot = await stateIndex.getProtocolRoot(tenant, 'https://example.com/social');
 
       // Different protocols have different roots
-      expect(hashEquals(chatRoot, socialRoot)).to.be.false;
+      expect(hashEquals(chatRoot, socialRoot)).toBe(false);
     });
 
     it('should update both global and protocol trees on insert', async () => {
@@ -145,8 +145,8 @@ describe('StateIndexLevel', () => {
       const chatRoot = await stateIndex.getProtocolRoot(tenant, 'https://example.com/chat');
 
       // Both should be non-empty
-      expect(hashEquals(globalRoot, defaultHashes[0])).to.be.false;
-      expect(hashEquals(chatRoot, defaultHashes[0])).to.be.false;
+      expect(hashEquals(globalRoot, defaultHashes[0])).toBe(false);
+      expect(hashEquals(chatRoot, defaultHashes[0])).toBe(false);
     });
 
     it('should remove from both global and protocol trees on delete', async () => {
@@ -165,8 +165,8 @@ describe('StateIndexLevel', () => {
       const chatRoot = await stateIndex.getProtocolRoot(tenant, 'https://example.com/chat');
 
       // Both should be empty
-      expect(hashEquals(globalRoot, defaultHashes[0])).to.be.true;
-      expect(hashEquals(chatRoot, defaultHashes[0])).to.be.true;
+      expect(hashEquals(globalRoot, defaultHashes[0])).toBe(true);
+      expect(hashEquals(chatRoot, defaultHashes[0])).toBe(true);
     });
 
     it('should return empty protocol root for unscoped messages', async () => {
@@ -181,11 +181,11 @@ describe('StateIndexLevel', () => {
 
       // Protocol-scoped root should be empty since no messages with this protocol exist
       const protoRoot = await stateIndex.getProtocolRoot(tenant, 'https://example.com/chat');
-      expect(hashEquals(protoRoot, defaultHashes[0])).to.be.true;
+      expect(hashEquals(protoRoot, defaultHashes[0])).toBe(true);
 
       // But global root should not be empty
       const globalRoot = await stateIndex.getRoot(tenant);
-      expect(hashEquals(globalRoot, defaultHashes[0])).to.be.false;
+      expect(hashEquals(globalRoot, defaultHashes[0])).toBe(false);
     });
   });
 
@@ -211,7 +211,7 @@ describe('StateIndexLevel', () => {
       // At least one should be non-default
       const leftIsDefault = hashEquals(leftHash, defaultHashes[1]);
       const rightIsDefault = hashEquals(rightHash, defaultHashes[1]);
-      expect(leftIsDefault && rightIsDefault).to.be.false;
+      expect(leftIsDefault && rightIsDefault).toBe(false);
     });
   });
 
@@ -224,7 +224,7 @@ describe('StateIndexLevel', () => {
       await stateIndex.delete(tenant, ['bafyreig-nonexistent']);
 
       const root = await stateIndex.getRoot(tenant);
-      expect(hashEquals(root, defaultHashes[0])).to.be.true;
+      expect(hashEquals(root, defaultHashes[0])).toBe(true);
     });
   });
 
@@ -242,7 +242,7 @@ describe('StateIndexLevel', () => {
       // At least one should be non-default
       const leftIsDefault = hashEquals(leftHash, defaultHashes[1]);
       const rightIsDefault = hashEquals(rightHash, defaultHashes[1]);
-      expect(leftIsDefault && rightIsDefault).to.be.false;
+      expect(leftIsDefault && rightIsDefault).toBe(false);
     });
   });
 
@@ -256,7 +256,7 @@ describe('StateIndexLevel', () => {
       await stateIndex.insert(tenant, 'bafyreig-3', indexes);
 
       const leaves = await stateIndex.getLeaves(tenant, []);
-      expect(leaves.sort()).to.deep.equal(['bafyreig-1', 'bafyreig-2', 'bafyreig-3'].sort());
+      expect(leaves.sort()).toEqual(['bafyreig-1', 'bafyreig-2', 'bafyreig-3'].sort());
     });
 
     it('should return protocol-scoped leaves', async () => {
@@ -274,10 +274,10 @@ describe('StateIndexLevel', () => {
       });
 
       const chatLeaves = await stateIndex.getProtocolLeaves(tenant, 'https://example.com/chat', []);
-      expect(chatLeaves).to.deep.equal(['bafyreig-chat-1']);
+      expect(chatLeaves).toEqual(['bafyreig-chat-1']);
 
       const socialLeaves = await stateIndex.getProtocolLeaves(tenant, 'https://example.com/social', []);
-      expect(socialLeaves).to.deep.equal(['bafyreig-social-1']);
+      expect(socialLeaves).toEqual(['bafyreig-social-1']);
     });
   });
 
@@ -305,8 +305,8 @@ describe('StateIndexLevel', () => {
       const aliceRoot = await stateIndex.getRoot('did:test:alice');
       const bobRoot = await stateIndex.getRoot('did:test:bob');
 
-      expect(hashEquals(aliceRoot, defaultHashes[0])).to.be.true;
-      expect(hashEquals(bobRoot, defaultHashes[0])).to.be.true;
+      expect(hashEquals(aliceRoot, defaultHashes[0])).toBe(true);
+      expect(hashEquals(bobRoot, defaultHashes[0])).toBe(true);
     });
   });
 });

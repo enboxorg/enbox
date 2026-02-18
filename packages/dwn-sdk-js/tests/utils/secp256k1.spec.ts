@@ -2,15 +2,15 @@ import type { JwkParamsEcPublic } from '@enbox/crypto';
 
 import { base64url } from 'multiformats/bases/base64';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
-import { expect } from 'chai';
 import { Secp256k1 } from '../../src/utils/secp256k1.js';
 import { TestDataGenerator } from './test-data-generator.js';
+import { describe, expect, it } from 'bun:test';
 
 describe('Secp256k1', () => {
   describe('generateKeyPairRaw()', () => {
     it('should generate compressed publicKey', async () => {
       const { publicKey } = await Secp256k1.generateKeyPairRaw();
-      expect(publicKey.length).to.equal(33);
+      expect(publicKey.length).toBe(33);
     });
   });
 
@@ -18,8 +18,8 @@ describe('Secp256k1', () => {
     it('should throw if key is not a valid SECP256K1 key', async () => {
       const validKey = (await Secp256k1.generateKeyPair()).publicJwk;
 
-      expect(() => Secp256k1.validateKey({ ...validKey, kty: 'invalidKty' as any })).to.throw(DwnErrorCode.Secp256k1KeyNotValid);
-      expect(() => Secp256k1.validateKey({ ...validKey, crv: 'invalidCrv' as any })).to.throw(DwnErrorCode.Secp256k1KeyNotValid);
+      expect(() => Secp256k1.validateKey({ ...validKey, kty: 'invalidKty' as any })).toThrow(DwnErrorCode.Secp256k1KeyNotValid);
+      expect(() => Secp256k1.validateKey({ ...validKey, crv: 'invalidCrv' as any })).toThrow(DwnErrorCode.Secp256k1KeyNotValid);
     });
   });
 
@@ -34,8 +34,8 @@ describe('Secp256k1', () => {
       const publicJwk1 = await Secp256k1.publicKeyToJwk(compressedPublicKey);
       const publicJwk2 = await Secp256k1.publicKeyToJwk(uncompressedPublicKey);
 
-      expect((publicJwk1 as JwkParamsEcPublic).x).to.equal((publicJwk2 as JwkParamsEcPublic).x);
-      expect((publicJwk1 as JwkParamsEcPublic).y).to.equal((publicJwk2 as JwkParamsEcPublic).y);
+      expect((publicJwk1 as JwkParamsEcPublic).x).toBe((publicJwk2 as JwkParamsEcPublic).x);
+      expect((publicJwk1 as JwkParamsEcPublic).y).toBe((publicJwk2 as JwkParamsEcPublic).y);
     });
   });
 
@@ -46,7 +46,7 @@ describe('Secp256k1', () => {
       const contentBytes = TestDataGenerator.randomBytes(16);
       const signatureBytes = await Secp256k1.sign(contentBytes, privateJwk);
 
-      expect(signatureBytes.length).to.equal(64); // DER format would be 70 bytes
+      expect(signatureBytes.length).toBe(64); // DER format would be 70 bytes
     });
   });
 });

@@ -1,11 +1,7 @@
-import chaiAsPromised from 'chai-as-promised';
-import chai, { expect } from 'chai';
+import { describe, expect, it } from 'bun:test';
 
 import { MemoryCache } from '../../src/utils/memory-cache.js';
 import sinon from 'sinon';
-
-// extends chai to test promises
-chai.use(chaiAsPromised);
 
 describe('MemoryCache', () => {
   it('should return `undefined` when value expires', async () => {
@@ -13,11 +9,11 @@ describe('MemoryCache', () => {
 
     await memoryCache.set('key', 'aValue');
     let valueInCache = await memoryCache.get('key');
-    expect(valueInCache).to.equal('aValue');
+    expect(valueInCache).toBe('aValue');
 
     await new Promise(resolve => setTimeout(resolve, 11)); // wait for 11 millisecond for value to expire
     valueInCache = await memoryCache.get('key');
-    expect(valueInCache).to.be.undefined;
+    expect(valueInCache).toBeUndefined();
   });
 
   it('should continue if set() fails', async () => {
@@ -28,6 +24,6 @@ describe('MemoryCache', () => {
     setStub.throws('a simulated error');
 
     await memoryCache.set('key', 'aValue');
-    expect(setStub.called).to.be.true;
+    expect(setStub.called).toBe(true);
   });
 });

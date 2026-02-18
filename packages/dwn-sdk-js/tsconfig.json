@@ -39,8 +39,7 @@
     }
   },
   "include": [
-    "./src/index.ts",
-    "tests" // building tests also so we can run tests directly without the need for ts-node, ts-mocha
+    "./src/index.ts"
   ],
   "exclude": [
     "node_modules",

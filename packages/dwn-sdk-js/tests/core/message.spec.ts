@@ -1,7 +1,6 @@
 import type { PermissionScope } from '../../src/types/permission-types.js';
 import type { RecordsQueryReplyEntry } from '../../src/types/records-types.js';
 
-import { expect } from 'chai';
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
 import { PermissionsProtocol } from '../../src/protocols/permissions.js';
@@ -9,6 +8,7 @@ import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { Time } from '../../src/utils/time.js';
+import { describe, expect, it } from 'bun:test';
 import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
 
 describe('Message', () => {
@@ -19,17 +19,17 @@ describe('Message', () => {
       // create a record message
       const { message: recordsWriteMessage } = await TestDataGenerator.generateRecordsWrite({ author: bob });
       const recordsWriteAuthor = Message.getAuthor(recordsWriteMessage);
-      expect(recordsWriteAuthor).to.equal(bob.did);
+      expect(recordsWriteAuthor).toBe(bob.did);
 
       // create a delete message
       const { message: recordsDeleteMessage } = await TestDataGenerator.generateRecordsDelete({ author: bob });
       const recordsDeleteAuthor = Message.getAuthor(recordsDeleteMessage);
-      expect(recordsDeleteAuthor).to.equal(bob.did);
+      expect(recordsDeleteAuthor).toBe(bob.did);
 
       // create a protocol configure message
       const { message: protocolsConfigureMessage } = await TestDataGenerator.generateProtocolsConfigure({ author: bob });
       const protocolsConfigureAuthor = Message.getAuthor(protocolsConfigureMessage);
-      expect(protocolsConfigureAuthor).to.equal(bob.did);
+      expect(protocolsConfigureAuthor).toBe(bob.did);
     });
 
     it('should get the author of a delegated message', async () => {
@@ -66,11 +66,11 @@ describe('Message', () => {
 
       // expect message author to be alice
       const author = Message.getAuthor(message);
-      expect(author).to.equal(alice.did);
+      expect(author).toBe(alice.did);
 
       // expect message signer to be deviceX
       const signer = Message.getSigner(message);
-      expect(signer).to.equal(deviceX.did);
+      expect(signer).toBe(deviceX.did);
     });
 
     it('returns undefined for an unsigned message', async () => {
@@ -81,7 +81,7 @@ describe('Message', () => {
       });
 
       const author = Message.getAuthor(message);
-      expect(author).to.be.undefined;
+      expect(author).toBeUndefined();
     });
   });
 
@@ -94,7 +94,7 @@ describe('Message', () => {
       });
 
       const author = Message.getSigner(recordsRead.message);
-      expect(author).to.be.undefined;
+      expect(author).toBeUndefined();
     });
   });
 
@@ -109,7 +109,7 @@ describe('Message', () => {
 
       // NOTE: parse() calls constructor internally
       const recordsRead = await RecordsRead.parse(message);
-      expect(recordsRead.toJSON()).to.equal(message);
+      expect(recordsRead.toJSON()).toBe(message);
     });
   });
 
@@ -120,7 +120,7 @@ describe('Message', () => {
       const b = JSON.parse(JSON.stringify(a)); // create a deep copy of `a`
 
       const compareResult = await Message.compareMessageTimestamp(a, b);
-      expect(compareResult).to.equal(0);
+      expect(compareResult).toBe(0);
     });
   });
 
@@ -133,7 +133,7 @@ describe('Message', () => {
       const c = (await TestDataGenerator.generateRecordsWrite()).message; // c is the newest since its created last
 
       const newestMessage = await Message.getNewestMessage([b, c, a]);
-      expect((newestMessage as any).recordId).to.equal(c.recordId);
+      expect((newestMessage as any).recordId).toBe(c.recordId);
     });
   });
 
@@ -146,7 +146,7 @@ describe('Message', () => {
       const c = (await TestDataGenerator.generateRecordsWrite()).message; // c is the newest since its created last
 
       const newestMessage = await Message.getOldestMessage([b, c, a]);
-      expect((newestMessage as any).recordId).to.equal(a.recordId);
+      expect((newestMessage as any).recordId).toBe(a.recordId);
     });
   });
 
@@ -160,7 +160,7 @@ describe('Message', () => {
 
       const cid2 = await Message.getCid(messageWithData);
 
-      expect(cid1).to.equal(cid2);
+      expect(cid1).toBe(cid2);
     });
   });
 });

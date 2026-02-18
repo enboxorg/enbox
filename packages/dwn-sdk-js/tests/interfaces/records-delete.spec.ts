@@ -1,12 +1,8 @@
-import chaiAsPromised from 'chai-as-promised';
-import chai, { expect } from 'chai';
-
 import { Jws } from '../../src/index.js';
 import { RecordsDelete } from '../../src/interfaces/records-delete.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { Time } from '../../src/utils/time.js';
-
-chai.use(chaiAsPromised);
+import { describe, expect, it } from 'bun:test';
 
 describe('RecordsDelete', () => {
   describe('create()', () => {
@@ -20,7 +16,7 @@ describe('RecordsDelete', () => {
         messageTimestamp : currentTime
       });
 
-      expect(recordsDelete.message.descriptor.messageTimestamp).to.equal(currentTime);
+      expect(recordsDelete.message.descriptor.messageTimestamp).toBe(currentTime);
     });
 
     it('should auto-fill `messageTimestamp` if not given', async () => {
@@ -31,8 +27,7 @@ describe('RecordsDelete', () => {
         signer   : Jws.createSigner(alice)
       });
 
-      expect(recordsDelete.message.descriptor.messageTimestamp).to.exist;
+      expect(recordsDelete.message.descriptor.messageTimestamp).toBeDefined();
     });
   });
 });
-

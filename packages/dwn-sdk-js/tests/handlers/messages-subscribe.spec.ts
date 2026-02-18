@@ -10,17 +10,13 @@ import { Message } from '../../src/core/message.js';
 import { MessagesSubscribe } from '../../src/interfaces/messages-subscribe.js';
 import { MessagesSubscribeHandler } from '../../src/handlers/messages-subscribe.js';
 import { Poller } from '../utils/poller.js';
+import sinon from 'sinon';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '../../src/index.js';
-
-import sinon from 'sinon';
-import chai, { expect } from 'chai';
-
-import chaiAsPromised from 'chai-as-promised';
-chai.use(chaiAsPromised);
 
 export function testMessagesSubscribeHandler(): void {
   describe('MessagesSubscribe.handle()', () => {
@@ -35,7 +31,7 @@ export function testMessagesSubscribeHandler(): void {
 
       // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
       // so that different test suites can reuse the same backend store for testing
-      before(async () => {
+      beforeAll(async () => {
         didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
         const stores = TestStores.get();
@@ -65,7 +61,7 @@ export function testMessagesSubscribeHandler(): void {
         await stateIndex.clear();
       });
 
-      after(async () => {
+      afterAll(async () => {
         await dwn.close();
       });
 
@@ -77,8 +73,8 @@ export function testMessagesSubscribeHandler(): void {
         // attempt to subscribe
         const { message } = await MessagesSubscribe.create({ signer: Jws.createSigner(alice) });
         const subscriptionMessageReply = await dwn.processMessage(alice.did, message, { subscriptionHandler: (_) => {} });
-        expect(subscriptionMessageReply.status.code).to.equal(501, subscriptionMessageReply.status.detail);
-        expect(subscriptionMessageReply.status.detail).to.include(DwnErrorCode.MessagesSubscribeEventStreamUnimplemented);
+        expect(subscriptionMessageReply.status.code).toBe(501);
+        expect(subscriptionMessageReply.status.detail).toContain(DwnErrorCode.MessagesSubscribeEventStreamUnimplemented);
       });
     });
 
@@ -93,7 +89,7 @@ export function testMessagesSubscribeHandler(): void {
 
       // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
       // so that different test suites can reuse the same backend store for testing
-      before(async () => {
+      beforeAll(async () => {
         didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
         const stores = TestStores.get();
@@ -124,7 +120,7 @@ export function testMessagesSubscribeHandler(): void {
         await stateIndex.clear();
       });
 
-      after(async () => {
+      afterAll(async () => {
         await dwn.close();
       });
 
@@ -138,7 +134,7 @@ export function testMessagesSubscribeHandler(): void {
         const messagesSubscribeHandler = new MessagesSubscribeHandler(didResolver, messageStore, eventStream);
 
         const reply = await messagesSubscribeHandler.handle({ tenant: alice.did, message, subscriptionHandler: (_) => {} });
-        expect(reply.status.code).to.equal(400);
+        expect(reply.status.code).toBe(400);
       });
 
 
@@ -160,21 +156,22 @@ export function testMessagesSubscribeHandler(): void {
           signer: Jws.createSigner(alice),
         });
         const subscriptionReply = await dwn.processMessage(alice.did, messagesSubscribe.message, { subscriptionHandler: handler });
-        expect(subscriptionReply.status.code).to.equal(200, subscriptionReply.status.detail);
-        expect(subscriptionReply.subscription).to.not.be.undefined;
+        expect(subscriptionReply.status.code).toBe(200);
+        expect(subscriptionReply.subscription).toBeDefined();
 
         const messageWrite = await TestDataGenerator.generateRecordsWrite({ author: alice });
         const writeReply = await dwn.processMessage(alice.did, messageWrite.message, { dataStream: messageWrite.dataStream });
-        expect(writeReply.status.code).to.equal(202);
+        expect(writeReply.status.code).toBe(202);
         const messageCid = await Message.getCid(messageWrite.message);
 
         // control: ensure that the event exists
         const events = await stateIndex.getLeaves(alice.did, []);
-        expect(events.length).to.equal(1);
-        expect(events[0]).to.equal(messageCid);
+        expect(events.length).toBe(1);
+        expect(events[0]).toBe(messageCid);
 
         // await the event
-        await expect(messageSubscriptionPromise).to.eventually.equal(messageCid);
+        const resolvedCid = await messageSubscriptionPromise;
+        expect(resolvedCid).toBe(messageCid);
       });
 
       it('should not allow non-tenant to subscribe to an event stream they are not authorized for', async () => {
@@ -186,9 +183,9 @@ export function testMessagesSubscribeHandler(): void {
         delete (anonymousSubscription.message as any).authorization;
 
         const anonymousReply = await dwn.processMessage(alice.did, anonymousSubscription.message);
-        expect(anonymousReply.status.code).to.equal(400);
-        expect(anonymousReply.status.detail).to.include(`MessagesSubscribe: must have required property 'authorization'`);
-        expect(anonymousReply.subscription).to.be.undefined;
+        expect(anonymousReply.status.code).toBe(400);
+        expect(anonymousReply.status.detail).toContain(`MessagesSubscribe: must have required property 'authorization'`);
+        expect(anonymousReply.subscription).toBeUndefined();
 
         // testing MessagesSubscribe
         const messagesSubscribe = await MessagesSubscribe.create({
@@ -196,8 +193,8 @@ export function testMessagesSubscribeHandler(): void {
         });
 
         const subscriptionReply = await dwn.processMessage(alice.did, messagesSubscribe.message);
-        expect(subscriptionReply.status.code).to.equal(401);
-        expect(subscriptionReply.subscription).to.be.undefined;
+        expect(subscriptionReply.status.code).toBe(401);
+        expect(subscriptionReply.subscription).toBeUndefined();
       });
 
       describe('grant based subscribes', () => {
@@ -219,7 +216,7 @@ export function testMessagesSubscribeHandler(): void {
             }
           });
           const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream });
-          expect(grantReply.status.code).to.equal(202);
+          expect(grantReply.status.code).toBe(202);
 
           // create a handler to capture the emitted messageCids
           const messageCids: string[] = [];
@@ -236,7 +233,7 @@ export function testMessagesSubscribeHandler(): void {
           });
 
           const subscribeReply = await dwn.processMessage(alice.did, subscribeMessage, { subscriptionHandler: handler });
-          expect(subscribeReply.status.code).to.equal(200);
+          expect(subscribeReply.status.code).toBe(200);
 
           // configure the freeForAll protocol
           const { message: freeForAllConfigure } = await TestDataGenerator.generateProtocolsConfigure({
@@ -244,14 +241,14 @@ export function testMessagesSubscribeHandler(): void {
             protocolDefinition : freeForAll,
           });
           const { status: freeForAllReplyStatus } = await dwn.processMessage(alice.did, freeForAllConfigure);
-          expect(freeForAllReplyStatus.code).to.equal(202);
+          expect(freeForAllReplyStatus.code).toBe(202);
 
           // configure a random protocol configuration
           const { message: protocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
             author: alice,
           });
           const { status: configureStatus } = await dwn.processMessage(alice.did, protocolMessage);
-          expect(configureStatus.code).to.equal(202);
+          expect(configureStatus.code).toBe(202);
 
           // write a message to the Records free for all interface
           const { message: recordMessage, dataStream: recordDataStream } = await TestDataGenerator.generateRecordsWrite({
@@ -262,24 +259,25 @@ export function testMessagesSubscribeHandler(): void {
           });
 
           const recordReply = await dwn.processMessage(alice.did, recordMessage, { dataStream: recordDataStream });
-          expect(recordReply.status.code).to.equal(202);
+          expect(recordReply.status.code).toBe(202);
 
           // write a random message
           const { message: randomMessage, dataStream: randomDataStream } = await TestDataGenerator.generateRecordsWrite({
             author: alice
           });
           const randomReply = await dwn.processMessage(alice.did, randomMessage, { dataStream: randomDataStream });
-          expect(randomReply.status.code).to.equal(202);
+          expect(randomReply.status.code).toBe(202);
 
           // ensure that all messages have been received
           await Poller.pollUntilSuccessOrTimeout(async () => {
-            expect(messageCids.length).to.equal(4);
-            expect(messageCids).to.have.members([
+            expect(messageCids.length).toBe(4);
+            const expectedCids = [
               await Message.getCid(freeForAllConfigure),
               await Message.getCid(protocolMessage),
               await Message.getCid(recordMessage),
               await Message.getCid(randomMessage),
-            ]);
+            ];
+            expect(messageCids.sort()).toEqual(expectedCids.sort());
           });
         });
 
@@ -298,7 +296,7 @@ export function testMessagesSubscribeHandler(): void {
             }
           });
           const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream });
-          expect(grantReply.status.code).to.equal(202);
+          expect(grantReply.status.code).toBe(202);
 
           // bob attempts to use the `RecordsWrite` grant on an `MessagesSubscribe` message
           const { message: bobSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
@@ -306,11 +304,11 @@ export function testMessagesSubscribeHandler(): void {
             permissionGrantId : grantMessage.recordId
           });
           const bobReply = await dwn.processMessage(alice.did, bobSubscribe);
-          expect(bobReply.status.code).to.equal(401);
-          expect(bobReply.status.detail).to.include(DwnErrorCode.GrantAuthorizationInterfaceMismatch);
+          expect(bobReply.status.code).toBe(401);
+          expect(bobReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationInterfaceMismatch);
         });
 
-        xit('rejects subscribe of messages with mismatching method grant scopes', async () => {
+        it.skip('rejects subscribe of messages with mismatching method grant scopes', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
 
@@ -324,7 +322,7 @@ export function testMessagesSubscribeHandler(): void {
             }
           });
           const grantWriteReply = await dwn.processMessage(alice.did, grantWrite.message, { dataStream });
-          expect(grantWriteReply.status.code).to.equal(204);
+          expect(grantWriteReply.status.code).toBe(204);
 
 
           // bob attempts to use the `MessagesSync` grant on an `MessagesSubscribe` message
@@ -333,8 +331,8 @@ export function testMessagesSubscribeHandler(): void {
             permissionGrantId : grantWrite.message.recordId
           });
           const bobReply = await dwn.processMessage(alice.did, bobSubscribe);
-          expect(bobReply.status.code).to.equal(401);
-          expect(bobReply.status.detail).to.include(DwnErrorCode.GrantAuthorizationMethodMismatch);
+          expect(bobReply.status.code).toBe(401);
+          expect(bobReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationMethodMismatch);
         });
 
         describe('protocol filtered messages', () => {
@@ -350,7 +348,7 @@ export function testMessagesSubscribeHandler(): void {
               protocolDefinition : protocol1,
             });
             const { status: protocol1ConfigureStatus } = await dwn.processMessage(alice.did, protocol1Configure);
-            expect(protocol1ConfigureStatus.code).to.equal(202);
+            expect(protocol1ConfigureStatus.code).toBe(202);
 
             // install protocol 2
             const protocol2: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://protcol2' };
@@ -359,7 +357,7 @@ export function testMessagesSubscribeHandler(): void {
               protocolDefinition : protocol2,
             });
             const { status: protocol2ConfigureStatus } = await dwn.processMessage(alice.did, protocol2Configure);
-            expect(protocol2ConfigureStatus.code).to.equal(202);
+            expect(protocol2ConfigureStatus.code).toBe(202);
 
             // grant bob permission to subscribe for protocol 1
             const { message: grant1Message, dataStream: grant1DataStream } = await TestDataGenerator.generateGrantCreate({
@@ -373,7 +371,7 @@ export function testMessagesSubscribeHandler(): void {
             });
 
             const grant1Reply = await dwn.processMessage(alice.did, grant1Message, { dataStream: grant1DataStream });
-            expect(grant1Reply.status.code).to.equal(202);
+            expect(grant1Reply.status.code).toBe(202);
 
             // bob uses the grant to subscribe to protocol 1 messages
             const proto1MessageCids: string[] = [];
@@ -389,7 +387,7 @@ export function testMessagesSubscribeHandler(): void {
               permissionGrantId : grant1Message.recordId
             });
             const bobReply1 = await dwn.processMessage(alice.did, bobSubscribe1, { subscriptionHandler: proto1Handler });
-            expect(bobReply1.status.code).to.equal(200);
+            expect(bobReply1.status.code).toBe(200);
 
             const allMessages: string[] = [];
             const allHandler = async (event: MessageEvent):Promise<void> => {
@@ -402,7 +400,7 @@ export function testMessagesSubscribeHandler(): void {
               author: alice,
             });
             const allReply = await dwn.processMessage(alice.did, allSubscribe, { subscriptionHandler: allHandler });
-            expect(allReply.status.code).to.equal(200);
+            expect(allReply.status.code).toBe(200);
 
             // alice writes a message to protocol 1
             const { message: proto1Message, dataStream: proto1DataStream } = await TestDataGenerator.generateRecordsWrite({
@@ -412,7 +410,7 @@ export function testMessagesSubscribeHandler(): void {
               author       : alice
             });
             const proto1Reply = await dwn.processMessage(alice.did, proto1Message, { dataStream: proto1DataStream });
-            expect(proto1Reply.status.code).to.equal(202);
+            expect(proto1Reply.status.code).toBe(202);
 
             // alice writes a message to protocol 2
             const { message: proto2Message, dataStream: proto2DataStream } = await TestDataGenerator.generateRecordsWrite({
@@ -422,19 +420,21 @@ export function testMessagesSubscribeHandler(): void {
               author       : alice
             });
             const proto2Reply = await dwn.processMessage(alice.did, proto2Message, { dataStream: proto2DataStream });
-            expect(proto2Reply.status.code).to.equal(202);
+            expect(proto2Reply.status.code).toBe(202);
 
             // ensure that all messages have been received as a control
             await Poller.pollUntilSuccessOrTimeout(async () => {
-              expect(allMessages.length).to.equal(2);
-              expect(allMessages).to.have.members([
+              expect(allMessages.length).toBe(2);
+              const expectedAllCids = [
                 await Message.getCid(proto1Message),
                 await Message.getCid(proto2Message)
-              ]);
+              ];
+              expect(allMessages.sort()).toEqual(expectedAllCids.sort());
 
               // proto 1 messages should only have one message
-              expect(proto1MessageCids.length).to.equal(1);
-              expect(proto1MessageCids).to.have.members([await Message.getCid(proto1Message) ]);
+              expect(proto1MessageCids.length).toBe(1);
+              const expectedProto1Cids = [await Message.getCid(proto1Message)];
+              expect(proto1MessageCids.sort()).toEqual(expectedProto1Cids.sort());
             });
 
           });
@@ -450,7 +450,7 @@ export function testMessagesSubscribeHandler(): void {
               protocolDefinition : protocol1,
             });
             const { status: protocol1ConfigureStatus } = await dwn.processMessage(alice.did, protocol1Configure);
-            expect(protocol1ConfigureStatus.code).to.equal(202);
+            expect(protocol1ConfigureStatus.code).toBe(202);
 
             // install protocol 2
             const protocol2: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://protcol2' };
@@ -459,7 +459,7 @@ export function testMessagesSubscribeHandler(): void {
               protocolDefinition : protocol2,
             });
             const { status: protocol2ConfigureStatus } = await dwn.processMessage(alice.did, protocol2Configure);
-            expect(protocol2ConfigureStatus.code).to.equal(202);
+            expect(protocol2ConfigureStatus.code).toBe(202);
 
             // grant bob permission to subscribe for protocol 1
             const { message: grant1Message, dataStream: grant1DataStream } = await TestDataGenerator.generateGrantCreate({
@@ -473,7 +473,7 @@ export function testMessagesSubscribeHandler(): void {
             });
 
             const grant1Reply = await dwn.processMessage(alice.did, grant1Message, { dataStream: grant1DataStream });
-            expect(grant1Reply.status.code).to.equal(202);
+            expect(grant1Reply.status.code).toBe(202);
 
             // bob uses the grant for protocol 1 to subscribe for protocol 2 messages
             const { message: bobSubscribe1 } = await TestDataGenerator.generateMessagesSubscribe({
@@ -482,9 +482,9 @@ export function testMessagesSubscribeHandler(): void {
               permissionGrantId : grant1Message.recordId
             });
             const bobReply1 = await dwn.processMessage(alice.did, bobSubscribe1);
-            expect(bobReply1.status.code).to.equal(401);
-            expect(bobReply1.status.detail).to.include(DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol);
-            expect(bobReply1.subscription).to.not.exist;
+            expect(bobReply1.status.code).toBe(401);
+            expect(bobReply1.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol);
+            expect(bobReply1.subscription).toBeUndefined();
 
             // bob attempts to use the grant for protocol 1 to subscribe to messages in protocol 1 OR protocol 2 given two filters
             // this should fail because the grant is scoped to protocol 1 only
@@ -494,9 +494,9 @@ export function testMessagesSubscribeHandler(): void {
               permissionGrantId : grant1Message.recordId
             });
             const bobReply2 = await dwn.processMessage(alice.did, bobSubscribe2);
-            expect(bobReply2.status.code).to.equal(401);
-            expect(bobReply2.status.detail).to.include(DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol);
-            expect(bobReply2.subscription).to.not.exist;
+            expect(bobReply2.status.code).toBe(401);
+            expect(bobReply2.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol);
+            expect(bobReply2.subscription).toBeUndefined();
           });
         });
       });
