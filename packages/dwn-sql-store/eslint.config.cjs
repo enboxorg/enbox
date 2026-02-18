@@ -4,6 +4,13 @@ const baseConfig = require('../../eslint.config.cjs');
 module.exports = [
   ...baseConfig,
   {
+    languageOptions: {
+      parserOptions: {
+        project: ['./tsconfig.json', './tests/tsconfig.json'],
+      },
+    },
+  },
+  {
     rules: {
       '@typescript-eslint/no-floating-promises' : ['error'],
     },

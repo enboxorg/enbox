@@ -1,14 +1,10 @@
-import chaiAsPromised from 'chai-as-promised';
-import chai, { expect } from 'chai';
-
 import type { DwnDatabaseType } from '../src/types.js';
 
 import { executeWithTransaction } from '../src/utils/transaction.js';
 import { Kysely } from 'kysely';
 import { TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { describe, expect, it } from 'bun:test';
 import { testMysqlDialect, testPostgresDialect, testSqliteDialect } from './test-dialects.js';
-
-chai.use(chaiAsPromised);
 
 describe('Dialect tests', () => {
   const databaseDialects = [testMysqlDialect, testPostgresDialect, testSqliteDialect];
@@ -19,7 +15,7 @@ describe('Dialect tests', () => {
       const randomTableName = `test_table_${TestDataGenerator.randomString(10)}`;
 
       let tableExists = await dialect.hasTable(database, randomTableName);
-      expect(tableExists).to.be.false;
+      expect(tableExists).toBe(false);
 
       await database.schema
         .createTable(randomTableName)
@@ -27,12 +23,12 @@ describe('Dialect tests', () => {
         .execute();
 
       tableExists = await dialect.hasTable(database, randomTableName);
-      expect(tableExists).to.be.true;
+      expect(tableExists).toBe(true);
 
       await database.schema.dropTable(randomTableName).execute();
 
       tableExists = await dialect.hasTable(database, randomTableName);
-      expect(tableExists).to.be.false;
+      expect(tableExists).toBe(false);
     });
 
     it(`executeWithTransaction() should rethrow errors: ${dialect.name}`,
@@ -43,7 +39,7 @@ describe('Dialect tests', () => {
         };
 
         const executePromise = executeWithTransaction(database, operation);
-        await expect(executePromise).to.be.rejectedWith('Some error');
+        await expect(executePromise).rejects.toThrow('Some error');
       });
   }
 });

@@ -1,4 +1,5 @@
 import { DataStoreSql } from '../src/data-store-sql.js';
+import { describe } from 'bun:test';
 import { MessageStoreSql } from '../src/message-store-sql.js';
 import { ResumableTaskStoreSql } from '../src/resumable-task-store-sql.js';
 import { StateIndexSql } from '../src/state-index-sql.js';
