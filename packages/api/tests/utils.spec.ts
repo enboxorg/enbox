@@ -6,7 +6,8 @@ describe('Web5 API Utils', () => {
   describe('dataToBlob()', () => {
     it('should handle text data with explicit format', async () => {
       const result = dataToBlob('Hello World', 'text/plain');
-      expect(result.dataBlob.type).to.equal('text/plain');
+      // Bun's Blob appends `;charset=utf-8` to text types; assert the base type.
+      expect(result.dataBlob.type).to.satisfy((t: string) => t.startsWith('text/plain'));
       expect(result.dataFormat).to.equal('text/plain');
       const output = await result.dataBlob.text();
       expect(output).to.equal('Hello World');
@@ -14,7 +15,7 @@ describe('Web5 API Utils', () => {
 
     it('should handle text data with detected type', async () => {
       const result = dataToBlob('Hello World');
-      expect(result.dataBlob.type).to.equal('text/plain');
+      expect(result.dataBlob.type).to.satisfy((t: string) => t.startsWith('text/plain'));
       expect(result.dataFormat).to.equal('text/plain');
       const output = await result.dataBlob.text();
       expect(output).to.equal('Hello World');
@@ -22,13 +23,13 @@ describe('Web5 API Utils', () => {
 
     it('should handle JSON data with explicit format', async () => {
       const result = dataToBlob({ key: 'value' }, 'application/json');
-      expect(result.dataBlob.type).to.equal('application/json');
+      expect(result.dataBlob.type).to.satisfy((t: string) => t.startsWith('application/json'));
       expect(result.dataFormat).to.equal('application/json');
     });
 
     it('should handle JSON data with detected type', () => {
       const result = dataToBlob({ key: 'value' });
-      expect(result.dataBlob.type).to.equal('application/json');
+      expect(result.dataBlob.type).to.satisfy((t: string) => t.startsWith('application/json'));
       expect(result.dataFormat).to.equal('application/json');
     });
 

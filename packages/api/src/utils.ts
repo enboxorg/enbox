@@ -42,22 +42,31 @@ export function dataToBlob(data: any, dataFormat?: string): {
 } {
   let dataBlob: Blob;
 
+  // Track the detected MIME type separately from the Blob's type property because Bun's Blob
+  // constructor appends `;charset=utf-8` to text-based types (e.g. `text/plain` becomes
+  // `text/plain;charset=utf-8`). The DWN protocol authorization performs exact string matching
+  // on `dataFormat`, so we must use the canonical MIME type without parameters.
+  let detectedMimeType: string | undefined;
+
   // Check for Object or String, and if neither, assume bytes.
   const detectedType = universalTypeOf(data);
   if (dataFormat === 'text/plain' || detectedType === 'String') {
-    dataBlob = new Blob([data], { type: 'text/plain' });
+    detectedMimeType = 'text/plain';
+    dataBlob = new Blob([data], { type: detectedMimeType });
   } else if (dataFormat === 'application/json' || detectedType === 'Object') {
+    detectedMimeType = 'application/json';
     const dataBytes = Convert.object(data).toUint8Array();
-    dataBlob = new Blob([dataBytes], { type: 'application/json' });
+    dataBlob = new Blob([dataBytes], { type: detectedMimeType });
   } else if (detectedType === 'Uint8Array' || detectedType === 'ArrayBuffer') {
-    dataBlob = new Blob([data], { type: 'application/octet-stream' });
+    detectedMimeType = 'application/octet-stream';
+    dataBlob = new Blob([data], { type: detectedMimeType });
   } else if (detectedType === 'Blob') {
     dataBlob = data;
   } else {
     throw new Error('data type not supported.');
   }
 
-  dataFormat = dataFormat || dataBlob.type || 'application/octet-stream';
+  dataFormat = dataFormat || detectedMimeType || dataBlob.type || 'application/octet-stream';
 
   return { dataBlob, dataFormat };
 }
