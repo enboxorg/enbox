@@ -6,8 +6,13 @@ import { Encoder } from './encoder.js';
 export class DataStream {
   /**
    * Reads the entire readable stream given into array of bytes.
+   * @throws TypeError if `readableStream` is null or undefined.
    */
   public static async toBytes(readableStream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+    if (readableStream == null) {
+      throw new TypeError('DataStream.toBytes(): expected a ReadableStream but received ' + readableStream);
+    }
+
     const reader = readableStream.getReader();
     const chunks: Uint8Array[] = [];
 
@@ -82,8 +87,13 @@ export class DataStream {
   /**
    * Adapts a Web ReadableStream into an AsyncIterable for compatibility with libraries
    * like `ipfs-unixfs-importer` that expect `AsyncIterable<Uint8Array>`.
+   * @throws TypeError if `stream` is null or undefined.
    */
   public static async * asAsyncIterable(stream: ReadableStream<Uint8Array>): AsyncIterable<Uint8Array> {
+    if (stream == null) {
+      throw new TypeError('DataStream.asAsyncIterable(): expected a ReadableStream but received ' + stream);
+    }
+
     const reader = stream.getReader();
     try {
       while (true) {

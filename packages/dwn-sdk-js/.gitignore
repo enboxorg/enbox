@@ -21,13 +21,13 @@ TEST-DATASTORE
 TEST-MESSAGESTORE
 TEST-RESUMABLE-TASK-STORE
 TEST-EVENTLOG
-TEST-BLOCKSTORE-LEVEL-*
-TEST-SMT-LEVEL-*
-TEST-STATEINDEX*
+TEST-BLOCKSTORE-LEVEL-*/
+TEST-SMT-LEVEL-*/
+TEST-STATEINDEX*/
 
 # default location for index specific levelDB data storage in a non-browser env
 INDEX
-# location for index specific levelDB data storage levelDB data storage for non-browser tests
+# location for index specific levelDB data storage for non-browser tests
 TEST-INDEX
 BENCHMARK-INDEX
 BENCHMARK-BLOCK

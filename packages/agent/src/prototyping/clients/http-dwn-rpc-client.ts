@@ -3,6 +3,7 @@ import type { DwnRpc, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
 import type { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
 
 import { CryptoUtils } from '@enbox/crypto';
+import { DataStream } from '@enbox/dwn-sdk-js';
 import { DwnServerInfoCacheMemory } from './dwn-server-info-cache-memory.js';
 import { createJsonRpcRequest, parseJson } from './json-rpc.js';
 
@@ -41,20 +42,20 @@ export class HttpDwnRpcClient implements DwnRpc {
     const resp = await fetch(request.dwnUrl, fetchOpts);
     let dwnRpcResponse: JsonRpcResponse;
 
-    // check to see if response is in header first. if it is, that means the response is a ReadableStream
-    let dataStream;
-    const { headers } = resp;
-    if (headers.has('dwn-response')) {
-      const jsonRpcResponse = parseJson(headers.get('dwn-response')!) as JsonRpcResponse;
+    // When the server streams record data back, the JSON-RPC envelope is in the
+    // `dwn-response` header and the body is the raw data stream.  Otherwise the
+    // entire JSON-RPC response is the body.
+    const hasDataStream = resp.headers.has('dwn-response');
+
+    if (hasDataStream) {
+      const jsonRpcResponse = parseJson(resp.headers.get('dwn-response')!) as JsonRpcResponse;
 
       if (jsonRpcResponse == null) {
         throw new Error(`failed to parse json rpc response. dwn url: ${request.dwnUrl}`);
       }
 
-      dataStream = resp.body;
       dwnRpcResponse = jsonRpcResponse;
     } else {
-      // TODO: wonder if i need to try/catch this?
       const responseBody = await resp.text();
       dwnRpcResponse = JSON.parse(responseBody);
     }
@@ -64,11 +65,20 @@ export class HttpDwnRpcClient implements DwnRpc {
       throw new Error(`(${code}) - ${message}`);
     }
 
+    // Materialise the response body before attaching to the reply.
+    // Bun (<=1.3.9) has a bug where resp.body.getReader() can intermittently
+    // return undefined, crashing DataStream.toBytes() in its finally block.
+    // Buffering via arrayBuffer() is a safe workaround.
+    // TODO: https://github.com/enboxorg/enbox/issues/90 — remove once Bun ships fix
     const { reply } = dwnRpcResponse.result;
-    if (dataStream && reply.record) {
-      reply.record.data = dataStream;
-    } else if (dataStream && reply.entry) {
-      reply.entry.data = dataStream;
+    if (hasDataStream) {
+      const bodyBytes = new Uint8Array(await resp.arrayBuffer());
+      const dataStream = DataStream.fromBytes(bodyBytes);
+      if (reply.record) {
+        reply.record.data = dataStream;
+      } else if (reply.entry) {
+        reply.entry.data = dataStream;
+      }
     }
 
     return reply as DwnRpcResponse;

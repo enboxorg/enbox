@@ -10,7 +10,6 @@ import ms from 'ms';
 
 import { Level } from 'level';
 import {
-  DataStream,
   DwnInterfaceName,
   DwnMethodName,
   Message,
@@ -628,8 +627,8 @@ export class SyncEngineLevel implements SyncEngine {
     protocol?: string;
     messageCids: string[];
   }): Promise<void> {
-    // Step 1: Fetch all local messages.
-    const fetched: { message: GenericMessage; data?: Blob }[] = [];
+    // Step 1: Fetch all local messages (streams are pull-based, not yet consumed).
+    const fetched: { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> }[] = [];
     for (const messageCid of messageCids) {
       const dwnMessage = await this.getLocalMessage({ author: did, messageCid, delegateDid, protocol });
       if (dwnMessage) {
@@ -637,27 +636,16 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
-    // Step 2: Sort in dependency order using the same topological sort as pull.
-    // Adapt the fetched entries to the format expected by topologicalSort.
-    const forSort = fetched.map((entry): { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> } => ({
-      message: entry.message,
-    }));
-    const sorted = SyncEngineLevel.topologicalSort(forSort);
+    // Step 2: Sort in dependency order using topological sort.
+    const sorted = SyncEngineLevel.topologicalSort(fetched);
 
-    // Build a map from message to its Blob data so we can send it.
-    const dataByMessage = new Map<GenericMessage, Blob | undefined>();
-    for (const entry of fetched) {
-      dataByMessage.set(entry.message, entry.data);
-    }
-
-    // Step 3: Push messages in dependency order.
+    // Step 3: Push messages in dependency order, consuming each stream as we go.
     for (const entry of sorted) {
-      const data = dataByMessage.get(entry.message);
       try {
         const reply = await this.agent.rpc.sendDwnRequest({
           dwnUrl,
           targetDid : did,
-          data,
+          data      : entry.dataStream,
           message   : entry.message
         });
 
@@ -691,7 +679,7 @@ export class SyncEngineLevel implements SyncEngine {
     delegateDid?: string;
     protocol?: string;
     messageCid: string;
-  }): Promise<{ message: GenericMessage; data?: Blob } | undefined> {
+  }): Promise<{ message: GenericMessage; dataStream?: ReadableStream<Uint8Array> } | undefined> {
     let permissionGrantId: string | undefined;
     if (delegateDid) {
       try {
@@ -722,14 +710,15 @@ export class SyncEngineLevel implements SyncEngine {
     }
     const messageEntry = reply.entry!;
 
-    const dwnMessageWithBlob: { message: GenericMessage; data?: Blob } = { message: messageEntry.message };
+    const result: { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> } = {
+      message: messageEntry.message
+    };
 
     if (isRecordsWrite(messageEntry) && messageEntry.data) {
-      const dataBytes = await DataStream.toBytes(messageEntry.data);
-      dwnMessageWithBlob.data = new Blob([dataBytes], { type: messageEntry.message.descriptor.dataFormat });
+      result.dataStream = messageEntry.data;
     }
 
-    return dwnMessageWithBlob;
+    return result;
   }
 
   // ---------------------------------------------------------------------------
