@@ -5,8 +5,8 @@ import type {
 } from '../src/lib/json-rpc.js';
 
 import { Convert } from '@enbox/common';
-import { expect } from 'chai';
 import log from 'loglevel';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -42,7 +42,7 @@ describe('http api', function () {
   let clock;
   let baseUrl: string;
 
-  before(async function () {
+  beforeAll(async function () {
     clock = useFakeTimers({ shouldAdvanceTime: true });
     // TODO: Remove direct use of default config to avoid changes bleed/pollute between tests - https://github.com/enboxorg/enbox/issues/144
     config.packageJsonPath = './package.json'; // default is Docker path; override for local tests
@@ -77,7 +77,7 @@ describe('http api', function () {
     await httpApi.close();
   });
 
-  after(function () {
+  afterAll(function () {
     sinon.restore();
     clock.restore();
   });
@@ -88,11 +88,11 @@ describe('http api', function () {
         method: 'POST',
       });
 
-      expect(response.status).to.equal(400);
+      expect(response.status).toBe(400);
 
       const body = (await response.json()) as JsonRpcErrorResponse;
-      expect(body.error.code).to.equal(JsonRpcErrorCodes.BadRequest);
-      expect(body.error.message).to.equal('request payload required.');
+      expect(body.error.code).toBe(JsonRpcErrorCodes.BadRequest);
+      expect(body.error.message).toBe('request payload required.');
     });
 
     it('responds with a 400 if parsing dwn request fails', async function () {
@@ -101,11 +101,11 @@ describe('http api', function () {
         headers : { 'dwn-request': ';;;;@!#@!$$#!@%' },
       });
 
-      expect(response.status).to.equal(400);
+      expect(response.status).toBe(400);
 
       const body = (await response.json()) as JsonRpcErrorResponse;
-      expect(body.error.code).to.equal(JsonRpcErrorCodes.BadRequest);
-      expect(body.error.message).to.include('JSON');
+      expect(body.error.code).toBe(JsonRpcErrorCodes.BadRequest);
+      expect(body.error.message).toContain('JSON');
     });
 
     it('responds with a 2XX HTTP status if JSON RPC handler returns 4XX/5XX DWN status code', async function () {
@@ -133,15 +133,15 @@ describe('http api', function () {
         body: new Blob([dataBytes]),
       });
 
-      expect(responseInitialWrite.status).to.equal(200);
+      expect(responseInitialWrite.status).toBe(200);
 
       const body = (await responseInitialWrite.json()) as JsonRpcResponse;
-      expect(body.id).to.equal(requestId);
-      expect(body.error).to.not.exist;
+      expect(body.id).toBe(requestId);
+      expect(body.error).toBeUndefined();
 
       const { reply } = body.result;
-      expect(reply.status.code).to.equal(400);
-      expect(reply.status.detail).to.include(
+      expect(reply.status.code).toBe(400);
+      expect(reply.status.detail).toContain(
         'Both interface and method must be present',
       );
     });
@@ -161,11 +161,11 @@ describe('http api', function () {
       });
 
       // Check if the 'access-control-expose-headers' header is present
-      expect(response.headers.has('access-control-expose-headers')).to.be.true;
+      expect(response.headers.has('access-control-expose-headers')).toBe(true);
 
       // Check if the 'dwn-response' header is listed in 'access-control-expose-headers'
       const exposedHeaders = response.headers.get('access-control-expose-headers');
-      expect(exposedHeaders).to.include('dwn-response');
+      expect(exposedHeaders).toContain('dwn-response');
     });
 
     it('works fine when no request body is provided', async function () {
@@ -187,11 +187,11 @@ describe('http api', function () {
         headers : { 'dwn-request': JSON.stringify(dwnRequest) },
       });
 
-      expect(response.status).to.equal(200);
+      expect(response.status).toBe(200);
       const body = await response.json();
-      expect(body.id).to.equal(requestId);
-      expect(body.error).to.not.exist;
-      expect(body.result.reply.status.code).to.equal(200);
+      expect(body.id).toBe(requestId);
+      expect(body.error).toBeUndefined();
+      expect(body.result.reply.status.code).toBe(200);
     });
   });
 
@@ -221,7 +221,7 @@ describe('http api', function () {
         body: new Blob([dataBytes]),
       });
 
-      expect(responseInitialWrite.status).to.equal(200);
+      expect(responseInitialWrite.status).toBe(200);
 
       // Waiting for minimal time to make sure subsequent RecordsWrite has a later timestamp.
       await Time.minimalSleep();
@@ -247,15 +247,15 @@ describe('http api', function () {
         },
       });
 
-      expect(responseOverwrite.status).to.equal(200);
+      expect(responseOverwrite.status).toBe(200);
 
       const body = (await responseOverwrite.json()) as JsonRpcResponse;
-      expect(body.error).to.not.exist;
-      expect(body.id).to.equal(requestId);
-      expect(body.error).to.not.exist;
+      expect(body.error).toBeUndefined();
+      expect(body.id).toBe(requestId);
+      expect(body.error).toBeUndefined();
 
       const { reply } = body.result;
-      expect(reply.status.code).to.equal(202);
+      expect(reply.status.code).toBe(202);
     });
 
     it('handles a RecordsWrite tombstone', async function () {
@@ -275,7 +275,7 @@ describe('http api', function () {
         },
       });
 
-      expect(responeTombstone.status).to.equal(200);
+      expect(responeTombstone.status).toBe(200);
     });
   });
 
@@ -284,7 +284,7 @@ describe('http api', function () {
       const response = await fetch(`${baseUrl}/health`, {
         method: 'GET',
       });
-      expect(response.status).to.equal(200);
+      expect(response.status).toBe(200);
     });
   });
 
@@ -293,7 +293,7 @@ describe('http api', function () {
       const response = await fetch(`${baseUrl}/`, {
         method: 'GET',
       });
-      expect(response.status).to.equal(200);
+      expect(response.status).toBe(200);
     });
   });
 
@@ -326,21 +326,21 @@ describe('http api', function () {
         body: stream,
       });
 
-      expect(response.status).to.equal(200);
+      expect(response.status).toBe(200);
 
       const body = (await response.json()) as JsonRpcResponse;
-      expect(body.id).to.equal(requestId);
-      expect(body.error).to.not.exist;
+      expect(body.id).toBe(requestId);
+      expect(body.error).toBeUndefined();
 
       const { reply } = body.result;
-      expect(reply.status.code).to.equal(202);
+      expect(reply.status.code).toBe(202);
 
       response = await fetch(
         `${baseUrl}/${alice.did}/records/${recordsWrite.message.recordId}`,
       );
       const blob = await response.blob();
 
-      expect(blob.size).to.equal(size);
+      expect(blob.size).toBe(size);
     });
 
     it('returns a 404 if an unpublished record is requested', async function () {
@@ -370,20 +370,20 @@ describe('http api', function () {
         body: stream,
       });
 
-      expect(response.status).to.equal(200);
+      expect(response.status).toBe(200);
 
       const body = (await response.json()) as JsonRpcResponse;
-      expect(body.id).to.equal(requestId);
-      expect(body.error).to.not.exist;
+      expect(body.id).toBe(requestId);
+      expect(body.error).toBeUndefined();
 
       const { reply } = body.result;
-      expect(reply.status.code).to.equal(202);
+      expect(reply.status.code).toBe(202);
 
       response = await fetch(
         `${baseUrl}/${alice.did}/records/${recordsWrite.message.recordId}`,
       );
 
-      expect(response.status).to.equal(404);
+      expect(response.status).toBe(404);
     });
 
     it('returns a 404 if record does not exist', async function () {
@@ -392,7 +392,7 @@ describe('http api', function () {
       const response = await fetch(
         `${baseUrl}/${alice.did}/records/${recordsWrite.message.recordId}`,
       );
-      expect(response.status).to.equal(404);
+      expect(response.status).toBe(404);
     });
 
     it('returns a 404 for invalid or unauthorized did', async function () {
@@ -402,14 +402,14 @@ describe('http api', function () {
       const response = await fetch(
         `${baseUrl}/${unauthorized.did}/records/${recordsWrite.message.recordId}`,
       );
-      expect(response.status).to.equal(404);
+      expect(response.status).toBe(404);
     });
 
     it('returns a 404 for invalid record id', async function () {
       const response = await fetch(
         `${baseUrl}/${alice.did}/records/kaka`,
       );
-      expect(response.status).to.equal(404);
+      expect(response.status).toBe(404);
     });
   });
 
@@ -442,21 +442,21 @@ describe('http api', function () {
         body: stream,
       });
 
-      expect(response.status).to.equal(200);
+      expect(response.status).toBe(200);
 
       const body = (await response.json()) as JsonRpcResponse;
-      expect(body.id).to.equal(requestId);
-      expect(body.error).to.not.exist;
+      expect(body.id).toBe(requestId);
+      expect(body.error).toBeUndefined();
 
       const { reply } = body.result;
-      expect(reply.status.code).to.equal(202);
+      expect(reply.status.code).toBe(202);
 
       response = await fetch(
         `${baseUrl}/${alice.did}/read/records/${recordsWrite.message.recordId}`,
       );
       const blob = await response.blob();
 
-      expect(blob.size).to.equal(size);
+      expect(blob.size).toBe(size);
     });
 
     it('returns a 404 if an unpublished record is requested', async function () {
@@ -486,20 +486,20 @@ describe('http api', function () {
         body: stream,
       });
 
-      expect(response.status).to.equal(200);
+      expect(response.status).toBe(200);
 
       const body = (await response.json()) as JsonRpcResponse;
-      expect(body.id).to.equal(requestId);
-      expect(body.error).to.not.exist;
+      expect(body.id).toBe(requestId);
+      expect(body.error).toBeUndefined();
 
       const { reply } = body.result;
-      expect(reply.status.code).to.equal(202);
+      expect(reply.status.code).toBe(202);
 
       response = await fetch(
         `${baseUrl}/${alice.did}/read/records/${recordsWrite.message.recordId}`,
       );
 
-      expect(response.status).to.equal(404);
+      expect(response.status).toBe(404);
     });
 
     it('returns a 404 if record does not exist', async function () {
@@ -508,7 +508,7 @@ describe('http api', function () {
       const response = await fetch(
         `${baseUrl}/${alice.did}/read/records/${recordsWrite.message.recordId}`,
       );
-      expect(response.status).to.equal(404);
+      expect(response.status).toBe(404);
     });
 
     it('returns a 404 for invalid or unauthorized did', async function () {
@@ -518,14 +518,14 @@ describe('http api', function () {
       const response = await fetch(
         `${baseUrl}/${unauthorized.did}/read/records/${recordsWrite.message.recordId}`,
       );
-      expect(response.status).to.equal(404);
+      expect(response.status).toBe(404);
     });
 
     it('returns a 404 for invalid record id', async function () {
       const response = await fetch(
         `${baseUrl}/${alice.did}/read/records/kaka`,
       );
-      expect(response.status).to.equal(404);
+      expect(response.status).toBe(404);
     });
   });
 
@@ -558,18 +558,18 @@ describe('http api', function () {
           'dwn-request': JSON.stringify(dwnRequest),
         },
       });
-      expect(response.status).to.equal(200);
+      expect(response.status).toBe(200);
 
 
       // Fetch the protocol definition using the HTTP API
       const base64urlEncodedProtocol = Convert.string(protocolConfigure.message.descriptor.definition.protocol).toBase64Url();
       const protocolUrl = `${baseUrl}/${alice.did}/read/protocols/${base64urlEncodedProtocol}`;
       const protocolQueryResponse = await fetch(protocolUrl);
-      expect(protocolQueryResponse.status).to.equal(200);
+      expect(protocolQueryResponse.status).toBe(200);
 
       // get the JSON response
       const protocolConfigureReply = await protocolQueryResponse.json() as ProtocolsConfigureMessage;
-      expect(protocolConfigureReply.descriptor).to.deep.equal(protocolConfigure.message.descriptor);
+      expect(protocolConfigureReply.descriptor).toEqual(protocolConfigure.message.descriptor);
     });
 
     it('returns a 404 if protocol is not published', async function () {
@@ -600,21 +600,21 @@ describe('http api', function () {
           'dwn-request': JSON.stringify(dwnRequest),
         },
       });
-      expect(response.status).to.equal(200);
+      expect(response.status).toBe(200);
 
 
       // Fetch the protocol definition using the HTTP API
       const base64urlEncodedProtocol = Convert.string(protocolConfigure.message.descriptor.definition.protocol).toBase64Url();
       const protocolUrl = `${baseUrl}/${alice.did}/read/protocols/${base64urlEncodedProtocol}`;
       const protocolQueryResponse = await fetch(protocolUrl);
-      expect(protocolQueryResponse.status).to.equal(404);
+      expect(protocolQueryResponse.status).toBe(404);
     });
 
     it('returns a 400 if protocol is not base64url encoded', async function () {
       const protocolUrl = `${baseUrl}/${alice.did}/read/protocols/invalid-protocol`;
       const protocolQueryResponse = await fetch(protocolUrl);
-      expect(protocolQueryResponse.status).to.equal(400);
-      expect(await protocolQueryResponse.text()).to.equal('Bad Request');
+      expect(protocolQueryResponse.status).toBe(400);
+      expect(await protocolQueryResponse.text()).toBe('Bad Request');
     });
   });
 
@@ -647,7 +647,7 @@ describe('http api', function () {
           'dwn-request': JSON.stringify(dwnRequest),
         },
       });
-      expect(response.status).to.equal(200);
+      expect(response.status).toBe(200);
 
       const protocolConfigureNotPublished = await ProtocolsConfigure.create({
         definition: {
@@ -676,19 +676,19 @@ describe('http api', function () {
         },
       });
 
-      expect(response2.status).to.equal(200);
+      expect(response2.status).toBe(200);
 
       // now query for a list of protocols
       const protocolQueryUrl = `${baseUrl}/${alice.did}/query/protocols`;
       const protocolQueryResponse = await fetch(protocolQueryUrl);
-      expect(protocolQueryResponse.status).to.equal(200);
+      expect(protocolQueryResponse.status).toBe(200);
 
       // get the JSON response
       const protocolQueryReply = await protocolQueryResponse.json() as ProtocolsConfigureMessage[];
-      expect(protocolQueryReply).to.have.lengthOf(1);
+      expect(protocolQueryReply).toHaveLength(1);
 
       // check that the published protocol is returned
-      expect(protocolQueryReply[0].descriptor).to.deep.equal(protocolConfigurePublished.message.descriptor);
+      expect(protocolQueryReply[0].descriptor).toEqual(protocolConfigurePublished.message.descriptor);
     });
   });
 
@@ -721,7 +721,7 @@ describe('http api', function () {
           'dwn-request': JSON.stringify(dwnRequest),
         },
       });
-      expect(response.status).to.equal(200);
+      expect(response.status).toBe(200);
 
       // Create a foo record
       const filePath = './fixtures/test.jpeg';
@@ -752,25 +752,25 @@ describe('http api', function () {
         },
         body: stream,
       });
-      expect(recordsWriteResponse.status).to.equal(200);
+      expect(recordsWriteResponse.status).toBe(200);
       const responseJson = await recordsWriteResponse.json() as JsonRpcResponse;
-      expect(responseJson.result.reply.status.code).to.equal(202);
+      expect(responseJson.result.reply.status.code).toBe(202);
 
       // Fetch the record using the HTTP API
       const base64urlEncodedProtocol = Convert.string(protocolConfigure.message.descriptor.definition.protocol).toBase64Url();
       const protocolUrl = `${baseUrl}/${alice.did}/read/protocols/${base64urlEncodedProtocol}/foo`;
       const recordReadResponse = await fetch(protocolUrl);
-      expect(recordReadResponse.status).to.equal(200);
+      expect(recordReadResponse.status).toBe(200);
 
       // get the data response
       const blob = await recordReadResponse.blob();
-      expect(blob.size).to.equal(size);
+      expect(blob.size).toBe(size);
 
       // get dwn message response
       const { status, entry } = getDwnResponse(recordReadResponse);
-      expect(status.code).to.equal(200);
-      expect(entry).to.exist;
-      expect(entry.recordsWrite.recordId).to.equal(recordsWrite.message.recordId);
+      expect(status.code).toBe(200);
+      expect(entry).toBeDefined();
+      expect(entry.recordsWrite.recordId).toBe(recordsWrite.message.recordId);
     });
 
     it('removes the trailing slash from the protocol path', async function () {
@@ -779,11 +779,11 @@ describe('http api', function () {
       const base64urlEncodedProtocol = Convert.string('http://example.com/protocol').toBase64Url();
       const protocolUrl = `${baseUrl}/${alice.did}/read/protocols/${base64urlEncodedProtocol}/foo/`; // trailing slash
       const recordReadResponse = await fetch(protocolUrl);
-      expect(recordReadResponse.status).to.equal(404);
+      expect(recordReadResponse.status).toBe(404);
 
-      expect(recordsQueryCreateSpy.calledOnce).to.be.true;
+      expect(recordsQueryCreateSpy.calledOnce).toBe(true);
       const recordsQueryFilter = recordsQueryCreateSpy.getCall(0).args[0].filter;
-      expect(recordsQueryFilter.protocolPath).to.equal('foo');
+      expect(recordsQueryFilter.protocolPath).toBe('foo');
     });
 
     it('returns a 404 if record for a given protocol and protocolPath is not published', async function () {
@@ -814,7 +814,7 @@ describe('http api', function () {
           'dwn-request': JSON.stringify(dwnRequest),
         },
       });
-      expect(response.status).to.equal(200);
+      expect(response.status).toBe(200);
 
       // Create a foo record
       const filePath = './fixtures/test.jpeg';
@@ -845,15 +845,15 @@ describe('http api', function () {
         },
         body: stream,
       });
-      expect(recordsWriteResponse.status).to.equal(200);
+      expect(recordsWriteResponse.status).toBe(200);
       const responseJson = await recordsWriteResponse.json() as JsonRpcResponse;
-      expect(responseJson.result.reply.status.code).to.equal(202);
+      expect(responseJson.result.reply.status.code).toBe(202);
 
       // Fetch the record using the HTTP API
       const base64urlEncodedProtocol = Convert.string(protocolConfigure.message.descriptor.definition.protocol).toBase64Url();
       const protocolUrl = `${baseUrl}/${alice.did}/read/protocols/${base64urlEncodedProtocol}/foo`;
       const recordReadResponse = await fetch(protocolUrl);
-      expect(recordReadResponse.status).to.equal(404);
+      expect(recordReadResponse.status).toBe(404);
     });
 
     it('returns a 400 if protocol path is not provided', async function () {
@@ -861,15 +861,15 @@ describe('http api', function () {
       const base64urlEncodedProtocol = Convert.string('http://example.com/protocol').toBase64Url();
       const protocolUrl = `${baseUrl}/${alice.did}/read/protocols/${base64urlEncodedProtocol}/`; // missing protocol path
       const recordReadResponse = await fetch(protocolUrl);
-      expect(recordReadResponse.status).to.equal(400);
-      expect(await recordReadResponse.text()).to.equal('protocol path is required');
+      expect(recordReadResponse.status).toBe(400);
+      expect(await recordReadResponse.text()).toBe('protocol path is required');
     });
 
     it('returns a 400 error if protocol cannot be base64url encoded', async function () {
       const protocolUrl = `${baseUrl}/${alice.did}/read/protocols/invalid-protocol/foo`;
       const recordReadResponse = await fetch(protocolUrl);
-      expect(recordReadResponse.status).to.equal(400);
-      expect(await recordReadResponse.text()).to.equal('Bad Request');
+      expect(recordReadResponse.status).toBe(400);
+      expect(await recordReadResponse.text()).toBe('Bad Request');
     });
   });
 
@@ -902,54 +902,54 @@ describe('http api', function () {
         body: stream,
       });
 
-      expect(response.status).to.equal(200);
+      expect(response.status).toBe(200);
 
       const body = (await response.json()) as JsonRpcResponse;
-      expect(body.id).to.equal(requestId);
-      expect(body.error).to.not.exist;
+      expect(body.id).toBe(requestId);
+      expect(body.error).toBeUndefined();
 
       const { reply } = body.result;
-      expect(reply.status.code).to.equal(202);
+      expect(reply.status.code).toBe(202);
 
       const { entries } = await fetch(
         `${baseUrl}/${alice.did}/query?filter.recordId=${recordsWrite.message.recordId}&other.random.param=unused-value`,
       ).then(response => response.json()) as RecordsQueryReply;
 
-      expect(entries?.length).to.equal(1);
+      expect(entries).toHaveLength(1);
     });
 
     it('should return 400 if user provide invalid query', async function () {
       const response = await fetch(
         `${baseUrl}/${alice.did}/query?filter=invalid-filter`,
       );
-      expect(response.status).to.equal(400);
+      expect(response.status).toBe(400);
 
       const responseBody = await response.json() as DwnError;
-      expect(responseBody.code).to.equal(DwnErrorCode.SchemaValidatorAdditionalPropertyNotAllowed);
+      expect(responseBody.code).toBe(DwnErrorCode.SchemaValidatorAdditionalPropertyNotAllowed);
     });
   });
 
   describe('/info', function () {
     it('verify /info has some of the fields it is supposed to have', async function () {
       const resp = await fetch(`${baseUrl}/info`);
-      expect(resp.status).to.equal(200);
+      expect(resp.status).toBe(200);
 
       const info = await resp.json();
-      expect(info['url']).to.equal('http://localhost:3000');
-      expect(info['server']).to.equal('@enbox/dwn-server');
-      expect(info['registrationRequirements']).to.include('terms-of-service');
-      expect(info['registrationRequirements']).to.include(
+      expect(info['url']).toBe('http://localhost:3000');
+      expect(info['server']).toBe('@enbox/dwn-server');
+      expect(info['registrationRequirements']).toContain('terms-of-service');
+      expect(info['registrationRequirements']).toContain(
         'proof-of-work-sha256-v0',
       );
     });
 
     it('verify /info signals websocket support', async function() {
       let resp = await fetch(`${baseUrl}/info`);
-      expect(resp.status).to.equal(200);
+      expect(resp.status).toBe(200);
 
       let info = await resp.json();
-      expect(info['server']).to.equal('@enbox/dwn-server');
-      expect(info['webSocketSupport']).to.equal(true);
+      expect(info['server']).toBe('@enbox/dwn-server');
+      expect(info['webSocketSupport']).toBe(true);
 
 
       // start server without websocket support enabled
@@ -961,11 +961,11 @@ describe('http api', function () {
       baseUrl = `http://localhost:${httpApi.server.port}`;
 
       resp = await fetch(`${baseUrl}/info`);
-      expect(resp.status).to.equal(200);
+      expect(resp.status).toBe(200);
 
       info = await resp.json();
-      expect(info['server']).to.equal('@enbox/dwn-server');
-      expect(info['webSocketSupport']).to.equal(false);
+      expect(info['server']).toBe('@enbox/dwn-server');
+      expect(info['webSocketSupport']).toBe(false);
 
       // restore old config value
       config.webSocketSupport = true;
@@ -986,18 +986,18 @@ describe('http api', function () {
 
       const resp = await fetch(`${baseUrl}/info`);
       const info = await resp.json();
-      expect(resp.status).to.equal(200);
+      expect(resp.status).toBe(200);
 
       // check that server name exists in the info object
-      expect(info['server']).to.equal('@enbox/dwn-server');
+      expect(info['server']).toBe('@enbox/dwn-server');
 
       // check that `sdkVersion` and `version` are undefined as they were not abel to be retrieved from the invalid file.
-      expect(info['sdkVersion']).to.be.undefined;
-      expect(info['version']).to.be.undefined;
+      expect(info['sdkVersion']).toBeUndefined();
+      expect(info['version']).toBeUndefined();
 
       // check the logSpy was called
-      expect(logSpy.callCount).to.be.gt(0);
-      expect(logSpy.calledWith(sinon.match('could not read `package.json` for version info'))).to.be.true;
+      expect(logSpy.callCount).toBeGreaterThan(0);
+      expect(logSpy.calledWith(sinon.match('could not read `package.json` for version info'))).toBe(true);
 
       // restore old config path
       config.packageJsonPath = packageJsonConfig;
@@ -1015,14 +1015,14 @@ describe('http api', function () {
 
       const resp = await fetch(`${baseUrl}/info`);
       const info = await resp.json();
-      expect(resp.status).to.equal(200);
+      expect(resp.status).toBe(200);
 
       // verify that the custom server name was passed to the info endpoint
-      expect(info['server']).to.equal('@enbox/dwn-server-2');
+      expect(info['server']).toBe('@enbox/dwn-server-2');
 
       // verify that `sdkVersion` and `version` exist.
-      expect(info['sdkVersion']).to.not.be.undefined;
-      expect(info['version']).to.not.be.undefined;
+      expect(info['sdkVersion']).toBeDefined();
+      expect(info['version']).toBeDefined();
 
       // restore server name config
       config.serverName = serverName;

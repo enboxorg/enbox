@@ -1,29 +1,23 @@
-import { expect } from 'chai';
 import { randomBytes } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import sinon, { useFakeTimers } from 'sinon';
 
 import { ProofOfWork } from '../../src/registration/proof-of-work.js';
 import { ProofOfWorkManager } from '../../src/registration/proof-of-work-manager.js';
 
-describe('ProofOfWorkManager', function () {
+describe('ProofOfWorkManager', () => {
   let clock;
 
-  before(async function () {
+  beforeAll(async () => {
     clock = useFakeTimers({ shouldAdvanceTime: true });
   });
 
-  beforeEach(async function () {
-  });
-
-  afterEach(async function () {
-  });
-
-  after(function () {
+  afterAll(() => {
     clock.restore();
   });
 
-  it('should continue to periodically refresh the challenge nonce and proof-of-work difficulty even if the refresh logic throws error.', async function () {
+  it('should continue to periodically refresh the challenge nonce and proof-of-work difficulty even if the refresh logic throws error.', async () => {
     const desiredSolveCountPerMinute = 10;
     const initialMaximumAllowedHashValue = 'FFFFFFFF';
     const proofOfWorkManager = await ProofOfWorkManager.create({
@@ -54,11 +48,11 @@ describe('ProofOfWorkManager', function () {
     // 1 hour divided by the challenge refresh frequency
     const expectedDifficultyReevaluationCount = 60 * 60 / proofOfWorkManager.difficultyReevaluationFrequencyInSeconds;
 
-    expect(challengeNonceRefreshSpy.callCount).to.greaterThanOrEqual(expectedChallengeNonceRefreshCount);
-    expect(maximumAllowedHashValueRefreshSpy.callCount).to.greaterThanOrEqual(expectedDifficultyReevaluationCount);
+    expect(challengeNonceRefreshSpy.callCount).toBeGreaterThanOrEqual(expectedChallengeNonceRefreshCount);
+    expect(maximumAllowedHashValueRefreshSpy.callCount).toBeGreaterThanOrEqual(expectedDifficultyReevaluationCount);
   });
 
-  it('should accept previous and next challenge nonce to account for server time drift when challenge seed is given.', async function () {
+  it('should accept previous and next challenge nonce to account for server time drift when challenge seed is given.', async () => {
     const desiredSolveCountPerMinute = 10;
     const initialMaximumAllowedHashValue = 'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF'; // always accept
     const challengeSeed = randomBytes(32).toString('hex');
@@ -71,8 +65,8 @@ describe('ProofOfWorkManager', function () {
 
     const previousChallengeNonce = proofOfWorkManager['challengeNonces'].previousChallengeNonce;
     const nextChallengeNonce = proofOfWorkManager['challengeNonces'].nextChallengeNonce;
-    expect(previousChallengeNonce?.length).to.equal(64);
-    expect(nextChallengeNonce?.length).to.equal(64);
+    expect(previousChallengeNonce).toHaveLength(64);
+    expect(nextChallengeNonce).toHaveLength(64);
 
     const requestData = 'irrelevant';
 
@@ -101,7 +95,7 @@ describe('ProofOfWorkManager', function () {
     });
   });
 
-  it('should increase difficulty if proof-of-work rate goes above desired rate and reduce difficulty as proof-of-work rate falls below desired rate.', async function () {
+  it('should increase difficulty if proof-of-work rate goes above desired rate and reduce difficulty as proof-of-work rate falls below desired rate.', async () => {
     const desiredSolveCountPerMinute = 10;
     const initialMaximumAllowedHashValue = 'FFFFFFFF';
     const proofOfWorkManager = await ProofOfWorkManager.create({
@@ -121,20 +115,20 @@ describe('ProofOfWorkManager', function () {
     for (let i = 0; i < 100; i++) {
       // Simulating 1 proof-of-work per second for 100 seconds.
       await proofOfWorkManager.recordProofOfWork(uuidv4());
-      expect(proofOfWorkManager.currentSolveCountPerMinute).to.be.greaterThanOrEqual(lastSolveCountPerMinute);
+      expect(proofOfWorkManager.currentSolveCountPerMinute).toBeGreaterThanOrEqual(lastSolveCountPerMinute);
       clock.tick(1000);
 
       // The maximum allowed hash value should be monotonically decreasing as more proof-of-work is submitted.
-      expect(proofOfWorkManager.currentMaximumAllowedHashValue <= lastMaximumAllowedHashValue).to.be.true;
+      expect(proofOfWorkManager.currentMaximumAllowedHashValue <= lastMaximumAllowedHashValue).toBe(true);
       lastMaximumAllowedHashValue = proofOfWorkManager.currentMaximumAllowedHashValue;
     }
-    expect(proofOfWorkManager.currentMaximumAllowedHashValue < baselineMaximumAllowedHashValue).to.be.true;
+    expect(proofOfWorkManager.currentMaximumAllowedHashValue < baselineMaximumAllowedHashValue).toBe(true);
 
     // Simulated 100 seconds has passed, so all proof-of-work entries should be removed.
     clock.tick(100_000);
     clock.runToLast();
 
-    expect(proofOfWorkManager.currentSolveCountPerMinute).to.equal(0);
+    expect(proofOfWorkManager.currentSolveCountPerMinute).toBe(0);
 
     baselineMaximumAllowedHashValue = proofOfWorkManager.currentMaximumAllowedHashValue;
     for (let i = 0; i < 100; i++) {
@@ -142,13 +136,13 @@ describe('ProofOfWorkManager', function () {
       clock.tick(1000);
 
       // The maximum allowed hash value should be monotonically increasing again.
-      expect(proofOfWorkManager.currentMaximumAllowedHashValue >= lastMaximumAllowedHashValue).to.be.true;
+      expect(proofOfWorkManager.currentMaximumAllowedHashValue >= lastMaximumAllowedHashValue).toBe(true);
       lastMaximumAllowedHashValue = proofOfWorkManager.currentMaximumAllowedHashValue;
     }
-    expect(proofOfWorkManager.currentMaximumAllowedHashValue > baselineMaximumAllowedHashValue).to.be.true;
+    expect(proofOfWorkManager.currentMaximumAllowedHashValue > baselineMaximumAllowedHashValue).toBe(true);
   });
 
-  it('should reduce difficulty back to initial difficulty when proof-of-work rate is lower than desired rate for long enough', async function () {
+  it('should reduce difficulty back to initial difficulty when proof-of-work rate is lower than desired rate for long enough', async () => {
     const desiredSolveCountPerMinute = 10;
     const initialMaximumAllowedHashValue = 'FFFFFFFF';
     const initialMaximumAllowedHashValueAsBigInt = BigInt('0x' + initialMaximumAllowedHashValue);
@@ -168,22 +162,22 @@ describe('ProofOfWorkManager', function () {
       await proofOfWorkManager.recordProofOfWork(uuidv4());
       clock.tick(1000);
     }
-    expect(proofOfWorkManager.currentMaximumAllowedHashValue < initialMaximumAllowedHashValueAsBigInt).to.be.true;
+    expect(proofOfWorkManager.currentMaximumAllowedHashValue < initialMaximumAllowedHashValueAsBigInt).toBe(true);
 
     // Simulated 1 hour has passed.
     clock.tick(60 * 60 * 1000);
     clock.runToLast();
 
-    expect(proofOfWorkManager.currentMaximumAllowedHashValue === initialMaximumAllowedHashValueAsBigInt).to.be.true;
+    expect(proofOfWorkManager.currentMaximumAllowedHashValue === initialMaximumAllowedHashValueAsBigInt).toBe(true);
   });
 
-  it('should use default difficulty if not given', async function () {
+  it('should use default difficulty if not given', async () => {
     const desiredSolveCountPerMinute = 10;
     const proofOfWorkManager = await ProofOfWorkManager.create({
       autoStart: false,
       desiredSolveCountPerMinute,
     });
 
-    expect(proofOfWorkManager.currentMaximumAllowedHashValue).to.equal(BigInt('0x' + ProofOfWorkManager.defaultMaximumAllowedHashValue));
+    expect(proofOfWorkManager.currentMaximumAllowedHashValue).toBe(BigInt('0x' + ProofOfWorkManager.defaultMaximumAllowedHashValue));
   });
 });

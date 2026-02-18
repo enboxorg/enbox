@@ -2,9 +2,9 @@ import type { SinonFakeTimers } from 'sinon';
 import type { Dwn, MessageEvent } from '@enbox/dwn-sdk-js';
 
 import { base64url } from 'multiformats/bases/base64';
-import { expect } from 'chai';
 import { useFakeTimers } from 'sinon';
 import { v4 as uuidv4 } from 'uuid';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DataStream, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { config } from '../src/config.js';
@@ -28,11 +28,11 @@ describe('websocket api', function () {
   let wsUrl: string;
   let httpUrl: string;
 
-  before(() => {
+  beforeAll(() => {
     clock = useFakeTimers({ shouldAdvanceTime: true });
   });
 
-  after(() => {
+  afterAll(() => {
     clock.restore();
   });
 
@@ -57,8 +57,8 @@ describe('websocket api', function () {
     const data = await sendWsMessage(wsUrl, Buffer.from(''));
 
     const resp = JSON.parse(data.toString());
-    expect(resp.error.code).to.equal(JsonRpcErrorCodes.BadRequest);
-    expect(resp.error.message).to.equal('request payload required.');
+    expect(resp.error.code).toBe(JsonRpcErrorCodes.BadRequest);
+    expect(resp.error.message).toBe('request payload required.');
   });
 
   it('returns an error response if parsing dwn request fails', async function () {
@@ -68,8 +68,8 @@ describe('websocket api', function () {
     );
 
     const resp = JSON.parse(data.toString());
-    expect(resp.error.code).to.equal(JsonRpcErrorCodes.BadRequest);
-    expect(resp.error.message).to.include('JSON');
+    expect(resp.error.code).toBe(JsonRpcErrorCodes.BadRequest);
+    expect(resp.error.message).toContain('JSON');
   });
 
   it('RecordsWrite messages are not supported', async function () {
@@ -89,10 +89,10 @@ describe('websocket api', function () {
     const connection = await JsonRpcSocket.connect(wsUrl);
     const response = await connection.request(dwnRequest);
 
-    expect(response.id).to.equal(requestId);
-    expect(response.error).to.not.be.undefined;
-    expect(response.error.code).to.equal(JsonRpcErrorCodes.InvalidParams);
-    expect(response.error.message).to.include('RecordsWrite is not supported via ws');
+    expect(response.id).toBe(requestId);
+    expect(response.error).toBeDefined();
+    expect(response.error.code).toBe(JsonRpcErrorCodes.InvalidParams);
+    expect(response.error.message).toContain('RecordsWrite is not supported via ws');
   });
 
   it('subscribes to records and receives updates', async () => {
@@ -123,9 +123,9 @@ describe('websocket api', function () {
       subscriptionHandler(event);
     });
 
-    expect(response.error).to.be.undefined;
-    expect(response.result.reply.status.code).to.equal(200);
-    expect(close).to.not.be.undefined;
+    expect(response.error).toBeUndefined();
+    expect(response.result.reply.status.code).toBe(200);
+    expect(close).toBeDefined();
 
     const write1Message = await TestDataGenerator.generateRecordsWrite({
       author     : alice,
@@ -139,7 +139,7 @@ describe('websocket api', function () {
       message : write1Message.message,
       data    : write1Message.dataBytes,
     });
-    expect(writeResult1.status.code).to.equal(202);
+    expect(writeResult1.status.code).toBe(202);
 
     const write2Message = await TestDataGenerator.generateRecordsWrite({
       author     : alice,
@@ -153,17 +153,18 @@ describe('websocket api', function () {
       message : write2Message.message,
       data    : write2Message.dataBytes,
     });
-    expect(writeResult2.status.code).to.equal(202);
+    expect(writeResult2.status.code).toBe(202);
 
     await waitUntil(() => records.length >= 2);
 
     // close the subscription
     await close();
 
-    expect(records).to.have.members([
+    const expectedMembers = [
       await Message.getCid(write1Message.message),
       await Message.getCid(write2Message.message)
-    ]);
+    ].sort();
+    expect([...records].sort()).toEqual(expectedMembers);
   });
 
   it('stops receiving updates when subscription is closed', async () => {
@@ -195,9 +196,9 @@ describe('websocket api', function () {
       subscriptionHandler(event);
     });
 
-    expect(response.error).to.be.undefined;
-    expect(response.result.reply.status.code).to.equal(200);
-    expect(close).to.not.be.undefined;
+    expect(response.error).toBeUndefined();
+    expect(response.result.reply.status.code).toBe(200);
+    expect(close).toBeDefined();
 
     const write1Message = await TestDataGenerator.generateRecordsWrite({
       author     : alice,
@@ -211,7 +212,7 @@ describe('websocket api', function () {
       message : write1Message.message,
       data    : write1Message.dataBytes,
     });
-    expect(writeResult1.status.code).to.equal(202);
+    expect(writeResult1.status.code).toBe(202);
 
     // wait for the subscription event to arrive via WebSocket before closing
     await waitUntil(() => records.length >= 1);
@@ -232,7 +233,7 @@ describe('websocket api', function () {
       message : write2Message.message,
       data    : write2Message.dataBytes,
     });
-    expect(writeResult2.status.code).to.equal(202);
+    expect(writeResult2.status.code).toBe(202);
 
     const write3Message = await TestDataGenerator.generateRecordsWrite({
       author     : alice,
@@ -246,10 +247,11 @@ describe('websocket api', function () {
       message : write3Message.message,
       data    : write3Message.dataBytes,
     });
-    expect(writeResult3.status.code).to.equal(202);
+    expect(writeResult3.status.code).toBe(202);
 
     await new Promise(resolve => setTimeout(resolve, 5)); // wait for records to be processed
-    expect(records).to.have.members([ await Message.getCid(write1Message.message) ]);
+    const expectedMembers = [ await Message.getCid(write1Message.message) ].sort();
+    expect([...records].sort()).toEqual(expectedMembers);
   });
 
   it('should fail to add subscription using a `JsonRpcId` that already exists for a subscription in that socket', async () => {
@@ -295,8 +297,8 @@ describe('websocket api', function () {
       subscriptionHandler(event);
     });
 
-    expect(response2.error.code).to.equal(JsonRpcErrorCodes.InvalidParams);
-    expect(response2.error.message).to.contain(`${subscribeId} is in use by an active subscription`);
+    expect(response2.error.code).toBe(JsonRpcErrorCodes.InvalidParams);
+    expect(response2.error.message).toContain(`${subscribeId} is in use by an active subscription`);
 
     const write1Message = await TestDataGenerator.generateRecordsWrite({
       author     : alice,
@@ -310,7 +312,7 @@ describe('websocket api', function () {
       message : write1Message.message,
       data    : write1Message.dataBytes,
     });
-    expect(writeResult1.status.code).to.equal(202);
+    expect(writeResult1.status.code).toBe(202);
 
     const write2Message = await TestDataGenerator.generateRecordsWrite({
       author     : alice,
@@ -324,17 +326,18 @@ describe('websocket api', function () {
       message : write2Message.message,
       data    : write2Message.dataBytes,
     });
-    expect(writeResult2.status.code).to.equal(202);
+    expect(writeResult2.status.code).toBe(202);
 
     await waitUntil(() => records.length >= 2);
 
     // close the subscription
     await close();
 
-    expect(records).to.have.members([
+    const expectedMembers = [
       await Message.getCid(write1Message.message),
       await Message.getCid(write2Message.message)
-    ]);
+    ].sort();
+    expect([...records].sort()).toEqual(expectedMembers);
   });
 
   it('should receive an updated message as well as the initial write when subscribing to a record', async () => {
@@ -353,7 +356,7 @@ describe('websocket api', function () {
       message : initialWrite.message,
       data    : initialWrite.dataBytes,
     });
-    expect(writeResult1.status.code).to.equal(202);
+    expect(writeResult1.status.code).toBe(202);
 
     // subscribe to 'foo/bar' messages
     const { message } = await TestDataGenerator.generateRecordsSubscribe({
@@ -387,7 +390,7 @@ describe('websocket api', function () {
 
     // wait for potential records to process and confirm that initial write has not been processed
     await new Promise(resolve => setTimeout(resolve, 5));
-    expect(records.length).length.to.equal(0);
+    expect(records).toHaveLength(0);
 
     // update the initial message
     const updatedMessage = await TestDataGenerator.generateFromRecordsWrite({
@@ -401,7 +404,7 @@ describe('websocket api', function () {
       message : updatedMessage.message,
       data    : updatedMessage.dataBytes,
     });
-    expect(updateResult.status.code).to.equal(202);
+    expect(updateResult.status.code).toBe(202);
 
     await waitUntil(() => records.length >= 2);
 
@@ -409,9 +412,10 @@ describe('websocket api', function () {
     await close();
 
     // both initial and update should exist now
-    expect(records).to.have.members([
+    const expectedMembers = [
       await Message.getCid(initialWrite.message),
       await Message.getCid(updatedMessage.message)
-    ]);
+    ].sort();
+    expect([...records].sort()).toEqual(expectedMembers);
   });
 });

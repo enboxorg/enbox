@@ -1,6 +1,6 @@
-import { expect } from 'chai';
 import sinon from 'sinon';
 import { v4 as uuidv4 } from 'uuid';
+import { describe, expect, it } from 'bun:test';
 
 import type { RequestContext } from '../src/lib/json-rpc-router.js';
 
@@ -10,8 +10,8 @@ import { SocketConnection } from '../src/connection/socket-connection.js';
 import { createJsonRpcRequest, createJsonRpcSubscriptionRequest, JsonRpcErrorCodes } from '../src/lib/json-rpc.js';
 import { DwnServerError, DwnServerErrorCode } from '../src/dwn-error.js';
 
-describe('handleDwnProcessMessage', function () {
-  it('should return an error if no socket connection exists', async function () {
+describe('handleDwnProcessMessage', () => {
+  it('should return an error if no socket connection exists', async () => {
     const requestId = uuidv4();
     const dwnRequest = createJsonRpcRequest(requestId, 'rpc.subscribe.close', { });
 
@@ -23,12 +23,12 @@ describe('handleDwnProcessMessage', function () {
       context,
     );
 
-    expect(jsonRpcResponse.error).to.exist;
-    expect(jsonRpcResponse.error.code).to.equal(JsonRpcErrorCodes.InvalidRequest);
-    expect(jsonRpcResponse.error.message).to.equal('socket connection does not exist');
+    expect(jsonRpcResponse.error).toBeDefined();
+    expect(jsonRpcResponse.error.code).toBe(JsonRpcErrorCodes.InvalidRequest);
+    expect(jsonRpcResponse.error.message).toBe('socket connection does not exist');
   });
 
-  it('should return an error if no subscribe options exist', async function () {
+  it('should return an error if no subscribe options exist', async () => {
     const requestId = uuidv4();
     const dwnRequest = createJsonRpcRequest(requestId, 'rpc.subscribe.close', { });
     const socketConnection = sinon.createStubInstance(SocketConnection);
@@ -41,12 +41,12 @@ describe('handleDwnProcessMessage', function () {
       context,
     );
 
-    expect(jsonRpcResponse.error).to.exist;
-    expect(jsonRpcResponse.error.code).to.equal(JsonRpcErrorCodes.InvalidRequest);
-    expect(jsonRpcResponse.error.message).to.equal('subscribe options do not exist');
+    expect(jsonRpcResponse.error).toBeDefined();
+    expect(jsonRpcResponse.error.code).toBe(JsonRpcErrorCodes.InvalidRequest);
+    expect(jsonRpcResponse.error.message).toBe('subscribe options do not exist');
   });
 
-  it('should return an error if close subscription throws ConnectionSubscriptionJsonRpcIdNotFound', async function () {
+  it('should return an error if close subscription throws ConnectionSubscriptionJsonRpcIdNotFound', async () => {
     const requestId = uuidv4();
     const id = 'some-id';
     const dwnRequest = createJsonRpcSubscriptionRequest(requestId, 'rpc.subscribe.close', {}, id);
@@ -64,12 +64,12 @@ describe('handleDwnProcessMessage', function () {
       context,
     );
 
-    expect(jsonRpcResponse.error).to.exist;
-    expect(jsonRpcResponse.error.code).to.equal(JsonRpcErrorCodes.InvalidParams);
-    expect(jsonRpcResponse.error.message).to.equal(`subscription ${id} does not exist.`);
+    expect(jsonRpcResponse.error).toBeDefined();
+    expect(jsonRpcResponse.error.code).toBe(JsonRpcErrorCodes.InvalidParams);
+    expect(jsonRpcResponse.error.message).toBe(`subscription ${id} does not exist.`);
   });
 
-  it('should return an error if close subscription throws ConnectionSubscriptionJsonRpcIdNotFound', async function () {
+  it('should return an error if close subscription throws ConnectionSubscriptionJsonRpcIdNotFound', async () => {
     const requestId = uuidv4();
     const id = 'some-id';
     const dwnRequest = createJsonRpcSubscriptionRequest(requestId, 'rpc.subscribe.close', {}, id);
@@ -84,12 +84,12 @@ describe('handleDwnProcessMessage', function () {
       context,
     );
 
-    expect(jsonRpcResponse.error).to.exist;
-    expect(jsonRpcResponse.error.code).to.equal(JsonRpcErrorCodes.InternalError);
-    expect(jsonRpcResponse.error.message).to.equal(`unknown subscription close error for ${id}: unknown error`);
+    expect(jsonRpcResponse.error).toBeDefined();
+    expect(jsonRpcResponse.error.code).toBe(JsonRpcErrorCodes.InternalError);
+    expect(jsonRpcResponse.error.message).toBe(`unknown subscription close error for ${id}: unknown error`);
   });
 
-  it('should return a success', async function () {
+  it('should return a success', async () => {
     const requestId = uuidv4();
     const id = 'some-id';
     const dwnRequest = createJsonRpcSubscriptionRequest(requestId, 'rpc.subscribe.close', {}, id);
@@ -102,10 +102,10 @@ describe('handleDwnProcessMessage', function () {
       dwnRequest,
       context,
     );
-    expect(jsonRpcResponse.error).to.not.exist;
+    expect(jsonRpcResponse.error).toBeUndefined();
   });
 
-  it('handler should generate a request Id if one is not provided with the request', async function () {
+  it('handler should generate a request Id if one is not provided with the request', async () => {
     const requestId = uuidv4();
     const id = 'some-id';
     const dwnRequest = createJsonRpcSubscriptionRequest(requestId, 'rpc.subscribe.close', {}, id);
@@ -120,8 +120,8 @@ describe('handleDwnProcessMessage', function () {
       dwnRequest,
       context,
     );
-    expect(jsonRpcResponse.error).to.not.exist;
-    expect(jsonRpcResponse.id).to.exist;
-    expect(jsonRpcResponse.id).to.not.equal(id);
+    expect(jsonRpcResponse.error).toBeUndefined();
+    expect(jsonRpcResponse.id).toBeDefined();
+    expect(jsonRpcResponse.id).not.toBe(id);
   });
 });

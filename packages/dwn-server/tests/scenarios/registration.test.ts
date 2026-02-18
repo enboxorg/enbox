@@ -10,17 +10,17 @@ import { createJsonRpcRequest } from '../../src/lib/json-rpc.js';
 import { createRecordsWriteMessage } from '../utils.js';
 import { DwnServer } from '../../src/dwn-server.js';
 import { DwnServerErrorCode } from '../../src/dwn-error.js';
-import { expect } from 'chai';
 import { ProofOfWork } from '../../src/registration/proof-of-work.js';
 import { ProofOfWorkManager } from '../../src/registration/proof-of-work-manager.js';
 import { randomBytes } from 'crypto';
 import { readFileSync } from 'fs';
 import { useFakeTimers } from 'sinon';
 import { v4 as uuidv4 } from 'uuid';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { DataStream, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { DidDht, DidKey, UniversalResolver } from '@enbox/dids';
 
-describe('Registration scenarios', function () {
+describe('Registration scenarios', () => {
   let dwnMessageEndpoint: string;
   let termsOfUseEndpoint: string;
   let proofOfWorkEndpoint: string;
@@ -33,7 +33,7 @@ describe('Registration scenarios', function () {
   let dwnServer: DwnServer;
   const dwnServerConfig: DwnServerConfig = { ...config, port: 0 }; // not touching the original config
 
-  before(async function () {
+  beforeAll(async () => {
     clock = useFakeTimers({ shouldAdvanceTime: true });
 
     alice = await TestDataGenerator.generateDidKeyPersona();
@@ -71,7 +71,7 @@ describe('Registration scenarios', function () {
     registrationEndpoint = `${baseUrl}/registration`;
   });
 
-  after(async () => {
+  afterAll(async () => {
     clock.restore();
   });
 
@@ -90,18 +90,18 @@ describe('Registration scenarios', function () {
       method: 'GET',
     });
     const termsOfServiceFetched = await termsOfServiceGetResponse.text();
-    expect(termsOfServiceGetResponse.status).to.equal(200);
-    expect(termsOfServiceFetched).to.equal(readFileSync(dwnServerConfig.termsOfServiceFilePath).toString());
+    expect(termsOfServiceGetResponse.status).toBe(200);
+    expect(termsOfServiceFetched).toBe(readFileSync(dwnServerConfig.termsOfServiceFilePath).toString());
 
     // 2. Alice fetches the proof-of-work challenge.
     const proofOfWorkChallengeGetResponse = await fetch(proofOfWorkEndpoint, {
       method: 'GET',
     });
     const { challengeNonce, maximumAllowedHashValue } = await proofOfWorkChallengeGetResponse.json() as ProofOfWorkChallengeModel;
-    expect(proofOfWorkChallengeGetResponse.status).to.equal(200);
-    expect(challengeNonce.length).to.equal(64);
-    expect(ProofOfWorkManager.isHexString(challengeNonce)).to.be.true;
-    expect(ProofOfWorkManager.isHexString(maximumAllowedHashValue)).to.be.true;
+    expect(proofOfWorkChallengeGetResponse.status).toBe(200);
+    expect(challengeNonce).toHaveLength(64);
+    expect(ProofOfWorkManager.isHexString(challengeNonce)).toBe(true);
+    expect(ProofOfWorkManager.isHexString(maximumAllowedHashValue)).toBe(true);
 
     // 3. Alice creates registration data based on the hash of the terms-of-service and her DID.
     const registrationData: RegistrationData = {
@@ -130,7 +130,7 @@ describe('Registration scenarios', function () {
       headers : { 'Content-Type': 'application/json' },
       body    : JSON.stringify(registrationRequest),
     });
-    expect(registrationResponse.status).to.equal(200);
+    expect(registrationResponse.status).toBe(200);
 
     // 6. Alice can now write to the DWN.
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
@@ -142,8 +142,8 @@ describe('Registration scenarios', function () {
       body: new Blob([dataBytes]),
     });
     const writeResponseBody = await writeResponse.json() as JsonRpcResponse;
-    expect(writeResponse.status).to.equal(200);
-    expect(writeResponseBody.result.reply.status.code).to.equal(202);
+    expect(writeResponse.status).toBe(200);
+    expect(writeResponseBody.result.reply.status.code).toBe(202);
 
     // 7. Sanity test that another non-tenant is NOT authorized to write.
     const nonTenant = await TestDataGenerator.generateDidKeyPersona();
@@ -156,12 +156,12 @@ describe('Registration scenarios', function () {
       body: new Blob([nonTenantJsonRpcRequest.dataBytes]),
     });
     const nonTenantJsonRpcResponseBody = await nonTenantJsonRpcResponse.json() as JsonRpcResponse;
-    expect(nonTenantJsonRpcResponse.status).to.equal(200);
-    expect(nonTenantJsonRpcResponseBody.result.reply.status.code).to.equal(401);
-    expect(nonTenantJsonRpcResponseBody.result.reply.status.detail).to.equal('Not a registered tenant.');
+    expect(nonTenantJsonRpcResponse.status).toBe(200);
+    expect(nonTenantJsonRpcResponseBody.result.reply.status.code).toBe(401);
+    expect(nonTenantJsonRpcResponseBody.result.reply.status.detail).toBe('Not a registered tenant.');
   });
 
-  it('should reject a registration request that has proof-or-work that does not meet the difficulty requirement.', async function () {
+  it('should reject a registration request that has proof-or-work that does not meet the difficulty requirement.', async () => {
     // Scenario:
     // 0. Assume Alice fetched the terms-of-service and proof-of-work challenge.
     // 1. Alice computes the proof-of-work response nonce that is insufficient to meet the difficulty requirement.
@@ -202,8 +202,8 @@ describe('Registration scenarios', function () {
       body    : JSON.stringify(registrationRequest),
     });
     const registrationResponseBody = await registrationResponse.json() as any;
-    expect(registrationResponse.status).to.equal(400);
-    expect(registrationResponseBody.code).to.equal(DwnServerErrorCode.ProofOfWorkInsufficientSolutionNonce);
+    expect(registrationResponse.status).toBe(400);
+    expect(registrationResponseBody.code).toBe(DwnServerErrorCode.ProofOfWorkInsufficientSolutionNonce);
 
     // Restoring original difficulty for subsequent tests.
     registrationManager['proofOfWorkManager']['currentMaximumAllowedHashValueAsBigInt'] = originalMaximumAllowedHashValueAsBigInt;
@@ -245,8 +245,8 @@ describe('Registration scenarios', function () {
       body    : JSON.stringify(registrationRequest),
     });
     const registrationResponseBody = await registrationResponse.json() as any;
-    expect(registrationResponse.status).to.equal(400);
-    expect(registrationResponseBody.code).to.equal(DwnServerErrorCode.RegistrationManagerInvalidOrOutdatedTermsOfServiceHash);
+    expect(registrationResponse.status).toBe(400);
+    expect(registrationResponseBody.code).toBe(DwnServerErrorCode.RegistrationManagerInvalidOrOutdatedTermsOfServiceHash);
   });
 
   it('should reject registration request that reuses a response nonce that is already used a short-time earlier', async () => {
@@ -284,7 +284,7 @@ describe('Registration scenarios', function () {
       headers : { 'Content-Type': 'application/json' },
       body    : JSON.stringify(registrationRequest),
     });
-    expect(registrationResponse.status).to.equal(200);
+    expect(registrationResponse.status).toBe(200);
 
     // 2. Alice sends the same registration request which uses the same response nonce to the server again and it is rejected.
     const registration2Response = await fetch(registrationEndpoint, {
@@ -293,11 +293,11 @@ describe('Registration scenarios', function () {
       body    : JSON.stringify(registrationRequest),
     });
     const registration2ResponseBody = await registration2Response.json() as any;
-    expect(registration2Response.status).to.equal(400);
-    expect(registration2ResponseBody.code).to.equal(DwnServerErrorCode.ProofOfWorkManagerResponseNonceReused);
+    expect(registration2Response.status).toBe(400);
+    expect(registration2ResponseBody.code).toBe(DwnServerErrorCode.ProofOfWorkManagerResponseNonceReused);
   });
 
-  it('should reject an invalid nonce that is not a HEX string representing a 256 bit value.', async function () {
+  it('should reject an invalid nonce that is not a HEX string representing a 256 bit value.', async () => {
 
     // Assume Alice fetched the terms-of-service.
     const termsOfService = registrationManager.getTermsOfService();
@@ -320,8 +320,8 @@ describe('Registration scenarios', function () {
       body    : JSON.stringify(registrationRequest1),
     });
     const registrationResponseBody1 = await registrationResponse1.json() as any;
-    expect(registrationResponse1.status).to.equal(400);
-    expect(registrationResponseBody1.code).to.equal(DwnServerErrorCode.ProofOfWorkManagerInvalidResponseNonceFormat);
+    expect(registrationResponse1.status).toBe(400);
+    expect(registrationResponseBody1.code).toBe(DwnServerErrorCode.ProofOfWorkManagerInvalidResponseNonceFormat);
 
     const registrationRequest2: RegistrationRequest = {
       registrationData,
@@ -337,8 +337,8 @@ describe('Registration scenarios', function () {
       body    : JSON.stringify(registrationRequest2),
     });
     const registrationResponseBody2 = await registrationResponse2.json() as any;
-    expect(registrationResponse2.status).to.equal(400);
-    expect(registrationResponseBody2.code).to.equal(DwnServerErrorCode.ProofOfWorkManagerInvalidResponseNonceFormat);
+    expect(registrationResponse2.status).toBe(400);
+    expect(registrationResponseBody2.code).toBe(DwnServerErrorCode.ProofOfWorkManagerInvalidResponseNonceFormat);
   });
 
   it('should reject a response nonce based on an expired challenge nonce and accept one is based on the new challenge nonce', async () => {
@@ -386,8 +386,8 @@ describe('Registration scenarios', function () {
       body    : JSON.stringify(registrationRequest),
     });
     const registrationResponseBody = await registrationResponse.json() as any;
-    expect(registrationResponse.status).to.equal(400);
-    expect(registrationResponseBody.code).to.equal(DwnServerErrorCode.ProofOfWorkManagerInvalidChallengeNonce);
+    expect(registrationResponse.status).toBe(400);
+    expect(registrationResponseBody.code).toBe(DwnServerErrorCode.ProofOfWorkManagerInvalidChallengeNonce);
 
     // 4. Alice fetches the new proof-of-work challenge.
     const proofOfWorkChallengeGetResponse = await fetch(proofOfWorkEndpoint, {
@@ -397,7 +397,7 @@ describe('Registration scenarios', function () {
       challengeNonce: newChallengeNonce,
       maximumAllowedHashValue: newMaximumAllowedHashValue
     } = await proofOfWorkChallengeGetResponse.json() as ProofOfWorkChallengeModel;
-    expect(proofOfWorkChallengeGetResponse.status).to.equal(200);
+    expect(proofOfWorkChallengeGetResponse.status).toBe(200);
 
     // 5. Alice computes the proof-of-work response nonce based on the the new proof-of-work challenge and the registration data.
     const newResponseNonce = ProofOfWork.findQualifiedResponseNonce({
@@ -420,7 +420,7 @@ describe('Registration scenarios', function () {
       headers : { 'Content-Type': 'application/json' },
       body    : JSON.stringify(newRegistrationRequest),
     });
-    expect(newRegistrationResponse.status).to.equal(200);
+    expect(newRegistrationResponse.status).toBe(200);
   });
 
   it('should reject a DWN message for an existing tenant who agreed to an outdated terms-of-service.', async () => {
@@ -449,8 +449,8 @@ describe('Registration scenarios', function () {
       body: new Blob([write1.dataBytes]),
     });
     const write1ResponseBody = await write1Response.json() as JsonRpcResponse;
-    expect(write1Response.status).to.equal(200);
-    expect(write1ResponseBody.result.reply.status.code).to.equal(202);
+    expect(write1Response.status).toBe(200);
+    expect(write1ResponseBody.result.reply.status.code).toBe(202);
 
     // 2. DWN server administrator updates the terms-of-service.
     const newTermsOfService = 'new terms of service';
@@ -466,17 +466,17 @@ describe('Registration scenarios', function () {
       body: new Blob([write2.dataBytes]),
     });
     const write2ResponseBody = await write2Response.json() as JsonRpcResponse;
-    expect(write2Response.status).to.equal(200);
-    expect(write2ResponseBody.result.reply.status.code).to.equal(401);
-    expect(write2ResponseBody.result.reply.status.detail).to.equal('Agreed terms-of-service is outdated.');
+    expect(write2Response.status).toBe(200);
+    expect(write2ResponseBody.result.reply.status.code).toBe(401);
+    expect(write2ResponseBody.result.reply.status.detail).toBe('Agreed terms-of-service is outdated.');
 
     // 4. Alice fetches the new terms-of-service and proof-of-work challenge
     const termsOfServiceGetResponse = await fetch(termsOfUseEndpoint, {
       method: 'GET',
     });
     const termsOfServiceFetched = await termsOfServiceGetResponse.text();
-    expect(termsOfServiceGetResponse.status).to.equal(200);
-    expect(termsOfServiceFetched).to.equal(newTermsOfService);
+    expect(termsOfServiceGetResponse.status).toBe(200);
+    expect(termsOfServiceFetched).toBe(newTermsOfService);
 
     const proofOfWorkChallengeGetResponse = await fetch(proofOfWorkEndpoint, {
       method: 'GET',
@@ -508,7 +508,7 @@ describe('Registration scenarios', function () {
       headers : { 'Content-Type': 'application/json' },
       body    : JSON.stringify(registrationRequest),
     });
-    expect(registrationResponse.status).to.equal(200);
+    expect(registrationResponse.status).toBe(200);
 
     // 6. Alice can now write to the DWN again.
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
@@ -520,12 +520,12 @@ describe('Registration scenarios', function () {
       body: new Blob([dataBytes]),
     });
     const write3ResponseBody = await write3Response.json() as JsonRpcResponse;
-    expect(write3Response.status).to.equal(200);
-    expect(write3ResponseBody.result.reply.status.code).to.equal(202);
+    expect(write3Response.status).toBe(200);
+    expect(write3ResponseBody.result.reply.status.code).toBe(202);
 
   });
 
-  it('should initialize ProofOfWorkManager with challenge nonce seed if given.', async function () {
+  it('should initialize ProofOfWorkManager with challenge nonce seed if given.', async () => {
     await dwnServer.stop();
 
     const registrationProofOfWorkSeed = randomBytes(32).toString('hex');
@@ -538,7 +538,7 @@ describe('Registration scenarios', function () {
 
     dwnServer = new DwnServer({ config: configWithProofOfWorkSeed });
     await dwnServer.start();
-    expect(dwnServer.registrationManager['proofOfWorkManager']['challengeSeed']).to.equal(registrationProofOfWorkSeed);
+    expect(dwnServer.registrationManager['proofOfWorkManager']['challengeSeed']).toBe(registrationProofOfWorkSeed);
   });
 
   it('should allow tenant registration to be turned off to allow all DWN messages through.', async () => {
@@ -577,8 +577,8 @@ describe('Registration scenarios', function () {
     });
 
     const writeResponseBody = await writeResponse.json() as JsonRpcResponse;
-    expect(writeResponse.status).to.equal(200);
-    expect(writeResponseBody.result.reply.status.code).to.equal(202);
+    expect(writeResponse.status).toBe(200);
+    expect(writeResponseBody.result.reply.status.code).toBe(202);
   });
 });
 
