@@ -39,7 +39,8 @@
     }
   },
   "include": [
-    "./src/index.ts"
+    "./src/index.ts",
+    "tests"
   ],
   "exclude": [
     "node_modules",
