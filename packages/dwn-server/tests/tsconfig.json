@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "sourceMap": true,
+    "types": ["bun-types"]
+  },
+  "include": [
+    "../src",
+    "."
+  ],
+  "exclude": [
+    "cors.spec.ts"
+  ]
+}

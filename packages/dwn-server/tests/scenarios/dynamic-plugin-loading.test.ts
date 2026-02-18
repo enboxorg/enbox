@@ -1,7 +1,6 @@
-import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
-import chai, { expect } from 'chai';
 
+import { afterEach, describe, expect, it } from 'bun:test';
 import { DidDht, DidKey, UniversalResolver } from '@enbox/dids';
 
 import CommonScenarioValidator from '../common-scenario-validator.js';
@@ -13,9 +12,7 @@ import MessageStoreSqlite from '../plugins/message-store-sqlite.js';
 import ResumableTaskStoreSqlite from '../plugins/resumable-task-store-sqlite.js';
 import StateIndexSqlite from '../plugins/state-index-sqlite.js';
 
-chai.use(chaiAsPromised);
-
-describe('Dynamic DWN plugin loading', function () {
+describe('Dynamic DWN plugin loading', () => {
   let dwnServer: DwnServer;
 
   afterEach(async () => {
@@ -29,7 +26,7 @@ describe('Dynamic DWN plugin loading', function () {
     dwnServerConfigCopy.dataStore = './non-existent-plugin.js';
 
     const invalidDwnServer = new DwnServer({ config: dwnServerConfigCopy });
-    await expect(invalidDwnServer.start()).to.be.rejectedWith('Failed to load component at ./non-existent-plugin.js');
+    await expect(invalidDwnServer.start()).rejects.toThrow('Failed to load component at ./non-existent-plugin.js');
   });
 
   it('should be able to dynamically load and use custom data store implementation', async () => {
@@ -69,11 +66,11 @@ describe('Dynamic DWN plugin loading', function () {
     });
     dwnServer = new DwnServer({ config: dwnServerConfigCopy, didResolver });
     await dwnServer.start();
-    expect(customMessageStoreConstructorSpy.calledOnce).to.be.true;
-    expect(customDataStoreConstructorSpy.calledOnce).to.be.true;
-    expect(customResumableTaskStoreConstructorSpy.calledOnce).to.be.true;
-    expect(customStateIndexConstructorSpy.calledOnce).to.be.true;
-    expect(customEventStreamConstructorSpy.calledOnce).to.be.true;
+    expect(customMessageStoreConstructorSpy.calledOnce).toBe(true);
+    expect(customDataStoreConstructorSpy.calledOnce).toBe(true);
+    expect(customResumableTaskStoreConstructorSpy.calledOnce).toBe(true);
+    expect(customStateIndexConstructorSpy.calledOnce).toBe(true);
+    expect(customEventStreamConstructorSpy.calledOnce).toBe(true);
 
     // 3. Validate that the DWN instance is using the custom data store plugin.
     const testBaseUrl = `http://localhost:${dwnServer.httpServer.port}`;

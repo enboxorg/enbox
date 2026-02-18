@@ -1,15 +1,12 @@
 import type { JsonRpcSuccessResponse } from '../src/lib/json-rpc.js';
 import type { Persona } from '@enbox/dwn-sdk-js';
 
-import chaiAsPromised from 'chai-as-promised';
+import { expect } from 'bun:test';
 import { v4 as uuidv4 } from 'uuid';
-import chai, { expect } from 'chai';
 
 import { createJsonRpcRequest } from '../src/lib/json-rpc.js';
 import { getFileAsReadStream } from './utils.js';
 import { Cid, DwnConstant, Jws, ProtocolsConfigure, RecordsRead, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
-
-chai.use(chaiAsPromised);
 
 /**
  * Validator of common scenarios.
@@ -52,8 +49,8 @@ export default class CommonScenarioValidator {
     });
     const protocolConfigureResponseBody = await protocolConfigureResponse.json() as JsonRpcSuccessResponse;
 
-    expect(protocolConfigureResponse.status).to.equal(200);
-    expect(protocolConfigureResponseBody.result.reply.status.code).to.equal(202);
+    expect(protocolConfigureResponse.status).toBe(200);
+    expect(protocolConfigureResponseBody.result.reply.status.code).toBe(202);
 
     // Alice writing a file larger than max data size allowed to be encoded directly in the DWN Message Store.
     const filePath = './fixtures/test.jpeg';
@@ -62,7 +59,7 @@ export default class CommonScenarioValidator {
       size: dataSize,
       stream
     } = await getFileAsReadStream(filePath);
-    expect(dataSize).to.be.greaterThan(DwnConstant.maxDataSizeAllowedToBeEncoded);
+    expect(dataSize).toBeGreaterThan(DwnConstant.maxDataSizeAllowedToBeEncoded);
 
     const recordsWrite = await RecordsWrite.create({
       signer     : aliceSigner,
@@ -85,8 +82,8 @@ export default class CommonScenarioValidator {
     });
     const recordsWriteResponseBody = await recordsWriteResponse.json() as JsonRpcSuccessResponse;
 
-    expect(recordsWriteResponse.status).to.equal(200);
-    expect(recordsWriteResponseBody.result.reply.status.code).to.equal(202);
+    expect(recordsWriteResponse.status).toBe(200);
+    expect(recordsWriteResponseBody.result.reply.status.code).toBe(202);
 
     // Alice reading the file back out.
     const recordsRead = await RecordsRead.create({
@@ -109,24 +106,24 @@ export default class CommonScenarioValidator {
       },
     });
 
-    expect(recordsReadResponse.status).to.equal(200);
+    expect(recordsReadResponse.status).toBe(200);
 
     const { headers } = recordsReadResponse;
     const contentType = headers.get('content-type');
-    expect(contentType).to.not.be.undefined;
-    expect(contentType).to.equal('application/octet-stream');
+    expect(contentType).toBeDefined();
+    expect(contentType).toBe('application/octet-stream');
 
     const recordsReadDwnResponse = headers.get('dwn-response');
-    expect(recordsReadDwnResponse).to.not.be.undefined;
+    expect(recordsReadDwnResponse).toBeDefined();
 
     const recordsReadJsonRpcResponse = JSON.parse(recordsReadDwnResponse) as JsonRpcSuccessResponse;
-    expect(recordsReadJsonRpcResponse.id).to.equal(recordsReadRequestId);
-    expect(recordsReadJsonRpcResponse.error).to.not.exist;
-    expect(recordsReadJsonRpcResponse.result.reply.status.code).to.equal(200);
-    expect(recordsReadJsonRpcResponse.result.reply.entry.recordsWrite).to.exist;
+    expect(recordsReadJsonRpcResponse.id).toBe(recordsReadRequestId);
+    expect(recordsReadJsonRpcResponse.error).toBeUndefined();
+    expect(recordsReadJsonRpcResponse.result.reply.status.code).toBe(200);
+    expect(recordsReadJsonRpcResponse.result.reply.entry.recordsWrite).toBeDefined();
 
     // can't get response as stream from supertest :(
     const cid = await Cid.computeDagPbCidFromStream(recordsReadResponse.body as unknown as ReadableStream<Uint8Array>);
-    expect(cid).to.equal(dataCid);
+    expect(cid).toBe(dataCid);
   }
 }
