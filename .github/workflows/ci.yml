@@ -379,7 +379,7 @@ jobs:
           path: packages
 
       - name: Run tests
-        run: bun run --filter @enbox/dwn-server test
+        run: bun run --filter @enbox/dwn-server test:node
 
   # ---------------------------------------------------------------------------
   # Coverage: parse lcov reports, enforce 90% threshold, comment on PR
