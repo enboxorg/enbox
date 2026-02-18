@@ -398,16 +398,6 @@ describe('DidKey', () => {
   });
 
   describe('resolve()', () => {
-    it('derives a key agreement verification method when enableEncryptionKeyDerivation is true', async function () {
-      const did = 'did:key:z6MkpUzNmYVTGpqhStxK8yRKXWCRNm1bGYz8geAg2zmjYHKX';
-      const resolutionResult = await DidKey.resolve(did, { enableEncryptionKeyDerivation: true });
-
-      expect(resolutionResult.didDocument?.verificationMethod).to.have.length(2);
-      expect(resolutionResult.didDocument?.verificationMethod![0]!.publicKeyJwk).to.have.property('crv', 'Ed25519');
-      expect(resolutionResult.didDocument?.verificationMethod![1]!.publicKeyJwk).to.have.property('crv', 'X25519');
-      expect(resolutionResult.didDocument?.verificationMethod![1]!.id).to.equal(resolutionResult.didDocument?.keyAgreement![0]);
-    });
-
     it('returns an error due to DID parsing failing', async function () {
       const invalidDidUri = 'did:invalidFormat';
       const resolutionResult = await DidKey.resolve(invalidDidUri);
@@ -485,31 +475,6 @@ describe('DidKey', () => {
         expect(multicoded).to.deep.equal({ code: 4865, name: 'secp256k1-priv' });
       });
 
-      it('supports X25519 public keys', async () => {
-        const multicoded = await DidKeyUtils.jwkToMulticodec({
-          jwk: {
-            crv : 'X25519',
-            kty : 'OKP',
-            x   : 'Uszsfy4vkz9MKeflgUpQot7sJhDyco2aYWCRXKTrcQg',
-          }
-        });
-
-        expect(multicoded).to.deep.equal({ code: 236, name: 'x25519-pub' });
-      });
-
-      it('supports X25519 private keys', async () => {
-        const multicoded = await DidKeyUtils.jwkToMulticodec({
-          jwk: {
-            d   : 'MJf4AAqcwfBC68Wkb8nRbmnIdHb07zYM7vU_TAOgmtM',
-            crv : 'X25519',
-            kty : 'OKP',
-            x   : 'Uszsfy4vkz9MKeflgUpQot7sJhDyco2aYWCRXKTrcQg',
-          }
-        });
-
-        expect(multicoded).to.deep.equal({ code: 4866, name: 'x25519-priv' });
-      });
-
       it('throws an error if unsupported JOSE has been passed', async () => {
         try {
           // @ts-expect-error because parameters are intentionally omitted to trigger an error.
@@ -558,25 +523,6 @@ describe('DidKey', () => {
           kty : 'EC',
           x   : '', // x value would be populated with actual key material in real use
           y   : '', // y value would be populated with actual key material in real use
-          d   : '' // d value would be populated with actual key material in real use
-        });
-      });
-
-      it('converts x25519 public key multicodec to JWK', async () => {
-        const result = await DidKeyUtils.multicodecToJwk({ name: 'x25519-pub' });
-        expect(result).to.deep.equal({
-          crv : 'X25519',
-          kty : 'OKP',
-          x   : '' // x value would be populated with actual key material in real use
-        });
-      });
-
-      it('converts x25519 private key multicodec to JWK', async () => {
-        const result = await DidKeyUtils.multicodecToJwk({ name: 'x25519-priv' });
-        expect(result).to.deep.equal({
-          crv : 'X25519',
-          kty : 'OKP',
-          x   : '', // x value would be populated with actual key material in real use
           d   : '' // d value would be populated with actual key material in real use
         });
       });
@@ -642,18 +588,6 @@ describe('DidKey', () => {
         const multibaseId = await DidKeyUtils.publicKeyToMultibaseId({ publicKey });
 
         expect(multibaseId).to.equal('zQ3sheTFzDvGpXAc9AXtwGF3MW1CusKovnwM4pSsUamqKCyLB');
-      });
-
-      it('supports X25519', async () => {
-        const publicKey: Jwk = {
-          crv : 'X25519',
-          kty : 'OKP',
-          x   : 'cuY-fEu_V1s4b8HbGzy_9VOaNtxiUPzLn6KOATdz0ks',
-        };
-
-        const multibaseId = await DidKeyUtils.publicKeyToMultibaseId({ publicKey });
-
-        expect(multibaseId).to.equal('z6LSjQhGhqqYgrFsNFoZL9wzuKpS1xQ7YNE6fnLgSyW2hUt2');
       });
 
       it('throws an error for an unsupported public key type', async () => {

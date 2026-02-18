@@ -9,18 +9,16 @@ import type {
   KmsExportKeyParams,
   KmsImportKeyParams,
 } from '@enbox/crypto';
-import type { MulticodecCode, MulticodecDefinition, RequireOnly } from '@enbox/common';
+import type { MulticodecCode, MulticodecDefinition } from '@enbox/common';
 
 import {
   Ed25519,
   LocalKeyManager,
   Secp256k1,
   Secp256r1,
-  X25519,
 } from '@enbox/crypto';
 import { Multicodec, universalTypeOf } from '@enbox/common';
 
-import type { KeyWithMulticodec } from '../types/multibase.js';
 import type { PortableDid } from '../types/portable-did.js';
 import type { DidCreateOptions, DidCreateVerificationMethod } from './did-method.js';
 import type {
@@ -104,23 +102,6 @@ export interface DidKeyCreateOptions<TKms> extends DidCreateOptions<TKms> {
   defaultContext?: string;
 
   /**
-   * Optionally enable encryption key derivation during DID creation.
-   *
-   * By default, this option is set to `false`, which means encryption key derivation is not
-   * performed unless explicitly enabled.
-   *
-   * When set to `true`, an `X25519` key will be derived from the `Ed25519` public key used to
-   * create the DID. This feature enables the same DID to be used for encrypted communication, in
-   * addition to signature verification.
-   *
-   * Notes:
-   * - This option is ONLY applicable when the `algorithm` of the DID's public key is `Ed25519`.
-   * - Enabling this introduces specific cryptographic considerations that should be understood
-   *   before using the same key pair for digital signatures and encrypted communication. See the following for more information:
-   */
-  enableEncryptionKeyDerivation?: boolean;
-
-  /**
    * Optionally enable experimental public key types during DID creation.
    * By default, this option is set to `false`, which means experimental public key types are not
    * supported.
@@ -167,11 +148,6 @@ export enum DidKeyRegisteredKeyType {
    * and is widely supported in various cryptographic libraries and standards.
    */
   secp256r1 = 'secp256r1',
-
-  /**
-   * X25519: A Diffie-Hellman key exchange algorithm using Curve25519.
-   */
-  X25519 = 'X25519'
 }
 
 /**
@@ -187,9 +163,6 @@ export const DidKeyVerificationMethodType = {
 
   /** Represents a JSON Web Key (JWK) used for digital signatures and key agreement protocols. */
   JsonWebKey2020: 'https://w3id.org/security/suites/jws-2020/v1',
-
-  /** Represents an X25519 public key used for key agreement protocols. */
-  X25519KeyAgreementKey2020: 'https://w3id.org/security/suites/x25519-2020/v1',
 } as const;
 
 /**
@@ -203,7 +176,6 @@ const AlgorithmToKeyTypeMap = {
   'P-256'   : DidKeyRegisteredKeyType.secp256r1,
   secp256k1 : DidKeyRegisteredKeyType.secp256k1,
   secp256r1 : DidKeyRegisteredKeyType.secp256r1,
-  X25519    : DidKeyRegisteredKeyType.X25519
 } as const;
 
 /**
@@ -229,13 +201,6 @@ const AlgorithmToKeyTypeMap = {
  * {@link https://github.com/multiformats/multicodec/blob/master/README.md | Multicodec} identifier
  * for the public key type and the raw public key bytes. To form the DID URI, the method-specific
  * identifier is prefixed with the string 'did:key:'.
- *
- * This method can optionally derive an encryption key from the public key used to create the DID
- * if and only if the public key algorithm is `Ed25519`. This feature enables the same DID to be
- * used for encrypted communication, in addition to signature verification. To enable this
- * feature when calling {@link DidKey.create | `DidKey.create()`}, first specify an `algorithm` of
- * `Ed25519` or provide a `keySet` referencing an `Ed25519` key and then set the
- * `enableEncryptionKeyDerivation` option to `true`.
  *
  * Note:
  * - The authors of the DID Key specification have indicated that use of this method for long-lived
@@ -309,12 +274,6 @@ export class DidKey extends DidMethod {
    * encoding the
    * {@link https://github.com/multiformats/multicodec/blob/master/README.md | Multicodec}-encoded
    * public key and prefixing with `did:key:`.
-   *
-   * This method can optionally derive an encryption key from the public key used to create the DID
-   * if and only if the public key algorithm is `Ed25519`. This feature enables the same DID to be
-   * used for encrypted communication, in addition to signature verification. To enable this
-   * feature, specify an `algorithm` of `Ed25519` as either a top-level option or in a
-   * `verificationMethod` and set the `enableEncryptionKeyDerivation` option to `true`.
    *
    * Notes:
    * - If no `options` are given, by default a new Ed25519 key will be generated.
@@ -518,7 +477,6 @@ export class DidKey extends DidMethod {
   }): Promise<DidDocument> {
     const {
       defaultContext = 'https://www.w3.org/ns/did/v1',
-      enableEncryptionKeyDerivation = false,
       enableExperimentalPublicKeyTypes = false,
       publicKeyFormat = 'JsonWebKey2020'
     } = options;
@@ -592,51 +550,7 @@ export class DidKey extends DidMethod {
     didDocument.capabilityDelegation = [signatureVerificationMethod.id];
 
     /**
-     * 8. If options.enableEncryptionKeyDerivation is set to true:
-     * Add the encryptionVerificationMethod value to the verificationMethod
-     * array. Initialize the keyAgreement property in document to an array
-     * where the first item is the value of the id property in
-     * encryptionVerificationMethod.
-     */
-    if (enableEncryptionKeyDerivation === true) {
-      /**
-       * Although not covered by the did:key method specification, a sensible
-       * default will be taken to use the 'X25519KeyAgreementKey2020'
-       * verification method type if the given publicKeyFormat is
-       * 'Ed25519VerificationKey2020' and 'JsonWebKey2020' otherwise.
-       */
-      const encryptionPublicKeyFormat =
-        (publicKeyFormat === 'Ed25519VerificationKey2020')
-          ? 'X25519KeyAgreementKey2020'
-          : 'JsonWebKey2020';
-
-      /**
-       * 8.1 Initialize the encryptionVerificationMethod to the result of
-       * passing identifier, multibaseValue, and options to an
-     * {@link https://w3c-ccg.github.io/did-method-key/#encryption-method-creation-algorithm | Encryption Method Creation Algorithm}.
-       */
-      const encryptionVerificationMethod = await this.createEncryptionMethod({
-        didUri,
-        multibaseValue,
-        options: { enableExperimentalPublicKeyTypes, publicKeyFormat: encryptionPublicKeyFormat }
-      });
-
-      /**
-       * 8.2 Add the encryptionVerificationMethod value to the
-       * verificationMethod array.
-       */
-      didDocument.verificationMethod.push(encryptionVerificationMethod);
-
-      /**
-       * 8.3. Initialize the keyAgreement property in document to an array
-       * where the first item is the value of the id property in
-       * encryptionVerificationMethod.
-       */
-      didDocument.keyAgreement = [encryptionVerificationMethod.id];
-    }
-
-    /**
-     * 9. Initialize the @context property in document to the result of passing document and options to the Context
+     * 8. Initialize the @context property in document to the result of passing document and options to the Context
      * Creation algorithm.
      */
     // Set contextArray to an array that is initialized to options.defaultContext.
@@ -657,128 +571,6 @@ export class DidKey extends DidMethod {
      * 10. Return document.
      */
     return didDocument;
-  }
-
-  /**
-   * Decoding a multibase-encoded multicodec value into a verification method
-   * that is suitable for verifying that encrypted information will be
-   * received by the intended recipient.
-   */
-  private static async createEncryptionMethod({ didUri, multibaseValue, options }: {
-    didUri: string;
-    multibaseValue: string;
-    options: Required<Pick<DidKeyCreateOptions<CryptoApi>, 'enableExperimentalPublicKeyTypes' | 'publicKeyFormat'>>;
-  }): Promise<DidVerificationMethod> {
-    const { enableExperimentalPublicKeyTypes, publicKeyFormat } = options;
-
-    /**
-     * 1. Initialize verificationMethod to an empty object.
-     */
-    const verificationMethod: DidVerificationMethod = { id: '', type: '', controller: '' };
-
-    /**
-     * 2. Set multicodecValue and raw publicKeyBytes to the result of passing multibaseValue and
-     * options to a Derive Encryption Key algorithm.
-     */
-    const {
-      keyBytes: publicKeyBytes,
-      multicodecCode: multicodecValue,
-    } = await DidKey.deriveEncryptionKey({ multibaseValue });
-
-    /**
-     * 3. Ensure the proper key length of raw publicKeyBytes based on the multicodecValue table
-     * provided below:
-     *
-     * Multicodec hexadecimal value: 0xec
-     *
-     * If the byte length of raw publicKeyBytes does not match the expected public key length for
-     * the associated multicodecValue, an invalidPublicKeyLength error MUST be raised.
-     */
-    const actualLength = publicKeyBytes.byteLength;
-    const expectedLength = DidKeyUtils.MULTICODEC_PUBLIC_KEY_LENGTH[multicodecValue];
-    if (actualLength !== expectedLength) {
-      throw new DidError(DidErrorCode.InvalidPublicKeyLength, `Expected ${actualLength} bytes. Actual: ${expectedLength}`);
-    }
-
-    /**
-     * 4. Create the multibaseValue by concatenating the letter 'z' and the
-     * base58-btc encoding of the concatenation of the multicodecValue and
-     * the raw publicKeyBytes.
-     */
-    const kemMultibaseValue = keyBytesToMultibaseId({
-      keyBytes       : publicKeyBytes,
-      multicodecCode : multicodecValue
-    });
-
-    /**
-     * 5. Set the verificationMethod.id value by concatenating identifier,
-     * a hash character (#), and the multibaseValue. If verificationMethod.id
-     * is not a valid DID URL, an invalidDidUrl error MUST be raised.
-     */
-    verificationMethod.id = `${didUri}#${kemMultibaseValue}`;
-    try {
-      new URL(verificationMethod.id);
-    } catch {
-      throw new DidError(DidErrorCode.InvalidDidUrl, 'Verification Method ID is not a valid DID URL.');
-    }
-
-    /**
-     * 6. Set the publicKeyFormat value to the options.publicKeyFormat value.
-     * 7. If publicKeyFormat is not known to the implementation, an
-     * unsupportedPublicKeyType error MUST be raised.
-     */
-    if (!(publicKeyFormat in DidKeyVerificationMethodType)) {
-      throw new DidError(DidErrorCode.UnsupportedPublicKeyType, `Unsupported format: ${publicKeyFormat}`);
-    }
-
-    /**
-     * 8. If options.enableExperimentalPublicKeyTypes is set to false and publicKeyFormat is not
-     * Multikey, JsonWebKey2020, or X25519KeyAgreementKey2020, an invalidPublicKeyType error MUST be
-     * raised.
-     */
-    const StandardPublicKeyTypes = ['Multikey', 'JsonWebKey2020', 'X25519KeyAgreementKey2020'];
-    if (enableExperimentalPublicKeyTypes === false
-      && !(StandardPublicKeyTypes.includes(publicKeyFormat))) {
-      throw new DidError(
-        DidErrorCode.InvalidPublicKeyType,
-        `Specified '${publicKeyFormat}' without setting enableExperimentalPublicKeyTypes to true.`
-      );
-    }
-
-    /**
-     * 9. Set verificationMethod.type to the publicKeyFormat value.
-     */
-    verificationMethod.type = publicKeyFormat;
-
-    /**
-     * 10. Set verificationMethod.controller to the identifier value.
-     */
-    verificationMethod.controller = didUri;
-
-    /**
-     * 11. If publicKeyFormat is Multikey or X25519KeyAgreementKey2020, set the verificationMethod.publicKeyMultibase
-     * value to multibaseValue.
-     *
-     * Note: This implementation does not currently support the Multikey
-     *       format.
-     */
-    if (publicKeyFormat === 'X25519KeyAgreementKey2020') {
-      verificationMethod.publicKeyMultibase = kemMultibaseValue;
-    }
-
-    /**
-     * 12. If publicKeyFormat is JsonWebKey2020, set the verificationMethod.publicKeyJwk value to
-     * the result of passing multicodecValue and rawPublicKeyBytes to a JWK encoding algorithm.
-     */
-    if (publicKeyFormat === 'JsonWebKey2020') {
-      const { crv } = await DidKeyUtils.multicodecToJwk({ code: multicodecValue });
-      verificationMethod.publicKeyJwk = await DidKeyUtils.keyConverter(crv!).bytesToPublicKey({ publicKeyBytes });
-    }
-
-    /**
-     * 13. Return verificationMethod.
-     */
-    return verificationMethod;
   }
 
   /**
@@ -833,11 +625,6 @@ export class DidKey extends DidMethod {
         break;
       case 'ed25519-pub':
         isValid = await Ed25519.validatePublicKey({ publicKeyBytes });
-        break;
-      case 'x25519-pub':
-        // TODO: Validate key once/if X25519.validatePublicKey() is implemented.
-        // isValid = X25519.validatePublicKey({ key: rawPublicKeyBytes})
-        isValid = true;
         break;
     }
     if (!isValid) {
@@ -917,72 +704,6 @@ export class DidKey extends DidMethod {
 
 
   /**
-   * Transform a multibase-encoded multicodec value to public encryption key
-   * components that are suitable for encrypting messages to a receiver. A
-   * mathematical proof elaborating on the safety of performing this operation
-   * is available in:
-   * {@link https://eprint.iacr.org/2021/509.pdf | On using the same key pair for Ed25519 and an X25519 based KEM}
-   */
-  private static async deriveEncryptionKey({ multibaseValue }: {
-    multibaseValue: string
-  }): Promise<RequireOnly<KeyWithMulticodec, 'keyBytes' | 'multicodecCode'>> {
-    /**
-     * 1. Set publicEncryptionKey to an empty object.
-     */
-    let publicEncryptionKey: RequireOnly<KeyWithMulticodec, 'keyBytes' | 'multicodecCode'> = {
-      keyBytes       : new Uint8Array(),
-      multicodecCode : 0
-    };
-
-    /**
-     * 2. Decode multibaseValue using the base58-btc multibase alphabet and
-     * set multicodecValue to the multicodec header for the decoded value.
-     * Implementers are cautioned to ensure that the multicodecValue is set
-     * to the result after performing varint decoding.
-     *
-     * 3. Set the rawPublicKeyBytes to the bytes remaining after the multicodec
-     * header.
-     */
-    const {
-      keyBytes: publicKeyBytes,
-      multicodecCode: multicodecValue
-    } = multibaseIdToKeyBytes({ multibaseKeyId: multibaseValue });
-
-    /**
-     * 4. If the multicodecValue is 0xed (Ed25519 public key), derive a public X25519 encryption key
-     * by using the raw publicKeyBytes and the algorithm defined in
-     * {@link https://datatracker.ietf.org/doc/html/draft-ietf-core-oscore-groupcomm | Group OSCORE - Secure Group Communication for CoAP}
-     * for Curve25519 in Section 2.4.2: ECDH with Montgomery Coordinates and set
-     * generatedPublicEncryptionKeyBytes to the result.
-     */
-    if (multicodecValue === 0xed) {
-      const ed25519PublicKey = await DidKeyUtils.keyConverter('Ed25519').bytesToPublicKey({
-        publicKeyBytes
-      });
-      const generatedPublicEncryptionKey = await Ed25519.convertPublicKeyToX25519({
-        publicKey: ed25519PublicKey
-      });
-      const generatedPublicEncryptionKeyBytes = await DidKeyUtils.keyConverter('Ed25519').publicKeyToBytes({
-        publicKey: generatedPublicEncryptionKey
-      });
-
-      /**
-       * 5. Set multicodecValue to 0xec.
-       * 6. Set raw public keyBytes to generatedPublicEncryptionKeyBytes.
-       */
-      publicEncryptionKey = {
-        keyBytes       : generatedPublicEncryptionKeyBytes,
-        multicodecCode : 0xec
-      };
-    }
-
-    /**
-     * 7. Return publicEncryptionKey.
-     */
-    return publicEncryptionKey;
-  }
-
-  /**
    * Validates the structure and components of a DID URI against the `did:key` method specification.
    *
    * @param parsedDid - An object representing the parsed components of a DID URI, including the
@@ -1037,8 +758,6 @@ export class DidKeyUtils {
     'Ed25519:private'   : 'ed25519-priv',
     'secp256k1:public'  : 'secp256k1-pub',
     'secp256k1:private' : 'secp256k1-priv',
-    'X25519:public'     : 'x25519-pub',
-    'X25519:private'    : 'x25519-priv',
   };
 
   /**
@@ -1048,9 +767,6 @@ export class DidKeyUtils {
   public static MULTICODEC_PUBLIC_KEY_LENGTH: Record<number, number> = {
     // secp256k1-pub - Secp256k1 public key (compressed) - 33 bytes
     0xe7: 33,
-
-    // x25519-pub - Curve25519 public key - 32 bytes
-    0xec: 32,
 
     // ed25519-pub - Ed25519 public key - 32 bytes
     0xed: 32
@@ -1076,8 +792,6 @@ export class DidKeyUtils {
     'ed25519-priv'   : { crv: 'Ed25519', kty: 'OKP', x: '', d: '' },
     'secp256k1-pub'  : { crv: 'secp256k1', kty: 'EC', x: '', y: '' },
     'secp256k1-priv' : { crv: 'secp256k1', kty: 'EC', x: '', y: '', d: '' },
-    'x25519-pub'     : { crv: 'X25519', kty: 'OKP', x: '' },
-    'x25519-priv'    : { crv: 'X25519', kty: 'OKP', x: '', d: '' },
   };
 
   /**
@@ -1152,7 +866,6 @@ export class DidKeyUtils {
       'Ed25519'   : Ed25519,
       'P-256'     : Secp256r1,
       'secp256k1' : Secp256k1,
-      'X25519'    : X25519
     };
 
     const converter = converters[curve];
