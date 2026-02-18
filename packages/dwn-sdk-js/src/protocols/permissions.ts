@@ -138,7 +138,7 @@ export class PermissionsProtocol {
           {
             who : 'recipient',
             of  : 'grant',
-            can : ['read', 'query']
+            can : ['read']
           }
         ],
         revocation: {

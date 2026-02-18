@@ -57,7 +57,7 @@
         {
           "role": "community/admin",
           "can": [
-            "read", "query", "subscribe"
+            "read"
           ]
         }
       ],
@@ -157,15 +157,13 @@
               "create",
               "update",
               "read",
-              "query",
-              "subscribe",
               "co-delete"
             ]
           },
           {
             "role": "community/gatedChannel/participant",
             "can": [
-              "read", "query", "subscribe"
+              "read"
             ]
           }
         ],
@@ -204,9 +202,7 @@
               "can": [
                 "create",
                 "update",
-                "query",
                 "read",
-                "subscribe",
                 "co-delete"
               ]
             }

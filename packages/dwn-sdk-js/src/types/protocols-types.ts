@@ -54,9 +54,7 @@ export enum ProtocolAction {
   Create = 'create',
   Delete = 'delete',
   Prune = 'prune',
-  Query = 'query',
   Read = 'read',
-  Subscribe = 'subscribe',
   Update = 'update'
 }
 
@@ -106,8 +104,7 @@ export type ProtocolActionRule = {
   /**
    * Array of actions that the actor/role can perform.
    * See {ProtocolAction} for possible values.
-   * 'query' and 'subscribe' are supported for `role` rules and for `who` rules with `of`.
-   * When any of 'read', 'query', 'subscribe' is present, all three must be included.
+   * 'read' authorizes read, query, and subscribe access.
    */
   can: string[];
 };

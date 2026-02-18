@@ -56,9 +56,7 @@
                     "create",
                     "delete",
                     "prune",
-                    "query",
                     "read",
-                    "subscribe",
                     "update"
                   ]
                 }
@@ -70,6 +68,7 @@
               "role",
               "can"
             ],
+            "additionalProperties": false,
             "properties": {
               "role": {
                 "$comment": "Must be the protocol path of a role record type",
@@ -82,11 +81,11 @@
                   "type": "string",
                   "enum": [
                     "co-delete",
+                    "co-prune",
                     "co-update",
                     "create",
                     "delete",
-                    "query",
-                    "subscribe",
+                    "prune",
                     "read",
                     "update"
                   ]

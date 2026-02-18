@@ -28,18 +28,14 @@
           "who": "author",
           "of": "thread",
           "can": [
-            "read",
-            "query",
-            "subscribe"
+            "read"
           ]
         },
         {
           "who": "recipient",
           "of": "thread",
           "can": [
-            "read",
-            "query",
-            "subscribe"
+            "read"
           ]
         }
       ],
@@ -56,18 +52,14 @@
             "who": "author",
             "of": "thread/email",
             "can": [
-              "read",
-              "query",
-              "subscribe"
+              "read"
             ]
           },
           {
             "who": "recipient",
             "of": "thread/email",
             "can": [
-              "read",
-              "query",
-              "subscribe"
+              "read"
             ]
           }
         ]

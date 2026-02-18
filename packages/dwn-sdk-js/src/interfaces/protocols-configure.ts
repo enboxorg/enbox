@@ -197,16 +197,6 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
             DwnErrorCode.ProtocolsConfigureRoleDoesNotExistAtGivenPath,
             `Role in action ${JSON.stringify(actionRule)} for rule set ${ruleSetProtocolPath} does not exist.`
           );
-        } else {
-          // it is a role record, we ensure that if any of the `can` actions are 'read' type of actions ('read', 'query', 'subscribe'),
-          // that they are all present.
-          const readActions = [ProtocolAction.Read, ProtocolAction.Query, ProtocolAction.Subscribe];
-          if (readActions.find( action => actionRule.can.includes(action)) && !readActions.every(action => actionRule.can.includes(action))) {
-            throw new DwnError(
-              DwnErrorCode.ProtocolsConfigureRoleReadActionMissing,
-              `Role in action ${JSON.stringify(actionRule)} for rule set ${ruleSetProtocolPath} must contain all read actions (${readActions.join(', ')}).`
-            );
-          }
         }
       }
 
@@ -219,12 +209,11 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       }
 
       // Validate that if `who === recipient` and `of === undefined`, then `can` can only contain `co-update`, `co-delete`, and `co-prune`.
-      // We do not allow `read`, `write`, or `query` in the `can` array because:
-      // - `read` - Recipients are always allowed to `read`.
+      // We do not allow `read` or `write` in the `can` array because:
+      // - `read` - Recipients are always allowed to read.
       // - `write` - Entails ability to create and update.
       //             Since `of` is undefined, it implies the recipient of THIS record,
       //             there is no 'recipient' until this record has been created, so it makes no sense to allow recipient to write this record.
-      // - `query`/`subscribe` - Without `of`, there is no relational context to scope the query.
       if (actionRule.who === ProtocolActor.Recipient && actionRule.of === undefined) {
 
         // throw if `can` contains a value that is not `co-update`, `co-delete`, or `co-prune`
@@ -261,19 +250,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         }
       }
 
-      // For `who`-based rules with `of`, enforce that read-type actions (read, query, subscribe)
-      // are all-or-nothing, same as the role-based rule constraint above.
-      if (actionRule.who !== undefined && actionRule.of !== undefined) {
-        const readActions = [ProtocolAction.Read, ProtocolAction.Query, ProtocolAction.Subscribe];
-        if (readActions.find(action => actionRule.can.includes(action)) && !readActions.every(action => actionRule.can.includes(action))) {
-          throw new DwnError(
-            DwnErrorCode.ProtocolsConfigureWhoReadActionMissing,
-            `Action ${JSON.stringify(actionRule)} for rule set ${ruleSetProtocolPath} must contain all read actions (${readActions.join(', ')}).`
-          );
-        }
-      }
-
-      // validate that if `can` contains `update` or `delete`, it must also contain `create`
+      // validate that if `can` contains `update`, `delete`, or `prune`, it must also contain `create`
+      // because these are author-only actions, and you can only be the author if you can create
       if (actionRule.can !== undefined) {
         if (actionRule.can.includes(ProtocolAction.Update) && !actionRule.can.includes(ProtocolAction.Create)) {
           throw new DwnError(
@@ -286,6 +264,13 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
           throw new DwnError(
             DwnErrorCode.ProtocolsConfigureInvalidActionDeleteWithoutCreate,
             `Action rule ${JSON.stringify(actionRule)} contains 'delete' action but missing the required 'create' action.`
+          );
+        }
+
+        if (actionRule.can.includes(ProtocolAction.Prune) && !actionRule.can.includes(ProtocolAction.Create)) {
+          throw new DwnError(
+            DwnErrorCode.ProtocolsConfigureInvalidActionPruneWithoutCreate,
+            `Action rule ${JSON.stringify(actionRule)} contains 'prune' action but missing the required 'create' action.`
           );
         }
       }
