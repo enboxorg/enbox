@@ -4,20 +4,6 @@ import type { Jwk } from '../src/jose/jwk.js';
 
 import { CryptoUtils } from '../src/utils.js';
 
-// TODO: Remove this polyfill once Node.js v18 is no longer supported by @enbox/crypto.
-if (!globalThis.crypto) {
-  // Node.js v18 and earlier requires a polyfill for `webcrypto` because the Web Crypto API was
-  // still marked as experimental and not available globally. In contrast, Node.js versions 19 and
-  // 20 removed the experimental flag and `webcrypto` is globally available.
-  // As a consequence `webcrypto` must be imported from the Node.js `crypto` until Node.js 18
-  // reaches "End-of-life" status on 2025-04-30.
-  (async (): Promise<void> => {
-    const { webcrypto } = await import('node:crypto');
-    // @ts-ignore
-    globalThis.crypto = webcrypto;
-  })();
-}
-
 describe('Crypto Utils', () => {
   describe('getJoseSignatureAlgorithmFromPublicKey()', () => {
     it('returns the algorithm specified by the alg property regardless of the crv property', () => {

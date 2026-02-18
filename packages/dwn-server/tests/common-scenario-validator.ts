@@ -3,18 +3,11 @@ import type { Persona } from '@enbox/dwn-sdk-js';
 
 import chaiAsPromised from 'chai-as-promised';
 import { v4 as uuidv4 } from 'uuid';
-import { webcrypto } from 'node:crypto';
 import chai, { expect } from 'chai';
 
 import { createJsonRpcRequest } from '../src/lib/json-rpc.js';
 import { getFileAsReadStream } from './utils.js';
 import { Cid, DwnConstant, Jws, ProtocolsConfigure, RecordsRead, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
-
-// node.js 18 and earlier needs globalThis.crypto polyfill
-if (!globalThis.crypto) {
-  // @ts-ignore
-  globalThis.crypto = webcrypto;
-}
 
 chai.use(chaiAsPromised);
 

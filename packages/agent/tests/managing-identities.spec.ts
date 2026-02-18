@@ -3,12 +3,6 @@ import { PlatformAgentTestHarness } from '../src/test-harness.js';
 
 import { Web5UserAgent } from '../src/web5-user-agent.js';
 
-// NOTE: @noble/secp256k1 requires globalThis.crypto polyfill for node.js <=18: https://github.com/paulmillr/noble-secp256k1/blob/main/README.md#usage
-// Remove when we move off of node.js v18 to v20, earliest possible time would be Oct 2023: https://github.com/nodejs/release#release-schedule
-import { webcrypto } from 'node:crypto';
-// @ts-ignore
-if (!globalThis.crypto) {globalThis.crypto = webcrypto;}
-
 describe('Managing Identities', () => {
 
   const agentStoreTypes = ['dwn', 'memory'] as const;

@@ -17,15 +17,8 @@ import { randomBytes } from 'crypto';
 import { readFileSync } from 'fs';
 import { useFakeTimers } from 'sinon';
 import { v4 as uuidv4 } from 'uuid';
-import { webcrypto } from 'node:crypto';
 import { DataStream, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { DidDht, DidKey, UniversalResolver } from '@enbox/dids';
-
-// node.js 18 and earlier,  needs globalThis.crypto polyfill
-if (!globalThis.crypto) {
-  // @ts-ignore
-  globalThis.crypto = webcrypto;
-}
 
 describe('Registration scenarios', function () {
   let dwnMessageEndpoint: string;
