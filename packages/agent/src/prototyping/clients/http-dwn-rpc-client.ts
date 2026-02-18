@@ -3,6 +3,7 @@ import type { DwnRpc, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
 import type { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
 
 import { CryptoUtils } from '@enbox/crypto';
+import { DataStream } from '@enbox/dwn-sdk-js';
 import { DwnServerInfoCacheMemory } from './dwn-server-info-cache-memory.js';
 import { createJsonRpcRequest, parseJson } from './json-rpc.js';
 
@@ -51,7 +52,11 @@ export class HttpDwnRpcClient implements DwnRpc {
         throw new Error(`failed to parse json rpc response. dwn url: ${request.dwnUrl}`);
       }
 
-      dataStream = resp.body;
+      // Materialise the response body into a standards-compliant ReadableStream.
+      // Bun's native Response.body has an incompatible getReader() that returns
+      // undefined, which breaks DWN SDK's DataStream.toBytes().
+      const bodyBytes = new Uint8Array(await resp.arrayBuffer());
+      dataStream = DataStream.fromBytes(bodyBytes);
       dwnRpcResponse = jsonRpcResponse;
     } else {
       // TODO: wonder if i need to try/catch this?
