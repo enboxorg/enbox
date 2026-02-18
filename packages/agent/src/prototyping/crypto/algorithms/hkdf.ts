@@ -1,10 +1,7 @@
-import { CryptoAlgorithm } from '@enbox/crypto';
-
-import type { DeriveKeyBytesParams } from '../types/params-direct.js';
-import type { HkdfParams } from '../primitives/hkdf.js';
 import type { KeyBytesDeriver } from '../types/key-deriver.js';
+import type { DeriveKeyBytesParams, HkdfParams } from '@enbox/crypto';
 
-import { Hkdf } from '../primitives/hkdf.js';
+import { CryptoAlgorithm, Hkdf } from '@enbox/crypto';
 
 /**
  * The `HkdfDeriveKeyBytesParams` interface defines the algorithm-specific parameters that should be

@@ -2,11 +2,11 @@ import { expect } from 'chai';
 
 import { Convert } from '@enbox/common';
 
-import { Hkdf } from '../../../../src/prototyping/crypto/primitives/hkdf.js';
+import { Hkdf } from '../../src/primitives/hkdf.js';
 import { hkdfTestVectors } from '../fixtures/test-vectors/hkdf.js';
 
 describe('Hkdf', () => {
-  describe('deriveKey', () => {
+  describe('deriveKeyBytes', () => {
     it('should derive a key using SHA-256', async () => {
       const baseKeyBytes = new Uint8Array([1, 2, 3]);
       const salt = new Uint8Array([4, 5, 6]);

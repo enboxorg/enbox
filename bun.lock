@@ -24,7 +24,6 @@
         "@enbox/crypto": "workspace:*",
         "@enbox/dids": "workspace:*",
         "@enbox/dwn-sdk-js": "workspace:*",
-        "@noble/ciphers": "0.5.3",
         "@scure/bip39": "1.2.2",
         "abstract-level": "1.0.4",
         "ed25519-keygen": "0.4.11",

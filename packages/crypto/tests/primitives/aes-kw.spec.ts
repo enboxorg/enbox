@@ -1,10 +1,10 @@
-import type { Jwk } from '@enbox/crypto';
+import type { Jwk } from '../../src/jose/jwk.js';
 
 import { Convert } from '@enbox/common';
 import { expect } from 'chai';
 
-import { AesKw } from '../../../../src/prototyping/crypto/primitives/aes-kw.js';
-import { isChrome } from '../../../utils/runtimes.js';
+import { AesKw } from '../../src/primitives/aes-kw.js';
+import { isChrome } from '../utils/runtimes.js';
 
 describe('AesKw', () => {
   describe('bytesToPrivateKey()', () => {

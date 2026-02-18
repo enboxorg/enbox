@@ -1,12 +1,10 @@
-// ! TODO : Make sure I remove `@noble/ciphers` from the Agent package.json once this is moved to the `@enbox/crypto` package.
-import { getWebcryptoSubtle } from '@noble/ciphers/webcrypto';
-
-import type { Jwk } from '@enbox/crypto';
-
+import type { Jwk } from '../jose/jwk.js';
 import type { UnwrapKeyParams, WrapKeyParams } from '../types/params-direct.js';
 
+import { getWebcryptoSubtle } from '@noble/ciphers/webcrypto';
+
 import { Convert } from '@enbox/common';
-import { computeJwkThumbprint, isOctPrivateJwk } from '@enbox/crypto';
+import { computeJwkThumbprint, isOctPrivateJwk } from '../jose/jwk.js';
 import { CryptoError, CryptoErrorCode } from '../crypto-error.js';
 
 /**

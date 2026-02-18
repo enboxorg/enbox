@@ -1,10 +1,7 @@
-import { CryptoAlgorithm } from '@enbox/crypto';
-
-import type { DeriveKeyBytesParams } from '../types/params-direct.js';
 import type { KeyBytesDeriver } from '../types/key-deriver.js';
-import type { Pbkdf2Params } from '../primitives/pbkdf2.js';
+import type { DeriveKeyBytesParams, Pbkdf2Params } from '@enbox/crypto';
 
-import { Pbkdf2 } from '../primitives/pbkdf2.js';
+import { CryptoAlgorithm, Pbkdf2 } from '@enbox/crypto';
 
 /**
  * The `Pbkdf2DeriveKeyBytesParams` interface defines the algorithm-specific parameters that

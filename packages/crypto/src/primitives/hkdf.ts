@@ -1,11 +1,11 @@
-// ! TODO : Make sure I remove `@noble/ciphers` from the Agent package.json once this is moved to the `@enbox/crypto` package.
+import type { DeriveKeyBytesParams } from '../types/params-direct.js';
+
 import { getWebcryptoSubtle } from '@noble/ciphers/webcrypto';
 
 import { Convert } from '@enbox/common';
-import type { DeriveKeyBytesParams } from '../types/params-direct.js';
 
 /**
- * The object that should be passed into `Hkdf.deriveKey()`, when using the HKDF algorithm.
+ * The object that should be passed into `Hkdf.deriveKeyBytes()`, when using the HKDF algorithm.
  */
 export type HkdfParams = {
   /**
@@ -103,12 +103,12 @@ export class Hkdf {
     const webCryptoKey = await webCrypto.importKey('raw', baseKeyBytes, { name: 'HKDF' }, false, ['deriveBits']);
 
     // Convert the salt and info to Uint8Array if they are provided as strings.
-    salt = typeof salt === 'string' ? Convert.string(salt).toUint8Array() : salt;
-    info = typeof info === 'string' ? Convert.string(info).toUint8Array() : info;
+    const saltBytes = typeof salt === 'string' ? Convert.string(salt).toUint8Array() : salt;
+    const infoBytes = typeof info === 'string' ? Convert.string(info).toUint8Array() : info;
 
     // Derive the bytes using the Web Crypto API.
-    const derivedKeyBuffer = await crypto.subtle.deriveBits(
-      { name: 'HKDF', hash, salt, info },
+    const derivedKeyBuffer = await webCrypto.deriveBits(
+      { name: 'HKDF', hash, salt: saltBytes, info: infoBytes },
       webCryptoKey,
       length
     );

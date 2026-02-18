@@ -50,4 +50,63 @@ describe('Pbkdf2', () => {
       await expect(Pbkdf2.deriveKey(options)).to.eventually.be.rejectedWith(Error);
     });
   });
+
+  describe('deriveKeyBytes', () => {
+    it('successfully derives key bytes', async () => {
+      const derivedKeyBytes = await Pbkdf2.deriveKeyBytes({
+        hash         : 'SHA-256',
+        baseKeyBytes : password,
+        salt,
+        iterations,
+        length
+      });
+
+      expect(derivedKeyBytes).to.be.instanceOf(Uint8Array);
+      expect(derivedKeyBytes.byteLength).to.equal(length / 8);
+    });
+
+    const hashFunctions: ('SHA-256' | 'SHA-384' | 'SHA-512')[] = ['SHA-256', 'SHA-384', 'SHA-512'];
+    hashFunctions.forEach((hash: 'SHA-256' | 'SHA-384' | 'SHA-512') => {
+      it(`handles ${hash} hash function`, async () => {
+        const derivedKeyBytes = await Pbkdf2.deriveKeyBytes({
+          hash, baseKeyBytes: password, salt, iterations, length
+        });
+        expect(derivedKeyBytes).to.be.instanceOf(Uint8Array);
+        expect(derivedKeyBytes.byteLength).to.equal(length / 8);
+      });
+    });
+
+    it('produces the same output as deriveKey for equivalent inputs', async () => {
+      const derivedKey = await Pbkdf2.deriveKey({
+        hash       : 'SHA-256',
+        password,
+        salt,
+        iterations : 1000,
+        length
+      });
+
+      const derivedKeyBytes = await Pbkdf2.deriveKeyBytes({
+        hash         : 'SHA-256',
+        baseKeyBytes : password,
+        salt,
+        iterations   : 1000,
+        length
+      });
+
+      expect(derivedKeyBytes).to.deep.equal(derivedKey);
+    });
+
+    it('throws an error when iterations count is not a positive number', async () => {
+      // Every browser throws a different error message so a specific message cannot be checked.
+      await expect(
+        Pbkdf2.deriveKeyBytes({
+          hash         : 'SHA-256',
+          baseKeyBytes : password,
+          salt,
+          iterations   : -1,
+          length
+        })
+      ).to.eventually.be.rejectedWith(Error);
+    });
+  });
 });
