@@ -90,6 +90,7 @@ export class ResumableTaskManager {
 
   /**
    * Repeatedly retry the given tasks until all are completed successfully.
+   * Tasks are processed sequentially to avoid concurrent database write contention (e.g. SQLite's single-writer lock).
    */
   private async retryTasksUntilCompletion(resumableTasks: ManagedResumableTask[]): Promise<void> {
 
@@ -98,17 +99,15 @@ export class ResumableTaskManager {
       const managedTasksCopy = managedTasks;
       managedTasks = [];
 
-      const allTaskPromises = managedTasksCopy.map(async (managedTask) => {
+      for (const managedTask of managedTasksCopy) {
         try {
           await this.runWithAutomaticTimeoutExtension(managedTask);
         } catch (error) {
           console.error('Error while running resumable task:', error);
-          console.error('Resumable task:', resumableTasks);
+          console.error('Resumable task:', managedTask);
           managedTasks.push(managedTask);
         }
-      });
-
-      await Promise.all(allTaskPromises);
+      }
     }
   }
 }
