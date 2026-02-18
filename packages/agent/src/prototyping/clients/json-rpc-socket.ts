@@ -1,7 +1,6 @@
 import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from './json-rpc.js';
 
 import { CryptoUtils } from '@enbox/crypto';
-import IsomorphicWebSocket from 'isomorphic-ws';
 import { createJsonRpcSubscriptionRequest, parseJson } from './json-rpc.js';
 
 // These were arbitrarily chosen, but can be modified via connect options
@@ -28,12 +27,12 @@ export interface JsonRpcSocketOptions {
 export class JsonRpcSocket {
   private messageHandlers: Map<JsonRpcId, (event: { data: any }) => void> = new Map();
 
-  private constructor(private socket: IsomorphicWebSocket, private responseTimeout: number) {}
+  private constructor(private socket: WebSocket, private responseTimeout: number) {}
 
   static async connect(url: string, options: JsonRpcSocketOptions = {}): Promise<JsonRpcSocket> {
     const { connectTimeout = CONNECT_TIMEOUT, responseTimeout = RESPONSE_TIMEOUT, onclose, onerror } = options;
 
-    const socket = new IsomorphicWebSocket(url);
+    const socket = new WebSocket(url);
 
     if (!onclose) {
       socket.onclose = ():void => {
