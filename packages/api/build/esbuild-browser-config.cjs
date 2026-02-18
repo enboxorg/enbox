@@ -2,7 +2,7 @@
 const polyfillProviderPlugin = require('node-stdlib-browser/helpers/esbuild/plugin');
 const stdLibBrowser = require('node-stdlib-browser');
 
-const requiredPolyfills = new Set(['crypto', 'node:crypto', 'stream']);
+const requiredPolyfills = new Set(['crypto', 'node:crypto', 'events', 'stream']);
 
 // populate object containing lib -> polyfill path
 const polyfills = {};
