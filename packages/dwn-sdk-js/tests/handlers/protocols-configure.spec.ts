@@ -592,6 +592,179 @@ export function testProtocolsConfigureHandler(): void {
         expect(withAllReadActionsResponse.status.code).to.equal(202);
       });
 
+      it('should reject ProtocolsConfigure with action rule `of` pointing to a sibling type (not an ancestor)', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // `bar` and `baz` are siblings under `foo`, so `baz` action rule cannot reference `of: 'foo/bar'`
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://example.com/sibling-of-test',
+          published : true,
+          types     : {
+            foo : {},
+            bar : {},
+            baz : {},
+          },
+          structure: {
+            foo: {
+              bar : {},
+              baz : {
+                $actions: [
+                  {
+                    who : 'author',
+                    of  : 'foo/bar', // sibling, not ancestor
+                    can : [ProtocolAction.Create]
+                  }
+                ]
+              }
+            }
+          }
+        };
+
+        // manually craft the invalid ProtocolsConfigure message because our library will not let you create an invalid definition
+        const descriptor: ProtocolsConfigureDescriptor = {
+          interface        : DwnInterfaceName.Protocols,
+          method           : DwnMethodName.Configure,
+          messageTimestamp : Time.getCurrentTimestamp(),
+          definition       : protocolDefinition
+        };
+
+        const authorization = await Message.createAuthorization({
+          descriptor,
+          signer: Jws.createSigner(alice)
+        });
+        const protocolsConfigureMessage = { descriptor, authorization };
+
+        const reply = await dwn.processMessage(alice.did, protocolsConfigureMessage);
+        expect(reply.status.code).to.equal(400);
+        expect(reply.status.detail).to.contain(DwnErrorCode.ProtocolsConfigureInvalidActionOfNotAnAncestor);
+      });
+
+      it('should reject ProtocolsConfigure with action rule `of` pointing to an unrelated type', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // `comment` is a top-level type unrelated to the nested `thread/reply` path
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://example.com/unrelated-of-test',
+          published : true,
+          types     : {
+            thread  : {},
+            reply   : {},
+            comment : {},
+          },
+          structure: {
+            thread: {
+              reply: {
+                $actions: [
+                  {
+                    who : 'author',
+                    of  : 'comment', // unrelated type, not an ancestor of 'thread/reply'
+                    can : [ProtocolAction.Create]
+                  }
+                ]
+              }
+            },
+            comment: {}
+          }
+        };
+
+        const descriptor: ProtocolsConfigureDescriptor = {
+          interface        : DwnInterfaceName.Protocols,
+          method           : DwnMethodName.Configure,
+          messageTimestamp : Time.getCurrentTimestamp(),
+          definition       : protocolDefinition
+        };
+
+        const authorization = await Message.createAuthorization({
+          descriptor,
+          signer: Jws.createSigner(alice)
+        });
+        const protocolsConfigureMessage = { descriptor, authorization };
+
+        const reply = await dwn.processMessage(alice.did, protocolsConfigureMessage);
+        expect(reply.status.code).to.equal(400);
+        expect(reply.status.detail).to.contain(DwnErrorCode.ProtocolsConfigureInvalidActionOfNotAnAncestor);
+      });
+
+      it('should accept ProtocolsConfigure with action rule `of` pointing to itself (same protocol path)', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // `of` pointing to the same protocol path is valid: "the author of this record can update it"
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://example.com/self-of-test',
+          published : true,
+          types     : {
+            foo : {},
+            bar : {},
+          },
+          structure: {
+            foo: {
+              bar: {
+                $actions: [
+                  {
+                    who : 'author',
+                    of  : 'foo/bar', // same as current protocol path — valid self-reference
+                    can : [ProtocolAction.Create]
+                  }
+                ]
+              }
+            }
+          }
+        };
+
+        const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author: alice,
+          protocolDefinition,
+        });
+
+        const reply = await dwn.processMessage(alice.did, protocolsConfigure.message);
+        expect(reply.status.code).to.equal(202);
+      });
+
+      it('should accept ProtocolsConfigure with action rule `of` pointing to a valid ancestor', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // `of: 'thread'` is a valid ancestor of `thread/reply/reaction`
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://example.com/valid-ancestor-of-test',
+          published : true,
+          types     : {
+            thread   : {},
+            reply    : {},
+            reaction : {},
+          },
+          structure: {
+            thread: {
+              reply: {
+                $actions: [
+                  {
+                    who : 'author',
+                    of  : 'thread', // valid ancestor
+                    can : [ProtocolAction.Create]
+                  }
+                ],
+                reaction: {
+                  $actions: [
+                    {
+                      who : 'author',
+                      of  : 'thread/reply', // valid immediate parent ancestor
+                      can : [ProtocolAction.Create]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        };
+
+        const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author: alice,
+          protocolDefinition,
+        });
+
+        const reply = await dwn.processMessage(alice.did, protocolsConfigure.message);
+        expect(reply.status.code).to.equal(202);
+      });
+
       describe('Grant authorization', () => {
         it('allows an external party to ProtocolsConfigure only if they have a valid grant', async () => {
           // scenario:
