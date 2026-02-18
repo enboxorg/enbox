@@ -2,15 +2,12 @@ import type { DidDocument } from '../../src/types/did-core.js';
 import type { Jwk } from '@enbox/crypto';
 import type { PortableDid } from '../../src/types/portable-did.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import { computeJwkThumbprint } from '@enbox/crypto';
 import { vectors as CreateTestVector } from '../fixtures/test-vectors/did-ion/create.js';
 import { DidIon } from '../../src/methods/did-ion.js';
 import { vectors as ResolveTestVector } from '../fixtures/test-vectors/did-ion/resolve.js';
-import sinon from 'sinon';
-import { expect, use } from 'chai';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
-use(chaiAsPromised);
 // Helper function to create a mocked fetch response that fails and returns a 404 Not Found.
 const fetchNotFoundResponse = (): { status: number; statusText: string; ok: boolean } => ({
   status     : 404,
@@ -33,21 +30,21 @@ const ION_OPERATIONS_ENDPOINT = 'https://ion.tbd.engineering/operations';
 const ION_RESOLUTION_ENDPOINT = 'https://ion.tbd.engineering/identifiers';
 
 describe('DidIon', () => {
-  let fetchStub: sinon.SinonStub;
+  let fetchStub: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     // Setup stub so that a mocked response is returned rather than calling over the network.
-    fetchStub = sinon.stub(globalThis as any, 'fetch');
+    fetchStub = spyOn(globalThis as any, 'fetch');
   });
 
   afterEach(() => {
-    fetchStub.restore();
-    sinon.restore();
+    fetchStub.mockRestore();
+    mock.restore();
   });
 
   describe('create', () => {
     it('creates a DID with one verification method, by default', async () => {
-      fetchStub.callsFake((url: string) => {
+      fetchStub.mockImplementation((url: string) => {
         if (url.startsWith(ION_RESOLUTION_ENDPOINT)) {
           return Promise.resolve(fetchOkResponse(CreateTestVector.oneMethodNoServices.didResolutionResult));
         } else if (url.startsWith(ION_OPERATIONS_ENDPOINT)) {
@@ -57,21 +54,21 @@ describe('DidIon', () => {
 
       const did = await DidIon.create();
 
-      expect(did).to.have.property('document');
-      expect(did).to.have.property('getSigner');
-      expect(did).to.have.property('keyManager');
-      expect(did).to.have.property('metadata');
-      expect(did).to.have.property('uri');
+      expect(did).toHaveProperty('document');
+      expect(did).toHaveProperty('getSigner');
+      expect(did).toHaveProperty('keyManager');
+      expect(did).toHaveProperty('metadata');
+      expect(did).toHaveProperty('uri');
 
-      expect(fetchStub.calledTwice).to.be.true;
+      expect(fetchStub).toHaveBeenCalledTimes(2);
 
-      expect(did.document).to.have.property('verificationMethod');
-      expect(did.document.verificationMethod).to.have.length(1);
-      expect(did.metadata).to.have.property('canonicalId');
+      expect(did.document).toHaveProperty('verificationMethod');
+      expect(did.document.verificationMethod).toHaveLength(1);
+      expect(did.metadata).toHaveProperty('canonicalId');
     });
 
     it('handles creating DIDs with multiple verification methods', async () => {
-      fetchStub.callsFake((url: string) => {
+      fetchStub.mockImplementation((url: string) => {
         if (url.startsWith(ION_RESOLUTION_ENDPOINT)) {
           return Promise.resolve(fetchOkResponse(CreateTestVector.twoMethodsNoServices.didResolutionResult));
         } else if (url.startsWith(ION_OPERATIONS_ENDPOINT)) {
@@ -94,13 +91,13 @@ describe('DidIon', () => {
         }
       });
 
-      expect(did.document.verificationMethod).to.have.length(2);
-      expect(did.document.verificationMethod?.[0].publicKeyJwk).to.have.property('crv', 'Ed25519');
-      expect(did.document.verificationMethod?.[1].publicKeyJwk).to.have.property('crv', 'secp256k1');
+      expect(did.document.verificationMethod).toHaveLength(2);
+      expect(did.document.verificationMethod?.[0].publicKeyJwk).toHaveProperty('crv', 'Ed25519');
+      expect(did.document.verificationMethod?.[1].publicKeyJwk).toHaveProperty('crv', 'secp256k1');
     });
 
     it('uses the JWK thumbprint as the ID for verification methods, by default', async () => {
-      fetchStub.callsFake((url: string) => {
+      fetchStub.mockImplementation((url: string) => {
         if (url.startsWith(ION_RESOLUTION_ENDPOINT)) {
           return Promise.resolve(fetchOkResponse(CreateTestVector.oneMethodNoServices.didResolutionResult));
         } else if (url.startsWith(ION_OPERATIONS_ENDPOINT)) {
@@ -111,11 +108,11 @@ describe('DidIon', () => {
       const did = await DidIon.create();
 
       const expectedKeyId = await computeJwkThumbprint({ jwk: did.document.verificationMethod![0]!.publicKeyJwk! });
-      expect(did.document.verificationMethod?.[0].id).to.include(expectedKeyId);
+      expect(did.document.verificationMethod?.[0].id).toContain(expectedKeyId);
     });
 
     it('allows a custom ID to be specified for additional verification methods', async () => {
-      fetchStub.callsFake((url: string) => {
+      fetchStub.mockImplementation((url: string) => {
         if (url.startsWith(ION_RESOLUTION_ENDPOINT)) {
           return Promise.resolve(fetchOkResponse(CreateTestVector.oneMethodCustomId.didResolutionResult));
         } else if (url.startsWith(ION_OPERATIONS_ENDPOINT)) {
@@ -135,11 +132,11 @@ describe('DidIon', () => {
         }
       });
 
-      expect(did.document.verificationMethod?.[0]).to.have.property('id', '#1');
+      expect(did.document.verificationMethod?.[0]).toHaveProperty('id', '#1');
     });
 
     it('retains only the ID fragment if verification method IDs contain a prefix before the hash symbol (#)', async () => {
-      fetchStub.callsFake((url: string) => {
+      fetchStub.mockImplementation((url: string) => {
         if (url.startsWith(ION_RESOLUTION_ENDPOINT)) {
           return Promise.resolve(fetchOkResponse(CreateTestVector.oneMethodCustomId.didResolutionResult));
         } else if (url.startsWith(ION_OPERATIONS_ENDPOINT)) {
@@ -159,11 +156,11 @@ describe('DidIon', () => {
         }
       });
 
-      expect(did.document.verificationMethod?.[0]).to.have.property('id', '#1');
+      expect(did.document.verificationMethod?.[0]).toHaveProperty('id', '#1');
     });
 
     it('handles creating DIDs with one service', async () => {
-      fetchStub.callsFake((url: string) => {
+      fetchStub.mockImplementation((url: string) => {
         if (url.startsWith(ION_RESOLUTION_ENDPOINT)) {
           return Promise.resolve(fetchOkResponse(CreateTestVector.oneMethodOneService.didResolutionResult));
         } else if (url.startsWith(ION_OPERATIONS_ENDPOINT)) {
@@ -183,14 +180,14 @@ describe('DidIon', () => {
         }
       });
 
-      expect(did.document.service).to.have.length(1);
-      expect(did.document.service?.[0]).to.have.property('id', `#dwn`);
-      expect(did.document.service?.[0]).to.have.property('type', 'DecentralizedWebNode');
-      expect(did.document.service?.[0]).to.have.property('serviceEndpoint', 'https://example.com/dwn');
+      expect(did.document.service).toHaveLength(1);
+      expect(did.document.service?.[0]).toHaveProperty('id', `#dwn`);
+      expect(did.document.service?.[0]).toHaveProperty('type', 'DecentralizedWebNode');
+      expect(did.document.service?.[0]).toHaveProperty('serviceEndpoint', 'https://example.com/dwn');
     });
 
     it('handles creating DIDs with multiple services', async () => {
-      fetchStub.callsFake((url: string) => {
+      fetchStub.mockImplementation((url: string) => {
         if (url.startsWith(ION_RESOLUTION_ENDPOINT)) {
           return Promise.resolve(fetchOkResponse(CreateTestVector.oneMethodTwoServices.didResolutionResult));
         } else if (url.startsWith(ION_OPERATIONS_ENDPOINT)) {
@@ -215,13 +212,13 @@ describe('DidIon', () => {
         }
       });
 
-      expect(did.document.service).to.have.length(2);
-      expect(did.document.service?.[0]).to.have.property('id', `#dwn`);
-      expect(did.document.service?.[1]).to.have.property('id', `#oid4vci`);
+      expect(did.document.service).toHaveLength(2);
+      expect(did.document.service?.[0]).toHaveProperty('id', `#dwn`);
+      expect(did.document.service?.[1]).toHaveProperty('id', `#oid4vci`);
     });
 
     it('given service IDs are automatically prefixed with hash symbol (#) in DID document', async () => {
-      fetchStub.callsFake((url: string) => {
+      fetchStub.mockImplementation((url: string) => {
         if (url.startsWith(ION_RESOLUTION_ENDPOINT)) {
           return Promise.resolve(fetchOkResponse(CreateTestVector.oneMethodOneService.didResolutionResult));
         } else if (url.startsWith(ION_OPERATIONS_ENDPOINT)) {
@@ -241,12 +238,12 @@ describe('DidIon', () => {
         }
       });
 
-      expect(did.document.service).to.have.length(1);
-      expect(did.document.service?.[0]).to.have.property('id', `#dwn`);
+      expect(did.document.service).toHaveLength(1);
+      expect(did.document.service?.[0]).toHaveProperty('id', `#dwn`);
     });
 
     it('accepts service IDs that start with a hash symbol (#)', async () => {
-      fetchStub.callsFake((url: string) => {
+      fetchStub.mockImplementation((url: string) => {
         if (url.startsWith(ION_RESOLUTION_ENDPOINT)) {
           return Promise.resolve(fetchOkResponse(CreateTestVector.oneMethodOneService.didResolutionResult));
         } else if (url.startsWith(ION_OPERATIONS_ENDPOINT)) {
@@ -266,12 +263,12 @@ describe('DidIon', () => {
         }
       });
 
-      expect(did.document.service).to.have.length(1);
-      expect(did.document.service?.[0]).to.have.property('id', `#dwn`);
+      expect(did.document.service).toHaveLength(1);
+      expect(did.document.service?.[0]).toHaveProperty('id', `#dwn`);
     });
 
     it('retains only the ID fragment if service IDs contain a prefix before the hash symbol (#)', async () => {
-      fetchStub.callsFake((url: string) => {
+      fetchStub.mockImplementation((url: string) => {
         if (url.startsWith(ION_RESOLUTION_ENDPOINT)) {
           return Promise.resolve(fetchOkResponse(CreateTestVector.oneMethodOneService.didResolutionResult));
         } else if (url.startsWith(ION_OPERATIONS_ENDPOINT)) {
@@ -291,12 +288,12 @@ describe('DidIon', () => {
         }
       });
 
-      expect(did.document.service).to.have.length(1);
-      expect(did.document.service?.[0]).to.have.property('id', `#dwn`);
+      expect(did.document.service).toHaveLength(1);
+      expect(did.document.service?.[0]).toHaveProperty('id', `#dwn`);
     });
 
     it('accepts custom properties for services', async () => {
-      fetchStub.callsFake((url: string) => {
+      fetchStub.mockImplementation((url: string) => {
         if (url.startsWith(ION_RESOLUTION_ENDPOINT)) {
           return Promise.resolve(fetchOkResponse(CreateTestVector.dwnService.didResolutionResult));
         } else if (url.startsWith(ION_OPERATIONS_ENDPOINT)) {
@@ -332,20 +329,20 @@ describe('DidIon', () => {
         }
       });
 
-      expect(did.document.verificationMethod).to.have.length(2);
-      expect(did.document.verificationMethod?.[0]).to.have.property('id', `#sig`);
-      expect(did.document.verificationMethod?.[1]).to.have.property('id', `#enc`);
-      expect(did.document.service).to.have.length(1);
-      expect(did.document.service?.[0]).to.have.property('id', `#dwn`);
-      expect(did.document.service?.[0]).to.have.property('type', 'DecentralizedWebNode');
-      expect(did.document.service?.[0]).to.have.property('serviceEndpoint');
-      expect(did.document.service?.[0]?.serviceEndpoint).to.have.property('nodes');
-      expect(did.document.service?.[0]?.serviceEndpoint).to.have.property('encryptionKeys');
-      expect(did.document.service?.[0]?.serviceEndpoint).to.have.property('signingKeys');
+      expect(did.document.verificationMethod).toHaveLength(2);
+      expect(did.document.verificationMethod?.[0]).toHaveProperty('id', `#sig`);
+      expect(did.document.verificationMethod?.[1]).toHaveProperty('id', `#enc`);
+      expect(did.document.service).toHaveLength(1);
+      expect(did.document.service?.[0]).toHaveProperty('id', `#dwn`);
+      expect(did.document.service?.[0]).toHaveProperty('type', 'DecentralizedWebNode');
+      expect(did.document.service?.[0]).toHaveProperty('serviceEndpoint');
+      expect(did.document.service?.[0]?.serviceEndpoint).toHaveProperty('nodes');
+      expect(did.document.service?.[0]?.serviceEndpoint).toHaveProperty('encryptionKeys');
+      expect(did.document.service?.[0]?.serviceEndpoint).toHaveProperty('signingKeys');
     });
 
     it('publishes DIDs, by default', async () => {
-      fetchStub.callsFake((url: string) => {
+      fetchStub.mockImplementation((url: string) => {
         if (url.startsWith(ION_RESOLUTION_ENDPOINT)) {
           return Promise.resolve(fetchOkResponse(CreateTestVector.oneMethodNoServices.didResolutionResult));
         } else if (url.startsWith(ION_OPERATIONS_ENDPOINT)) {
@@ -355,12 +352,12 @@ describe('DidIon', () => {
 
       const did = await DidIon.create();
 
-      expect(fetchStub.calledTwice).to.be.true;
-      expect(did.metadata).to.have.property('published', true);
+      expect(fetchStub).toHaveBeenCalledTimes(2);
+      expect(did.metadata).toHaveProperty('published', true);
     });
 
     it('allows publishing of DIDs to optionally be disabled', async () => {
-      fetchStub.callsFake((url: string) => {
+      fetchStub.mockImplementation((url: string) => {
         if (url.startsWith(ION_RESOLUTION_ENDPOINT)) {
           return Promise.resolve(fetchOkResponse(CreateTestVector.oneMethodNoServices.didResolutionResult));
         }
@@ -368,8 +365,8 @@ describe('DidIon', () => {
 
       const did = await DidIon.create({ options: { publish: false } });
 
-      expect(fetchStub.calledOnce).to.be.true;
-      expect(did.metadata).to.have.property('published', false);
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      expect(did.metadata).toHaveProperty('published', false);
     });
 
     it('throws an error if a verification method algorithm is not supported', async () => {
@@ -391,9 +388,9 @@ describe('DidIon', () => {
           }
         });
 
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.message).to.include('algorithms are not supported');
+        expect(error.message).toContain('algorithms are not supported');
       }
     });
 
@@ -401,25 +398,25 @@ describe('DidIon', () => {
       try {
         // @ts-expect-error - Testing service with missing 'id' property.
         await DidIon.create({ options: { services: [{ type: 'b', serviceEndpoint: 'c' }] } });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.message).to.include('services are missing required properties');
+        expect(error.message).toContain('services are missing required properties');
       }
 
       try {
         // @ts-expect-error - Testing service with missing 'type' property.
         await DidIon.create({ options: { services: [{ id: 'a', serviceEndpoint: 'c' }] } });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.message).to.include('services are missing required properties');
+        expect(error.message).toContain('services are missing required properties');
       }
 
       try {
         // @ts-expect-error - Testing service with missing 'serviceEndpoint' property.
         await DidIon.create({ options: { services: [{ id: 'a', type: 'b' }] } });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.message).to.include('services are missing required properties');
+        expect(error.message).toContain('services are missing required properties');
       }
     });
   });
@@ -441,8 +438,8 @@ describe('DidIon', () => {
         }
       });
 
-      expect(verificationMethod).to.exist;
-      expect(verificationMethod).to.have.property('id', 'did:ion:123#0');
+      expect(verificationMethod).toBeDefined();
+      expect(verificationMethod).toHaveProperty('id', 'did:ion:123#0');
     });
 
     it('throws an error if the DID document is missing verification methods', async function () {
@@ -450,9 +447,9 @@ describe('DidIon', () => {
         await DidIon.getSigningMethod({
           didDocument: { id: 'did:ion:123' }
         });
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('verification method intended for signing could not be determined');
+        expect(error.message).toContain('verification method intended for signing could not be determined');
       }
     });
 
@@ -472,9 +469,9 @@ describe('DidIon', () => {
             authentication: ['did:ion:123#0']
           }
         });
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('verification method intended for signing could not be determined');
+        expect(error.message).toContain('verification method intended for signing could not be determined');
       }
     });
 
@@ -502,9 +499,9 @@ describe('DidIon', () => {
             authentication: ['did:ion:123#0']
           }
         });
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('verification method intended for signing could not be determined');
+        expect(error.message).toContain('verification method intended for signing could not be determined');
       }
     });
 
@@ -523,7 +520,7 @@ describe('DidIon', () => {
         ],
       };
 
-      await expect(DidIon.getSigningMethod({ didDocument })).to.be.rejectedWith('Method not supported: example');
+      await expect(DidIon.getSigningMethod({ didDocument })).rejects.toThrow('Method not supported: example');
     });
   });
 
@@ -605,50 +602,50 @@ describe('DidIon', () => {
     it('returns a previously created DID from the URI and imported key material', async () => {
       const did = await DidIon.import({ portableDid });
 
-      expect(did).to.have.property('document');
-      expect(did).to.have.property('getSigner');
-      expect(did).to.have.property('keyManager');
-      expect(did).to.have.property('metadata');
-      expect(did).to.have.property('uri', portableDid.uri);
+      expect(did).toHaveProperty('document');
+      expect(did).toHaveProperty('getSigner');
+      expect(did).toHaveProperty('keyManager');
+      expect(did).toHaveProperty('metadata');
+      expect(did).toHaveProperty('uri', portableDid.uri);
     });
   });
 
   describe('resolve()', () => {
     it('resolves published short form ION DIDs', async() => {
-      fetchStub.returns(Promise.resolve(fetchOkResponse(ResolveTestVector.publishedDid.didResolutionResult)));
+      fetchStub.mockReturnValue(Promise.resolve(fetchOkResponse(ResolveTestVector.publishedDid.didResolutionResult)));
 
       const resolutionResult = await DidIon.resolve(ResolveTestVector.publishedDid.didUri);
 
-      expect(resolutionResult).to.have.property('didDocument');
-      expect(resolutionResult).to.have.property('didDocumentMetadata');
-      expect(resolutionResult).to.have.property('didResolutionMetadata');
+      expect(resolutionResult).toHaveProperty('didDocument');
+      expect(resolutionResult).toHaveProperty('didDocumentMetadata');
+      expect(resolutionResult).toHaveProperty('didResolutionMetadata');
 
-      expect(resolutionResult.didDocument).to.have.property('id', ResolveTestVector.publishedDid.didUri);
-      expect(resolutionResult.didDocumentMetadata).to.have.property('canonicalId', ResolveTestVector.publishedDid.didUri);
-      expect(resolutionResult.didDocumentMetadata).to.have.property('published', true);
+      expect(resolutionResult.didDocument).toHaveProperty('id', ResolveTestVector.publishedDid.didUri);
+      expect(resolutionResult.didDocumentMetadata).toHaveProperty('canonicalId', ResolveTestVector.publishedDid.didUri);
+      expect(resolutionResult.didDocumentMetadata).toHaveProperty('published', true);
     });
 
     it('returns notFound error with unpublished short form ION DIDs', async() => {
-      fetchStub.returns(Promise.resolve(fetchNotFoundResponse()));
+      fetchStub.mockReturnValue(Promise.resolve(fetchNotFoundResponse()));
 
       const didUri = 'did:ion:EiBCi7lnGtotBsFkbI_lQskQZLk_GPelU0C5-nRB4_nMfA';
       const resolutionResult = await DidIon.resolve(didUri);
 
-      expect(resolutionResult).to.have.property('@context');
-      expect(resolutionResult).to.have.property('didDocument');
-      expect(resolutionResult).to.have.property('didDocumentMetadata');
+      expect(resolutionResult).toHaveProperty('@context');
+      expect(resolutionResult).toHaveProperty('didDocument');
+      expect(resolutionResult).toHaveProperty('didDocumentMetadata');
 
-      expect(resolutionResult.didResolutionMetadata).to.have.property('error', 'notFound');
+      expect(resolutionResult.didResolutionMetadata).toHaveProperty('error', 'notFound');
     });
 
     it(`returns methodNotSupported error if DID method is not 'ion'`, async () => {
       const didUri = 'did:key:z6MkvEvogvhMEv9bXLyDXdqSSvvh5goAMtUruYwCbFpuhDjx';
       const resolutionResult = await DidIon.resolve(didUri);
-      expect(resolutionResult).to.have.property('@context');
-      expect(resolutionResult).to.have.property('didDocument');
-      expect(resolutionResult).to.have.property('didDocumentMetadata');
+      expect(resolutionResult).toHaveProperty('@context');
+      expect(resolutionResult).toHaveProperty('didDocument');
+      expect(resolutionResult).toHaveProperty('didDocumentMetadata');
 
-      expect(resolutionResult.didResolutionMetadata).to.have.property('error', 'methodNotSupported');
+      expect(resolutionResult.didResolutionMetadata).toHaveProperty('error', 'methodNotSupported');
     });
 
     it('accepts custom DID resolver with trailing slash', async () => {
@@ -660,7 +657,7 @@ describe('DidIon', () => {
         },
         'didResolutionMetadata': {}
       };
-      fetchStub.returns(Promise.resolve({
+      fetchStub.mockReturnValue(Promise.resolve({
         ok   : true,
         json : () => Promise.resolve(mockResult)
       }));
@@ -670,10 +667,11 @@ describe('DidIon', () => {
         gatewayUri: 'https://dev.uniresolver.io/1.0/'
       });
 
-      expect(resolutionResult).to.deep.equal(mockResult);
-      expect(fetchStub.calledOnceWith(
+      expect(resolutionResult).toEqual(mockResult);
+      expect(fetchStub).toHaveBeenCalledWith(
         `https://dev.uniresolver.io/1.0/identifiers/${didUri}`
-      )).to.be.true;
+      );
+      expect(fetchStub).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -695,14 +693,14 @@ describe('DidIon', () => {
   //     // Convert the DID to a portable format.
   //     const portableDid = await DidIon.toKeys({ did });
 
-  //     expect(portableDid).to.have.property('verificationMethods');
-  //     expect(portableDid.verificationMethods).to.have.length(1);
-  //     expect(portableDid.verificationMethods[0]).to.have.property('publicKeyJwk');
-  //     expect(portableDid.verificationMethods[0]).to.have.property('privateKeyJwk');
-  //     expect(portableDid.verificationMethods[0]).to.have.property('purposes');
-  //     expect(portableDid.verificationMethods[0]).to.have.property('type');
-  //     expect(portableDid.verificationMethods[0]).to.have.property('id');
-  //     expect(portableDid.verificationMethods[0]).to.have.property('controller');
+  //     expect(portableDid).toHaveProperty('verificationMethods');
+  //     expect(portableDid.verificationMethods).toHaveLength(1);
+  //     expect(portableDid.verificationMethods[0]).toHaveProperty('publicKeyJwk');
+  //     expect(portableDid.verificationMethods[0]).toHaveProperty('privateKeyJwk');
+  //     expect(portableDid.verificationMethods[0]).toHaveProperty('purposes');
+  //     expect(portableDid.verificationMethods[0]).toHaveProperty('type');
+  //     expect(portableDid.verificationMethods[0]).toHaveProperty('id');
+  //     expect(portableDid.verificationMethods[0]).toHaveProperty('controller');
   //   });
   // });
 });

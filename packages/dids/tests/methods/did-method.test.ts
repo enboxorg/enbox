@@ -1,4 +1,4 @@
-import { expect } from 'chai';
+import { describe, expect, it } from 'bun:test';
 
 import { DidMethod } from '../../src/methods/did-method.js';
 
@@ -9,9 +9,9 @@ describe('DidMethod', () => {
 
       try {
         await DidTest.getSigningMethod({ didDocument: { id: 'did:method:example' } });
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('must implement getSigningMethod()');
+        expect(error.message).toContain('must implement getSigningMethod()');
       }
     });
   });
@@ -22,9 +22,9 @@ describe('DidMethod', () => {
 
       try {
         await DidTest.resolve('did:method:example');
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('must implement resolve()');
+        expect(error.message).toContain('must implement resolve()');
       }
     });
   });

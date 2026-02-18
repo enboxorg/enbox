@@ -1,8 +1,7 @@
 import type { UnwrapPromise } from '@enbox/common';
 
 import DidWebResolveTestVector from '../fixtures/web5-spec-vectors/did_web/resolve.json' with { type: 'json' };
-import { expect } from 'chai';
-import sinon from 'sinon';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
 import { DidWeb } from '../../src/methods/did-web.js';
 
@@ -25,34 +24,34 @@ const fetchOkResponse = (response: any): {
 });
 
 describe('DidWeb', () => {
-  after(() => {
-    sinon.restore();
+  afterAll(() => {
+    mock.restore();
   });
 
   describe('resolve()', () => {
     it(`returns a 'notFound' error if the HTTP GET response is not status code 200`, async () => {
       // Setup stub so that a mocked response is returned rather than calling over the network.
-      const fetchStub = sinon.stub(globalThis as any, 'fetch');
-      fetchStub.callsFake(() => Promise.resolve(fetchNotFoundResponse()));
+      const fetchStub = spyOn(globalThis as any, 'fetch');
+      fetchStub.mockImplementation(() => Promise.resolve(fetchNotFoundResponse()));
 
       const resolutionResult = await DidWeb.resolve('did:web:non-existent-domain.com');
 
-      expect(resolutionResult.didResolutionMetadata.error).to.equal('notFound');
+      expect(resolutionResult.didResolutionMetadata.error).toBe('notFound');
 
-      fetchStub.restore();
+      fetchStub.mockRestore();
     });
   });
 
   describe('Web5TestVectorsDidWeb', () => {
-    let fetchStub: sinon.SinonStub;
+    let fetchStub: ReturnType<typeof spyOn>;
 
     beforeEach(() => {
       // Setup stub so that a mocked response is returned rather than calling over the network.
-      fetchStub = sinon.stub(globalThis as any, 'fetch');
+      fetchStub = spyOn(globalThis as any, 'fetch');
     });
 
     afterEach(() => {
-      fetchStub.restore();
+      fetchStub.mockRestore();
     });
 
     it('resolve', async () => {
@@ -71,16 +70,16 @@ describe('DidWeb', () => {
         // Only mock the response if the test vector contains a `mockServer` property.
         if (vector.input.mockServer) {
           const mockResponses = vector.input.mockServer;
-          fetchStub.callsFake((url: string) => {
+          fetchStub.mockImplementation((url: string) => {
             if (url in mockResponses) {return Promise.resolve(fetchOkResponse(mockResponses[url]));}
           });
         }
 
         const didResolutionResult = await DidWeb.resolve(vector.input.didUri);
 
-        expect(didResolutionResult.didDocument).to.deep.equal(vector.output.didDocument);
-        expect(didResolutionResult.didDocumentMetadata).to.deep.equal(vector.output.didDocumentMetadata);
-        expect(didResolutionResult.didResolutionMetadata).to.deep.equal(vector.output.didResolutionMetadata);
+        expect(didResolutionResult.didDocument).toEqual(vector.output.didDocument);
+        expect(didResolutionResult.didDocumentMetadata).toEqual(vector.output.didDocumentMetadata);
+        expect(didResolutionResult.didResolutionMetadata).toEqual(vector.output.didResolutionMetadata);
       }
     });
   });

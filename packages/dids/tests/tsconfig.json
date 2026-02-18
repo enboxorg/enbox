@@ -1,15 +1,12 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "outDir": "compiled",
-    "declarationDir": "compiled/types",
+    "noEmit": true,
     "sourceMap": true,
+    "types": ["bun-types"]
   },
   "include": [
     "../src",
-    ".",
-  ],
-  "exclude": [
-    "./compiled"
+    "."
   ]
 }

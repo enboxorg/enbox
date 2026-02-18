@@ -1,8 +1,7 @@
 import type { CryptoApi } from '@enbox/crypto';
 
-import { expect } from 'chai';
 import { LocalKeyManager } from '@enbox/crypto';
-import sinon from 'sinon';
+import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
 import type { PortableDid } from '../src/types/portable-did.js';
 
@@ -11,8 +10,8 @@ import { BearerDid } from '../src/bearer-did.js';
 describe('BearerDid', () => {
   let portableDid: PortableDid;
 
-  after(() => {
-    sinon.restore();
+  afterAll(() => {
+    mock.restore();
   });
 
   beforeEach(() => {
@@ -76,24 +75,24 @@ describe('BearerDid', () => {
 
       const exportedPortableDid = await did.export();
 
-      expect(exportedPortableDid).to.have.property('uri', portableDid.uri);
-      expect(exportedPortableDid).to.have.property('document');
-      expect(exportedPortableDid).to.have.property('metadata');
-      expect(exportedPortableDid).to.have.property('privateKeys');
+      expect(exportedPortableDid).toHaveProperty('uri', portableDid.uri);
+      expect(exportedPortableDid).toHaveProperty('document');
+      expect(exportedPortableDid).toHaveProperty('metadata');
+      expect(exportedPortableDid).toHaveProperty('privateKeys');
 
-      expect(exportedPortableDid.document.verificationMethod).to.have.length(1);
-      expect(exportedPortableDid.document).to.deep.equal(portableDid.document);
+      expect(exportedPortableDid.document.verificationMethod).toHaveLength(1);
+      expect(exportedPortableDid.document).toEqual(portableDid.document);
     });
 
     it('exported PortableDid does not include private keys  if the key manager does not support exporting keys', async () => {
       // Create a key manager that does not support exporting keys.
       const keyManagerWithoutExport: CryptoApi = {
-        digest       : sinon.stub(),
-        generateKey  : sinon.stub(),
-        getKeyUri    : sinon.stub(),
-        getPublicKey : sinon.stub(),
-        sign         : sinon.stub(),
-        verify       : sinon.stub(),
+        digest       : mock(async () => undefined) as any,
+        generateKey  : mock(async () => undefined) as any,
+        getKeyUri    : mock(async () => undefined) as any,
+        getPublicKey : mock(async () => undefined) as any,
+        sign         : mock(async () => undefined) as any,
+        verify       : mock(async () => undefined) as any,
       };
 
       const did = await BearerDid.import({ portableDid });
@@ -101,7 +100,7 @@ describe('BearerDid', () => {
 
       const exportedPortableDid = await did.export();
 
-      expect(exportedPortableDid).to.not.have.property('privateKeys');
+      expect(exportedPortableDid).not.toHaveProperty('privateKeys');
     });
 
     it('throws an error if the DID document lacks any verification methods', async () => {
@@ -112,9 +111,9 @@ describe('BearerDid', () => {
 
       try {
         await did.export();
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('is missing verification methods');
+        expect(error.message).toContain('is missing verification methods');
       }
     });
 
@@ -126,9 +125,9 @@ describe('BearerDid', () => {
 
       try {
         await did.export();
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('does not contain a public key');
+        expect(error.message).toContain('does not contain a public key');
       }
     });
   });
@@ -139,20 +138,14 @@ describe('BearerDid', () => {
     beforeEach(() => {
       // Mock for CryptoApi
       keyManagerMock = {
-        digest       : sinon.stub(),
-        generateKey  : sinon.stub(),
-        getKeyUri    : sinon.stub(),
-        getPublicKey : sinon.stub(),
-        importKey    : sinon.stub(),
-        sign         : sinon.stub(),
-        verify       : sinon.stub(),
+        digest       : mock(async () => undefined),
+        generateKey  : mock(async () => undefined),
+        getKeyUri    : mock(async () => `urn:jwk${portableDid.document.verificationMethod![0].publicKeyJwk!.kid}`),
+        getPublicKey : mock(async () => portableDid.document.verificationMethod![0].publicKeyJwk!),
+        importKey    : mock(async () => `urn:jwk${portableDid.document.verificationMethod![0].publicKeyJwk!.kid}`),
+        sign         : mock(async () => new Uint8Array(64).fill(0)),
+        verify       : mock(async () => true),
       };
-
-      keyManagerMock.getKeyUri.resolves(`urn:jwk${portableDid.document.verificationMethod![0].publicKeyJwk!.kid}`); // Mock key URI retrieval
-      keyManagerMock.getPublicKey.resolves(portableDid.document.verificationMethod![0].publicKeyJwk!); // Mock public key retrieval
-      keyManagerMock.importKey.resolves(`urn:jwk${portableDid.document.verificationMethod![0].publicKeyJwk!.kid}`); // Mock import key
-      keyManagerMock.sign.resolves(new Uint8Array(64).fill(0)); // Mock signature creation
-      keyManagerMock.verify.resolves(true); // Mock verification result
     });
 
     it('returns a signer with sign and verify functions', async () => {
@@ -162,9 +155,11 @@ describe('BearerDid', () => {
       });
       const signer = await did.getSigner();
 
-      expect(signer).to.be.an('object');
-      expect(signer).to.have.property('sign').that.is.a('function');
-      expect(signer).to.have.property('verify').that.is.a('function');
+      expect(typeof signer).toBe('object');
+      expect(signer).toHaveProperty('sign');
+      expect(typeof signer.sign).toBe('function');
+      expect(signer).toHaveProperty('verify');
+      expect(typeof signer.verify).toBe('function');
     });
 
     it('handles public keys that do not contain an "alg" property', async () => {
@@ -174,11 +169,11 @@ describe('BearerDid', () => {
       });
 
       const { alg, ...publicKeyWithoutAlg } = portableDid.document.verificationMethod![0].publicKeyJwk!;
-      keyManagerMock.getPublicKey.resolves(publicKeyWithoutAlg);
+      keyManagerMock.getPublicKey = mock(async () => publicKeyWithoutAlg);
 
       const signer = await did.getSigner();
 
-      expect(signer).to.be.have.property('algorithm', 'EdDSA');
+      expect(signer).toHaveProperty('algorithm', 'EdDSA');
     });
 
     it('sign function should call keyManager.sign with correct parameters', async () => {
@@ -191,8 +186,8 @@ describe('BearerDid', () => {
 
       await signer.sign({ data: dataToSign });
 
-      expect(keyManagerMock.sign.calledOnce).to.be.true;
-      expect(keyManagerMock.sign.calledWith(sinon.match({ data: dataToSign }))).to.be.true;
+      expect(keyManagerMock.sign).toHaveBeenCalledTimes(1);
+      expect(keyManagerMock.sign).toHaveBeenCalledWith(expect.objectContaining({ data: dataToSign }));
     });
 
     it('verify function should call keyManager.verify with correct parameters', async () => {
@@ -206,14 +201,13 @@ describe('BearerDid', () => {
 
       await signer.verify({ data: dataToVerify, signature });
 
-      expect(keyManagerMock.verify.calledOnce).to.be.true;
-      expect(keyManagerMock.verify.calledWith(sinon.match({ data: dataToVerify, signature }))).to.be.true;
+      expect(keyManagerMock.verify).toHaveBeenCalledTimes(1);
+      expect(keyManagerMock.verify).toHaveBeenCalledWith(expect.objectContaining({ data: dataToVerify, signature }));
     });
 
     it('uses the provided methodId to fetch the public key', async () => {
       const methodId = '0';
       const publicKey = portableDid.document.verificationMethod![0].publicKeyJwk!;
-      keyManagerMock.getKeyUri.withArgs({ key: publicKey }).resolves(publicKey);
 
       const did = await BearerDid.import({
         portableDid,
@@ -221,11 +215,11 @@ describe('BearerDid', () => {
       });
       const signer = await did.getSigner({ methodId });
 
-      expect(signer).to.be.an('object');
-      expect(keyManagerMock.getKeyUri.calledWith({ key: publicKey })).to.be.true;
+      expect(typeof signer).toBe('object');
+      expect(keyManagerMock.getKeyUri).toHaveBeenCalledWith({ key: publicKey });
     });
 
-    it('handles undefined params', async function () {
+    it('handles undefined params', async () => {
       const did = await BearerDid.import({
         portableDid,
         keyManager: keyManagerMock
@@ -237,8 +231,8 @@ describe('BearerDid', () => {
 
       // Note: Since this test does not interact with an actual keyManager, it primarily ensures
       // that the method doesn't break with undefined params.
-      expect(signer).to.have.property('sign');
-      expect(signer).to.have.property('verify');
+      expect(signer).toHaveProperty('sign');
+      expect(signer).toHaveProperty('verify');
     });
 
     it('throws an error if the public key contains an unknown "crv" property', async () => {
@@ -249,14 +243,14 @@ describe('BearerDid', () => {
 
       const { alg, ...publicKeyWithoutAlg } = portableDid.document.verificationMethod![0].publicKeyJwk!;
       publicKeyWithoutAlg.crv = 'unknown-crv';
-      keyManagerMock.getPublicKey.resolves(publicKeyWithoutAlg);
+      keyManagerMock.getPublicKey = mock(async () => publicKeyWithoutAlg);
 
       try {
         await did.getSigner();
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('crv=unknown-crv');
-        expect(error.message).to.include('Unable to determine algorithm');
+        expect(error.message).toContain('crv=unknown-crv');
+        expect(error.message).toContain('Unable to determine algorithm');
       }
     });
 
@@ -270,9 +264,9 @@ describe('BearerDid', () => {
 
       try {
         await did.getSigner({ methodId });
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('method intended for signing could not be determined');
+        expect(error.message).toContain('method intended for signing could not be determined');
       }
     });
 
@@ -286,9 +280,9 @@ describe('BearerDid', () => {
 
       try {
         await did.getSigner();
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('method intended for signing could not be determined');
+        expect(error.message).toContain('method intended for signing could not be determined');
       }
     });
 
@@ -302,9 +296,9 @@ describe('BearerDid', () => {
 
       try {
         await did.getSigner();
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('method intended for signing could not be determined');
+        expect(error.message).toContain('method intended for signing could not be determined');
       }
     });
 
@@ -333,13 +327,13 @@ describe('BearerDid', () => {
 
       try {
         await did.getSigner();
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('method intended for signing could not be determined');
+        expect(error.message).toContain('method intended for signing could not be determined');
       }
     });
 
-    it('throws an error if the key is missing in the key manager', async function () {
+    it('throws an error if the key is missing in the key manager', async () => {
       const did = await BearerDid.import({ portableDid });
 
       // Replace the key manager with one that does not contain the keys for the DID.
@@ -347,9 +341,9 @@ describe('BearerDid', () => {
 
       try {
         await did.getSigner();
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('Key not found');
+        expect(error.message).toContain('Key not found');
       }
     });
   });
@@ -418,9 +412,9 @@ describe('BearerDid', () => {
 
       try {
         await BearerDid.import({ portableDid });
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('verification method is required but 0 were given');
+        expect(error.message).toContain('verification method is required but 0 were given');
       }
     });
 
@@ -430,9 +424,9 @@ describe('BearerDid', () => {
 
       try {
         await BearerDid.import({ portableDid });
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('does not contain a public key');
+        expect(error.message).toContain('does not contain a public key');
       }
     });
 
@@ -442,9 +436,9 @@ describe('BearerDid', () => {
 
       try {
         await BearerDid.import({ portableDid });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.message).to.include('Key not found');
+        expect(error.message).toContain('Key not found');
       }
     });
 
@@ -458,12 +452,12 @@ describe('BearerDid', () => {
       await keyManager.importKey({ key: privateKey });
 
       // spy on the importKey method
-      const importKeySpy = sinon.spy(keyManager, 'importKey');
+      const importKeySpy = spyOn(keyManager, 'importKey');
 
       // attempt to import the BearerDid with the key manager
       const did = await BearerDid.import({ portableDid, keyManager });
-      expect(did.uri).to.equal(portableDid.uri);
-      expect(importKeySpy.calledOnce).to.be.false;
+      expect(did.uri).toBe(portableDid.uri);
+      expect(importKeySpy).not.toHaveBeenCalled();
     });
   });
 });

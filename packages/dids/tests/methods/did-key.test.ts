@@ -2,18 +2,15 @@ import type { DidDocument } from '../../src/types/did-core.js';
 import type { Jwk } from '@enbox/crypto';
 import type { PortableDid } from '../../src/types/portable-did.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import { DidErrorCode } from '../../src/did-error.js';
 import { LocalKeyManager } from '@enbox/crypto';
+import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, DidKeyUtils } from '../../src/methods/did-key.js';
-import { expect, use } from 'chai';
-
-use(chaiAsPromised);
 
 describe('DidKey', () => {
   let keyManager: LocalKeyManager;
 
-  before(() => {
+  beforeAll(() => {
     keyManager = new LocalKeyManager();
   });
 
@@ -21,27 +18,27 @@ describe('DidKey', () => {
     it('creates a did:key DID', async () => {
       const did = await DidKey.create({ keyManager, options: { algorithm: 'Ed25519' } });
 
-      expect(did).to.have.property('document');
-      expect(did).to.have.property('getSigner');
-      expect(did).to.have.property('keyManager');
-      expect(did).to.have.property('metadata');
-      expect(did).to.have.property('uri');
-      expect(did.uri.startsWith('did:key:')).to.be.true;
-      expect(did.document.verificationMethod).to.have.length(1);
+      expect(did).toHaveProperty('document');
+      expect(did).toHaveProperty('getSigner');
+      expect(did).toHaveProperty('keyManager');
+      expect(did).toHaveProperty('metadata');
+      expect(did).toHaveProperty('uri');
+      expect(did.uri.startsWith('did:key:')).toBe(true);
+      expect(did.document.verificationMethod).toHaveLength(1);
     });
 
     it('uses a default key manager and key generation algorithm if neither is given', async () => {
       // Create a DID with no params.
       let did = await DidKey.create();
-      expect(did.uri.startsWith('did:key:')).to.be.true;
+      expect(did.uri.startsWith('did:key:')).toBe(true);
 
       // Create a DID with an empty options object.
       did = await DidKey.create({ options: {} });
-      expect(did.uri.startsWith('did:key:')).to.be.true;
+      expect(did.uri.startsWith('did:key:')).toBe(true);
 
       // Create a DID with an empty options object and undefined key manager.
       did = await DidKey.create({});
-      expect(did.uri.startsWith('did:key:')).to.be.true;
+      expect(did.uri.startsWith('did:key:')).toBe(true);
     });
 
     it('creates a DID using the top-level algorithm property, if given', async () => {
@@ -52,7 +49,7 @@ describe('DidKey', () => {
       const publicKey = await keyManager.getPublicKey({ keyUri });
 
       // Verify the public key is an secp256k1 key.
-      expect(publicKey).to.have.property('crv', 'secp256k1');
+      expect(publicKey).toHaveProperty('crv', 'secp256k1');
     });
 
     it('creates a DID using the verificationMethods algorithm property, if given', async () => {
@@ -63,7 +60,7 @@ describe('DidKey', () => {
       const publicKey = await keyManager.getPublicKey({ keyUri });
 
       // Verify the public key is an secp256k1 key.
-      expect(publicKey).to.have.property('crv', 'secp256k1');
+      expect(publicKey).toHaveProperty('crv', 'secp256k1');
     });
 
     it('creates a DID with an Ed25519 key, by default', async () => {
@@ -74,27 +71,27 @@ describe('DidKey', () => {
       const publicKey = await keyManager.getPublicKey({ keyUri });
 
       // Verify the public key is an Ed25519 key.
-      expect(publicKey).to.have.property('crv', 'Ed25519');
+      expect(publicKey).toHaveProperty('crv', 'Ed25519');
     });
 
     it('creates a DID using any signature algorithm supported by the provided KMS', async () => {
       expect(
         await DidKey.create({ keyManager, options: { algorithm: 'secp256k1' } })
-      ).to.have.property('uri');
+      ).toHaveProperty('uri');
 
       expect(
         await DidKey.create({ keyManager, options: { algorithm: 'Ed25519' } })
-      ).to.have.property('uri');
+      ).toHaveProperty('uri');
     });
 
     it('supports multibase and JWK public key format', async () => {
       let did = await DidKey.create({ keyManager, options: { publicKeyFormat: 'JsonWebKey2020' } });
-      expect(did.document.verificationMethod![0]!.publicKeyJwk).to.exist;
-      expect(did.document.verificationMethod![0]!.publicKeyMultibase).to.not.exist;
+      expect(did.document.verificationMethod![0]!.publicKeyJwk).toBeDefined();
+      expect(did.document.verificationMethod![0]!.publicKeyMultibase).toBeUndefined();
 
       did = await DidKey.create({ keyManager, options: { publicKeyFormat: 'Ed25519VerificationKey2020' } });
-      expect(did.document.verificationMethod![0]!.publicKeyJwk).to.not.exist;
-      expect(did.document.verificationMethod![0]!.publicKeyMultibase).to.exist;
+      expect(did.document.verificationMethod![0]!.publicKeyJwk).toBeUndefined();
+      expect(did.document.verificationMethod![0]!.publicKeyMultibase).toBeDefined();
     });
 
     it('accepts an alternate default context', async () => {
@@ -105,8 +102,8 @@ describe('DidKey', () => {
         }
       });
 
-      expect(did.document['@context']).to.not.include('https://www.w3.org/ns/did/v1');
-      expect(did.document['@context']).to.include('https://www.w3.org/ns/did/v99');
+      expect(did.document['@context']).not.toContain('https://www.w3.org/ns/did/v1');
+      expect(did.document['@context']).toContain('https://www.w3.org/ns/did/v99');
     });
 
     it('throws an error if both algorithm and verificationMethods are provided', async () => {
@@ -118,18 +115,18 @@ describe('DidKey', () => {
             verificationMethods : [{ algorithm: 'Ed25519' }]
           }
         });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.message).to.include('options are mutually exclusive');
+        expect(error.message).toContain('options are mutually exclusive');
       }
     });
 
     it('throws an error if zero verificationMethods are given', async () => {
       try {
         await DidKey.create({ keyManager, options: { verificationMethods: [] } });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.message).to.include('must contain exactly one entry');
+        expect(error.message).toContain('must contain exactly one entry');
       }
     });
 
@@ -139,9 +136,9 @@ describe('DidKey', () => {
           keyManager,
           options: { verificationMethods: [{ algorithm: 'secp256k1' }, { algorithm: 'Ed25519' }] }
         });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.message).to.include('must contain exactly one entry');
+        expect(error.message).toContain('must contain exactly one entry');
       }
     });
   });
@@ -153,16 +150,16 @@ describe('DidKey', () => {
 
       const portableDid = await did.export();
 
-      expect(portableDid.document).to.have.property('verificationMethod');
-      expect(portableDid.document.verificationMethod).to.have.length(1);
-      expect(portableDid.document.verificationMethod![0]).to.have.property('publicKeyJwk');
-      expect(portableDid.document.verificationMethod![0]).to.have.property('type');
-      expect(portableDid.document.verificationMethod![0]).to.have.property('id');
-      expect(portableDid.document.verificationMethod![0]).to.have.property('controller');
-      expect(portableDid.privateKeys).to.have.length(1);
-      expect(portableDid.privateKeys![0]).to.have.property('crv');
-      expect(portableDid.privateKeys![0]).to.have.property('x');
-      expect(portableDid.privateKeys![0]).to.have.property('d');
+      expect(portableDid.document).toHaveProperty('verificationMethod');
+      expect(portableDid.document.verificationMethod).toHaveLength(1);
+      expect(portableDid.document.verificationMethod![0]).toHaveProperty('publicKeyJwk');
+      expect(portableDid.document.verificationMethod![0]).toHaveProperty('type');
+      expect(portableDid.document.verificationMethod![0]).toHaveProperty('id');
+      expect(portableDid.document.verificationMethod![0]).toHaveProperty('controller');
+      expect(portableDid.privateKeys).toHaveLength(1);
+      expect(portableDid.privateKeys![0]).toHaveProperty('crv');
+      expect(portableDid.privateKeys![0]).toHaveProperty('x');
+      expect(portableDid.privateKeys![0]).toHaveProperty('d');
     });
   });
 
@@ -173,10 +170,10 @@ describe('DidKey', () => {
 
       const signingMethod = await DidKey.getSigningMethod({ didDocument: did.document });
 
-      expect(signingMethod).to.have.property('type', 'JsonWebKey2020');
-      expect(signingMethod).to.have.property('id');
-      expect(signingMethod!.id).to.include(did.uri);
-      expect(signingMethod).to.have.property('controller', did.uri);
+      expect(signingMethod).toHaveProperty('type', 'JsonWebKey2020');
+      expect(signingMethod).toHaveProperty('id');
+      expect(signingMethod!.id).toContain(did.uri);
+      expect(signingMethod).toHaveProperty('controller', did.uri);
     });
 
     it('returns the first assertionMethod verification method', async function () {
@@ -195,8 +192,8 @@ describe('DidKey', () => {
         }
       });
 
-      expect(verificationMethod).to.exist;
-      expect(verificationMethod).to.have.property('id', 'did:key:123#0');
+      expect(verificationMethod).toBeDefined();
+      expect(verificationMethod).toHaveProperty('id', 'did:key:123#0');
     });
 
     it('throws an error if the DID document is missing verification methods', async function () {
@@ -204,9 +201,9 @@ describe('DidKey', () => {
         await DidKey.getSigningMethod({
           didDocument: { id: 'did:key:123' }
         });
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('verification method intended for signing could not be determined');
+        expect(error.message).toContain('verification method intended for signing could not be determined');
       }
     });
 
@@ -226,9 +223,9 @@ describe('DidKey', () => {
             authentication: ['did:key:123#0']
           }
         });
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('verification method intended for signing could not be determined');
+        expect(error.message).toContain('verification method intended for signing could not be determined');
       }
     });
 
@@ -256,9 +253,9 @@ describe('DidKey', () => {
             authentication: ['did:key:123#0']
           }
         });
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('verification method intended for signing could not be determined');
+        expect(error.message).toContain('verification method intended for signing could not be determined');
       }
     });
 
@@ -277,7 +274,7 @@ describe('DidKey', () => {
         ],
       };
 
-      await expect(DidKey.getSigningMethod({ didDocument })).to.be.rejectedWith('Method not supported: example');
+      await expect(DidKey.getSigningMethod({ didDocument })).rejects.toThrow('Method not supported: example');
     });
   });
 
@@ -338,12 +335,12 @@ describe('DidKey', () => {
     it('returns a BearerDid from the given DID JWK PortableDid', async () => {
       const did = await DidKey.import({ portableDid });
 
-      expect(did).to.have.property('document');
-      expect(did).to.have.property('getSigner');
-      expect(did).to.have.property('keyManager');
-      expect(did).to.have.property('metadata');
-      expect(did).to.have.property('uri', portableDid.uri);
-      expect(did.document).to.deep.equal(portableDid.document);
+      expect(did).toHaveProperty('document');
+      expect(did).toHaveProperty('getSigner');
+      expect(did).toHaveProperty('keyManager');
+      expect(did).toHaveProperty('metadata');
+      expect(did).toHaveProperty('uri', portableDid.uri);
+      expect(did.document).toEqual(portableDid.document);
     });
 
     it('returns a DID with a getSigner function that can sign and verify data', async () => {
@@ -353,8 +350,8 @@ describe('DidKey', () => {
       const signature = await signer.sign({ data });
       const isValid = await signer.verify({ data, signature });
 
-      expect(signature).to.have.length(64);
-      expect(isValid).to.be.true;
+      expect(signature).toHaveLength(64);
+      expect(isValid).toBe(true);
     });
 
     it('throws an error if the DID method is not supported', async () => {
@@ -363,10 +360,10 @@ describe('DidKey', () => {
 
       try {
         await DidKey.import({ portableDid });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.code).to.equal(DidErrorCode.MethodNotSupported);
-        expect(error.message).to.include('Method not supported');
+        expect(error.code).toBe(DidErrorCode.MethodNotSupported);
+        expect(error.message).toContain('Method not supported');
       }
     });
 
@@ -376,10 +373,10 @@ describe('DidKey', () => {
 
       try {
         await DidKey.import({ portableDid });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.code).to.equal(DidErrorCode.MethodNotSupported);
-        expect(error.message).to.include('Method not supported');
+        expect(error.code).toBe(DidErrorCode.MethodNotSupported);
+        expect(error.message).toContain('Method not supported');
       }
     });
 
@@ -389,10 +386,10 @@ describe('DidKey', () => {
 
       try {
         await DidKey.import({ portableDid });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.code).to.equal(DidErrorCode.InvalidDidDocument);
-        expect(error.message).to.include('DID document must contain exactly one verification method');
+        expect(error.code).toBe(DidErrorCode.InvalidDidDocument);
+        expect(error.message).toContain('DID document must contain exactly one verification method');
       }
     });
   });
@@ -401,19 +398,19 @@ describe('DidKey', () => {
     it('returns an error due to DID parsing failing', async function () {
       const invalidDidUri = 'did:invalidFormat';
       const resolutionResult = await DidKey.resolve(invalidDidUri);
-      expect(resolutionResult.didResolutionMetadata.error).to.equal('invalidDid');
+      expect(resolutionResult.didResolutionMetadata.error).toBe('invalidDid');
     });
 
     it('returns an error due to failing to decode the multibase identifier', async function () {
       const didUriWithInvalidEncoding = 'did:key:invalidEncoding';
       const resolutionResult = await DidKey.resolve(didUriWithInvalidEncoding);
-      expect(resolutionResult.didResolutionMetadata.error).to.equal('invalidDid');
+      expect(resolutionResult.didResolutionMetadata.error).toBe('invalidDid');
     });
 
     it('returns an error because the DID method is not "key"', async function () {
       const didUriWithDifferentMethod = 'did:notkey:eyJmb28iOiJiYXIifQ';
       const resolutionResult = await DidKey.resolve(didUriWithDifferentMethod);
-      expect(resolutionResult.didResolutionMetadata.error).to.equal(DidErrorCode.MethodNotSupported);
+      expect(resolutionResult.didResolutionMetadata.error).toBe(DidErrorCode.MethodNotSupported);
     });
   });
 
@@ -429,7 +426,7 @@ describe('DidKey', () => {
           }
         });
 
-        expect(multicoded).to.deep.equal({ code: 237, name: 'ed25519-pub' });
+        expect(multicoded).toEqual({ code: 237, name: 'ed25519-pub' });
       });
 
       it('supports Ed25519 private keys', async () => {
@@ -443,7 +440,7 @@ describe('DidKey', () => {
           }
         });
 
-        expect(multicoded).to.deep.equal({ code: 4864, name: 'ed25519-priv' });
+        expect(multicoded).toEqual({ code: 4864, name: 'ed25519-priv' });
       });
 
       it('supports secp256k1 public keys', async () => {
@@ -457,7 +454,7 @@ describe('DidKey', () => {
           }
         });
 
-        expect(multicoded).to.deep.equal({ code: 231, name: 'secp256k1-pub' });
+        expect(multicoded).toEqual({ code: 231, name: 'secp256k1-pub' });
       });
 
       it('supports secp256k1 private keys', async () => {
@@ -472,16 +469,16 @@ describe('DidKey', () => {
           }
         });
 
-        expect(multicoded).to.deep.equal({ code: 4865, name: 'secp256k1-priv' });
+        expect(multicoded).toEqual({ code: 4865, name: 'secp256k1-priv' });
       });
 
       it('throws an error if unsupported JOSE has been passed', async () => {
         try {
           // @ts-expect-error because parameters are intentionally omitted to trigger an error.
           await DidKeyUtils.jwkToMulticodec({ jwk: { crv: '123' } });
-          expect.fail('Expected an error to be thrown.');
+          throw new Error('Expected an error to be thrown.');
         } catch (error: any) {
-          expect(error.message).to.include(`Unsupported JWK to Multicodec conversion: '123:public'`);
+          expect(error.message).toContain(`Unsupported JWK to Multicodec conversion: '123:public'`);
         }
       });
     });
@@ -489,7 +486,7 @@ describe('DidKey', () => {
     describe('multicodecToJwk()', () => {
       it('converts ed25519 public key multicodec to JWK', async () => {
         const result = await DidKeyUtils.multicodecToJwk({ name: 'ed25519-pub' });
-        expect(result).to.deep.equal({
+        expect(result).toEqual({
           crv : 'Ed25519',
           kty : 'OKP',
           x   : '' // x value would be populated with actual key material in real use
@@ -498,7 +495,7 @@ describe('DidKey', () => {
 
       it('converts ed25519 private key multicodec to JWK', async () => {
         const result = await DidKeyUtils.multicodecToJwk({ name: 'ed25519-priv' });
-        expect(result).to.deep.equal({
+        expect(result).toEqual({
           crv : 'Ed25519',
           kty : 'OKP',
           x   : '', // x value would be populated with actual key material in real use
@@ -508,7 +505,7 @@ describe('DidKey', () => {
 
       it('converts secp256k1 public key multicodec to JWK', async () => {
         const result = await DidKeyUtils.multicodecToJwk({ name: 'secp256k1-pub' });
-        expect(result).to.deep.equal({
+        expect(result).toEqual({
           crv : 'secp256k1',
           kty : 'EC',
           x   : '', // x value would be populated with actual key material in real use
@@ -518,7 +515,7 @@ describe('DidKey', () => {
 
       it('converts secp256k1 private key multicodec to JWK', async () => {
         const result = await DidKeyUtils.multicodecToJwk({ name: 'secp256k1-priv' });
-        expect(result).to.deep.equal({
+        expect(result).toEqual({
           crv : 'secp256k1',
           kty : 'EC',
           x   : '', // x value would be populated with actual key material in real use
@@ -530,36 +527,36 @@ describe('DidKey', () => {
       it('throws an error when name is undefined and code is not provided', async () => {
         try {
           await DidKeyUtils.multicodecToJwk({});
-          expect.fail('Should have thrown an error for undefined name and code');
+          throw new Error('Should have thrown an error for undefined name and code');
         } catch (e: any) {
-          expect(e.message).to.equal('Either \'name\' or \'code\' must be defined, but not both.');
+          expect(e.message).toBe('Either \'name\' or \'code\' must be defined, but not both.');
         }
       });
 
       it('throws an error when both name and code are provided', async () => {
         try {
           await DidKeyUtils.multicodecToJwk({ name: 'ed25519-pub', code: 0xed });
-          expect.fail('Should have thrown an error for both name and code being defined');
+          throw new Error('Should have thrown an error for both name and code being defined');
         } catch (e: any) {
-          expect(e.message).to.equal('Either \'name\' or \'code\' must be defined, but not both.');
+          expect(e.message).toBe('Either \'name\' or \'code\' must be defined, but not both.');
         }
       });
 
       it('throws an error for unsupported multicodec name', async () => {
         try {
           await DidKeyUtils.multicodecToJwk({ name: 'unsupported-key-type' });
-          expect.fail('Should have thrown an error for unsupported multicodec name');
+          throw new Error('Should have thrown an error for unsupported multicodec name');
         } catch (e: any) {
-          expect(e.message).to.include('Unsupported Multicodec to JWK conversion');
+          expect(e.message).toContain('Unsupported Multicodec to JWK conversion');
         }
       });
 
       it('throws an error for unsupported multicodec code', async () => {
         try {
           await DidKeyUtils.multicodecToJwk({ code: 0x9999 });
-          expect.fail('Should have thrown an error for unsupported multicodec code');
+          throw new Error('Should have thrown an error for unsupported multicodec code');
         } catch (e: any) {
-          expect(e.message).to.include('Unsupported multicodec');
+          expect(e.message).toContain('Unsupported multicodec');
         }
       });
     });
@@ -574,7 +571,7 @@ describe('DidKey', () => {
 
         const multibaseId = await DidKeyUtils.publicKeyToMultibaseId({ publicKey });
 
-        expect(multibaseId).to.equal('z6MksabiHWJ5wQqJGDzxw1EiV5zi6BE6QRENTnHBcKHSqLaQ');
+        expect(multibaseId).toBe('z6MksabiHWJ5wQqJGDzxw1EiV5zi6BE6QRENTnHBcKHSqLaQ');
       });
 
       it('supports secp256k1', async () => {
@@ -587,7 +584,7 @@ describe('DidKey', () => {
 
         const multibaseId = await DidKeyUtils.publicKeyToMultibaseId({ publicKey });
 
-        expect(multibaseId).to.equal('zQ3sheTFzDvGpXAc9AXtwGF3MW1CusKovnwM4pSsUamqKCyLB');
+        expect(multibaseId).toBe('zQ3sheTFzDvGpXAc9AXtwGF3MW1CusKovnwM4pSsUamqKCyLB');
       });
 
       it('throws an error for an unsupported public key type', async () => {
@@ -600,9 +597,9 @@ describe('DidKey', () => {
               alg : 'RS256'
             }
           });
-          expect.fail('Expected an error to be thrown.');
+          throw new Error('Expected an error to be thrown.');
         } catch (error: any) {
-          expect(error.message).to.include('unsupported key type');
+          expect(error.message).toContain('unsupported key type');
         }
       });
 
@@ -615,9 +612,9 @@ describe('DidKey', () => {
               x   : 'mIT3NuXBB_VeJUaV15hwBbMtBrMaTWcN4gnDfkzX-VuUZg3vnpB9RxxaC6vkTgJ2'
             }
           });
-          expect.fail('Expected an error to be thrown.');
+          throw new Error('Expected an error to be thrown.');
         } catch (error: any) {
-          expect(error.message).to.include('unsupported key type');
+          expect(error.message).toContain('unsupported key type');
         }
       });
     });
