@@ -7,15 +7,16 @@ import type {
   JoseHeaderParams,
   Jwk } from '@enbox/crypto';
 
-import { xchacha20poly1305 } from '@noble/ciphers/chacha';
 import { type BearerDid, DidJwk } from '@enbox/dids';
 import { Convert, logger } from '@enbox/common';
 import {
   CryptoUtils,
   Ed25519,
   EdDsaAlgorithm,
+  Hkdf,
   Sha256,
   X25519,
+  XChaCha20Poly1305,
 } from '@enbox/crypto';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
@@ -291,8 +292,7 @@ async function encryptAuthRequest({
   const nonce = CryptoUtils.randomBytes(24);
   const additionalData = Convert.object(protectedHeader).toUint8Array();
   const jwtBytes = Convert.string(jwt).toUint8Array();
-  const chacha = xchacha20poly1305(encryptionKey, nonce, additionalData);
-  const ciphertextAndTag = chacha.encrypt(jwtBytes);
+  const ciphertextAndTag = await XChaCha20Poly1305.encryptRaw({ data: jwtBytes, keyBytes: encryptionKey, nonce, additionalData });
 
   /** The cipher output concatenates the encrypted data and tag
    * so we need to extract the values for use in the JWE. */
@@ -412,7 +412,7 @@ async function verifyJwt({ jwt }: { jwt: string }): Promise<Record<string, unkno
 const getAuthRequest = async (request_uri: string, encryption_key: string): Promise<Web5ConnectAuthRequest> => {
   const authRequest = await fetch(request_uri);
   const jwe = await authRequest.text();
-  const jwt = decryptAuthRequest({
+  const jwt = await decryptAuthRequest({
     jwe,
     encryption_key,
   });
@@ -424,13 +424,13 @@ const getAuthRequest = async (request_uri: string, encryption_key: string): Prom
 };
 
 /** Take the encrypted JWE, decrypt using the code challenge and return a JWT string which will need to be verified */
-function decryptAuthRequest({
+async function decryptAuthRequest({
   jwe,
   encryption_key,
 }: {
   jwe: string;
   encryption_key: string;
-}): string {
+}): Promise<string> {
   const [
     protectedHeaderB64U,
     ,
@@ -453,8 +453,7 @@ function decryptAuthRequest({
     ...ciphertext,
     ...authenticationTag,
   ]);
-  const chacha = xchacha20poly1305(encryptionKeyBytes, nonce, additionalData);
-  const decryptedJwtBytes = chacha.decrypt(ciphertextAndTag);
+  const decryptedJwtBytes = await XChaCha20Poly1305.decryptRaw({ data: ciphertextAndTag, keyBytes: encryptionKeyBytes, nonce, additionalData });
   const jwt = Convert.uint8Array(decryptedJwtBytes).toString();
 
   return jwt;
@@ -512,8 +511,7 @@ async function decryptAuthResponse(
   ]);
 
   // decrypt using the sharedKey
-  const chacha = xchacha20poly1305(sharedKey, nonce, AAD);
-  const decryptedJwtBytes = chacha.decrypt(ciphertextAndTag);
+  const decryptedJwtBytes = await XChaCha20Poly1305.decryptRaw({ data: ciphertextAndTag, keyBytes: sharedKey, nonce, additionalData: AAD });
   const jwt = Convert.uint8Array(decryptedJwtBytes).toString();
 
   return jwt;
@@ -542,24 +540,14 @@ async function deriveSharedKey(
     publicKeyB  : publicX25519,
   });
 
-  const derivedKey = await crypto.subtle.importKey(
-    'raw',
-    sharedKey,
-    { name: 'HKDF' },
-    false,
-    ['deriveBits']
-  );
-  const derivedKeyBits = await crypto.subtle.deriveBits(
-    {
-      name : 'HKDF',
-      hash : 'SHA-256',
-      info : new Uint8Array(),
-      salt : new Uint8Array(),
-    },
-    derivedKey,
-    256
-  );
-  const sharedEncryptionKey = new Uint8Array(derivedKeyBits);
+  const sharedEncryptionKey = await Hkdf.deriveKeyBytes({
+    baseKeyBytes : new Uint8Array(sharedKey),
+    hash         : 'SHA-256',
+    salt         : new Uint8Array(),
+    info         : new Uint8Array(),
+    length       : 256,
+  });
+
   return sharedEncryptionKey;
 }
 
@@ -569,7 +557,7 @@ async function deriveSharedKey(
  * The keyid of the delegate did is used to pass the public key to the client in order
  * for the client to derive the shared ECDH private key.
  */
-function encryptAuthResponse({
+async function encryptAuthResponse({
   jwt,
   encryptionKey,
   delegateDidKeyId,
@@ -579,7 +567,7 @@ function encryptAuthResponse({
   encryptionKey: Uint8Array;
   delegateDidKeyId: string;
   randomPin: string;
-}): string {
+}): Promise<string> {
   const protectedHeader = {
     alg : 'dir',
     cty : 'JWT',
@@ -594,8 +582,7 @@ function encryptAuthResponse({
   }).toUint8Array();
 
   const jwtBytes = Convert.string(jwt).toUint8Array();
-  const chacha = xchacha20poly1305(encryptionKey, nonce, additionalData);
-  const ciphertextAndTag = chacha.encrypt(jwtBytes);
+  const ciphertextAndTag = await XChaCha20Poly1305.encryptRaw({ data: jwtBytes, keyBytes: encryptionKey, nonce, additionalData });
 
   /** The cipher output concatenates the encrypted data and tag
    * so we need to extract the values for use in the JWE. */
@@ -826,7 +813,7 @@ async function submitAuthResponse(
   );
 
   logger.log('Encrypting auth response object...');
-  const encryptedResponse = Oidc.encryptAuthResponse({
+  const encryptedResponse = await Oidc.encryptAuthResponse({
     jwt              : responseObjectJwt!,
     encryptionKey    : sharedKey,
     delegateDidKeyId : delegateBearerDid.document.verificationMethod![0].id,

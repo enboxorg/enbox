@@ -1,11 +1,7 @@
-import type { GenerateKeyParams, Jwk, KeyConverter, KeyGenerator, KeyWrapper } from '@enbox/crypto';
-
-import { CryptoAlgorithm } from '@enbox/crypto';
-
-import type { BytesToPrivateKeyParams, PrivateKeyToBytesParams, UnwrapKeyParams, WrapKeyParams } from '../types/params-direct.js';
-
-import { AesKw } from '../primitives/aes-kw.js';
 import type { RequireOnly } from '@enbox/common';
+import type { BytesToPrivateKeyParams, GenerateKeyParams, Jwk, KeyConverter, KeyGenerator, KeyWrapper, PrivateKeyToBytesParams, UnwrapKeyParams, WrapKeyParams } from '@enbox/crypto';
+
+import { AesKw, CryptoAlgorithm } from '@enbox/crypto';
 
 /**
  * The `AesKwGenerateKeyParams` interface defines the algorithm-specific parameters that should be

@@ -147,7 +147,32 @@ export class XChaCha20Poly1305 {
     // Convert the private key from JWK format to bytes.
     const privateKeyBytes = await XChaCha20Poly1305.privateKeyToBytes({ privateKey: key });
 
-    const xc20p = xchacha20poly1305(privateKeyBytes, nonce, additionalData);
+    return XChaCha20Poly1305.decryptRaw({ data, keyBytes: privateKeyBytes, nonce, additionalData });
+  }
+
+  /**
+   * Decrypts data using XChaCha20-Poly1305 with a raw byte array key.
+   *
+   * @remarks
+   * This is a lower-level method that accepts the key as a raw `Uint8Array` instead of a JWK.
+   * It is useful in scenarios where the key material is already in byte form (e.g., derived
+   * from ECDH + HKDF) and constructing a JWK would add unnecessary overhead.
+   *
+   * @param params - The parameters for the decryption operation.
+   * @param params.data - The encrypted data including the authentication tag.
+   * @param params.keyBytes - The 256-bit (32-byte) decryption key as a Uint8Array.
+   * @param params.nonce - The 24-byte nonce used during encryption.
+   * @param params.additionalData - Optional additional authenticated data.
+   *
+   * @returns A Promise that resolves to the decrypted plaintext as a Uint8Array.
+   */
+  public static async decryptRaw({ data, keyBytes, nonce, additionalData }: {
+    additionalData?: Uint8Array;
+    data: Uint8Array;
+    keyBytes: Uint8Array;
+    nonce: Uint8Array;
+  }): Promise<Uint8Array> {
+    const xc20p = xchacha20poly1305(keyBytes, nonce, additionalData);
     const plaintext = xc20p.decrypt(data);
 
     return plaintext;
@@ -195,7 +220,35 @@ export class XChaCha20Poly1305 {
     // Convert the private key from JWK format to bytes.
     const privateKeyBytes = await XChaCha20Poly1305.privateKeyToBytes({ privateKey: key });
 
-    const xc20p = xchacha20poly1305(privateKeyBytes, nonce, additionalData);
+    return XChaCha20Poly1305.encryptRaw({ data, keyBytes: privateKeyBytes, nonce, additionalData });
+  }
+
+  /**
+   * Encrypts data using XChaCha20-Poly1305 with a raw byte array key.
+   *
+   * @remarks
+   * This is a lower-level method that accepts the key as a raw `Uint8Array` instead of a JWK.
+   * It is useful in scenarios where the key material is already in byte form (e.g., derived
+   * from ECDH + HKDF) and constructing a JWK would add unnecessary overhead.
+   *
+   * The returned `Uint8Array` contains the ciphertext followed by the 16-byte Poly1305
+   * authentication tag.
+   *
+   * @param params - The parameters for the encryption operation.
+   * @param params.data - The plaintext data to encrypt.
+   * @param params.keyBytes - The 256-bit (32-byte) encryption key as a Uint8Array.
+   * @param params.nonce - A 24-byte nonce for the encryption process.
+   * @param params.additionalData - Optional additional authenticated data.
+   *
+   * @returns A Promise that resolves to the ciphertext + authentication tag as a Uint8Array.
+   */
+  public static async encryptRaw({ data, keyBytes, nonce, additionalData }: {
+    additionalData?: Uint8Array;
+    data: Uint8Array;
+    keyBytes: Uint8Array;
+    nonce: Uint8Array;
+  }): Promise<Uint8Array> {
+    const xc20p = xchacha20poly1305(keyBytes, nonce, additionalData);
     const ciphertext = xc20p.encrypt(data);
 
     return ciphertext;

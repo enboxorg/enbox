@@ -1,3 +1,4 @@
+export * from './crypto-error.js';
 export * from './local-key-manager.js';
 export * from './utils.js';
 
@@ -16,8 +17,10 @@ export * from './jose/utils.js';
 
 export * from './primitives/aes-ctr.js';
 export * from './primitives/aes-gcm.js';
+export * from './primitives/aes-kw.js';
 export * from './primitives/concat-kdf.js';
 export * from './primitives/ed25519.js';
+export * from './primitives/hkdf.js';
 export * from './primitives/secp256r1.js';
 export * from './primitives/pbkdf2.js';
 export * from './primitives/secp256k1.js';

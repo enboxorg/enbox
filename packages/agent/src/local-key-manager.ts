@@ -2,6 +2,7 @@ import type {
   AesGcmParams,
   AsymmetricKeyGenerator,
   Cipher,
+  CipherParams,
   CryptoAlgorithm,
   GetPublicKeyParams,
   Jwk,
@@ -19,12 +20,15 @@ import type {
   PublicKeyJwk,
   Signer,
   SignParams,
-
-  VerifyParams } from '@enbox/crypto';
+  UnwrapKeyParams,
+  VerifyParams,
+  WrapKeyParams } from '@enbox/crypto';
 
 import {
   AesGcmAlgorithm,
   computeJwkThumbprint,
+  CryptoError,
+  CryptoErrorCode,
   EcdsaAlgorithm,
   EdDsaAlgorithm,
   isPrivateJwk,
@@ -40,12 +44,10 @@ import type { AgentDataStore } from './store-data.js';
 import type { AgentKeyManager } from './types/key-manager.js';
 import type { InferType } from './prototyping/common/type-utils.js';
 import type { Web5PlatformAgent } from './types/agent.js';
-import type { CipherParams, UnwrapKeyParams, WrapKeyParams } from './prototyping/crypto/types/params-direct.js';
 import type { KmsCipherParams, KmsUnwrapKeyParams, KmsWrapKeyParams } from './prototyping/crypto/types/params-kms.js';
 
 import { AesKwAlgorithm } from './prototyping/crypto/algorithms/aes-kw.js';
 import { InMemoryKeyStore } from './store-key.js';
-import { CryptoError, CryptoErrorCode } from './prototyping/crypto/crypto-error.js';
 
 /**
  * `supportedAlgorithms` is an object mapping algorithm names to their respective implementations

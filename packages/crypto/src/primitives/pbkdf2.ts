@@ -1,4 +1,37 @@
+import type { DeriveKeyBytesParams } from '../types/params-direct.js';
+
+import { getWebcryptoSubtle } from '@noble/ciphers/webcrypto';
+
 import { crypto } from '@noble/hashes/crypto';
+
+/**
+ * The object that should be passed into `Pbkdf2.deriveKeyBytes()`, when using the PBKDF2 algorithm.
+ */
+export interface Pbkdf2Params {
+  /**
+   * A string representing the digest algorithm to use. This may be one of:
+   * - 'SHA-256'
+   * - 'SHA-384'
+   * - 'SHA-512'
+   */
+  hash: 'SHA-256' | 'SHA-384' | 'SHA-512';
+
+  /**
+   * The salt value to use in the derivation process, as a Uint8Array. This should be a random or
+   * pseudo-random value of at least 16 bytes. Unlike the `password`, `salt` does not need to be
+   * kept secret.
+   */
+  salt: Uint8Array;
+
+  /**
+   * A `Number` representing the number of iterations the hash function will be executed in
+   * `deriveKey()`. This impacts the computational cost of the `deriveKey()` operation, making it
+   * more resistant to dictionary attacks. The higher the number, the more secure, but also slower,
+   * the operation. Choose a value that balances security needs and performance for your
+   * application.
+   */
+  iterations: number;
+}
 
 /**
  * The object that should be passed into `Pbkdf2.deriveKey()`, when using the PBKDF2 algorithm.
@@ -118,5 +151,63 @@ export class Pbkdf2 {
     const derivedKey = new Uint8Array(derivedKeyBuffer);
 
     return derivedKey;
+  }
+
+  /**
+   * Derives cryptographic key bytes from base key material using the PBKDF2 algorithm.
+   *
+   * @remarks
+   * This method is similar to {@link Pbkdf2.deriveKey | `deriveKey()`} but accepts
+   * raw key bytes (`baseKeyBytes`) instead of a password. It is intended for use cases
+   * where the input key material is already available as a byte array.
+   *
+   * Notes:
+   * - The `baseKeyBytes` that will be the input key material for PBKDF2 is expected to be a
+   *   low-entropy value, such as a password or passphrase. It should be kept confidential.
+   * - In 2023,
+   *   {@link https://web.archive.org/web/20230123232056/https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2
+   *   | OWASP recommended}
+   *   a minimum of 600,000 iterations for PBKDF2-HMAC-SHA256 and 210,000 for PBKDF2-HMAC-SHA512.
+   *
+   * @example
+   * ```ts
+   * const derivedKeyBytes = await Pbkdf2.deriveKeyBytes({
+   *   baseKeyBytes: new TextEncoder().encode('password'),
+   *   hash: 'SHA-256',
+   *   salt: new Uint8Array([...]),
+   *   iterations: 600_000,
+   *   length: 256
+   * });
+   * ```
+   *
+   * @param params - The parameters for key derivation.
+   * @returns A Promise that resolves to the derived key as a byte array.
+   */
+  public static async deriveKeyBytes({ baseKeyBytes, hash, salt, iterations, length }:
+    DeriveKeyBytesParams & Pbkdf2Params
+  ): Promise<Uint8Array> {
+    // Get the Web Crypto API interface.
+    const webCrypto = getWebcryptoSubtle() as SubtleCrypto;
+
+    // Import the password as a raw key for use with the Web Crypto API.
+    const webCryptoKey = await webCrypto.importKey(
+      'raw', // key format is raw bytes
+      baseKeyBytes, // key data to import
+      { name: 'PBKDF2' }, // algorithm identifier
+      false, // key is not extractable
+      ['deriveBits'] // key usages
+    );
+
+    // Derive the bytes using the Web Crypto API.
+    const derivedKeyBuffer = await webCrypto.deriveBits(
+      { name: 'PBKDF2', hash, salt, iterations },
+      webCryptoKey,
+      length
+    );
+
+    // Convert from ArrayBuffer to Uint8Array.
+    const derivedKeyBytes = new Uint8Array(derivedKeyBuffer);
+
+    return derivedKeyBytes;
   }
 }

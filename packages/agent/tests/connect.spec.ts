@@ -355,7 +355,7 @@ describe('web5 connect', function () {
       const randomBytesStub = sinon
         .stub(CryptoUtils, 'randomBytes')
         .returns(encryptionNonce);
-      authResponseJwe = Oidc.encryptAuthResponse({
+      authResponseJwe = await Oidc.encryptAuthResponse({
         jwt              : authResponseJwt,
         encryptionKey    : sharedECDHPrivateKey,
         randomPin,
