@@ -12,7 +12,7 @@ Given that we're still in early stages of development, this contribution guide w
   - [Running tests](#tests)
   - [Code Style](#code-style)
   - [Code Guidelines](#code-guidelines)
-  - [Available NPM Commands](#available-npm-commands)
+  - [Available Commands](#available-commands)
 
 ## Code of Conduct
 
@@ -49,7 +49,7 @@ We take our open-source community seriously. Please adhere to our [Code of Condu
 
 ### Tests
 
-- Running the `npm run test` command from the root of the project will run all tests.
+- Running the `bun run test` command from the root of the project will run all tests.
   - This is run via CI whenever a pull request is opened, or a commit is pushed to a branch that has an open PR.
 - Make sure to cover added code with tests, if it should be tested
 
@@ -72,7 +72,7 @@ We take our open-source community seriously. Please adhere to our [Code of Condu
 
 - Our preferred code style has been codified into `eslint`.
   - Feel free to take a look onto [eslint config](https://github.com/enboxorg/enbox/blob/main/packages/dwn-server/.eslintrc.cjs).
-- Running `npm run lint:fix` will auto-format as much they can. Everything they weren't able to will be printed out as errors or warnings.
+- Running `bun run lint:fix` will auto-format as much as it can. Everything it wasn't able to fix will be printed out as errors or warnings.
 - We have a pre-commit hook which would run both commands with attempt to autofix problems
   - It runs by [husky](https://github.com/enboxorg/enbox/blob/main/packages/dwn-server/.husky/pre-commit) and executes [lint-staged command](https://github.com/enboxorg/enbox/blob/main/packages/dwn-server/package.json#L89)
 - Make sure that no errors/warnings are introduced in your PR
@@ -81,16 +81,14 @@ We take our open-source community seriously. Please adhere to our [Code of Condu
 
 1. A `TODO` in comment must always link to a GitHub issue.
 
-### Available NPM Commands
+### Available Commands
 
 | Script                 | Description                                                        |
 | ---------------------- | ------------------------------------------------------------------ |
-| `npm run build:esm`    | compiles typescript into ESM JS                                    |
-| `npm run build:cjs`    | compiles typescript into CommonJS                                  |
-| `npm run build`        | compiles typescript into ESM JS & CommonJS                         |
-| `npm run clean`        | deletes compiled JS                                                |
-| `npm run lint`         | runs linter                                                        |
-| `npm run lint:fix`     | runs linter and fixes auto-fixable problems                        |
-| `npm run test`         | runs tests                                                         |
-| `npm run server`       | starts server                                                      |
-| `npm run prepare`      | prepares husky for pre-commit hooks (auto-runs with `npm install`) |
+| `bun run build:esm`    | compiles typescript into ESM JS                                    |
+| `bun run build`        | compiles typescript into ESM JS                                    |
+| `bun run clean`        | deletes compiled JS                                                |
+| `bun run lint`         | runs linter                                                        |
+| `bun run lint:fix`     | runs linter and fixes auto-fixable problems                        |
+| `bun run test`         | runs tests                                                         |
+| `bun run server`       | starts server                                                      |

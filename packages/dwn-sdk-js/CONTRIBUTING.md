@@ -64,12 +64,12 @@ Happy contributing!
 
 | Requirement | Tested Version | Installation Instructions |
 | ----------- | -------------- | ------------------------- |
-| `Node.js`   | `v18.17.0`     | There are many ways to install `Node.js`. Feel free to choose whichever approach you feel most comfortable with. If you don't have a preferred installation method, you can visit the official [downloads](https://nodejs.org/en/download/) page and choose the appropriate installer for your operating system. |
+| `Bun`       | `>= 1.0.0`    | Visit the official [Bun installation page](https://bun.sh/docs/installation) for instructions. |
 
 ### Running tests
-* Running the `npm run test:node` command from the root of the project will run all tests using Node. 
+* Running the `bun run test:node` command from the root of the project will run all tests.
   * This is run via CI whenever a pull request is opened, or a commit is pushed to a branch that has an open PR.
-* Running the `npm run test:browser` command from the root of the project will run the tests in browser environments.
+* Running the `bun run test:browser` command from the root of the project will run the tests in browser environments.
   * Please make sure there are no failing tests before switching your PR to ready for review! This validation is automated when you open a new pull request.
 
 ### Developing and testing custom store implementations
@@ -98,30 +98,27 @@ describe('Custom data store implementation', () => {
 
 ### Running benchmarks
 
-Benchmarks should be run directly using `node` (e.g., `node benchmarks/store/index/search-index.js`).
+Benchmarks should be run directly using `bun` (e.g., `bun benchmarks/store/index/search-index.js`).
 
-Note that some benchmarks require that `npm run build` has been run beforehand.
+Note that some benchmarks require that `bun run build` has been run beforehand.
 
-Any dependencies needed by benchmarks should be in `devDependencies` (e.g., `index-store` for `node benchmarks/store/index/index-store.js`).
+Any dependencies needed by benchmarks should be in `devDependencies` (e.g., `index-store` for `bun benchmarks/store/index/index-store.js`).
 
 ### Code Style
-Our preferred code style has been codified into `eslint` rules. Feel free to take a look [at the relevant ESLint config file](https://github.com/enboxorg/enbox/blob/main/packages/dwn-sdk-js/eslint.config.cjs). Running `npm run lint` will auto-format as much as `eslint` can. Everything it wasn't able to format will be printed out as errors or warnings. Please make sure to run `npm run lint` before switching your PR to ready for review! We hope to have this automated via a GitHub action very soon.
+Our preferred code style has been codified into `eslint` rules. Feel free to take a look [at the relevant ESLint config file](https://github.com/enboxorg/enbox/blob/main/packages/dwn-sdk-js/eslint.config.cjs). Running `bun run lint` will auto-format as much as `eslint` can. Everything it wasn't able to format will be printed out as errors or warnings. Please make sure to run `bun run lint` before switching your PR to ready for review! We hope to have this automated via a GitHub action very soon.
 
 ### Code Guidelines
 1. A `TODO` comment must always link to a GitHub issue.
 
-### Available NPM Commands
+### Available Commands
 | Command                           | Description                                                                                                        |
 |----------------------------------|--------------------------------------------------------------------------------------------------------------------|
-| `npm run test:node`              | Runs tests and type checking                                                                                       |
-| `npm run test:node-grep`         | Runs specific tests matching a pattern. Requires the `-g` option. For example: `npm run test:node-grep -g "RecordsReadHandler.handle"` |
-| `npm run test:browser`           | Runs tests against browser bundles in headless browser                                                             |
-| `npm run test:browser-debug`     | Runs tests against browser bundles in debug-ready Chrome                                                           |
-| `npm run build`                  | Transpiles `ts` -> `js` as `esm` and `cjs`, generates `esm` and `umd` bundles, and generates all type declarations |
-| `npm run build:esm`              | Transpiles `ts` -> `js` as `esm`                                                                                  |
-| `npm run build:cjs`              | Transpiles `ts` -> `js` as `cjs`                                                                                  |
-| `npm run build:bundles`          | Generates `esm` and `umd` bundles                                                                                  |
-| `npm run build:declarations`     | Generates all type declarations                                                                                     |
-| `npm run clean`                  | Deletes the `dist` directory                                                                                       |
-| `npm run lint`                   | Runs linter and displays all problems                                                                              |
-| `npm run lint:fix`               | Runs linter and attempts to auto-fix all problems                                                                  |
+| `bun run test:node`              | Runs tests and type checking                                                                                       |
+| `bun run test:node-grep`         | Runs specific tests matching a pattern. Set the `GREP` env var. For example: `GREP="RecordsReadHandler.handle" bun run test:node-grep` |
+| `bun run test:browser`           | Runs tests against browser bundles in headless browser                                                             |
+| `bun run test:browser-debug`     | Runs tests against browser bundles in debug-ready Chrome                                                           |
+| `bun run build`                  | Transpiles `ts` -> `js` as `esm`, generates browser bundle, and compiles validators                               |
+| `bun run build:esm`              | Transpiles `ts` -> `js` as `esm`                                                                                  |
+| `bun run clean`                  | Deletes the `dist` directory                                                                                       |
+| `bun run lint`                   | Runs linter and displays all problems                                                                              |
+| `bun run lint:fix`               | Runs linter and attempts to auto-fix all problems                                                                  |
