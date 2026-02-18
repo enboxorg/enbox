@@ -247,6 +247,20 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         );
       }
 
+      // Validate that `of` points to the current protocol path or an ancestor of it.
+      // At runtime, `checkActor()` searches the record chain for a matching `protocolPath` equal to `actionRule.of`.
+      // If `of` is not the current path or one of its ancestors, the action rule would silently never authorize anyone.
+      if (actionRule.of !== undefined && ruleSetProtocolPath !== '') {
+        const isSelfOrAncestor = ruleSetProtocolPath === actionRule.of
+          || ruleSetProtocolPath.startsWith(actionRule.of + '/');
+        if (!isSelfOrAncestor) {
+          throw new DwnError(
+            DwnErrorCode.ProtocolsConfigureInvalidActionOfNotAnAncestor,
+            `'of' value '${actionRule.of}' is not an ancestor of protocol path '${ruleSetProtocolPath}' in action rule ${JSON.stringify(actionRule)}.`
+          );
+        }
+      }
+
       // For `who`-based rules with `of`, enforce that read-type actions (read, query, subscribe)
       // are all-or-nothing, same as the role-based rule constraint above.
       if (actionRule.who !== undefined && actionRule.of !== undefined) {

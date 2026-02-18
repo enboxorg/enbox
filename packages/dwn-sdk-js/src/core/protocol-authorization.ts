@@ -933,10 +933,13 @@ export class ProtocolAuthorization {
     );
 
     if (ancestorRecordsWrite === undefined) {
-      // If this is reached, there is likely an issue with the protocol definition.
-      // The protocolPath to the actionRule should start with actionRule.of
-      // consider moving this check to ProtocolsConfigure message ingestion
-      return false;
+      // This should be unreachable for valid protocol definitions because `ProtocolsConfigure.validateRuleSetRecursively()`
+      // now validates that `actionRule.of` is an ancestor of the current protocol path at definition time.
+      throw new DwnError(
+        DwnErrorCode.ProtocolAuthorizationActionNotAllowed,
+        `No ancestor record found with protocol path '${actionRule.of!}' in the record chain. ` +
+        `This indicates an invalid protocol definition that should have been rejected at configuration time.`
+      );
     }
 
     if (actionRule.who === ProtocolActor.Recipient) {
