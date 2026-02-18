@@ -72,9 +72,16 @@ export class JsonRpcSocket {
     return new Promise((resolve, reject) => {
       request.id ??= uuidv4();
 
+      // reject this promise if we don't receive any response back within the timeout period
+      const timer = setTimeout(() => {
+        this.socket.removeEventListener('message', handleResponse);
+        reject(new Error('request timed out'));
+      }, this.responseTimeout);
+
       const handleResponse = (event: { data: any }):void => {
         const jsonRpsResponse = JSON.parse(event.data) as JsonRpcResponse;
         if (jsonRpsResponse.id === request.id) {
+          clearTimeout(timer);
           // if the incoming response id matches the request id, we will remove the listener and resolve the response
           this.socket.removeEventListener('message', handleResponse);
           return resolve(jsonRpsResponse);
@@ -83,12 +90,6 @@ export class JsonRpcSocket {
       // subscribe to the listener before sending the request
       this.socket.addEventListener('message', handleResponse);
       this.send(request);
-
-      // reject this promise if we don't receive any response back within the timeout period
-      setTimeout(() => {
-        this.socket.removeEventListener('message', handleResponse);
-        reject(new Error('request timed out'));
-      }, this.responseTimeout);
     });
   }
 
@@ -116,7 +117,9 @@ export class JsonRpcSocket {
         if (jsonRpcResponse.error !== undefined) {
           // remove the event listener upon receipt of a JSON RPC Error.
           this.socket.removeEventListener('message', socketEventListener);
-          this.closeSubscription(subscriptionId);
+          this.closeSubscription(subscriptionId).catch(() => {
+            // swallow timeout errors; the subscription is already cleaned up locally.
+          });
         }
         listener(jsonRpcResponse);
       }
