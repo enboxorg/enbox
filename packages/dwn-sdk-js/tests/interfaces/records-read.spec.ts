@@ -1,7 +1,9 @@
 import chaiAsPromised from 'chai-as-promised';
 import chai, { expect } from 'chai';
 
+import { DateSort } from '../../src/types/records-types.js';
 import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
+import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Jws } from '../../src/index.js';
 import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -73,6 +75,85 @@ describe('RecordsRead', () => {
       const message = recordsQuery.message;
 
       expect(message.descriptor.filter!.schema).to.eq('http://example.com');
+    });
+
+    it('should include dateSort in the descriptor when provided', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+
+      const recordsRead = await RecordsRead.create({
+        filter   : { recordId: 'anything' },
+        signer   : Jws.createSigner(alice),
+        dateSort : DateSort.CreatedDescending,
+      });
+
+      expect(recordsRead.message.descriptor.dateSort).to.equal(DateSort.CreatedDescending);
+    });
+
+    it('should not include dateSort in the descriptor when not provided', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+
+      const recordsRead = await RecordsRead.create({
+        filter : { recordId: 'anything' },
+        signer : Jws.createSigner(alice),
+      });
+
+      expect(recordsRead.message.descriptor.dateSort).to.be.undefined;
+    });
+
+    it('should throw if published is set to false and dateSort is PublishedAscending', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+
+      const createPromise = RecordsRead.create({
+        filter   : { schema: 'anySchema', published: false },
+        signer   : Jws.createSigner(alice),
+        dateSort : DateSort.PublishedAscending,
+      });
+
+      await expect(createPromise).to.be.rejectedWith(DwnErrorCode.RecordsReadCreateFilterPublishedSortInvalid);
+    });
+
+    it('should throw if published is set to false and dateSort is PublishedDescending', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+
+      const createPromise = RecordsRead.create({
+        filter   : { schema: 'anySchema', published: false },
+        signer   : Jws.createSigner(alice),
+        dateSort : DateSort.PublishedDescending,
+      });
+
+      await expect(createPromise).to.be.rejectedWith(DwnErrorCode.RecordsReadCreateFilterPublishedSortInvalid);
+    });
+  });
+
+  describe('parse()', () => {
+    it('should throw if published is set to false and dateSort is PublishedAscending', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+
+      const recordsRead = await RecordsRead.create({
+        filter : { schema: 'anySchema', published: false },
+        signer : Jws.createSigner(alice),
+      });
+
+      // manually inject invalid dateSort to bypass create() validation
+      recordsRead.message.descriptor.dateSort = DateSort.PublishedAscending;
+
+      const parsePromise = RecordsRead.parse(recordsRead.message);
+      await expect(parsePromise).to.be.rejectedWith(DwnErrorCode.RecordsReadParseFilterPublishedSortInvalid);
+    });
+
+    it('should throw if published is set to false and dateSort is PublishedDescending', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+
+      const recordsRead = await RecordsRead.create({
+        filter : { schema: 'anySchema', published: false },
+        signer : Jws.createSigner(alice),
+      });
+
+      // manually inject invalid dateSort to bypass create() validation
+      recordsRead.message.descriptor.dateSort = DateSort.PublishedDescending;
+
+      const parsePromise = RecordsRead.parse(recordsRead.message);
+      await expect(parsePromise).to.be.rejectedWith(DwnErrorCode.RecordsReadParseFilterPublishedSortInvalid);
     });
   });
 });

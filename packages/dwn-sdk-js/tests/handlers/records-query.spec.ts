@@ -1476,6 +1476,79 @@ export function testRecordsQueryHandler(): void {
         expect(updatedDescendingQueryReply.entries?.[2].recordId).to.equal(write1Data.message.recordId);
       });
 
+      it('should sort by `messageTimestamp` (not `dateCreated`) when using updated sort with genuinely updated records', async () => {
+        // scenario: alice creates 3 records on the same day, then updates them in reverse order.
+        // updatedAscending should return them in order of their update, not creation.
+        const createdTimestamp = Time.createTimestamp({ year: 2020, month: 1, day: 1 });
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const schema = 'aSchema';
+
+        const write1 = await TestDataGenerator.generateRecordsWrite({
+          author: alice, schema, dateCreated: createdTimestamp, messageTimestamp: createdTimestamp,
+        });
+        const write2 = await TestDataGenerator.generateRecordsWrite({
+          author: alice, schema, dateCreated: createdTimestamp, messageTimestamp: createdTimestamp,
+        });
+        const write3 = await TestDataGenerator.generateRecordsWrite({
+          author: alice, schema, dateCreated: createdTimestamp, messageTimestamp: createdTimestamp,
+        });
+
+        const writeReply1 = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
+        const writeReply2 = await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
+        const writeReply3 = await dwn.processMessage(alice.did, write3.message, { dataStream: write3.dataStream });
+        expect(writeReply1.status.code).to.equal(202);
+        expect(writeReply2.status.code).to.equal(202);
+        expect(writeReply3.status.code).to.equal(202);
+
+        // update in reverse order: write3 first, then write2, then write1
+        const update3 = await RecordsWrite.createFrom({
+          recordsWriteMessage : write3.message,
+          messageTimestamp    : Time.createTimestamp({ year: 2021, month: 1, day: 1 }),
+          signer              : Jws.createSigner(alice),
+        });
+        const update2 = await RecordsWrite.createFrom({
+          recordsWriteMessage : write2.message,
+          messageTimestamp    : Time.createTimestamp({ year: 2022, month: 1, day: 1 }),
+          signer              : Jws.createSigner(alice),
+        });
+        const update1 = await RecordsWrite.createFrom({
+          recordsWriteMessage : write1.message,
+          messageTimestamp    : Time.createTimestamp({ year: 2023, month: 1, day: 1 }),
+          signer              : Jws.createSigner(alice),
+        });
+
+        const updateReply3 = await dwn.processMessage(alice.did, update3.message);
+        const updateReply2 = await dwn.processMessage(alice.did, update2.message);
+        const updateReply1 = await dwn.processMessage(alice.did, update1.message);
+        expect(updateReply3.status.code).to.equal(202);
+        expect(updateReply2.status.code).to.equal(202);
+        expect(updateReply1.status.code).to.equal(202);
+
+        // updatedAscending should return: write3 (2021), write2 (2022), write1 (2023)
+        const updatedAscQuery = await TestDataGenerator.generateRecordsQuery({
+          author   : alice,
+          dateSort : DateSort.UpdatedAscending,
+          filter   : { schema }
+        });
+        const updatedAscReply = await dwn.processMessage(alice.did, updatedAscQuery.message);
+        expect(updatedAscReply.entries!.length).to.equal(3);
+        expect(updatedAscReply.entries![0].recordId).to.equal(write3.message.recordId);
+        expect(updatedAscReply.entries![1].recordId).to.equal(write2.message.recordId);
+        expect(updatedAscReply.entries![2].recordId).to.equal(write1.message.recordId);
+
+        // updatedDescending should return: write1 (2023), write2 (2022), write3 (2021)
+        const updatedDescQuery = await TestDataGenerator.generateRecordsQuery({
+          author   : alice,
+          dateSort : DateSort.UpdatedDescending,
+          filter   : { schema }
+        });
+        const updatedDescReply = await dwn.processMessage(alice.did, updatedDescQuery.message);
+        expect(updatedDescReply.entries!.length).to.equal(3);
+        expect(updatedDescReply.entries![0].recordId).to.equal(write1.message.recordId);
+        expect(updatedDescReply.entries![1].recordId).to.equal(write2.message.recordId);
+        expect(updatedDescReply.entries![2].recordId).to.equal(write3.message.recordId);
+      });
+
       it('should tiebreak using `messageCid` when sorting encounters identical values', async () => {
         // setup: 3 messages with the same `dateCreated` value
         const dateCreated = Time.getCurrentTimestamp();

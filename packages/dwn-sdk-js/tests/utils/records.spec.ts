@@ -2,8 +2,10 @@ import type { DerivedPrivateJwk, RecordsWriteDescriptor } from '../../src/index.
 
 import { expect } from 'chai';
 
+import { DateSort } from '../../src/types/records-types.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { ed25519 } from '../../src/jose/algorithms/signing/ed25519.js';
+import { SortDirection } from '../../src/types/query-types.js';
 import { DwnInterfaceName, DwnMethodName, KeyDerivationScheme, Records } from '../../src/index.js';
 
 describe('Records', () => {
@@ -46,6 +48,43 @@ describe('Records', () => {
     it('should throw if not given schema', async () => {
       expect(() => Records.constructKeyDerivationPathUsingSchemasScheme(undefined))
         .to.throw(DwnErrorCode.RecordsSchemasDerivationSchemeMissingSchema);
+    });
+  });
+
+  describe('convertDateSort()', () => {
+    it('should return messageTimestamp descending when no dateSort is given', () => {
+      const result = Records.convertDateSort(undefined);
+      expect(result).to.deep.equal({ messageTimestamp: SortDirection.Descending });
+    });
+
+    it('should map CreatedAscending to dateCreated ascending', () => {
+      const result = Records.convertDateSort(DateSort.CreatedAscending);
+      expect(result).to.deep.equal({ dateCreated: SortDirection.Ascending });
+    });
+
+    it('should map CreatedDescending to dateCreated descending', () => {
+      const result = Records.convertDateSort(DateSort.CreatedDescending);
+      expect(result).to.deep.equal({ dateCreated: SortDirection.Descending });
+    });
+
+    it('should map PublishedAscending to datePublished ascending', () => {
+      const result = Records.convertDateSort(DateSort.PublishedAscending);
+      expect(result).to.deep.equal({ datePublished: SortDirection.Ascending });
+    });
+
+    it('should map PublishedDescending to datePublished descending', () => {
+      const result = Records.convertDateSort(DateSort.PublishedDescending);
+      expect(result).to.deep.equal({ datePublished: SortDirection.Descending });
+    });
+
+    it('should map UpdatedAscending to messageTimestamp ascending', () => {
+      const result = Records.convertDateSort(DateSort.UpdatedAscending);
+      expect(result).to.deep.equal({ messageTimestamp: SortDirection.Ascending });
+    });
+
+    it('should map UpdatedDescending to messageTimestamp descending', () => {
+      const result = Records.convertDateSort(DateSort.UpdatedDescending);
+      expect(result).to.deep.equal({ messageTimestamp: SortDirection.Descending });
     });
   });
 });
