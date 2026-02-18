@@ -12,6 +12,7 @@ import { FilterUtility } from '../utils/filter.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
 import { Records } from '../utils/records.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
+import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
@@ -27,11 +28,19 @@ export class ProtocolAuthorization {
     incomingMessage: RecordsWrite,
     messageStore: MessageStore,
   ): Promise<void> {
-    // fetch the protocol definition
+    // Determine the governing timestamp for protocol definition lookup.
+    // For an initial write, this is the message's own timestamp.
+    // For an update, this is the initial write's timestamp (the protocol version is locked at creation time).
+    const governingTimestamp = await ProtocolAuthorization.getGoverningTimestamp(
+      tenant, incomingMessage, messageStore
+    );
+
+    // fetch the protocol definition that was active at the governing timestamp
     const protocolDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
       tenant,
       incomingMessage.message.descriptor.protocol!,
       messageStore,
+      governingTimestamp,
     );
 
     // verify declared protocol type exists in protocol and that it conforms to type specification
@@ -89,11 +98,17 @@ export class ProtocolAuthorization {
       recordChain = await ProtocolAuthorization.constructRecordChain(tenant, incomingMessage.message.recordId, messageStore);
     }
 
-    // fetch the protocol definition
+    // Determine the governing timestamp for protocol definition lookup.
+    const governingTimestamp = await ProtocolAuthorization.getGoverningTimestamp(
+      tenant, incomingMessage, messageStore
+    );
+
+    // fetch the protocol definition that was active at the governing timestamp
     const protocolDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
       tenant,
       incomingMessage.message.descriptor.protocol!,
       messageStore,
+      governingTimestamp,
     );
 
     // get the rule set for the inbound message
@@ -137,11 +152,21 @@ export class ProtocolAuthorization {
     const recordChain: RecordsWriteMessage[] =
       await ProtocolAuthorization.constructRecordChain(tenant, newestRecordsWrite.message.recordId, messageStore);
 
-    // fetch the protocol definition
+    // Use the initial write's timestamp to determine the governing protocol definition.
+    // The protocol version is locked at the time the record was first created.
+    const initialWrite = await ProtocolAuthorization.fetchInitialWrite(
+      tenant, newestRecordsWrite.message.recordId, messageStore
+    );
+    const governingTimestamp = initialWrite !== undefined
+      ? initialWrite.descriptor.messageTimestamp
+      : newestRecordsWrite.message.descriptor.messageTimestamp;
+
+    // fetch the protocol definition that was active when the record was created
     const protocolDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
       tenant,
       newestRecordsWrite.message.descriptor.protocol!,
       messageStore,
+      governingTimestamp,
     );
 
     // get the rule set for the inbound message
@@ -225,11 +250,20 @@ export class ProtocolAuthorization {
     const recordChain: RecordsWriteMessage[] =
       await ProtocolAuthorization.constructRecordChain(tenant, incomingMessage.message.descriptor.recordId, messageStore);
 
-    // fetch the protocol definition
+    // Use the initial write's timestamp to determine the governing protocol definition.
+    const initialWrite = await ProtocolAuthorization.fetchInitialWrite(
+      tenant, incomingMessage.message.descriptor.recordId, messageStore
+    );
+    const governingTimestamp = initialWrite !== undefined
+      ? initialWrite.descriptor.messageTimestamp
+      : recordsWrite.message.descriptor.messageTimestamp;
+
+    // fetch the protocol definition that was active when the record was created
     const protocolDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
       tenant,
       recordsWrite.message.descriptor.protocol!,
       messageStore,
+      governingTimestamp,
     );
 
     // get the rule set for the inbound message
@@ -260,11 +294,15 @@ export class ProtocolAuthorization {
 
   /**
    * Fetches the protocol definition based on the protocol specified in the given message.
+   * When `messageTimestamp` is provided, returns the protocol definition that was active at that
+   * point in time — i.e. the ProtocolsConfigure with the greatest `messageTimestamp` that is <= the
+   * given timestamp. When not provided, returns the latest (current) protocol definition.
    */
   private static async fetchProtocolDefinition(
     tenant: string,
     protocolUri: string,
-    messageStore: MessageStore
+    messageStore: MessageStore,
+    messageTimestamp?: string,
   ): Promise<ProtocolDefinition> {
     // if first-class protocol, return the definition from const object directly without going to data store
     if (protocolUri === PermissionsProtocol.uri) {
@@ -275,9 +313,23 @@ export class ProtocolAuthorization {
     const query: Filter = {
       interface : DwnInterfaceName.Protocols,
       method    : DwnMethodName.Configure,
-      protocol  : protocolUri
+      protocol  : protocolUri,
     };
-    const { messages: protocols } = await messageStore.query(tenant, [query]);
+
+    if (messageTimestamp !== undefined) {
+      // temporal lookup: find the protocol definition active at the given timestamp
+      query.messageTimestamp = { lte: messageTimestamp };
+    } else {
+      // default: return only the latest protocol definition
+      query.isLatestBaseState = true;
+    }
+
+    const { messages: protocols } = await messageStore.query(
+      tenant,
+      [query],
+      { messageTimestamp: SortDirection.Descending },
+      { limit: 1 },
+    );
 
     if (protocols.length === 0) {
       throw new DwnError(DwnErrorCode.ProtocolAuthorizationProtocolNotFound, `unable to find protocol definition for ${protocolUri}`);
@@ -895,6 +947,30 @@ export class ProtocolAuthorization {
       const ancestorAuthor = (await RecordsWrite.parse(ancestorRecordsWrite)).author;
       return author === ancestorAuthor;
     }
+  }
+
+  /**
+   * Determines the timestamp that governs which protocol definition version applies to the given RecordsWrite.
+   * For an update, this is the initial write's `messageTimestamp` (the protocol version is locked at creation time).
+   * For a new initial write, returns `undefined` — the latest protocol definition should be used because the
+   * record is being created now and must conform to the current protocol rules.
+   */
+  private static async getGoverningTimestamp(
+    tenant: string,
+    incomingMessage: RecordsWrite,
+    messageStore: MessageStore,
+  ): Promise<string | undefined> {
+    const existingInitialWrite = await ProtocolAuthorization.fetchInitialWrite(
+      tenant, incomingMessage.message.recordId, messageStore
+    );
+
+    if (existingInitialWrite !== undefined) {
+      // update case: use the initial write's timestamp
+      return existingInitialWrite.descriptor.messageTimestamp;
+    }
+
+    // initial write case: validate against the latest protocol definition
+    return undefined;
   }
 
   private static getTypeName(protocolPath: string): string {

@@ -52,8 +52,9 @@ export class ProtocolsQueryHandler implements MethodHandler {
 
     const query = {
       ...message.descriptor.filter,
-      interface : DwnInterfaceName.Protocols,
-      method    : DwnMethodName.Configure
+      interface         : DwnInterfaceName.Protocols,
+      method            : DwnMethodName.Configure,
+      isLatestBaseState : true,
     };
     removeUndefinedProperties(query);
 
@@ -72,9 +73,10 @@ export class ProtocolsQueryHandler implements MethodHandler {
     // fetch all published `ProtocolConfigure` matching the query
     const filter = {
       ...protocolsQuery.message.descriptor.filter,
-      interface : DwnInterfaceName.Protocols,
-      method    : DwnMethodName.Configure,
-      published : true
+      interface         : DwnInterfaceName.Protocols,
+      method            : DwnMethodName.Configure,
+      published         : true,
+      isLatestBaseState : true,
     };
     const { messages: publishedProtocolsConfigure } = await this.messageStore.query(tenant, [ filter ]);
     return publishedProtocolsConfigure as ProtocolsConfigureMessage[];
