@@ -95,7 +95,7 @@
     "@types/lodash": "4.14.179",
     "@types/mocha": "^9.1.0",
     "@types/ms": "0.7.31",
-    "@types/node": "^18.13.0",
+    "@types/node": "20.14.8",
     "@types/secp256k1": "4.0.3",
     "@types/sinon": "^17.0.3",
     "@types/uuid": "^9.0.1",
@@ -105,12 +105,12 @@
     "c8": "^10.1.2",
     "chai": "4.3.6",
     "chai-as-promised": "7.1.1",
-    "cross-env": "7.0.3",
+
     "dependency-cruiser": "^16.3.7",
     "esbuild": "0.16.17",
     "eslint": "9.7.0",
     "eslint-plugin-todo-plz": "1.3.0",
-    "events": "3.3.0",
+
     "istanbul-badges-readme": "1.8.1",
     "karma": "^6.4.4",
     "karma-chai": "0.1.0",
@@ -131,7 +131,7 @@
     "search-index": "3.4.0",
     "sinon": "18.0.1",
     "typescript": "5.5.4",
-    "util": "0.12.4",
+
     "uuid": "8.3.2"
   },
   "overrides": {
@@ -148,8 +148,8 @@
     "circular-dependency-check": "depcruise src",
     "test:node": "bun run compile-validators && tsc && bunx c8 mocha \"dist/esm/tests/**/*.spec.js\"",
     "test:node-grep": "bun run compile-validators && tsc && bunx mocha \"dist/esm/tests/**/*.spec.js\" --grep $GREP",
-    "test:browser": "bun run compile-validators && cross-env karma start karma.conf.cjs",
-    "test:browser-debug": "bun run compile-validators && cross-env karma start karma.conf.debug.cjs",
+    "test:browser": "bun run compile-validators && bunx karma start karma.conf.cjs",
+    "test:browser-debug": "bun run compile-validators && bunx karma start karma.conf.debug.cjs",
     "license-check": "license-report --only=prod > license-report.json && bun ./build/license-check.cjs",
     "publish:unstable": "./build/publish-unstable.sh"
   }

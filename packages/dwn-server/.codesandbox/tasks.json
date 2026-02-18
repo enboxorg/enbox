@@ -1,9 +1,9 @@
 {
-  // These tasks will run in order when initializing your CodeSandbox project.
+  "$schema": "https://codesandbox.io/schemas/tasks.json",
   "setupTasks": [
     {
       "name": "Install Dependencies",
-      "command": "npm install"
+      "command": "bun install"
     }
   ]
 }
