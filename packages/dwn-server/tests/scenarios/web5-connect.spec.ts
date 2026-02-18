@@ -5,13 +5,7 @@ import { Poller } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
 import { useFakeTimers } from 'sinon';
 import { Web5ConnectServer } from '../../src/web5-connect/web5-connect-server.js';
-import { randomUUID, webcrypto } from 'node:crypto';
-
-// node.js 18 and earlier needs globalThis.crypto polyfill
-if (!globalThis.crypto) {
-  // @ts-ignore
-  globalThis.crypto = webcrypto;
-}
+import { randomUUID } from 'node:crypto';
 
 describe('Web5 Connect scenarios', function () {
   let web5ConnectBaseUrl: string;

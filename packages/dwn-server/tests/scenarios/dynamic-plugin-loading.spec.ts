@@ -13,12 +13,6 @@ import MessageStoreSqlite from '../plugins/message-store-sqlite.js';
 import ResumableTaskStoreSqlite from '../plugins/resumable-task-store-sqlite.js';
 import StateIndexSqlite from '../plugins/state-index-sqlite.js';
 
-// node.js 18 and earlier needs globalThis.crypto polyfill
-if (!globalThis.crypto) {
-  // @ts-ignore
-  globalThis.crypto = webcrypto;
-}
-
 chai.use(chaiAsPromised);
 
 describe('Dynamic DWN plugin loading', function () {

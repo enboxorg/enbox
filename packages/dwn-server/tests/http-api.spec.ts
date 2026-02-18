@@ -1,4 +1,3 @@
-// node.js 18 and earlier,  needs globalThis.crypto polyfill
 import type { Dwn, DwnError, Persona, ProtocolsConfigureMessage, RecordsQueryReply } from '@enbox/dwn-sdk-js';
 import type {
   JsonRpcErrorResponse,
@@ -10,7 +9,6 @@ import { expect } from 'chai';
 import log from 'loglevel';
 
 import { v4 as uuidv4 } from 'uuid';
-import { webcrypto } from 'node:crypto';
 import {
   DataStream,
   DwnErrorCode,
@@ -35,11 +33,6 @@ import {
   getDwnResponse,
   getFileAsReadStream,
 } from './utils.js';
-
-if (!globalThis.crypto) {
-  // @ts-ignore
-  globalThis.crypto = webcrypto;
-}
 
 describe('http api', function () {
   let httpApi: HttpApi;

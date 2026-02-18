@@ -4,15 +4,10 @@ import { expect } from 'chai';
 
 import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
 
-// NOTE: @noble/secp256k1 requires globalThis.crypto polyfill for node.js <=18: https://github.com/paulmillr/noble-secp256k1/blob/main/README.md#usage
-// Remove when we move off of node.js v18 to v20, earliest possible time would be Oct 2023: https://github.com/nodejs/release#release-schedule
 import { DwnApi } from '../src/dwn-api.js';
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { webcrypto } from 'node:crypto';
-// @ts-ignore
-if (!globalThis.crypto) {globalThis.crypto = webcrypto;}
 
 // TODO: Come up with a better way of resolving the TS errors.
 const testDwnUrls: string[] = [testDwnUrl];

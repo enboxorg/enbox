@@ -22,12 +22,6 @@ import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { AgentDwnApi, isDwnMessage, isMessagesPermissionScope, isRecordPermissionScope } from '../src/dwn-api.js';
 
-// NOTE: @noble/secp256k1 requires globalThis.crypto polyfill for node.js <=18: https://github.com/paulmillr/noble-secp256k1/blob/main/README.md#usage
-// Remove when we move off of node.js v18 to v20, earliest possible time would be Oct 2023: https://github.com/nodejs/release#release-schedule
-import { webcrypto } from 'node:crypto';
-// @ts-expect-error - globalThis.crypto and webcrypto are of different types.
-if (!globalThis.crypto) {globalThis.crypto = webcrypto;}
-
 const testDwnUrls: string[] = [testDwnUrl];
 
 describe('AgentDwnApi', () => {
