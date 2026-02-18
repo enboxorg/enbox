@@ -921,6 +921,36 @@ export function testRecordsPrune(): void {
         expect(unauthorizedPostPruneReply.status.code).to.equal(401);
         expect(unauthorizedPostPruneReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
       });
+
+      it('should not allow creation of a protocol definition with action rule containing `prune` without `create`', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition = {
+          protocol  : 'http://prune-without-create.xyz',
+          published : true,
+          types     : {
+            post: {},
+          },
+          structure: {
+            post: {
+              $actions: [
+                {
+                  who : 'anyone',
+                  can : ['prune'] // intentionally missing `create` action
+                }
+              ]
+            }
+          }
+        };
+
+        const protocolsConfigureCreatePromise = ProtocolsConfigure.create({
+          definition : protocolDefinition,
+          signer     : Jws.createSigner(alice)
+        });
+
+        await expect(protocolsConfigureCreatePromise)
+          .to.be.rejectedWith(DwnErrorCode.ProtocolsConfigureInvalidActionPruneWithoutCreate);
+      });
     });
   });
 }

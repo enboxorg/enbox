@@ -643,13 +643,13 @@ export class ProtocolAuthorization {
       return actionsThatWouldAuthorizeDelete;
 
     case DwnMethodName.Query:
-      return [ProtocolAction.Query];
+      return [ProtocolAction.Read];
 
     case DwnMethodName.Read:
       return [ProtocolAction.Read];
 
     case DwnMethodName.Subscribe:
-      return [ProtocolAction.Subscribe];
+      return [ProtocolAction.Read];
 
     case DwnMethodName.Write:
       const incomingRecordsWrite = incomingMessage as RecordsWrite;

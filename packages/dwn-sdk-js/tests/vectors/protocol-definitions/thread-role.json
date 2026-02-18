@@ -17,7 +17,7 @@
         {
           "role": "thread/participant",
           "can": [
-            "read", "query", "subscribe"
+            "read"
           ]
         }
       ],
@@ -31,8 +31,6 @@
             "role": "thread/participant",
             "can": [
               "read",
-              "query",
-              "subscribe",
               "create"
             ]
           }
@@ -45,9 +43,7 @@
             "can": [
               "create",
               "update",
-              "read",
-              "query",
-              "subscribe"
+              "read"
             ]
           },
           {

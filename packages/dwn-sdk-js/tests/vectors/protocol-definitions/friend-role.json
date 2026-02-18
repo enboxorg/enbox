@@ -22,7 +22,7 @@
         {
           "role": "fan",
           "can": [
-            "read", "query", "subscribe"
+            "read"
           ]
         },
         {
@@ -30,9 +30,7 @@
           "can": [
             "create",
             "update",
-            "read",
-            "query",
-            "subscribe"
+            "read"
           ]
         },
         {

@@ -3127,8 +3127,8 @@ export function testRecordsQueryHandler(): void {
               message: {
                 $actions: [
                   { who: 'anyone', can: ['create'] },
-                  { who: 'author', of: 'message', can: ['read', 'query', 'subscribe'] },
-                  { who: 'recipient', of: 'message', can: ['read', 'query', 'subscribe'] },
+                  { who: 'author', of: 'message', can: ['read'] },
+                  { who: 'recipient', of: 'message', can: ['read'] },
                 ],
               },
             },
@@ -3338,8 +3338,8 @@ export function testRecordsQueryHandler(): void {
                   chat: {
                     $actions: [
                       { who: 'anyone', can: ['create'] },
-                      { who: 'recipient', of: 'thread/chat', can: ['read', 'query', 'subscribe'] },
-                      { role: 'thread/participant', can: ['read', 'query', 'subscribe'] },
+                      { who: 'recipient', of: 'thread/chat', can: ['read'] },
+                      { role: 'thread/participant', can: ['read'] },
                     ],
                   },
                 },

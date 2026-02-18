@@ -22,18 +22,14 @@
           "who": "author",
           "of": "email",
           "can": [
-            "read",
-            "query",
-            "subscribe"
+            "read"
           ]
         },
         {
           "who": "recipient",
           "of": "email",
           "can": [
-            "read",
-            "query",
-            "subscribe"
+            "read"
           ]
         }
       ],
@@ -49,18 +45,14 @@
             "who": "author",
             "of": "email/email",
             "can": [
-              "read",
-              "query",
-              "subscribe"
+              "read"
             ]
           },
           {
             "who": "recipient",
             "of": "email/email",
             "can": [
-              "read",
-              "query",
-              "subscribe"
+              "read"
             ]
           }
         ]
