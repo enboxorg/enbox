@@ -7,7 +7,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -116,10 +116,21 @@ jobs:
           name: workspace-build
           path: packages
 
-      - name: Run tests
+      - name: Run tests with coverage
         run: |
-          bun run --filter @enbox/common  test:node
-          bun run --filter @enbox/crypto  test:node
+          bun run --filter @enbox/common  test:node:coverage
+          bun run --filter @enbox/crypto  test:node:coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lightweight
+          path: |
+            packages/common/coverage/lcov.info
+            packages/crypto/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
   # DWN SDK: large test suite, but no external services (LevelDB in-process)
@@ -362,13 +373,118 @@ jobs:
         run: bun run --filter @enbox/dwn-server test
 
   # ---------------------------------------------------------------------------
+  # Coverage: parse lcov reports, enforce 90% threshold, comment on PR
+  # ---------------------------------------------------------------------------
+  coverage:
+    name: Coverage Check
+    runs-on: ubuntu-latest
+    needs: [test-lightweight]
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: coverage-artifacts
+          merge-multiple: true
+
+      - name: Check coverage thresholds
+        id: coverage-check
+        run: |
+          echo "## Coverage Report" > coverage-report.md
+          echo "" >> coverage-report.md
+          echo "| Package | Line Coverage | Status |" >> coverage-report.md
+          echo "|---------|-------------|--------|" >> coverage-report.md
+
+          failed=false
+          threshold=90
+
+          for lcov_file in coverage-artifacts/packages/*/coverage/lcov.info; do
+            [ -f "$lcov_file" ] || continue
+
+            pkg=$(echo "$lcov_file" | sed 's|coverage-artifacts/packages/\([^/]*\)/.*|\1|')
+
+            # Parse lcov: count lines found (LF) and lines hit (LH)
+            total_lf=0
+            total_lh=0
+            while IFS= read -r line; do
+              case "$line" in
+                LF:*) total_lf=$((total_lf + ${line#LF:})) ;;
+                LH:*) total_lh=$((total_lh + ${line#LH:})) ;;
+              esac
+            done < "$lcov_file"
+
+            if [ "$total_lf" -gt 0 ]; then
+              coverage=$(awk "BEGIN { printf \"%.1f\", ($total_lh / $total_lf) * 100 }")
+            else
+              coverage="0.0"
+            fi
+
+            if [ "$(echo "$coverage < $threshold" | bc -l)" = "1" ]; then
+              echo "| $pkg | ${coverage}% | :x: Below ${threshold}% |" >> coverage-report.md
+              echo "::error::Coverage for $pkg is ${coverage}%, below ${threshold}% threshold"
+              failed=true
+            else
+              echo "| $pkg | ${coverage}% | :white_check_mark: |" >> coverage-report.md
+            fi
+          done
+
+          echo "" >> coverage-report.md
+          if [ "$failed" = true ]; then
+            echo ":x: **Coverage check failed**: one or more packages are below the ${threshold}% threshold." >> coverage-report.md
+          else
+            echo ":white_check_mark: **All packages meet the ${threshold}% coverage threshold.**" >> coverage-report.md
+          fi
+
+          cat coverage-report.md >> $GITHUB_STEP_SUMMARY
+
+          if [ "$failed" = true ]; then
+            exit 1
+          fi
+
+      - name: Comment PR with coverage
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('coverage-report.md', 'utf8');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Coverage Report')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+  # ---------------------------------------------------------------------------
   # Gate job for branch protection — always runs so required checks pass even
   # when the pipeline is skipped (e.g. docs-only changes).
   # ---------------------------------------------------------------------------
   ci-passed:
     name: CI Passed
     runs-on: ubuntu-latest
-    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server]
+    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server, coverage]
     if: always()
     steps:
       - name: Check results
@@ -398,6 +514,12 @@ jobs:
           fi
           if [ "${{ needs.test-dwn-server.result }}" != "success" ]; then
             echo "::error::test-dwn-server failed"
+            exit 1
+          fi
+
+          # Coverage must pass on PRs
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ needs.coverage.result }}" != "success" ]; then
+            echo "::error::Coverage check failed"
             exit 1
           fi
 

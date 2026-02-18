@@ -1,16 +1,13 @@
-import chaiAsPromised from 'chai-as-promised';
-import { Convert } from '@enbox/common';
-import { expect, use } from 'chai';
-
 import type { AES_GCM_TAG_LENGTHS } from '../../src/primitives/aes-gcm.js';
 import type { Jwk, JwkParamsOctPrivate } from '../../src/jose/jwk.js';
+
+import { Convert } from '@enbox/common';
+import { describe, expect, it } from 'bun:test';
 
 import { AesGcm } from '../../src/primitives/aes-gcm.js';
 import AesGcmDecryptTestVector from '../fixtures/test-vectors/aes-gcm/decrypt.json' with { type: 'json' };
 import AesGcmEncryptTestVector from '../fixtures/test-vectors/aes-gcm/encrypt.json' with { type: 'json' };
 import { isChrome } from '../utils/runtimes.js';
-
-use(chaiAsPromised);
 
 describe('AesGcm', () => {
   describe('bytesToPrivateKey()', () => {
@@ -18,9 +15,9 @@ describe('AesGcm', () => {
       const privateKeyBytes = Convert.hex('ffbd52af5980bd3870cdc3f3634980ae9d15b33440f63f79799eb8ca2329117f').toUint8Array();
       const privateKey = await AesGcm.bytesToPrivateKey({ privateKeyBytes });
 
-      expect(privateKey).to.have.property('k');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'oct');
+      expect(privateKey).toHaveProperty('k');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'oct');
     });
 
     it('returns the expected JWK given byte array input', async () => {
@@ -33,7 +30,7 @@ describe('AesGcm', () => {
         kty : 'oct',
         kid : '6oEQ2tFk2QI4_Lz8uxQpT4_Qce6f9ceS3ZD76nqd_qg'
       };
-      expect(privateKey).to.deep.equal(expectedOutput);
+      expect(privateKey).toEqual(expectedOutput);
     });
   });
 
@@ -48,7 +45,7 @@ describe('AesGcm', () => {
       const plaintext = await AesGcm.decrypt({ data: ciphertext, iv: new Uint8Array(12), key: privateKey, tagLength: 128 });
 
       // Validate the results.
-      expect(plaintext).to.be.instanceOf(Uint8Array);
+      expect(plaintext).toBeInstanceOf(Uint8Array);
     });
 
     it('uses a tagLength of 128 bits by default', async () => {
@@ -57,7 +54,7 @@ describe('AesGcm', () => {
       const ciphertext = Convert.hex('f27e81aa63c315a5cd03e2abcbc62a5665').toUint8Array();
 
       const plaintext = await AesGcm.decrypt({ data: ciphertext, iv: new Uint8Array(12), key: privateKey });
-      expect(plaintext).to.be.instanceOf(Uint8Array);
+      expect(plaintext).toBeInstanceOf(Uint8Array);
     });
 
     for (const vector of AesGcmDecryptTestVector.vectors) {
@@ -73,7 +70,7 @@ describe('AesGcm', () => {
           tagLength      : vector.input.tagLength as typeof AES_GCM_TAG_LENGTHS[number]
         });
 
-        expect(plaintext).to.deep.equal(Convert.hex(vector.output).toUint8Array());
+        expect(plaintext).toEqual(Convert.hex(vector.output).toUint8Array());
       });
     }
 
@@ -87,11 +84,11 @@ describe('AesGcm', () => {
         try {
           // Test the method.
           await AesGcm.decrypt({ key, data, iv });
-          expect.fail('expected an error to be thrown due to unsupported initialization vector length');
+          throw new Error('expected an error to be thrown due to unsupported initialization vector length');
 
         } catch (error: any) {
           // Validate the result.
-          expect(error.message).to.include(`initialization vector must be 96 bits`);
+          expect(error.message).toContain(`initialization vector must be 96 bits`);
         }
       }
     });
@@ -107,11 +104,11 @@ describe('AesGcm', () => {
           // Test the method.
           // @ts-expect-error because invalid tag lengths are being tested
           await AesGcm.decrypt({ tagLength, key, data, iv });
-          expect.fail('expected an error to be thrown due to invalid tag length');
+          throw new Error('expected an error to be thrown due to invalid tag length');
 
         } catch (error: any) {
           // Validate the result.
-          expect(error.message).to.include(`tag length is invalid`);
+          expect(error.message).toContain(`tag length is invalid`);
         }
       }
     });
@@ -127,7 +124,7 @@ describe('AesGcm', () => {
       const ciphertext = await AesGcm.encrypt({ data, iv: new Uint8Array(12), key: privateKey, tagLength: 128 });
 
       // Validate the results.
-      expect(ciphertext).to.be.instanceOf(Uint8Array);
+      expect(ciphertext).toBeInstanceOf(Uint8Array);
     });
 
     it('optionally accepts additional authenticated data', async () => {
@@ -146,7 +143,7 @@ describe('AesGcm', () => {
       });
 
       // Validate the results.
-      expect(ciphertext).to.be.instanceOf(Uint8Array);
+      expect(ciphertext).toBeInstanceOf(Uint8Array);
     });
 
     it('uses a tagLength of 128 bits by default', async () => {
@@ -158,7 +155,7 @@ describe('AesGcm', () => {
       const ciphertext = await AesGcm.encrypt({ data, iv: new Uint8Array(12), key: privateKey });
 
       // Validate the results.
-      expect(ciphertext).to.have.length(data.byteLength + 16); // 128 bits = 16 bytes
+      expect(ciphertext).toHaveLength(data.byteLength + 16); // 128 bits = 16 bytes
     });
 
     for (const vector of AesGcmEncryptTestVector.vectors) {
@@ -178,7 +175,7 @@ describe('AesGcm', () => {
         });
 
         // Validate the result.
-        expect(ciphertext).to.deep.equal(expectedCiphertext);
+        expect(ciphertext).toEqual(expectedCiphertext);
       });
     }
 
@@ -192,11 +189,11 @@ describe('AesGcm', () => {
         try {
           // Test the method.
           await AesGcm.encrypt({ key, data, iv });
-          expect.fail('expected an error to be thrown due to unsupported initialization vector length');
+          throw new Error('expected an error to be thrown due to unsupported initialization vector length');
 
         } catch (error: any) {
           // Validate the result.
-          expect(error.message).to.include(`initialization vector must be 96 bits`);
+          expect(error.message).toContain(`initialization vector must be 96 bits`);
         }
       }
     });
@@ -212,11 +209,11 @@ describe('AesGcm', () => {
           // Test the method.
           // @ts-expect-error because invalid tag lengths are being tested
           await AesGcm.encrypt({ tagLength, key, data, iv });
-          expect.fail('expected an error to be thrown due to invalid tag length');
+          throw new Error('expected an error to be thrown due to invalid tag length');
 
         } catch (error: any) {
           // Validate the result.
-          expect(error.message).to.include(`tag length is invalid`);
+          expect(error.message).toContain(`tag length is invalid`);
         }
       }
     });
@@ -226,9 +223,9 @@ describe('AesGcm', () => {
     it('returns a private key in JWK format', async () => {
       const privateKey = await AesGcm.generateKey({ length: 256 });
 
-      expect(privateKey).to.have.property('k');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'oct');
+      expect(privateKey).toHaveProperty('k');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'oct');
     });
 
     it('supports key lengths of 128 and 256 bits in all supported runtimes', async () => {
@@ -238,21 +235,21 @@ describe('AesGcm', () => {
       // 128 bits
       privateKey = await AesGcm.generateKey({ length: 128 }) as JwkParamsOctPrivate;
       privateKeyBytes = Convert.base64Url(privateKey.k).toUint8Array();
-      expect(privateKeyBytes.byteLength).to.equal(16);
+      expect(privateKeyBytes.byteLength).toBe(16);
 
       // 256 bits
       privateKey = await AesGcm.generateKey({ length: 256 }) as JwkParamsOctPrivate;
       privateKeyBytes = Convert.base64Url(privateKey.k).toUint8Array();
-      expect(privateKeyBytes.byteLength).to.equal(32);
+      expect(privateKeyBytes.byteLength).toBe(32);
     });
 
-    it('supports key lengths of 192 bits in all supported runtimes except Chrome browser', async function () {
-      if (isChrome) {this.skip();}
+    it('supports key lengths of 192 bits in all supported runtimes except Chrome browser', async () => {
+      if (isChrome) { return; }
 
       // 192 bits
       const privateKey: JwkParamsOctPrivate = await AesGcm.generateKey({ length: 192 }) as JwkParamsOctPrivate;
       const privateKeyBytes: Uint8Array = Convert.base64Url(privateKey.k).toUint8Array();
-      expect(privateKeyBytes.byteLength).to.equal(24);
+      expect(privateKeyBytes.byteLength).toBe(24);
     });
 
     it('throws an error if the key length is invalid', async () => {
@@ -261,11 +258,11 @@ describe('AesGcm', () => {
           // Test the method.
           // @ts-expect-error because invalid tag lengths are being tested
           await AesGcm.generateKey({ length });
-          expect.fail('expected an error to be thrown due to invalid key length');
+          throw new Error('expected an error to be thrown due to invalid key length');
 
         } catch (error: any) {
           // Validate the result.
-          expect(error.message).to.include(`key length is invalid`);
+          expect(error.message).toContain(`key length is invalid`);
         }
       }
     });
@@ -276,7 +273,7 @@ describe('AesGcm', () => {
       const privateKey = await AesGcm.generateKey({ length: 128 });
       const privateKeyBytes = await AesGcm.privateKeyToBytes({ privateKey });
 
-      expect(privateKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
     });
 
     it('returns the expected byte array for JWK input', async () => {
@@ -287,9 +284,9 @@ describe('AesGcm', () => {
       };
       const privateKeyBytes = await AesGcm.privateKeyToBytes({ privateKey });
 
-      expect(privateKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
       const expectedOutput = Convert.hex('2fbd52af5980bd3870cdc3f3634980ae9d15b33440f63f79799eb8ca2329117f').toUint8Array();
-      expect(privateKeyBytes).to.deep.equal(expectedOutput);
+      expect(privateKeyBytes).toEqual(expectedOutput);
     });
 
     it('throws an error when provided an asymmetric public key', async () => {
@@ -301,7 +298,7 @@ describe('AesGcm', () => {
 
       await expect(
         AesGcm.privateKeyToBytes({ privateKey: publicKey })
-      ).to.eventually.be.rejectedWith(Error, 'provided key is not a valid oct private key');
+      ).rejects.toThrow('provided key is not a valid oct private key');
     });
   });
 });

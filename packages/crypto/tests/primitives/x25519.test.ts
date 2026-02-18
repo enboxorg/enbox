@@ -1,8 +1,7 @@
-import chaiAsPromised from 'chai-as-promised';
-import { Convert } from '@enbox/common';
-import { expect, use } from 'chai';
-
 import type { Jwk, JwkParamsOkpPrivate } from '../../src/jose/jwk.js';
+
+import { Convert } from '@enbox/common';
+import { beforeAll, describe, expect, it } from 'bun:test';
 
 import x25519BytesToPrivateKey from '../fixtures/test-vectors/x25519/bytes-to-private-key.json' with { type: 'json' };
 import x25519BytesToPublicKey from '../fixtures/test-vectors/x25519/bytes-to-public-key.json' with { type: 'json' };
@@ -11,13 +10,11 @@ import x25519PublicKeyToBytes from '../fixtures/test-vectors/x25519/public-key-t
 
 import { X25519 } from '../../src/primitives/x25519.js';
 
-use(chaiAsPromised);
-
 describe('X25519', () => {
   let privateKey: Jwk;
   let publicKey: Jwk;
 
-  before(async () => {
+  beforeAll(async () => {
     privateKey = await X25519.generateKey();
     publicKey = await X25519.computePublicKey({ key: privateKey });
   });
@@ -27,11 +24,11 @@ describe('X25519', () => {
       const privateKeyBytes = Convert.hex('c8a9d5a91091ad851c668b0736c1c9a02936c0d3ad62670858088047ba057475').toUint8Array();
       const privateKey = await X25519.bytesToPrivateKey({ privateKeyBytes });
 
-      expect(privateKey).to.have.property('crv', 'X25519');
-      expect(privateKey).to.have.property('d');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'OKP');
-      expect(privateKey).to.have.property('x');
+      expect(privateKey).toHaveProperty('crv', 'X25519');
+      expect(privateKey).toHaveProperty('d');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'OKP');
+      expect(privateKey).toHaveProperty('x');
     });
 
     for (const vector of x25519BytesToPrivateKey.vectors) {
@@ -40,7 +37,7 @@ describe('X25519', () => {
           privateKeyBytes: Convert.hex(vector.input.privateKeyBytes).toUint8Array()
         });
 
-        expect(privateKey).to.deep.equal(vector.output);
+        expect(privateKey).toEqual(vector.output);
       });
     }
   });
@@ -50,11 +47,11 @@ describe('X25519', () => {
       const publicKeyBytes = Convert.hex('504a36999f489cd2fdbc08baff3d88fa00569ba986cba22548ffde80f9806829').toUint8Array();
       const publicKey = await X25519.bytesToPublicKey({ publicKeyBytes });
 
-      expect(publicKey).to.have.property('crv', 'X25519');
-      expect(publicKey).to.have.property('kid');
-      expect(publicKey).to.have.property('kty', 'OKP');
-      expect(publicKey).to.have.property('x');
-      expect(publicKey).to.not.have.property('d');
+      expect(publicKey).toHaveProperty('crv', 'X25519');
+      expect(publicKey).toHaveProperty('kid');
+      expect(publicKey).toHaveProperty('kty', 'OKP');
+      expect(publicKey).toHaveProperty('x');
+      expect(publicKey).not.toHaveProperty('d');
     });
 
     for (const vector of x25519BytesToPublicKey.vectors) {
@@ -63,7 +60,7 @@ describe('X25519', () => {
           publicKeyBytes: Convert.hex(vector.input.publicKeyBytes).toUint8Array()
         });
 
-        expect(publicKey).to.deep.equal(vector.output);
+        expect(publicKey).toEqual(vector.output);
       });
     }
   });
@@ -72,18 +69,18 @@ describe('X25519', () => {
     it('returns a public key in JWK format', async () => {
       const publicKey = await X25519.computePublicKey({ key: privateKey });
 
-      expect(publicKey).to.have.property('kty', 'OKP');
-      expect(publicKey).to.have.property('crv', 'X25519');
-      expect(publicKey).to.have.property('kid');
-      expect(publicKey).to.have.property('x');
-      expect(publicKey).to.not.have.property('d');
+      expect(publicKey).toHaveProperty('kty', 'OKP');
+      expect(publicKey).toHaveProperty('crv', 'X25519');
+      expect(publicKey).toHaveProperty('kid');
+      expect(publicKey).toHaveProperty('x');
+      expect(publicKey).not.toHaveProperty('d');
     });
 
     it('computes and adds a kid property, if missing', async () => {
       const { kid, ...privateKeyWithoutKid } = privateKey;
       const publicKey = await X25519.computePublicKey({ key: privateKeyWithoutKid });
 
-      expect(publicKey).to.have.property('kid', kid);
+      expect(publicKey).toHaveProperty('kid', kid);
     });
   });
 
@@ -91,18 +88,18 @@ describe('X25519', () => {
     it('returns a private key in JWK format', async () => {
       const privateKey = await X25519.generateKey();
 
-      expect(privateKey).to.have.property('crv', 'X25519');
-      expect(privateKey).to.have.property('d');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'OKP');
-      expect(privateKey).to.have.property('x');
+      expect(privateKey).toHaveProperty('crv', 'X25519');
+      expect(privateKey).toHaveProperty('d');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'OKP');
+      expect(privateKey).toHaveProperty('x');
     });
 
     it('returns a 32-byte private key', async () => {
       const privateKey = await X25519.generateKey() as JwkParamsOkpPrivate;
 
       const privateKeyBytes = Convert.base64Url(privateKey.d).toUint8Array();
-      expect(privateKeyBytes.byteLength).to.equal(32);
+      expect(privateKeyBytes.byteLength).toBe(32);
     });
   });
 
@@ -110,28 +107,28 @@ describe('X25519', () => {
     it('returns a public key in JWK format', async () => {
       const publicKey = await X25519.getPublicKey({ key: privateKey });
 
-      expect(publicKey).to.have.property('kty', 'OKP');
-      expect(publicKey).to.have.property('crv', 'X25519');
-      expect(publicKey).to.have.property('x');
-      expect(publicKey).to.not.have.property('d');
+      expect(publicKey).toHaveProperty('kty', 'OKP');
+      expect(publicKey).toHaveProperty('crv', 'X25519');
+      expect(publicKey).toHaveProperty('x');
+      expect(publicKey).not.toHaveProperty('d');
     });
 
     it('computes and adds a kid property, if missing', async () => {
       const { kid, ...privateKeyWithoutKid } = privateKey;
       const publicKey = await X25519.getPublicKey({ key: privateKeyWithoutKid });
 
-      expect(publicKey).to.have.property('kid', kid);
+      expect(publicKey).toHaveProperty('kid', kid);
     });
 
     it('returns the same output as computePublicKey()', async () => {
       const publicKey = await X25519.getPublicKey({ key: privateKey });
-      expect(publicKey).to.deep.equal(await X25519.computePublicKey({ key: privateKey }));
+      expect(publicKey).toEqual(await X25519.computePublicKey({ key: privateKey }));
     });
 
     it('throws an error when provided an X25519 public key', async () => {
       await expect(
         X25519.getPublicKey({ key: publicKey })
-      ).to.eventually.be.rejectedWith(Error, 'key is not an X25519 private JWK');
+      ).rejects.toThrow('key is not an X25519 private JWK');
     });
 
     it('throws an error when provided an Ed25519 private key', async () => {
@@ -145,7 +142,7 @@ describe('X25519', () => {
 
       await expect(
         X25519.getPublicKey({ key: ed25519PrivateKey })
-      ).to.eventually.be.rejectedWith(Error, 'key is not an X25519 private JWK');
+      ).rejects.toThrow('key is not an X25519 private JWK');
     });
 
     it('throws an error when provided an secp256k1 private key', async () => {
@@ -159,7 +156,7 @@ describe('X25519', () => {
 
       await expect(
         X25519.getPublicKey({ key: secp256k1PrivateKey })
-      ).to.eventually.be.rejectedWith(Error, 'key is not an X25519 private JWK');
+      ).rejects.toThrow('key is not an X25519 private JWK');
     });
   });
 
@@ -174,9 +171,9 @@ describe('X25519', () => {
       };
       const privateKeyBytes = await X25519.privateKeyToBytes({ privateKey });
 
-      expect(privateKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
       const expectedOutput = Convert.hex('8f14925ff68ce3d9ba13831a49dfa1722cc8337deb5f32e5b6e7aff68070d55f').toUint8Array();
-      expect(privateKeyBytes).to.deep.equal(expectedOutput);
+      expect(privateKeyBytes).toEqual(expectedOutput);
     });
 
     it('throws an error when provided an X25519 public key', async () => {
@@ -189,7 +186,7 @@ describe('X25519', () => {
 
       await expect(
         X25519.privateKeyToBytes({ privateKey: publicKey })
-      ).to.eventually.be.rejectedWith(Error, 'provided key is not a valid OKP private key');
+      ).rejects.toThrow('provided key is not a valid OKP private key');
     });
 
     for (const vector of x25519PrivateKeyToBytes.vectors) {
@@ -197,7 +194,7 @@ describe('X25519', () => {
         const privateKeyBytes = await X25519.privateKeyToBytes({
           privateKey: vector.input.privateKey as Jwk
         });
-        expect(privateKeyBytes).to.deep.equal(Convert.hex(vector.output).toUint8Array());
+        expect(privateKeyBytes).toEqual(Convert.hex(vector.output).toUint8Array());
       });
     }
   });
@@ -213,9 +210,9 @@ describe('X25519', () => {
 
       const publicKeyBytes = await X25519.publicKeyToBytes({ publicKey });
 
-      expect(publicKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(publicKeyBytes).toBeInstanceOf(Uint8Array);
       const expectedOutput = Convert.hex('536917d857244c0a1302330151a7703a97ed75793e2b1f2964c7b21b7419b32f').toUint8Array();
-      expect(publicKeyBytes).to.deep.equal(expectedOutput);
+      expect(publicKeyBytes).toEqual(expectedOutput);
     });
 
     it('throws an error when provided an X25519 private key', async () => {
@@ -229,7 +226,7 @@ describe('X25519', () => {
 
       await expect(
         X25519.publicKeyToBytes({ publicKey: privateKey })
-      ).to.eventually.be.rejectedWith(Error, 'provided key is not a valid OKP public key');
+      ).rejects.toThrow('provided key is not a valid OKP public key');
     });
 
     for (const vector of x25519PublicKeyToBytes.vectors) {
@@ -237,7 +234,7 @@ describe('X25519', () => {
         const publicKeyBytes = await X25519.publicKeyToBytes({
           publicKey: vector.input.publicKey as Jwk
         });
-        expect(publicKeyBytes).to.deep.equal(Convert.hex(vector.output).toUint8Array());
+        expect(publicKeyBytes).toEqual(Convert.hex(vector.output).toUint8Array());
       });
     }
   });
@@ -248,7 +245,7 @@ describe('X25519', () => {
     let otherPartyPrivateKey: Jwk;
     let otherPartyPublicKey: Jwk;
 
-    before(async () => {
+    beforeAll(async () => {
       ownPrivateKey = privateKey;
       ownPublicKey = publicKey;
       otherPartyPrivateKey = await X25519.generateKey();
@@ -260,8 +257,8 @@ describe('X25519', () => {
         privateKeyA : ownPrivateKey,
         publicKeyB  : otherPartyPublicKey
       });
-      expect(sharedSecret).to.be.instanceOf(Uint8Array);
-      expect(sharedSecret.byteLength).to.equal(32);
+      expect(sharedSecret).toBeInstanceOf(Uint8Array);
+      expect(sharedSecret.byteLength).toBe(32);
     });
 
     it('is commutative', async () => {
@@ -275,7 +272,7 @@ describe('X25519', () => {
         publicKeyB  : ownPublicKey
       });
 
-      expect(sharedSecretOwnOther).to.deep.equal(sharedSecretOtherOwn);
+      expect(sharedSecretOwnOther).toEqual(sharedSecretOtherOwn);
     });
 
     it('throws an error if the public/private keys from the same key pair are specified', async () => {
@@ -284,7 +281,7 @@ describe('X25519', () => {
           privateKeyA : ownPrivateKey,
           publicKeyB  : ownPublicKey
         })
-      ).to.eventually.be.rejectedWith(Error, 'shared secret cannot be computed from a single key pair');
+      ).rejects.toThrow('shared secret cannot be computed from a single key pair');
     });
   });
 });

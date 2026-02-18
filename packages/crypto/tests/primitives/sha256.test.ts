@@ -1,12 +1,9 @@
-import chaiAsPromised from 'chai-as-promised';
 import { Convert } from '@enbox/common';
-import { expect, use } from 'chai';
+import { describe, expect, it } from 'bun:test';
 
 import Sha256DigestTestVector from '../fixtures/test-vectors/sha256/digest.json' with { type: 'json' };
 
 import { Sha256 } from '../../src/primitives/sha256.js';
-
-use(chaiAsPromised);
 
 describe('Sha256', () => {
   describe('digest()', () => {
@@ -15,8 +12,8 @@ describe('Sha256', () => {
         data: new Uint8Array(10)
       });
 
-      expect(digest).to.be.an('Uint8Array');
-      expect(digest.byteLength).to.equal(32);
+      expect(digest).toBeInstanceOf(Uint8Array);
+      expect(digest.byteLength).toBe(32);
     });
 
     for (const vector of Sha256DigestTestVector.vectors) {
@@ -25,7 +22,7 @@ describe('Sha256', () => {
           data: Convert.string(vector.input).toUint8Array()
         });
 
-        expect(digest).to.deep.equal(
+        expect(digest).toEqual(
           Convert.hex(vector.output).toUint8Array()
         );
       });

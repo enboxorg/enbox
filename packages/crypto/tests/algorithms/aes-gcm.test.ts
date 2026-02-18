@@ -1,7 +1,7 @@
-import { Convert } from '@enbox/common';
-import { expect } from 'chai';
-
 import type { Jwk } from '../../src/jose/jwk.js';
+
+import { Convert } from '@enbox/common';
+import { beforeAll, describe, expect, it } from 'bun:test';
 
 import { AesGcmAlgorithm } from '../../src/algorithms/aes-gcm.js';
 import { CryptoUtils } from '../../src/utils.js';
@@ -11,7 +11,7 @@ describe('AesGcmAlgorithm', () => {
   let aesGcm: AesGcmAlgorithm;
   let dataEncryptionKey: Jwk;
 
-  before(async () => {
+  beforeAll(async () => {
     aesGcm = new AesGcmAlgorithm();
     dataEncryptionKey = await aesGcm.generateKey({ algorithm: 'A128GCM' });
   });
@@ -32,8 +32,8 @@ describe('AesGcmAlgorithm', () => {
       });
 
       // Validate the results.
-      expect(ciphertext).to.be.instanceOf(Uint8Array);
-      expect(ciphertext.byteLength).to.equal(plaintext.byteLength + tagLength / 8);
+      expect(ciphertext).toBeInstanceOf(Uint8Array);
+      expect(ciphertext.byteLength).toBe(plaintext.byteLength + tagLength / 8);
     });
   });
 
@@ -55,7 +55,7 @@ describe('AesGcmAlgorithm', () => {
       });
 
       // Validate the results.
-      expect(plaintext).to.be.instanceOf(Uint8Array);
+      expect(plaintext).toBeInstanceOf(Uint8Array);
     });
   });
 
@@ -63,33 +63,33 @@ describe('AesGcmAlgorithm', () => {
     it('returns a private key in JWK format', async () => {
       const privateKey = await aesGcm.generateKey({ algorithm: 'A128GCM' });
 
-      expect(privateKey).to.have.property('alg', 'A128GCM');
-      expect(privateKey).to.have.property('k');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'oct');
+      expect(privateKey).toHaveProperty('alg', 'A128GCM');
+      expect(privateKey).toHaveProperty('k');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'oct');
     });
 
     it(`supports 'A128GCM' and 'A256GCM' algorithms in all supported runtimes`, async () => {
       const algorithms = ['A128GCM', 'A256GCM'] as const;
       for (const algorithm of algorithms) {
         const privateKey = await aesGcm.generateKey({ algorithm });
-        expect(privateKey).to.have.property('alg', algorithm);
+        expect(privateKey).toHaveProperty('alg', algorithm);
         if (!privateKey.k) {throw new Error('Expected privateKey to have a `k` property');} // TypeScript type guard.
         const privateKeyBytes = Convert.base64Url(privateKey.k).toUint8Array();
-        expect(privateKeyBytes.byteLength * 8).to.equal(parseInt(algorithm.slice(1, 4)));
+        expect(privateKeyBytes.byteLength * 8).toBe(parseInt(algorithm.slice(1, 4)));
       }
     });
 
-    it(`supports 'A192GCM' algorithm in all supported runtimes except Chrome browser`, async function () {
-      if (isChrome) {this.skip();}
+    it(`supports 'A192GCM' algorithm in all supported runtimes except Chrome browser`, async () => {
+      if (isChrome) { return; }
 
       const algorithms = ['A192GCM'] as const;
       for (const algorithm of algorithms) {
         const privateKey = await aesGcm.generateKey({ algorithm });
-        expect(privateKey).to.have.property('alg', algorithm);
+        expect(privateKey).toHaveProperty('alg', algorithm);
         if (!privateKey.k) {throw new Error('Expected privateKey to have a `k` property');} // TypeScript type guard.
         const privateKeyBytes = Convert.base64Url(privateKey.k).toUint8Array();
-        expect(privateKeyBytes.byteLength * 8).to.equal(parseInt(algorithm.slice(1, 4)));
+        expect(privateKeyBytes.byteLength * 8).toBe(parseInt(algorithm.slice(1, 4)));
       }
     });
   });

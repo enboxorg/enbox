@@ -1,7 +1,7 @@
 import type { Jwk } from '../../src/jose/jwk.js';
 
 import { Convert } from '@enbox/common';
-import { expect } from 'chai';
+import { describe, expect, it } from 'bun:test';
 
 import { AesKw } from '../../src/primitives/aes-kw.js';
 import { isChrome } from '../utils/runtimes.js';
@@ -12,10 +12,10 @@ describe('AesKw', () => {
       const privateKeyBytes = Convert.hex('dc5ace47f88a59c992f6ad05fa15ccbe').toUint8Array();
       const privateKey = await AesKw.bytesToPrivateKey({ privateKeyBytes });
 
-      expect(privateKey).to.have.property('k');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'oct');
-      expect(privateKey).to.have.property('alg', 'A128KW');
+      expect(privateKey).toHaveProperty('k');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'oct');
+      expect(privateKey).toHaveProperty('alg', 'A128KW');
     });
 
     it('returns the expected JWK given byte array input', async () => {
@@ -29,7 +29,7 @@ describe('AesKw', () => {
         alg : 'A128KW',
         kid : 'u09ksgd0kCHfNK1BDhzP_N7lOvljazw443nfbO7k6Fo',
       };
-      expect(privateKey).to.deep.equal(expectedOutput);
+      expect(privateKey).toEqual(expectedOutput);
     });
   });
 
@@ -37,10 +37,10 @@ describe('AesKw', () => {
     it('returns a private key in JWK format', async () => {
       const privateKey = await AesKw.generateKey({ length: 256 });
 
-      expect(privateKey).to.have.property('k');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'oct');
-      expect(privateKey.alg).to.equal('A256KW');
+      expect(privateKey).toHaveProperty('k');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'oct');
+      expect(privateKey.alg).toBe('A256KW');
     });
 
     it('supports key lengths of 128, 192, or 256 bits', async () => {
@@ -49,24 +49,24 @@ describe('AesKw', () => {
 
       // 128 bits
       privateKey = await AesKw.generateKey({ length: 128 }) as Jwk;
-      expect(privateKey.alg).to.equal('A128KW');
+      expect(privateKey.alg).toBe('A128KW');
       privateKeyBytes = Convert.base64Url(privateKey.k!).toUint8Array();
-      expect(privateKeyBytes.byteLength).to.equal(16);
+      expect(privateKeyBytes.byteLength).toBe(16);
 
       // Skip this test in Chrome browser because it does not support AES with 192-bit keys.
       if (!isChrome) {
         // 192 bits
         privateKey = await AesKw.generateKey({ length: 192 }) as Jwk;
-        expect(privateKey.alg).to.equal('A192KW');
+        expect(privateKey.alg).toBe('A192KW');
         privateKeyBytes = Convert.base64Url(privateKey.k!).toUint8Array();
-        expect(privateKeyBytes.byteLength).to.equal(24);
+        expect(privateKeyBytes.byteLength).toBe(24);
       }
 
       // 256 bits
       privateKey = await AesKw.generateKey({ length: 256 }) as Jwk;
-      expect(privateKey.alg).to.equal('A256KW');
+      expect(privateKey.alg).toBe('A256KW');
       privateKeyBytes = Convert.base64Url(privateKey.k!).toUint8Array();
-      expect(privateKeyBytes.byteLength).to.equal(32);
+      expect(privateKeyBytes.byteLength).toBe(32);
     });
 
     it('throws an error if the key length is invalid', async () => {
@@ -75,11 +75,11 @@ describe('AesKw', () => {
           // Test the method.
           // @ts-expect-error because invalid tag lengths are being tested
           await AesKw.generateKey({ length });
-          expect.fail('expected an error to be thrown due to invalid key length');
+          throw new Error('expected an error to be thrown due to invalid key length');
 
         } catch (error: any) {
           // Validate the result.
-          expect(error.message).to.include(`key length is invalid`);
+          expect(error.message).toContain(`key length is invalid`);
         }
       }
     });
@@ -90,7 +90,7 @@ describe('AesKw', () => {
       const privateKey = await AesKw.generateKey({ length: 128 });
       const privateKeyBytes = await AesKw.privateKeyToBytes({ privateKey });
 
-      expect(privateKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
     });
 
     it('returns the expected byte array for JWK input', async () => {
@@ -103,9 +103,9 @@ describe('AesKw', () => {
 
       const privateKeyBytes = await AesKw.privateKeyToBytes({ privateKey });
 
-      expect(privateKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
       const expectedOutput = Convert.hex('dc5ace47f88a59c992f6ad05fa15ccbe').toUint8Array();
-      expect(privateKeyBytes).to.deep.equal(expectedOutput);
+      expect(privateKeyBytes).toEqual(expectedOutput);
     });
 
     it('throws an error when provided an asymmetric private key', async () => {
@@ -118,9 +118,9 @@ describe('AesKw', () => {
 
       try {
         await AesKw.privateKeyToBytes({ privateKey });
-        expect.fail('expected an error to be thrown');
+        throw new Error('expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).to.include('provided key is not a valid oct private key');
+        expect(error.message).toContain('provided key is not a valid oct private key');
       }
     });
 
@@ -133,9 +133,9 @@ describe('AesKw', () => {
 
       try {
         await AesKw.privateKeyToBytes({ privateKey: publicKey });
-        expect.fail('expected an error to be thrown');
+        throw new Error('expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).to.include('provided key is not a valid oct private key');
+        expect(error.message).toContain('provided key is not a valid oct private key');
       }
     });
   });
@@ -154,10 +154,10 @@ describe('AesKw', () => {
 
       const unwrappedKey = await AesKw.unwrapKey({ wrappedKeyBytes, wrappedKeyAlgorithm: 'A256GCM', decryptionKey: encryptionKey });
 
-      expect(unwrappedKey).to.have.property('k');
-      expect(unwrappedKey).to.have.property('kty', 'oct');
-      expect(unwrappedKey).to.have.property('kid');
-      expect(unwrappedKey).to.have.property('alg', 'A256GCM');
+      expect(unwrappedKey).toHaveProperty('k');
+      expect(unwrappedKey).toHaveProperty('kty', 'oct');
+      expect(unwrappedKey).toHaveProperty('kid');
+      expect(unwrappedKey).toHaveProperty('alg', 'A256GCM');
     });
 
     it('returns the expected wrapped key for given input', async () => {
@@ -179,7 +179,7 @@ describe('AesKw', () => {
         kid : '-TssSnJNgh10-YTwuBtyZTnv0LY6sdT-TQl9WFTSetI',
       };
 
-      expect(unwrappedKey).to.deep.equal(expectedPrivateKey);
+      expect(unwrappedKey).toEqual(expectedPrivateKey);
     });
   });
 
@@ -195,8 +195,8 @@ describe('AesKw', () => {
 
       const wrappedKeyBytes = await AesKw.wrapKey({ encryptionKey, unwrappedKey });
 
-      expect(wrappedKeyBytes).to.be.an.instanceOf(Uint8Array);
-      expect(wrappedKeyBytes.byteLength).to.equal(32 + 8); // 32 bytes for the wrapped private key, 8 bytes for the initialization vector
+      expect(wrappedKeyBytes).toBeInstanceOf(Uint8Array);
+      expect(wrappedKeyBytes.byteLength).toBe(32 + 8); // 32 bytes for the wrapped private key, 8 bytes for the initialization vector
     });
 
     it('returns the expected wrapped key for given input', async () => {
@@ -217,7 +217,7 @@ describe('AesKw', () => {
       const wrappedKeyBytes = await AesKw.wrapKey({ unwrappedKey, encryptionKey });
 
       const expectedOutput = Convert.hex('8c55fb6fc4c7bb0b6b483df65ba52bee7ed6e0f861ac8097b2394f61067d1157901295aba72c514b').toUint8Array(); // raw format
-      expect(wrappedKeyBytes).to.deep.equal(expectedOutput);
+      expect(wrappedKeyBytes).toEqual(expectedOutput);
     });
   });
 });

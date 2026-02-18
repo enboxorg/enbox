@@ -1,10 +1,7 @@
-import chaiAsPromised from 'chai-as-promised';
 import { Convert } from '@enbox/common';
-import { expect, use } from 'chai';
+import { describe, expect, it } from 'bun:test';
 
 import { ConcatKdf } from '../../src/primitives/concat-kdf.js';
-
-use(chaiAsPromised);
 
 describe('ConcatKdf', () => {
   describe('deriveKey()', () => {
@@ -26,8 +23,8 @@ describe('ConcatKdf', () => {
       const derivedKeyingMaterial = await ConcatKdf.deriveKey(input);
 
       const expectedResult = Convert.base64Url(output).toUint8Array();
-      expect(derivedKeyingMaterial).to.deep.equal(expectedResult);
-      expect(derivedKeyingMaterial.byteLength).to.equal(16);
+      expect(derivedKeyingMaterial).toEqual(expectedResult);
+      expect(derivedKeyingMaterial.byteLength).toBe(16);
     });
 
     it('accepts other info as String and TypedArray', async () => {
@@ -45,8 +42,8 @@ describe('ConcatKdf', () => {
         suppPubInfo : 128
       } };
       let derivedKeyingMaterial = await ConcatKdf.deriveKey(inputString);
-      expect(derivedKeyingMaterial).to.be.an('Uint8Array');
-      expect(derivedKeyingMaterial.byteLength).to.equal(32);
+      expect(derivedKeyingMaterial).toBeInstanceOf(Uint8Array);
+      expect(derivedKeyingMaterial.byteLength).toBe(32);
 
       // TypedArray input.
       const inputTypedArray = { ...inputBase, fixedInfo: {
@@ -56,15 +53,15 @@ describe('ConcatKdf', () => {
         suppPubInfo : 128
       } };
       derivedKeyingMaterial = await ConcatKdf.deriveKey(inputTypedArray);
-      expect(derivedKeyingMaterial).to.be.an('Uint8Array');
-      expect(derivedKeyingMaterial.byteLength).to.equal(32);
+      expect(derivedKeyingMaterial).toBeInstanceOf(Uint8Array);
+      expect(derivedKeyingMaterial.byteLength).toBe(32);
     });
 
     it('throws error if multi-round Concat KDF attempted', async () => {
       await expect(
         // @ts-expect-error because only parameters needed to trigger the error are specified.
         ConcatKdf.deriveKey({ keyDataLen: 512 })
-      ).to.eventually.be.rejectedWith(Error, 'rounds not supported');
+      ).rejects.toThrow('rounds not supported');
     });
 
     it('throws an error if suppPubInfo is not a Number', async () => {
@@ -80,7 +77,7 @@ describe('ConcatKdf', () => {
             suppPubInfo : '128',
           }
         })
-      ).to.eventually.be.rejectedWith(TypeError, 'Fixed length input must be a number');
+      ).rejects.toThrow('Fixed length input must be a number');
     });
   });
 
@@ -99,7 +96,7 @@ describe('ConcatKdf', () => {
       const fixedInfo = ConcatKdf.computeFixedInfo(input);
 
       const expectedResult = Convert.base64Url(output).toUint8Array();
-      expect(fixedInfo).to.deep.equal(expectedResult);
+      expect(fixedInfo).toEqual(expectedResult);
     });
 
     it('matches RFC 7518 ECDH-ES key agreement computation example', async () => {
@@ -116,7 +113,7 @@ describe('ConcatKdf', () => {
       const fixedInfo = ConcatKdf.computeFixedInfo(input);
 
       const expectedResult = Convert.base64Url(output).toUint8Array();
-      expect(fixedInfo).to.deep.equal(expectedResult);
+      expect(fixedInfo).toEqual(expectedResult);
     });
   });
 });

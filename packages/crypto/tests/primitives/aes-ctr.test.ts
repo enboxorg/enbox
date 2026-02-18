@@ -1,15 +1,12 @@
-import chaiAsPromised from 'chai-as-promised';
-import { Convert } from '@enbox/common';
-import { expect, use } from 'chai';
-
 import type { Jwk, JwkParamsOctPrivate } from '../../src/jose/jwk.js';
+
+import { Convert } from '@enbox/common';
+import { describe, expect, it } from 'bun:test';
 
 import { AesCtr } from '../../src/primitives/aes-ctr.js';
 import AesCtrDecryptTestVector from '../fixtures/test-vectors/aes-ctr/decrypt.json' with { type: 'json' };
 import AesCtrEncryptTestVector from '../fixtures/test-vectors/aes-ctr/encrypt.json' with { type: 'json' };
 import { isChrome } from '../utils/runtimes.js';
-
-use(chaiAsPromised);
 
 describe('AesCtr', () => {
   describe('bytesToPrivateKey()', () => {
@@ -17,9 +14,9 @@ describe('AesCtr', () => {
       const privateKeyBytes = Convert.hex('ffbd52af5980bd3870cdc3f3634980ae9d15b33440f63f79799eb8ca2329117f').toUint8Array();
       const privateKey = await AesCtr.bytesToPrivateKey({ privateKeyBytes });
 
-      expect(privateKey).to.have.property('k');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'oct');
+      expect(privateKey).toHaveProperty('k');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'oct');
     });
 
     it('returns the expected JWK given byte array input', async () => {
@@ -32,7 +29,7 @@ describe('AesCtr', () => {
         kty : 'oct',
         kid : '6oEQ2tFk2QI4_Lz8uxQpT4_Qce6f9ceS3ZD76nqd_qg'
       };
-      expect(privateKey).to.deep.equal(expectedOutput);
+      expect(privateKey).toEqual(expectedOutput);
     });
   });
 
@@ -42,16 +39,16 @@ describe('AesCtr', () => {
       const privateKey = await AesCtr.generateKey({ length: 256 });
 
       const ciphertext = await AesCtr.decrypt({ counter: new Uint8Array(16), data, key: privateKey, length: 128 });
-      expect(ciphertext).to.be.instanceOf(Uint8Array);
+      expect(ciphertext).toBeInstanceOf(Uint8Array);
     });
 
     for (const vector of AesCtrDecryptTestVector.vectors) {
-      it(vector.description, async function () {
+      it(vector.description, async () => {
         const privateKeyBytes = Convert.hex(vector.input.key).toUint8Array();
         const privateKey = await AesCtr.bytesToPrivateKey({ privateKeyBytes });
 
         // Skip the test if the key length is 192 bits and the runtime is Chrome browser.
-        if (isChrome && privateKeyBytes.length === 24) {this.skip();}
+        if (isChrome && privateKeyBytes.length === 24) { return; }
 
         const ciphertext = await AesCtr.decrypt({
           key     : privateKey,
@@ -60,7 +57,7 @@ describe('AesCtr', () => {
           length  : vector.input.length
         });
 
-        expect(ciphertext).to.deep.equal(Convert.hex(vector.output).toUint8Array());
+        expect(ciphertext).toEqual(Convert.hex(vector.output).toUint8Array());
       });
     }
 
@@ -74,11 +71,11 @@ describe('AesCtr', () => {
         try {
           // Test the method.
           await AesCtr.decrypt({ key, data, counter, length: 128 });
-          expect.fail('expected an error to be thrown due to invalid counter length');
+          throw new Error('expected an error to be thrown due to invalid counter length');
 
         } catch (error: any) {
           // Validate the result.
-          expect(error.message).to.include(`counter must be 128 bits`);
+          expect(error.message).toContain(`counter must be 128 bits`);
         }
       }
     });
@@ -94,11 +91,11 @@ describe('AesCtr', () => {
         try {
           // Test the method.
           await AesCtr.decrypt({ key, data, counter, length });
-          expect.fail('expected an error to be thrown due to invalid length property');
+          throw new Error('expected an error to be thrown due to invalid length property');
 
         } catch (error: any) {
           // Validate the result.
-          expect(error.message).to.include(`must be in the range 1 to 128`);
+          expect(error.message).toContain(`must be in the range 1 to 128`);
         }
       }
     });
@@ -110,16 +107,16 @@ describe('AesCtr', () => {
       const privateKey = await AesCtr.generateKey({ length: 256 });
       // Uint8Array
       const ciphertext = await AesCtr.encrypt({ counter: new Uint8Array(16), data, key: privateKey, length: 128 });
-      expect(ciphertext).to.be.instanceOf(Uint8Array);
+      expect(ciphertext).toBeInstanceOf(Uint8Array);
     });
 
     for (const vector of AesCtrEncryptTestVector.vectors) {
-      it(vector.description, async function () {
+      it(vector.description, async () => {
         const privateKeyBytes = Convert.hex(vector.input.key).toUint8Array();
         const privateKey = await AesCtr.bytesToPrivateKey({ privateKeyBytes });
 
         // Skip the test if the key length is 192 bits and the runtime is Chrome browser.
-        if (isChrome && privateKeyBytes.length === 24) {this.skip();}
+        if (isChrome && privateKeyBytes.length === 24) { return; }
 
         const ciphertext = await AesCtr.encrypt({
           key     : privateKey,
@@ -128,7 +125,7 @@ describe('AesCtr', () => {
           length  : vector.input.length
         });
 
-        expect(ciphertext).to.deep.equal(Convert.hex(vector.output).toUint8Array());
+        expect(ciphertext).toEqual(Convert.hex(vector.output).toUint8Array());
       });
     }
 
@@ -142,11 +139,11 @@ describe('AesCtr', () => {
         try {
           // Test the method.
           await AesCtr.encrypt({ key, data, counter, length: 128 });
-          expect.fail('expected an error to be thrown due to invalid counter length');
+          throw new Error('expected an error to be thrown due to invalid counter length');
 
         } catch (error: any) {
           // Validate the result.
-          expect(error.message).to.include(`counter must be 128 bits`);
+          expect(error.message).toContain(`counter must be 128 bits`);
         }
       }
     });
@@ -162,11 +159,11 @@ describe('AesCtr', () => {
         try {
           // Test the method.
           await AesCtr.encrypt({ key, data, counter, length });
-          expect.fail('expected an error to be thrown due to invalid length property');
+          throw new Error('expected an error to be thrown due to invalid length property');
 
         } catch (error: any) {
           // Validate the result.
-          expect(error.message).to.include(`must be in the range 1 to 128`);
+          expect(error.message).toContain(`must be in the range 1 to 128`);
         }
       }
     });
@@ -176,9 +173,9 @@ describe('AesCtr', () => {
     it('returns a private key in JWK format', async () => {
       const privateKey = await AesCtr.generateKey({ length: 256 });
 
-      expect(privateKey).to.have.property('k');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'oct');
+      expect(privateKey).toHaveProperty('k');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'oct');
     });
 
     it('supports key lengths of 128 and 256 bits in all supported runtimes', async () => {
@@ -188,21 +185,21 @@ describe('AesCtr', () => {
       // 128 bits
       privateKey = await AesCtr.generateKey({ length: 128 }) as JwkParamsOctPrivate;
       privateKeyBytes = Convert.base64Url(privateKey.k!).toUint8Array();
-      expect(privateKeyBytes.byteLength).to.equal(16);
+      expect(privateKeyBytes.byteLength).toBe(16);
 
       // 256 bits
       privateKey = await AesCtr.generateKey({ length: 256 }) as JwkParamsOctPrivate;
       privateKeyBytes = Convert.base64Url(privateKey.k!).toUint8Array();
-      expect(privateKeyBytes.byteLength).to.equal(32);
+      expect(privateKeyBytes.byteLength).toBe(32);
     });
 
-    it('supports key lengths of 192 bits in all supported runtimes except Chrome browser', async function () {
-      if (isChrome) {this.skip();}
+    it('supports key lengths of 192 bits in all supported runtimes except Chrome browser', async () => {
+      if (isChrome) { return; }
 
       // 192 bits
       const privateKey: Jwk = await AesCtr.generateKey({ length: 192 }) as JwkParamsOctPrivate;
       const privateKeyBytes: Uint8Array = Convert.base64Url(privateKey.k!).toUint8Array();
-      expect(privateKeyBytes.byteLength).to.equal(24);
+      expect(privateKeyBytes.byteLength).toBe(24);
     });
 
     it('throws an error if the key length is invalid', async () => {
@@ -211,11 +208,11 @@ describe('AesCtr', () => {
           // Test the method.
           // @ts-expect-error because invalid tag lengths are being tested
           await AesCtr.generateKey({ length });
-          expect.fail('expected an error to be thrown due to invalid key length');
+          throw new Error('expected an error to be thrown due to invalid key length');
 
         } catch (error: any) {
           // Validate the result.
-          expect(error.message).to.include(`key length is invalid`);
+          expect(error.message).toContain(`key length is invalid`);
         }
       }
     });
@@ -226,7 +223,7 @@ describe('AesCtr', () => {
       const privateKey = await AesCtr.generateKey({ length: 128 });
       const privateKeyBytes = await AesCtr.privateKeyToBytes({ privateKey });
 
-      expect(privateKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
     });
 
     it('returns the expected byte array for JWK input', async () => {
@@ -237,9 +234,9 @@ describe('AesCtr', () => {
       };
       const privateKeyBytes = await AesCtr.privateKeyToBytes({ privateKey });
 
-      expect(privateKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
       const expectedOutput = Convert.hex('2fbd52af5980bd3870cdc3f3634980ae9d15b33440f63f79799eb8ca2329117f').toUint8Array();
-      expect(privateKeyBytes).to.deep.equal(expectedOutput);
+      expect(privateKeyBytes).toEqual(expectedOutput);
     });
 
     it('throws an error when provided an asymmetric public key', async () => {
@@ -251,7 +248,7 @@ describe('AesCtr', () => {
 
       await expect(
         AesCtr.privateKeyToBytes({ privateKey: publicKey })
-      ).to.eventually.be.rejectedWith(Error, 'provided key is not a valid oct private key');
+      ).rejects.toThrow('provided key is not a valid oct private key');
     });
   });
 });

@@ -1,12 +1,9 @@
-import chaiAsPromised from 'chai-as-promised';
-import { Convert } from '@enbox/common';
-import { expect, use } from 'chai';
-
 import type { Jwk } from '../../src/jose/jwk.js';
 
-import { POLY1305_TAG_LENGTH, XChaCha20Poly1305 } from '../../src/primitives/xchacha20-poly1305.js';
+import { Convert } from '@enbox/common';
+import { describe, expect, it } from 'bun:test';
 
-use(chaiAsPromised);
+import { POLY1305_TAG_LENGTH, XChaCha20Poly1305 } from '../../src/primitives/xchacha20-poly1305.js';
 
 describe('XChaCha20Poly1305', () => {
   describe('bytesToPrivateKey()', () => {
@@ -14,9 +11,9 @@ describe('XChaCha20Poly1305', () => {
       const privateKeyBytes = Convert.hex('ffbd52af5980bd3870cdc3f3634980ae9d15b33440f63f79799eb8ca2329117f').toUint8Array();
       const privateKey = await XChaCha20Poly1305.bytesToPrivateKey({ privateKeyBytes });
 
-      expect(privateKey).to.have.property('k');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'oct');
+      expect(privateKey).toHaveProperty('k');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'oct');
     });
 
     it('returns the expected JWK given byte array input', async () => {
@@ -29,7 +26,7 @@ describe('XChaCha20Poly1305', () => {
         kty : 'oct',
         kid : '6oEQ2tFk2QI4_Lz8uxQpT4_Qce6f9ceS3ZD76nqd_qg'
       };
-      expect(privateKey).to.deep.equal(expectedOutput);
+      expect(privateKey).toEqual(expectedOutput);
     });
   });
 
@@ -42,8 +39,8 @@ describe('XChaCha20Poly1305', () => {
         key   : await XChaCha20Poly1305.bytesToPrivateKey({ privateKeyBytes: new Uint8Array(32) }),
         nonce : new Uint8Array(24),
       });
-      expect(plaintext).to.be.an('Uint8Array');
-      expect(plaintext.byteLength).to.equal(10);
+      expect(plaintext).toBeInstanceOf(Uint8Array);
+      expect(plaintext.byteLength).toBe(10);
     });
 
     it('passes test vectors', async () => {
@@ -67,7 +64,7 @@ describe('XChaCha20Poly1305', () => {
         nonce : input.nonce,
       });
 
-      expect(plaintext).to.deep.equal(output);
+      expect(plaintext).toEqual(output);
     });
 
     it('throws an error if an invalid tag is given', async () => {
@@ -77,7 +74,7 @@ describe('XChaCha20Poly1305', () => {
           key   : await XChaCha20Poly1305.bytesToPrivateKey({ privateKeyBytes: new Uint8Array(32) }),
           nonce : new Uint8Array(24)
         })
-      ).to.eventually.be.rejectedWith(Error, 'invalid tag');
+      ).rejects.toThrow('invalid tag');
     });
   });
 
@@ -88,8 +85,8 @@ describe('XChaCha20Poly1305', () => {
         key   : await XChaCha20Poly1305.bytesToPrivateKey({ privateKeyBytes: new Uint8Array(32) }),
         nonce : new Uint8Array(24)
       });
-      expect(ciphertext).to.be.an('Uint8Array');
-      expect(ciphertext.byteLength).to.equal(10 + POLY1305_TAG_LENGTH);
+      expect(ciphertext).toBeInstanceOf(Uint8Array);
+      expect(ciphertext.byteLength).toBe(10 + POLY1305_TAG_LENGTH);
     });
 
     it('accepts additional authenticated data', async () => {
@@ -111,10 +108,10 @@ describe('XChaCha20Poly1305', () => {
       const ciphertextWithoutAad = ciphertext.slice(0, -POLY1305_TAG_LENGTH);
       const tagWithoutAad = ciphertext.slice(-POLY1305_TAG_LENGTH);
 
-      expect(ciphertextWithAad.byteLength).to.equal(10);
-      expect(ciphertextWithoutAad.byteLength).to.equal(10);
-      expect(ciphertextWithAad).to.deep.equal(ciphertextWithoutAad);
-      expect(tagWithAad).to.not.deep.equal(tagWithoutAad);
+      expect(ciphertextWithAad.byteLength).toBe(10);
+      expect(ciphertextWithoutAad.byteLength).toBe(10);
+      expect(ciphertextWithAad).toEqual(ciphertextWithoutAad);
+      expect(tagWithAad).not.toEqual(tagWithoutAad);
     });
 
     it('passes test vectors', async () => {
@@ -140,8 +137,8 @@ describe('XChaCha20Poly1305', () => {
       const ciphertextOnly = ciphertext.slice(0, -POLY1305_TAG_LENGTH);
       const tag = ciphertext.slice(-POLY1305_TAG_LENGTH);
 
-      expect(ciphertextOnly).to.deep.equal(output.ciphertext);
-      expect(tag).to.deep.equal(output.tag);
+      expect(ciphertextOnly).toEqual(output.ciphertext);
+      expect(tag).toEqual(output.tag);
     });
   });
 
@@ -149,9 +146,9 @@ describe('XChaCha20Poly1305', () => {
     it('returns a private key in JWK format', async () => {
       const privateKey = await XChaCha20Poly1305.generateKey();
 
-      expect(privateKey).to.have.property('k');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'oct');
+      expect(privateKey).toHaveProperty('k');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'oct');
     });
   });
 
@@ -160,7 +157,7 @@ describe('XChaCha20Poly1305', () => {
       const privateKey = await XChaCha20Poly1305.generateKey();
       const privateKeyBytes = await XChaCha20Poly1305.privateKeyToBytes({ privateKey });
 
-      expect(privateKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
     });
 
     it('returns the expected byte array for JWK input', async () => {
@@ -171,9 +168,9 @@ describe('XChaCha20Poly1305', () => {
       };
       const privateKeyBytes = await XChaCha20Poly1305.privateKeyToBytes({ privateKey });
 
-      expect(privateKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
       const expectedOutput = Convert.hex('2fbd52af5980bd3870cdc3f3634980ae9d15b33440f63f79799eb8ca2329117f').toUint8Array();
-      expect(privateKeyBytes).to.deep.equal(expectedOutput);
+      expect(privateKeyBytes).toEqual(expectedOutput);
     });
 
     it('throws an error when provided an asymmetric public key', async () => {
@@ -185,7 +182,7 @@ describe('XChaCha20Poly1305', () => {
 
       await expect(
         XChaCha20Poly1305.privateKeyToBytes({ privateKey: publicKey })
-      ).to.eventually.be.rejectedWith(Error, 'provided key is not a valid oct private key');
+      ).rejects.toThrow('provided key is not a valid oct private key');
     });
   });
 });

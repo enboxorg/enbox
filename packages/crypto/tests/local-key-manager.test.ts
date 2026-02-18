@@ -1,9 +1,8 @@
-import { expect } from 'chai';
-import sinon from 'sinon';
-import { Convert, MemoryStore } from '@enbox/common';
-
 import type { Jwk } from '../src/jose/jwk.js';
 import type { KeyIdentifier } from '../src/types/identifier.js';
+
+import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { Convert, MemoryStore } from '@enbox/common';
 
 import { EcdsaAlgorithm } from '../src/algorithms/ecdsa.js';
 import { LocalKeyManager } from '../src/local-key-manager.js';
@@ -11,8 +10,8 @@ import { LocalKeyManager } from '../src/local-key-manager.js';
 describe('LocalKeyManager', () => {
   let keyManager: LocalKeyManager;
 
-  after(() => {
-    sinon.restore();
+  afterAll(() => {
+    mock.restore();
   });
 
   beforeEach(() => {
@@ -22,16 +21,16 @@ describe('LocalKeyManager', () => {
   describe('constructor', () => {
     it('initializes with default parameters', () => {
       const keyManager = new LocalKeyManager();
-      expect(keyManager).to.exist;
-      expect(keyManager).to.be.an.instanceOf(LocalKeyManager);
+      expect(keyManager).toBeDefined();
+      expect(keyManager).toBeInstanceOf(LocalKeyManager);
     });
 
     it('initializes with a custom in-memory key store', () => {
       const keyStore = new MemoryStore<KeyIdentifier, Jwk>();
       const keyManager = new LocalKeyManager({ keyStore });
 
-      expect(keyManager).to.exist;
-      expect(keyManager).to.be.an.instanceOf(LocalKeyManager);
+      expect(keyManager).toBeDefined();
+      expect(keyManager).toBeInstanceOf(LocalKeyManager);
     });
   });
 
@@ -44,8 +43,8 @@ describe('LocalKeyManager', () => {
       const digest = await keyManager.digest({ algorithm: 'SHA-256', data });
 
       // Validate the result.
-      expect(digest).to.exist;
-      expect(digest).to.be.an.instanceOf(Uint8Array);
+      expect(digest).toBeDefined();
+      expect(digest).toBeInstanceOf(Uint8Array);
     });
 
     it('supports SHA-256', async () => {
@@ -57,10 +56,10 @@ describe('LocalKeyManager', () => {
       const digest = await keyManager.digest({ algorithm: 'SHA-256', data });
 
       // Validate the result.
-      expect(digest).to.exist;
-      expect(digest).to.be.an.instanceOf(Uint8Array);
-      expect(digest).to.have.lengthOf(32);
-      expect(digest).to.deep.equal(expectedOutput);
+      expect(digest).toBeDefined();
+      expect(digest).toBeInstanceOf(Uint8Array);
+      expect(digest).toHaveLength(32);
+      expect(digest).toEqual(expectedOutput);
     });
   });
 
@@ -70,10 +69,10 @@ describe('LocalKeyManager', () => {
 
       const jwk = await keyManager.exportKey({ keyUri });
 
-      expect(jwk).to.exist;
-      expect(jwk).to.be.an('object');
-      expect(jwk).to.have.property('kty');
-      expect(jwk).to.have.property('d');
+      expect(jwk).toBeDefined();
+      expect(typeof jwk).toBe('object');
+      expect(jwk).toHaveProperty('kty');
+      expect(jwk).toHaveProperty('d');
     });
 
     it('throws an error if the key does not exist', async () => {
@@ -81,12 +80,12 @@ describe('LocalKeyManager', () => {
 
       try {
         await keyManager.exportKey({ keyUri });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Key not found');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Key not found');
       }
     });
   });
@@ -95,25 +94,25 @@ describe('LocalKeyManager', () => {
     it('generates a key and returns a key URI', async () => {
       const keyUri = await keyManager.generateKey({ algorithm: 'secp256k1' });
 
-      expect(keyUri).to.exist;
-      expect(keyUri).to.be.a.string;
-      expect(keyUri.indexOf('urn:jwk:')).to.equal(0);
+      expect(keyUri).toBeDefined();
+      expect(typeof keyUri).toBe('string');
+      expect(keyUri.indexOf('urn:jwk:')).toBe(0);
     });
 
     it(`supports generating 'secp256k1' keys`, async () => {
       const keyUri = await keyManager.generateKey({ algorithm: 'secp256k1' });
 
-      expect(keyUri).to.exist;
-      expect(keyUri).to.be.a.string;
-      expect(keyUri.indexOf('urn:jwk:')).to.equal(0);
+      expect(keyUri).toBeDefined();
+      expect(typeof keyUri).toBe('string');
+      expect(keyUri.indexOf('urn:jwk:')).toBe(0);
     });
 
     it(`supports generating 'Ed25519' keys`, async () => {
       const keyUri = await keyManager.generateKey({ algorithm: 'Ed25519' });
 
-      expect(keyUri).to.exist;
-      expect(keyUri).to.be.a.string;
-      expect(keyUri.indexOf('urn:jwk:')).to.equal(0);
+      expect(keyUri).toBeDefined();
+      expect(typeof keyUri).toBe('string');
+      expect(keyUri.indexOf('urn:jwk:')).toBe(0);
     });
 
     it('throws an error if the algorithm is not supported', async () => {
@@ -124,35 +123,35 @@ describe('LocalKeyManager', () => {
       try {
         // @ts-expect-error because an unsupported algorithm is being tested.
         await keyManager.generateKey({ algorithm });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include(`Algorithm not supported: ${algorithm}`);
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain(`Algorithm not supported: ${algorithm}`);
       }
     });
 
     it('throws an error if the generated key does not have a kid property', async () => {
       // Setup.
-      const mockKeyGenerator = { generateKey: sinon.stub() };
+      const mockKeyGenerator = { generateKey: spyOn({ generateKey: () => {} }, 'generateKey').mockResolvedValue(undefined as any) };
       // @ts-expect-error because we're accessing a private property.
       keyManager._algorithmInstances.set(EcdsaAlgorithm, mockKeyGenerator); // Replace the algorithm instance with the mock.
 
       // Test the method.
       try {
         await keyManager.generateKey({ algorithm: 'secp256k1' });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('key is missing a required property');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('key is missing a required property');
       } finally {
         // Cleanup.
-        sinon.restore();
+        mock.restore();
       }
     });
   });
@@ -171,9 +170,9 @@ describe('LocalKeyManager', () => {
       const keyUri = await keyManager.getKeyUri({ key });
 
       // Validate the result.
-      expect(keyUri).to.exist;
-      expect(keyUri).to.be.a.string;
-      expect(keyUri.indexOf('urn:jwk:')).to.equal(0);
+      expect(keyUri).toBeDefined();
+      expect(typeof keyUri).toBe('string');
+      expect(keyUri.indexOf('urn:jwk:')).toBe(0);
     });
 
     it('computes the key URI correctly for a valid JWK', async () => {
@@ -190,7 +189,7 @@ describe('LocalKeyManager', () => {
       // Test the method.
       const keyUri = await keyManager.getKeyUri({ key });
 
-      expect(keyUri).to.equal(expectedKeyUri);
+      expect(keyUri).toBe(expectedKeyUri);
     });
   });
 
@@ -200,9 +199,9 @@ describe('LocalKeyManager', () => {
 
       const publicKey = await keyManager.getPublicKey({ keyUri });
 
-      expect(publicKey).to.exist;
-      expect(publicKey).to.be.an('object');
-      expect(publicKey).to.have.property('kty');
+      expect(publicKey).toBeDefined();
+      expect(typeof publicKey).toBe('object');
+      expect(publicKey).toHaveProperty('kty');
     });
 
     it('supports ECDSA using secp256k1 curve and SHA-256', async () => {
@@ -210,14 +209,14 @@ describe('LocalKeyManager', () => {
 
       const publicKey = await keyManager.getPublicKey({ keyUri });
 
-      expect(publicKey).to.exist;
-      expect(publicKey).to.be.an('object');
-      expect(publicKey).to.have.property('kty', 'EC');
-      expect(publicKey).to.have.property('alg', 'ES256K');
-      expect(publicKey).to.have.property('crv', 'secp256k1');
-      expect(publicKey).to.have.property('x');
-      expect(publicKey).to.have.property('y');
-      expect(publicKey).to.not.have.property('d');
+      expect(publicKey).toBeDefined();
+      expect(typeof publicKey).toBe('object');
+      expect(publicKey).toHaveProperty('kty', 'EC');
+      expect(publicKey).toHaveProperty('alg', 'ES256K');
+      expect(publicKey).toHaveProperty('crv', 'secp256k1');
+      expect(publicKey).toHaveProperty('x');
+      expect(publicKey).toHaveProperty('y');
+      expect(publicKey).not.toHaveProperty('d');
     });
 
     it('supports EdDSA using Ed25519 curve', async () => {
@@ -227,14 +226,14 @@ describe('LocalKeyManager', () => {
       // Test the method.
       const publicKey = await keyManager.getPublicKey({ keyUri });
 
-      expect(publicKey).to.exist;
-      expect(publicKey).to.be.an('object');
-      expect(publicKey).to.have.property('kty', 'OKP');
-      expect(publicKey).to.have.property('alg', 'EdDSA');
-      expect(publicKey).to.have.property('crv', 'Ed25519');
-      expect(publicKey).to.have.property('x');
-      expect(publicKey).to.not.have.property('y');
-      expect(publicKey).to.not.have.property('d');
+      expect(publicKey).toBeDefined();
+      expect(typeof publicKey).toBe('object');
+      expect(publicKey).toHaveProperty('kty', 'OKP');
+      expect(publicKey).toHaveProperty('alg', 'EdDSA');
+      expect(publicKey).toHaveProperty('crv', 'Ed25519');
+      expect(publicKey).toHaveProperty('x');
+      expect(publicKey).not.toHaveProperty('y');
+      expect(publicKey).not.toHaveProperty('d');
     });
   });
 
@@ -258,9 +257,9 @@ describe('LocalKeyManager', () => {
       const keyUri = await keyManager.importKey({ key: privateKey });
 
       // Validate the result.
-      expect(keyUri).to.equal(expectedKeyUri);
+      expect(keyUri).toBe(expectedKeyUri);
       const storedKey = await memoryStore.get(keyUri);
-      expect(storedKey).to.deep.equal(privateKey);
+      expect(storedKey).toEqual(privateKey);
     });
 
     it('does not modify the kid property, if provided', async () => {
@@ -281,7 +280,7 @@ describe('LocalKeyManager', () => {
 
       // Validate the result.
       const storedKey = await memoryStore.get(keyUri);
-      expect(storedKey).to.have.property('kid', 'custom-kid');
+      expect(storedKey).toHaveProperty('kid', 'custom-kid');
     });
 
     it('adds the kid property, if missing', async () => {
@@ -301,7 +300,7 @@ describe('LocalKeyManager', () => {
 
       // Validate the result.
       const storedKey = await memoryStore.get(keyUri);
-      expect(storedKey).to.have.property('kid');
+      expect(storedKey).toHaveProperty('kid');
     });
 
     it('does not mutate the provided key', async () => {
@@ -319,7 +318,7 @@ describe('LocalKeyManager', () => {
       await keyManager.importKey({ key: privateKey });
 
       // Validate the result.
-      expect(privateKey).to.deep.equal(privateKeyCopy);
+      expect(privateKey).toEqual(privateKeyCopy);
     });
 
     it('throws an error if the key is invalid', async () => {
@@ -330,11 +329,11 @@ describe('LocalKeyManager', () => {
       // Test the method.
       try {
         await keyManager.importKey({ key: invalidJwk });
-        expect.fail('Should have thrown an error');
+        throw new Error('Should have thrown an error');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error.message).to.include('Invalid key provided');
+        expect(error.message).toContain('Invalid key provided');
       }
     });
 
@@ -350,11 +349,11 @@ describe('LocalKeyManager', () => {
       // Test the method.
       try {
         await keyManager.importKey({ key: publicKey });
-        expect.fail('Should have thrown an error');
+        throw new Error('Should have thrown an error');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error.message).to.include('Invalid key provided');
+        expect(error.message).toContain('Invalid key provided');
       }
     });
   });
@@ -369,7 +368,7 @@ describe('LocalKeyManager', () => {
       const signature = await keyManager.sign({ keyUri: privateKeyUri, data });
 
       // Validate the result.
-      expect(signature).to.be.a('Uint8Array');
+      expect(signature).toBeInstanceOf(Uint8Array);
     });
   });
 
@@ -385,7 +384,7 @@ describe('LocalKeyManager', () => {
       const isValid = await keyManager.verify({ key: publicKey, signature, data });
 
       // Validate the result.
-      expect(isValid).to.be.true;
+      expect(isValid).toBe(true);
     });
 
     it('returns false for an invalid signature', async () => {
@@ -399,7 +398,7 @@ describe('LocalKeyManager', () => {
       const isValid = await keyManager.verify({ key: publicKey, signature, data });
 
       // Validate the result.
-      expect(isValid).to.be.false;
+      expect(isValid).toBe(false);
     });
 
 
@@ -412,13 +411,13 @@ describe('LocalKeyManager', () => {
       // Test the method.
       try {
         await keyManager.verify({ key, signature, data });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Unable to determine algorithm based on provided input');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Unable to determine algorithm based on provided input');
       }
     });
   });

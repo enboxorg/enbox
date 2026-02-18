@@ -1,6 +1,5 @@
-import { expect } from 'chai';
-
 import { Convert } from '@enbox/common';
+import { describe, expect, it } from 'bun:test';
 
 import { Hkdf } from '../../src/primitives/hkdf.js';
 import { hkdfTestVectors } from '../fixtures/test-vectors/hkdf.js';
@@ -18,8 +17,8 @@ describe('Hkdf', () => {
         salt,
         info,
       });
-      expect(derivedKey).to.be.instanceOf(Uint8Array);
-      expect(derivedKey.length).to.equal(32);
+      expect(derivedKey).toBeInstanceOf(Uint8Array);
+      expect(derivedKey.length).toBe(32);
     });
 
     it('should derive a key using SHA-384', async () => {
@@ -33,8 +32,8 @@ describe('Hkdf', () => {
         salt,
         info,
       });
-      expect(derivedKey).to.be.instanceOf(Uint8Array);
-      expect(derivedKey.length).to.equal(48);
+      expect(derivedKey).toBeInstanceOf(Uint8Array);
+      expect(derivedKey.length).toBe(48);
     });
 
     it('should derive a key using SHA-512', async () => {
@@ -48,8 +47,8 @@ describe('Hkdf', () => {
         salt,
         info,
       });
-      expect(derivedKey).to.be.instanceOf(Uint8Array);
-      expect(derivedKey.length).to.equal(64);
+      expect(derivedKey).toBeInstanceOf(Uint8Array);
+      expect(derivedKey.length).toBe(64);
     });
 
     for (const vector of hkdfTestVectors) {
@@ -61,7 +60,7 @@ describe('Hkdf', () => {
           salt         : Convert.hex(vector.salt).toUint8Array(),
           length       : vector.length
         });
-        expect(Convert.uint8Array(outputKeyingMaterial).toHex()).to.deep.equal(vector.output);
+        expect(Convert.uint8Array(outputKeyingMaterial).toHex()).toEqual(vector.output);
       });
     }
   });

@@ -1,6 +1,6 @@
-import { expect } from 'chai';
-
 import type { Jwk } from '../../src/jose/jwk.js';
+
+import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { EcdsaAlgorithm } from '../../src/algorithms/ecdsa.js';
 
@@ -9,7 +9,7 @@ describe('EcdsaAlgorithm', () => {
   let privateKey: Jwk;
   let publicKey: Jwk;
 
-  before(() => {
+  beforeAll(() => {
     ecdsa = new EcdsaAlgorithm();
   });
 
@@ -24,11 +24,11 @@ describe('EcdsaAlgorithm', () => {
       const publicKey = await ecdsa.computePublicKey({ key: privateKey });
 
       // Validate the result.
-      expect(publicKey).to.not.have.property('d');
-      expect(publicKey).to.have.property('kid');
-      expect(publicKey).to.have.property('kty');
-      expect(publicKey).to.have.property('x');
-      expect(publicKey).to.have.property('y');
+      expect(publicKey).not.toHaveProperty('d');
+      expect(publicKey).toHaveProperty('kid');
+      expect(publicKey).toHaveProperty('kty');
+      expect(publicKey).toHaveProperty('x');
+      expect(publicKey).toHaveProperty('y');
     });
 
     it('computes and adds a kid property, if missing', async () => {
@@ -39,7 +39,7 @@ describe('EcdsaAlgorithm', () => {
       const publicKey = await ecdsa.computePublicKey({ key: privateKeyWithoutKid });
 
       // Validate the result.
-      expect(publicKey).to.have.property('kid', kid);
+      expect(publicKey).toHaveProperty('kid', kid);
     });
 
     it('supports ECDSA using secp256k1 curve and SHA-256', async () => {
@@ -50,9 +50,9 @@ describe('EcdsaAlgorithm', () => {
       const publicKey = await ecdsa.computePublicKey({ key: privateKey });
 
       // Validate the result.
-      expect(publicKey).to.have.property('kty', 'EC');
-      expect(publicKey).to.have.property('alg', 'ES256K');
-      expect(publicKey).to.have.property('crv', 'secp256k1');
+      expect(publicKey).toHaveProperty('kty', 'EC');
+      expect(publicKey).toHaveProperty('alg', 'ES256K');
+      expect(publicKey).toHaveProperty('crv', 'secp256k1');
     });
 
     it('accepts secp256k1 as an alias for the ES256K algorithm identifier', async () => {
@@ -63,9 +63,9 @@ describe('EcdsaAlgorithm', () => {
       const publicKey = await ecdsa.computePublicKey({ key: privateKey });
 
       // Validate the result.
-      expect(publicKey).to.have.property('kty', 'EC');
-      expect(publicKey).to.have.property('alg', 'ES256K');
-      expect(publicKey).to.have.property('crv', 'secp256k1');
+      expect(publicKey).toHaveProperty('kty', 'EC');
+      expect(publicKey).toHaveProperty('alg', 'ES256K');
+      expect(publicKey).toHaveProperty('crv', 'secp256k1');
     });
 
     it('supports ECDSA using secp256r1 curve and SHA-256', async () => {
@@ -76,9 +76,9 @@ describe('EcdsaAlgorithm', () => {
       const publicKey = await ecdsa.computePublicKey({ key: privateKey });
 
       // Validate the result.
-      expect(publicKey).to.have.property('kty', 'EC');
-      expect(publicKey).to.have.property('alg', 'ES256');
-      expect(publicKey).to.have.property('crv', 'P-256');
+      expect(publicKey).toHaveProperty('kty', 'EC');
+      expect(publicKey).toHaveProperty('alg', 'ES256');
+      expect(publicKey).toHaveProperty('crv', 'P-256');
     });
 
     it('accepts secp256r1 as an alias for the ES256 algorithm identifier', async () => {
@@ -89,9 +89,9 @@ describe('EcdsaAlgorithm', () => {
       const publicKey = await ecdsa.computePublicKey({ key: privateKey });
 
       // Validate the result.
-      expect(publicKey).to.have.property('kty', 'EC');
-      expect(publicKey).to.have.property('alg', 'ES256');
-      expect(publicKey).to.have.property('crv', 'P-256');
+      expect(publicKey).toHaveProperty('kty', 'EC');
+      expect(publicKey).toHaveProperty('alg', 'ES256');
+      expect(publicKey).toHaveProperty('crv', 'P-256');
     });
 
     it('throws an error if the key provided is not an EC private key', async () => {
@@ -106,13 +106,13 @@ describe('EcdsaAlgorithm', () => {
       // Test the method.
       try {
         await ecdsa.computePublicKey({ key: privateKey });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Invalid key provided');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Invalid key provided');
       }
     });
 
@@ -129,13 +129,13 @@ describe('EcdsaAlgorithm', () => {
       // Test the method.
       try {
         await ecdsa.computePublicKey({ key: privateKey });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Unsupported curve');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Unsupported curve');
       }
     });
   });
@@ -146,40 +146,40 @@ describe('EcdsaAlgorithm', () => {
       const privateKey = await ecdsa.generateKey({ algorithm: 'ES256K' });
 
       // Validate the result.
-      expect(privateKey).to.have.property('kty', 'EC');
-      expect(privateKey).to.have.property('kid');
+      expect(privateKey).toHaveProperty('kty', 'EC');
+      expect(privateKey).toHaveProperty('kid');
     });
 
     it('supports ECDSA using secp256k1 curve and SHA-256', async () => {
       // Test the method.
       const privateKey = await ecdsa.generateKey({ algorithm: 'ES256K' });
 
-      expect(privateKey).to.have.property('alg', 'ES256K');
-      expect(privateKey).to.have.property('crv', 'secp256k1');
+      expect(privateKey).toHaveProperty('alg', 'ES256K');
+      expect(privateKey).toHaveProperty('crv', 'secp256k1');
     });
 
     it('accepts secp256k1 as an alias for the ES256K algorithm identifier', async () => {
       // Test the method.
       const privateKey = await ecdsa.generateKey({ algorithm: 'secp256k1' });
 
-      expect(privateKey).to.have.property('alg', 'ES256K');
-      expect(privateKey).to.have.property('crv', 'secp256k1');
+      expect(privateKey).toHaveProperty('alg', 'ES256K');
+      expect(privateKey).toHaveProperty('crv', 'secp256k1');
     });
 
     it('supports ECDSA using secp256r1 curve and SHA-256', async () => {
       // Test the method.
       const privateKey = await ecdsa.generateKey({ algorithm: 'ES256' });
 
-      expect(privateKey).to.have.property('alg', 'ES256');
-      expect(privateKey).to.have.property('crv', 'P-256');
+      expect(privateKey).toHaveProperty('alg', 'ES256');
+      expect(privateKey).toHaveProperty('crv', 'P-256');
     });
 
     it('accepts secp256r1 as an alias for the ES256 algorithm identifier', async () => {
       // Test the method.
       const privateKey = await ecdsa.generateKey({ algorithm: 'secp256r1' });
 
-      expect(privateKey).to.have.property('alg', 'ES256');
-      expect(privateKey).to.have.property('crv', 'P-256');
+      expect(privateKey).toHaveProperty('alg', 'ES256');
+      expect(privateKey).toHaveProperty('crv', 'P-256');
     });
   });
 
@@ -189,11 +189,11 @@ describe('EcdsaAlgorithm', () => {
       const publicKey = await ecdsa.getPublicKey({ key: privateKey });
 
       // Validate the result.
-      expect(publicKey).to.not.have.property('d');
-      expect(publicKey).to.have.property('kid');
-      expect(publicKey).to.have.property('kty');
-      expect(publicKey).to.have.property('x');
-      expect(publicKey).to.have.property('y');
+      expect(publicKey).not.toHaveProperty('d');
+      expect(publicKey).toHaveProperty('kid');
+      expect(publicKey).toHaveProperty('kty');
+      expect(publicKey).toHaveProperty('x');
+      expect(publicKey).toHaveProperty('y');
     });
 
     it('computes and adds a kid property, if missing', async () => {
@@ -204,7 +204,7 @@ describe('EcdsaAlgorithm', () => {
       const publicKey = await ecdsa.getPublicKey({ key: privateKeyWithoutKid });
 
       // Validate the result.
-      expect(publicKey).to.have.property('kid', kid);
+      expect(publicKey).toHaveProperty('kid', kid);
     });
 
     it('supports ECDSA using secp256k1 curve and SHA-256', async () => {
@@ -215,9 +215,9 @@ describe('EcdsaAlgorithm', () => {
       const publicKey = await ecdsa.getPublicKey({ key: privateKey });
 
       // Validate the result.
-      expect(publicKey).to.have.property('kty', 'EC');
-      expect(publicKey).to.have.property('alg', 'ES256K');
-      expect(publicKey).to.have.property('crv', 'secp256k1');
+      expect(publicKey).toHaveProperty('kty', 'EC');
+      expect(publicKey).toHaveProperty('alg', 'ES256K');
+      expect(publicKey).toHaveProperty('crv', 'secp256k1');
     });
 
     it('supports ECDSA using secp256r1 curve and SHA-256', async () => {
@@ -228,9 +228,9 @@ describe('EcdsaAlgorithm', () => {
       const publicKey = await ecdsa.getPublicKey({ key: privateKey });
 
       // Validate the result.
-      expect(publicKey).to.have.property('kty', 'EC');
-      expect(publicKey).to.have.property('alg', 'ES256');
-      expect(publicKey).to.have.property('crv', 'P-256');
+      expect(publicKey).toHaveProperty('kty', 'EC');
+      expect(publicKey).toHaveProperty('alg', 'ES256');
+      expect(publicKey).toHaveProperty('crv', 'P-256');
     });
 
     it('throws an error if the key provided is not an EC private key', async () => {
@@ -245,13 +245,13 @@ describe('EcdsaAlgorithm', () => {
       // Test the method.
       try {
         await ecdsa.getPublicKey({ key: privateKey });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Invalid key provided');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Invalid key provided');
       }
     });
 
@@ -268,13 +268,13 @@ describe('EcdsaAlgorithm', () => {
       // Test the method.
       try {
         await ecdsa.getPublicKey({ key: privateKey });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Unsupported curve');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Unsupported curve');
       }
     });
   });
@@ -287,8 +287,8 @@ describe('EcdsaAlgorithm', () => {
       const signature = await ecdsa.sign({ key: privateKey, data });
 
       // Validate the result.
-      expect(signature).to.exist;
-      expect(signature).to.be.a('Uint8Array');
+      expect(signature).toBeDefined();
+      expect(signature).toBeInstanceOf(Uint8Array);
     });
 
     it('generates signatures in compact R+S format', async () => {
@@ -296,7 +296,7 @@ describe('EcdsaAlgorithm', () => {
       const signature = await ecdsa.sign({ key: privateKey, data });
 
       // Validate the result.
-      expect(signature).to.have.length(64);
+      expect(signature).toHaveLength(64);
     });
 
     it('supports ECDSA using secp256k1 curve and SHA-256', async () => {
@@ -307,7 +307,7 @@ describe('EcdsaAlgorithm', () => {
       const signature = await ecdsa.sign({ key: privateKey, data });
 
       // Validate the result.
-      expect(signature).to.have.length(64);
+      expect(signature).toHaveLength(64);
     });
 
     it('supports ECDSA using secp256r1 curve and SHA-256', async () => {
@@ -318,7 +318,7 @@ describe('EcdsaAlgorithm', () => {
       const signature = await ecdsa.sign({ key: privateKey, data });
 
       // Validate the result.
-      expect(signature).to.have.length(64);
+      expect(signature).toHaveLength(64);
     });
 
     it('throws an error if the key provided is not an EC private key', async () => {
@@ -333,13 +333,13 @@ describe('EcdsaAlgorithm', () => {
       // Test the method.
       try {
         await ecdsa.sign({ key: privateKey, data });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Invalid key provided');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Invalid key provided');
       }
     });
 
@@ -357,13 +357,13 @@ describe('EcdsaAlgorithm', () => {
       try {
       // Test the method.
         await ecdsa.sign({ key: privateKey, data });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Unsupported curve');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Unsupported curve');
       }
     });
   });
@@ -383,7 +383,7 @@ describe('EcdsaAlgorithm', () => {
         data
       });
 
-      expect(isValid).to.be.a('boolean');
+      expect(typeof isValid).toBe('boolean');
     });
 
     it('returns true for a valid signature', async () => {
@@ -391,7 +391,7 @@ describe('EcdsaAlgorithm', () => {
       const isValid = await ecdsa.verify({ key: publicKey, signature, data });
 
       // Validate the result.
-      expect(isValid).to.be.true;
+      expect(isValid).toBe(true);
     });
 
     it('returns false for an invalid signature', async () => {
@@ -402,7 +402,7 @@ describe('EcdsaAlgorithm', () => {
       const isValid = await ecdsa.verify({ key: publicKey, signature, data });
 
       // Validate the result.
-      expect(isValid).to.be.false;
+      expect(isValid).toBe(false);
     });
 
     it('supports ECDSA using secp256k1 curve and SHA-256', async () => {
@@ -415,7 +415,7 @@ describe('EcdsaAlgorithm', () => {
       const isValid = await ecdsa.verify({ key: publicKey, signature, data });
 
       // Validate the result.
-      expect(isValid).to.be.true;
+      expect(isValid).toBe(true);
     });
 
     it('supports ECDSA using secp256r1 curve and SHA-256', async () => {
@@ -428,7 +428,7 @@ describe('EcdsaAlgorithm', () => {
       const isValid = await ecdsa.verify({ key: publicKey, signature, data });
 
       // Validate the result.
-      expect(isValid).to.be.true;
+      expect(isValid).toBe(true);
     });
 
     it('throws an error if the key provided is not an EC public key', async () => {
@@ -442,13 +442,13 @@ describe('EcdsaAlgorithm', () => {
       // Test the method.
       try {
         await ecdsa.verify({ key: publicKey, signature, data });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Invalid key provided');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Invalid key provided');
       }
     });
 
@@ -465,13 +465,13 @@ describe('EcdsaAlgorithm', () => {
       try {
       // Test the method.
         await ecdsa.verify({ key: publicKey, signature, data });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Unsupported curve');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Unsupported curve');
       }
     });
   });
