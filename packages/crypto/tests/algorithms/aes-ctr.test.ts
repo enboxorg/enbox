@@ -1,7 +1,7 @@
-import { Convert } from '@enbox/common';
-import { expect } from 'chai';
-
 import type { Jwk } from '../../src/jose/jwk.js';
+
+import { Convert } from '@enbox/common';
+import { beforeAll, describe, expect, it } from 'bun:test';
 
 import { AesCtrAlgorithm } from '../../src/algorithms/aes-ctr.js';
 import { CryptoUtils } from '../../src/utils.js';
@@ -11,7 +11,7 @@ describe('AesCtrAlgorithm', () => {
   let aesCtr: AesCtrAlgorithm;
   let dataEncryptionKey: Jwk;
 
-  before(async () => {
+  beforeAll(async () => {
     aesCtr = new AesCtrAlgorithm();
     dataEncryptionKey = await aesCtr.generateKey({ algorithm: 'A128CTR' });
   });
@@ -32,8 +32,8 @@ describe('AesCtrAlgorithm', () => {
       });
 
       // Validate the results.
-      expect(ciphertext).to.be.instanceOf(Uint8Array);
-      expect(ciphertext.byteLength).to.equal(plaintext.byteLength);
+      expect(ciphertext).toBeInstanceOf(Uint8Array);
+      expect(ciphertext.byteLength).toBe(plaintext.byteLength);
     });
   });
 
@@ -53,8 +53,8 @@ describe('AesCtrAlgorithm', () => {
       });
 
       // Validate the results.
-      expect(plaintext).to.be.instanceOf(Uint8Array);
-      expect(plaintext.byteLength).to.equal(ciphertext.byteLength);
+      expect(plaintext).toBeInstanceOf(Uint8Array);
+      expect(plaintext.byteLength).toBe(ciphertext.byteLength);
     });
   });
 
@@ -62,33 +62,33 @@ describe('AesCtrAlgorithm', () => {
     it('returns a private key in JWK format', async () => {
       const privateKey = await aesCtr.generateKey({ algorithm: 'A128CTR' });
 
-      expect(privateKey).to.have.property('alg', 'A128CTR');
-      expect(privateKey).to.have.property('k');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'oct');
+      expect(privateKey).toHaveProperty('alg', 'A128CTR');
+      expect(privateKey).toHaveProperty('k');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'oct');
     });
 
     it(`supports 'A128CTR' and 'A256CTR' algorithms in all supported runtimes`, async () => {
       const algorithms = ['A128CTR', 'A256CTR'] as const;
       for (const algorithm of algorithms) {
         const privateKey = await aesCtr.generateKey({ algorithm });
-        expect(privateKey).to.have.property('alg', algorithm);
+        expect(privateKey).toHaveProperty('alg', algorithm);
         if (!privateKey.k) {throw new Error('Expected privateKey to have a `k` property');} // TypeScript type guard.
         const privateKeyBytes = Convert.base64Url(privateKey.k).toUint8Array();
-        expect(privateKeyBytes.byteLength * 8).to.equal(parseInt(algorithm.slice(1, 4)));
+        expect(privateKeyBytes.byteLength * 8).toBe(parseInt(algorithm.slice(1, 4)));
       }
     });
 
-    it(`supports 'A192CTR' algorithm in all supported runtimes except Chrome browser`, async function () {
-      if (isChrome) {this.skip();}
+    it(`supports 'A192CTR' algorithm in all supported runtimes except Chrome browser`, async () => {
+      if (isChrome) { return; }
 
       const algorithms = ['A192CTR'] as const;
       for (const algorithm of algorithms) {
         const privateKey = await aesCtr.generateKey({ algorithm });
-        expect(privateKey).to.have.property('alg', algorithm);
+        expect(privateKey).toHaveProperty('alg', algorithm);
         if (!privateKey.k) {throw new Error('Expected privateKey to have a `k` property');} // TypeScript type guard.
         const privateKeyBytes = Convert.base64Url(privateKey.k).toUint8Array();
-        expect(privateKeyBytes.byteLength * 8).to.equal(parseInt(algorithm.slice(1, 4)));
+        expect(privateKeyBytes.byteLength * 8).toBe(parseInt(algorithm.slice(1, 4)));
       }
     });
   });

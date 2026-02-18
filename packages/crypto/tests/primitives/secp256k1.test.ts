@@ -1,8 +1,7 @@
-import chaiAsPromised from 'chai-as-promised';
-import { Convert } from '@enbox/common';
-import { expect, use } from 'chai';
-
 import type { Jwk, JwkParamsEcPrivate } from '../../src/jose/jwk.js';
+
+import { Convert } from '@enbox/common';
+import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import CryptoEs256kSignTestVector from '../fixtures/web5-spec-vectors/crypto_es256k/sign.json' with { type: 'json' };
 import CryptoEs256kVerifyTestVector from '../fixtures/web5-spec-vectors/crypto_es256k/verify.json' with { type: 'json' };
@@ -15,13 +14,11 @@ import secp256k1PublicKeyToBytes from '../fixtures/test-vectors/secp256k1/public
 import secp256k1ValidatePrivateKey from '../fixtures/test-vectors/secp256k1/validate-private-key.json' with { type: 'json' };
 import secp256k1ValidatePublicKey from '../fixtures/test-vectors/secp256k1/validate-public-key.json' with { type: 'json' };
 
-use(chaiAsPromised);
-
 describe('Secp256k1', () => {
   let privateKey: Jwk;
   let publicKey: Jwk;
 
-  before(async () => {
+  beforeAll(async () => {
     privateKey = await Secp256k1.generateKey();
     publicKey = await Secp256k1.computePublicKey({ key: privateKey });
   });
@@ -33,8 +30,8 @@ describe('Secp256k1', () => {
 
       const adjustedSignature = await Secp256k1.adjustSignatureToLowS({ signature });
 
-      expect(adjustedSignature).to.be.instanceOf(Uint8Array);
-      expect(adjustedSignature.byteLength).to.equal(64);
+      expect(adjustedSignature).toBeInstanceOf(Uint8Array);
+      expect(adjustedSignature.byteLength).toBe(64);
     });
 
     it('returns the low-S form given a high-S signature', async () => {
@@ -42,7 +39,7 @@ describe('Secp256k1', () => {
 
       const adjustedSignature = await Secp256k1.adjustSignatureToLowS({ signature: signatureHighS });
 
-      expect(adjustedSignature).to.not.deep.equal(signatureHighS);
+      expect(adjustedSignature).not.toEqual(signatureHighS);
     });
 
     it('returns the signature unmodified if already in low-S form', async () => {
@@ -50,7 +47,7 @@ describe('Secp256k1', () => {
 
       const adjustedSignature = await Secp256k1.adjustSignatureToLowS({ signature: signatureLowS });
 
-      expect(adjustedSignature).to.deep.equal(signatureLowS);
+      expect(adjustedSignature).toEqual(signatureLowS);
     });
 
     it('returns signatures that can be verified regardless of low- or high-S form', async () => {
@@ -70,12 +67,12 @@ describe('Secp256k1', () => {
       // Verify that the returned signature is valid when input in low-S form.
       let adjustedSignature = await Secp256k1.adjustSignatureToLowS({ signature: signatureLowS });
       let isValid = await Secp256k1.verify({ key: publicKey, signature: adjustedSignature, data });
-      expect(isValid).to.be.true;
+      expect(isValid).toBe(true);
 
       // Verify that the returned signature is valid when input in high-S form.
       adjustedSignature = await Secp256k1.adjustSignatureToLowS({ signature: signatureHighS });
       isValid = await Secp256k1.verify({ key: publicKey, signature: adjustedSignature, data });
-      expect(isValid).to.be.true;
+      expect(isValid).toBe(true);
     });
   });
 
@@ -84,12 +81,12 @@ describe('Secp256k1', () => {
       const privateKeyBytes = Convert.hex('740ec69810de9ad1b8f298f1d2c0e6a52dd1e958dc2afc85764bec169c222e88').toUint8Array();
       const privateKey = await Secp256k1.bytesToPrivateKey({ privateKeyBytes });
 
-      expect(privateKey).to.have.property('crv', 'secp256k1');
-      expect(privateKey).to.have.property('d');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'EC');
-      expect(privateKey).to.have.property('x');
-      expect(privateKey).to.have.property('y');
+      expect(privateKey).toHaveProperty('crv', 'secp256k1');
+      expect(privateKey).toHaveProperty('d');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'EC');
+      expect(privateKey).toHaveProperty('x');
+      expect(privateKey).toHaveProperty('y');
     });
 
     for (const vector of secp256k1BytesToPrivateKey.vectors) {
@@ -98,7 +95,7 @@ describe('Secp256k1', () => {
           privateKeyBytes: Convert.hex(vector.input.privateKeyBytes).toUint8Array()
         });
 
-        expect(privateKey).to.deep.equal(vector.output);
+        expect(privateKey).toEqual(vector.output);
       });
     }
   });
@@ -108,12 +105,12 @@ describe('Secp256k1', () => {
       const publicKeyBytes = Convert.hex('043752951274023296c8a74b0ffe42f82ff4b4d4bba4326477422703f761f59258c26a7465b9a77ac0c3f1cedb139c428b0b1fbb5516867b527636f3286f705553').toUint8Array();
       const publicKey = await Secp256k1.bytesToPublicKey({ publicKeyBytes });
 
-      expect(publicKey).to.have.property('crv', 'secp256k1');
-      expect(publicKey).to.have.property('kid');
-      expect(publicKey).to.have.property('kty', 'EC');
-      expect(publicKey).to.have.property('x');
-      expect(publicKey).to.have.property('y');
-      expect(publicKey).to.not.have.property('d');
+      expect(publicKey).toHaveProperty('crv', 'secp256k1');
+      expect(publicKey).toHaveProperty('kid');
+      expect(publicKey).toHaveProperty('kty', 'EC');
+      expect(publicKey).toHaveProperty('x');
+      expect(publicKey).toHaveProperty('y');
+      expect(publicKey).not.toHaveProperty('d');
     });
 
     for (const vector of secp256k1BytesToPublicKey.vectors) {
@@ -121,7 +118,7 @@ describe('Secp256k1', () => {
         const publicKey = await Secp256k1.bytesToPublicKey({
           publicKeyBytes: Convert.hex(vector.input.publicKeyBytes).toUint8Array()
         });
-        expect(publicKey).to.deep.equal(vector.output);
+        expect(publicKey).toEqual(vector.output);
       });
     }
   });
@@ -136,10 +133,10 @@ describe('Secp256k1', () => {
       });
 
       // Confirm the length of the resulting public key is 33 bytes
-      expect(output.byteLength).to.equal(33);
+      expect(output.byteLength).toBe(33);
 
       // Confirm the output matches the expected compressed public key.
-      expect(output).to.deep.equal(compressedPublicKeyBytes);
+      expect(output).toEqual(compressedPublicKeyBytes);
     });
 
     it('throws an error for an invalid uncompressed public key', async () => {
@@ -150,10 +147,10 @@ describe('Secp256k1', () => {
         await Secp256k1.compressPublicKey({
           publicKeyBytes: invalidPublicKey,
         });
-        expect.fail('Expected method to throw an error.');
+        throw new Error('Expected method to throw an error.');
       } catch (error) {
-        expect(error).to.be.instanceOf(Error);
-        expect((error as Error).message).to.include('Point of length 65 was invalid');
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain('Point of length 65 was invalid');
       }
     });
   });
@@ -162,19 +159,19 @@ describe('Secp256k1', () => {
     it('returns a public key in JWK format', async () => {
       publicKey = await Secp256k1.computePublicKey({ key: privateKey });
 
-      expect(publicKey).to.have.property('crv', 'secp256k1');
-      expect(publicKey).to.not.have.property('d');
-      expect(publicKey).to.have.property('kid');
-      expect(publicKey).to.have.property('kty', 'EC');
-      expect(publicKey).to.have.property('x');
-      expect(publicKey).to.have.property('y');
+      expect(publicKey).toHaveProperty('crv', 'secp256k1');
+      expect(publicKey).not.toHaveProperty('d');
+      expect(publicKey).toHaveProperty('kid');
+      expect(publicKey).toHaveProperty('kty', 'EC');
+      expect(publicKey).toHaveProperty('x');
+      expect(publicKey).toHaveProperty('y');
     });
 
     it('computes and adds a kid property, if missing', async () => {
       const { kid, ...privateKeyWithoutKid } = privateKey;
       const publicKey = await Secp256k1.computePublicKey({ key: privateKeyWithoutKid });
 
-      expect(publicKey).to.have.property('kid', kid);
+      expect(publicKey).toHaveProperty('kid', kid);
     });
   });
 
@@ -184,8 +181,8 @@ describe('Secp256k1', () => {
 
       const compactSignature = await Secp256k1.convertDerToCompactSignature({ derSignature });
 
-      expect(compactSignature).to.be.instanceOf(Uint8Array);
-      expect(compactSignature.byteLength).to.equal(64);
+      expect(compactSignature).toBeInstanceOf(Uint8Array);
+      expect(compactSignature.byteLength).toBe(64);
     });
 
     it('converted ASN.1 DER encoded ECDSA signature matches the expected compact R+S signature', async () => {
@@ -194,7 +191,7 @@ describe('Secp256k1', () => {
 
       const compactSignature = await Secp256k1.convertDerToCompactSignature({ derSignature });
 
-      expect(compactSignature).to.deep.equal(expectedCompactSignature);
+      expect(compactSignature).toEqual(expectedCompactSignature);
     });
 
     it('converts AWS KMS signatures that can be verified with Secp256k1.verify()', async () => {
@@ -223,12 +220,10 @@ describe('Secp256k1', () => {
         data      : message
       });
 
-      expect(isValid).to.be.true;
+      expect(isValid).toBe(true);
     });
 
     it('passes Wycheproof test vector', async () => {
-      // Source: https://github.com/paulmillr/noble-curves/blob/37eab5a28a43c35b87e9e95a12ae6086393ac38b
-      //   /test/wycheproof/ecdsa_secp256k1_sha256_test.json#L189-L198
       const publicKeyBytes = Convert.hex(
         '04b838ff44e5bc177bf21189d0766082fc9d843226887fc9760371100b7ee20a6f' +
         'f0c9d75bfba7b31a6bca1974496eeb56de357071955d83c4b1badaa0b21832e9'
@@ -248,13 +243,10 @@ describe('Secp256k1', () => {
         data      : message
       });
 
-      expect(isValid).to.be.true;
+      expect(isValid).toBe(true);
     });
 
     it('throws an error for an invalid ASN.1 DER encoded ECDSA signature due to incorrect length', async () => {
-      // Invalid ASN.1 DER encoded ECDSA signature.
-      // Source: https://github.com/paulmillr/noble-curves/blob/37eab5a28a43c35b87e9e95a12ae6086393ac38b
-      //   /test/wycheproof/ecdsa_secp256k1_sha256_test.json#L239-L248
       const invalidDerSignature = Convert.hex(
         '3046022100813ef79ccefa9a56f7ba805f0e478584fe5f0dd5f567bc09b5123ccbc9832365' +
         '02206ff18a52dcc0336f7af62400a6dd9b810732baf1ff758000d6f613a556eb31ba'
@@ -262,17 +254,14 @@ describe('Secp256k1', () => {
 
       try {
         await Secp256k1.convertDerToCompactSignature({ derSignature: invalidDerSignature });
-        expect.fail('Expected method to throw an error.');
+        throw new Error('Expected method to throw an error.');
       } catch (error) {
-        expect(error).to.be.instanceOf(Error);
-        expect((error as Error).message).to.include('Invalid signature: incorrect length');
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain('Invalid signature: incorrect length');
       }
     });
 
     it('throws an error for an invalid ASN.1 DER encoded ECDSA signature due to appending zeros to sequence', async () => {
-      // Invalid ASN.1 DER encoded ECDSA signature.
-      // Source: https://github.com/paulmillr/noble-curves/blob/37eab5a28a43c35b87e9e95a12ae6086393ac38b
-      //   /test/wycheproof/ecdsa_secp256k1_sha256_test.json#L369-L378
       const invalidDerSignature = Convert.hex(
         '3047022100813ef79ccefa9a56f7ba805f0e478584fe5f0dd5f567bc09b5123ccbc9832365' +
         '02206ff18a52dcc0336f7af62400a6dd9b810732baf1ff758000d6f613a556eb31ba0000'
@@ -280,10 +269,10 @@ describe('Secp256k1', () => {
 
       try {
         await Secp256k1.convertDerToCompactSignature({ derSignature: invalidDerSignature });
-        expect.fail('Expected method to throw an error.');
+        throw new Error('Expected method to throw an error.');
       } catch (error) {
-        expect(error).to.be.instanceOf(Error);
-        expect((error as Error).message).to.include('Invalid signature: left bytes after parsing');
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain('Invalid signature: left bytes after parsing');
       }
     });
   });
@@ -298,10 +287,10 @@ describe('Secp256k1', () => {
       });
 
       // Confirm the length of the resulting public key is 65 bytes
-      expect(output.byteLength).to.equal(65);
+      expect(output.byteLength).toBe(65);
 
       // Confirm the output matches the expected uncompressed public key.
-      expect(output).to.deep.equal(uncompressedPublicKeyBytes);
+      expect(output).toEqual(uncompressedPublicKeyBytes);
     });
 
     it('throws an error for an invalid compressed public key', async () => {
@@ -312,10 +301,10 @@ describe('Secp256k1', () => {
         await Secp256k1.decompressPublicKey({
           publicKeyBytes: invalidPublicKey,
         });
-        expect.fail('Expected method to throw an error.');
+        throw new Error('Expected method to throw an error.');
       } catch (error) {
-        expect(error).to.be.instanceOf(Error);
-        expect((error as Error).message).to.include('Point of length 33 was invalid');
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain('Point of length 33 was invalid');
       }
     });
   });
@@ -324,19 +313,19 @@ describe('Secp256k1', () => {
     it('returns a private key in JWK format', async () => {
       const privateKey = await Secp256k1.generateKey();
 
-      expect(privateKey).to.have.property('crv', 'secp256k1');
-      expect(privateKey).to.have.property('d');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'EC');
-      expect(privateKey).to.have.property('x');
-      expect(privateKey).to.have.property('y');
+      expect(privateKey).toHaveProperty('crv', 'secp256k1');
+      expect(privateKey).toHaveProperty('d');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'EC');
+      expect(privateKey).toHaveProperty('x');
+      expect(privateKey).toHaveProperty('y');
     });
 
     it('returns a 32-byte private key', async () => {
       const privateKey = await Secp256k1.generateKey() as JwkParamsEcPrivate;
 
       const privateKeyBytes = Convert.base64Url(privateKey.d).toUint8Array();
-      expect(privateKeyBytes.byteLength).to.equal(32);
+      expect(privateKeyBytes.byteLength).toBe(32);
     });
   });
 
@@ -346,8 +335,8 @@ describe('Secp256k1', () => {
         const keyBytes = Convert.hex(vector.input.keyBytes).toUint8Array();
         // @ts-expect-error because getCurvePoint() is a private method.
         const points = await Secp256k1.getCurvePoint({ keyBytes });
-        expect(points.x).to.deep.equal(Convert.hex(vector.output.x).toUint8Array());
-        expect(points.y).to.deep.equal(Convert.hex(vector.output.y).toUint8Array());
+        expect(points.x).toEqual(Convert.hex(vector.output.x).toUint8Array());
+        expect(points.y).toEqual(Convert.hex(vector.output.y).toUint8Array());
       });
     }
 
@@ -355,7 +344,7 @@ describe('Secp256k1', () => {
       await expect(
         // @ts-expect-error because getCurvePoint() is a private method.
         Secp256k1.getCurvePoint({ keyBytes: new Uint8Array(16) })
-      ).to.eventually.be.rejectedWith(Error, 'Point of length 16 was invalid. Expected 33 compressed bytes or 65 uncompressed bytes');
+      ).rejects.toThrow('Point of length 16 was invalid. Expected 33 compressed bytes or 65 uncompressed bytes');
     });
   });
 
@@ -363,30 +352,30 @@ describe('Secp256k1', () => {
     it('returns a public key in JWK format', async () => {
       const publicKey = await Secp256k1.getPublicKey({ key: privateKey });
 
-      expect(publicKey).to.have.property('kty', 'EC');
-      expect(publicKey).to.have.property('crv', 'secp256k1');
-      expect(publicKey).to.have.property('kid');
-      expect(publicKey).to.have.property('x');
-      expect(publicKey).to.have.property('y');
-      expect(publicKey).to.not.have.property('d');
+      expect(publicKey).toHaveProperty('kty', 'EC');
+      expect(publicKey).toHaveProperty('crv', 'secp256k1');
+      expect(publicKey).toHaveProperty('kid');
+      expect(publicKey).toHaveProperty('x');
+      expect(publicKey).toHaveProperty('y');
+      expect(publicKey).not.toHaveProperty('d');
     });
 
     it('computes and adds a kid property, if missing', async () => {
       const { kid, ...privateKeyWithoutKid } = privateKey;
       const publicKey = await Secp256k1.getPublicKey({ key: privateKeyWithoutKid });
 
-      expect(publicKey).to.have.property('kid', kid);
+      expect(publicKey).toHaveProperty('kid', kid);
     });
 
     it('returns the same output as computePublicKey()', async () => {
       const publicKey = await Secp256k1.getPublicKey({ key: privateKey });
-      expect(publicKey).to.deep.equal(await Secp256k1.computePublicKey({ key: privateKey }));
+      expect(publicKey).toEqual(await Secp256k1.computePublicKey({ key: privateKey }));
     });
 
     it('throws an error when provided a secp256k1 public key', async () => {
       await expect(
         Secp256k1.getPublicKey({ key: publicKey })
-      ).to.eventually.be.rejectedWith(Error, 'key is not a secp256k1 private JWK');
+      ).rejects.toThrow('key is not a secp256k1 private JWK');
     });
 
     it('throws an error when provided an Ed25519 private key', async () => {
@@ -400,7 +389,7 @@ describe('Secp256k1', () => {
 
       await expect(
         Secp256k1.getPublicKey({ key: ed25519PrivateKey })
-      ).to.eventually.be.rejectedWith(Error, 'key is not a secp256k1 private JWK');
+      ).rejects.toThrow('key is not a secp256k1 private JWK');
     });
 
     it('throws an error when provided a secp256r1 public key', async () => {
@@ -413,7 +402,7 @@ describe('Secp256k1', () => {
       };
       await expect(
         Secp256k1.getPublicKey({ key: secp256r1PrivateKey })
-      ).to.eventually.be.rejectedWith(Error, 'key is not a secp256k1 private JWK');
+      ).rejects.toThrow('key is not a secp256k1 private JWK');
     });
 
     it('throws an error when provided an Ed25519 private key', async () => {
@@ -427,7 +416,7 @@ describe('Secp256k1', () => {
 
       await expect(
         Secp256k1.getPublicKey({ key: ed25519PrivateKey })
-      ).to.eventually.be.rejectedWith(Error, 'key is not a secp256k1 private JWK');
+      ).rejects.toThrow('key is not a secp256k1 private JWK');
     });
   });
 
@@ -443,9 +432,9 @@ describe('Secp256k1', () => {
       };
       const privateKeyBytes = await Secp256k1.privateKeyToBytes({ privateKey });
 
-      expect(privateKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
       const expectedOutput = Convert.hex('740ec69810de9ad1b8f298f1d2c0e6a52dd1e958dc2afc85764bec169c222e88').toUint8Array();
-      expect(privateKeyBytes).to.deep.equal(expectedOutput);
+      expect(privateKeyBytes).toEqual(expectedOutput);
     });
 
     it('throws an error when provided a secp256k1 public key', async () => {
@@ -458,7 +447,7 @@ describe('Secp256k1', () => {
 
       await expect(
         Secp256k1.privateKeyToBytes({ privateKey: publicKey })
-      ).to.eventually.be.rejectedWith(Error, 'provided key is not a valid EC private key');
+      ).rejects.toThrow('provided key is not a valid EC private key');
     });
 
     for (const vector of secp256k1PrivateKeyToBytes.vectors) {
@@ -466,7 +455,7 @@ describe('Secp256k1', () => {
         const privateKeyBytes = await Secp256k1.privateKeyToBytes({
           privateKey: vector.input.privateKey as Jwk
         });
-        expect(privateKeyBytes).to.deep.equal(Convert.hex(vector.output).toUint8Array());
+        expect(privateKeyBytes).toEqual(Convert.hex(vector.output).toUint8Array());
       });
     }
   });
@@ -483,9 +472,9 @@ describe('Secp256k1', () => {
 
       const publicKeyBytes = await Secp256k1.publicKeyToBytes({ publicKey });
 
-      expect(publicKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(publicKeyBytes).toBeInstanceOf(Uint8Array);
       const expectedOutput = Convert.hex('043752951274023296c8a74b0ffe42f82ff4b4d4bba4326477422703f761f59258c26a7465b9a77ac0c3f1cedb139c428b0b1fbb5516867b527636f3286f705553').toUint8Array();
-      expect(publicKeyBytes).to.deep.equal(expectedOutput);
+      expect(publicKeyBytes).toEqual(expectedOutput);
     });
 
     it('throws an error when provided an Ed25519 private key', async () => {
@@ -500,7 +489,7 @@ describe('Secp256k1', () => {
 
       await expect(
         Secp256k1.publicKeyToBytes({ publicKey: privateKey })
-      ).to.eventually.be.rejectedWith(Error, 'provided key is not a valid EC public key');
+      ).rejects.toThrow('provided key is not a valid EC public key');
     });
 
     for (const vector of secp256k1PublicKeyToBytes.vectors) {
@@ -508,7 +497,7 @@ describe('Secp256k1', () => {
         const publicKeyBytes = await Secp256k1.publicKeyToBytes({
           publicKey: vector.input.publicKey as Jwk
         });
-        expect(publicKeyBytes).to.deep.equal(Convert.hex(vector.output).toUint8Array());
+        expect(publicKeyBytes).toEqual(Convert.hex(vector.output).toUint8Array());
       });
     }
   });
@@ -532,8 +521,8 @@ describe('Secp256k1', () => {
         privateKeyA : ownPrivateKey,
         publicKeyB  : otherPartyPublicKey
       });
-      expect(sharedSecret).to.be.instanceOf(Uint8Array);
-      expect(sharedSecret.byteLength).to.equal(32);
+      expect(sharedSecret).toBeInstanceOf(Uint8Array);
+      expect(sharedSecret.byteLength).toBe(32);
     });
 
     it('is commutative', async () => {
@@ -547,7 +536,7 @@ describe('Secp256k1', () => {
         publicKeyB  : ownPublicKey
       });
 
-      expect(sharedSecretOwnOther).to.deep.equal(sharedSecretOtherOwn);
+      expect(sharedSecretOwnOther).toEqual(sharedSecretOtherOwn);
     });
 
     it('throws an error if the public/private keys from the same key pair are specified', async () => {
@@ -556,7 +545,7 @@ describe('Secp256k1', () => {
           privateKeyA : ownPrivateKey,
           publicKeyB  : ownPublicKey
         })
-      ).to.eventually.be.rejectedWith(Error, 'shared secret cannot be computed from a single key pair');
+      ).rejects.toThrow('shared secret cannot be computed from a single key pair');
     });
   });
 
@@ -564,15 +553,15 @@ describe('Secp256k1', () => {
     it('returns a 64-byte signature of type Uint8Array', async () => {
       const data = new Uint8Array([51, 52, 53]);
       const signature = await Secp256k1.sign({ key: privateKey, data });
-      expect(signature).to.be.instanceOf(Uint8Array);
-      expect(signature.byteLength).to.equal(64);
+      expect(signature).toBeInstanceOf(Uint8Array);
+      expect(signature.byteLength).toBe(64);
     });
 
     it('accepts input data as Uint8Array', async () => {
       const data = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
       const key = privateKey;
       const signature = await Secp256k1.sign({ key, data });
-      expect(signature).to.be.instanceOf(Uint8Array);
+      expect(signature).toBeInstanceOf(Uint8Array);
     });
 
     describe('Web5TestVectorsCryptoEs256k', () => {
@@ -586,10 +575,10 @@ describe('Secp256k1', () => {
             });
 
             const signatureHex = Convert.uint8Array(signature).toHex();
-            expect(signatureHex).to.deep.equal(vector.output);
+            expect(signatureHex).toEqual(vector.output);
 
           } catch { errorOccurred = true; }
-          expect(errorOccurred).to.equal(vector.errors, `Expected '${vector.description}' to${vector.errors ? ' ' : ' not '}throw an error`);
+          expect(errorOccurred).toBe(vector.errors);
         }
       });
     });
@@ -600,7 +589,7 @@ describe('Secp256k1', () => {
       it(vector.description, async () => {
         const privateKeyBytes = Convert.hex(vector.input.privateKeyBytes).toUint8Array();
         const isValid = await Secp256k1.validatePrivateKey({ privateKeyBytes });
-        expect(isValid).to.equal(vector.output);
+        expect(isValid).toBe(vector.output);
       });
     }
   });
@@ -610,7 +599,7 @@ describe('Secp256k1', () => {
       it(vector.description, async () => {
         const publicKeyBytes = Convert.hex(vector.input.publicKeyBytes).toUint8Array();
         const isValid = await Secp256k1.validatePublicKey({ publicKeyBytes });
-        expect(isValid).to.equal(vector.output);
+        expect(isValid).toBe(vector.output);
       });
     }
   });
@@ -621,8 +610,8 @@ describe('Secp256k1', () => {
       const signature = await Secp256k1.sign({ key: privateKey, data });
 
       const isValid = await Secp256k1.verify({ key: publicKey, signature, data });
-      expect(isValid).to.exist;
-      expect(isValid).to.be.true;
+      expect(isValid).toBeDefined();
+      expect(isValid).toBe(true);
     });
 
     it('accepts input data as Uint8Array', async () => {
@@ -630,7 +619,7 @@ describe('Secp256k1', () => {
       // TypedArray - Uint8Array
       const signature = await Secp256k1.sign({ key: privateKey, data });
       const isValid = await Secp256k1.verify({ key: publicKey, signature, data });
-      expect(isValid).to.be.true;
+      expect(isValid).toBe(true);
     });
 
     describe('Web5TestVectorsCryptoEs256k', () => {
@@ -644,10 +633,10 @@ describe('Secp256k1', () => {
               data      : Convert.hex(vector.input.data).toUint8Array()
             });
 
-            expect(isValid).to.equal(vector.output);
+            expect(isValid).toBe(vector.output);
 
           } catch { errorOccurred = true; }
-          expect(errorOccurred).to.equal(vector.errors, `Expected '${vector.description}' to${vector.errors ? ' ' : ' not '}throw an error`);
+          expect(errorOccurred).toBe(vector.errors);
         }
       });
     });

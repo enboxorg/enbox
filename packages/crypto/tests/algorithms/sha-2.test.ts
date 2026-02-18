@@ -1,5 +1,5 @@
 import { Convert } from '@enbox/common';
-import { expect } from 'chai';
+import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { Sha2Algorithm } from '../../src/algorithms/sha-2.js';
 
@@ -19,8 +19,8 @@ describe('Sha2Algorithm', () => {
       const digest = await sha2.digest({ algorithm: 'SHA-256', data });
 
       // Validate the result.
-      expect(digest).to.exist;
-      expect(digest).to.be.an.instanceOf(Uint8Array);
+      expect(digest).toBeDefined();
+      expect(digest).toBeInstanceOf(Uint8Array);
     });
 
     it('supports SHA-256', async () => {
@@ -32,10 +32,10 @@ describe('Sha2Algorithm', () => {
       const digest = await sha2.digest({ algorithm: 'SHA-256', data });
 
       // Validate the result.
-      expect(digest).to.exist;
-      expect(digest).to.be.an.instanceOf(Uint8Array);
-      expect(digest).to.have.lengthOf(32);
-      expect(digest).to.deep.equal(expectedOutput);
+      expect(digest).toBeDefined();
+      expect(digest).toBeInstanceOf(Uint8Array);
+      expect(digest).toHaveLength(32);
+      expect(digest).toEqual(expectedOutput);
     });
   });
 });

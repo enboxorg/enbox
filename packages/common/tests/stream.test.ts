@@ -1,4 +1,4 @@
-import { expect } from 'chai';
+import { describe, expect, it } from 'bun:test';
 
 import { Stream } from '../src/stream.js';
 
@@ -11,7 +11,7 @@ describe('Stream', () => {
       const readableStream = Stream.fromBlob(blob);
 
       const result = await Stream.consumeToText({ readableStream });
-      expect(result).to.equal(inputText);
+      expect(result).toBe(inputText);
     });
 
     it('creates a ReadableStream from an empty Blob', async () => {
@@ -19,7 +19,7 @@ describe('Stream', () => {
       const readableStream = Stream.fromBlob(blob);
 
       const result = await Stream.consumeToBytes({ readableStream });
-      expect(result.length).to.equal(0);
+      expect(result.length).toBe(0);
     });
 
     it('creates a ReadableStream from a Blob with binary data', async () => {
@@ -28,7 +28,7 @@ describe('Stream', () => {
       const readableStream = Stream.fromBlob(blob);
 
       const result = await Stream.consumeToBytes({ readableStream });
-      expect(result).to.deep.equal(inputBytes);
+      expect(result).toEqual(inputBytes);
     });
   });
 
@@ -38,7 +38,7 @@ describe('Stream', () => {
       const readableStream = Stream.fromBytes(inputBytes);
 
       const result = await Stream.consumeToBytes({ readableStream });
-      expect(result).to.deep.equal(inputBytes);
+      expect(result).toEqual(inputBytes);
     });
 
     it('creates a ReadableStream from an empty Uint8Array', async () => {
@@ -46,7 +46,7 @@ describe('Stream', () => {
       const readableStream = Stream.fromBytes(inputBytes);
 
       const result = await Stream.consumeToBytes({ readableStream });
-      expect(result.length).to.equal(0);
+      expect(result.length).toBe(0);
     });
 
     it('creates a ReadableStream from a large Uint8Array', async () => {
@@ -54,7 +54,7 @@ describe('Stream', () => {
       const readableStream = Stream.fromBytes(oneMegabyte);
 
       const result = await Stream.consumeToBytes({ readableStream });
-      expect(result).to.deep.equal(oneMegabyte);
+      expect(result).toEqual(oneMegabyte);
     });
 
     it('chunks the data according to the specified chunk length', async () => {
@@ -72,10 +72,10 @@ describe('Stream', () => {
       }
 
       // 250 bytes / 100 byte chunks = 3 chunks (100, 100, 50)
-      expect(chunks.length).to.equal(3);
-      expect(chunks[0].length).to.equal(100);
-      expect(chunks[1].length).to.equal(100);
-      expect(chunks[2].length).to.equal(50);
+      expect(chunks.length).toBe(3);
+      expect(chunks[0].length).toBe(100);
+      expect(chunks[1].length).toBe(100);
+      expect(chunks[2].length).toBe(50);
     });
 
     it('uses the default chunk length of 100,000 bytes', async () => {
@@ -92,10 +92,10 @@ describe('Stream', () => {
       }
 
       // 250,000 bytes / 100,000 byte default chunks = 3 chunks (100K, 100K, 50K)
-      expect(chunks.length).to.equal(3);
-      expect(chunks[0].length).to.equal(100_000);
-      expect(chunks[1].length).to.equal(100_000);
-      expect(chunks[2].length).to.equal(50_000);
+      expect(chunks.length).toBe(3);
+      expect(chunks[0].length).toBe(100_000);
+      expect(chunks[1].length).toBe(100_000);
+      expect(chunks[2].length).toBe(50_000);
     });
   });
 
@@ -110,8 +110,8 @@ describe('Stream', () => {
       });
 
       const result = await Stream.consumeToArrayBuffer({ readableStream });
-      expect(result).to.be.an.instanceof(ArrayBuffer);
-      expect(new Uint8Array(result)).to.deep.equal(inputBytes);
+      expect(result).toBeInstanceOf(ArrayBuffer);
+      expect(new Uint8Array(result)).toEqual(inputBytes);
     });
 
     it('consumes a large ReadableStream and returns the expected bytes', async () => {
@@ -124,7 +124,7 @@ describe('Stream', () => {
       });
 
       const result = await Stream.consumeToArrayBuffer({ readableStream });
-      expect(new Uint8Array(result)).to.deep.equal(oneMegabyte);
+      expect(new Uint8Array(result)).toEqual(oneMegabyte);
     });
 
     it('handles an empty ReadableStream', async () => {
@@ -135,8 +135,8 @@ describe('Stream', () => {
       });
 
       const result = await Stream.consumeToArrayBuffer({ readableStream });
-      expect(result).to.be.an.instanceof(ArrayBuffer);
-      expect(result.byteLength).to.equal(0);
+      expect(result).toBeInstanceOf(ArrayBuffer);
+      expect(result.byteLength).toBe(0);
     });
 
     it('throws an error for a stream that errors', async () => {
@@ -149,9 +149,9 @@ describe('Stream', () => {
 
       try {
         await Stream.consumeToArrayBuffer({ readableStream });
-        expect.fail('Should have thrown an error');
+        throw new Error('Should have thrown an error');
       } catch (err) {
-        expect(err).to.equal(error);
+        expect(err).toBe(error);
       }
     });
   });
@@ -167,12 +167,12 @@ describe('Stream', () => {
       });
 
       const result = await Stream.consumeToBlob({ readableStream });
-      expect(result).to.be.an.instanceof(Blob);
-      expect(result.size).to.equal(inputBytes.length);
+      expect(result).toBeInstanceOf(Blob);
+      expect(result.size).toBe(inputBytes.length);
 
       // Read the blob to verify its content
       const arrayBuffer = await result.arrayBuffer();
-      expect(new Uint8Array(arrayBuffer)).to.deep.equal(inputBytes);
+      expect(new Uint8Array(arrayBuffer)).toEqual(inputBytes);
     });
 
     it('handles an empty ReadableStream', async () => {
@@ -183,8 +183,8 @@ describe('Stream', () => {
       });
 
       const result = await Stream.consumeToBlob({ readableStream });
-      expect(result).to.be.an.instanceof(Blob);
-      expect(result.size).to.equal(0);
+      expect(result).toBeInstanceOf(Blob);
+      expect(result.size).toBe(0);
     });
 
     it('consumes a large ReadableStream and returns the expected blob size', async () => {
@@ -197,7 +197,7 @@ describe('Stream', () => {
       });
 
       const result = await Stream.consumeToBlob({ readableStream });
-      expect(result.size).to.equal(oneMegabyte.length);
+      expect(result.size).toBe(oneMegabyte.length);
     });
 
     it('consumes a ReadableStream containing a string and returns the correct Blob', async () => {
@@ -212,12 +212,12 @@ describe('Stream', () => {
       });
 
       const blob = await Stream.consumeToBlob({ readableStream });
-      expect(blob).to.be.an.instanceof(Blob);
-      expect(blob.size).to.equal(inputBytes.length);
+      expect(blob).toBeInstanceOf(Blob);
+      expect(blob.size).toBe(inputBytes.length);
 
       // Read the blob and verify its content
       const blobText = await blob.text();
-      expect(blobText).to.equal(inputString);
+      expect(blobText).toBe(inputString);
     });
 
     it('throws an error for a stream that errors', async () => {
@@ -230,9 +230,9 @@ describe('Stream', () => {
 
       try {
         await Stream.consumeToBlob({ readableStream });
-        expect.fail('Should have thrown an error');
+        throw new Error('Should have thrown an error');
       } catch (err) {
-        expect(err).to.equal(error);
+        expect(err).toBe(error);
       }
     });
   });
@@ -248,8 +248,8 @@ describe('Stream', () => {
       });
 
       const result = await Stream.consumeToBytes({ readableStream });
-      expect(result).to.be.an.instanceof(Uint8Array);
-      expect(result).to.deep.equal(inputBytes);
+      expect(result).toBeInstanceOf(Uint8Array);
+      expect(result).toEqual(inputBytes);
     });
 
     it('consumes a 5-byte ReadableStream and returns the expected bytes', async () => {
@@ -262,7 +262,7 @@ describe('Stream', () => {
       });
 
       const result = await Stream.consumeToBytes({ readableStream });
-      expect(result).to.deep.equal(inputBytes);
+      expect(result).toEqual(inputBytes);
     });
 
     it('consumes a large ReadableStream and returns the expected bytes', async () => {
@@ -276,7 +276,7 @@ describe('Stream', () => {
       });
 
       const result = await Stream.consumeToBytes({ readableStream });
-      expect(result).to.deep.equal(oneMegabyte);
+      expect(result).toEqual(oneMegabyte);
     });
 
     it('handles an empty ReadableStream', async () => {
@@ -287,8 +287,8 @@ describe('Stream', () => {
       });
 
       const result = await Stream.consumeToBytes({ readableStream });
-      expect(result).to.be.an.instanceof(Uint8Array);
-      expect(result.length).to.equal(0);
+      expect(result).toBeInstanceOf(Uint8Array);
+      expect(result.length).toBe(0);
     });
 
     it('throws an error for a stream that errors', async () => {
@@ -301,9 +301,9 @@ describe('Stream', () => {
 
       try {
         await Stream.consumeToBytes({ readableStream });
-        expect.fail('Should have thrown an error');
+        throw new Error('Should have thrown an error');
       } catch (err) {
-        expect(err).to.equal(error);
+        expect(err).toBe(error);
       }
     });
   });
@@ -322,7 +322,7 @@ describe('Stream', () => {
       });
 
       const result = await Stream.consumeToJson({ readableStream });
-      expect(result).to.deep.equal(inputObject);
+      expect(result).toEqual(inputObject);
     });
 
     it('throws an error for a stream containing invalid JSON', async () => {
@@ -336,9 +336,9 @@ describe('Stream', () => {
 
       try {
         await Stream.consumeToJson({ readableStream });
-        expect.fail('Should have thrown an error');
+        throw new Error('Should have thrown an error');
       } catch (err) {
-        expect(err).to.be.instanceOf(SyntaxError);
+        expect(err).toBeInstanceOf(SyntaxError);
       }
     });
 
@@ -351,9 +351,9 @@ describe('Stream', () => {
 
       try {
         await Stream.consumeToJson({ readableStream });
-        expect.fail('Should have thrown an error');
+        throw new Error('Should have thrown an error');
       } catch (err) {
-        expect(err).to.be.instanceOf(SyntaxError); // Empty string is not valid JSON
+        expect(err).toBeInstanceOf(SyntaxError); // Empty string is not valid JSON
       }
     });
 
@@ -367,9 +367,9 @@ describe('Stream', () => {
 
       try {
         await Stream.consumeToJson({ readableStream });
-        expect.fail('Should have thrown an error');
+        throw new Error('Should have thrown an error');
       } catch (err) {
-        expect(err).to.equal(error);
+        expect(err).toBe(error);
       }
     });
   });
@@ -385,8 +385,8 @@ describe('Stream', () => {
       });
 
       const result = await Stream.consumeToText({ readableStream });
-      expect(result).to.be.a('string');
-      expect(result).to.equal(inputText);
+      expect(typeof result).toBe('string');
+      expect(result).toBe(inputText);
     });
 
     it('handles an empty ReadableStream', async () => {
@@ -397,8 +397,8 @@ describe('Stream', () => {
       });
 
       const result = await Stream.consumeToText({ readableStream });
-      expect(result).to.be.a('string');
-      expect(result).to.equal('');
+      expect(typeof result).toBe('string');
+      expect(result).toBe('');
     });
 
     it('consumes a large text stream and returns the expected text', async () => {
@@ -411,7 +411,7 @@ describe('Stream', () => {
       });
 
       const result = await Stream.consumeToText({ readableStream });
-      expect(result).to.equal(largeText);
+      expect(result).toBe(largeText);
     });
 
     it('throws an error for a stream that errors', async () => {
@@ -424,9 +424,9 @@ describe('Stream', () => {
 
       try {
         await Stream.consumeToText({ readableStream });
-        expect.fail('Should have thrown an error');
+        throw new Error('Should have thrown an error');
       } catch (err) {
-        expect(err).to.equal(error);
+        expect(err).toBe(error);
       }
     });
   });
@@ -441,11 +441,11 @@ describe('Stream', () => {
       const consumedBytes = await Stream.consumeToBytes({ readableStream: stream });
 
       // Check the length of the received bytes
-      expect(consumedBytes.length).to.equal(streamByteLength);
+      expect(consumedBytes.length).toBe(streamByteLength);
 
       // Check if all bytes are set to 43
       consumedBytes.forEach(byte => {
-        expect(byte).to.equal(fillValue);
+        expect(byte).toBe(fillValue);
       });
     });
 
@@ -470,13 +470,13 @@ describe('Stream', () => {
       }
 
       // Check the length of the received bytes.
-      expect(receivedBytes.length).to.equal(streamByteLength);
+      expect(receivedBytes.length).toBe(streamByteLength);
 
       // Check the number of chunks received.
-      expect(chunkCount).to.equal(Math.ceil(streamByteLength / chunkLength));
+      expect(chunkCount).toBe(Math.ceil(streamByteLength / chunkLength));
 
       // Check if the first chunk is of the expected length.
-      expect(firstChunkLength).to.equal(chunkLength);
+      expect(firstChunkLength).toBe(chunkLength);
     });
 
     it('handles stream lengths that are evenly divisible by chunk length', async function () {
@@ -488,7 +488,7 @@ describe('Stream', () => {
       const consumedBytes = await Stream.consumeToBytes({ readableStream: stream });
 
       // Confirm that the stream contents are as expected.
-      expect(consumedBytes.length).to.equal(streamByteLength);
+      expect(consumedBytes.length).toBe(streamByteLength);
     });
 
     it('handles stream lengths that are not evenly divisible by chunk length', async function () {
@@ -500,7 +500,7 @@ describe('Stream', () => {
       const consumedBytes = await Stream.consumeToBytes({ readableStream: stream });
 
       // Confirm that the stream contents are as expected.
-      expect(consumedBytes.length).to.equal(streamByteLength);
+      expect(consumedBytes.length).toBe(streamByteLength);
     });
 
     it('generates a stream with chunks having random bytes within a specified range', async () => {
@@ -515,13 +515,13 @@ describe('Stream', () => {
         const { done, value } = await reader.read();
         if (done) {break;}
 
-        expect(value).to.be.an.instanceof(Uint8Array);
-        expect(value.length).to.be.at.most(chunkLength);
+        expect(value).toBeInstanceOf(Uint8Array);
+        expect(value.length).toBeLessThanOrEqual(chunkLength);
 
         // Check each byte in the chunk is within the specified range
         for (const byte of value) {
-          expect(byte).to.be.at.least(fillValueRange[0]);
-          expect(byte).to.be.at.most(fillValueRange[1]);
+          expect(byte).toBeGreaterThanOrEqual(fillValueRange[0]);
+          expect(byte).toBeLessThanOrEqual(fillValueRange[1]);
         }
       }
     });
@@ -544,15 +544,15 @@ describe('Stream', () => {
         iterations++;
       }
 
-      expect(iterations).to.equal(maxIterations);
-      expect(allChunksValid).to.be.true;
+      expect(iterations).toBe(maxIterations);
+      expect(allChunksValid).toBe(true);
     });
   });
 
   describe('isReadable()', () => {
     it('returns true for a new ReadableStream', () => {
       const stream = new ReadableStream();
-      expect(Stream.isReadable({ readableStream: stream })).to.be.true;
+      expect(Stream.isReadable({ readableStream: stream })).toBe(true);
     });
 
     it('returns true for an errored ReadableStream', () => {
@@ -570,13 +570,13 @@ describe('Stream', () => {
           controller.error(new Error('Stream intentionally errored'));
         }
       });
-      expect(Stream.isReadable({ readableStream: erroredStream })).to.be.true;
+      expect(Stream.isReadable({ readableStream: erroredStream })).toBe(true);
     });
 
     it('returns false for a locked ReadableStream', () => {
       const stream = new ReadableStream();
       const reader = stream.getReader();
-      expect(Stream.isReadable({ readableStream: stream })).to.be.false;
+      expect(Stream.isReadable({ readableStream: stream })).toBe(false);
       reader.releaseLock();
     });
 
@@ -590,7 +590,7 @@ describe('Stream', () => {
       const reader = stream.getReader();
       await reader.read();
       await reader.closed;
-      expect(Stream.isReadable({ readableStream: stream })).to.be.false;
+      expect(Stream.isReadable({ readableStream: stream })).toBe(false);
     });
 
     it('returns false for a closed ReadableStream', async () => {
@@ -601,16 +601,16 @@ describe('Stream', () => {
       });
       stream.getReader();
 
-      expect(Stream.isReadable({ readableStream: stream })).to.be.false;
+      expect(Stream.isReadable({ readableStream: stream })).toBe(false);
     });
 
     it('returns false for non-stream objects', () => {
       // @ts-expect-error because we're testing non-stream input.
-      expect(Stream.isReadable({ readableStream: {} })).to.be.false;
+      expect(Stream.isReadable({ readableStream: {} })).toBe(false);
       // @ts-expect-error because we're testing non-stream input.
-      expect(Stream.isReadable({ readableStream: null })).to.be.false;
+      expect(Stream.isReadable({ readableStream: null })).toBe(false);
       // @ts-expect-error because we're testing non-stream input.
-      expect(Stream.isReadable({ readableStream: undefined })).to.be.false;
+      expect(Stream.isReadable({ readableStream: undefined })).toBe(false);
     });
 
     it('returns false for a ReadableStream where getReader() throws an error', () => {
@@ -619,123 +619,123 @@ describe('Stream', () => {
       erroredStream.getReader = (): ReadableStreamDefaultReader => { throw new Error('getReader intentionally throws an error'); };
 
       const result = Stream.isReadable({ readableStream: erroredStream });
-      expect(result).to.be.false;
+      expect(result).toBe(false);
     });
   });
 
   describe('isReadableStream()', () => {
     it('returns true for a ReadableStream', () => {
       const readableStream = new ReadableStream();
-      expect(Stream.isReadableStream(readableStream)).to.be.true;
+      expect(Stream.isReadableStream(readableStream)).toBe(true);
     });
 
     it('returns false for a Node-like stream object', () => {
       const nodeLike = { pipe: (): void => {}, on: (): void => {}, _readableState: {} };
-      expect(Stream.isReadableStream(nodeLike)).to.be.false;
+      expect(Stream.isReadableStream(nodeLike)).toBe(false);
     });
 
 
     it('returns false for null', () => {
-      expect(Stream.isReadableStream(null)).to.be.false;
+      expect(Stream.isReadableStream(null)).toBe(false);
     });
 
     it('returns false for undefined', () => {
-      expect(Stream.isReadableStream(undefined)).to.be.false;
+      expect(Stream.isReadableStream(undefined)).toBe(false);
     });
 
     it('returns false for a number', () => {
-      expect(Stream.isReadableStream(123)).to.be.false;
+      expect(Stream.isReadableStream(123)).toBe(false);
     });
 
     it('returns false for a string', () => {
-      expect(Stream.isReadableStream('string')).to.be.false;
+      expect(Stream.isReadableStream('string')).toBe(false);
     });
 
     it('returns false for a boolean', () => {
-      expect(Stream.isReadableStream(true)).to.be.false;
+      expect(Stream.isReadableStream(true)).toBe(false);
     });
 
     it('returns false for an array', () => {
-      expect(Stream.isReadableStream([])).to.be.false;
+      expect(Stream.isReadableStream([])).toBe(false);
     });
 
     it('returns false for an object without getReader method', () => {
-      expect(Stream.isReadableStream({})).to.be.false;
+      expect(Stream.isReadableStream({})).toBe(false);
     });
 
     it('returns false for a function', () => {
-      expect(Stream.isReadableStream(() => {})).to.be.false;
+      expect(Stream.isReadableStream(() => {})).toBe(false);
     });
 
     it('returns false for an object with a non-function getReader property', () => {
       const objWithNonFunctionGetReader = { getReader: 'not a function' };
-      expect(Stream.isReadableStream(objWithNonFunctionGetReader)).to.be.false;
+      expect(Stream.isReadableStream(objWithNonFunctionGetReader)).toBe(false);
     });
   });
 
   describe('isStream', () => {
     it('returns true for a ReadableStream', () => {
       const readableStream = new ReadableStream();
-      expect(Stream.isStream(readableStream)).to.be.true;
+      expect(Stream.isStream(readableStream)).toBe(true);
     });
 
     it('returns true for a WritableStream', () => {
       const writableStream = new WritableStream();
-      expect(Stream.isStream(writableStream)).to.be.true;
+      expect(Stream.isStream(writableStream)).toBe(true);
     });
 
     it('returns true for a TransformStream', () => {
       const transformStream = new TransformStream();
-      expect(Stream.isStream(transformStream)).to.be.true;
+      expect(Stream.isStream(transformStream)).toBe(true);
     });
 
     it('returns false for non-stream objects', () => {
-      expect(Stream.isStream({})).to.be.false;
-      expect(Stream.isStream(null)).to.be.false;
-      expect(Stream.isStream(undefined)).to.be.false;
-      expect(Stream.isStream(123)).to.be.false;
+      expect(Stream.isStream({})).toBe(false);
+      expect(Stream.isStream(null)).toBe(false);
+      expect(Stream.isStream(undefined)).toBe(false);
+      expect(Stream.isStream(123)).toBe(false);
     });
   });
 
   describe('isTransformStream', () => {
     it('returns true for a TransformStream', () => {
       const transformStream = new TransformStream();
-      expect(Stream.isTransformStream(transformStream)).to.be.true;
+      expect(Stream.isTransformStream(transformStream)).toBe(true);
     });
 
     it('returns false for ReadableStream and WritableStream', () => {
       const readableStream = new ReadableStream();
       const writableStream = new WritableStream();
-      expect(Stream.isTransformStream(readableStream)).to.be.false;
-      expect(Stream.isTransformStream(writableStream)).to.be.false;
+      expect(Stream.isTransformStream(readableStream)).toBe(false);
+      expect(Stream.isTransformStream(writableStream)).toBe(false);
     });
 
     it('returns false for non-stream objects', () => {
-      expect(Stream.isTransformStream({})).to.be.false;
-      expect(Stream.isTransformStream(null)).to.be.false;
-      expect(Stream.isTransformStream(undefined)).to.be.false;
-      expect(Stream.isTransformStream(123)).to.be.false;
+      expect(Stream.isTransformStream({})).toBe(false);
+      expect(Stream.isTransformStream(null)).toBe(false);
+      expect(Stream.isTransformStream(undefined)).toBe(false);
+      expect(Stream.isTransformStream(123)).toBe(false);
     });
   });
 
   describe('isWritableStream', () => {
     it('returns true for a WritableStream', () => {
       const writableStream = new WritableStream();
-      expect(Stream.isWritableStream(writableStream)).to.be.true;
+      expect(Stream.isWritableStream(writableStream)).toBe(true);
     });
 
     it('returns false for ReadableStream and TransformStream', () => {
       const readableStream = new ReadableStream();
       const transformStream = new TransformStream();
-      expect(Stream.isWritableStream(readableStream)).to.be.false;
-      expect(Stream.isWritableStream(transformStream)).to.be.false;
+      expect(Stream.isWritableStream(readableStream)).toBe(false);
+      expect(Stream.isWritableStream(transformStream)).toBe(false);
     });
 
     it('returns false for non-stream objects', () => {
-      expect(Stream.isWritableStream({})).to.be.false;
-      expect(Stream.isWritableStream(null)).to.be.false;
-      expect(Stream.isWritableStream(undefined)).to.be.false;
-      expect(Stream.isWritableStream(123)).to.be.false;
+      expect(Stream.isWritableStream({})).toBe(false);
+      expect(Stream.isWritableStream(null)).toBe(false);
+      expect(Stream.isWritableStream(undefined)).toBe(false);
+      expect(Stream.isWritableStream(123)).toBe(false);
     });
   });
 

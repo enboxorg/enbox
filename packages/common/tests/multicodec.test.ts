@@ -1,5 +1,6 @@
-import { expect } from 'chai';
 import { varint } from 'multiformats';
+
+import { describe, expect, it } from 'bun:test';
 
 import { Multicodec } from '../src/multicodec.js';
 
@@ -13,10 +14,10 @@ describe('Multicodec', () => {
 
       const prefixedData = Multicodec.addPrefix({ code: input, data: mockEd25519PublicKey });
 
-      expect(prefixedData).to.be.a('Uint8Array');
+      expect(prefixedData).toBeInstanceOf(Uint8Array);
       const [_, codeByteLength] = varint.decode(prefixedData);
-      expect(prefixedData.byteLength).to.equal(codeByteLength + mockEd25519PublicKey.byteLength);
-      expect(prefixedData.slice(0, codeByteLength)).to.deep.equal(output);
+      expect(prefixedData.byteLength).toBe(codeByteLength + mockEd25519PublicKey.byteLength);
+      expect(prefixedData.slice(0, codeByteLength)).toEqual(output);
     });
 
     it('returns Uint8Array with prefixed codec by name', () => {
@@ -26,8 +27,8 @@ describe('Multicodec', () => {
       const prefixedData = Multicodec.addPrefix({ name: input, data: mockEd25519PublicKey });
 
       const [_, codeByteLength] = varint.decode(prefixedData);
-      expect(prefixedData.byteLength).to.equal(codeByteLength + mockEd25519PublicKey.byteLength);
-      expect(prefixedData.slice(0, codeByteLength)).to.deep.equal(output);
+      expect(prefixedData.byteLength).toBe(codeByteLength + mockEd25519PublicKey.byteLength);
+      expect(prefixedData.slice(0, codeByteLength)).toEqual(output);
     });
 
     it('passes Multicodec test vectors', () => {
@@ -45,31 +46,31 @@ describe('Multicodec', () => {
       testVectors.forEach(([input, output]) => {
         const prefixedData = Multicodec.addPrefix({ code: input, data: mockEd25519PublicKey });
         const [_, codeByteLength] = varint.decode(prefixedData);
-        expect(prefixedData.byteLength).to.equal(codeByteLength + mockEd25519PublicKey.byteLength);
-        expect(prefixedData.slice(0, codeByteLength)).to.deep.equal(new Uint8Array(output));
+        expect(prefixedData.byteLength).toBe(codeByteLength + mockEd25519PublicKey.byteLength);
+        expect(prefixedData.slice(0, codeByteLength)).toEqual(new Uint8Array(output));
       });
     });
 
     it('throws an error when code and name input data missing', () => {
       expect(
         () => Multicodec.addPrefix({ data: new Uint8Array(0) })
-      ).to.throw(Error, `Either 'name' or 'code' must be defined, but not both.`);
+      ).toThrow(`Either 'name' or 'code' must be defined, but not both.`);
     });
 
     it('throws an error when both code and name specified', () => {
       expect(
         () => Multicodec.addPrefix({ code: 0x99999, name: 'non-existent', data: new Uint8Array(0) })
-      ).to.throw(Error, `Either 'name' or 'code' must be defined, but not both.`);
+      ).toThrow(`Either 'name' or 'code' must be defined, but not both.`);
     });
 
     it('throws an error when codec not found', () => {
       expect(
         () => Multicodec.addPrefix({ code: 0x99999, data: new Uint8Array(0) })
-      ).to.throw(Error, 'Unsupported multicodec: 629145');
+      ).toThrow('Unsupported multicodec: 629145');
 
       expect(
         () => Multicodec.addPrefix({ name: 'non-existent', data: new Uint8Array(0) })
-      ).to.throw(Error, 'Unsupported multicodec: non-existent');
+      ).toThrow('Unsupported multicodec: non-existent');
     });
   });
 
@@ -80,8 +81,8 @@ describe('Multicodec', () => {
       const prefixedData = Multicodec.addPrefix({ code: input, data: mockEd25519PublicKey });
 
       const codecCode = Multicodec.getCodeFromData({ prefixedData });
-      expect(codecCode).to.be.a('Number');
-      expect(codecCode).to.equal(output);
+      expect(typeof codecCode).toBe('number');
+      expect(codecCode).toBe(output);
     });
   });
 
@@ -91,9 +92,9 @@ describe('Multicodec', () => {
 
       const { code, data, name } = Multicodec.removePrefix({ prefixedData: input });
 
-      expect(code).to.be.a('Number');
-      expect(data).to.be.a('Uint8Array');
-      expect(name).to.be.a('String');
+      expect(typeof code).toBe('number');
+      expect(data).toBeInstanceOf(Uint8Array);
+      expect(typeof name).toBe('string');
     });
 
     it('returns data as Uint8Array with prefixed codec removed', () => {
@@ -102,8 +103,8 @@ describe('Multicodec', () => {
 
       const { data } = Multicodec.removePrefix({ prefixedData: input });
 
-      expect(data).to.be.a('Uint8Array');
-      expect(data).to.deep.equal(output);
+      expect(data).toBeInstanceOf(Uint8Array);
+      expect(data).toEqual(output);
     });
 
     it('passes Multicodec test vectors', () => {
@@ -122,8 +123,8 @@ describe('Multicodec', () => {
         const prefixedData = new Uint8Array(input);
         const [_, codeByteLength] = varint.decode(prefixedData);
         const { data } = Multicodec.removePrefix({ prefixedData });
-        expect(data.byteLength).to.equal(prefixedData.byteLength - codeByteLength);
-        expect(data).to.deep.equal(new Uint8Array(output));
+        expect(data.byteLength).toBe(prefixedData.byteLength - codeByteLength);
+        expect(data).toEqual(new Uint8Array(output));
       });
     });
 
@@ -136,7 +137,7 @@ describe('Multicodec', () => {
 
       expect(
         () => Multicodec.removePrefix({ prefixedData: dataWithPrefix })
-      ).to.throw(Error, 'Unsupported multicodec: 100');
+      ).toThrow('Unsupported multicodec: 100');
     });
   });
 });

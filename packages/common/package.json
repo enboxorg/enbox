@@ -6,15 +6,15 @@
   "module": "./dist/esm/index.js",
   "types": "./dist/types/index.d.ts",
   "scripts": {
-    "clean": "rimraf dist tests/compiled",
+    "clean": "rimraf dist",
     "build:esm": "rimraf dist/esm dist/types && bun tsc -p tsconfig.json",
     "build:browser": "rimraf dist/browser.mjs dist/browser.js && bun build/bundles.js",
-    "build:tests:node": "rimraf tests/compiled && bun tsc -p tests/tsconfig.json",
     "build:tests:browser": "rimraf tests/compiled && bun build/esbuild-tests.cjs",
     "build": "bun run clean && bun run build:esm && bun run build:browser",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
-    "test:node": "bun run build:tests:node && bunx --bun mocha",
+    "test:node": "bun test tests/",
+    "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage tests/",
     "test:browser": "bun run build:tests:browser && bunx web-test-runner"
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/common#readme",
@@ -76,24 +76,14 @@
   },
   "devDependencies": {
     "@playwright/test": "1.45.3",
-    "@types/chai": "4.3.16",
-    "@types/chai-as-promised": "7.1.8",
-
-    "@types/mocha": "10.0.6",
     "@types/node": "20.14.8",
     "@typescript-eslint/eslint-plugin": "8.32.1",
     "@typescript-eslint/parser": "8.32.1",
     "@web/test-runner": "0.18.2",
     "@web/test-runner-playwright": "0.11.0",
     "abstract-level": "1.0.4",
-
-    "chai": "5.1.1",
-    "chai-as-promised": "8.0.0",
     "esbuild": "0.23.0",
     "eslint": "9.7.0",
-    "eslint-plugin-mocha": "10.4.3",
-    "mocha": "10.4.0",
-    "mocha-junit-reporter": "2.2.1",
     "playwright": "1.45.3",
     "rimraf": "5.0.7",
     "typescript": "5.5.4"

@@ -1,7 +1,6 @@
-import chaiAsPromised from 'chai-as-promised';
-import { expect, use } from 'chai';
-
 import type { Jwk } from '../../src/jose/jwk.js';
+
+import { describe, expect, it } from 'bun:test';
 
 import { jwkToThumbprintTestVectors } from '../fixtures/test-vectors/jwk.js';
 import {
@@ -15,8 +14,6 @@ import {
   isPublicJwk,
 } from '../../src/jose/jwk.js';
 
-use(chaiAsPromised);
-
 describe('JWK', () => {
   describe('computeJwkThumbprint()', () => {
     it('passes all test vectors', async () => {
@@ -24,7 +21,7 @@ describe('JWK', () => {
 
       for (const vector of jwkToThumbprintTestVectors) {
         jwkThumbprint = await computeJwkThumbprint({ jwk: vector.input as Jwk });
-        expect(jwkThumbprint).to.equal(vector.output);
+        expect(jwkThumbprint).toBe(vector.output);
       }
     });
 
@@ -32,7 +29,7 @@ describe('JWK', () => {
       await expect(
         // @ts-expect-error because an invalid key type is being intentionally passed.
         computeJwkThumbprint({ jwk: { crv: 'X25519', kty: 'unsupported' } })
-      ).to.eventually.be.rejectedWith(Error, `Unsupported key type: unsupported`);
+      ).rejects.toThrow(`Unsupported key type: unsupported`);
     });
   });
 
@@ -44,15 +41,15 @@ describe('JWK', () => {
         x   : 'base64url-encoded-x-value',
         d   : 'base64url-encoded-private-key'
       };
-      expect(isEcPrivateJwk(validEcJwk)).to.be.true;
+      expect(isEcPrivateJwk(validEcJwk)).toBe(true);
     });
 
     it('returns false for non-object inputs', () => {
-      expect(isEcPrivateJwk(null)).to.be.false;
-      expect(isEcPrivateJwk(undefined)).to.be.false;
-      expect(isEcPrivateJwk(123)).to.be.false;
-      expect(isEcPrivateJwk('string')).to.be.false;
-      expect(isEcPrivateJwk([])).to.be.false;
+      expect(isEcPrivateJwk(null)).toBe(false);
+      expect(isEcPrivateJwk(undefined)).toBe(false);
+      expect(isEcPrivateJwk(123)).toBe(false);
+      expect(isEcPrivateJwk('string')).toBe(false);
+      expect(isEcPrivateJwk([])).toBe(false);
     });
 
     it('returns false if any required property is missing', () => {
@@ -61,23 +58,23 @@ describe('JWK', () => {
       const missingX = { kty: 'EC', crv: 'P-256', d: 'base64url-encoded-private-key' };
       const missingD = { kty: 'EC', crv: 'P-256', x: 'base64url-encoded-x-value' };
 
-      expect(isEcPrivateJwk(missingKty)).to.be.false;
-      expect(isEcPrivateJwk(missingCrv)).to.be.false;
-      expect(isEcPrivateJwk(missingX)).to.be.false;
-      expect(isEcPrivateJwk(missingD)).to.be.false;
+      expect(isEcPrivateJwk(missingKty)).toBe(false);
+      expect(isEcPrivateJwk(missingCrv)).toBe(false);
+      expect(isEcPrivateJwk(missingX)).toBe(false);
+      expect(isEcPrivateJwk(missingD)).toBe(false);
     });
 
     it('returns false if kty is not EC', () => {
       const invalidKty = { kty: 'RSA', crv: 'P-256', x: 'base64url-encoded-x-value', d: 'base64url-encoded-private-key' };
-      expect(isEcPrivateJwk(invalidKty)).to.be.false;
+      expect(isEcPrivateJwk(invalidKty)).toBe(false);
     });
 
     it('returns false if any property is of incorrect type', () => {
       const invalidDType = { kty: 'EC', crv: 'P-256', x: 'base64url-encoded-x-value', d: 123 };
       const invalidXType = { kty: 'EC', crv: 'P-256', x: 123, d: 'base64url-encoded-private-key' };
 
-      expect(isEcPrivateJwk(invalidDType)).to.be.false;
-      expect(isEcPrivateJwk(invalidXType)).to.be.false;
+      expect(isEcPrivateJwk(invalidDType)).toBe(false);
+      expect(isEcPrivateJwk(invalidXType)).toBe(false);
     });
 
     it('returns true for valid EC JWK with extra properties', () => {
@@ -88,7 +85,7 @@ describe('JWK', () => {
         d     : 'base64url-encoded-private-key',
         extra : 'extra-value'
       };
-      expect(isEcPrivateJwk(validEcJwkExtra)).to.be.true;
+      expect(isEcPrivateJwk(validEcJwkExtra)).toBe(true);
     });
   });
 
@@ -99,15 +96,15 @@ describe('JWK', () => {
         crv : 'P-256',
         x   : 'base64url-encoded-x-value'
       };
-      expect(isEcPublicJwk(validEcJwk)).to.be.true;
+      expect(isEcPublicJwk(validEcJwk)).toBe(true);
     });
 
     it('returns false for non-object inputs', () => {
-      expect(isEcPublicJwk(null)).to.be.false;
-      expect(isEcPublicJwk(undefined)).to.be.false;
-      expect(isEcPublicJwk(123)).to.be.false;
-      expect(isEcPublicJwk('string')).to.be.false;
-      expect(isEcPublicJwk([])).to.be.false;
+      expect(isEcPublicJwk(null)).toBe(false);
+      expect(isEcPublicJwk(undefined)).toBe(false);
+      expect(isEcPublicJwk(123)).toBe(false);
+      expect(isEcPublicJwk('string')).toBe(false);
+      expect(isEcPublicJwk([])).toBe(false);
     });
 
     it('returns false if any required property is missing', () => {
@@ -115,25 +112,25 @@ describe('JWK', () => {
       const missingCrv = { kty: 'EC', x: 'base64url-encoded-x-value' };
       const missingX = { kty: 'EC', crv: 'P-256' };
 
-      expect(isEcPublicJwk(missingKty)).to.be.false;
-      expect(isEcPublicJwk(missingCrv)).to.be.false;
-      expect(isEcPublicJwk(missingX)).to.be.false;
+      expect(isEcPublicJwk(missingKty)).toBe(false);
+      expect(isEcPublicJwk(missingCrv)).toBe(false);
+      expect(isEcPublicJwk(missingX)).toBe(false);
     });
 
     it('returns false if kty is not EC', () => {
       const invalidKty = { kty: 'RSA', crv: 'P-256', x: 'base64url-encoded-x-value' };
-      expect(isEcPublicJwk(invalidKty)).to.be.false;
+      expect(isEcPublicJwk(invalidKty)).toBe(false);
     });
 
     it('returns false if any property is of incorrect type', () => {
       const invalidXType = { kty: 'EC', crv: 'P-256', x: 123 };
 
-      expect(isEcPublicJwk(invalidXType)).to.be.false;
+      expect(isEcPublicJwk(invalidXType)).toBe(false);
     });
 
     it('returns false if the private key parameter \'d\' is present', () => {
       const withDParam = { kty: 'EC', crv: 'P-256', x: 'base64url-encoded-x-value', d: 'base64url-encoded-d-value' };
-      expect(isEcPublicJwk(withDParam)).to.be.false;
+      expect(isEcPublicJwk(withDParam)).toBe(false);
     });
 
     it('returns true for valid EC public JWK with extra properties', () => {
@@ -143,7 +140,7 @@ describe('JWK', () => {
         x     : 'base64url-encoded-x-value',
         extra : 'extra-value'
       };
-      expect(isEcPublicJwk(validEcJwkExtra)).to.be.true;
+      expect(isEcPublicJwk(validEcJwkExtra)).toBe(true);
     });
   });
 
@@ -153,34 +150,34 @@ describe('JWK', () => {
         kty : 'oct',
         k   : 'base64url-encoded-key'
       };
-      expect(isOctPrivateJwk(validOctJwk)).to.be.true;
+      expect(isOctPrivateJwk(validOctJwk)).toBe(true);
     });
 
     it('returns false for non-object inputs', () => {
-      expect(isOctPrivateJwk(null)).to.be.false;
-      expect(isOctPrivateJwk(undefined)).to.be.false;
-      expect(isOctPrivateJwk(123)).to.be.false;
-      expect(isOctPrivateJwk('string')).to.be.false;
-      expect(isOctPrivateJwk([])).to.be.false;
+      expect(isOctPrivateJwk(null)).toBe(false);
+      expect(isOctPrivateJwk(undefined)).toBe(false);
+      expect(isOctPrivateJwk(123)).toBe(false);
+      expect(isOctPrivateJwk('string')).toBe(false);
+      expect(isOctPrivateJwk([])).toBe(false);
     });
 
     it('returns false if any required property is missing', () => {
       const missingKty = { k: 'base64url-encoded-key' };
       const missingK = { kty: 'oct' };
 
-      expect(isOctPrivateJwk(missingKty)).to.be.false;
-      expect(isOctPrivateJwk(missingK)).to.be.false;
+      expect(isOctPrivateJwk(missingKty)).toBe(false);
+      expect(isOctPrivateJwk(missingK)).toBe(false);
     });
 
     it('returns false if kty is not oct', () => {
       const invalidKty = { kty: 'RSA', k: 'base64url-encoded-key' };
-      expect(isOctPrivateJwk(invalidKty)).to.be.false;
+      expect(isOctPrivateJwk(invalidKty)).toBe(false);
     });
 
     it('returns false if any property is of incorrect type', () => {
       const invalidKType = { kty: 'oct', k: 123 };
 
-      expect(isOctPrivateJwk(invalidKType)).to.be.false;
+      expect(isOctPrivateJwk(invalidKType)).toBe(false);
     });
 
     it('returns true for valid OCT private JWK with extra properties', () => {
@@ -189,7 +186,7 @@ describe('JWK', () => {
         k     : 'base64url-encoded-key',
         extra : 'extra-value'
       };
-      expect(isOctPrivateJwk(validOctJwkExtra)).to.be.true;
+      expect(isOctPrivateJwk(validOctJwkExtra)).toBe(true);
     });
   });
 
@@ -201,15 +198,15 @@ describe('JWK', () => {
         x   : 'base64url-encoded-x-value',
         d   : 'base64url-encoded-private-key'
       };
-      expect(isOkpPrivateJwk(validOkpJwk)).to.be.true;
+      expect(isOkpPrivateJwk(validOkpJwk)).toBe(true);
     });
 
     it('returns false for non-object inputs', () => {
-      expect(isOkpPrivateJwk(null)).to.be.false;
-      expect(isOkpPrivateJwk(undefined)).to.be.false;
-      expect(isOkpPrivateJwk(123)).to.be.false;
-      expect(isOkpPrivateJwk('string')).to.be.false;
-      expect(isOkpPrivateJwk([])).to.be.false;
+      expect(isOkpPrivateJwk(null)).toBe(false);
+      expect(isOkpPrivateJwk(undefined)).toBe(false);
+      expect(isOkpPrivateJwk(123)).toBe(false);
+      expect(isOkpPrivateJwk('string')).toBe(false);
+      expect(isOkpPrivateJwk([])).toBe(false);
     });
 
     it('returns false if any required property is missing', () => {
@@ -218,23 +215,23 @@ describe('JWK', () => {
       const missingX = { kty: 'OKP', crv: 'Ed25519', d: 'base64url-encoded-private-key' };
       const missingD = { kty: 'OKP', crv: 'Ed25519', x: 'base64url-encoded-x-value' };
 
-      expect(isOkpPrivateJwk(missingKty)).to.be.false;
-      expect(isOkpPrivateJwk(missingCrv)).to.be.false;
-      expect(isOkpPrivateJwk(missingX)).to.be.false;
-      expect(isOkpPrivateJwk(missingD)).to.be.false;
+      expect(isOkpPrivateJwk(missingKty)).toBe(false);
+      expect(isOkpPrivateJwk(missingCrv)).toBe(false);
+      expect(isOkpPrivateJwk(missingX)).toBe(false);
+      expect(isOkpPrivateJwk(missingD)).toBe(false);
     });
 
     it('returns false if kty is not OKP', () => {
       const invalidKty = { kty: 'EC', crv: 'Ed25519', x: 'base64url-encoded-x-value', d: 'base64url-encoded-private-key' };
-      expect(isOkpPrivateJwk(invalidKty)).to.be.false;
+      expect(isOkpPrivateJwk(invalidKty)).toBe(false);
     });
 
     it('returns false if any property is of incorrect type', () => {
       const invalidDType = { kty: 'OKP', crv: 'Ed25519', x: 'base64url-encoded-x-value', d: 123 };
       const invalidXType = { kty: 'OKP', crv: 'Ed25519', x: 123, d: 'base64url-encoded-private-key' };
 
-      expect(isOkpPrivateJwk(invalidDType)).to.be.false;
-      expect(isOkpPrivateJwk(invalidXType)).to.be.false;
+      expect(isOkpPrivateJwk(invalidDType)).toBe(false);
+      expect(isOkpPrivateJwk(invalidXType)).toBe(false);
     });
 
     it('returns true for valid OKP private JWK with extra properties', () => {
@@ -245,7 +242,7 @@ describe('JWK', () => {
         d     : 'base64url-encoded-private-key',
         extra : 'extra-value'
       };
-      expect(isOkpPrivateJwk(validOkpJwkExtra)).to.be.true;
+      expect(isOkpPrivateJwk(validOkpJwkExtra)).toBe(true);
     });
   });
 
@@ -256,15 +253,15 @@ describe('JWK', () => {
         crv : 'Ed25519',
         x   : 'base64url-encoded-x-value'
       };
-      expect(isOkpPublicJwk(validOkpJwk)).to.be.true;
+      expect(isOkpPublicJwk(validOkpJwk)).toBe(true);
     });
 
     it('returns false for non-object inputs', () => {
-      expect(isOkpPublicJwk(null)).to.be.false;
-      expect(isOkpPublicJwk(undefined)).to.be.false;
-      expect(isOkpPublicJwk(123)).to.be.false;
-      expect(isOkpPublicJwk('string')).to.be.false;
-      expect(isOkpPublicJwk([])).to.be.false;
+      expect(isOkpPublicJwk(null)).toBe(false);
+      expect(isOkpPublicJwk(undefined)).toBe(false);
+      expect(isOkpPublicJwk(123)).toBe(false);
+      expect(isOkpPublicJwk('string')).toBe(false);
+      expect(isOkpPublicJwk([])).toBe(false);
     });
 
     it('returns false if any required property is missing', () => {
@@ -272,25 +269,25 @@ describe('JWK', () => {
       const missingCrv = { kty: 'OKP', x: 'base64url-encoded-x-value' };
       const missingX = { kty: 'OKP', crv: 'Ed25519' };
 
-      expect(isOkpPublicJwk(missingKty)).to.be.false;
-      expect(isOkpPublicJwk(missingCrv)).to.be.false;
-      expect(isOkpPublicJwk(missingX)).to.be.false;
+      expect(isOkpPublicJwk(missingKty)).toBe(false);
+      expect(isOkpPublicJwk(missingCrv)).toBe(false);
+      expect(isOkpPublicJwk(missingX)).toBe(false);
     });
 
     it('returns false if kty is not OKP', () => {
       const invalidKty = { kty: 'EC', crv: 'Ed25519', x: 'base64url-encoded-x-value' };
-      expect(isOkpPublicJwk(invalidKty)).to.be.false;
+      expect(isOkpPublicJwk(invalidKty)).toBe(false);
     });
 
     it('returns false if any property is of incorrect type', () => {
       const invalidXType = { kty: 'OKP', crv: 'Ed25519', x: 123 };
 
-      expect(isOkpPublicJwk(invalidXType)).to.be.false;
+      expect(isOkpPublicJwk(invalidXType)).toBe(false);
     });
 
     it(`returns false if the private key parameter 'd' is present`, () => {
       const withDParam = { kty: 'OKP', crv: 'Ed25519', x: 'base64url-encoded-x-value', d: 'base64url-encoded-d-value' };
-      expect(isOkpPublicJwk(withDParam)).to.be.false;
+      expect(isOkpPublicJwk(withDParam)).toBe(false);
     });
 
     it('returns true for valid OKP public JWK with extra properties', () => {
@@ -300,7 +297,7 @@ describe('JWK', () => {
         x     : 'base64url-encoded-x-value',
         extra : 'extra-value'
       };
-      expect(isOkpPublicJwk(validOkpJwkExtra)).to.be.true;
+      expect(isOkpPublicJwk(validOkpJwkExtra)).toBe(true);
     });
   });
 
@@ -312,7 +309,7 @@ describe('JWK', () => {
         x   : 'base64url-encoded-x-value',
         d   : 'base64url-encoded-private-key'
       };
-      expect(isPrivateJwk(validEcJwk)).to.be.true;
+      expect(isPrivateJwk(validEcJwk)).toBe(true);
     });
 
     it('returns true for a valid OKP private key JWK', () => {
@@ -322,7 +319,7 @@ describe('JWK', () => {
         x   : 'base64url-encoded-x-value',
         d   : 'base64url-encoded-private-key'
       };
-      expect(isPrivateJwk(validOkpJwk)).to.be.true;
+      expect(isPrivateJwk(validOkpJwk)).toBe(true);
     });
 
     it('returns true for a valid OCT private key JWK', () => {
@@ -330,7 +327,7 @@ describe('JWK', () => {
         kty : 'oct',
         k   : 'base64url-encoded-key'
       };
-      expect(isPrivateJwk(validOctJwk)).to.be.true;
+      expect(isPrivateJwk(validOctJwk)).toBe(true);
     });
 
     it('returns true for a valid RSA private key JWK', () => {
@@ -340,7 +337,7 @@ describe('JWK', () => {
         e   : 'base64url-encoded-e-value',
         d   : 'base64url-encoded-d-value'
       };
-      expect(isPrivateJwk(validRsaJwk)).to.be.true;
+      expect(isPrivateJwk(validRsaJwk)).toBe(true);
     });
 
     it('returns false for an EC public key JWK', () => {
@@ -349,7 +346,7 @@ describe('JWK', () => {
         crv : 'P-256',
         x   : 'base64url-encoded-x-value'
       };
-      expect(isPrivateJwk(validEcJwk)).to.be.false;
+      expect(isPrivateJwk(validEcJwk)).toBe(false);
     });
 
     it('returns false for an OKP public key JWK', () => {
@@ -358,7 +355,7 @@ describe('JWK', () => {
         crv : 'Ed25519',
         x   : 'base64url-encoded-x-value'
       };
-      expect(isPrivateJwk(validOkpPublicJwk)).to.be.false;
+      expect(isPrivateJwk(validOkpPublicJwk)).toBe(false);
     });
 
     it('returns false for a RSA public key JWK', () => {
@@ -367,15 +364,15 @@ describe('JWK', () => {
         n   : 'base64url-encoded-n-value',
         e   : 'base64url-encoded-e-value'
       };
-      expect(isPrivateJwk(validRsaPublicJwk)).to.be.false;
+      expect(isPrivateJwk(validRsaPublicJwk)).toBe(false);
     });
 
     it('returns false for non-object inputs', () => {
-      expect(isPrivateJwk(null)).to.be.false;
-      expect(isPrivateJwk(undefined)).to.be.false;
-      expect(isPrivateJwk(123)).to.be.false;
-      expect(isPrivateJwk('string')).to.be.false;
-      expect(isPrivateJwk([])).to.be.false;
+      expect(isPrivateJwk(null)).toBe(false);
+      expect(isPrivateJwk(undefined)).toBe(false);
+      expect(isPrivateJwk(123)).toBe(false);
+      expect(isPrivateJwk('string')).toBe(false);
+      expect(isPrivateJwk([])).toBe(false);
     });
   });
 
@@ -386,7 +383,7 @@ describe('JWK', () => {
         crv : 'P-256',
         x   : 'base64url-encoded-x-value'
       };
-      expect(isPublicJwk(validEcJwk)).to.be.true;
+      expect(isPublicJwk(validEcJwk)).toBe(true);
     });
 
     it('returns true for a valid OKP public key JWK', () => {
@@ -395,7 +392,7 @@ describe('JWK', () => {
         crv : 'Ed25519',
         x   : 'base64url-encoded-x-value'
       };
-      expect(isPublicJwk(validOkpPublicJwk)).to.be.true;
+      expect(isPublicJwk(validOkpPublicJwk)).toBe(true);
     });
 
     it('returns true for a valid RSA public key JWK', () => {
@@ -404,7 +401,7 @@ describe('JWK', () => {
         n   : 'base64url-encoded-n-value',
         e   : 'base64url-encoded-e-value'
       };
-      expect(isPublicJwk(validRsaPublicJwk)).to.be.true;
+      expect(isPublicJwk(validRsaPublicJwk)).toBe(true);
     });
 
     it('returns false for an EC private key JWK', () => {
@@ -414,7 +411,7 @@ describe('JWK', () => {
         x   : 'base64url-encoded-x-value',
         d   : 'base64url-encoded-private-key'
       };
-      expect(isPublicJwk(validEcJwk)).to.be.false;
+      expect(isPublicJwk(validEcJwk)).toBe(false);
     });
 
     it('returns false for an OKP private key JWK', () => {
@@ -424,7 +421,7 @@ describe('JWK', () => {
         x   : 'base64url-encoded-x-value',
         d   : 'base64url-encoded-private-key'
       };
-      expect(isPublicJwk(validOkpJwk)).to.be.false;
+      expect(isPublicJwk(validOkpJwk)).toBe(false);
     });
 
     it('returns false for an OCT private key JWK', () => {
@@ -432,7 +429,7 @@ describe('JWK', () => {
         kty : 'oct',
         k   : 'base64url-encoded-key'
       };
-      expect(isPublicJwk(validOctJwk)).to.be.false;
+      expect(isPublicJwk(validOctJwk)).toBe(false);
     });
 
     it('returns false for a RSA private key JWK', () => {
@@ -442,15 +439,15 @@ describe('JWK', () => {
         e   : 'base64url-encoded-e-value',
         d   : 'base64url-encoded-d-value'
       };
-      expect(isPublicJwk(validRsaJwk)).to.be.false;
+      expect(isPublicJwk(validRsaJwk)).toBe(false);
     });
 
     it('returns false for non-object inputs', () => {
-      expect(isPublicJwk(null)).to.be.false;
-      expect(isPublicJwk(undefined)).to.be.false;
-      expect(isPublicJwk(123)).to.be.false;
-      expect(isPublicJwk('string')).to.be.false;
-      expect(isPublicJwk([])).to.be.false;
+      expect(isPublicJwk(null)).toBe(false);
+      expect(isPublicJwk(undefined)).toBe(false);
+      expect(isPublicJwk(123)).toBe(false);
+      expect(isPublicJwk('string')).toBe(false);
+      expect(isPublicJwk([])).toBe(false);
     });
   });
 });

@@ -1,6 +1,6 @@
-import { expect } from 'chai';
-
 import type { Jwk } from '../../src/jose/jwk.js';
+
+import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { EdDsaAlgorithm } from '../../src/algorithms/eddsa.js';
 
@@ -9,7 +9,7 @@ describe('EdDsaAlgorithm', () => {
   let privateKey: Jwk;
   let publicKey: Jwk;
 
-  before(() => {
+  beforeAll(() => {
     eddsa = new EdDsaAlgorithm();
   });
 
@@ -24,11 +24,11 @@ describe('EdDsaAlgorithm', () => {
       const publicKey = await eddsa.computePublicKey({ key: privateKey });
 
       // Validate the result.
-      expect(publicKey).to.have.property('kid');
-      expect(publicKey).to.have.property('kty');
-      expect(publicKey).to.have.property('x');
-      expect(publicKey).to.not.have.property('d');
-      expect(publicKey).to.not.have.property('y');
+      expect(publicKey).toHaveProperty('kid');
+      expect(publicKey).toHaveProperty('kty');
+      expect(publicKey).toHaveProperty('x');
+      expect(publicKey).not.toHaveProperty('d');
+      expect(publicKey).not.toHaveProperty('y');
     });
 
     it('computes and adds a kid property, if missing', async () => {
@@ -39,7 +39,7 @@ describe('EdDsaAlgorithm', () => {
       const publicKey = await eddsa.computePublicKey({ key: privateKeyWithoutKid });
 
       // Validate the result.
-      expect(publicKey).to.have.property('kid', kid);
+      expect(publicKey).toHaveProperty('kid', kid);
     });
 
     it('supports EdDSA using Ed25519 curve', async () => {
@@ -50,9 +50,9 @@ describe('EdDsaAlgorithm', () => {
       const publicKey = await eddsa.computePublicKey({ key: privateKey });
 
       // Validate the result.
-      expect(publicKey).to.have.property('kty', 'OKP');
-      expect(publicKey).to.have.property('alg', 'EdDSA');
-      expect(publicKey).to.have.property('crv', 'Ed25519');
+      expect(publicKey).toHaveProperty('kty', 'OKP');
+      expect(publicKey).toHaveProperty('alg', 'EdDSA');
+      expect(publicKey).toHaveProperty('crv', 'Ed25519');
     });
 
     it('throws an error if the key provided is not an OKP private key', async () => {
@@ -68,13 +68,13 @@ describe('EdDsaAlgorithm', () => {
       // Test the method.
       try {
         await eddsa.computePublicKey({ key: privateKey });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Invalid key provided');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Invalid key provided');
       }
     });
 
@@ -90,13 +90,13 @@ describe('EdDsaAlgorithm', () => {
       // Test the method.
       try {
         await eddsa.computePublicKey({ key: privateKey });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Unsupported curve');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Unsupported curve');
       }
     });
   });
@@ -107,16 +107,16 @@ describe('EdDsaAlgorithm', () => {
       const privateKey = await eddsa.generateKey({ algorithm: 'Ed25519' });
 
       // Validate the result.
-      expect(privateKey).to.have.property('kty', 'OKP');
-      expect(privateKey).to.have.property('kid');
+      expect(privateKey).toHaveProperty('kty', 'OKP');
+      expect(privateKey).toHaveProperty('kid');
     });
 
     it('supports EdDSA using Ed25519 curve', async () => {
       // Test the method.
       const privateKey = await eddsa.generateKey({ algorithm: 'Ed25519' });
 
-      expect(privateKey).to.have.property('alg', 'EdDSA');
-      expect(privateKey).to.have.property('crv', 'Ed25519');
+      expect(privateKey).toHaveProperty('alg', 'EdDSA');
+      expect(privateKey).toHaveProperty('crv', 'Ed25519');
     });
   });
 
@@ -126,10 +126,10 @@ describe('EdDsaAlgorithm', () => {
       const publicKey = await eddsa.getPublicKey({ key: privateKey });
 
       // Validate the result.
-      expect(publicKey).to.not.have.property('d');
-      expect(publicKey).to.have.property('kid');
-      expect(publicKey).to.have.property('kty');
-      expect(publicKey).to.have.property('x');
+      expect(publicKey).not.toHaveProperty('d');
+      expect(publicKey).toHaveProperty('kid');
+      expect(publicKey).toHaveProperty('kty');
+      expect(publicKey).toHaveProperty('x');
     });
 
     it('computes and adds a kid property, if missing', async () => {
@@ -140,7 +140,7 @@ describe('EdDsaAlgorithm', () => {
       const publicKey = await eddsa.getPublicKey({ key: privateKeyWithoutKid });
 
       // Validate the result.
-      expect(publicKey).to.have.property('kid', kid);
+      expect(publicKey).toHaveProperty('kid', kid);
     });
 
     it('supports EdDSA using Ed25519 curve', async () => {
@@ -151,9 +151,9 @@ describe('EdDsaAlgorithm', () => {
       const publicKey = await eddsa.getPublicKey({ key: privateKey });
 
       // Validate the result.
-      expect(publicKey).to.have.property('kty', 'OKP');
-      expect(publicKey).to.have.property('alg', 'EdDSA');
-      expect(publicKey).to.have.property('crv', 'Ed25519');
+      expect(publicKey).toHaveProperty('kty', 'OKP');
+      expect(publicKey).toHaveProperty('alg', 'EdDSA');
+      expect(publicKey).toHaveProperty('crv', 'Ed25519');
     });
 
     it('throws an error if the key provided is not an OKP private key', async () => {
@@ -169,13 +169,13 @@ describe('EdDsaAlgorithm', () => {
       // Test the method.
       try {
         await eddsa.getPublicKey({ key: privateKey });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Invalid key provided');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Invalid key provided');
       }
     });
 
@@ -191,13 +191,13 @@ describe('EdDsaAlgorithm', () => {
       // Test the method.
       try {
         await eddsa.getPublicKey({ key: privateKey });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Unsupported curve');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Unsupported curve');
       }
     });
   });
@@ -210,8 +210,8 @@ describe('EdDsaAlgorithm', () => {
       const signature = await eddsa.sign({ key: privateKey, data });
 
       // Validate the result.
-      expect(signature).to.exist;
-      expect(signature).to.be.a('Uint8Array');
+      expect(signature).toBeDefined();
+      expect(signature).toBeInstanceOf(Uint8Array);
     });
 
     it('generates signatures in compact R+S format', async () => {
@@ -219,7 +219,7 @@ describe('EdDsaAlgorithm', () => {
       const signature = await eddsa.sign({ key: privateKey, data });
 
       // Validate the result.
-      expect(signature).to.have.length(64);
+      expect(signature).toHaveLength(64);
     });
 
     it('throws an error if the key provided is not an OKP private key', async () => {
@@ -235,13 +235,13 @@ describe('EdDsaAlgorithm', () => {
       // Test the method.
       try {
         await eddsa.sign({ key: privateKey, data });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Invalid key provided');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Invalid key provided');
       }
     });
 
@@ -258,13 +258,13 @@ describe('EdDsaAlgorithm', () => {
       try {
       // Test the method.
         await eddsa.sign({ key: privateKey, data });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Unsupported curve');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Unsupported curve');
       }
     });
   });
@@ -284,7 +284,7 @@ describe('EdDsaAlgorithm', () => {
         data
       });
 
-      expect(isValid).to.be.a('boolean');
+      expect(typeof isValid).toBe('boolean');
     });
 
     it('returns true for a valid signature', async () => {
@@ -292,7 +292,7 @@ describe('EdDsaAlgorithm', () => {
       const isValid = await eddsa.verify({ key: publicKey, signature, data });
 
       // Validate the result.
-      expect(isValid).to.be.true;
+      expect(isValid).toBe(true);
     });
 
     it('returns false for an invalid signature', async () => {
@@ -303,7 +303,7 @@ describe('EdDsaAlgorithm', () => {
       const isValid = await eddsa.verify({ key: publicKey, signature, data });
 
       // Validate the result.
-      expect(isValid).to.be.false;
+      expect(isValid).toBe(false);
     });
 
     it('throws an error if the key provided is not an OKP public key', async () => {
@@ -318,13 +318,13 @@ describe('EdDsaAlgorithm', () => {
       // Test the method.
       try {
         await eddsa.verify({ key: publicKey, signature, data });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Invalid key provided');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Invalid key provided');
       }
     });
 
@@ -340,13 +340,13 @@ describe('EdDsaAlgorithm', () => {
       try {
       // Test the method.
         await eddsa.verify({ key: publicKey, signature, data });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Unsupported curve');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Unsupported curve');
       }
     });
   });

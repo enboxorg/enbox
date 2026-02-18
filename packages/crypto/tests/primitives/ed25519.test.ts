@@ -1,8 +1,7 @@
-import chaiAsPromised from 'chai-as-promised';
-import { Convert } from '@enbox/common';
-import { expect, use } from 'chai';
-
 import type { Jwk, JwkParamsOkpPrivate } from '../../src/jose/jwk.js';
+
+import { Convert } from '@enbox/common';
+import { beforeAll, describe, expect, it } from 'bun:test';
 
 import CryptoEd25519SignTestVector from '../fixtures/web5-spec-vectors/crypto_ed25519/sign.json' with { type: 'json' };
 import CryptoEd25519VerifyTestVector from '../fixtures/web5-spec-vectors/crypto_ed25519/verify.json' with { type: 'json' };
@@ -15,13 +14,11 @@ import ed25519ConvertPublicKeyToX25519 from '../fixtures/test-vectors/ed25519/co
 import ed25519PrivateKeyToBytes from '../fixtures/test-vectors/ed25519/private-key-to-bytes.json' with { type: 'json' };
 import ed25519PublicKeyToBytes from '../fixtures/test-vectors/ed25519/public-key-to-bytes.json' with { type: 'json' };
 
-use(chaiAsPromised);
-
 describe('Ed25519', () => {
   let privateKey: Jwk;
   let publicKey: Jwk;
 
-  before(async () => {
+  beforeAll(async () => {
     privateKey = await Ed25519.generateKey();
     publicKey = await Ed25519.computePublicKey({ key: privateKey });
   });
@@ -31,11 +28,11 @@ describe('Ed25519', () => {
       const privateKeyBytes = Convert.hex('4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb').toUint8Array();
       const privateKey = await Ed25519.bytesToPrivateKey({ privateKeyBytes });
 
-      expect(privateKey).to.have.property('crv', 'Ed25519');
-      expect(privateKey).to.have.property('d');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'OKP');
-      expect(privateKey).to.have.property('x');
+      expect(privateKey).toHaveProperty('crv', 'Ed25519');
+      expect(privateKey).toHaveProperty('d');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'OKP');
+      expect(privateKey).toHaveProperty('x');
     });
 
     for (const vector of ed25519BytesToPrivateKey.vectors) {
@@ -43,7 +40,7 @@ describe('Ed25519', () => {
         const privateKey = await Ed25519.bytesToPrivateKey({
           privateKeyBytes: Convert.hex(vector.input.privateKeyBytes).toUint8Array()
         });
-        expect(privateKey).to.deep.equal(vector.output);
+        expect(privateKey).toEqual(vector.output);
       });
     }
   });
@@ -53,11 +50,11 @@ describe('Ed25519', () => {
       const publicKeyBytes = Convert.hex('3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c').toUint8Array();
       const publicKey = await Ed25519.bytesToPublicKey({ publicKeyBytes });
 
-      expect(publicKey).to.have.property('crv', 'Ed25519');
-      expect(publicKey).to.have.property('kid');
-      expect(publicKey).to.have.property('kty', 'OKP');
-      expect(publicKey).to.have.property('x');
-      expect(publicKey).to.not.have.property('d');
+      expect(publicKey).toHaveProperty('crv', 'Ed25519');
+      expect(publicKey).toHaveProperty('kid');
+      expect(publicKey).toHaveProperty('kty', 'OKP');
+      expect(publicKey).toHaveProperty('x');
+      expect(publicKey).not.toHaveProperty('d');
     });
 
     for (const vector of ed25519BytesToPublicKey.vectors) {
@@ -65,7 +62,7 @@ describe('Ed25519', () => {
         const publicKey = await Ed25519.bytesToPublicKey({
           publicKeyBytes: Convert.hex(vector.input.publicKeyBytes).toUint8Array()
         });
-        expect(publicKey).to.deep.equal(vector.output);
+        expect(publicKey).toEqual(vector.output);
       });
     }
   });
@@ -74,23 +71,23 @@ describe('Ed25519', () => {
     it('returns a public key in JWK format', async () => {
       const publicKey = await Ed25519.computePublicKey({ key: privateKey });
 
-      expect(publicKey).to.have.property('kty', 'OKP');
-      expect(publicKey).to.have.property('crv', 'Ed25519');
-      expect(publicKey).to.have.property('x');
-      expect(publicKey).to.not.have.property('d');
+      expect(publicKey).toHaveProperty('kty', 'OKP');
+      expect(publicKey).toHaveProperty('crv', 'Ed25519');
+      expect(publicKey).toHaveProperty('x');
+      expect(publicKey).not.toHaveProperty('d');
     });
 
     it('computes and adds a kid property, if missing', async () => {
       const { kid, ...privateKeyWithoutKid } = privateKey;
       const publicKey = await Ed25519.computePublicKey({ key: privateKeyWithoutKid });
 
-      expect(publicKey).to.have.property('kid', kid);
+      expect(publicKey).toHaveProperty('kid', kid);
     });
 
     for (const vector of ed25519ComputePublicKey.vectors) {
       it(vector.description, async () => {
         const publicKey = await Ed25519.computePublicKey(vector.input as { key: Jwk });
-        expect(publicKey).to.deep.equal(vector.output);
+        expect(publicKey).toEqual(vector.output);
       });
     }
   });
@@ -101,7 +98,7 @@ describe('Ed25519', () => {
         const x25519PrivateKey = await Ed25519.convertPrivateKeyToX25519(
           vector.input as { privateKey: Jwk }
         );
-        expect(x25519PrivateKey).to.deep.equal(vector.output);
+        expect(x25519PrivateKey).toEqual(vector.output);
       });
     }
   });
@@ -118,7 +115,7 @@ describe('Ed25519', () => {
 
       await expect(
         Ed25519.convertPublicKeyToX25519({ publicKey: invalidEd25519PublicKey })
-      ).to.eventually.be.rejectedWith(Error, 'Invalid public key');
+      ).rejects.toThrow('Invalid public key');
     });
 
     it('throws an error when provided an Ed25519 private key', async () => {
@@ -131,7 +128,7 @@ describe('Ed25519', () => {
 
       await expect(
         Ed25519.convertPublicKeyToX25519({ publicKey: ed25519PrivateKey })
-      ).to.eventually.be.rejectedWith(Error, 'provided key is not a valid OKP public key');
+      ).rejects.toThrow('provided key is not a valid OKP public key');
     });
 
     for (const vector of ed25519ConvertPublicKeyToX25519.vectors) {
@@ -139,7 +136,7 @@ describe('Ed25519', () => {
         const x25519PrivateKey = await Ed25519.convertPublicKeyToX25519(
           vector.input as { publicKey: Jwk }
         );
-        expect(x25519PrivateKey).to.deep.equal(vector.output);
+        expect(x25519PrivateKey).toEqual(vector.output);
       });
     }
   });
@@ -148,18 +145,18 @@ describe('Ed25519', () => {
     it('returns a private key in JWK format', async () => {
       const privateKey = await Ed25519.generateKey();
 
-      expect(privateKey).to.have.property('crv', 'Ed25519');
-      expect(privateKey).to.have.property('d');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'OKP');
-      expect(privateKey).to.have.property('x');
+      expect(privateKey).toHaveProperty('crv', 'Ed25519');
+      expect(privateKey).toHaveProperty('d');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'OKP');
+      expect(privateKey).toHaveProperty('x');
     });
 
     it('returns a 32-byte private key', async () => {
       const privateKey = await Ed25519.generateKey() as JwkParamsOkpPrivate;
 
       const privateKeyBytes = Convert.base64Url(privateKey.d).toUint8Array();
-      expect(privateKeyBytes.byteLength).to.equal(32);
+      expect(privateKeyBytes.byteLength).toBe(32);
     });
   });
 
@@ -167,28 +164,28 @@ describe('Ed25519', () => {
     it('returns a public key in JWK format', async () => {
       const publicKey = await Ed25519.getPublicKey({ key: privateKey });
 
-      expect(publicKey).to.have.property('kty', 'OKP');
-      expect(publicKey).to.have.property('crv', 'Ed25519');
-      expect(publicKey).to.have.property('x');
-      expect(publicKey).to.not.have.property('d');
+      expect(publicKey).toHaveProperty('kty', 'OKP');
+      expect(publicKey).toHaveProperty('crv', 'Ed25519');
+      expect(publicKey).toHaveProperty('x');
+      expect(publicKey).not.toHaveProperty('d');
     });
 
     it('computes and adds a kid property, if missing', async () => {
       const { kid, ...privateKeyWithoutKid } = privateKey;
       const publicKey = await Ed25519.getPublicKey({ key: privateKeyWithoutKid });
 
-      expect(publicKey).to.have.property('kid', kid);
+      expect(publicKey).toHaveProperty('kid', kid);
     });
 
     it('returns the same output as computePublicKey()', async () => {
       const publicKey = await Ed25519.getPublicKey({ key: privateKey });
-      expect(publicKey).to.deep.equal(await Ed25519.computePublicKey({ key: privateKey }));
+      expect(publicKey).toEqual(await Ed25519.computePublicKey({ key: privateKey }));
     });
 
     it('throws an error when provided an Ed25519 public key', async () => {
       await expect(
         Ed25519.getPublicKey({ key: publicKey })
-      ).to.eventually.be.rejectedWith(Error, 'key is not an Ed25519 private JWK');
+      ).rejects.toThrow('key is not an Ed25519 private JWK');
     });
 
     it('throws an error when provided an secp256k1 private key', async () => {
@@ -202,7 +199,7 @@ describe('Ed25519', () => {
 
       await expect(
         Ed25519.getPublicKey({ key: secp256k1PrivateKey })
-      ).to.eventually.be.rejectedWith(Error, 'key is not an Ed25519 private JWK');
+      ).rejects.toThrow('key is not an Ed25519 private JWK');
     });
 
     it('throws an error when provided an X25519 private key', async () => {
@@ -216,7 +213,7 @@ describe('Ed25519', () => {
 
       await expect(
         Ed25519.getPublicKey({ key: x25519PrivateKey })
-      ).to.eventually.be.rejectedWith(Error, 'key is not an Ed25519 private JWK');
+      ).rejects.toThrow('key is not an Ed25519 private JWK');
     });
   });
 
@@ -231,9 +228,9 @@ describe('Ed25519', () => {
       };
       const privateKeyBytes = await Ed25519.privateKeyToBytes({ privateKey });
 
-      expect(privateKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
       const expectedOutput = Convert.hex('4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb').toUint8Array();
-      expect(privateKeyBytes).to.deep.equal(expectedOutput);
+      expect(privateKeyBytes).toEqual(expectedOutput);
     });
 
     it('throws an error when provided an Ed25519 public key', async () => {
@@ -245,7 +242,7 @@ describe('Ed25519', () => {
 
       await expect(
         Ed25519.privateKeyToBytes({ privateKey: publicKey })
-      ).to.eventually.be.rejectedWith(Error, 'provided key is not a valid OKP private key');
+      ).rejects.toThrow('provided key is not a valid OKP private key');
     });
 
     for (const vector of ed25519PrivateKeyToBytes.vectors) {
@@ -253,7 +250,7 @@ describe('Ed25519', () => {
         const privateKeyBytes = await Ed25519.privateKeyToBytes({
           privateKey: vector.input.privateKey as Jwk
         });
-        expect(privateKeyBytes).to.deep.equal(Convert.hex(vector.output).toUint8Array());
+        expect(privateKeyBytes).toEqual(Convert.hex(vector.output).toUint8Array());
       });
     }
   });
@@ -269,9 +266,9 @@ describe('Ed25519', () => {
 
       const publicKeyBytes = await Ed25519.publicKeyToBytes({ publicKey });
 
-      expect(publicKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(publicKeyBytes).toBeInstanceOf(Uint8Array);
       const expectedOutput = Convert.hex('3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c').toUint8Array();
-      expect(publicKeyBytes).to.deep.equal(expectedOutput);
+      expect(publicKeyBytes).toEqual(expectedOutput);
     });
 
     it('throws an error when provided an Ed25519 private key', async () => {
@@ -285,7 +282,7 @@ describe('Ed25519', () => {
 
       await expect(
         Ed25519.publicKeyToBytes({ publicKey: privateKey })
-      ).to.eventually.be.rejectedWith(Error, 'provided key is not a valid OKP public key');
+      ).rejects.toThrow('provided key is not a valid OKP public key');
     });
 
     for (const vector of ed25519PublicKeyToBytes.vectors) {
@@ -293,7 +290,7 @@ describe('Ed25519', () => {
         const publicKeyBytes = await Ed25519.publicKeyToBytes({
           publicKey: vector.input.publicKey as Jwk
         });
-        expect(publicKeyBytes).to.deep.equal(Convert.hex(vector.output).toUint8Array());
+        expect(publicKeyBytes).toEqual(Convert.hex(vector.output).toUint8Array());
       });
     }
   });
@@ -302,14 +299,14 @@ describe('Ed25519', () => {
     it('returns a 64-byte signature of type Uint8Array', async () => {
       const data = new Uint8Array([51, 52, 53]);
       const signature = await Ed25519.sign({ key: privateKey, data });
-      expect(signature).to.be.instanceOf(Uint8Array);
-      expect(signature.byteLength).to.equal(64);
+      expect(signature).toBeInstanceOf(Uint8Array);
+      expect(signature.byteLength).toBe(64);
     });
 
     it('accepts input data as Uint8Array', async () => {
       const data = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
       const signature = await Ed25519.sign({ key: privateKey, data: data });
-      expect(signature).to.be.instanceOf(Uint8Array);
+      expect(signature).toBeInstanceOf(Uint8Array);
     });
 
     describe('Web5TestVectorsCryptoEd25519', () => {
@@ -323,10 +320,10 @@ describe('Ed25519', () => {
             });
 
             const signatureHex = Convert.uint8Array(signature).toHex();
-            expect(signatureHex).to.deep.equal(vector.output, vector.description);
+            expect(signatureHex).toEqual(vector.output);
 
           } catch { errorOccurred = true; }
-          expect(errorOccurred).to.equal(vector.errors, `Expected '${vector.description}' to${vector.errors ? ' ' : ' not '}throw an error`);
+          expect(errorOccurred).toBe(vector.errors);
         }
       });
     });
@@ -336,19 +333,19 @@ describe('Ed25519', () => {
     it('returns true for valid public keys', async () => {
       const publicKeyBytes = Convert.hex('a12c2beb77265f2aac953b5009349d94155a03ada416aad451319480e983ca4c').toUint8Array();
       const isValid = await Ed25519.validatePublicKey({ publicKeyBytes });
-      expect(isValid).to.be.true;
+      expect(isValid).toBe(true);
     });
 
     it('returns false for invalid public keys', async () => {
       const publicKeyBytes = Convert.hex('02fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f').toUint8Array();
       const isValid = await Ed25519.validatePublicKey({ publicKeyBytes });
-      expect(isValid).to.be.false;
+      expect(isValid).toBe(false);
     });
 
     it('returns false if a private key is given', async () => {
       const publicKeyBytes = Convert.hex('0a23a20072891237aa0864b5765139514908787878cd77135a0059881d313f00').toUint8Array();
       const isValid = await Ed25519.validatePublicKey({ publicKeyBytes });
-      expect(isValid).to.be.false;
+      expect(isValid).toBe(false);
     });
   });
 
@@ -358,8 +355,8 @@ describe('Ed25519', () => {
       const signature = await Ed25519.sign({ key: privateKey, data });
 
       const isValid = await Ed25519.verify({ key: publicKey, signature, data });
-      expect(isValid).to.exist;
-      expect(isValid).to.be.a('boolean');
+      expect(isValid).toBeDefined();
+      expect(typeof isValid).toBe('boolean');
     });
 
     it('accepts input data as Uint8Array', async () => {
@@ -367,7 +364,7 @@ describe('Ed25519', () => {
       const signature = await Ed25519.sign({ key: privateKey, data });
 
       const isValid = await Ed25519.verify({ key: publicKey, signature, data });
-      expect(isValid).to.be.true;
+      expect(isValid).toBe(true);
     });
 
     describe('Web5TestVectorsCryptoEd25519', () => {
@@ -381,10 +378,10 @@ describe('Ed25519', () => {
               data      : Convert.hex(vector.input.data).toUint8Array()
             });
 
-            expect(isValid).to.equal(vector.output);
+            expect(isValid).toBe(vector.output);
 
           } catch { errorOccurred = true; }
-          expect(errorOccurred).to.equal(vector.errors, `Expected '${vector.description}' to${vector.errors ? ' ' : ' not '}throw an error`);
+          expect(errorOccurred).toBe(vector.errors);
         }
       });
     });

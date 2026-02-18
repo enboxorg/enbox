@@ -1,10 +1,7 @@
-import chaiAsPromised from 'chai-as-promised';
 import { Convert } from '@enbox/common';
-import { expect, use } from 'chai';
+import { describe, expect, it } from 'bun:test';
 
 import { Pbkdf2 } from '../../src/primitives/pbkdf2.js';
-
-use(chaiAsPromised);
 
 describe('Pbkdf2', () => {
   const password = Convert.string('password').toUint8Array();
@@ -16,8 +13,8 @@ describe('Pbkdf2', () => {
     it('successfully derives a key', async () => {
       const derivedKey = await Pbkdf2.deriveKey({ hash: 'SHA-256', password, salt, iterations, length });
 
-      expect(derivedKey).to.be.instanceOf(Uint8Array);
-      expect(derivedKey.byteLength).to.equal(length / 8);
+      expect(derivedKey).toBeInstanceOf(Uint8Array);
+      expect(derivedKey.byteLength).toBe(length / 8);
     });
 
     const hashFunctions: ('SHA-256' | 'SHA-384' | 'SHA-512')[] = ['SHA-256', 'SHA-384', 'SHA-512'];
@@ -26,8 +23,8 @@ describe('Pbkdf2', () => {
         const options = { hash, password, salt, iterations, length };
 
         const derivedKey = await Pbkdf2.deriveKey(options);
-        expect(derivedKey).to.be.instanceOf(Uint8Array);
-        expect(derivedKey.byteLength).to.equal(length / 8);
+        expect(derivedKey).toBeInstanceOf(Uint8Array);
+        expect(derivedKey.byteLength).toBe(length / 8);
       });
     });
 
@@ -37,7 +34,7 @@ describe('Pbkdf2', () => {
       };
 
       // @ts-expect-error for testing purposes
-      await expect(Pbkdf2.deriveKey(options)).to.eventually.be.rejectedWith(Error);
+      await expect(Pbkdf2.deriveKey(options)).rejects.toThrow();
     });
 
     it('throws an error when iterations count is not a positive number', async () => {
@@ -47,7 +44,7 @@ describe('Pbkdf2', () => {
       };
 
       // Every browser throws a different error message so a specific message cannot be checked.
-      await expect(Pbkdf2.deriveKey(options)).to.eventually.be.rejectedWith(Error);
+      await expect(Pbkdf2.deriveKey(options)).rejects.toThrow();
     });
   });
 
@@ -61,8 +58,8 @@ describe('Pbkdf2', () => {
         length
       });
 
-      expect(derivedKeyBytes).to.be.instanceOf(Uint8Array);
-      expect(derivedKeyBytes.byteLength).to.equal(length / 8);
+      expect(derivedKeyBytes).toBeInstanceOf(Uint8Array);
+      expect(derivedKeyBytes.byteLength).toBe(length / 8);
     });
 
     const hashFunctions: ('SHA-256' | 'SHA-384' | 'SHA-512')[] = ['SHA-256', 'SHA-384', 'SHA-512'];
@@ -71,8 +68,8 @@ describe('Pbkdf2', () => {
         const derivedKeyBytes = await Pbkdf2.deriveKeyBytes({
           hash, baseKeyBytes: password, salt, iterations, length
         });
-        expect(derivedKeyBytes).to.be.instanceOf(Uint8Array);
-        expect(derivedKeyBytes.byteLength).to.equal(length / 8);
+        expect(derivedKeyBytes).toBeInstanceOf(Uint8Array);
+        expect(derivedKeyBytes.byteLength).toBe(length / 8);
       });
     });
 
@@ -93,7 +90,7 @@ describe('Pbkdf2', () => {
         length
       });
 
-      expect(derivedKeyBytes).to.deep.equal(derivedKey);
+      expect(derivedKeyBytes).toEqual(derivedKey);
     });
 
     it('throws an error when iterations count is not a positive number', async () => {
@@ -106,7 +103,7 @@ describe('Pbkdf2', () => {
           iterations   : -1,
           length
         })
-      ).to.eventually.be.rejectedWith(Error);
+      ).rejects.toThrow();
     });
   });
 });

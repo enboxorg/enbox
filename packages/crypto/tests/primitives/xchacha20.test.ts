@@ -1,12 +1,9 @@
-import chaiAsPromised from 'chai-as-promised';
-import { Convert } from '@enbox/common';
-import { expect, use } from 'chai';
-
 import type { Jwk } from '../../src/jose/jwk.js';
 
-import { XChaCha20 } from '../../src/primitives/xchacha20.js';
+import { Convert } from '@enbox/common';
+import { describe, expect, it } from 'bun:test';
 
-use(chaiAsPromised);
+import { XChaCha20 } from '../../src/primitives/xchacha20.js';
 
 describe('XChaCha20', () => {
   describe('bytesToPrivateKey()', () => {
@@ -14,9 +11,9 @@ describe('XChaCha20', () => {
       const privateKeyBytes = Convert.hex('ffbd52af5980bd3870cdc3f3634980ae9d15b33440f63f79799eb8ca2329117f').toUint8Array();
       const privateKey = await XChaCha20.bytesToPrivateKey({ privateKeyBytes });
 
-      expect(privateKey).to.have.property('k');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'oct');
+      expect(privateKey).toHaveProperty('k');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'oct');
     });
 
     it('returns the expected JWK given byte array input', async () => {
@@ -28,7 +25,7 @@ describe('XChaCha20', () => {
         kty : 'oct',
         kid : '6oEQ2tFk2QI4_Lz8uxQpT4_Qce6f9ceS3ZD76nqd_qg'
       };
-      expect(privateKey).to.deep.equal(expectedOutput);
+      expect(privateKey).toEqual(expectedOutput);
     });
   });
 
@@ -41,8 +38,8 @@ describe('XChaCha20', () => {
         key   : privateKey,
         nonce : new Uint8Array(24)
       });
-      expect(plaintext).to.be.an('Uint8Array');
-      expect(plaintext.byteLength).to.equal(10);
+      expect(plaintext).toBeInstanceOf(Uint8Array);
+      expect(plaintext.byteLength).toBe(10);
     });
 
     it('passes test vectors', async () => {
@@ -62,7 +59,7 @@ describe('XChaCha20', () => {
         nonce : input.nonce
       });
 
-      expect(ciphertext).to.deep.equal(output);
+      expect(ciphertext).toEqual(output);
     });
   });
 
@@ -75,8 +72,8 @@ describe('XChaCha20', () => {
         key   : privateKey,
         nonce : new Uint8Array(24)
       });
-      expect(ciphertext).to.be.an('Uint8Array');
-      expect(ciphertext.byteLength).to.equal(10);
+      expect(ciphertext).toBeInstanceOf(Uint8Array);
+      expect(ciphertext.byteLength).toBe(10);
     });
 
     it('passes test vectors', async () => {
@@ -96,7 +93,7 @@ describe('XChaCha20', () => {
         nonce : input.nonce
       });
 
-      expect(ciphertext).to.deep.equal(output);
+      expect(ciphertext).toEqual(output);
     });
   });
 
@@ -104,9 +101,9 @@ describe('XChaCha20', () => {
     it('returns a private key in JWK format', async () => {
       const privateKey = await XChaCha20.generateKey();
 
-      expect(privateKey).to.have.property('k');
-      expect(privateKey).to.have.property('kid');
-      expect(privateKey).to.have.property('kty', 'oct');
+      expect(privateKey).toHaveProperty('k');
+      expect(privateKey).toHaveProperty('kid');
+      expect(privateKey).toHaveProperty('kty', 'oct');
     });
   });
 
@@ -115,7 +112,7 @@ describe('XChaCha20', () => {
       const privateKey = await XChaCha20.generateKey();
       const privateKeyBytes = await XChaCha20.privateKeyToBytes({ privateKey });
 
-      expect(privateKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
     });
 
     it('returns the expected byte array for JWK input', async () => {
@@ -126,9 +123,9 @@ describe('XChaCha20', () => {
       };
       const privateKeyBytes = await XChaCha20.privateKeyToBytes({ privateKey });
 
-      expect(privateKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
       const expectedOutput = Convert.hex('2fbd52af5980bd3870cdc3f3634980ae9d15b33440f63f79799eb8ca2329117f').toUint8Array();
-      expect(privateKeyBytes).to.deep.equal(expectedOutput);
+      expect(privateKeyBytes).toEqual(expectedOutput);
     });
 
     it('throws an error when provided an asymmetric public key', async () => {
@@ -140,7 +137,7 @@ describe('XChaCha20', () => {
 
       await expect(
         XChaCha20.privateKeyToBytes({ privateKey: publicKey })
-      ).to.eventually.be.rejectedWith(Error, 'provided key is not a valid oct private key');
+      ).rejects.toThrow('provided key is not a valid oct private key');
     });
   });
 });
