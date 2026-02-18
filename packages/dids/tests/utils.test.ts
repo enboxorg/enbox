@@ -1,4 +1,4 @@
-import { expect } from 'chai';
+import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { type DidDocument, DidVerificationRelationship } from '../src/types/did-core.js';
 
@@ -24,45 +24,45 @@ describe('DID Utils', () => {
   describe('extractDidFragment()', () => {
     it('returns the fragment when a DID string with a fragment is provided', () => {
       const result = extractDidFragment('did:example:123#key-1');
-      expect(result).to.equal('key-1');
+      expect(result).toBe('key-1');
     });
 
     it('returns the input string when a string without a fragment is provided', () => {
       let result = extractDidFragment('did:example:123');
-      expect(result).to.equal('did:example:123');
+      expect(result).toBe('did:example:123');
 
       result = extractDidFragment('0');
-      expect(result).to.equal('0');
+      expect(result).toBe('0');
     });
 
     it('returns undefined for non-string inputs', () => {
       const result = extractDidFragment({ id: 'did:example:123#0', type: 'JsonWebKey' });
-      expect(result).to.be.undefined;
+      expect(result).toBeUndefined();
     });
 
     it('returns undefined for array inputs', () => {
       const result = extractDidFragment([{ id: 'did:example:123#0', type: 'JsonWebKey' }]);
-      expect(result).to.be.undefined;
+      expect(result).toBeUndefined();
     });
 
     it('returns undefined for undefined inputs', () => {
       const result = extractDidFragment(undefined);
-      expect(result).to.be.undefined;
+      expect(result).toBeUndefined();
     });
 
     it('returns undefined for empty string input', () => {
       const result = extractDidFragment('');
-      expect(result).to.be.undefined;
+      expect(result).toBeUndefined();
     });
 
     it('returns "0" when input is "did:method:123#0"', () => {
       const result = extractDidFragment('did:method:123#0');
-      expect(result).to.equal('0');
+      expect(result).toBe('0');
     });
 
     it('returns "0" when input is "#0"', () => {
       const result = extractDidFragment('#0');
-      expect(result).to.equal('0');
+      expect(result).toBe('0');
     });
   });
 
@@ -78,54 +78,54 @@ describe('DID Utils', () => {
 
     it('returns all services if no id or type filter is provided', () => {
       const services = getServices({ didDocument });
-      expect(services).to.have.lengthOf(3);
+      expect(services).toHaveLength(3);
     });
 
     it('should filter services by id', () => {
       const services = getServices({ didDocument, id: 'service1' });
-      expect(services).to.have.lengthOf(1);
-      expect(services[0].id).to.equal('service1');
+      expect(services).toHaveLength(1);
+      expect(services[0].id).toBe('service1');
     });
 
     it('returns an empty array if no services are present', () => {
       const emptyDidDocument = {} as DidDocument;
       const services = getServices({ didDocument: emptyDidDocument });
-      expect(services).to.be.an('array').that.is.empty;
+      expect(services).toEqual([]);
     });
 
     it('should filter services by type', () => {
       const services = getServices({ didDocument, type: 'TypeA' });
-      expect(services).to.have.lengthOf(2);
-      services.forEach(service => expect(service.type).to.equal('TypeA'));
+      expect(services).toHaveLength(2);
+      services.forEach(service => expect(service.type).toBe('TypeA'));
     });
 
     it('returns an empty array if no service matches the specified type', () => {
       const services = getServices({ didDocument, type: 'NonExistingType' });
-      expect(services).to.be.an('array').that.is.empty;
+      expect(services).toEqual([]);
     });
 
     it('should filter services by both id and type', () => {
       const services = getServices({ didDocument, id: 'service3', type: 'TypeA' });
-      expect(services).to.have.lengthOf(1);
-      expect(services[0].id).to.equal('service3');
-      expect(services[0].type).to.equal('TypeA');
+      expect(services).toHaveLength(1);
+      expect(services[0].id).toBe('service3');
+      expect(services[0].type).toBe('TypeA');
     });
 
     it('returns an empty array if no service matches both the specified id and type', () => {
       const services = getServices({ didDocument, id: 'service3', type: 'TypeB' });
-      expect(services).to.be.an('array').that.is.empty;
+      expect(services).toEqual([]);
     });
 
     it('returns an empty array if didDocument is null', () => {
       // @ts-expect-error - Testing invalid input
       const services = getServices({ didDocument: null });
-      expect(services).to.be.an('array').that.is.empty;
+      expect(services).toEqual([]);
     });
 
     it('returns an empty array if didDocument is undefined', () => {
       // @ts-expect-error - Testing invalid input
       const services = getServices({ didDocument: undefined });
-      expect(services).to.be.an('array').that.is.empty;
+      expect(services).toEqual([]);
     });
   });
 
@@ -143,10 +143,10 @@ describe('DID Utils', () => {
         try {
           const verificationMethods = await getVerificationMethodByKey(vector.input);
 
-          expect(verificationMethods).to.deep.equal(vector.output, vector.description);
+          expect(verificationMethods).toEqual(vector.output);
 
         } catch { errorOccurred = true; }
-        expect(errorOccurred).to.equal(vector.errors, `Expected '${vector.description}' to${vector.errors ? ' ' : ' not '}throw an error`);
+        expect(errorOccurred).toBe(vector.errors);
       });
     }
   });
@@ -167,10 +167,10 @@ describe('DID Utils', () => {
             didDocument: vector.input.didDocument as DidDocument
           });
 
-          expect(verificationMethods).to.deep.equal(vector.output, vector.description);
+          expect(verificationMethods).toEqual(vector.output);
 
         } catch { errorOccurred = true; }
-        expect(errorOccurred).to.equal(vector.errors, `Expected '${vector.description}' to${vector.errors ? ' ' : ' not '}throw an error`);
+        expect(errorOccurred).toBe(vector.errors);
       });
     }
   });
@@ -189,17 +189,17 @@ describe('DID Utils', () => {
         try {
           const types = getVerificationMethodTypes(vector.input);
 
-          expect(types).to.deep.equal(vector.output, vector.description);
+          expect(types).toEqual(vector.output);
 
         } catch { errorOccurred = true; }
-        expect(errorOccurred).to.equal(vector.errors, `Expected '${vector.description}' to${vector.errors ? ' ' : ' not '}throw an error`);
+        expect(errorOccurred).toBe(vector.errors);
       });
     }
 
     it('returns an empty array if no verification methods are present', () => {
       const emptyDidDocument = {} as DidDocument;
       const types = getVerificationMethodTypes({ didDocument: emptyDidDocument });
-      expect(types).to.be.an('array').that.is.empty;
+      expect(types).toEqual([]);
     });
 
     it('throws an error when didDocument is not provided', async () => {
@@ -208,7 +208,7 @@ describe('DID Utils', () => {
         getVerificationMethodTypes({ });
         throw new Error('Test failed - error not thrown');
       } catch (error: any) {
-        expect(error.message).to.include('parameter missing');
+        expect(error.message).toContain('parameter missing');
       }
     });
   });
@@ -220,7 +220,7 @@ describe('DID Utils', () => {
         type            : 'OidcService',
         serviceEndpoint : 'https://example.com/oidc'
       };
-      expect(isDidService(validService)).to.be.true;
+      expect(isDidService(validService)).toBe(true);
     });
 
     it('returns false for an object missing the id property', () => {
@@ -228,7 +228,7 @@ describe('DID Utils', () => {
         type            : 'OidcService',
         serviceEndpoint : 'https://example.com/oidc'
       };
-      expect(isDidService(noIdService)).to.be.false;
+      expect(isDidService(noIdService)).toBe(false);
     });
 
     it('returns false for an object missing the type property', () => {
@@ -236,7 +236,7 @@ describe('DID Utils', () => {
         id              : 'did:example:123#service-1',
         serviceEndpoint : 'https://example.com/oidc'
       };
-      expect(isDidService(noTypeService)).to.be.false;
+      expect(isDidService(noTypeService)).toBe(false);
     });
 
     it('returns false for an object missing the serviceEndpoint property', () => {
@@ -244,25 +244,25 @@ describe('DID Utils', () => {
         id   : 'did:example:123#service-1',
         type : 'OidcService'
       };
-      expect(isDidService(noEndpointService)).to.be.false;
+      expect(isDidService(noEndpointService)).toBe(false);
     });
 
     it('returns false for a null object', () => {
-      expect(isDidService(null)).to.be.false;
+      expect(isDidService(null)).toBe(false);
     });
 
     it('returns false for an undefined object', () => {
-      expect(isDidService(undefined)).to.be.false;
+      expect(isDidService(undefined)).toBe(false);
     });
 
     it('returns false for a non-object value', () => {
-      expect(isDidService('string')).to.be.false;
-      expect(isDidService(123)).to.be.false;
-      expect(isDidService(true)).to.be.false;
+      expect(isDidService('string')).toBe(false);
+      expect(isDidService(123)).toBe(false);
+      expect(isDidService(true)).toBe(false);
     });
 
     it('returns false for an empty object', () => {
-      expect(isDidService({})).to.be.false;
+      expect(isDidService({})).toBe(false);
     });
 
     it('returns false for an object with extra properties', () => {
@@ -272,7 +272,7 @@ describe('DID Utils', () => {
         serviceEndpoint : 'https://example.com/oidc',
         extraProp       : 'extraValue'
       };
-      expect(isDidService(extraPropsService)).to.be.true; // Note: Extra properties do not invalidate a DidService.
+      expect(isDidService(extraPropsService)).toBe(true); // Note: Extra properties do not invalidate a DidService.
     });
   });
 
@@ -296,29 +296,29 @@ describe('DID Utils', () => {
 
     it('should return an empty array if no relationships match the methodId', () => {
       const result = getVerificationRelationshipsById({ didDocument, methodId: '0' });
-      expect(result).to.be.an('array').that.is.empty;
+      expect(result).toEqual([]);
     });
 
     it('should return matching relationships by direct reference', () => {
       const result = getVerificationRelationshipsById({ didDocument, methodId: 'auth' });
-      expect(result).to.include(DidVerificationRelationship.authentication);
+      expect(result).toContain(DidVerificationRelationship.authentication);
     });
 
     it('should return matching relationships by embedded method', () => {
       const result = getVerificationRelationshipsById({ didDocument, methodId: 'assert' });
-      expect(result).to.include(DidVerificationRelationship.assertionMethod);
+      expect(result).toContain(DidVerificationRelationship.assertionMethod);
     });
 
     it('handles method IDs with or without hash symbol prefix', () => {
       let result = getVerificationRelationshipsById({ didDocument, methodId: 'key-2' });
-      expect(result).to.include(DidVerificationRelationship.capabilityDelegation);
+      expect(result).toContain(DidVerificationRelationship.capabilityDelegation);
       result = getVerificationRelationshipsById({ didDocument, methodId: '#key-2' });
-      expect(result).to.include(DidVerificationRelationship.capabilityDelegation);
+      expect(result).toContain(DidVerificationRelationship.capabilityDelegation);
     });
 
     it('handles method IDs with a full DID URL', () => {
       const result = getVerificationRelationshipsById({ didDocument, methodId: 'did:example:123#key-2' });
-      expect(result).to.include(DidVerificationRelationship.capabilityDelegation);
+      expect(result).toContain(DidVerificationRelationship.capabilityDelegation);
     });
 
     it('ignores the DID if the method IDs is a full DID URL', () => {
@@ -326,7 +326,7 @@ describe('DID Utils', () => {
       // DID document to reference another DID. If a use case ever arises for this, we can revisit
       // adding support to enable matching method IDs with the same identifier but different DIDs.
       const result = getVerificationRelationshipsById({ didDocument, methodId: 'did:example:456#key-2' });
-      expect(result).to.include(DidVerificationRelationship.capabilityDelegation);
+      expect(result).toContain(DidVerificationRelationship.capabilityDelegation);
     });
   });
 
@@ -339,7 +339,7 @@ describe('DID Utils', () => {
         enc             : 'did:example:123#key-1',
         sig             : 'did:example:123#key-2'
       };
-      expect(isDwnDidService(validDwnService)).to.be.true;
+      expect(isDwnDidService(validDwnService)).toBe(true);
     });
 
     it('returns false for a non-DwnDidService type', () => {
@@ -350,7 +350,7 @@ describe('DID Utils', () => {
         enc             : 'did:example:123#key-1',
         sig             : 'did:example:123#key-2'
       };
-      expect(isDwnDidService(nonDwnService)).to.be.false;
+      expect(isDwnDidService(nonDwnService)).toBe(false);
     });
 
     it('returns false for missing enc property', () => {
@@ -360,7 +360,7 @@ describe('DID Utils', () => {
         serviceEndpoint : 'https://dwn.example.org',
         sig             : 'did:example:123#key-2'
       };
-      expect(isDwnDidService(missingEncService)).to.be.false;
+      expect(isDwnDidService(missingEncService)).toBe(false);
     });
 
     it('returns false for missing sig property', () => {
@@ -370,7 +370,7 @@ describe('DID Utils', () => {
         serviceEndpoint : 'https://dwn.example.org',
         enc             : 'did:example:123#key-1'
       };
-      expect(isDwnDidService(missingSigService)).to.be.false;
+      expect(isDwnDidService(missingSigService)).toBe(false);
     });
 
     it('returns false for invalid enc property type', () => {
@@ -381,7 +381,7 @@ describe('DID Utils', () => {
         enc             : 123,
         sig             : 'did:example:123#key-2'
       };
-      expect(isDwnDidService(invalidEncService)).to.be.false;
+      expect(isDwnDidService(invalidEncService)).toBe(false);
     });
 
     it('returns false for invalid sig property type', () => {
@@ -392,7 +392,7 @@ describe('DID Utils', () => {
         enc             : 'did:example:123#key-1',
         sig             : true
       };
-      expect(isDwnDidService(invalidSigService)).to.be.false;
+      expect(isDwnDidService(invalidSigService)).toBe(false);
     });
 
     it('returns false for an array of non-string in enc', () => {
@@ -403,7 +403,7 @@ describe('DID Utils', () => {
         enc             : [123, 'did:example:123#key-1'],
         sig             : 'did:example:123#key-2'
       };
-      expect(isDwnDidService(arrayEncService)).to.be.false;
+      expect(isDwnDidService(arrayEncService)).toBe(false);
     });
 
     it('returns false for an array of non-string in sig', () => {
@@ -414,21 +414,21 @@ describe('DID Utils', () => {
         enc             : 'did:example:123#key-1',
         sig             : ['did:example:123#key-2', null]
       };
-      expect(isDwnDidService(arraySigService)).to.be.false;
+      expect(isDwnDidService(arraySigService)).toBe(false);
     });
 
     it('returns false for a null object', () => {
-      expect(isDwnDidService(null)).to.be.false;
+      expect(isDwnDidService(null)).toBe(false);
     });
 
     it('returns false for an undefined object', () => {
-      expect(isDwnDidService(undefined)).to.be.false;
+      expect(isDwnDidService(undefined)).toBe(false);
     });
 
     it('returns false for a non-object value', () => {
-      expect(isDwnDidService('string')).to.be.false;
-      expect(isDwnDidService(123)).to.be.false;
-      expect(isDwnDidService(true)).to.be.false;
+      expect(isDwnDidService('string')).toBe(false);
+      expect(isDwnDidService(123)).toBe(false);
+      expect(isDwnDidService(true)).toBe(false);
     });
 
     it('returns false for an object not adhering to DidService structure', () => {
@@ -439,11 +439,11 @@ describe('DID Utils', () => {
         enc           : 'did:example:123#key-1',
         sig           : 'did:example:123#key-2'
       };
-      expect(isDwnDidService(invalidStructureService)).to.be.false;
+      expect(isDwnDidService(invalidStructureService)).toBe(false);
     });
 
     it('returns false for an empty object', () => {
-      expect(isDwnDidService({})).to.be.false;
+      expect(isDwnDidService({})).toBe(false);
     });
   });
 
@@ -455,7 +455,7 @@ describe('DID Utils', () => {
         controller   : 'did:example:123',
         publicKeyJwk : {}
       };
-      expect(isDidVerificationMethod(validVerificationMethod)).to.be.true;
+      expect(isDidVerificationMethod(validVerificationMethod)).toBe(true);
     });
 
     it('returns false for an object missing the id property', () => {
@@ -464,7 +464,7 @@ describe('DID Utils', () => {
         controller   : 'did:example:123',
         publicKeyJwk : {}
       };
-      expect(isDidVerificationMethod(missingId)).to.be.false;
+      expect(isDidVerificationMethod(missingId)).toBe(false);
     });
 
     it('returns false for an object missing the type property', () => {
@@ -473,7 +473,7 @@ describe('DID Utils', () => {
         controller   : 'did:example:123',
         publicKeyJwk : {}
       };
-      expect(isDidVerificationMethod(missingType)).to.be.false;
+      expect(isDidVerificationMethod(missingType)).toBe(false);
     });
 
     it('returns false for an object missing the controller property', () => {
@@ -482,7 +482,7 @@ describe('DID Utils', () => {
         type         : 'JsonWebKey2020',
         publicKeyJwk : {}
       };
-      expect(isDidVerificationMethod(missingController)).to.be.false;
+      expect(isDidVerificationMethod(missingController)).toBe(false);
     });
 
     it('returns false for an object with incorrect property types', () => {
@@ -490,35 +490,35 @@ describe('DID Utils', () => {
         id         : 123,
         type       : {},
         controller : false
-      })).to.be.false;
+      })).toBe(false);
       expect(isDidVerificationMethod({
         id         : 'did:example:123',
         type       : {},
         controller : false
-      })).to.be.false;
+      })).toBe(false);
       expect(isDidVerificationMethod({
         id         : 'did:example:123',
         type       : 'JsonWebKey2020',
         controller : false
-      })).to.be.false;
+      })).toBe(false);
     });
 
     it('returns false for a null object', () => {
-      expect(isDidVerificationMethod(null)).to.be.false;
+      expect(isDidVerificationMethod(null)).toBe(false);
     });
 
     it('returns false for an undefined object', () => {
-      expect(isDidVerificationMethod(undefined)).to.be.false;
+      expect(isDidVerificationMethod(undefined)).toBe(false);
     });
 
     it('returns false for a non-object value', () => {
-      expect(isDidVerificationMethod('string')).to.be.false;
-      expect(isDidVerificationMethod(123)).to.be.false;
-      expect(isDidVerificationMethod(true)).to.be.false;
+      expect(isDidVerificationMethod('string')).toBe(false);
+      expect(isDidVerificationMethod(123)).toBe(false);
+      expect(isDidVerificationMethod(true)).toBe(false);
     });
 
     it('returns false for an empty object', () => {
-      expect(isDidVerificationMethod({})).to.be.false;
+      expect(isDidVerificationMethod({})).toBe(false);
     });
 
     it('returns true for an object with extra properties', () => {
@@ -529,7 +529,7 @@ describe('DID Utils', () => {
         publicKeyJwk : {},
         extra        : 'extraValue'
       };
-      expect(isDidVerificationMethod(extraProps)).to.be.true;
+      expect(isDidVerificationMethod(extraProps)).toBe(true);
     });
   });
 
@@ -540,9 +540,9 @@ describe('DID Utils', () => {
         multicodecName : 'ed25519-pub',
       };
       const encoded = keyBytesToMultibaseId({ keyBytes: input.keyBytes, multicodecName: input.multicodecName });
-      expect(encoded).to.be.a.string;
-      expect(encoded.substring(0, 1)).to.equal('z');
-      expect(encoded.substring(1, 4)).to.equal('6Mk');
+      expect(typeof encoded).toBe('string');
+      expect(encoded.substring(0, 1)).toBe('z');
+      expect(encoded.substring(1, 4)).toBe('6Mk');
     });
 
     it('passes test vectors', () => {
@@ -557,7 +557,7 @@ describe('DID Utils', () => {
       };
       output = 'z6MkeTG3bFFSLYVU7VqhgZxqr6YzpaGrQtFMh1uvqGy1vDnP';
       encoded = keyBytesToMultibaseId({ keyBytes: input.keyBytes, multicodecName: input.multicodecName });
-      expect(encoded).to.equal(output);
+      expect(encoded).toBe(output);
 
       // Test Vector 2.
       input = {
@@ -566,7 +566,7 @@ describe('DID Utils', () => {
       };
       output = 'z6MkeXBLjYiSvqnhFb6D7sHm8yKm4jV45wwBFRaatf1cfZ76';
       encoded = keyBytesToMultibaseId({ keyBytes: input.keyBytes, multicodecName: input.multicodecName });
-      expect(encoded).to.equal(output);
+      expect(encoded).toBe(output);
 
       // Test Vector 3.
       input = {
@@ -575,7 +575,7 @@ describe('DID Utils', () => {
       };
       output = 'z6Mkf4XhsxSXfEAWNK6GcFu7TyVs21AfUTRjiguqMhNQeDgk';
       encoded = keyBytesToMultibaseId({ keyBytes: input.keyBytes, multicodecName: input.multicodecName });
-      expect(encoded).to.equal(output);
+      expect(encoded).toBe(output);
     });
   });
 
@@ -585,13 +585,13 @@ describe('DID Utils', () => {
 
       const { keyBytes, multicodecCode, multicodecName } = multibaseIdToKeyBytes({ multibaseKeyId });
 
-      expect(keyBytes).to.exist;
-      expect(keyBytes).to.be.a('Uint8Array');
-      expect(keyBytes).to.have.length(33);
-      expect(multicodecCode).to.exist;
-      expect(multicodecCode).to.equal(231);
-      expect(multicodecName).to.exist;
-      expect(multicodecName).to.equal('secp256k1-pub');
+      expect(keyBytes).toBeDefined();
+      expect(keyBytes).toBeInstanceOf(Uint8Array);
+      expect(keyBytes).toHaveLength(33);
+      expect(multicodecCode).toBeDefined();
+      expect(multicodecCode).toBe(231);
+      expect(multicodecName).toBeDefined();
+      expect(multicodecName).toBe('secp256k1-pub');
     });
 
     it('converts ed25519-pub multibase identifiers', () => {
@@ -599,13 +599,13 @@ describe('DID Utils', () => {
 
       const { keyBytes, multicodecCode, multicodecName } = multibaseIdToKeyBytes({ multibaseKeyId });
 
-      expect(keyBytes).to.exist;
-      expect(keyBytes).to.be.a('Uint8Array');
-      expect(keyBytes).to.have.length(32);
-      expect(multicodecCode).to.exist;
-      expect(multicodecCode).to.equal(237);
-      expect(multicodecName).to.exist;
-      expect(multicodecName).to.equal('ed25519-pub');
+      expect(keyBytes).toBeDefined();
+      expect(keyBytes).toBeInstanceOf(Uint8Array);
+      expect(keyBytes).toHaveLength(32);
+      expect(multicodecCode).toBeDefined();
+      expect(multicodecCode).toBe(237);
+      expect(multicodecName).toBeDefined();
+      expect(multicodecName).toBe('ed25519-pub');
     });
 
     it('converts x25519-pub multibase identifiers', () => {
@@ -613,20 +613,20 @@ describe('DID Utils', () => {
 
       const { keyBytes, multicodecCode, multicodecName } = multibaseIdToKeyBytes({ multibaseKeyId });
 
-      expect(keyBytes).to.exist;
-      expect(keyBytes).to.be.a('Uint8Array');
-      expect(keyBytes).to.have.length(32);
-      expect(multicodecCode).to.exist;
-      expect(multicodecCode).to.equal(236);
-      expect(multicodecName).to.exist;
-      expect(multicodecName).to.equal('x25519-pub');
+      expect(keyBytes).toBeDefined();
+      expect(keyBytes).toBeInstanceOf(Uint8Array);
+      expect(keyBytes).toHaveLength(32);
+      expect(multicodecCode).toBeDefined();
+      expect(multicodecCode).toBe(236);
+      expect(multicodecName).toBeDefined();
+      expect(multicodecName).toBe('x25519-pub');
     });
 
     it('throws an error for an invalid multibase identifier', async () => {
       try {
         multibaseIdToKeyBytes({ multibaseKeyId: 'z6Mkiz' });
       } catch (error: any) {
-        expect(error.message).to.include('Invalid multibase identifier');
+        expect(error.message).toContain('Invalid multibase identifier');
       }
     });
   });

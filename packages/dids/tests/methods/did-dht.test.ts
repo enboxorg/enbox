@@ -2,18 +2,14 @@ import type { Answer } from '@dnsquery/dns-packet';
 import type { DidDocument } from '../../src/index.js';
 import type { PortableDid } from '../../src/types/portable-did.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import { Convert } from '@enbox/common';
 import { DidErrorCode } from '../../src/did-error.js';
 import officialTestVector1 from '../fixtures/test-vectors/did-dht/vector-1.json' with { type: 'json' };
 import officialTestVector2 from '../fixtures/test-vectors/did-dht/vector-2.json' with { type: 'json' };
 import officialTestVector3 from '../fixtures/test-vectors/did-dht/vector-3.json' with { type: 'json' };
 import resolveTestVectors from '../fixtures/web5-spec-vectors/did_dht/resolve.json' with { type: 'json' };
-import sinon from 'sinon';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { DidDht, DidDhtDocument, DidDhtRegisteredDidType, DidDhtUtils } from '../../src/methods/did-dht.js';
-import { expect, use } from 'chai';
-
-use(chaiAsPromised);
 
 // Helper function to create a mocked fetch response that fails and returns a 404 Not Found.
 const fetchNotFoundResponse = (): { status: number; statusText: string; ok: boolean } => ({
@@ -34,33 +30,33 @@ const fetchOkResponse = (response?: any): {
 });
 
 describe('DidDht', () => {
-  let fetchStub: sinon.SinonStub;
+  let fetchStub: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     // Setup stub so that a mocked response is returned rather than calling over the network.
-    fetchStub = sinon.stub(globalThis as any, 'fetch');
+    fetchStub = spyOn(globalThis as any, 'fetch');
 
     // By default, return a 200 OK response when fetch is called by publish().
-    fetchStub.resolves(fetchOkResponse());
+    fetchStub.mockResolvedValue(fetchOkResponse());
   });
 
   afterEach(() => {
-    fetchStub.restore();
-    sinon.restore();
+    fetchStub.mockRestore();
+    mock.restore();
   });
 
   describe('create()', () => {
     it('creates a DID with a single verification method, by default', async () => {
       const did = await DidDht.create();
 
-      expect(did).to.have.property('document');
-      expect(did).to.have.property('getSigner');
-      expect(did).to.have.property('keyManager');
-      expect(did).to.have.property('metadata');
-      expect(did).to.have.property('uri');
+      expect(did).toHaveProperty('document');
+      expect(did).toHaveProperty('getSigner');
+      expect(did).toHaveProperty('keyManager');
+      expect(did).toHaveProperty('metadata');
+      expect(did).toHaveProperty('uri');
 
-      expect(did.document).to.have.property('verificationMethod');
-      expect(did.document.verificationMethod).to.have.length(1);
+      expect(did.document).toHaveProperty('verificationMethod');
+      expect(did.document.verificationMethod).toHaveLength(1);
     });
 
     it('handles creating DIDs with additional Ed25519 verification methods', async () => {
@@ -75,8 +71,8 @@ describe('DidDht', () => {
         }
       });
 
-      expect(did.document.verificationMethod).to.have.length(2);
-      expect(did.document.verificationMethod?.[1].publicKeyJwk).to.have.property('crv', 'Ed25519');
+      expect(did.document.verificationMethod).toHaveLength(2);
+      expect(did.document.verificationMethod?.[1].publicKeyJwk).toHaveProperty('crv', 'Ed25519');
     });
 
     it('handles creating DIDs with additional secp256k1 verification methods', async () => {
@@ -91,8 +87,8 @@ describe('DidDht', () => {
         }
       });
 
-      expect(did.document.verificationMethod).to.have.length(2);
-      expect(did.document.verificationMethod?.[1].publicKeyJwk).to.have.property('crv', 'secp256k1');
+      expect(did.document.verificationMethod).toHaveLength(2);
+      expect(did.document.verificationMethod?.[1].publicKeyJwk).toHaveProperty('crv', 'secp256k1');
     });
 
     it('handles creating DIDs with additional secp256r1 verification methods', async () => {
@@ -107,8 +103,8 @@ describe('DidDht', () => {
         }
       });
 
-      expect(did.document.verificationMethod).to.have.length(2);
-      expect(did.document.verificationMethod?.[1].publicKeyJwk).to.have.property('crv', 'P-256');
+      expect(did.document.verificationMethod).toHaveLength(2);
+      expect(did.document.verificationMethod?.[1].publicKeyJwk).toHaveProperty('crv', 'P-256');
     });
 
     it('allows one or more DID controller identifiers to be specified', async () => {
@@ -118,7 +114,7 @@ describe('DidDht', () => {
         }
       });
 
-      expect(did.document).to.have.property('controller', 'did:example:1234');
+      expect(did.document).toHaveProperty('controller', 'did:example:1234');
 
       did = await DidDht.create({
         options: {
@@ -126,7 +122,7 @@ describe('DidDht', () => {
         }
       });
 
-      expect(did.document.controller).to.deep.equal(['did:example:1234', 'did:example:5678']);
+      expect(did.document.controller).toEqual(['did:example:1234', 'did:example:5678']);
     });
 
     it('allows one or more Also Known As identifiers to be specified', async () => {
@@ -136,7 +132,7 @@ describe('DidDht', () => {
         }
       });
 
-      expect(did.document.alsoKnownAs).to.deep.equal(['did:example:1234']);
+      expect(did.document.alsoKnownAs).toEqual(['did:example:1234']);
 
       did = await DidDht.create({
         options: {
@@ -144,7 +140,7 @@ describe('DidDht', () => {
         }
       });
 
-      expect(did.document.alsoKnownAs).to.deep.equal(['did:example:1234', 'did:example:5678']);
+      expect(did.document.alsoKnownAs).toEqual(['did:example:1234', 'did:example:5678']);
     });
 
     it('handles creating DIDs with additional verification methods', async () => {
@@ -159,13 +155,13 @@ describe('DidDht', () => {
         }
       });
 
-      expect(did.document.verificationMethod).to.have.length(2);
+      expect(did.document.verificationMethod).toHaveLength(2);
     });
 
     it('assigns 0 as the ID of the Identity Key verification method ', async () => {
       const did = await DidDht.create();
 
-      expect(did.document.verificationMethod?.[0].id).to.include('#0');
+      expect(did.document.verificationMethod?.[0].id).toContain('#0');
     });
 
     it('uses the JWK thumbprint as the ID for additional verification methods if no id is provided', async () => {
@@ -180,7 +176,7 @@ describe('DidDht', () => {
         }
       });
 
-      expect(did.document.verificationMethod?.[1].id).to.include(`#${did?.document?.verificationMethod?.[1]?.publicKeyJwk?.kid}`);
+      expect(did.document.verificationMethod?.[1].id).toContain(`#${did?.document?.verificationMethod?.[1]?.publicKeyJwk?.kid}`);
     });
 
     it('allows a custom ID to be specified for additional verification methods', async () => {
@@ -196,7 +192,7 @@ describe('DidDht', () => {
         }
       });
 
-      expect(did.document.verificationMethod?.[1]).to.have.property('id', `${did.uri}#1`);
+      expect(did.document.verificationMethod?.[1]).toHaveProperty('id', `${did.uri}#1`);
     });
 
     it('handles creating DIDs with one service', async () => {
@@ -212,10 +208,10 @@ describe('DidDht', () => {
         }
       });
 
-      expect(did.document.service).to.have.length(1);
-      expect(did.document.service?.[0]).to.have.property('id', `${did.uri}#dwn`);
-      expect(did.document.service?.[0]).to.have.property('type', 'DecentralizedWebNode');
-      expect(did.document.service?.[0]).to.have.property('serviceEndpoint', 'https://example.com/dwn');
+      expect(did.document.service).toHaveLength(1);
+      expect(did.document.service?.[0]).toHaveProperty('id', `${did.uri}#dwn`);
+      expect(did.document.service?.[0]).toHaveProperty('type', 'DecentralizedWebNode');
+      expect(did.document.service?.[0]).toHaveProperty('serviceEndpoint', 'https://example.com/dwn');
     });
 
     it('handles creating DIDs with multiple services', async () => {
@@ -236,9 +232,9 @@ describe('DidDht', () => {
         }
       });
 
-      expect(did.document.service).to.have.length(2);
-      expect(did.document.service?.[0]).to.have.property('id', `${did.uri}#dwn`);
-      expect(did.document.service?.[1]).to.have.property('id', `${did.uri}#oid4vci`);
+      expect(did.document.service).toHaveLength(2);
+      expect(did.document.service?.[0]).toHaveProperty('id', `${did.uri}#dwn`);
+      expect(did.document.service?.[1]).toHaveProperty('id', `${did.uri}#oid4vci`);
     });
 
     it('accepts a custom controller for the Identity Key verification method', async () => {
@@ -257,7 +253,7 @@ describe('DidDht', () => {
       const identityKeyVerificationMethod = did.document?.verificationMethod?.find(
         (method) => method.id.endsWith('#0')
       );
-      expect(identityKeyVerificationMethod).to.have.property('controller', 'did:example:1234');
+      expect(identityKeyVerificationMethod).toHaveProperty('controller', 'did:example:1234');
     });
 
     it('accepts custom properties for services', async () => {
@@ -287,15 +283,15 @@ describe('DidDht', () => {
         }
       });
 
-      expect(did.document.verificationMethod).to.have.length(3);
-      expect(did.document.verificationMethod?.[1]).to.have.property('id', `${did.uri}#sig`);
-      expect(did.document.verificationMethod?.[2]).to.have.property('id', `${did.uri}#enc`);
-      expect(did.document.service).to.have.length(1);
-      expect(did.document.service?.[0]).to.have.property('id', `${did.uri}#dwn`);
-      expect(did.document.service?.[0]).to.have.property('type', 'DecentralizedWebNode');
-      expect(did.document.service?.[0]).to.have.property('serviceEndpoint', 'https://example.com/dwn');
-      expect(did.document.service?.[0]).to.have.property('enc', '#enc');
-      expect(did.document.service?.[0]).to.have.property('sig', '#sig');
+      expect(did.document.verificationMethod).toHaveLength(3);
+      expect(did.document.verificationMethod?.[1]).toHaveProperty('id', `${did.uri}#sig`);
+      expect(did.document.verificationMethod?.[2]).toHaveProperty('id', `${did.uri}#enc`);
+      expect(did.document.service).toHaveLength(1);
+      expect(did.document.service?.[0]).toHaveProperty('id', `${did.uri}#dwn`);
+      expect(did.document.service?.[0]).toHaveProperty('type', 'DecentralizedWebNode');
+      expect(did.document.service?.[0]).toHaveProperty('serviceEndpoint', 'https://example.com/dwn');
+      expect(did.document.service?.[0]).toHaveProperty('enc', '#enc');
+      expect(did.document.service?.[0]).toHaveProperty('sig', '#sig');
     });
 
     it('accepts one or more DID DHT registered types', async () => {
@@ -305,35 +301,35 @@ describe('DidDht', () => {
         }
       });
 
-      expect(did.metadata).to.have.property('types');
-      expect(did.metadata.types).to.have.length(2);
-      expect(did.metadata.types).to.include(DidDhtRegisteredDidType.FinancialInstitution);
-      expect(did.metadata.types).to.include(DidDhtRegisteredDidType.WebApp);
+      expect(did.metadata).toHaveProperty('types');
+      expect(did.metadata.types).toHaveLength(2);
+      expect(did.metadata.types).toContain(DidDhtRegisteredDidType.FinancialInstitution);
+      expect(did.metadata.types).toContain(DidDhtRegisteredDidType.WebApp);
     });
 
     it('publishes DIDs, by default', async () => {
       const did = await DidDht.create();
 
-      expect(did.metadata).to.have.property('published', true);
-      expect(fetchStub.calledOnce).to.be.true;
+      expect(did.metadata).toHaveProperty('published', true);
+      expect(fetchStub).toHaveBeenCalledTimes(1);
     });
 
     it('allows DID publishing to optionally be disabled', async () => {
       const did = await DidDht.create({ options: { publish: false } });
 
-      expect(did.metadata).to.have.property('published', false);
-      expect(fetchStub.called).to.be.false;
+      expect(did.metadata).toHaveProperty('published', false);
+      expect(fetchStub).not.toHaveBeenCalled();
     });
 
     it('returns a version ID in DID metadata when published', async () => {
       const did = await DidDht.create();
-      expect(did.metadata).to.have.property('versionId');
-      expect(did.metadata.versionId).to.be.a.string;
+      expect(did.metadata).toHaveProperty('versionId');
+      expect(typeof did.metadata.versionId).toBe('string');
     });
 
     it('does not return a version ID in DID metadata when not published', async () => {
       const did = await DidDht.create({ options: { publish: false } });
-      expect(did.metadata).to.not.have.property('versionId');
+      expect(did.metadata).not.toHaveProperty('versionId');
     });
 
     it('returns a DID with a getSigner function that can sign and verify data', async () => {
@@ -344,8 +340,8 @@ describe('DidDht', () => {
       const signature = await signer.sign({ data });
       const isValid = await signer.verify({ data, signature });
 
-      expect(signature).to.have.length(64);
-      expect(isValid).to.be.true;
+      expect(signature).toHaveLength(64);
+      expect(isValid).toBe(true);
     });
 
     it('throws an error if duplicate verification method IDs are given', async () => {
@@ -367,23 +363,23 @@ describe('DidDht', () => {
           }
         });
 
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.message).to.include('verification method IDs are not unique');
+        expect(error.message).toContain('verification method IDs are not unique');
       }
     });
 
     it('throws an error if publishing fails', async () => {
       // Simulate a network error when attempting to publish the DID.
-      fetchStub.rejects(new Error('Network error'));
+      fetchStub.mockRejectedValue(new Error('Network error'));
 
       try {
         await DidDht.create();
 
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.code).to.equal(DidErrorCode.InternalError);
-        expect(error.message).to.include('Failed to put Pkarr record');
+        expect(error.code).toBe(DidErrorCode.InternalError);
+        expect(error.message).toContain('Failed to put Pkarr record');
       }
     });
 
@@ -406,9 +402,9 @@ describe('DidDht', () => {
           }
         });
 
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.message).to.include('algorithms are not supported');
+        expect(error.message).toContain('algorithms are not supported');
       }
     });
 
@@ -416,25 +412,25 @@ describe('DidDht', () => {
       try {
         // @ts-expect-error - Testing service with missing 'id' property.
         await DidDht.create({ options: { services: [{ type: 'b', serviceEndpoint: 'c' }] } });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.message).to.include('services are missing required properties');
+        expect(error.message).toContain('services are missing required properties');
       }
 
       try {
         // @ts-expect-error - Testing service with missing 'type' property.
         await DidDht.create({ options: { services: [{ id: 'a', serviceEndpoint: 'c' }] } });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.message).to.include('services are missing required properties');
+        expect(error.message).toContain('services are missing required properties');
       }
 
       try {
         // @ts-expect-error - Testing service with missing 'serviceEndpoint' property.
         await DidDht.create({ options: { services: [{ id: 'a', type: 'b' }] } });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.message).to.include('services are missing required properties');
+        expect(error.message).toContain('services are missing required properties');
       }
     });
 
@@ -458,9 +454,9 @@ describe('DidDht', () => {
           }
         });
 
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.code).to.equal(DidErrorCode.InvalidDidDocumentLength);
+        expect(error.code).toBe(DidErrorCode.InvalidDidDocumentLength);
       }
     });
   });
@@ -469,10 +465,10 @@ describe('DidDht', () => {
     it('returns an error if the DID method is not supported', async () => {
       try {
         await DidDht.getSigningMethod({ didDocument: { id: 'did:method:123' } });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.code).to.equal(DidErrorCode.MethodNotSupported);
-        expect(error.message).to.include('Method not supported');
+        expect(error.code).toBe(DidErrorCode.MethodNotSupported);
+        expect(error.message).toContain('Method not supported');
       }
     });
 
@@ -484,9 +480,9 @@ describe('DidDht', () => {
             verificationMethod : []
           }
         });
-        expect.fail('Error should have been thrown');
+        throw new Error('Error should have been thrown');
       } catch (error: any) {
-        expect(error.message).to.include('method intended for signing could not be determined');
+        expect(error.message).toContain('method intended for signing could not be determined');
       }
     });
   });
@@ -544,11 +540,11 @@ describe('DidDht', () => {
     it('returns a previously created DID from the URI and imported key material', async () => {
       const did = await DidDht.import({ portableDid });
 
-      expect(did).to.have.property('document');
-      expect(did).to.have.property('getSigner');
-      expect(did).to.have.property('keyManager');
-      expect(did).to.have.property('metadata');
-      expect(did).to.have.property('uri', portableDid.uri);
+      expect(did).toHaveProperty('document');
+      expect(did).toHaveProperty('getSigner');
+      expect(did).toHaveProperty('keyManager');
+      expect(did).toHaveProperty('metadata');
+      expect(did).toHaveProperty('uri', portableDid.uri);
     });
 
     it('returns a previously created DID from the URI and imported key material, with types', async () => {
@@ -600,7 +596,7 @@ describe('DidDht', () => {
 
       const did = await DidDht.import({ portableDid });
 
-      expect(did.metadata).to.deep.equal({ types: [6, 7] });
+      expect(did.metadata).toEqual({ types: [6, 7] });
     });
 
     it('can import exported PortableDid', async () => {
@@ -613,8 +609,8 @@ describe('DidDht', () => {
       // Create a DID object from the portable format.
       const didFromPortable = await DidDht.import({ portableDid });
 
-      expect(didFromPortable.document).to.deep.equal(did.document);
-      expect(didFromPortable.metadata).to.deep.equal(did.metadata);
+      expect(didFromPortable.document).toEqual(did.document);
+      expect(didFromPortable.metadata).toEqual(did.metadata);
     });
 
     it('throws an error if the DID method is not supported', async () => {
@@ -623,10 +619,10 @@ describe('DidDht', () => {
 
       try {
         await DidDht.import({ portableDid });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.code).to.equal(DidErrorCode.MethodNotSupported);
-        expect(error.message).to.include('Method not supported');
+        expect(error.code).toBe(DidErrorCode.MethodNotSupported);
+        expect(error.message).toContain('Method not supported');
       }
     });
 
@@ -636,9 +632,9 @@ describe('DidDht', () => {
 
       try {
         await DidDht.import({ portableDid });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
-        expect(error.message).to.include('must contain an Identity Key');
+        expect(error.message).toContain('must contain an Identity Key');
       }
     });
   });
@@ -646,32 +642,33 @@ describe('DidDht', () => {
   describe('resolve()', () => {
     it('resolves a published DID with a single verification method', async () => {
       // Mock the response from the Pkarr relay rather than calling over the network.
-      fetchStub.resolves(fetchOkResponse(
+      fetchStub.mockResolvedValue(fetchOkResponse(
         Convert.hex('5f011403ca8a3dbf0935a4f598b47c965b66bc67c86c7b665fbbfa6a31013075f512bbf68ca5' +
                     'c1b6f6ddde45b6645366a7234e204ae6f7c2d0bf4b9b99efae050000000065b0123100008400' +
                     '0000000200000000035f6b30045f64696434706a6969773769626e3674396b316d6b6b6e6b6f' +
-                    '776a6b6574613863686b7367777a6b7435756b3837393865707578313338366f000010000100' +
-                    '001c2000373669643d303b743d303b6b3d616d7461647145586f5f564a616c4356436956496a' +
-                    '67374f4b73616c3152334e522d5f4f68733379796630045f64696434706a6969773769626e36' +
-                    '74396b316d6b6b6e6b6f776a6b6574613863686b7367777a6b7435756b383739386570757831' +
-                    '3338366f000010000100001c20002726763d303b766d3d6b303b617574683d6b303b61736d3d' +
-                    '6b303b64656c3d6b303b696e763d6b30').toArrayBuffer()
+                    '776a6b6574613863686b7367777a6b7435756b383739386570757831333836' +
+                    '6f000010000100001c2000373669643d303b743d303b6b3d616d7461647145586f5f564a616c' +
+                    '4356436956496a67374f4b73616c3152334e522d5f4f68733379796630045f64696434706a69' +
+                    '69773769626e3674396b316d6b6b6e6b6f776a6b6574613863686b7367777a6b7435756b3837' +
+                    '39386570757831333836' +
+                    '6f000010000100001c20002726763d303b766d3d6b303b617574683d6b303b61736d3d6b303b' +
+                    '64656c3d6b303b696e763d6b30').toArrayBuffer()
       ));
 
       const did = 'did:dht:pjiiw7ibn6t9k1mkknkowjketa8chksgwzkt5uk8798epux1386o';
       const didResolutionResult = await DidDht.resolve(did);
 
-      expect(didResolutionResult).to.have.property('didDocument');
-      expect(didResolutionResult).to.have.property('didDocumentMetadata');
-      expect(didResolutionResult).to.have.property('didResolutionMetadata');
+      expect(didResolutionResult).toHaveProperty('didDocument');
+      expect(didResolutionResult).toHaveProperty('didDocumentMetadata');
+      expect(didResolutionResult).toHaveProperty('didResolutionMetadata');
 
-      expect(didResolutionResult.didDocument).to.have.property('id', did);
-      expect(didResolutionResult.didDocument?.verificationMethod).to.have.length(1);
+      expect(didResolutionResult.didDocument).toHaveProperty('id', did);
+      expect(didResolutionResult.didDocument?.verificationMethod).toHaveLength(1);
     });
 
     it('resolves a published DID with services', async () => {
       // Mock the response from the Pkarr relay rather than calling over the network.
-      fetchStub.resolves(fetchOkResponse(
+      fetchStub.mockResolvedValue(fetchOkResponse(
         Convert.hex('19c356a57605e7be8d101e211137dec2bbb875f076a60866529eff68372380c63e435c852bf3' +
                     'dbc6fa4bbda014c561af361cace90c91350477c010769a9910060000000065b035ce00008400' +
                     '0000000300000000035f6b30045f646964343177696161616f61677a63656767736e77667a6d' +
@@ -690,12 +687,12 @@ describe('DidDht', () => {
       const did = 'did:dht:1wiaaaoagzceggsnwfzmx5cweog5msg4u536mby8sqy3mkp3wyko';
       const didResolutionResult = await DidDht.resolve(did);
 
-      expect(didResolutionResult.didDocument?.service).to.have.length(1);
-      expect(didResolutionResult.didDocument?.service?.[0]).to.have.property('id', `${did}#dwn`);
+      expect(didResolutionResult.didDocument?.service).toHaveLength(1);
+      expect(didResolutionResult.didDocument?.service?.[0]).toHaveProperty('id', `${did}#dwn`);
     });
 
     it('resolves a published DID with a DID Controller identifier', async () => {
-      fetchStub.resolves(fetchOkResponse(
+      fetchStub.mockResolvedValue(fetchOkResponse(
         Convert.hex('980110156ea686d159d62952c43a151e9fc8f69d9edf0ed38ae78505a3a340f4508de2adad29' +
                     '342e4acf9f3149b976234c6157272b28937e9b217a03e5a66e0f0000000065b0f2db00008400' +
                     '0000000300000000045f636e740364696434663464366267336331676a7368716f31656b3364' +
@@ -712,11 +709,11 @@ describe('DidDht', () => {
       const did = 'did:dht:f4d6bg3c1gjshqo1ek3d954z3my1oehon1tkjhc6j4f5m6fdh94o';
       const didResolutionResult = await DidDht.resolve(did);
 
-      expect(didResolutionResult.didDocument).to.have.property('controller');
+      expect(didResolutionResult.didDocument).toHaveProperty('controller');
     });
 
     it('resolves a published DID with an Also Known As identifier', async () => {
-      fetchStub.resolves(fetchOkResponse(
+      fetchStub.mockResolvedValue(fetchOkResponse(
         Convert.hex('802d44499e456cdee25fef5ffe6f6fbc56201be836d8d44bcb1332a6414529a5503e514230e0' +
                     'd0ec63a33d12a79aa06c3b8212160f514e40c9ac1b0f479128040000000065b0f37c00008400' +
                     '0000000300000000045f616b6103646964346b6e66356e37713568666e657a356b636d6d3439' +
@@ -733,12 +730,12 @@ describe('DidDht', () => {
       const did = 'did:dht:knf5n7q5hfnez5kcmm49g4knqj5mrra9773rfunswo5xtrieoqmo';
       const didResolutionResult = await DidDht.resolve(did);
 
-      expect(didResolutionResult.didDocument).to.have.property('alsoKnownAs');
+      expect(didResolutionResult.didDocument).toHaveProperty('alsoKnownAs');
     });
 
     it('resolves a published DID with types', async () => {
       // Mock the response from the Pkarr relay rather than calling over the network.
-      fetchStub.resolves(fetchOkResponse(
+      fetchStub.mockResolvedValue(fetchOkResponse(
         Convert.hex('ea33e704f3a48a3392f54b28744cdfb4e24780699f92ba7df62fd486d2a2cda3f263e1c6bcbd' +
                     '75d438be7316e5d6e94b13e98151f599cfecefad0b37432bd90a0000000065b0ed1600008400' +
                     '0000000300000000035f6b30045f6469643439746a6f6f773435656631686b736f6f3936626d' +
@@ -755,15 +752,15 @@ describe('DidDht', () => {
       const did = 'did:dht:9tjoow45ef1hksoo96bmzkwwy3mhme95d7fsi3ezjyjghmp75qyo';
       const didResolutionResult = await DidDht.resolve(did);
 
-      expect(didResolutionResult.didDocumentMetadata).to.have.property('types');
-      expect(didResolutionResult.didDocumentMetadata.types).to.have.length(2);
-      expect(didResolutionResult.didDocumentMetadata.types).to.include(DidDhtRegisteredDidType.FinancialInstitution);
-      expect(didResolutionResult.didDocumentMetadata.types).to.include(DidDhtRegisteredDidType.WebApp);
+      expect(didResolutionResult.didDocumentMetadata).toHaveProperty('types');
+      expect(didResolutionResult.didDocumentMetadata.types).toHaveLength(2);
+      expect(didResolutionResult.didDocumentMetadata.types).toContain(DidDhtRegisteredDidType.FinancialInstitution);
+      expect(didResolutionResult.didDocumentMetadata.types).toContain(DidDhtRegisteredDidType.WebApp);
     });
 
     it('returns a version ID in DID document metadata', async () => {
       // Mock the response from the Pkarr relay rather than calling over the network.
-      fetchStub.resolves(fetchOkResponse(
+      fetchStub.mockResolvedValue(fetchOkResponse(
         Convert.hex('ea33e704f3a48a3392f54b28744cdfb4e24780699f92ba7df62fd486d2a2cda3f263e1c6bcbd' +
                     '75d438be7316e5d6e94b13e98151f599cfecefad0b37432bd90a0000000065b0ed1600008400' +
                     '0000000300000000035f6b30045f6469643439746a6f6f773435656631686b736f6f3936626d' +
@@ -780,42 +777,42 @@ describe('DidDht', () => {
       const did = 'did:dht:9tjoow45ef1hksoo96bmzkwwy3mhme95d7fsi3ezjyjghmp75qyo';
       const didResolutionResult = await DidDht.resolve(did);
 
-      expect(didResolutionResult.didDocumentMetadata).to.have.property('versionId');
-      expect(didResolutionResult.didDocumentMetadata.versionId).to.be.a.string;
+      expect(didResolutionResult.didDocumentMetadata).toHaveProperty('versionId');
+      expect(typeof didResolutionResult.didDocumentMetadata.versionId).toBe('string');
     });
 
     it('returns a notFound error if the DID is not published', async () => {
       // Mock the response from the Pkarr relay rather than calling over the network.
-      fetchStub.resolves(fetchNotFoundResponse());
+      fetchStub.mockResolvedValue(fetchNotFoundResponse());
 
       const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
       const didResolutionResult = await DidDht.resolve(did);
 
-      expect(didResolutionResult.didResolutionMetadata).to.have.property('error', 'notFound');
+      expect(didResolutionResult.didResolutionMetadata).toHaveProperty('error', 'notFound');
     });
 
     it('returns a invalidDidDocumentLength error if the Pkarr relay returns smaller than the 72 byte minimum', async () => {
       // Mock the response from the Pkarr relay rather than calling over the network.
-      fetchStub.resolves(fetchOkResponse(
+      fetchStub.mockResolvedValue(fetchOkResponse(
         new Uint8Array(71).buffer
       ));
 
       const did = 'did:dht:pjiiw7ibn6t9k1mkknkowjketa8chksgwzkt5uk8798epux1386o';
       const didResolutionResult = await DidDht.resolve(did);
 
-      expect(didResolutionResult.didResolutionMetadata).to.have.property('error', 'invalidDidDocumentLength');
+      expect(didResolutionResult.didResolutionMetadata).toHaveProperty('error', 'invalidDidDocumentLength');
     });
 
     it('returns a invalidDidDocumentLength error if the Pkarr relay returns larger than the 1072 byte maximum', async () => {
       // Mock the response from the Pkarr relay rather than calling over the network.
-      fetchStub.resolves(fetchOkResponse(
+      fetchStub.mockResolvedValue(fetchOkResponse(
         new Uint8Array(1073).buffer
       ));
 
       const did = 'did:dht:pjiiw7ibn6t9k1mkknkowjketa8chksgwzkt5uk8798epux1386o';
       const didResolutionResult = await DidDht.resolve(did);
 
-      expect(didResolutionResult.didResolutionMetadata).to.have.property('error', 'invalidDidDocumentLength');
+      expect(didResolutionResult.didResolutionMetadata).toHaveProperty('error', 'invalidDidDocumentLength');
     });
   });
 });
@@ -923,24 +920,24 @@ describe('DidDhtDocument', () => {
         }
       });
 
-      expect(didResolutionResult).to.have.property('didDocument');
-      expect(didResolutionResult).to.have.property('didDocumentMetadata');
-      expect(didResolutionResult).to.have.property('didResolutionMetadata');
+      expect(didResolutionResult).toHaveProperty('didDocument');
+      expect(didResolutionResult).toHaveProperty('didDocumentMetadata');
+      expect(didResolutionResult).toHaveProperty('didResolutionMetadata');
 
       // Check the DID Document.
-      expect(didResolutionResult.didDocument).to.have.property('id', didUri); // expected DID URI
-      expect(didResolutionResult.didDocument?.verificationMethod).to.have.length(3); // expected 3 verification methods
+      expect(didResolutionResult.didDocument).toHaveProperty('id', didUri); // expected DID URI
+      expect(didResolutionResult.didDocument?.verificationMethod).toHaveLength(3); // expected 3 verification methods
       // expected first verification method to be the identity key
-      expect(didResolutionResult.didDocument?.verificationMethod![0].id).to.equal(`${didUri}#0`);
+      expect(didResolutionResult.didDocument?.verificationMethod![0].id).toBe(`${didUri}#0`);
       // expected second verification method to be #auth
-      expect(didResolutionResult.didDocument?.verificationMethod![1].id).to.equal(`${didUri}#auth`);
+      expect(didResolutionResult.didDocument?.verificationMethod![1].id).toBe(`${didUri}#auth`);
       // expected third verification method to be #assert
-      expect(didResolutionResult.didDocument?.verificationMethod![2].id).to.equal(`${didUri}#assert`);
+      expect(didResolutionResult.didDocument?.verificationMethod![2].id).toBe(`${didUri}#assert`);
 
-      expect(didResolutionResult.didDocument?.service).to.have.length(1); // expected 1 service
-      expect(didResolutionResult.didDocument?.service![0].id).to.equal(`${didUri}#dwn`); // expected service id
-      expect(didResolutionResult.didDocument!.service![0].sig).to.have.length(2);
-      expect(didResolutionResult.didDocument!.service![0].sig).to.deep.equal(['#auth', '#assert']);
+      expect(didResolutionResult.didDocument?.service).toHaveLength(1); // expected 1 service
+      expect(didResolutionResult.didDocument?.service![0].id).toBe(`${didUri}#dwn`); // expected service id
+      expect(didResolutionResult.didDocument!.service![0].sig).toHaveLength(2);
+      expect(didResolutionResult.didDocument!.service![0].sig).toEqual(['#auth', '#assert']);
     });
   });
 
@@ -1024,23 +1021,23 @@ describe('DidDhtDocument', () => {
 
       for (const record of dnsPacket.answers ?? []) {
         if (record.name.startsWith('_s')) {
-          expect(record.data).to.include('id=dwn');
-          expect(record.data).to.include('t=DecentralizedWebNode');
-          expect(record.data).to.include('se=https://example.com/dwn');
-          expect(record.data).to.include('enc=#enc');
-          expect(record.data).to.include('sig=#sig,#0');
+          expect(record.data).toContain('id=dwn');
+          expect(record.data).toContain('t=DecentralizedWebNode');
+          expect(record.data).toContain('se=https://example.com/dwn');
+          expect(record.data).toContain('enc=#enc');
+          expect(record.data).toContain('sig=#sig,#0');
         }
       }
 
       const didResolutionResult = await DidDhtDocument.fromDnsPacket({ didUri, dnsPacket });
 
-      expect(didResolutionResult).to.have.property('didDocument');
-      expect(didResolutionResult).to.have.property('didDocumentMetadata');
-      expect(didResolutionResult).to.have.property('didResolutionMetadata');
+      expect(didResolutionResult).toHaveProperty('didDocument');
+      expect(didResolutionResult).toHaveProperty('didDocumentMetadata');
+      expect(didResolutionResult).toHaveProperty('didResolutionMetadata');
 
-      expect(didResolutionResult.didDocument).to.have.property('id', didUri);
-      expect(didResolutionResult.didDocument!.service![0].sig).to.have.length(2);
-      expect(didResolutionResult.didDocument!.service![0].sig).to.deep.equal(['#sig', '#0']);
+      expect(didResolutionResult.didDocument).toHaveProperty('id', didUri);
+      expect(didResolutionResult.didDocument!.service![0].sig).toHaveLength(2);
+      expect(didResolutionResult.didDocument!.service![0].sig).toEqual(['#sig', '#0']);
     });
 
     it('handles custom string properties for services', async () => {
@@ -1122,23 +1119,23 @@ describe('DidDhtDocument', () => {
 
       for (const record of dnsPacket.answers ?? []) {
         if (record.name.startsWith('_s')) {
-          expect(record.data).to.include('id=dwn');
-          expect(record.data).to.include('t=DecentralizedWebNode');
-          expect(record.data).to.include('se=https://example.com/dwn');
-          expect(record.data).to.include('enc=#enc');
-          expect(record.data).to.include('sig=#sig');
+          expect(record.data).toContain('id=dwn');
+          expect(record.data).toContain('t=DecentralizedWebNode');
+          expect(record.data).toContain('se=https://example.com/dwn');
+          expect(record.data).toContain('enc=#enc');
+          expect(record.data).toContain('sig=#sig');
         }
       }
 
       const didResolutionResult = await DidDhtDocument.fromDnsPacket({ didUri, dnsPacket });
 
-      expect(didResolutionResult).to.have.property('didDocument');
-      expect(didResolutionResult).to.have.property('didDocumentMetadata');
-      expect(didResolutionResult).to.have.property('didResolutionMetadata');
+      expect(didResolutionResult).toHaveProperty('didDocument');
+      expect(didResolutionResult).toHaveProperty('didDocumentMetadata');
+      expect(didResolutionResult).toHaveProperty('didResolutionMetadata');
 
-      expect(didResolutionResult.didDocument).to.have.property('id', didUri);
-      expect(didResolutionResult.didDocument!.service![0].sig).to.equal('#sig');
-      expect(didResolutionResult.didDocument!.service![0].enc).to.equal('#enc');
+      expect(didResolutionResult.didDocument).toHaveProperty('id', didUri);
+      expect(didResolutionResult.didDocument!.service![0].sig).toBe('#sig');
+      expect(didResolutionResult.didDocument!.service![0].enc).toBe('#enc');
     });
 
     it('handles user defined Key Ids', async () => {
@@ -1210,24 +1207,24 @@ describe('DidDhtDocument', () => {
 
       for (const record of dnsPacket.answers ?? []) {
         if (record.name.startsWith('_k1')) {
-          expect(record.data).to.include('id=sig');
-          expect(record.data).to.include('t=0');
+          expect(record.data).toContain('id=sig');
+          expect(record.data).toContain('t=0');
         } else if (record.name.startsWith('_k2')) {
-          expect(record.data).to.include('id=enc');
-          expect(record.data).to.include('t=1');
+          expect(record.data).toContain('id=enc');
+          expect(record.data).toContain('t=1');
         }
       }
 
       const didResolutionResult = await DidDhtDocument.fromDnsPacket({ didUri, dnsPacket });
 
-      expect(didResolutionResult).to.have.property('didDocument');
-      expect(didResolutionResult).to.have.property('didDocumentMetadata');
-      expect(didResolutionResult).to.have.property('didResolutionMetadata');
+      expect(didResolutionResult).toHaveProperty('didDocument');
+      expect(didResolutionResult).toHaveProperty('didDocumentMetadata');
+      expect(didResolutionResult).toHaveProperty('didResolutionMetadata');
 
-      expect(didResolutionResult.didDocument).to.have.property('id', didUri);
-      expect(didResolutionResult.didDocument!.verificationMethod![0].id).to.equal(`${didUri}#0`);
-      expect(didResolutionResult.didDocument!.verificationMethod![1].id).to.equal(`${didUri}#sig`);
-      expect(didResolutionResult.didDocument!.verificationMethod![2].id).to.equal(`${didUri}#enc`);
+      expect(didResolutionResult.didDocument).toHaveProperty('id', didUri);
+      expect(didResolutionResult.didDocument!.verificationMethod![0].id).toBe(`${didUri}#0`);
+      expect(didResolutionResult.didDocument!.verificationMethod![1].id).toBe(`${didUri}#sig`);
+      expect(didResolutionResult.didDocument!.verificationMethod![2].id).toBe(`${didUri}#enc`);
     });
 
     it('handles custom controller for verification methods', async () => {
@@ -1286,21 +1283,21 @@ describe('DidDhtDocument', () => {
       // check for key controller controller
       for (const record of dnsPacket.answers ?? []) {
         if (record.name.startsWith('_k1')) {
-          expect(record.data).to.include('t=1');
-          expect(record.data).to.include(`c=${customController}`);
+          expect(record.data).toContain('t=1');
+          expect(record.data).toContain(`c=${customController}`);
         }
       }
 
       const didResolutionResult = await DidDhtDocument.fromDnsPacket({ didUri, dnsPacket });
 
-      expect(didResolutionResult).to.have.property('didDocument');
-      expect(didResolutionResult).to.have.property('didDocumentMetadata');
-      expect(didResolutionResult).to.have.property('didResolutionMetadata');
+      expect(didResolutionResult).toHaveProperty('didDocument');
+      expect(didResolutionResult).toHaveProperty('didDocumentMetadata');
+      expect(didResolutionResult).toHaveProperty('didResolutionMetadata');
 
-      expect(didResolutionResult.didDocument).to.have.property('id', didUri);
-      expect(didResolutionResult.didDocument!.verificationMethod).to.have.length(2);
-      expect(didResolutionResult.didDocument!.verificationMethod![0].controller).to.equal(didUri); // identity key
-      expect(didResolutionResult.didDocument!.verificationMethod![1].controller).to.equal(customController); // custom controller
+      expect(didResolutionResult.didDocument).toHaveProperty('id', didUri);
+      expect(didResolutionResult.didDocument!.verificationMethod).toHaveLength(2);
+      expect(didResolutionResult.didDocument!.verificationMethod![0].controller).toBe(didUri); // identity key
+      expect(didResolutionResult.didDocument!.verificationMethod![1].controller).toBe(customController); // custom controller
     });
   });
 
@@ -1308,19 +1305,31 @@ describe('DidDhtDocument', () => {
     it('resolve', async () => {
       for (const vector of resolveTestVectors.vectors as any[]) {
         const didResolutionResult = await DidDht.resolve(vector.input.didUri);
-        expect(didResolutionResult.didResolutionMetadata.error).to.equal(vector.output.didResolutionMetadata.error);
+        expect(didResolutionResult.didResolutionMetadata.error).toBe(vector.output.didResolutionMetadata.error);
       }
-    }).timeout(30000); // Set timeout to 30 seconds for this test for did:dht resolution timeout test
+    }, 30000); // Set timeout to 30 seconds for this test for did:dht resolution timeout test
   });
 });
 
 describe('DidDhtUtils', () => {
+  let fetchStub: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    fetchStub = spyOn(globalThis as any, 'fetch');
+    fetchStub.mockResolvedValue(fetchOkResponse());
+  });
+
+  afterEach(() => {
+    fetchStub.mockRestore();
+    mock.restore();
+  });
+
   it('validatePreviousDidProof()', async () => {
     // reuse an existing previous proof from the official test vector 3, but use a different new DID
     const previousDidProof = { ...officialTestVector3.previousDidProof };
     const newDid = (await DidDht.create()).document.id;
 
-    await expect(DidDhtUtils.validatePreviousDidProof({ newDid, previousDidProof })).to.be.rejectedWith(DidErrorCode.InvalidPreviousDidProof);
+    await expect(DidDhtUtils.validatePreviousDidProof({ newDid, previousDidProof })).rejects.toThrow(DidErrorCode.InvalidPreviousDidProof);
   });
 });
 
@@ -1333,17 +1342,17 @@ describe('Official DID:DHT Vector tests', () => {
       didMetadata : { published: false }
     });
 
-    expect(dnsPacket.answers).to.have.length(officialTestVector1.dnsRecords.length);
+    expect(dnsPacket.answers).toHaveLength(officialTestVector1.dnsRecords.length);
 
     const normalizedConstructedRecords = normalizeDnsRecords(dnsPacket.answers!);
-    expect(normalizedConstructedRecords).to.deep.include.members(officialTestVector1.dnsRecords);
+    expect(normalizedConstructedRecords).toEqual(expect.arrayContaining(officialTestVector1.dnsRecords));
 
     const didResolutionResult = await DidDhtDocument.fromDnsPacket({
       didUri    : inputDidDocument.id,
       dnsPacket : dnsPacket
     });
 
-    expect(didResolutionResult.didDocument).to.deep.equal(inputDidDocument);
+    expect(didResolutionResult.didDocument).toEqual(inputDidDocument);
   });
 
   it('vector 2', async () => {
@@ -1357,17 +1366,17 @@ describe('Official DID:DHT Vector tests', () => {
       authoritativeGatewayUris: officialTestVector2.authoritativeGatewayUris,
     });
 
-    expect(dnsPacket.answers).to.have.length(officialTestVector2.dnsRecords.length);
+    expect(dnsPacket.answers).toHaveLength(officialTestVector2.dnsRecords.length);
 
     const normalizedConstructedRecords = normalizeDnsRecords(dnsPacket.answers!);
-    expect(normalizedConstructedRecords).to.deep.include.members(officialTestVector2.dnsRecords);
+    expect(normalizedConstructedRecords).toEqual(expect.arrayContaining(officialTestVector2.dnsRecords));
 
     const didResolutionResult = await DidDhtDocument.fromDnsPacket({
       didUri    : inputDidDocument.id,
       dnsPacket : dnsPacket
     });
 
-    expect(didResolutionResult.didDocument).to.deep.equal(inputDidDocument);
+    expect(didResolutionResult.didDocument).toEqual(inputDidDocument);
   });
 
   it('vector 3', async () => {
@@ -1381,17 +1390,17 @@ describe('Official DID:DHT Vector tests', () => {
       previousDidProof         : officialTestVector3.previousDidProof,
     });
 
-    expect(dnsPacket.answers).to.have.length(officialTestVector3.dnsRecords.length);
+    expect(dnsPacket.answers).toHaveLength(officialTestVector3.dnsRecords.length);
 
     const normalizedConstructedRecords = normalizeDnsRecords(dnsPacket.answers!);
-    expect(normalizedConstructedRecords).to.deep.include.members(officialTestVector3.dnsRecords);
+    expect(normalizedConstructedRecords).toEqual(expect.arrayContaining(officialTestVector3.dnsRecords));
 
     const didResolutionResult = await DidDhtDocument.fromDnsPacket({
       didUri    : inputDidDocument.id,
       dnsPacket : dnsPacket
     });
 
-    expect(didResolutionResult.didDocument).to.deep.equal(inputDidDocument);
+    expect(didResolutionResult.didDocument).toEqual(inputDidDocument);
   });
 });
 
