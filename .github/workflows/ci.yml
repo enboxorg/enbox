@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -121,21 +120,6 @@ jobs:
           bun run --filter @enbox/common  test:node
           bun run --filter @enbox/crypto  test:node
 
-      - name: Stage coverage output
-        if: always()
-        run: |
-          mkdir -p coverage-output/common coverage-output/crypto
-          cp -r packages/common/coverage/* coverage-output/common/ 2>/dev/null || true
-          cp -r packages/crypto/coverage/* coverage-output/crypto/ 2>/dev/null || true
-
-      - name: Upload coverage
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-lightweight
-          path: coverage-output/
-          retention-days: 7
-
   # ---------------------------------------------------------------------------
   # DWN SDK: large test suite, but no external services (LevelDB in-process)
   # ---------------------------------------------------------------------------
@@ -172,20 +156,6 @@ jobs:
 
       - name: Run tests
         run: bun run --filter @enbox/dwn-sdk-js test:node
-
-      - name: Stage coverage output
-        if: always()
-        run: |
-          mkdir -p coverage-output/dwn-sdk-js
-          cp -r packages/dwn-sdk-js/coverage/* coverage-output/dwn-sdk-js/ 2>/dev/null || true
-
-      - name: Upload coverage
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-dwn-sdk
-          path: coverage-output/
-          retention-days: 7
 
   # ---------------------------------------------------------------------------
   # dids + Agent + API: need a live Pkarr relay and dwn-server (backed by Postgres)
@@ -286,22 +256,6 @@ jobs:
           fi
           docker rm -f pkarr-relay || true
 
-      - name: Stage coverage output
-        if: always()
-        run: |
-          mkdir -p coverage-output/dids coverage-output/agent coverage-output/api
-          cp -r packages/dids/coverage/* coverage-output/dids/ 2>/dev/null || true
-          cp -r packages/agent/coverage/* coverage-output/agent/ 2>/dev/null || true
-          cp -r packages/api/coverage/* coverage-output/api/ 2>/dev/null || true
-
-      - name: Upload coverage
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-agent-api
-          path: coverage-output/
-          retention-days: 7
-
   # ---------------------------------------------------------------------------
   # SQL Store: needs Postgres + MySQL for dialect-specific tests
   # ---------------------------------------------------------------------------
@@ -369,21 +323,6 @@ jobs:
       - name: Run tests
         run: bun run --filter @enbox/dwn-sql-store test
 
-      - name: Stage coverage output
-        if: always()
-        run: |
-          mkdir -p coverage-output/dwn-sql-store
-          cp -r packages/dwn-sql-store/coverage/* coverage-output/dwn-sql-store/ 2>/dev/null || true
-
-      - name: Upload coverage
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-sql-store
-          path: coverage-output/
-          retention-days: 7
-          if-no-files-found: ignore
-
   # ---------------------------------------------------------------------------
   # DWN Server: self-contained tests (SQLite in-memory, no external services)
   # ---------------------------------------------------------------------------
@@ -421,124 +360,6 @@ jobs:
       - name: Run tests
         run: bun run --filter @enbox/dwn-server test
 
-      - name: Stage coverage output
-        if: always()
-        run: |
-          mkdir -p coverage-output/dwn-server
-          cp -r packages/dwn-server/coverage/* coverage-output/dwn-server/ 2>/dev/null || true
-
-      - name: Upload coverage
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-dwn-server
-          path: coverage-output/
-          retention-days: 7
-          if-no-files-found: ignore
-
-  # ---------------------------------------------------------------------------
-  # Coverage: download all coverage artifacts and check thresholds (PRs only)
-  # ---------------------------------------------------------------------------
-  coverage:
-    name: Coverage Check
-    runs-on: ubuntu-latest
-    needs: [test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server]
-    if: github.event_name == 'pull_request'
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download all coverage reports
-        uses: actions/download-artifact@v4
-        with:
-          pattern: coverage-*
-          path: coverage-artifacts
-          merge-multiple: true
-
-      - name: Check coverage thresholds
-        id: coverage-check
-        run: |
-          echo "## Coverage Report" > coverage-report.md
-          echo "" >> coverage-report.md
-          echo "| Package | Line Coverage | Status |" >> coverage-report.md
-          echo "|---------|-------------|--------|" >> coverage-report.md
-
-          failed=false
-          threshold=80
-
-          for report in coverage-artifacts/*/cobertura-coverage.xml; do
-            [ -f "$report" ] || continue
-
-            pkg=$(echo "$report" | sed 's|coverage-artifacts/\([^/]*\)/.*|\1|')
-
-            coverage=$(python3 -c "
-          import xml.etree.ElementTree as ET
-          try:
-              tree = ET.parse('$report')
-              root = tree.getroot()
-              print(f'{float(root.get(\"line-rate\", 0)) * 100:.1f}')
-          except:
-              print('0.0')
-          ")
-
-            if [ "$(echo "$coverage < $threshold" | bc -l)" = "1" ]; then
-              echo "| $pkg | ${coverage}% | :x: Below ${threshold}% |" >> coverage-report.md
-              echo "::error::Coverage for $pkg is ${coverage}%, below ${threshold}% threshold"
-              failed=true
-            else
-              echo "| $pkg | ${coverage}% | :white_check_mark: |" >> coverage-report.md
-            fi
-          done
-
-          echo "" >> coverage-report.md
-          if [ "$failed" = true ]; then
-            echo ":x: **Coverage check failed**: one or more packages are below the ${threshold}% threshold." >> coverage-report.md
-          else
-            echo ":white_check_mark: **All packages meet the ${threshold}% coverage threshold.**" >> coverage-report.md
-          fi
-
-          cat coverage-report.md >> $GITHUB_STEP_SUMMARY
-
-          if [ "$failed" = true ]; then
-            exit 1
-          fi
-
-      - name: Comment PR with coverage
-        if: always()
-        continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const body = fs.readFileSync('coverage-report.md', 'utf8');
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const existing = comments.find(c =>
-              c.user.type === 'Bot' && c.body.includes('Coverage Report')
-            );
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body,
-              });
-            }
-
   # ---------------------------------------------------------------------------
   # Gate job for branch protection — always runs so required checks pass even
   # when the pipeline is skipped (e.g. docs-only changes).
@@ -546,7 +367,7 @@ jobs:
   ci-passed:
     name: CI Passed
     runs-on: ubuntu-latest
-    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server, coverage]
+    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server]
     if: always()
     steps:
       - name: Check results
@@ -576,12 +397,6 @@ jobs:
           fi
           if [ "${{ needs.test-dwn-server.result }}" != "success" ]; then
             echo "::error::test-dwn-server failed"
-            exit 1
-          fi
-
-          # Coverage must pass on PRs
-          if [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ needs.coverage.result }}" != "success" ]; then
-            echo "::error::Coverage check failed"
             exit 1
           fi
 

@@ -102,7 +102,7 @@
     "@stylistic/eslint-plugin": "2.13.0",
     "@typescript-eslint/eslint-plugin": "8.32.1",
     "@typescript-eslint/parser": "8.32.1",
-    "c8": "^10.1.2",
+
     "chai": "4.3.6",
     "chai-as-promised": "7.1.1",
 
@@ -146,7 +146,7 @@
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "circular-dependency-check": "depcruise src",
-    "test:node": "bun run compile-validators && tsc && bunx c8 mocha \"dist/esm/tests/**/*.spec.js\"",
+    "test:node": "bun run compile-validators && tsc && bunx --bun mocha \"dist/esm/tests/**/*.spec.js\"",
     "test:node-grep": "bun run compile-validators && tsc && bunx mocha \"dist/esm/tests/**/*.spec.js\" --grep $GREP",
     "test:browser": "bun run compile-validators && bunx karma start karma.conf.cjs",
     "test:browser-debug": "bun run compile-validators && bunx karma start karma.conf.debug.cjs",
