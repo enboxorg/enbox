@@ -117,14 +117,19 @@ jobs:
           bun run --filter @enbox/common  test:node
           bun run --filter @enbox/crypto  test:node
 
+      - name: Stage coverage output
+        if: always()
+        run: |
+          mkdir -p coverage-output/common coverage-output/crypto
+          cp -r packages/common/coverage/* coverage-output/common/ 2>/dev/null || true
+          cp -r packages/crypto/coverage/* coverage-output/crypto/ 2>/dev/null || true
+
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-lightweight
-          path: |
-            packages/common/coverage/
-            packages/crypto/coverage/
+          path: coverage-output/
           retention-days: 7
 
   # ---------------------------------------------------------------------------
@@ -164,12 +169,18 @@ jobs:
       - name: Run tests
         run: bun run --filter @enbox/dwn-sdk-js test:node
 
+      - name: Stage coverage output
+        if: always()
+        run: |
+          mkdir -p coverage-output/dwn-sdk-js
+          cp -r packages/dwn-sdk-js/coverage/* coverage-output/dwn-sdk-js/ 2>/dev/null || true
+
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-dwn-sdk
-          path: packages/dwn-sdk-js/coverage/
+          path: coverage-output/
           retention-days: 7
 
   # ---------------------------------------------------------------------------
@@ -271,15 +282,20 @@ jobs:
           fi
           docker rm -f pkarr-relay || true
 
+      - name: Stage coverage output
+        if: always()
+        run: |
+          mkdir -p coverage-output/dids coverage-output/agent coverage-output/api
+          cp -r packages/dids/coverage/* coverage-output/dids/ 2>/dev/null || true
+          cp -r packages/agent/coverage/* coverage-output/agent/ 2>/dev/null || true
+          cp -r packages/api/coverage/* coverage-output/api/ 2>/dev/null || true
+
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-agent-api
-          path: |
-            packages/dids/coverage/
-            packages/agent/coverage/
-            packages/api/coverage/
+          path: coverage-output/
           retention-days: 7
 
   # ---------------------------------------------------------------------------
@@ -349,12 +365,18 @@ jobs:
       - name: Run tests
         run: bun run --filter @enbox/dwn-sql-store test
 
+      - name: Stage coverage output
+        if: always()
+        run: |
+          mkdir -p coverage-output/dwn-sql-store
+          cp -r packages/dwn-sql-store/coverage/* coverage-output/dwn-sql-store/ 2>/dev/null || true
+
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-sql-store
-          path: packages/dwn-sql-store/coverage/
+          path: coverage-output/
           retention-days: 7
           if-no-files-found: ignore
 
@@ -395,12 +417,18 @@ jobs:
       - name: Run tests
         run: bun run --filter @enbox/dwn-server test
 
+      - name: Stage coverage output
+        if: always()
+        run: |
+          mkdir -p coverage-output/dwn-server
+          cp -r packages/dwn-server/coverage/* coverage-output/dwn-server/ 2>/dev/null || true
+
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-dwn-server
-          path: packages/dwn-server/coverage/
+          path: coverage-output/
           retention-days: 7
           if-no-files-found: ignore
 
@@ -435,10 +463,10 @@ jobs:
           failed=false
           threshold=80
 
-          for report in coverage-artifacts/packages/*/coverage/cobertura-coverage.xml; do
+          for report in coverage-artifacts/*/cobertura-coverage.xml; do
             [ -f "$report" ] || continue
 
-            pkg=$(echo "$report" | sed 's|coverage-artifacts/packages/\([^/]*\)/.*|\1|')
+            pkg=$(echo "$report" | sed 's|coverage-artifacts/\([^/]*\)/.*|\1|')
 
             coverage=$(python3 -c "
           import xml.etree.ElementTree as ET
