@@ -18,7 +18,7 @@
     },
     "packages/agent": {
       "name": "@enbox/agent",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "dependencies": {
         "@enbox/common": "workspace:*",
         "@enbox/crypto": "workspace:*",
@@ -55,10 +55,11 @@
     },
     "packages/api": {
       "name": "@enbox/api",
-      "version": "0.0.7",
+      "version": "0.0.8",
       "dependencies": {
         "@enbox/agent": "workspace:*",
         "@enbox/common": "workspace:*",
+        "@enbox/dwn-clients": "workspace:*",
       },
       "devDependencies": {
         "@enbox/crypto": "workspace:*",
@@ -84,7 +85,7 @@
     },
     "packages/browser": {
       "name": "@enbox/browser",
-      "version": "0.0.2",
+      "version": "0.0.3",
       "dependencies": {
         "@enbox/dids": "workspace:*",
       },
@@ -112,7 +113,7 @@
     },
     "packages/common": {
       "name": "@enbox/common",
-      "version": "0.0.2",
+      "version": "0.0.3",
       "dependencies": {
         "@isaacs/ttlcache": "1.4.1",
         "level": "8.0.1",
@@ -135,7 +136,7 @@
     },
     "packages/crypto": {
       "name": "@enbox/crypto",
-      "version": "0.0.2",
+      "version": "0.0.3",
       "dependencies": {
         "@enbox/common": "workspace:*",
         "@noble/ciphers": "0.5.3",
@@ -159,7 +160,7 @@
     },
     "packages/dids": {
       "name": "@enbox/dids",
-      "version": "0.0.2",
+      "version": "0.0.3",
       "dependencies": {
         "@decentralized-identity/ion-sdk": "1.0.4",
         "@dnsquery/dns-packet": "6.1.1",
@@ -213,7 +214,7 @@
     },
     "packages/dwn-sdk-js": {
       "name": "@enbox/dwn-sdk-js",
-      "version": "0.0.3",
+      "version": "0.0.4",
       "dependencies": {
         "@enbox/crypto": "workspace:*",
         "@enbox/dids": "workspace:*",
@@ -330,7 +331,7 @@
     },
     "packages/dwn-sql-store": {
       "name": "@enbox/dwn-sql-store",
-      "version": "0.0.3",
+      "version": "0.0.4",
       "dependencies": {
         "@enbox/dwn-sdk-js": "workspace:*",
         "@ipld/dag-cbor": "9.0.5",

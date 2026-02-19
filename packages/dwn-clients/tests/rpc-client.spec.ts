@@ -4,10 +4,14 @@ import sinon from 'sinon';
 
 import { CryptoUtils } from '@enbox/crypto';
 import { TestDataGenerator } from '@enbox/dwn-sdk-js';
-import { testDwnUrl } from './utils/test-config.js';
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
-import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, DwnServerInfoCacheMemory, HttpDwnRpcClient, JsonRpcErrorCodes } from '@enbox/dwn-clients';
+import {
+  createJsonRpcErrorResponse, createJsonRpcSuccessResponse,
+  DwnServerInfoCacheMemory, HttpDwnRpcClient, JsonRpcErrorCodes,
+} from '../src/index.js';
 import { DidRpcMethod, HttpWeb5RpcClient, Web5RpcClient, WebSocketWeb5RpcClient } from '../src/rpc-client.js';
+
+const testDwnUrl = process.env.TEST_DWN_URL || 'http://localhost:3000';
 
 describe('RPC Clients', () => {
   describe('HttpDwnRpcClient', () => {

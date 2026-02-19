@@ -10,7 +10,7 @@ export class DwnRegistrar {
    * Registers a new tenant with the given DWN.
    * NOTE: Assumes the user has already accepted the terms of service.
    * NOTE: Currently the DWN Server from `dwn-server` does not require user signature.
-   * TODO: bring in types from `dwn-server`.
+   * TODO: https://github.com/enboxorg/enbox/issues/162 — bring in types from `dwn-server`.
    */
   public static async registerTenant(dwnEndpoint: string, did: string): Promise<void> {
 

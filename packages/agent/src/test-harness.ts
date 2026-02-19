@@ -21,7 +21,7 @@ import { DidResolverCacheMemory } from './prototyping/dids/resolver-cache-memory
 import { HdIdentityVault } from './hd-identity-vault.js';
 import { LocalKeyManager } from './local-key-manager.js';
 import { SyncEngineLevel } from './sync-engine-level.js';
-import { Web5RpcClient } from './rpc-client.js';
+import { Web5RpcClient } from '@enbox/dwn-clients';
 import { DwnDidStore, InMemoryDidStore } from './store-did.js';
 import { DwnIdentityStore, InMemoryIdentityStore } from './store-identity.js';
 import { DwnKeyStore, InMemoryKeyStore } from './store-key.js';
