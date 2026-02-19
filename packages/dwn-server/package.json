@@ -78,7 +78,7 @@
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "test:node": "bun test .test.ts",
-    "test:node:coverage": "bun test --coverage --coverage-reporter=lcov .test.ts",
+    "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .test.ts",
     "server": "bun run build:esm && bun dist/esm/src/main.js"
   },
   "husky": {

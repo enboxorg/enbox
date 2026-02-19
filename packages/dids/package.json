@@ -15,7 +15,7 @@
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "test:node": "bun test tests/",
-    "test:node:coverage": "bun test --coverage --coverage-reporter=lcov tests/",
+    "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage tests/",
     "test:browser": "bun run build:tests:browser && bunx web-test-runner"
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/dids#readme",
