@@ -1,11 +1,9 @@
-import type { DidResolver, DidResolverCache } from '@enbox/dids';
+import type { DidResolverCache } from '../../src/types/did-resolution.js';
 
-import sinon from 'sinon';
-
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DidJwk, UniversalResolver } from '@enbox/dids';
-
-import { DidResolverCacheMemory } from '../../../src/prototyping/dids/resolver-cache-memory.js';
+import { DidJwk } from '../../src/methods/did-jwk.js';
+import { DidResolverCacheMemory } from '../../src/resolver/resolver-cache-memory.js';
+import { UniversalResolver } from '../../src/resolver/universal-resolver.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
 // Helper function to pause execution for a specified amount of time (in milliseconds).
 function sleep(ms: number): Promise<void> {
@@ -42,7 +40,7 @@ describe('DidResolverCacheMemory', () => {
     });
 
     it('uses a custom TTL, when specified', async () => {
-      // Instantiate DID resolution cache with custom TTL of 60 seconds.
+      // Instantiate DID resolution cache with custom TTL of 5 milliseconds.
       cache = new DidResolverCacheMemory({ ttl: '5' });
 
       const testDid = 'did:example:alice';
@@ -71,7 +69,6 @@ describe('DidResolverCacheMemory', () => {
 
   describe('clear()', () => {
     it('removes all entries from cache', async () => {
-      // Instantiate DID resolution cache with default TTL of 15 minutes.
       cache = new DidResolverCacheMemory();
 
       const testDid1 = 'did:example:alice';
@@ -97,7 +94,6 @@ describe('DidResolverCacheMemory', () => {
 
   describe('close()', () => {
     it('is a no-op', async () => {
-      // Instantiate DID resolution cache with default TTL of 15 minutes.
       cache = new DidResolverCacheMemory();
 
       const testDid1 = 'did:example:alice';
@@ -119,7 +115,6 @@ describe('DidResolverCacheMemory', () => {
 
   describe('delete()', () => {
     it('removes specified entry from cache', async () => {
-    // Instantiate DID resolution cache with default TTL of 15 minutes.
       cache = new DidResolverCacheMemory();
 
       const testDid1 = 'did:example:alice';
@@ -148,7 +143,6 @@ describe('DidResolverCacheMemory', () => {
 
   describe('get()', () => {
     it('does not throw an error given DID that is not in the cache', async () => {
-      // Instantiate DID resolution cache with default TTL of 15 minutes.
       cache = new DidResolverCacheMemory();
 
       const valueInCache = await cache.get('did:method:not-present');
@@ -156,7 +150,6 @@ describe('DidResolverCacheMemory', () => {
     });
 
     it('throws an error if the given DID is null or undefined', async () => {
-      // Instantiate DID resolution cache with default TTL of 15 minutes.
       cache = new DidResolverCacheMemory();
 
       try {
@@ -178,72 +171,70 @@ describe('DidResolverCacheMemory', () => {
   });
 
   describe('with DidResolver', () => {
-    let cache: DidResolverCache;
-    let didResolver: DidResolver;
+    let resolverCache: DidResolverCache;
+    let didResolver: UniversalResolver;
 
     beforeAll(() => {
-      cache = new DidResolverCacheMemory();
+      resolverCache = new DidResolverCacheMemory();
     });
 
     beforeEach(async () => {
-      await cache.clear();
+      await resolverCache.clear();
       const didMethodApis = [DidJwk];
-      didResolver = new UniversalResolver({ cache, didResolvers: didMethodApis });
+      didResolver = new UniversalResolver({ cache: resolverCache, didResolvers: didMethodApis });
     });
 
     afterAll(async () => {
-      await cache.clear();
+      await resolverCache.clear();
     });
 
     it('should cache miss for the first resolution attempt', async () => {
       const did = 'did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IjNFQmFfRUxvczJhbHZMb2pxSVZjcmJLcGlyVlhqNmNqVkQ1djJWaHdMejgifQ';
-      // Create a Sinon spy on the get method of the cache
-      const cacheGetSpy = sinon.spy(cache, 'get');
+      const cacheGetSpy = spyOn(resolverCache, 'get');
 
       await didResolver.resolve(did);
 
       // Verify that cache.get() was called.
-      expect(cacheGetSpy.called).toBe(true);
+      expect(cacheGetSpy).toHaveBeenCalled();
 
       // Verify the cache returned undefined.
-      const getCacheResult = await cacheGetSpy.returnValues[0];
+      const getCacheResult = await cacheGetSpy.mock.results[0].value;
       expect(getCacheResult).toBeUndefined();
 
-      cacheGetSpy.restore();
+      cacheGetSpy.mockRestore();
     });
 
     it('should cache hit for the second resolution attempt', async () => {
       const did = 'did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IjNFQmFfRUxvczJhbHZMb2pxSVZjcmJLcGlyVlhqNmNqVkQ1djJWaHdMejgifQ';
-      // Create a Sinon spy on the get method of the cache
-      const cacheGetSpy = sinon.spy(cache, 'get');
-      const cacheSetSpy = sinon.spy(cache, 'set');
+      const cacheGetSpy = spyOn(resolverCache, 'get');
+      const cacheSetSpy = spyOn(resolverCache, 'set');
 
       await didResolver.resolve(did);
 
       // Verify there was a cache miss.
-      expect(cacheGetSpy.calledOnce).toBe(true);
-      expect(cacheSetSpy.calledOnce).toBe(true);
+      expect(cacheGetSpy).toHaveBeenCalledTimes(1);
+      expect(cacheSetSpy).toHaveBeenCalledTimes(1);
 
       // Verify the cache returned undefined.
-      let getCacheResult = await cacheGetSpy.returnValues[0];
+      let getCacheResult = await cacheGetSpy.mock.results[0].value;
       expect(getCacheResult).toBeUndefined();
 
       // Resolve the same DID again.
       await didResolver.resolve(did);
 
-      // Verify that cache.get() was called.
-      expect(cacheGetSpy.called).toBe(true);
-      expect(cacheGetSpy.calledTwice).toBe(true);
+      // Verify that cache.get() was called twice.
+      expect(cacheGetSpy).toHaveBeenCalledTimes(2);
 
       // Verify there was a cache hit this time.
-      getCacheResult = await cacheGetSpy.returnValues[1];
+      getCacheResult = await cacheGetSpy.mock.results[1].value;
       expect(getCacheResult).toBeDefined();
       expect(getCacheResult).toHaveProperty('@context');
       expect(getCacheResult).toHaveProperty('didDocument');
       expect(getCacheResult).toHaveProperty('didDocumentMetadata');
       expect(getCacheResult).toHaveProperty('didResolutionMetadata');
 
-      cacheGetSpy.restore();
+      cacheGetSpy.mockRestore();
+      cacheSetSpy.mockRestore();
     });
   });
 });

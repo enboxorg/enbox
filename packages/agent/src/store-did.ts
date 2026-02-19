@@ -1,13 +1,13 @@
 import type { PortableDid } from '@enbox/dids';
 
 import { Convert } from '@enbox/common';
+import { isPortableDid } from '@enbox/dids';
 
 import type { Web5PlatformAgent } from './types/agent.js';
 import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreListParams, DataStoreSetParams } from './store-data.js';
 
 import { DwnInterface } from './types/dwn.js';
 import { IdentityProtocolDefinition } from './store-data-protocols.js';
-import { isPortableDid } from './prototyping/dids/utils.js';
 import { TENANT_SEPARATOR } from './utils-internal.js';
 import { DwnDataStore, InMemoryDataStore } from './store-data.js';
 

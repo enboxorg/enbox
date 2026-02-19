@@ -7,7 +7,7 @@ import type { Web5PlatformAgent } from './types/agent.js';
 
 import { Level } from 'level';
 import { DataStoreLevel, EventEmitterStream, MessageStoreLevel, ResumableTaskStoreLevel, StateIndexLevel } from '@enbox/dwn-sdk-js';
-import { DidDht, DidJwk } from '@enbox/dids';
+import { DidDht, DidJwk, DidResolverCacheMemory } from '@enbox/dids';
 import { LevelStore, MemoryStore } from '@enbox/common';
 
 import { AgentCryptoApi } from './crypto-api.js';
@@ -17,7 +17,6 @@ import { AgentDwnApi } from './dwn-api.js';
 import { AgentIdentityApi } from './identity-api.js';
 import { AgentPermissionsApi } from './permissions-api.js';
 import { AgentSyncApi } from './sync-api.js';
-import { DidResolverCacheMemory } from './prototyping/dids/resolver-cache-memory.js';
 import { HdIdentityVault } from './hd-identity-vault.js';
 import { LocalKeyManager } from './local-key-manager.js';
 import { SyncEngineLevel } from './sync-engine-level.js';

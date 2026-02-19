@@ -12,6 +12,7 @@ import {
   isDidService,
   isDidVerificationMethod,
   isDwnDidService,
+  isPortableDid,
   keyBytesToMultibaseId,
   multibaseIdToKeyBytes,
 } from '../src/utils.js';
@@ -628,6 +629,50 @@ describe('DID Utils', () => {
       } catch (error: any) {
         expect(error.message).toContain('Invalid multibase identifier');
       }
+    });
+  });
+
+  describe('isPortableDid()', () => {
+    it('returns true for a valid PortableDid object', () => {
+      const portableDid = {
+        uri      : 'did:jwk:abc123',
+        document : { id: 'did:jwk:abc123' },
+        metadata : {},
+      };
+      expect(isPortableDid(portableDid)).toBe(true);
+    });
+
+    it('returns true when keyManager is undefined', () => {
+      const portableDid = {
+        uri        : 'did:jwk:abc123',
+        document   : { id: 'did:jwk:abc123' },
+        metadata   : {},
+        keyManager : undefined,
+      };
+      expect(isPortableDid(portableDid)).toBe(true);
+    });
+
+    it('returns false when keyManager is present', () => {
+      const bearerDid = {
+        uri        : 'did:jwk:abc123',
+        document   : { id: 'did:jwk:abc123' },
+        metadata   : {},
+        keyManager : {},
+      };
+      expect(isPortableDid(bearerDid)).toBe(false);
+    });
+
+    it('returns false for non-object values', () => {
+      expect(isPortableDid(null)).toBe(false);
+      expect(isPortableDid(undefined)).toBe(false);
+      expect(isPortableDid('string')).toBe(false);
+      expect(isPortableDid(42)).toBe(false);
+    });
+
+    it('returns false when required properties are missing', () => {
+      expect(isPortableDid({ uri: 'did:example:123' })).toBe(false);
+      expect(isPortableDid({ uri: 'did:example:123', document: {} })).toBe(false);
+      expect(isPortableDid({ document: {}, metadata: {} })).toBe(false);
     });
   });
 });

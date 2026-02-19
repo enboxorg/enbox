@@ -4,7 +4,7 @@ import type { KeyValueStore } from '@enbox/common';
 
 import { HDKey } from 'ed25519-keygen/hdkey';
 import { wordlist } from '@scure/bip39/wordlists/english';
-import { BearerDid, DidDht } from '@enbox/dids';
+import { BearerDid, DidDht, isPortableDid } from '@enbox/dids';
 import { Convert, MemoryStore } from '@enbox/common';
 import { generateMnemonic, mnemonicToSeed, validateMnemonic } from '@scure/bip39';
 
@@ -14,7 +14,6 @@ import type { IdentityVault, IdentityVaultBackup, IdentityVaultBackupData, Ident
 import { AgentCryptoApi } from './crypto-api.js';
 import { CompactJwe } from './prototyping/crypto/jose/jwe-compact.js';
 import { DeterministicKeyGenerator } from './utils-internal.js';
-import { isPortableDid } from './prototyping/dids/utils.js';
 import { LocalKeyManager } from './local-key-manager.js';
 
 /**

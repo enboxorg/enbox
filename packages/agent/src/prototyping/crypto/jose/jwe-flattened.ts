@@ -1,16 +1,14 @@
 import type { Jwk, KeyIdentifier } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
-import { CryptoUtils, LocalKeyManager } from '@enbox/crypto';
+import { CryptoError, CryptoErrorCode, CryptoUtils, LocalKeyManager } from '@enbox/crypto';
 
 import type { CryptoApi } from '../types/crypto-api.js';
 import type { KeyManager } from '../types/key-manager.js';
 import type { JweDecryptOptions, JweEncryptOptions, JweHeaderParams } from './jwe.js';
 
 import { AgentCryptoApi } from '../../../crypto-api.js';
-import { hasDuplicateProperties } from '../../common/object.js';
 import { isCipher } from '../utils.js';
-import { CryptoError, CryptoErrorCode } from '../crypto-error.js';
 import { isValidJweHeader, JweKeyManagement } from './jwe.js';
 
 /**
@@ -456,4 +454,21 @@ export class FlattenedJwe {
 
     return jwe;
   }
+}
+
+/** Check whether any two of the given objects share the same property name. */
+function hasDuplicateProperties(...objects: Array<Record<string, any> | undefined>): boolean {
+  const propertySet = new Set<string>();
+  const objectsWithoutUndefined = objects.filter(Boolean);
+
+  for (const obj of objectsWithoutUndefined) {
+    for (const key in obj) {
+      if (propertySet.has(key)) {
+        return true;
+      }
+      propertySet.add(key);
+    }
+  }
+
+  return false;
 }
