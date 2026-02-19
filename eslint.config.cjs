@@ -33,7 +33,7 @@ module.exports = [
     files: ["**/*.ts"],
     // IMPORTANT and confusing: `ignores` only exclude files from the `files` setting.
     // To exclude *.js files entirely, you need to have a separate config object altogether. (See another `ignores` below.)
-    ignores: ["**/*.d.ts"],
+    ignores: ["**/*.d.ts", "**/vitest.browser.config.ts"],
     rules: {
       "curly"      : ["error", "all"],
       "no-console" : "off",

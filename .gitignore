@@ -152,7 +152,12 @@ web5.polyfill.min.js
 
 # Coverage reports
 .nyc_output/
-coverage/ 
+coverage/
+
+# Playwright / Vitest browser mode
+test-results/
+playwright-report/
+__screenshots__/
 
 .notes/
 TEST-COMPOUND-INDEX/

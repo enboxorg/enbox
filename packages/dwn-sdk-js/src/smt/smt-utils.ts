@@ -134,7 +134,7 @@ export function hashEquals(a: Hash, b: Hash): boolean {
  * Convert a hash to a hex string for use as a store key.
  */
 export function hashToHex(hash: Hash): string {
-  return Buffer.from(hash).toString('hex');
+  return Array.from(hash, (b: number): string => b.toString(16).padStart(2, '0')).join('');
 }
 
 /**

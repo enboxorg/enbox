@@ -9,13 +9,12 @@
     "clean": "rimraf dist",
     "build:esm": "rimraf dist/esm dist/types && bun tsc -p tsconfig.json",
     "build:browser": "rimraf dist/browser.mjs dist/browser.js && bun build/bundles.js",
-    "build:tests:browser": "rimraf tests/compiled && bun build/esbuild-tests.cjs",
     "build": "bun run clean && bun run build:esm && bun run build:browser",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
-    "test:node": "bun test tests/",
-    "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage tests/",
-    "test:browser": "bun run build:tests:browser && bunx web-test-runner"
+    "test:node": "bun test .test.ts",
+    "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .test.ts",
+    "test:browser": "bunx --bun vitest --config vitest.browser.config.ts --run"
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/common#readme",
   "bugs": "https://github.com/enboxorg/enbox/issues",
@@ -75,17 +74,15 @@
     "multiformats": "13.1.0"
   },
   "devDependencies": {
-    "@playwright/test": "1.45.3",
     "@types/node": "20.14.8",
     "@typescript-eslint/eslint-plugin": "8.32.1",
     "@typescript-eslint/parser": "8.32.1",
-    "@web/test-runner": "0.18.2",
-    "@web/test-runner-playwright": "0.11.0",
+    "@vitest/browser-playwright": "4.0.18",
     "abstract-level": "1.0.4",
     "esbuild": "0.23.0",
     "eslint": "9.7.0",
-    "playwright": "1.45.3",
     "rimraf": "5.0.7",
-    "typescript": "5.5.4"
+    "typescript": "5.5.4",
+    "vitest": "4.0.18"
   }
 }

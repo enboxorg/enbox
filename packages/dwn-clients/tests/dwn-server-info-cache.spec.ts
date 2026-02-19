@@ -99,8 +99,8 @@ describe('DwnServerInfoCache', () => {
       expect(result!.webSocketSupport).toBe(true);
       expect(result).toEqual(exampleInfo);
 
-      // sleep for 100ms
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // sleep beyond the TTL (150ms to account for browser timer imprecision)
+      await new Promise((resolve) => setTimeout(resolve, 150));
 
       const resultAfter = await cache.get(key);
       expect(resultAfter).toBeUndefined();

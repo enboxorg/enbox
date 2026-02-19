@@ -1,0 +1,32 @@
+import { resolve } from 'node:path';
+
+import { playwright } from '@vitest/browser-playwright';
+import { defineConfig } from 'vitest/config';
+
+const isCI = !!process.env.CI;
+
+export default defineConfig({
+  resolve: {
+    alias: {
+      'bun:test': resolve(__dirname, '../../testing/bun-test-shim.ts'),
+    },
+  },
+  test: {
+    // Only utils.spec.ts is browser-safe.
+    // All other test files depend on PlatformAgentTestHarness / Web5UserAgent (LevelDB).
+    include: [
+      'tests/utils.spec.ts',
+    ],
+    testTimeout : 15_000,
+    browser     : {
+      enabled  : true,
+      headless : true,
+      provider : playwright(),
+      instances: [
+        { browser: 'chromium' },
+        { browser: 'firefox' },
+        ...(isCI ? [{ browser: 'webkit' as const }] : []),
+      ],
+    },
+  },
+});

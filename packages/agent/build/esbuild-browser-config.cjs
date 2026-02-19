@@ -1,18 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
-const polyfillProviderPlugin = require('node-stdlib-browser/helpers/esbuild/plugin');
-const stdLibBrowser = require('node-stdlib-browser');
-
-const requiredPolyfills = new Set(['crypto', 'node:crypto', 'events', 'stream']);
-
-// populate object containing lib -> polyfill path
-const polyfills = {};
-for (let lib in stdLibBrowser) {
-  if (requiredPolyfills.has(lib)) {
-    const polyfill = stdLibBrowser[lib];
-    polyfills[lib] = polyfill;
-  }
-}
-
 /** @type {import('esbuild').BuildOptions} */
 module.exports = {
   entryPoints : ['./src/index.ts'],
@@ -22,9 +7,14 @@ module.exports = {
   minify      : true,
   platform    : 'browser',
   target      : ['chrome101', 'firefox108', 'safari16'],
-  inject      : [require.resolve('node-stdlib-browser/helpers/esbuild/shim')],
-  plugins     : [polyfillProviderPlugin(polyfills)],
   define      : {
-    'global': 'globalThis',
+    'global'      : 'globalThis',
+    'process.env' : '{}',
   },
+  alias: {
+    'events' : 'eventemitter3',
+  },
+  external: [
+    'level',
+  ],
 };
