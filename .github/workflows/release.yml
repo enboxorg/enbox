@@ -4,9 +4,12 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - '**/*.md'
       - 'docs/**'
       - 'LICENSE'
+      - '*.md'
+      - 'packages/**/*.md'
+      # NOTE: .changeset/*.md is intentionally NOT ignored — changesets are .md
+      # files and must trigger this workflow for version PRs to be created.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
