@@ -2,7 +2,7 @@ import type { KeyValueStore } from '@enbox/common';
 import { MemoryStore } from '@enbox/common';
 
 import type { CryptoAlgorithm } from './algorithms/crypto-algorithm.js';
-import type { CryptoApi } from './types/crypto-api.js';
+import type { DsaApi } from './types/crypto-api.js';
 import type { Hasher } from './types/hasher.js';
 import type { Jwk } from './jose/jwk.js';
 import type { KeyIdentifier } from './types/identifier.js';
@@ -108,7 +108,7 @@ export interface LocalKeyManagerGenerateKeyParams extends KmsGenerateKeyParams {
 }
 
 export class LocalKeyManager implements
-    CryptoApi,
+    DsaApi,
     KeyImporterExporter<KmsImportKeyParams, KeyIdentifier, KmsExportKeyParams> {
 
   /**
@@ -242,7 +242,7 @@ export class LocalKeyManager implements
    * @remarks
    * This method generates a {@link https://datatracker.ietf.org/doc/html/rfc3986 | URI}
    * (Uniform Resource Identifier) for the given JWK, which uniquely identifies the key across all
-   * `CryptoApi` implementations. The key URI is constructed by appending the
+   * `DsaApi` implementations. The key URI is constructed by appending the
    * {@link https://datatracker.ietf.org/doc/html/rfc7638 | JWK thumbprint} to the prefix
    * `urn:jwk:`. The JWK thumbprint is deterministically computed from the JWK and is consistent
    * regardless of property order or optional property inclusion in the JWK. This ensures that the
