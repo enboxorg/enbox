@@ -1,7 +1,7 @@
 import type { MessageStore } from '../types/message-store.js';
 import type { PermissionGrant } from '../protocols/permission-grant.js';
 import type { PermissionConditions, RecordsPermissionScope } from '../types/permission-types.js';
-import type { RecordsDeleteMessage, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteMessage } from '../types/records-types.js';
+import type { RecordsCountMessage, RecordsDeleteMessage, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteMessage } from '../types/records-types.js';
 
 import { GrantAuthorization } from './grant-authorization.js';
 import { PermissionConditionPublication } from '../types/permission-types.js';
@@ -69,7 +69,7 @@ export class RecordsGrantAuthorization {
    * @param messageStore Used to check if the grant has been revoked.
    */
   public static async authorizeQueryOrSubscribe(input: {
-    incomingMessage: RecordsQueryMessage | RecordsSubscribeMessage,
+    incomingMessage: RecordsCountMessage | RecordsQueryMessage | RecordsSubscribeMessage,
     expectedGrantor: string,
     expectedGrantee: string,
     permissionGrant: PermissionGrant,

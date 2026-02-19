@@ -102,6 +102,7 @@ export enum DwnErrorCode {
   RecordsAuthorDelegatedGrantGrantedToAndOwnerSignatureMismatch = 'RecordsAuthorDelegatedGrantGrantedToAndOwnerSignatureMismatch',
   RecordsAuthorDelegatedGrantNotADelegatedGrant = 'RecordsAuthorDelegatedGrantNotADelegatedGrant',
   RecordsDecryptNoMatchingKeyEncryptedFound = 'RecordsDecryptNoMatchingKeyEncryptedFound',
+  RecordsCountFilterMissingRequiredProperties = 'RecordsCountFilterMissingRequiredProperties',
   RecordsDeleteAuthorizationFailed = 'RecordsDeleteAuthorizationFailed',
   RecordsQueryCreateFilterPublishedSortInvalid = 'RecordsQueryCreateFilterPublishedSortInvalid',
   RecordsQueryParseFilterPublishedSortInvalid = 'RecordsQueryParseFilterPublishedSortInvalid',

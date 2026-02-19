@@ -227,6 +227,32 @@
           "type": "string"
         }
       }
+    },
+    "records-count-scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interface",
+        "method"
+      ],
+      "properties": {
+        "interface": {
+          "const": "Records"
+        },
+        "method": {
+          "const": "Count"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "contextId": {
+          "type": "string",
+          "maxLength": 600
+        },
+        "protocolPath": {
+          "type": "string"
+        }
+      }
     }
   }
 }

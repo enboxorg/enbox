@@ -34,6 +34,9 @@
         },
         {
           "$ref": "https://identity.foundation/dwn/json-schemas/permissions/scopes.json#/$defs/records-subscribe-scope"
+        },
+        {
+          "$ref": "https://identity.foundation/dwn/json-schemas/permissions/scopes.json#/$defs/records-count-scope"
         }
       ]
     },
