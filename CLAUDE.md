@@ -50,6 +50,15 @@ Before any commits get pushed and PRs opened, ALL of the following MUST pass:
 
 Do not push or open a PR until all three checks pass locally. See [Local Test Infrastructure](#local-test-infrastructure) for required services.
 
+### GitHub CLI (`gh`) — use REST API for mutations
+
+`gh pr edit --body` silently fails due to a GraphQL Projects Classic deprecation issue. When updating PR bodies (or any mutation that fails silently), use the REST API instead:
+
+```bash
+# Write body to a temp file, then:
+gh api repos/enboxorg/enbox/pulls/<PR_NUMBER> -X PATCH -F body=@pr-body.md
+```
+
 ### Running Tests
 
 All packages use **`bun test`** (Bun's native test runner).
