@@ -193,7 +193,7 @@ For detailed architecture notes, coding style, test patterns, and build instruct
 
 ## Contributing
 
-See the [contribution guide](https://github.com/enboxorg/enbox/blob/main/CONTRIBUTING.md).
+See the contribution guides in individual packages (e.g., [dwn-server](./packages/dwn-server/CONTRIBUTING.md), [dwn-sdk-js](./packages/dwn-sdk-js/CONTRIBUTING.md)).
 
 ## License
 

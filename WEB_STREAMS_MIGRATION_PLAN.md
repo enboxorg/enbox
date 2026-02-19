@@ -48,8 +48,8 @@ support and reducing the dependency footprint.
 │  - DataStoreSql uses Readable from readable-stream              │
 ├─────────────────────────────────────────────────────────────────┤
 │  @enbox/dwn-server                                              │
-│  - HTTP handler passes Express req (Node Readable) as stream    │
-│  - Uses Readable from node:stream in json-rpc-router.ts         │
+│  - HTTP handler uses Bun.serve() (Request body is ReadableStream│
+│    natively — no Express, no Node Readable)                     │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -59,8 +59,7 @@ support and reducing the dependency footprint.
 | dwn-sdk-js        | `readable-stream` 4.5.2     | Core stream primitive          |
 | common            | `readable-stream` 4.5.2     | NodeStream utilities           |
 | dwn-sql-store     | `readable-stream` 4.4.2     | DataStoreSql                   |
-| dwn-server        | `readable-stream` 4.4.2     | HTTP handler                   |
-| dwn-server        | `stream-browserify` (dev)    | Browser test bundling          |
+| dwn-server        | N/A (uses `Bun.serve()`)    | HTTP handler uses native Web Request/Response |
 | agent             | `readable-web-to-node-stream`| Web->Node conversion (REDUNDANT)|
 
 ---
@@ -302,11 +301,7 @@ const bytes = await Stream.consumeToBytes({ readableStream: dataStream });
 
 ### 2.9 Update `@enbox/dwn-server`
 
-The HTTP API currently passes Express `req` (a Node `Readable`) directly. After migration:
-```ts
-// Convert Node request to Web ReadableStream
-const dataStream = NodeStream.toWebReadable({ readable: req });
-```
+> **Note:** The HTTP API has already been migrated from Express to `Bun.serve()`. The `Request` object in Bun's fetch handler natively provides `request.body` as a `ReadableStream`. No conversion is needed at the server boundary.
 
 ### 2.10 Update `@enbox/agent` (inner layer)
 
@@ -343,7 +338,7 @@ Once all usages are migrated:
 | `crypto.createCipheriv` is Node-only | Keep using it wrapped in TransformStream; browser crypto is a separate concern |
 | Breaking change for external DataStore implementations | Bump major version; provide migration guide |
 | `readable-stream` v4 Readable is used as AsyncIterable in for-await-of loops | ReadableStream supports this in modern runtimes; use `Stream.asAsyncIterator()` polyfill |
-| dwn-server Express req is a Node Readable | Convert at HTTP boundary with `NodeStream.toWebReadable()` |
+| dwn-server HTTP boundary | Already resolved — `Bun.serve()` provides Web `Request` with native `ReadableStream` body |
 
 ---
 

@@ -75,12 +75,25 @@ Full migration from Node.js/npm/pnpm to Bun as runtime, package manager, bundler
 - [x] 9.4 Fixed `process.env.npm_package_*` refs in dwn-server config.ts
 - [x] 9.5 Added `@types/bun` to dwn-sql-store devDeps
 
+## Phase 10: Test Framework Migration -- IN PROGRESS
+
+Migrating from Mocha/Chai to `bun:test` across packages.
+
+- [x] 10.1 `@enbox/common` — migrated to `bun test`
+- [x] 10.2 `@enbox/crypto` — migrated to `bun test`
+- [x] 10.3 `@enbox/dids` — migrated to `bun test`
+- [x] 10.4 `@enbox/dwn-sdk-js` — migrated to `bun test`
+- [x] 10.5 `@enbox/dwn-server` — migrated to `bun test`
+- [x] 10.6 `@enbox/dwn-sql-store` — migrated to `bun test`
+- [ ] 10.7 `@enbox/agent` — still uses Mocha + Chai + Sinon
+- [ ] 10.8 `@enbox/api` — still uses Mocha + Chai
+
 ## Risk Register
 
 | Risk | Severity | Status |
 |------|----------|--------|
 | classic-level N-API compat | HIGH | Test at runtime; fallback plan ready |
 | bun:sqlite API diffs from better-sqlite3 | MEDIUM | Resolved via adapter |
-| Mocha/Chai ESM loader under Bun | MEDIUM | Test at runtime |
+| Mocha/Chai ESM loader under Bun | MEDIUM | Works; agent/api still on Mocha |
 | npm publish provenance support | LOW | Kept npm for publish workflows |
 | esbuild browser plugin compat | LOW | Kept esbuild for now |

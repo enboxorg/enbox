@@ -19,10 +19,10 @@ SQL backed implementations of DWN `MessageStore`, `DataStore`, and `StateIndex`.
   - [PostgreSQL](#postgresql)
 - [Development](#development)
   - [Prerequisites](#prerequisites)
-    - [`node` and `npm`](#node-and-npm)
+    - [Bun](#bun)
     - [Docker](#docker)
   - [Running Tests](#running-tests)
-  - [`npm` scripts](#npm-scripts)
+  - [Scripts](#scripts)
 
 
 # Supported DBs
@@ -44,15 +44,11 @@ bun add @enbox/dwn-sql-store
 ## SQLite
 
 ```typescript
-import Database from 'better-sqlite3';
-
 import { Dwn } from '@enbox/dwn-sdk-js'
-import { SqliteDialect, MessageStoreSql, DataStoreSql, StateIndexSql } from '@enbox/dwn-sql-store';
+import { createBunSqliteDatabase, SqliteDialect, MessageStoreSql, DataStoreSql, StateIndexSql } from '@enbox/dwn-sql-store';
 
 const sqliteDialect = new SqliteDialect({
-  database: async () => new Database('dwn.sqlite', {
-    fileMustExist: true,
-  })
+  database: async () => createBunSqliteDatabase('dwn.sqlite'),
 });
 
 const messageStore = new MessageStoreSql(sqliteDialect);

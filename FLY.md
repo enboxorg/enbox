@@ -94,7 +94,7 @@ curl https://enbox-dwn.fly.dev/health
 | `DWN_TTL_CACHE_URL` | PostgreSQL URL for TTL cache |
 | `DWN_STORAGE_MESSAGES` | PostgreSQL URL for message storage |
 | `DWN_STORAGE_DATA` | PostgreSQL URL for data storage |
-| `DWN_STORAGE_STATE_INDEX` | PostgreSQL URL for event storage |
+| `DWN_STORAGE_STATE_INDEX` | PostgreSQL URL for state index (sync state) |
 | `DWN_STORAGE_RESUMABLE_TASKS` | PostgreSQL URL for resumable task storage |
 
 ### Fly.io Auto-Provided Variables
