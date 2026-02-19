@@ -5,6 +5,7 @@ import { computeJwkThumbprint } from '@enbox/crypto';
 import { Convert, Multicodec } from '@enbox/common';
 
 import type { KeyWithMulticodec } from './types/multibase.js';
+import type { PortableDid } from './types/portable-did.js';
 import type {
   DidDocument,
   DidService,
@@ -465,6 +466,32 @@ export function isDidVerificationMethod(obj: unknown): obj is DidVerificationMet
   if (typeof obj.controller !== 'string') {return false;}
 
   return true;
+}
+
+/**
+ * Checks if a given object conforms to the {@link PortableDid} interface.
+ *
+ * A `PortableDid` is an object with `uri`, `document`, and `metadata` properties that does not
+ * have a `keyManager` property (or has it set to `undefined`). This distinguishes it from a
+ * {@link BearerDid}, which includes a `keyManager`.
+ *
+ * @example
+ * ```ts
+ * if (isPortableDid(obj)) {
+ *   console.log('The object is a PortableDid');
+ * }
+ * ```
+ *
+ * @param obj - The object to be checked.
+ * @returns `true` if `obj` is a `PortableDid`; otherwise, `false`.
+ */
+export function isPortableDid(obj: unknown): obj is PortableDid {
+  // Validate that the given value is an object that has the necessary properties of PortableDid.
+  return !(!obj || typeof obj !== 'object' || obj === null)
+    && 'uri' in obj
+    && 'document' in obj
+    && 'metadata' in obj
+    && (!('keyManager' in obj) || obj.keyManager === undefined);
 }
 
 /**

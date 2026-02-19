@@ -1,17 +1,16 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
-import { Convert } from '@enbox/common';
-import { DidJwk } from '@enbox/dids';
 import type { PortableDid } from '@enbox/dids';
+import type { ProtocolDefinition, RecordsDeleteMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
-import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreListParams, DataStoreSetParams } from '../src/store-data.js';
+import { Convert } from '@enbox/common';
+import { DidJwk, isPortableDid } from '@enbox/dids';
 
 import type { Web5PlatformAgent } from '../src/types/agent.js';
-import type { ProtocolDefinition, RecordsDeleteMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreListParams, DataStoreSetParams } from '../src/store-data.js';
 
 import { AgentDidApi } from '../src/did-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
-import { isPortableDid } from '../src/prototyping/dids/utils.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { DwnDataStore, InMemoryDataStore } from '../src/store-data.js';

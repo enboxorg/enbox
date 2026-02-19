@@ -11,10 +11,9 @@ import type {
   VerifyParams,
 } from '@enbox/crypto';
 
-import { CryptoAlgorithm, Ed25519, isOkpPrivateJwk, isOkpPublicJwk } from '@enbox/crypto';
+import { CryptoAlgorithm, CryptoError, CryptoErrorCode, Ed25519, isOkpPrivateJwk, isOkpPublicJwk } from '@enbox/crypto';
 
 import type { BytesToPrivateKeyParams, BytesToPublicKeyParams, PrivateKeyToBytesParams, PublicKeyToBytesParams } from '../types/params-direct.js';
-import { CryptoError, CryptoErrorCode } from '../crypto-error.js';
 
 /**
  * The `EdDsaGenerateKeyParams` interface defines the algorithm-specific parameters that should be

@@ -42,7 +42,6 @@ import { Encryption, HdKey, Secp256k1 } from '@enbox/dwn-sdk-js';
 
 import type { AgentDataStore } from './store-data.js';
 import type { AgentKeyManager } from './types/key-manager.js';
-import type { InferType } from './prototyping/common/type-utils.js';
 import type { Web5PlatformAgent } from './types/agent.js';
 import type { KmsCipherParams, KmsUnwrapKeyParams, KmsWrapKeyParams } from './prototyping/crypto/types/params-kms.js';
 
@@ -133,7 +132,7 @@ export interface LocalKmsGenerateKeyParams extends KmsGenerateKeyParams {
   /**
    * A string defining the type of key to generate.
    */
-  algorithm: InferType<SupportedKeyGeneratorAlgorithm>
+  algorithm: SupportedKeyGeneratorAlgorithm
 }
 
 /**

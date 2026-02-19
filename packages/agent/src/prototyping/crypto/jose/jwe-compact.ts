@@ -1,6 +1,6 @@
 import type { Jwk, KeyIdentifier } from '@enbox/crypto';
 
-import { LocalKeyManager } from '@enbox/crypto';
+import { CryptoError, CryptoErrorCode, LocalKeyManager } from '@enbox/crypto';
 
 import type { CryptoApi } from '../types/crypto-api.js';
 import type { KeyManager } from '../types/key-manager.js';
@@ -9,7 +9,6 @@ import type { JweDecryptOptions, JweEncryptOptions, JweHeaderParams } from './jw
 import { AgentCryptoApi } from '../../../crypto-api.js';
 import { FlattenedJwe } from './jwe-flattened.js';
 import { isValidJweHeader } from './jwe.js';
-import { CryptoError, CryptoErrorCode } from '../crypto-error.js';
 
 /**
  * Parameters required for decrypting a JWE in Compact Serialization format.

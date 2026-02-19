@@ -6,10 +6,11 @@ import type { DidMethodCreateOptions } from './did-api.js';
 import type { Web5PlatformAgent } from './types/agent.js';
 import type { IdentityMetadata, PortableIdentity } from './types/identity.js';
 
+import { isPortableDid } from '@enbox/dids';
+
 import { BearerIdentity } from './bearer-identity.js';
 import { getDwnServiceEndpointUrls } from './utils.js';
 import { InMemoryIdentityStore } from './store-identity.js';
-import { isPortableDid } from './prototyping/dids/utils.js';
 
 export interface IdentityApiParams<TKeyManager extends AgentKeyManager> {
   agent?: Web5PlatformAgent<TKeyManager>;

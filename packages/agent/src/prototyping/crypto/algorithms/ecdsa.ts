@@ -11,10 +11,9 @@ import type {
   VerifyParams,
 } from '@enbox/crypto';
 
-import { CryptoAlgorithm, isEcPrivateJwk, isEcPublicJwk, Secp256k1, Secp256r1 } from '@enbox/crypto';
+import { CryptoAlgorithm, CryptoError, CryptoErrorCode, isEcPrivateJwk, isEcPublicJwk, Secp256k1, Secp256r1 } from '@enbox/crypto';
 
 import type { BytesToPrivateKeyParams, BytesToPublicKeyParams, PrivateKeyToBytesParams, PublicKeyToBytesParams } from '../types/params-direct.js';
-import { CryptoError, CryptoErrorCode } from '../crypto-error.js';
 
 /**
  * The `EcdsaGenerateKeyParams` interface defines the algorithm-specific parameters that should be

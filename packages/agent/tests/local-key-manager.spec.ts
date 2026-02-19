@@ -4,12 +4,11 @@ import type { Jwk, JwkParamsEcPublic } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { CryptoUtils, Ed25519 } from '@enbox/crypto';
+import { CryptoErrorCode, CryptoUtils, Ed25519 } from '@enbox/crypto';
 import { Encryption, HdKey, Secp256k1 } from '@enbox/dwn-sdk-js';
 
 import type { Web5PlatformAgent } from '../src/types/agent.js';
 
-import { CryptoErrorCode } from '../src/prototyping/crypto/crypto-error.js';
 import { isChrome } from './utils/runtimes.js';
 import { LocalKeyManager } from '../src/local-key-manager.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';

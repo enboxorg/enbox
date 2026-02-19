@@ -5,7 +5,7 @@ import { Convert } from '@enbox/common';
 import type { CryptoApi } from '../types/crypto-api.js';
 import type { KeyManager } from '../types/key-manager.js';
 
-import { CryptoError, CryptoErrorCode } from '../crypto-error.js';
+import { CryptoError, CryptoErrorCode } from '@enbox/crypto';
 
 /**
  * Specifies options for decrypting a JWE, allowing the caller to define constraints on the JWE

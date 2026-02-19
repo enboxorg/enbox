@@ -15,7 +15,9 @@ export * from './methods/did-method.js';
 export * from './methods/did-web.js';
 
 export * from './resolver/resolver-cache-level.js';
+export * from './resolver/resolver-cache-memory.js';
 export * from './resolver/resolver-cache-noop.js';
 export * from './resolver/universal-resolver.js';
 
+export { isPortableDid } from './utils.js';
 export * as utils from './utils.js';

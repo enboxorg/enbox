@@ -1,7 +1,8 @@
-import type { DidResolutionResult, DidResolverCache } from '@enbox/dids';
-
 import ms from 'ms';
 import { TtlCache } from '@enbox/common';
+
+import type { DidResolutionResult } from '../types/did-core.js';
+import type { DidResolverCache } from '../types/did-resolution.js';
 
 /**
  * Configuration parameters for creating an in-memory cache for DID resolution results.
