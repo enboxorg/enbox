@@ -3,6 +3,7 @@ import type { PermissionConditions, PermissionGrantData, PermissionScope } from 
 
 import { Encoder } from '../utils/encoder.js';
 import { Message } from '../core/message.js';
+import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 
 /**
@@ -60,9 +61,59 @@ export class PermissionGrant {
    */
   public readonly conditions?: PermissionConditions;
 
+  /**
+   * Parses a `DataEncodedRecordsWriteMessage` into a `PermissionGrant`.
+   * Validates that the message contains required structural fields:
+   * `encodedData`, `authorization` (for grantor extraction), `descriptor.recipient` (grantee),
+   * and that the decoded data contains `scope` and `dateExpires`.
+   * @throws {DwnError} if any required field is missing.
+   */
   public static async parse(message: DataEncodedRecordsWriteMessage): Promise<PermissionGrant> {
+    PermissionGrant.validateMessage(message);
     const permissionGrant = new PermissionGrant(message);
     return permissionGrant;
+  }
+
+  /**
+   * Validates that the message has the required structural fields for a permission grant.
+   */
+  private static validateMessage(message: DataEncodedRecordsWriteMessage): void {
+    if (message.encodedData === undefined || message.encodedData === null) {
+      throw new DwnError(
+        DwnErrorCode.PermissionGrantParseMissingEncodedData,
+        'permission grant message is missing encodedData'
+      );
+    }
+
+    if (Message.getSigner(message) === undefined) {
+      throw new DwnError(
+        DwnErrorCode.PermissionGrantParseMissingAuthorization,
+        'permission grant message is missing authorization (unable to extract grantor)'
+      );
+    }
+
+    if (message.descriptor.recipient === undefined) {
+      throw new DwnError(
+        DwnErrorCode.PermissionGrantParseMissingRecipient,
+        'permission grant message is missing descriptor.recipient (grantee)'
+      );
+    }
+
+    const grantData = Encoder.base64UrlToObject(message.encodedData) as Partial<PermissionGrantData>;
+
+    if (grantData.scope === undefined) {
+      throw new DwnError(
+        DwnErrorCode.PermissionGrantParseMissingScope,
+        'permission grant data is missing required property `scope`'
+      );
+    }
+
+    if (grantData.dateExpires === undefined) {
+      throw new DwnError(
+        DwnErrorCode.PermissionGrantParseMissingDateExpires,
+        'permission grant data is missing required property `dateExpires`'
+      );
+    }
   }
 
   private constructor(message: DataEncodedRecordsWriteMessage) {

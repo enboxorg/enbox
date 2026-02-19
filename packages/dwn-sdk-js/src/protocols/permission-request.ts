@@ -3,6 +3,7 @@ import type { PermissionConditions, PermissionRequestData, PermissionScope } fro
 
 import { Encoder } from '../utils/encoder.js';
 import { Message } from '../core/message.js';
+import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 
 /**
@@ -41,9 +42,45 @@ export class PermissionRequest {
    */
   public readonly conditions?: PermissionConditions;
 
+  /**
+   * Parses a `DataEncodedRecordsWriteMessage` into a `PermissionRequest`.
+   * Validates that the message contains required structural fields:
+   * `encodedData`, `authorization` (for requester extraction),
+   * and that the decoded data contains `scope`.
+   * @throws {DwnError} if any required field is missing.
+   */
   public static async parse(message: DataEncodedRecordsWriteMessage): Promise<PermissionRequest> {
+    PermissionRequest.validateMessage(message);
     const permissionRequest = new PermissionRequest(message);
     return permissionRequest;
+  }
+
+  /**
+   * Validates that the message has the required structural fields for a permission request.
+   */
+  private static validateMessage(message: DataEncodedRecordsWriteMessage): void {
+    if (message.encodedData === undefined || message.encodedData === null) {
+      throw new DwnError(
+        DwnErrorCode.PermissionRequestParseMissingEncodedData,
+        'permission request message is missing encodedData'
+      );
+    }
+
+    if (Message.getSigner(message) === undefined) {
+      throw new DwnError(
+        DwnErrorCode.PermissionRequestParseMissingAuthorization,
+        'permission request message is missing authorization (unable to extract requester)'
+      );
+    }
+
+    const requestData = Encoder.base64UrlToObject(message.encodedData) as Partial<PermissionRequestData>;
+
+    if (requestData.scope === undefined) {
+      throw new DwnError(
+        DwnErrorCode.PermissionRequestParseMissingScope,
+        'permission request data is missing required property `scope`'
+      );
+    }
   }
 
   private constructor(message: DataEncodedRecordsWriteMessage) {

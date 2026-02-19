@@ -3,7 +3,7 @@ import type { BearerDid } from '@enbox/dids';
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import { DwnInterfaceName, DwnMethodName, Time } from '@enbox/dwn-sdk-js';
+import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Time } from '@enbox/dwn-sdk-js';
 import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
 
 import { DwnApi } from '../src/dwn-api.js';
@@ -91,8 +91,26 @@ describe('PermissionRequest', () => {
       expect(parsedRequest.conditions).toEqual(request.conditions);
     });
 
-    //TODO: this should happen in the `dwn-sdk-js` helper
-    it.skip('throws for an invalid request');
+    it('throws for an invalid request', async () => {
+      const { message } = await testHarness.agent.permissions.createRequest({
+        author : aliceDid.uri,
+        scope  : {
+          interface : DwnInterfaceName.Messages,
+          method    : DwnMethodName.Read,
+          protocol  : protocolUri
+        }
+      });
+
+      // Remove authorization to make the message invalid
+      const invalidMessage = { ...message };
+      delete (invalidMessage as any).authorization;
+
+      await expect(PermissionRequest.parse({
+        agent        : testHarness.agent,
+        connectedDid : bobDid.uri,
+        message      : invalidMessage,
+      })).rejects.toThrow(DwnErrorCode.PermissionRequestParseMissingAuthorization);
+    });
   });
 
   describe('send()', () => {

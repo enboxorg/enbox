@@ -3,7 +3,7 @@ import type { BearerDid } from '@enbox/dids';
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import { DwnInterfaceName, DwnMethodName, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
+import { DwnErrorCode, DwnInterfaceName, DwnMethodName, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
 
 import { DwnApi } from '../src/dwn-api.js';
@@ -95,8 +95,25 @@ describe('PermissionGrant', () => {
       expect(parsedGrant.delegated).toBe(grant.delegated);
     });
 
-    //TODO: this should happen in the `dwn-sdk-js` helper
-    it.skip('throws for an invalid grant');
+    it('throws for an invalid grant', async () => {
+      const { message } = await testHarness.agent.permissions.createGrant({
+        store       : false,
+        author      : aliceDid.uri,
+        grantedTo   : bobDid.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        scope       : { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, protocol: protocolUri },
+      });
+
+      // Remove authorization to make the message invalid
+      const invalidMessage = { ...message };
+      delete (invalidMessage as any).authorization;
+
+      await expect(PermissionGrant.parse({
+        agent        : testHarness.agent,
+        connectedDid : bobDid.uri,
+        message      : invalidMessage,
+      })).rejects.toThrow(DwnErrorCode.PermissionGrantParseMissingAuthorization);
+    });
   });
 
   describe('send()', () => {
