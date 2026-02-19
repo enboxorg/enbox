@@ -162,6 +162,21 @@ export class Dwn {
   }
 
   /**
+   * Returns the internal storage components for advanced operations that
+   * cannot be expressed through the standard `processMessage()` pipeline
+   * (e.g., owner-upgrade of externally authored encrypted records).
+   *
+   * Callers are responsible for maintaining consistency across stores.
+   */
+  public get storage(): { messageStore: MessageStore; stateIndex: StateIndex; eventStream: EventStream | undefined } {
+    return {
+      messageStore : this.messageStore,
+      stateIndex   : this.stateIndex,
+      eventStream  : this.eventStream,
+    };
+  }
+
+  /**
    * Processes the given DWN message and returns with a reply.
    * @param tenant The tenant DID to route the given message to.
    */

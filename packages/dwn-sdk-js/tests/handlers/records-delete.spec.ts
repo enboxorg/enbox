@@ -21,7 +21,6 @@ import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread
 
 import { ArrayUtility } from '../../src/utils/array.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
-import { DwnMethodName } from '../../src/enums/dwn-interface-method.js';
 import { Message } from '../../src/core/message.js';
 import { normalizeSchemaUrl } from '../../src/utils/url.js';
 import { RecordsDeleteHandler } from '../../src/handlers/records-delete.js';
@@ -30,8 +29,9 @@ import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
-import { DataStream, Dwn, Encoder, Jws, MessageStoreLevel, RecordsDelete, RecordsRead, RecordsWrite } from '../../src/index.js';
+import { DataStream, Dwn, Encoder, Jws, MessageStoreLevel, PermissionsProtocol, RecordsDelete, RecordsRead, RecordsWrite } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
+import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
 
 export function testRecordsDeleteHandler(): void {
   describe('RecordsDeleteHandler.handle()', () => {
@@ -659,6 +659,146 @@ export function testRecordsDeleteHandler(): void {
         const recordsDeleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
         expect(recordsDeleteReply.status.code).toBe(401);
         expect(recordsDeleteReply.status.detail).toContain(DwnErrorCode.RecordsDeleteAuthorizationFailed);
+      });
+
+      describe('grant based deletes', () => {
+        it('should allow delete with a matching protocol grant scope', async () => {
+          // scenario: Alice writes a protocol record, grants Bob delete permission, Bob deletes it.
+
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolDefinition: ProtocolDefinition = {
+            protocol  : 'http://grant-delete-test.xyz',
+            published : false,
+            types     : { foo: {} },
+            structure : { foo: {} }
+          };
+
+          // Alice installs the protocol
+          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            author: alice,
+            protocolDefinition
+          });
+          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+          expect(protocolsConfigureReply.status.code).toBe(202);
+
+          // Alice writes a record
+          const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'foo',
+          });
+          const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
+          expect(writeReply.status.code).toBe(202);
+
+          // Alice grants Bob delete permission scoped to the protocol
+          const permissionGrant = await PermissionsProtocol.createGrant({
+            signer      : Jws.createSigner(alice),
+            grantedTo   : bob.did,
+            dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
+            scope       : {
+              interface : DwnInterfaceName.Records,
+              method    : DwnMethodName.Delete,
+              protocol  : protocolDefinition.protocol,
+            }
+          });
+          const grantDataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
+          const grantWriteReply = await dwn.processMessage(
+            alice.did,
+            permissionGrant.recordsWrite.message,
+            { dataStream: grantDataStream }
+          );
+          expect(grantWriteReply.status.code).toBe(202);
+
+          // Bob deletes the record using the grant
+          const recordsDelete = await RecordsDelete.create({
+            recordId          : recordsWrite.message.recordId,
+            signer            : Jws.createSigner(bob),
+            permissionGrantId : permissionGrant.recordsWrite.message.recordId,
+          });
+          const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
+          expect(deleteReply.status.code).toBe(202);
+        });
+
+        it('should reject delete when grant has mismatching protocol scope', async () => {
+          // scenario: Alice grants Bob delete permission for protocol A,
+          //           Bob tries to delete a record in protocol B.
+
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolA: ProtocolDefinition = {
+            protocol  : 'http://protocol-a.xyz',
+            published : false,
+            types     : { foo: {} },
+            structure : { foo: {} }
+          };
+          const protocolB: ProtocolDefinition = {
+            protocol  : 'http://protocol-b.xyz',
+            published : false,
+            types     : { foo: {} },
+            structure : { foo: {} }
+          };
+
+          // Alice installs both protocols
+          const configA = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: protocolA });
+          expect((await dwn.processMessage(alice.did, configA.message)).status.code).toBe(202);
+          const configB = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: protocolB });
+          expect((await dwn.processMessage(alice.did, configB.message)).status.code).toBe(202);
+
+          // Alice writes a record in protocol B
+          const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolB.protocol,
+            protocolPath : 'foo',
+          });
+          const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
+          expect(writeReply.status.code).toBe(202);
+
+          // Alice grants Bob delete permission scoped to protocol A (not B)
+          const permissionGrant = await PermissionsProtocol.createGrant({
+            signer      : Jws.createSigner(alice),
+            grantedTo   : bob.did,
+            dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
+            scope       : {
+              interface : DwnInterfaceName.Records,
+              method    : DwnMethodName.Delete,
+              protocol  : protocolA.protocol,
+            }
+          });
+          const grantDataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
+          expect((await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, { dataStream: grantDataStream })).status.code).toBe(202);
+
+          // Bob tries to delete the protocol B record with the protocol A grant — should fail
+          const recordsDelete = await RecordsDelete.create({
+            recordId          : recordsWrite.message.recordId,
+            signer            : Jws.createSigner(bob),
+            permissionGrantId : permissionGrant.recordsWrite.message.recordId,
+          });
+          const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
+          expect(deleteReply.status.code).toBe(401);
+          expect(deleteReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationDeleteProtocolScopeMismatch);
+        });
+
+        it('should reject delete without a grant when non-owner tries to delete a non-protocol record', async () => {
+          // scenario: Alice writes a non-protocol record, Bob tries to delete it without any grant.
+          //           This test verifies the fallback error path is unchanged.
+
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+          expect((await dwn.processMessage(alice.did, recordsWrite.message, { dataStream })).status.code).toBe(202);
+
+          const recordsDelete = await RecordsDelete.create({
+            recordId : recordsWrite.message.recordId,
+            signer   : Jws.createSigner(bob),
+          });
+          const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
+          expect(deleteReply.status.code).toBe(401);
+          expect(deleteReply.status.detail).toContain(DwnErrorCode.RecordsDeleteAuthorizationFailed);
+        });
       });
 
       it('should index additional properties from the RecordsWrite being deleted', async () => {

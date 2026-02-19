@@ -24,6 +24,11 @@ export type RecordsDeleteOptions = {
   prune?: boolean
 
   /**
+   * The ID of the permission grant authorizing this delete.
+   */
+  permissionGrantId?: string;
+
+  /**
    * The delegated grant to sign on behalf of the logical author, which is the grantor (`grantedBy`) of the delegated grant.
    */
   delegatedGrant?: DataEncodedRecordsWriteMessage;
@@ -64,9 +69,10 @@ export class RecordsDelete extends AbstractMessage<RecordsDeleteMessage> {
 
     const authorization = await Message.createAuthorization({
       descriptor,
-      signer         : options.signer,
-      protocolRole   : options.protocolRole,
-      delegatedGrant : options.delegatedGrant
+      signer            : options.signer,
+      protocolRole      : options.protocolRole,
+      permissionGrantId : options.permissionGrantId,
+      delegatedGrant    : options.delegatedGrant
     });
     const message: RecordsDeleteMessage = { descriptor, authorization };
 
