@@ -4,6 +4,7 @@ import type { Jwk } from '@enbox/crypto';
 import { Convert } from '@enbox/common';
 import { DidJwk } from '@enbox/dids';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { Encoder, Message, PrivateKeySigner, RecordsWrite } from '@enbox/dwn-sdk-js';
 
 import type { AgentDataStore, DwnDataStore } from '../src/store-data.js';
 
@@ -231,29 +232,35 @@ describe('KeyStore', () => {
       });
 
       it('throws an error if legacy unencrypted records exceed DWN max data size for query results', async () => {
-        // Write an oversized unencrypted record directly to the DWN (bypassing
-        // the encrypted store path) to simulate a legacy record whose encodedData
-        // is missing from query results.
+        // Inject an oversized unencrypted record directly into the message store
+        // (bypassing the handler which now enforces encryptionRequired) to simulate
+        // a legacy record whose encodedData is missing from query results.
         const keyBytes = Convert.string(new Array(102400 + 1).join('0')).toUint8Array();
 
         // Initialize the storage protocol (which now includes $encryption keys).
         await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
 
-        // Write directly without encryption: true — the record is unencrypted.
-        const response = await testHarness.agent.dwn.processRequest({
-          author        : testHarness.agent.agentDid.uri,
-          target        : testHarness.agent.agentDid.uri,
-          messageType   : DwnInterface.RecordsWrite,
-          messageParams : {
-            dataFormat   : 'application/json',
-            protocol     : JwkProtocolDefinition.protocol,
-            protocolPath : 'privateJwk',
-            schema       : JwkProtocolDefinition.types.privateJwk.schema,
-          },
-          dataStream: new Blob([keyBytes], { type: 'application/json' })
+        // Build an unencrypted RecordsWrite and inject it directly into the
+        // message store to simulate a pre-existing legacy record. The oversized
+        // payload means encodedData will be absent from query results.
+        const tenant = testHarness.agent.agentDid.uri;
+        const portableDid = await testHarness.agent.agentDid.export();
+        const signer = new PrivateKeySigner({
+          privateJwk : portableDid.privateKeys![0] as any,
+          keyId      : portableDid.document.verificationMethod![0].id,
         });
-
-        expect(response.reply.status.code).toBe(202);
+        const recordsWrite = await RecordsWrite.create({
+          dataFormat   : 'application/json',
+          protocol     : JwkProtocolDefinition.protocol,
+          protocolPath : 'privateJwk',
+          schema       : JwkProtocolDefinition.types.privateJwk.schema,
+          signer,
+          data         : keyBytes,
+        });
+        const { messageStore, stateIndex } = testHarness.agent.dwn.node.storage;
+        const indexes = await recordsWrite.constructIndexes(true);
+        await messageStore.put(tenant, recordsWrite.message, indexes);
+        await stateIndex.insert(tenant, await Message.getCid(recordsWrite.message), indexes);
 
         try {
           await keyStore.list({ agent: testHarness.agent });
@@ -550,7 +557,9 @@ describe('KeyStore', () => {
       });
 
       it('should handle mixed encrypted and unencrypted records', async () => {
-        // Step 1: Write an unencrypted record directly (simulating a legacy record).
+        // Step 1: Inject an unencrypted record directly into the message store
+        // (bypassing the handler which now enforces encryptionRequired) to
+        // simulate a pre-existing legacy record.
         await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
         const legacyKey: Jwk = {
           kid : 'legacy-key-1',
@@ -561,18 +570,27 @@ describe('KeyStore', () => {
           d   : 'testd',
         };
         const legacyBytes = Convert.object(legacyKey).toUint8Array();
-        await testHarness.agent.dwn.processRequest({
-          author        : testHarness.agent.agentDid.uri,
-          target        : testHarness.agent.agentDid.uri,
-          messageType   : DwnInterface.RecordsWrite,
-          messageParams : {
-            dataFormat   : 'application/json',
-            protocol     : JwkProtocolDefinition.protocol,
-            protocolPath : 'privateJwk',
-            schema       : JwkProtocolDefinition.types.privateJwk.schema,
-          },
-          dataStream: new Blob([legacyBytes], { type: 'application/json' })
+        const tenant = testHarness.agent.agentDid.uri;
+        const portableDid = await testHarness.agent.agentDid.export();
+        const signer = new PrivateKeySigner({
+          privateJwk : portableDid.privateKeys![0] as any,
+          keyId      : portableDid.document.verificationMethod![0].id,
         });
+        const legacyWrite = await RecordsWrite.create({
+          dataFormat   : 'application/json',
+          protocol     : JwkProtocolDefinition.protocol,
+          protocolPath : 'privateJwk',
+          schema       : JwkProtocolDefinition.types.privateJwk.schema,
+          signer,
+          data         : legacyBytes,
+        });
+        const { messageStore, stateIndex } = testHarness.agent.dwn.node.storage;
+        const legacyIndexes = await legacyWrite.constructIndexes(true);
+        // Inline encodedData so the record is returned with data in query results.
+        const legacyMessage = legacyWrite.message as any;
+        legacyMessage.encodedData = Encoder.bytesToBase64Url(legacyBytes);
+        await messageStore.put(tenant, legacyMessage, legacyIndexes);
+        await stateIndex.insert(tenant, await Message.getCid(legacyWrite.message), legacyIndexes);
 
         // Step 2: Write an encrypted record through the store API.
         const encryptedKeyUri = await testHarness.agent.keyManager.generateKey({

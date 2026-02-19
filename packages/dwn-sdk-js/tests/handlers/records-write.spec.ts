@@ -35,6 +35,7 @@ import { PermissionConditionPublication } from '../../src/types/permission-types
 import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { RecordsWriteHandler } from '../../src/handlers/records-write.js';
+import { Secp256k1 } from '../../src/utils/secp256k1.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
@@ -2553,6 +2554,139 @@ export function testRecordsWriteHandler(): void {
           const recordsReadReply = await dwn.processMessage(alice.did, recordsRead.message);
           expect(recordsReadReply.status.code).toBe(200);
           expect(recordsReadReply.entry!.recordsWrite?.descriptor.dataFormat).toBe(newDataFormat);
+        });
+
+        it('should reject a plaintext RecordsWrite when the protocol type has encryptionRequired: true', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolDefinition: ProtocolDefinition = {
+            protocol  : 'http://encryption-required-test.xyz',
+            published : false,
+            types     : {
+              secret: {
+                schema             : 'http://secret-schema',
+                encryptionRequired : true,
+              }
+            },
+            structure: {
+              secret: {}
+            }
+          };
+
+          // Alice installs the protocol
+          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : protocolDefinition,
+          });
+          const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+          expect(configReply.status.code).toBe(202);
+
+          // Alice writes a record WITHOUT encryption — should be rejected
+          const data = Encoder.stringToBytes('plaintext secret');
+          const recordsWrite = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'secret',
+            schema       : 'http://secret-schema',
+            data,
+          });
+
+          const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
+          expect(writeReply.status.code).toBe(400);
+          expect(writeReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationEncryptionRequired);
+        });
+
+        it('should accept an encrypted RecordsWrite when the protocol type has encryptionRequired: true', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolDefinition: ProtocolDefinition = {
+            protocol  : 'http://encryption-required-test.xyz',
+            published : false,
+            types     : {
+              secret: {
+                schema             : 'http://secret-schema',
+                encryptionRequired : true,
+              }
+            },
+            structure: {
+              secret: {}
+            }
+          };
+
+          // Alice installs the protocol
+          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : protocolDefinition,
+          });
+          const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+          expect(configReply.status.code).toBe(202);
+
+          // Generate a secp256k1 key pair for encryption (did:key personas use Ed25519 for signing)
+          const encryptionKeyPair = await Secp256k1.generateKeyPair();
+          const data = Encoder.stringToBytes('encrypted secret');
+          const dataEncryptionKey = TestDataGenerator.randomBytes(32);
+          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
+
+          const encryptionInput: EncryptionInput = {
+            algorithm            : EncryptionAlgorithm.Aes256Ctr,
+            initializationVector : dataEncryptionInitializationVector,
+            key                  : dataEncryptionKey,
+            keyEncryptionInputs  : [{
+              publicKeyId      : alice.keyId,
+              publicKey        : encryptionKeyPair.publicJwk,
+              algorithm        : EncryptionAlgorithm.EciesSecp256k1,
+              derivationScheme : KeyDerivationScheme.ProtocolPath
+            }]
+          };
+
+          const recordsWrite = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'secret',
+            schema       : 'http://secret-schema',
+            data,
+            encryptionInput,
+          });
+
+          const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
+          expect(writeReply.status.code).toBe(202);
+        });
+
+        it('should allow plaintext writes for protocol types without encryptionRequired', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolDefinition: ProtocolDefinition = {
+            protocol  : 'http://mixed-encryption-test.xyz',
+            published : false,
+            types     : {
+              public : {},
+              secret : { encryptionRequired: true },
+            },
+            structure: {
+              public : {},
+              secret : {},
+            }
+          };
+
+          // Alice installs the protocol
+          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : protocolDefinition,
+          });
+          const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+          expect(configReply.status.code).toBe(202);
+
+          // Plaintext write to the non-encrypted type — should succeed
+          const data = Encoder.stringToBytes('public data');
+          const recordsWrite = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'public',
+            data,
+          });
+
+          const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
+          expect(writeReply.status.code).toBe(202);
         });
 
         it('should fail authorization if record schema is not allowed at the hierarchical level attempted for the RecordsWrite', async () => {

@@ -674,6 +674,14 @@ export class ProtocolAuthorization {
         instead has '${dataFormat}'`
       );
     }
+
+    // enforce encryption when the protocol type requires it
+    if (protocolType.encryptionRequired === true && inboundMessage.encryption === undefined) {
+      throw new DwnError(
+        DwnErrorCode.ProtocolAuthorizationEncryptionRequired,
+        `type '${declaredTypeName}' requires encryption but message has no encryption metadata`
+      );
+    }
   }
 
   /**
