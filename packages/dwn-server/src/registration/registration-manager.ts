@@ -1,6 +1,5 @@
-import type { ProofOfWorkChallengeModel } from './proof-of-work-types.js';
 import type { ActiveTenantCheckResult, TenantGate } from '@enbox/dwn-sdk-js';
-import type { RegistrationData, RegistrationRequest } from './registration-types.js';
+import type { ProofOfWorkChallengeModel, RegistrationData, RegistrationRequest } from '@enbox/dwn-clients';
 
 import { readFileSync } from 'fs';
 

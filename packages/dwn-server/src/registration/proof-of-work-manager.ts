@@ -1,4 +1,4 @@
-import type { ProofOfWorkChallengeModel } from './proof-of-work-types.js';
+import type { ProofOfWorkChallengeModel } from '@enbox/dwn-clients';
 
 import { ProofOfWork } from './proof-of-work.js';
 import { DwnServerError, DwnServerErrorCode } from '../dwn-error.js';

@@ -15,6 +15,7 @@ import type { DwnServerError } from './dwn-error.js';
 import type { JsonRpcRequest } from '@enbox/dwn-clients';
 import type { RegistrationManager } from './registration/registration-manager.js';
 import type { RequestContext } from './lib/json-rpc-router.js';
+import type { ServerInfo } from '@enbox/dwn-clients';
 import type { SocketConnection } from './connection/socket-connection.js';
 
 import { config } from './config.js';
@@ -293,15 +294,17 @@ export class HttpApi {
       registrationRequirements.push('terms-of-service');
     }
 
-    return Response.json({
-      url                      : config.baseUrl,
-      server                   : this.#packageInfo.server,
+    const serverInfo: ServerInfo = {
       maxFileSize              : config.maxRecordDataSize,
       registrationRequirements : registrationRequirements,
-      version                  : this.#packageInfo.version,
+      server                   : this.#packageInfo.server,
       sdkVersion               : this.#packageInfo.sdkVersion,
+      url                      : config.baseUrl,
+      version                  : this.#packageInfo.version,
       webSocketSupport         : config.webSocketSupport,
-    });
+    };
+
+    return Response.json(serverInfo);
   }
 
   async #handleJsonRpcPost(req: Request): Promise<Response> {
