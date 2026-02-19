@@ -102,7 +102,6 @@
 
     "bun-types": "^1.2.4",
     "dependency-cruiser": "^16.3.7",
-    "esbuild": "0.16.17",
     "eslint": "9.7.0",
     "eslint-plugin-todo-plz": "1.3.0",
     "eventemitter3": "5.0.4",
@@ -123,7 +122,7 @@
   "scripts": {
     "build:esm": "tsc",
     "build": "bun run clean && bun run compile-validators && bun run build:esm && bun run bundle",
-    "bundle": "bun ./build/create-browser-bundle.cjs",
+    "bundle": "rimraf dist/browser.mjs && bun ../../build/browser-bundle.js --node-shims --metafile",
     "clean": "rimraf dist && rimraf generated/*",
     "compile-validators": "bun ./build/compile-validators.js",
     "lint": "eslint . --max-warnings 0",

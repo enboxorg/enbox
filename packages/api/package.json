@@ -9,7 +9,7 @@
   "scripts": {
     "clean": "rimraf dist",
     "build:esm": "rimraf dist/esm dist/types && bun tsc -p tsconfig.json",
-    "build:browser": "rimraf dist/browser.mjs dist/browser.js && bun build/bundles.js",
+    "build:browser": "rimraf dist/browser.mjs && bun ../../build/browser-bundle.js --node-shims --metafile",
     "build": "bun run clean && bun run build:esm && bun run build:browser",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
@@ -90,7 +90,6 @@
     "@typescript-eslint/parser": "8.32.1",
     "@vitest/browser-playwright": "4.0.18",
     "bun-types": "latest",
-    "esbuild": "0.19.8",
     "eslint": "9.7.0",
     "eventemitter3": "5.0.4",
     "rimraf": "4.4.0",

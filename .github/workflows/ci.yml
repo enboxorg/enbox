@@ -662,6 +662,9 @@ jobs:
           path: packages
 
       - name: Install Playwright browsers
+        # playwright@1.45.3 is pinned in root devDependencies to match the version
+        # resolved for @vitest/browser-playwright's peer dependency. This ensures
+        # the downloaded browser binaries match what vitest expects at runtime.
         run: bunx playwright install --with-deps chromium firefox webkit
 
       - name: Run browser tests
@@ -713,6 +716,10 @@ jobs:
           fi
           if [ "${{ needs.test-dwn-server.result }}" != "success" ]; then
             echo "::error::test-dwn-server failed"
+            exit 1
+          fi
+          if [ "${{ needs.test-browser.result }}" != "success" ]; then
+            echo "::error::test-browser failed"
             exit 1
           fi
 

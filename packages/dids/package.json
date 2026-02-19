@@ -9,7 +9,7 @@
   "scripts": {
     "clean": "rimraf dist",
     "build:esm": "rimraf dist/esm dist/types && bun tsc -p tsconfig.json",
-    "build:browser": "rimraf dist/browser.mjs dist/browser.js && bun build/bundles.js",
+    "build:browser": "rimraf dist/browser.mjs && bun ../../build/browser-bundle.js --extra-entry src/utils.ts:dist/utils.js",
     "build": "bun run clean && bun run build:esm && bun run build:browser",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
@@ -91,12 +91,9 @@
     "@typescript-eslint/eslint-plugin": "8.32.1",
     "@typescript-eslint/parser": "8.32.1",
     "@vitest/browser-playwright": "4.0.18",
-    "buffer": "6.0.3",
     "bun-types": "latest",
-    "esbuild": "0.23.0",
     "eslint": "9.7.0",
     "rimraf": "5.0.7",
-    "source-map-loader": "5.0.0",
     "typescript": "5.5.4",
     "vitest": "4.0.18"
   }
