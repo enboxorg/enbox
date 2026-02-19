@@ -180,6 +180,11 @@ export class Records {
 
   /**
    * Constructs the full key derivation path using `protocolPath` scheme.
+   *
+   * The path is `[scheme, protocol, ...protocolPathSegments]`. Because each record's `protocol`
+   * field always refers to the protocol it was written under, records in composed protocols
+   * naturally derive independent key hierarchies — a `$ref` parent (referenced protocol) and
+   * its children (composing protocol) use different protocol URIs and thus different key trees.
    */
   public static constructKeyDerivationPathUsingProtocolPathScheme(descriptor: RecordsWriteDescriptor): string[] {
     // ensure `protocol` is defined
@@ -203,6 +208,13 @@ export class Records {
 
   /**
    * Constructs the full key derivation path using `protocolContext` scheme.
+   *
+   * NOTE on protocol composition: When a context tree spans two protocols via `$ref` composition,
+   * the root `contextId` segment (the `$ref` parent record's ID) is shared across both protocols.
+   * This means ProtocolContext-encrypted records from the composing protocol and the referenced
+   * protocol derive the same context key. This is by design — it enables multi-party access within
+   * a shared context (e.g., thread participants can decrypt messages from both the threads protocol
+   * and composing protocols that attach to those threads).
    */
   public static constructKeyDerivationPathUsingProtocolContextScheme(contextId: string | undefined): string[] {
     if (contextId === undefined) {

@@ -73,6 +73,10 @@ export class Protocols {
    * then returns the final encryption-enabled protocol definition.
    * NOTE: The original definition passed in is unmodified.
    *
+   * `$ref` nodes (cross-protocol attachment points) are skipped during `$encryption` injection
+   * because their records belong to the referenced protocol, whose own encryption keys govern them.
+   * Children of `$ref` nodes are still processed because they belong to the composing protocol.
+   *
    * Overload 1 (callback-based): Accepts an EncryptionKeyDeriver that performs
    * key derivation internally. The private key never leaves the caller's boundary.
    */
@@ -111,6 +115,14 @@ export class Protocols {
         for (const key in ruleSet) {
           if (!key.startsWith('$')) {
             const currentPath = [...parentPath, key];
+
+            // Skip $ref nodes — they are governed by the referenced protocol's encryption keys.
+            // Still recurse into children, which belong to the composing protocol.
+            if (ruleSet[key].$ref !== undefined) {
+              await injectKeysViaCallback(ruleSet[key], currentPath);
+              continue;
+            }
+
             const publicKeyJwk = await keyDeriver.derivePublicKey(currentPath);
             ruleSet[key].$encryption = {
               rootKeyId: keyDeriver.rootKeyId,
@@ -134,6 +146,14 @@ export class Protocols {
         // if we encounter a nested rule set (a property name that doesn't begin with '$'), recursively inject the `$encryption` property
         if (!key.startsWith('$')) {
           const derivedPrivateKey = await HdKey.derivePrivateKey(parentKey, [key]);
+
+          // Skip $ref nodes — they are governed by the referenced protocol's encryption keys.
+          // Still recurse into children, which belong to the composing protocol.
+          if (ruleSet[key].$ref !== undefined) {
+            await addEncryptionProperty(ruleSet[key], derivedPrivateKey);
+            continue;
+          }
+
           const publicKeyJwk = await Secp256k1.getPublicJwk(derivedPrivateKey.derivedPrivateKey);
 
           ruleSet[key].$encryption = { rootKeyId, publicKeyJwk };

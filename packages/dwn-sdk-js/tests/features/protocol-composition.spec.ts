@@ -1,19 +1,27 @@
+import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { DidResolver } from '@enbox/dids';
 import type { EventStream } from '../../src/types/subscriptions.js';
 import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
-import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { DataStore, MessageStore, RecordsReadReply, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js';
 
 import sinon from 'sinon';
 
+import { DataStream } from '../../src/utils/data-stream.js';
 import { Dwn } from '../../src/dwn.js';
+import { Encoder } from '../../src/utils/encoder.js';
 import { Jws } from '../../src/utils/jws.js';
+import { Protocols } from '../../src/utils/protocols.js';
+import { Records } from '../../src/utils/records.js';
+import { Secp256k1 } from '../../src/utils/secp256k1.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
+import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-
 import { DwnErrorCode, ProtocolsConfigure, RecordsRead } from '../../src/index.js';
+import { HdKey, KeyDerivationScheme } from '../../src/utils/hd-key.js';
 
 /**
  * Tests for protocol composition using `uses` + `$ref`.
@@ -1019,6 +1027,310 @@ export function testProtocolComposition(): void {
           // JSON schema enforces minProperties: 1 on `uses`
           expect(error.message).toContain('must NOT have fewer than 1 properties');
         }
+      });
+    });
+
+    // =========================================================================
+    // Encryption + composition tests
+    // =========================================================================
+
+    describe('encryption with protocol composition', () => {
+      let encryptionPrivateJwk: PrivateKeyJwk;
+      let encryptionRootKeyId: string;
+
+      beforeAll(async () => {
+        const { privateJwk } = await Secp256k1.generateKeyPair();
+        encryptionPrivateJwk = privateJwk;
+        encryptionRootKeyId = 'did:example:alice#enc';
+      });
+
+      it('should skip `$encryption` injection on `$ref` nodes but inject on their children (raw-key path)', async () => {
+        const composingProtocol: ProtocolDefinition = {
+          protocol  : 'https://comments.example.com',
+          published : true,
+          uses      : { threads: 'https://threads.example.com' },
+          types     : {
+            comment  : { schema: 'https://comments.example.com/schemas/comment', dataFormats: ['application/json'] },
+            reaction : { schema: 'https://comments.example.com/schemas/reaction', dataFormats: ['application/json'] },
+          },
+          structure: {
+            thread: {
+              $ref    : 'threads:thread',
+              comment : {
+                $actions : [{ who: 'anyone', can: ['create', 'read'] }],
+                reaction : {
+                  $actions: [{ who: 'anyone', can: ['create', 'read'] }],
+                },
+              },
+            },
+          },
+        };
+
+        const result = await Protocols.deriveAndInjectPublicEncryptionKeys(
+          composingProtocol, encryptionRootKeyId, encryptionPrivateJwk,
+        );
+
+        // $ref node must NOT have $encryption
+        expect(result.structure.thread.$encryption).toBeUndefined();
+
+        // Children of $ref node MUST have $encryption
+        expect(result.structure.thread.comment.$encryption).toBeDefined();
+        expect(result.structure.thread.comment.$encryption!.rootKeyId).toBe(encryptionRootKeyId);
+        expect(result.structure.thread.comment.$encryption!.publicKeyJwk).toBeDefined();
+
+        // Grandchild of $ref node
+        expect(result.structure.thread.comment.reaction.$encryption).toBeDefined();
+        expect(result.structure.thread.comment.reaction.$encryption!.rootKeyId).toBe(encryptionRootKeyId);
+      });
+
+      it('should skip `$encryption` injection on `$ref` nodes but inject on their children (callback path)', async () => {
+        const composingProtocol: ProtocolDefinition = {
+          protocol  : 'https://comments.example.com',
+          published : true,
+          uses      : { threads: 'https://threads.example.com' },
+          types     : {
+            comment  : { schema: 'https://comments.example.com/schemas/comment', dataFormats: ['application/json'] },
+            reaction : { schema: 'https://comments.example.com/schemas/reaction', dataFormats: ['application/json'] },
+          },
+          structure: {
+            thread: {
+              $ref    : 'threads:thread',
+              comment : {
+                $actions : [{ who: 'anyone', can: ['create', 'read'] }],
+                reaction : {
+                  $actions: [{ who: 'anyone', can: ['create', 'read'] }],
+                },
+              },
+            },
+          },
+        };
+
+        const calledPaths: string[][] = [];
+        const keyDeriver = {
+          rootKeyId        : encryptionRootKeyId,
+          derivationScheme : KeyDerivationScheme.ProtocolPath,
+          derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicKeyJwk> => {
+            calledPaths.push([...fullDerivationPath]);
+            const privateKeyBytes = Secp256k1.privateJwkToBytes(encryptionPrivateJwk);
+            const derivedPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(privateKeyBytes, fullDerivationPath);
+            const derivedPublicKeyBytes = await Secp256k1.getPublicKey(derivedPrivateKeyBytes);
+            return Secp256k1.publicKeyToJwk(derivedPublicKeyBytes);
+          },
+        };
+
+        const result = await Protocols.deriveAndInjectPublicEncryptionKeys(
+          composingProtocol, keyDeriver,
+        );
+
+        // $ref node must NOT have $encryption
+        expect(result.structure.thread.$encryption).toBeUndefined();
+
+        // Children of $ref node MUST have $encryption
+        expect(result.structure.thread.comment.$encryption).toBeDefined();
+        expect(result.structure.thread.comment.reaction.$encryption).toBeDefined();
+
+        // derivePublicKey should NOT have been called for the $ref node itself
+        const threadPath = [KeyDerivationScheme.ProtocolPath, 'https://comments.example.com', 'thread'];
+        expect(calledPaths).not.toContainEqual(threadPath);
+
+        // derivePublicKey SHOULD have been called for children
+        const commentPath = [KeyDerivationScheme.ProtocolPath, 'https://comments.example.com', 'thread', 'comment'];
+        const reactionPath = [KeyDerivationScheme.ProtocolPath, 'https://comments.example.com', 'thread', 'comment', 'reaction'];
+        expect(calledPaths).toContainEqual(commentPath);
+        expect(calledPaths).toContainEqual(reactionPath);
+      });
+
+      it('should produce identical $encryption for children across both overloads', async () => {
+        const composingProtocol: ProtocolDefinition = {
+          protocol  : 'https://comments.example.com',
+          published : true,
+          uses      : { threads: 'https://threads.example.com' },
+          types     : {
+            comment: { schema: 'https://comments.example.com/schemas/comment', dataFormats: ['application/json'] },
+          },
+          structure: {
+            thread: {
+              $ref    : 'threads:thread',
+              comment : {},
+            },
+          },
+        };
+
+        // Raw-key path
+        const resultA = await Protocols.deriveAndInjectPublicEncryptionKeys(
+          composingProtocol, encryptionRootKeyId, encryptionPrivateJwk,
+        );
+
+        // Callback path
+        const keyDeriver = {
+          rootKeyId        : encryptionRootKeyId,
+          derivationScheme : KeyDerivationScheme.ProtocolPath,
+          derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicKeyJwk> => {
+            const privateKeyBytes = Secp256k1.privateJwkToBytes(encryptionPrivateJwk);
+            const derivedPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(privateKeyBytes, fullDerivationPath);
+            const derivedPublicKeyBytes = await Secp256k1.getPublicKey(derivedPrivateKeyBytes);
+            return Secp256k1.publicKeyToJwk(derivedPublicKeyBytes);
+          },
+        };
+
+        const resultB = await Protocols.deriveAndInjectPublicEncryptionKeys(
+          composingProtocol, keyDeriver,
+        );
+
+        // Both paths must skip $ref
+        expect(resultA.structure.thread.$encryption).toBeUndefined();
+        expect(resultB.structure.thread.$encryption).toBeUndefined();
+
+        // Both paths must produce identical $encryption on children
+        expect(resultA.structure.thread.comment.$encryption!.publicKeyJwk).toEqual(
+          resultB.structure.thread.comment.$encryption!.publicKeyJwk,
+        );
+        expect(resultA.structure.thread.comment.$encryption!.rootKeyId).toBe(
+          resultB.structure.thread.comment.$encryption!.rootKeyId,
+        );
+      });
+
+      it('should successfully install a composing protocol with encryption after $ref skip', async () => {
+        // This test verifies the full pipeline: inject encryption keys → ProtocolsConfigure.create()
+        // → validateRefNode() passes because $ref node has no $encryption.
+        const alice = await TestDataGenerator.generatePersona();
+        TestStubGenerator.stubDidResolver(didResolver, [alice]);
+
+        // Install the threads protocol first (required dependency)
+        const threadsConfigure = await ProtocolsConfigure.create({
+          definition : threadsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        const threadsInstallReply = await dwn.processMessage(alice.did, threadsConfigure.message);
+        expect(threadsInstallReply.status.code).toBe(202);
+
+        // Inject encryption keys into the composing protocol
+        const encryptedComments = await Protocols.deriveAndInjectPublicEncryptionKeys(
+          commentsProtocol, alice.keyId, alice.keyPair.privateJwk,
+        );
+
+        // $ref node should not have $encryption
+        expect(encryptedComments.structure.thread.$encryption).toBeUndefined();
+        // Children should have $encryption
+        expect(encryptedComments.structure.thread.comment.$encryption).toBeDefined();
+
+        // ProtocolsConfigure.create() should NOT throw — validateRefNode() will pass
+        // because $ref node has no forbidden directives
+        const commentsConfigure = await ProtocolsConfigure.create({
+          definition : encryptedComments,
+          signer     : Jws.createSigner(alice),
+        });
+
+        // Install should succeed
+        const commentsInstallReply = await dwn.processMessage(alice.did, commentsConfigure.message);
+        expect(commentsInstallReply.status.code).toBe(202);
+      });
+
+      it('should encrypt and decrypt a child record written under a `$ref` parent', async () => {
+        // Full round-trip: install both protocols → write parent → write encrypted child → read and decrypt
+        const alice = await TestDataGenerator.generatePersona();
+        TestStubGenerator.stubDidResolver(didResolver, [alice]);
+
+        // 1. Install the threads protocol (parent)
+        const threadsConfigure = await ProtocolsConfigure.create({
+          definition : threadsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        const threadsReply = await dwn.processMessage(alice.did, threadsConfigure.message);
+        expect(threadsReply.status.code).toBe(202);
+
+        // 2. Install the comments protocol with encryption keys
+        const encryptedComments = await Protocols.deriveAndInjectPublicEncryptionKeys(
+          commentsProtocol, alice.keyId, alice.keyPair.privateJwk,
+        );
+        const commentsConfigure = await ProtocolsConfigure.create({
+          definition : encryptedComments,
+          signer     : Jws.createSigner(alice),
+        });
+        const commentsReply = await dwn.processMessage(alice.did, commentsConfigure.message);
+        expect(commentsReply.status.code).toBe(202);
+
+        // 3. Write a thread record (in the threads protocol — the $ref parent)
+        const threadWrite = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol     : threadsProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://threads.example.com/schemas/thread',
+          dataFormat   : 'application/json',
+        });
+        const threadWriteReply = await dwn.processMessage(
+          alice.did, threadWrite.message, { dataStream: threadWrite.dataStream },
+        );
+        expect(threadWriteReply.status.code).toBe(202);
+
+        const threadContextId = threadWrite.message.contextId!;
+
+        // 4. Write an encrypted comment (child of $ref parent, in the comments protocol)
+        const plaintext = 'This is a secret comment';
+        const plaintextBytes = Encoder.stringToBytes(plaintext);
+
+        const encryptedComment = await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
+          plaintextBytes,
+          author                                           : alice,
+          protocolDefinition                               : encryptedComments,
+          protocolPath                                     : 'thread/comment',
+          protocolParentContextId                          : threadContextId,
+          encryptSymmetricKeyWithProtocolPathDerivedKey    : true,
+          encryptSymmetricKeyWithProtocolContextDerivedKey : false,
+        });
+
+        const commentWriteReply = await dwn.processMessage(
+          alice.did, encryptedComment.message, { dataStream: DataStream.fromBytes(encryptedComment.encryptedDataBytes) },
+        );
+        expect(commentWriteReply.status.code).toBe(202);
+
+        // 5. Read the encrypted comment back
+        const readMessage = await RecordsRead.create({
+          signer : Jws.createSigner(alice),
+          filter : { recordId: encryptedComment.message.recordId },
+        });
+        const readReply = await dwn.processMessage(alice.did, readMessage.message) as RecordsReadReply;
+        expect(readReply.status.code).toBe(200);
+
+        // 6. Decrypt using the composing protocol's key hierarchy.
+        //    The key derivation path is [protocolPath, commentsProtocol.protocol, 'thread', 'comment']
+        //    — note this uses the COMPOSING protocol's URI, not the threads protocol's URI,
+        //    because the comment record's descriptor.protocol is the comments protocol.
+        const rootKey: DerivedPrivateJwk = {
+          rootKeyId         : alice.keyId,
+          derivationScheme  : KeyDerivationScheme.ProtocolPath,
+          derivedPrivateKey : alice.keyPair.privateJwk,
+        };
+        const decryptedStream = await Records.decrypt(
+          readReply.entry!.recordsWrite!, rootKey, readReply.entry!.data!,
+        );
+        const decryptedBytes = await DataStream.toBytes(decryptedStream);
+        expect(Encoder.bytesToString(decryptedBytes)).toBe(plaintext);
+      });
+
+      it('should not inject `$encryption` on the original protocol definition (immutability)', async () => {
+        const composingProtocol: ProtocolDefinition = {
+          protocol  : 'https://comments.example.com',
+          published : true,
+          uses      : { threads: 'https://threads.example.com' },
+          types     : {
+            comment: { schema: 'https://comments.example.com/schemas/comment', dataFormats: ['application/json'] },
+          },
+          structure: {
+            thread: {
+              $ref    : 'threads:thread',
+              comment : {},
+            },
+          },
+        };
+
+        await Protocols.deriveAndInjectPublicEncryptionKeys(
+          composingProtocol, encryptionRootKeyId, encryptionPrivateJwk,
+        );
+
+        // Original must be unmodified
+        expect(composingProtocol.structure.thread.$encryption).toBeUndefined();
+        expect(composingProtocol.structure.thread.comment.$encryption).toBeUndefined();
       });
     });
   });
