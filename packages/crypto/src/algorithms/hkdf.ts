@@ -1,7 +1,9 @@
+import type { DeriveKeyBytesParams } from '../types/params-direct.js';
+import type { HkdfParams } from '../primitives/hkdf.js';
 import type { KeyBytesDeriver } from '../types/key-deriver.js';
-import type { DeriveKeyBytesParams, HkdfParams } from '@enbox/crypto';
 
-import { CryptoAlgorithm, Hkdf } from '@enbox/crypto';
+import { CryptoAlgorithm } from './crypto-algorithm.js';
+import { Hkdf } from '../primitives/hkdf.js';
 
 /**
  * The `HkdfDeriveKeyBytesParams` interface defines the algorithm-specific parameters that should be
@@ -17,9 +19,23 @@ export interface HkdfDeriveKeyBytesParams extends DeriveKeyBytesParams {
   algorithm: 'HKDF-256' | 'HKDF-384' | 'HKDF-512';
 }
 
+/**
+ * The `HkdfAlgorithm` class provides a concrete implementation for HKDF key derivation. It wraps
+ * the {@link Hkdf} primitive and maps JOSE algorithm names to hash functions.
+ */
 export class HkdfAlgorithm extends CryptoAlgorithm
   implements KeyBytesDeriver<HkdfDeriveKeyBytesParams, Uint8Array> {
 
+  /**
+   * Derives a cryptographic byte array using HKDF.
+   *
+   * @param params - The parameters for the key derivation operation.
+   * @param params.algorithm - The HKDF algorithm variant (e.g., `'HKDF-256'`).
+   * @param params.baseKeyBytes - The input key material.
+   * @param params.length - The desired length of the output in bits.
+   *
+   * @returns A Promise that resolves to the derived key bytes.
+   */
   public async deriveKeyBytes({ algorithm, ...params }:
     HkdfDeriveKeyBytesParams & Omit<HkdfParams, 'hash'>
   ): Promise<Uint8Array> {

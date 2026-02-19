@@ -1,7 +1,28 @@
+import type { AsymmetricKeyConverter } from './key-converter.js';
 import type { AsymmetricKeyGenerator } from './key-generator.js';
+import type { Cipher } from './cipher.js';
 import type { Hasher } from './hasher.js';
+import type { Jwk } from '../jose/jwk.js';
 import type { KeyIdentifier } from './identifier.js';
+import type { KeyWrapper } from './key-wrapper.js';
 import type { Signer } from './signer.js';
+import type {
+  BytesToPrivateKeyParams,
+  BytesToPublicKeyParams,
+  CipherParams,
+  DeriveKeyBytesParams,
+  DeriveKeyFromBytesParams,
+  DigestParams,
+  GenerateKeyParams,
+  GetPublicKeyParams,
+  PrivateKeyToBytesParams,
+  PublicKeyToBytesParams,
+  SignParams,
+  UnwrapKeyParams,
+  VerifyParams,
+  WrapKeyParams,
+} from './params-direct.js';
+import type { KeyBytesDeriver, SimpleKeyDeriver } from './key-deriver.js';
 import type {
   KmsDigestParams,
   KmsGenerateKeyParams,
@@ -47,6 +68,97 @@ export interface CryptoApi<
           Hasher<DigestInput>,
           Signer<SignInput, VerifyInput> {
   /**
+   *
+   * @param params - The parameters for getting the key URI.
+   * @param params.key - The key to get the URI for.
+   * @returns The key URI.
+   */
+  getKeyUri(params: KmsGetKeyUriParams): Promise<KeyIdentifier>;
+}
+
+/**
+ * The `DsaApi` interface is an alias for {@link CryptoApi} with the same generic parameters.
+ * It integrates key generation, hashing, and signing functionalities, designed for use with a
+ * Key Management System (KMS).
+ */
+export interface DsaApi<
+  GenerateKeyInput = GenerateKeyParams,
+  GenerateKeyOutput = Jwk,
+  GetPublicKeyInput = GetPublicKeyParams,
+  DigestInput = DigestParams,
+  SignInput = SignParams,
+  VerifyInput = VerifyParams
+> extends CryptoApi<GenerateKeyInput, GenerateKeyOutput, GetPublicKeyInput, DigestInput, SignInput, VerifyInput> {}
+
+/**
+ * The `ExtendedCryptoApi` interface extends {@link DsaApi} with encryption, key conversion,
+ * key derivation, and key wrapping capabilities.
+ *
+ * This is the full-featured cryptographic API used by agent-level code that needs direct-key
+ * cipher, key conversion, and key derivation operations beyond what the base `CryptoApi` provides.
+ */
+export interface ExtendedCryptoApi<
+  GenerateKeyInput = GenerateKeyParams,
+  GenerateKeyOutput = Jwk,
+  GetPublicKeyInput = GetPublicKeyParams,
+  DigestInput = DigestParams,
+  SignInput = SignParams,
+  VerifyInput = VerifyParams,
+  EncryptInput = CipherParams,
+  DecryptInput = CipherParams,
+  BytesToPublicKeyInput = BytesToPublicKeyParams,
+  PublicKeyToBytesInput = PublicKeyToBytesParams,
+  BytesToPrivateKeyInput = BytesToPrivateKeyParams,
+  PrivateKeyToBytesInput = PrivateKeyToBytesParams,
+  DeriveKeyInput = DeriveKeyFromBytesParams,
+  DeriveKeyOutput = Jwk,
+  DeriveKeyBytesInput = DeriveKeyBytesParams,
+  DeriveKeyBytesOutput = Uint8Array,
+  WrapKeyInput = WrapKeyParams,
+  UnwrapKeyInput = UnwrapKeyParams
+> extends
+  DsaApi<GenerateKeyInput, GenerateKeyOutput, GetPublicKeyInput, DigestInput, SignInput, VerifyInput>,
+  Cipher<EncryptInput, DecryptInput>,
+  AsymmetricKeyConverter<BytesToPublicKeyInput, PublicKeyToBytesInput, BytesToPrivateKeyInput, PrivateKeyToBytesInput>,
+  SimpleKeyDeriver<DeriveKeyInput, DeriveKeyOutput>,
+  KeyBytesDeriver<DeriveKeyBytesInput, DeriveKeyBytesOutput>,
+  KeyWrapper<WrapKeyInput, UnwrapKeyInput> {}
+
+/**
+ * Parameters for configuring a {@link KeyManager} implementation.
+ */
+export interface KeyManagerParams {
+  CipherInput?: unknown;
+  GenerateKeyInput?: unknown;
+  GenerateKeyOutput?: unknown;
+  GetPublicKeyInput?: unknown;
+  SignInput?: unknown;
+  VerifyInput?: unknown;
+}
+
+/**
+ * Default parameter types for {@link KeyManager}, using KMS-oriented types.
+ */
+export interface DefaultKeyManagerParams {
+  CipherInput: KmsDigestParams;
+  GenerateKeyInput: KmsGenerateKeyParams;
+  GenerateKeyOutput: KeyIdentifier;
+  GetPublicKeyInput: KmsGetPublicKeyParams;
+  SignInput: KmsSignParams;
+  VerifyInput: KmsVerifyParams;
+}
+
+/**
+ * The `KeyManager` interface integrates key generation and signing capabilities.
+ *
+ * Concrete implementations of this interface are intended to be used as a Key Management System
+ * (KMS), which is responsible for generating and storing cryptographic keys.
+ */
+export interface KeyManager<T extends KeyManagerParams = DefaultKeyManagerParams>
+  extends DsaApi<T['GenerateKeyInput'], T['GenerateKeyOutput'], T['GetPublicKeyInput'], KmsDigestParams, T['SignInput'], T['VerifyInput']> {
+
+  /**
+   * Returns the Key URI for a given JWK.
    *
    * @param params - The parameters for getting the key URI.
    * @param params.key - The key to get the URI for.

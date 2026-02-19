@@ -44,7 +44,6 @@ export default defineConfig({
       'tests/crypto-api.spec.ts',
       'tests/utils-internal.spec.ts',
       'tests/prototyping/crypto/algorithms/aes-kw.spec.ts',
-      'tests/prototyping/clients/dwn-server-info-cache.spec.ts',
     ],
     testTimeout : 15_000,
     browser     : {

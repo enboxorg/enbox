@@ -9,6 +9,7 @@ import type {
   KeyGenerator,
   KeyIdentifier,
   KeyWrapper,
+  KmsCipherParams,
   KmsDigestParams,
   KmsExportKeyParams,
   KmsGenerateKeyParams,
@@ -16,6 +17,8 @@ import type {
   KmsGetPublicKeyParams,
   KmsImportKeyParams,
   KmsSignParams,
+  KmsUriUnwrapKeyParams,
+  KmsUriWrapKeyParams,
   KmsVerifyParams,
   PublicKeyJwk,
   Signer,
@@ -26,6 +29,7 @@ import type {
 
 import {
   AesGcmAlgorithm,
+  AesKwAlgorithm,
   computeJwkThumbprint,
   CryptoError,
   CryptoErrorCode,
@@ -43,9 +47,7 @@ import { Encryption, HdKey, Secp256k1 } from '@enbox/dwn-sdk-js';
 import type { AgentDataStore } from './store-data.js';
 import type { AgentKeyManager } from './types/key-manager.js';
 import type { Web5PlatformAgent } from './types/agent.js';
-import type { KmsCipherParams, KmsUnwrapKeyParams, KmsWrapKeyParams } from './prototyping/crypto/types/params-kms.js';
 
-import { AesKwAlgorithm } from './prototyping/crypto/algorithms/aes-kw.js';
 import { InMemoryKeyStore } from './store-key.js';
 
 /**
@@ -140,7 +142,7 @@ export interface LocalKmsGenerateKeyParams extends KmsGenerateKeyParams {
  * should be passed into the {@link LocalKeyManager.wrapKey} method when wrapping a key using a
  * key stored in the local KMS to encrypt the key material.
  */
-export interface LocalKmsUnwrapKeyParams extends KmsUnwrapKeyParams {
+export interface LocalKmsUnwrapKeyParams extends KmsUriUnwrapKeyParams {
   /**
    * A string defining the type of wrapped key. The value must be one of the following:
    * - `"A128GCM"`: AES GCM using a 128-bit key.
@@ -623,7 +625,7 @@ export class LocalKeyManager implements AgentKeyManager {
   }
 
   public async wrapKey({ unwrappedKey, encryptionKeyUri }:
-    KmsWrapKeyParams
+    KmsUriWrapKeyParams
   ): Promise<Uint8Array> {
     // Get the private key from the key store.
     const encryptionKey = await this.getPrivateKey({ keyUri: encryptionKeyUri });

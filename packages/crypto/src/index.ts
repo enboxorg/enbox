@@ -4,9 +4,12 @@ export * from './utils.js';
 
 export * from './algorithms/aes-ctr.js';
 export * from './algorithms/aes-gcm.js';
+export * from './algorithms/aes-kw.js';
 export * from './algorithms/crypto-algorithm.js';
 export * from './algorithms/ecdsa.js';
 export * from './algorithms/eddsa.js';
+export * from './algorithms/hkdf.js';
+export * from './algorithms/pbkdf2.js';
 export * from './algorithms/sha-2.js';
 
 export * from './jose/jwe.js';

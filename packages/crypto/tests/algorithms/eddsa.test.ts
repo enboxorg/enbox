@@ -350,4 +350,95 @@ describe('EdDsaAlgorithm', () => {
       }
     });
   });
+
+  describe('bytesToPrivateKey()', () => {
+    it('returns a private key in JWK format with alg set to EdDSA', async () => {
+      const privateKey = await eddsa.generateKey({ algorithm: 'Ed25519' });
+      const privateKeyBytes = await eddsa.privateKeyToBytes({ privateKey });
+      const recoveredKey = await eddsa.bytesToPrivateKey({ algorithm: 'Ed25519', privateKeyBytes });
+
+      expect(recoveredKey).toHaveProperty('kty', 'OKP');
+      expect(recoveredKey).toHaveProperty('crv', 'Ed25519');
+      expect(recoveredKey).toHaveProperty('alg', 'EdDSA');
+      expect(recoveredKey).toHaveProperty('d');
+    });
+
+    it('throws for unsupported algorithm', async () => {
+      const privateKeyBytes = new Uint8Array(32);
+      await expect(
+        eddsa.bytesToPrivateKey({ algorithm: 'unsupported' as any, privateKeyBytes })
+      ).rejects.toThrow('Algorithm not supported');
+    });
+  });
+
+  describe('bytesToPublicKey()', () => {
+    it('returns a public key in JWK format with alg set to EdDSA', async () => {
+      const privateKey = await eddsa.generateKey({ algorithm: 'Ed25519' });
+      const publicKey = await eddsa.getPublicKey({ key: privateKey });
+      const publicKeyBytes = await eddsa.publicKeyToBytes({ publicKey });
+      const recoveredKey = await eddsa.bytesToPublicKey({ algorithm: 'Ed25519', publicKeyBytes });
+
+      expect(recoveredKey).toHaveProperty('kty', 'OKP');
+      expect(recoveredKey).toHaveProperty('crv', 'Ed25519');
+      expect(recoveredKey).toHaveProperty('alg', 'EdDSA');
+      expect(recoveredKey).not.toHaveProperty('d');
+    });
+
+    it('throws for unsupported algorithm', async () => {
+      const publicKeyBytes = new Uint8Array(32);
+      await expect(
+        eddsa.bytesToPublicKey({ algorithm: 'unsupported' as any, publicKeyBytes })
+      ).rejects.toThrow('Algorithm not supported');
+    });
+  });
+
+  describe('privateKeyToBytes()', () => {
+    it('returns a byte array for Ed25519 keys', async () => {
+      const privateKey = await eddsa.generateKey({ algorithm: 'Ed25519' });
+      const privateKeyBytes = await eddsa.privateKeyToBytes({ privateKey });
+
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
+      expect(privateKeyBytes.byteLength).toBe(32);
+    });
+
+    it('round-trips with bytesToPrivateKey', async () => {
+      const privateKey = await eddsa.generateKey({ algorithm: 'Ed25519' });
+      const privateKeyBytes = await eddsa.privateKeyToBytes({ privateKey });
+      const recoveredKey = await eddsa.bytesToPrivateKey({ algorithm: 'Ed25519', privateKeyBytes });
+      expect(recoveredKey.d).toBe(privateKey.d);
+    });
+
+    it('throws for unsupported curve', async () => {
+      const invalidKey = { kty: 'OKP' as const, crv: 'Ed448', d: 'abc', x: 'def' };
+      await expect(
+        eddsa.privateKeyToBytes({ privateKey: invalidKey })
+      ).rejects.toThrow('Curve not supported');
+    });
+  });
+
+  describe('publicKeyToBytes()', () => {
+    it('returns a byte array for Ed25519 keys', async () => {
+      const privateKey = await eddsa.generateKey({ algorithm: 'Ed25519' });
+      const publicKey = await eddsa.getPublicKey({ key: privateKey });
+      const publicKeyBytes = await eddsa.publicKeyToBytes({ publicKey });
+
+      expect(publicKeyBytes).toBeInstanceOf(Uint8Array);
+      expect(publicKeyBytes.byteLength).toBe(32);
+    });
+
+    it('round-trips with bytesToPublicKey', async () => {
+      const privateKey = await eddsa.generateKey({ algorithm: 'Ed25519' });
+      const publicKey = await eddsa.getPublicKey({ key: privateKey });
+      const publicKeyBytes = await eddsa.publicKeyToBytes({ publicKey });
+      const recoveredKey = await eddsa.bytesToPublicKey({ algorithm: 'Ed25519', publicKeyBytes });
+      expect(recoveredKey.x).toBe(publicKey.x);
+    });
+
+    it('throws for unsupported curve', async () => {
+      const invalidKey = { kty: 'OKP' as const, crv: 'Ed448', x: 'def' };
+      await expect(
+        eddsa.publicKeyToBytes({ publicKey: invalidKey })
+      ).rejects.toThrow('Curve not supported');
+    });
+  });
 });

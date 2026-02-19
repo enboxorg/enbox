@@ -1,10 +1,6 @@
-import type { JoseHeaderParams, Jwk, KeyIdentifier } from '@enbox/crypto';
+import type { ExtendedCryptoApi, JoseHeaderParams, Jwk, KeyIdentifier, KeyManager } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
-
-import type { CryptoApi } from '../types/crypto-api.js';
-import type { KeyManager } from '../types/key-manager.js';
-
 import { CryptoError, CryptoErrorCode } from '@enbox/crypto';
 
 /**
@@ -426,7 +422,7 @@ export class JweKeyManagement {
    * @throws Throws an error if the key management algorithm is not supported or if required
    *         parameters are missing or invalid.
    */
-  public static async decrypt<TKeyManager extends KeyManager, TCrypto extends CryptoApi>({
+  public static async decrypt<TKeyManager extends KeyManager, TCrypto extends ExtendedCryptoApi>({
     key, encryptedKey, joseHeader, crypto
   }: JweKeyManagementDecryptParams<TKeyManager, TCrypto>
   ): Promise<KeyIdentifier | Jwk> {
@@ -555,7 +551,7 @@ export class JweKeyManagement {
    * @throws Throws an error if the key management algorithm is not supported or if required
    *         parameters are missing or invalid.
    */
-  public static async encrypt<TKeyManager extends KeyManager, TCrypto extends CryptoApi>({
+  public static async encrypt<TKeyManager extends KeyManager, TCrypto extends ExtendedCryptoApi>({
     key, joseHeader, crypto
   }: JweKeyManagementEncryptParams<TKeyManager, TCrypto>
   ): Promise<JweKeyManagementEncryptResult> {

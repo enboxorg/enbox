@@ -1,8 +1,9 @@
 import type { AES_GCM_TAG_LENGTHS } from '../primitives/aes-gcm.js';
 import type { Cipher } from '../types/cipher.js';
 import type { Jwk } from '../jose/jwk.js';
+import type { KeyConverter } from '../types/key-converter.js';
 import type { KeyGenerator } from '../types/key-generator.js';
-import type { DecryptParams, EncryptParams, GenerateKeyParams } from '../types/params-direct.js';
+import type { BytesToPrivateKeyParams, DecryptParams, EncryptParams, GenerateKeyParams, PrivateKeyToBytesParams } from '../types/params-direct.js';
 
 import { AesGcm } from '../primitives/aes-gcm.js';
 import { CryptoAlgorithm } from './crypto-algorithm.js';
@@ -67,7 +68,27 @@ export interface AesGcmParams {
  */
 export class AesGcmAlgorithm extends CryptoAlgorithm
   implements Cipher<AesGcmParams, AesGcmParams>,
+             KeyConverter,
              KeyGenerator<AesGcmGenerateKeyParams, Jwk> {
+
+  /**
+   * Converts a private key from a byte array to JWK format, setting the `alg` property based on
+   * the key length.
+   *
+   * @param params - The parameters for the private key conversion.
+   * @param params.privateKeyBytes - The raw private key as a Uint8Array.
+   *
+   * @returns A Promise that resolves to the private key in JWK format.
+   */
+  public async bytesToPrivateKey({ privateKeyBytes }: BytesToPrivateKeyParams): Promise<Jwk> {
+    // Convert the byte array to a JWK.
+    const privateKey = await AesGcm.bytesToPrivateKey({ privateKeyBytes });
+
+    // Set the `alg` property based on the key length.
+    privateKey.alg = { 16: 'A128GCM', 24: 'A192GCM', 32: 'A256GCM' }[privateKeyBytes.length];
+
+    return privateKey;
+  }
 
   /**
    * Decrypts the provided data using AES-GCM.
@@ -184,5 +205,20 @@ export class AesGcmAlgorithm extends CryptoAlgorithm
     privateKey.alg = algorithm;
 
     return privateKey;
+  }
+
+  /**
+   * Converts a private key from JWK format to a byte array.
+   *
+   * @param params - The parameters for the private key conversion.
+   * @param params.privateKey - The private key in JWK format.
+   *
+   * @returns A Promise that resolves to the private key as a Uint8Array.
+   */
+  public async privateKeyToBytes({ privateKey }: PrivateKeyToBytesParams): Promise<Uint8Array> {
+    // Convert the JWK to a byte array.
+    const privateKeyBytes = await AesGcm.privateKeyToBytes({ privateKey });
+
+    return privateKeyBytes;
   }
 }

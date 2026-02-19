@@ -81,6 +81,27 @@ export interface DeriveKeyParams {
 }
 
 /**
+ * Parameters for deriving a key from raw byte-based key material.
+ *
+ * Unlike {@link DeriveKeyParams} which operates on JWK keys, this interface works with raw
+ * byte arrays as the base key input, making it suitable for agent-level key derivation where
+ * keys originate from passphrases, seed phrases, or other byte-oriented sources.
+ */
+export interface DeriveKeyFromBytesParams {
+  /** The algorithm identifier. */
+  algorithm: string;
+
+  /** The base key to be used for derivation as a byte array. */
+  baseKeyBytes: Uint8Array;
+
+  /** The algorithm identifier for the derived key. */
+  derivedKeyAlgorithm?: string;
+
+  /** Additional algorithm-specific parameters for key derivation. */
+  [key: string]: unknown;
+}
+
+/**
  * Parameters for derivation of cryptographic byte arrays.
  */
 export interface DeriveKeyBytesParams {
