@@ -1,16 +1,15 @@
 import type { Jwk } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
-import { expect } from 'chai';
+import { beforeAll, describe, expect, it } from 'bun:test';
 
 import { AgentCryptoApi } from '../src/crypto-api.js';
-import { isChrome } from './utils/runtimes.js';
 import { CryptoUtils, isOctPrivateJwk } from '@enbox/crypto';
 
 describe('AgentCryptoApi', () => {
   let cryptoApi: AgentCryptoApi;
 
-  before(async () => {
+  beforeAll(async () => {
     cryptoApi = new AgentCryptoApi();
   });
 
@@ -23,12 +22,12 @@ describe('AgentCryptoApi', () => {
       const privateKey = await cryptoApi.bytesToPrivateKey({ algorithm: 'A128KW', privateKeyBytes });
 
       // Validate the result.
-      expect(privateKey).to.have.property('kty', 'oct');
-      expect(privateKey).to.have.property('k');
-      expect(privateKey).to.have.property('alg', 'A128KW');
+      expect(privateKey).toHaveProperty('kty', 'oct');
+      expect(privateKey).toHaveProperty('k');
+      expect(privateKey).toHaveProperty('alg', 'A128KW');
       if (!isOctPrivateJwk(privateKey)) {throw new Error('Invalid key type');} // type guard
       const privateKeyBytesResult = Convert.base64Url(privateKey.k).toUint8Array();
-      expect(privateKeyBytesResult).to.deep.equal(privateKeyBytes);
+      expect(privateKeyBytesResult).toEqual(privateKeyBytes);
     });
 
     it('returns a private key as a JWK', async () => {
@@ -39,15 +38,15 @@ describe('AgentCryptoApi', () => {
       const privateKey = await cryptoApi.bytesToPrivateKey({ algorithm: 'A128KW', privateKeyBytes });
 
       // Validate the result.
-      expect(privateKey).to.have.property('kty', 'oct');
-      expect(privateKey).to.have.property('k');
-      expect(privateKey).to.have.property('alg', 'A128KW');
+      expect(privateKey).toHaveProperty('kty', 'oct');
+      expect(privateKey).toHaveProperty('k');
+      expect(privateKey).toHaveProperty('alg', 'A128KW');
       if (!isOctPrivateJwk(privateKey)) {throw new Error('Invalid key type');} // type guard
       const privateKeyBytesResult = Convert.base64Url(privateKey.k).toUint8Array();
-      expect(privateKeyBytesResult).to.deep.equal(privateKeyBytes);
+      expect(privateKeyBytesResult).toEqual(privateKeyBytes);
     });
 
-    it('supports A128GCM and A256GCM in all supported runtimes', async function () {
+    it('supports A128GCM and A256GCM in all supported runtimes', async () => {
       for (const algorithm of ['A128GCM', 'A256GCM'] as const) {
         // Setup.
         const privateKeyInput = await cryptoApi.generateKey({ algorithm });
@@ -57,15 +56,14 @@ describe('AgentCryptoApi', () => {
         const privateKey = await cryptoApi.bytesToPrivateKey({ algorithm, privateKeyBytes });
 
         // Validate the result.
-        expect(privateKey).to.have.property('alg', algorithm);
+        expect(privateKey).toHaveProperty('alg', algorithm);
         const privateKeyBytesResult = Convert.base64Url(privateKey.k!).toUint8Array();
-        expect(privateKeyBytesResult).to.deep.equal(privateKeyBytes);
+        expect(privateKeyBytesResult).toEqual(privateKeyBytes);
       }
     });
 
-    it('supports A192GCM in all supported runtimes except Chrome browser', async function () {
+    it.skip('supports A192GCM in all supported runtimes except Chrome browser', async () => {
       // Google Chrome does not support AES with 192-bit keys.
-      if (isChrome) {this.skip();}
 
       for (const algorithm of ['A192GCM'] as const) {
         // Setup.
@@ -76,9 +74,9 @@ describe('AgentCryptoApi', () => {
         const privateKey = await cryptoApi.bytesToPrivateKey({ algorithm, privateKeyBytes });
 
         // Validate the result.
-        expect(privateKey).to.have.property('alg', algorithm);
+        expect(privateKey).toHaveProperty('alg', algorithm);
         const privateKeyBytesResult = Convert.base64Url(privateKey.k!).toUint8Array();
-        expect(privateKeyBytesResult).to.deep.equal(privateKeyBytes);
+        expect(privateKeyBytesResult).toEqual(privateKeyBytes);
       }
     });
 
@@ -92,15 +90,14 @@ describe('AgentCryptoApi', () => {
         const privateKey = await cryptoApi.bytesToPrivateKey({ algorithm, privateKeyBytes });
 
         // Validate the result.
-        expect(privateKey).to.have.property('alg', algorithm);
+        expect(privateKey).toHaveProperty('alg', algorithm);
         const privateKeyBytesResult = Convert.base64Url(privateKey.k!).toUint8Array();
-        expect(privateKeyBytesResult).to.deep.equal(privateKeyBytes);
+        expect(privateKeyBytesResult).toEqual(privateKeyBytes);
       }
     });
 
-    it('supports A192KW in all supported runtimes except Chrome browser', async function () {
+    it.skip('supports A192KW in all supported runtimes except Chrome browser', async () => {
       // Google Chrome does not support AES with 192-bit keys.
-      if (isChrome) {this.skip();}
 
       for (const algorithm of ['A192KW'] as const) {
         // Setup.
@@ -111,9 +108,9 @@ describe('AgentCryptoApi', () => {
         const privateKey = await cryptoApi.bytesToPrivateKey({ algorithm, privateKeyBytes });
 
         // Validate the result.
-        expect(privateKey).to.have.property('alg', algorithm);
+        expect(privateKey).toHaveProperty('alg', algorithm);
         const privateKeyBytesResult = Convert.base64Url(privateKey.k!).toUint8Array();
-        expect(privateKeyBytesResult).to.deep.equal(privateKeyBytes);
+        expect(privateKeyBytesResult).toEqual(privateKeyBytes);
       }
     });
   });
@@ -127,10 +124,10 @@ describe('AgentCryptoApi', () => {
       const publicKey = await cryptoApi.bytesToPublicKey({ algorithm: 'Ed25519', publicKeyBytes });
 
       // Validate the result.
-      expect(publicKey).to.have.property('kty', 'OKP');
-      expect(publicKey).to.have.property('x');
-      expect(publicKey).to.not.have.property('d');
-      expect(publicKey).to.have.property('alg', 'EdDSA');
+      expect(publicKey).toHaveProperty('kty', 'OKP');
+      expect(publicKey).toHaveProperty('x');
+      expect(publicKey).not.toHaveProperty('d');
+      expect(publicKey).toHaveProperty('alg', 'EdDSA');
     });
 
     it('supports Ed25519, ES256K, secp256k1, ES256, and secp256r1', async () => {
@@ -144,9 +141,9 @@ describe('AgentCryptoApi', () => {
         const publicKey = await cryptoApi.bytesToPublicKey({ algorithm, publicKeyBytes });
 
         // Validate the result.
-        expect(publicKey).to.have.property('alg');
-        expect(publicKey).to.have.property('kty');
-        expect(publicKey).to.have.property('crv');
+        expect(publicKey).toHaveProperty('alg');
+        expect(publicKey).toHaveProperty('kty');
+        expect(publicKey).toHaveProperty('crv');
       }
     });
   });
@@ -170,9 +167,9 @@ describe('AgentCryptoApi', () => {
       });
 
       // Validate the results.
-      expect(plaintext).to.be.instanceOf(Uint8Array);
+      expect(plaintext).toBeInstanceOf(Uint8Array);
       const expectedPlaintext = Convert.hex('01').toUint8Array();
-      expect(plaintext).to.deep.equal(expectedPlaintext);
+      expect(plaintext).toEqual(expectedPlaintext);
     });
   });
 
@@ -192,12 +189,12 @@ describe('AgentCryptoApi', () => {
       });
 
       // Validate the result.
-      expect(derivedKey).to.have.property('kty', 'oct');
-      expect(derivedKey).to.have.property('k');
-      expect(derivedKey).to.have.property('alg', 'A128KW');
+      expect(derivedKey).toHaveProperty('kty', 'oct');
+      expect(derivedKey).toHaveProperty('k');
+      expect(derivedKey).toHaveProperty('alg', 'A128KW');
       if (!isOctPrivateJwk(derivedKey)) {throw new Error('Invalid key type');} // type guard
       const derivedKeyBytes = Convert.base64Url(derivedKey.k).toUint8Array();
-      expect(derivedKeyBytes.byteLength).to.equal(128 / 8);
+      expect(derivedKeyBytes.byteLength).toBe(128 / 8);
     });
 
     it('supports HKDF-256 with A128KW, A192KW, and A256KW', async () => {
@@ -216,11 +213,11 @@ describe('AgentCryptoApi', () => {
         });
 
         // Validate the result.
-        expect(derivedKey).to.have.property('alg', derivedKeyAlgorithm);
+        expect(derivedKey).toHaveProperty('alg', derivedKeyAlgorithm);
         if (!isOctPrivateJwk(derivedKey)) {throw new Error('Invalid key type');} // type guard
         const derivedKeyBytes = Convert.base64Url(derivedKey.k).toUint8Array();
         const expectedKeyLength = parseInt(derivedKeyAlgorithm.slice(1, 4), 10);
-        expect(derivedKeyBytes.byteLength).to.equal(expectedKeyLength / 8);
+        expect(derivedKeyBytes.byteLength).toBe(expectedKeyLength / 8);
       }
     });
 
@@ -240,11 +237,11 @@ describe('AgentCryptoApi', () => {
 
         // Validate the result.
         const [, , derivedKeyAlgorithm] = algorithm.split(/[-+]/);
-        expect(derivedKey).to.have.property('alg', derivedKeyAlgorithm);
+        expect(derivedKey).toHaveProperty('alg', derivedKeyAlgorithm);
         if (!isOctPrivateJwk(derivedKey)) {throw new Error('Invalid key type');} // type guard
         const derivedKeyBytes = Convert.base64Url(derivedKey.k).toUint8Array();
         const expectedKeyLength = parseInt(derivedKeyAlgorithm.slice(1, 4), 10);
-        expect(derivedKeyBytes.byteLength).to.equal(expectedKeyLength / 8);
+        expect(derivedKeyBytes.byteLength).toBe(expectedKeyLength / 8);
       }
     });
 
@@ -258,10 +255,10 @@ describe('AgentCryptoApi', () => {
           salt                : new Uint8Array(0),
           derivedKeyAlgorithm : 'A128KW'
         });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
         // Validate the result.
-        expect(error.message).to.include('Algorithm not supported');
+        expect(error.message).toContain('Algorithm not supported');
       }
     });
 
@@ -280,10 +277,10 @@ describe('AgentCryptoApi', () => {
           // @ts-expect-error because an unsupported algorithm is being tested.
           derivedKeyAlgorithm : 'unsupported-algorithm'
         });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
       } catch (error: any) {
         // Validate the result.
-        expect(error.message).to.include('is not supported');
+        expect(error.message).toContain('is not supported');
       }
     });
   });
@@ -304,8 +301,8 @@ describe('AgentCryptoApi', () => {
       });
 
       // Validate the result.
-      expect(derivedKeyBytes).to.be.an.instanceOf(Uint8Array);
-      expect(derivedKeyBytes.byteLength).to.equal(32);
+      expect(derivedKeyBytes).toBeInstanceOf(Uint8Array);
+      expect(derivedKeyBytes.byteLength).toBe(32);
     });
   });
 
@@ -318,8 +315,8 @@ describe('AgentCryptoApi', () => {
       const digest = await cryptoApi.digest({ algorithm: 'SHA-256', data });
 
       // Validate the result.
-      expect(digest).to.exist;
-      expect(digest).to.be.an.instanceOf(Uint8Array);
+      expect(digest).toBeDefined();
+      expect(digest).toBeInstanceOf(Uint8Array);
     });
 
     it('accepts an algorithm identifier as a string parameter', async () => {
@@ -331,8 +328,8 @@ describe('AgentCryptoApi', () => {
       const digest = await cryptoApi.digest({ algorithm, data });
 
       // Validate the result.
-      expect(digest).to.exist;
-      expect(digest).to.be.an.instanceOf(Uint8Array);
+      expect(digest).toBeDefined();
+      expect(digest).toBeInstanceOf(Uint8Array);
     });
 
     it('supports SHA-256', async () => {
@@ -344,10 +341,10 @@ describe('AgentCryptoApi', () => {
       const digest = await cryptoApi.digest({ algorithm: 'SHA-256', data });
 
       // Validate the result.
-      expect(digest).to.exist;
-      expect(digest).to.be.an.instanceOf(Uint8Array);
-      expect(digest).to.have.lengthOf(32);
-      expect(digest).to.deep.equal(expectedOutput);
+      expect(digest).toBeDefined();
+      expect(digest).toBeInstanceOf(Uint8Array);
+      expect(digest).toHaveLength(32);
+      expect(digest).toEqual(expectedOutput);
     });
 
     it('throws an error if the algorithm is not supported', async () => {
@@ -358,13 +355,13 @@ describe('AgentCryptoApi', () => {
       try {
         // @ts-expect-error because an unsupported algorithm is being tested.
         await cryptoApi.digest({ algorithm });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include(`Algorithm not supported: ${algorithm}`);
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain(`Algorithm not supported: ${algorithm}`);
       }
     });
   });
@@ -391,8 +388,8 @@ describe('AgentCryptoApi', () => {
       });
 
       // Validate the results.
-      expect(ciphertext).to.be.instanceOf(Uint8Array);
-      expect(ciphertext.byteLength).to.equal(plaintext.byteLength + tagLength / 8);
+      expect(ciphertext).toBeInstanceOf(Uint8Array);
+      expect(ciphertext.byteLength).toBe(plaintext.byteLength + tagLength / 8);
     });
   });
 
@@ -400,14 +397,14 @@ describe('AgentCryptoApi', () => {
     it('returns a Key URI', async () => {
       const keyUri = await cryptoApi.generateKey({ algorithm: 'Ed25519' });
 
-      expect(keyUri).to.be.a.string;
+      expect(keyUri).toBeDefined();
     });
 
     it('accepts an algorithm identifier as a string parameter', async () => {
       const algorithm = 'Ed25519';
       const keyUri = await cryptoApi.generateKey({ algorithm });
 
-      expect(keyUri).to.be.a.string;
+      expect(keyUri).toBeDefined();
     });
   });
 
@@ -422,9 +419,9 @@ describe('AgentCryptoApi', () => {
       };
       const privateKeyBytes = await cryptoApi.privateKeyToBytes({ privateKey });
 
-      expect(privateKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
       const expectedOutput = Convert.hex('4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb').toUint8Array();
-      expect(privateKeyBytes).to.deep.equal(expectedOutput);
+      expect(privateKeyBytes).toEqual(expectedOutput);
     });
   });
 
@@ -439,9 +436,9 @@ describe('AgentCryptoApi', () => {
 
       const publicKeyBytes = await cryptoApi.publicKeyToBytes({ publicKey });
 
-      expect(publicKeyBytes).to.be.an.instanceOf(Uint8Array);
+      expect(publicKeyBytes).toBeInstanceOf(Uint8Array);
       const expectedOutput = Convert.hex('3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c').toUint8Array();
-      expect(publicKeyBytes).to.deep.equal(expectedOutput);
+      expect(publicKeyBytes).toEqual(expectedOutput);
     });
   });
 
@@ -465,7 +462,7 @@ describe('AgentCryptoApi', () => {
         kid : '-TssSnJNgh10-YTwuBtyZTnv0LY6sdT-TQl9WFTSetI',
       };
 
-      expect(unwrappedKey).to.deep.equal(expectedPrivateKey);
+      expect(unwrappedKey).toEqual(expectedPrivateKey);
     });
   });
 
@@ -481,7 +478,7 @@ describe('AgentCryptoApi', () => {
       const isValid = await cryptoApi.verify({ key: publicKey, signature, data });
 
       // Validate the result.
-      expect(isValid).to.be.true;
+      expect(isValid).toBe(true);
     });
 
     it('returns false for an invalid signature', async () => {
@@ -495,7 +492,7 @@ describe('AgentCryptoApi', () => {
       const isValid = await cryptoApi.verify({ key: publicKey, signature, data });
 
       // Validate the result.
-      expect(isValid).to.be.false;
+      expect(isValid).toBe(false);
     });
 
     it('handles public keys missing alg property', async () => {
@@ -511,7 +508,7 @@ describe('AgentCryptoApi', () => {
       const isValid = await cryptoApi.verify({ key: publicKey, signature, data });
 
       // Validate the result.
-      expect(isValid).to.be.true;
+      expect(isValid).toBe(true);
     });
 
     it('throws an error when public key algorithm and curve are unsupported', async () => {
@@ -523,13 +520,13 @@ describe('AgentCryptoApi', () => {
       // Test the method.
       try {
         await cryptoApi.verify({ key, signature, data });
-        expect.fail('Expected an error to be thrown.');
+        throw new Error('Expected an error to be thrown.');
 
       } catch (error: any) {
         // Validate the result.
-        expect(error).to.exist;
-        expect(error).to.be.an.instanceOf(Error);
-        expect(error.message).to.include('Algorithm not supported');
+        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Algorithm not supported');
       }
     });
   });
@@ -546,8 +543,8 @@ describe('AgentCryptoApi', () => {
 
       const wrappedKeyBytes = await cryptoApi.wrapKey({ unwrappedKey, encryptionKey });
 
-      expect(wrappedKeyBytes).to.be.an.instanceOf(Uint8Array);
-      expect(wrappedKeyBytes.byteLength).to.equal(32 + 8); // 32 bytes for the wrapped private key, 8 bytes for the initialization vector
+      expect(wrappedKeyBytes).toBeInstanceOf(Uint8Array);
+      expect(wrappedKeyBytes.byteLength).toBe(32 + 8); // 32 bytes for the wrapped private key, 8 bytes for the initialization vector
     });
 
     it('returns the expected wrapped key for given input', async () => {
@@ -568,7 +565,7 @@ describe('AgentCryptoApi', () => {
       const wrappedKeyBytes = await cryptoApi.wrapKey({ encryptionKey, unwrappedKey });
 
       const expectedOutput = Convert.hex('8c55fb6fc4c7bb0b6b483df65ba52bee7ed6e0f861ac8097b2394f61067d1157901295aba72c514b').toUint8Array(); // raw format
-      expect(wrappedKeyBytes).to.deep.equal(expectedOutput);
+      expect(wrappedKeyBytes).toEqual(expectedOutput);
     });
   });
 });

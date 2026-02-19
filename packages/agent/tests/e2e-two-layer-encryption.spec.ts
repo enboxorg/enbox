@@ -1,7 +1,7 @@
 import type { Jwk } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
-import { expect } from 'chai';
+import { afterAll, describe, expect, it } from 'bun:test';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import { JwkProtocolDefinition } from '../src/store-data-protocols.js';
@@ -23,9 +23,7 @@ import { Web5UserAgent } from '../src/web5-user-agent.js';
  * Recovery path: seed phrase → deterministic agent DID → secp256k1 `#enc` key →
  * decrypt DWN key records.
  */
-describe('e2e: two-layer encryption recovery', function () {
-  this.timeout(30_000);
-
+describe('e2e: two-layer encryption recovery', () => {
   const testDataLocation = '__TESTDATA__/e2e-two-layer-encryption';
   const password = 'test-password-e2e';
   const newPassword = 'new-password-after-recovery';
@@ -35,7 +33,7 @@ describe('e2e: two-layer encryption recovery', function () {
   let originalKeyUris: string[];
   let originalKeys: Jwk[];
 
-  after(async function () {
+  afterAll(async () => {
     // Final cleanup: remove all test data by setting up and tearing down a harness.
     // Wrapped in try/catch to avoid masking test failures if cleanup itself fails
     // (e.g., when the entire suite was skipped due to DHT publish failures).
@@ -66,13 +64,13 @@ describe('e2e: two-layer encryption recovery', function () {
       // secp256k1) deterministically from a generated seed phrase, and encrypts
       // the PortableDid with the password (Layer 1).
       recoveryPhrase = await (harness.agent as Web5UserAgent).initialize({ password });
-      expect(recoveryPhrase).to.be.a('string');
-      expect(recoveryPhrase.split(' ')).to.have.length(12);
+      expect(typeof recoveryPhrase).toBe('string');
+      expect(recoveryPhrase.split(' ')).toHaveLength(12);
 
       // Start the agent (unlocks the vault).
       await (harness.agent as Web5UserAgent).start({ password });
       originalAgentDidUri = harness.agent.agentDid.uri;
-      expect(originalAgentDidUri).to.match(/^did:dht:/);
+      expect(originalAgentDidUri).toMatch(/^did:dht:/);
     });
 
     it('should have Ed25519 (#sig) and secp256k1 (#enc) verification methods', async () => {
@@ -85,31 +83,31 @@ describe('e2e: two-layer encryption recovery', function () {
       const sigKey = doc.verificationMethod?.find(
         (vm: any): boolean => vm.id.endsWith('#sig')
       );
-      expect(sigKey).to.exist;
-      expect(sigKey?.publicKeyJwk).to.have.property('kty', 'OKP');
-      expect(sigKey?.publicKeyJwk).to.have.property('crv', 'Ed25519');
-      expect(doc.authentication).to.be.an('array').that.satisfies(
-        (refs: string[]): boolean => refs.some((r: string): boolean => r.endsWith('#sig'))
-      );
+      expect(sigKey).toBeDefined();
+      expect(sigKey?.publicKeyJwk).toHaveProperty('kty', 'OKP');
+      expect(sigKey?.publicKeyJwk).toHaveProperty('crv', 'Ed25519');
+      expect(
+        (doc.authentication as string[]).some((r: string): boolean => r.endsWith('#sig'))
+      ).toBe(true);
 
       // Verify #enc (secp256k1) exists and is in keyAgreement.
       const encKey = doc.verificationMethod?.find(
         (vm: any): boolean => vm.id.endsWith('#enc')
       );
-      expect(encKey).to.exist;
-      expect(encKey?.publicKeyJwk).to.have.property('kty', 'EC');
-      expect(encKey?.publicKeyJwk).to.have.property('crv', 'secp256k1');
-      expect(encKey?.publicKeyJwk).to.have.property('x');
-      expect(encKey?.publicKeyJwk).to.have.property('y');
-      expect(encKey?.publicKeyJwk).to.not.have.property('d'); // public only in document
-      expect(doc.keyAgreement).to.be.an('array').that.satisfies(
-        (refs: string[]): boolean => refs.some((r: string): boolean => r.endsWith('#enc'))
-      );
+      expect(encKey).toBeDefined();
+      expect(encKey?.publicKeyJwk).toHaveProperty('kty', 'EC');
+      expect(encKey?.publicKeyJwk).toHaveProperty('crv', 'secp256k1');
+      expect(encKey?.publicKeyJwk).toHaveProperty('x');
+      expect(encKey?.publicKeyJwk).toHaveProperty('y');
+      expect(encKey?.publicKeyJwk).not.toHaveProperty('d'); // public only in document
+      expect(
+        (doc.keyAgreement as string[]).some((r: string): boolean => r.endsWith('#enc'))
+      ).toBe(true);
 
       // Verify #enc is NOT in authentication (it's only for keyAgreement).
-      expect(doc.authentication ?? []).to.not.satisfy(
-        (refs: string[]): boolean => refs.some((r: string): boolean => r.endsWith('#enc'))
-      );
+      expect(
+        (doc.authentication ?? []).some((r: string): boolean => r.endsWith('#enc'))
+      ).toBe(false);
     });
 
     it('should generate keys that are encrypted at the DWN level (Layer 2)', async () => {
@@ -124,8 +122,8 @@ describe('e2e: two-layer encryption recovery', function () {
       originalKeys = [];
       for (const keyUri of originalKeyUris) {
         const key = await harness.agent.keyManager.exportKey({ keyUri });
-        expect(key).to.exist;
-        expect(key).to.have.property('d'); // private key material present
+        expect(key).toBeDefined();
+        expect(key).toHaveProperty('d'); // private key material present
         originalKeys.push(key);
       }
     });
@@ -143,20 +141,20 @@ describe('e2e: two-layer encryption recovery', function () {
         },
       });
 
-      expect(reply.status.code).to.equal(200);
-      expect(reply.entries).to.have.length(1);
+      expect(reply.status.code).toBe(200);
+      expect(reply.entries).toHaveLength(1);
 
       // Verify $encryption was injected into the privateJwk rule set.
       const installedDefinition = reply.entries![0].descriptor.definition;
       const privateJwkRuleSet = installedDefinition.structure.privateJwk;
-      expect(privateJwkRuleSet).to.have.property('$encryption');
+      expect(privateJwkRuleSet).toHaveProperty('$encryption');
       const encryptionBlock = privateJwkRuleSet.$encryption;
-      expect(encryptionBlock).to.have.property('rootKeyId');
-      expect(encryptionBlock).to.have.property('publicKeyJwk');
+      expect(encryptionBlock).toHaveProperty('rootKeyId');
+      expect(encryptionBlock).toHaveProperty('publicKeyJwk');
 
       // The rootKeyId should reference the agent DID's #enc key.
-      expect(encryptionBlock!.rootKeyId).to.include(originalAgentDidUri);
-      expect(encryptionBlock!.rootKeyId).to.include('#enc');
+      expect(encryptionBlock!.rootKeyId).toContain(originalAgentDidUri);
+      expect(encryptionBlock!.rootKeyId).toContain('#enc');
     });
 
     it('should have encryption metadata on raw DWN records with ciphertext', async () => {
@@ -174,13 +172,13 @@ describe('e2e: two-layer encryption recovery', function () {
         },
       });
 
-      expect(reply.status.code).to.equal(200);
-      expect(reply.entries).to.have.length(3);
+      expect(reply.status.code).toBe(200);
+      expect(reply.entries).toHaveLength(3);
 
       for (const entry of reply.entries!) {
         // Verify encryption metadata is present.
-        expect(entry.encryption).to.exist;
-        expect(entry.encryption!.algorithm).to.equal('A256CTR');
+        expect(entry.encryption).toBeDefined();
+        expect(entry.encryption!.algorithm).toBe('A256CTR');
 
         // Verify the raw data is ciphertext, not readable JSON. Encrypted records
         // may have encodedData (base64url ciphertext) — if present, decoding it
@@ -197,8 +195,7 @@ describe('e2e: two-layer encryption recovery', function () {
           // If by chance the ciphertext decodes as JSON, it must NOT contain
           // private key material (the 'd' field).
           if (parsedAsJson !== null) {
-            expect(parsedAsJson).to.not.have.property('d',
-              'Raw DWN record data contains unencrypted private key material');
+            expect(parsedAsJson).not.toHaveProperty('d');
           }
         }
       }
@@ -222,7 +219,7 @@ describe('e2e: two-layer encryption recovery', function () {
       });
 
       // The vault should be locked since we just created a fresh agent instance.
-      expect((harness.agent as Web5UserAgent).vault.isLocked()).to.be.true;
+      expect((harness.agent as Web5UserAgent).vault.isLocked()).toBe(true);
     });
 
     it('should recover the agent DID using the seed phrase (Layer 1)', async () => {
@@ -239,16 +236,16 @@ describe('e2e: two-layer encryption recovery', function () {
         password: newPassword,
         recoveryPhrase,
       });
-      expect(returnedPhrase).to.equal(recoveryPhrase);
+      expect(returnedPhrase).toBe(recoveryPhrase);
 
       // Verify the vault reports as initialized after recovery.
-      expect(await (harness.agent as Web5UserAgent).vault.isInitialized()).to.be.true;
+      expect(await (harness.agent as Web5UserAgent).vault.isInitialized()).toBe(true);
 
       // Start the agent with the new password.
       await (harness.agent as Web5UserAgent).start({ password: newPassword });
 
       // The recovered agent DID should be identical to the original.
-      expect(harness.agent.agentDid.uri).to.equal(originalAgentDidUri);
+      expect(harness.agent.agentDid.uri).toBe(originalAgentDidUri);
     });
 
     it('should reject the old password after recovery (Layer 1 re-encryption)', async () => {
@@ -261,11 +258,11 @@ describe('e2e: two-layer encryption recovery', function () {
 
       try {
         await (harness.agent as Web5UserAgent).start({ password });
-        expect.fail('Expected an error when using the old password');
+        throw new Error('Expected an error when using the old password');
       } catch (error: any) {
-        // Re-throw AssertionError from expect.fail() so it isn't swallowed.
-        if (error.name === 'AssertionError') { throw error; }
-        expect(error.message).to.include('incorrect password');
+        // Re-throw Error from throw new Error() so it isn't swallowed.
+        if (error.message === 'Expected an error when using the old password') { throw error; }
+        expect(error.message).toContain('incorrect password');
       }
 
       // Re-unlock with the correct (new) password to continue the test.
@@ -280,15 +277,15 @@ describe('e2e: two-layer encryption recovery', function () {
           keyUri: originalKeyUris[i]
         });
 
-        expect(recovered).to.exist;
-        expect(recovered.kid).to.equal(originalKeys[i].kid);
-        expect(recovered.kty).to.equal(originalKeys[i].kty);
-        expect(recovered.crv).to.equal(originalKeys[i].crv);
-        expect(recovered.d).to.equal(originalKeys[i].d);
-        expect(recovered.x).to.equal(originalKeys[i].x);
+        expect(recovered).toBeDefined();
+        expect(recovered.kid).toBe(originalKeys[i].kid);
+        expect(recovered.kty).toBe(originalKeys[i].kty);
+        expect(recovered.crv).toBe(originalKeys[i].crv);
+        expect(recovered.d).toBe(originalKeys[i].d);
+        expect(recovered.x).toBe(originalKeys[i].x);
         // secp256k1 keys have a `y` coordinate; Ed25519 keys do not.
         if (originalKeys[i].y !== undefined) {
-          expect(recovered.y).to.equal(originalKeys[i].y);
+          expect(recovered.y).toBe(originalKeys[i].y);
         }
       }
     });
@@ -297,8 +294,8 @@ describe('e2e: two-layer encryption recovery', function () {
       // Generate an additional key to prove the recovered agent is fully operational.
       const newKeyUri = await harness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
       const newKey = await harness.agent.keyManager.exportKey({ keyUri: newKeyUri });
-      expect(newKey).to.exist;
-      expect(newKey).to.have.property('d');
+      expect(newKey).toBeDefined();
+      expect(newKey).toHaveProperty('d');
     });
 
     it('should clean up', async () => {

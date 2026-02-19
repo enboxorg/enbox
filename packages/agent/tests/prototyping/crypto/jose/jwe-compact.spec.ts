@@ -1,6 +1,6 @@
 import type { Jwk } from '@enbox/crypto';
 
-import { expect } from 'chai';
+import { beforeEach, describe, expect, it } from 'bun:test';
 
 import type { Web5PlatformAgent } from '../../../../src/types/agent.js';
 
@@ -32,8 +32,8 @@ describe('CompactJwe', () => {
         keyManager
       });
 
-      expect(plaintext).to.be.instanceOf(Uint8Array);
-      expect(protectedHeader).to.deep.equal({ alg: 'dir', enc: 'A256GCM' });
+      expect(plaintext).toBeInstanceOf(Uint8Array);
+      expect(protectedHeader).toEqual({ alg: 'dir', enc: 'A256GCM' });
     });
 
     it('returns the protected header and decrypted payload given a decryption Key URI', async () => {
@@ -53,8 +53,8 @@ describe('CompactJwe', () => {
         keyManager
       });
 
-      expect(plaintext).to.be.instanceOf(Uint8Array);
-      expect(protectedHeader).to.deep.equal({ alg: 'dir', enc: 'A256GCM' });
+      expect(plaintext).toBeInstanceOf(Uint8Array);
+      expect(protectedHeader).toEqual({ alg: 'dir', enc: 'A256GCM' });
     });
   });
 
@@ -75,8 +75,8 @@ describe('CompactJwe', () => {
         keyManager
       });
 
-      expect(jwe).to.be.a('string');
-      expect(jwe.split('.')).to.have.length(5);
+      expect(typeof jwe).toBe('string');
+      expect(jwe.split('.')).toHaveLength(5);
     });
 
     it('encrypts and returns a Compact JWE given an encryption Key URI', async () => {
@@ -97,8 +97,8 @@ describe('CompactJwe', () => {
         keyManager
       });
 
-      expect(jwe).to.be.a('string');
-      expect(jwe.split('.')).to.have.length(5);
+      expect(typeof jwe).toBe('string');
+      expect(jwe.split('.')).toHaveLength(5);
     });
   });
 });

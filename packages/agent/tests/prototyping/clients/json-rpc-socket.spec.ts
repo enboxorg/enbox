@@ -1,6 +1,4 @@
-import { expect } from 'chai';
-
-import sinon from 'sinon';
+import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
 import type { JsonRpcResponse } from '../../../src/prototyping/clients/json-rpc.js';
 import type { Persona } from '@enbox/dwn-sdk-js';
@@ -23,12 +21,12 @@ describe('JsonRpcSocket', () => {
   dwnUrl.protocol = dwnUrl.protocol === 'http:' ? 'ws:' : 'wss:';
   const socketDwnUrl = dwnUrl.toString();
 
-  after(() => {
-    sinon.restore();
+  afterAll(() => {
+    mock.restore();
   });
 
   beforeEach(async () => {
-    sinon.restore();
+    mock.restore();
 
     alice = await TestDataGenerator.generateDidKeyPersona();
   });
@@ -45,7 +43,7 @@ describe('JsonRpcSocket', () => {
     delete request.id;
 
     const response = await client.request(request);
-    expect(response.id).to.not.equal(requestId);
+    expect(response.id).not.toBe(requestId);
   });
 
   it('resolves a request with given params', async () => {
@@ -53,7 +51,7 @@ describe('JsonRpcSocket', () => {
     const requestId = CryptoUtils.randomUuid();
     const request = createJsonRpcRequest(requestId, 'dwn.processMessage', { param1: 'test-param1', param2: 'test-param2' });
     const response = await client.request(request);
-    expect(response.id).to.equal(request.id);
+    expect(response.id).toBe(request.id);
   });
 
   it('request times out', async () => {
@@ -63,9 +61,9 @@ describe('JsonRpcSocket', () => {
     const request = createJsonRpcRequest(requestId, 'down.processMessage', { param1: 'test-param1', param2: 'test-param2' });
     try {
       await client.request(request);
-      expect.fail('Expected an error to be thrown');
+      throw new Error('Expected an error to be thrown');
     } catch (error: any) {
-      expect(error.message).to.contain('timed out');
+      expect(error.message).toContain('timed out');
     }
   });
 
@@ -75,12 +73,12 @@ describe('JsonRpcSocket', () => {
     const requestId = CryptoUtils.randomUuid();
     const request = createJsonRpcRequest(requestId, 'dwn.processMessage', { target: alice.did, message });
     const response = client.request(request);
-    expect(client['messageHandlers'].has(requestId)).to.be.true;
+    expect(client['messageHandlers'].has(requestId)).toBe(true);
 
     await response;
 
     // removes the handler after the response is received
-    expect(client['messageHandlers'].has(requestId)).to.be.false;
+    expect(client['messageHandlers'].has(requestId)).toBe(false);
   });
 
   it('adds a handler to the messageHandlers map when listening for a response to a subscription', async () => {
@@ -98,11 +96,11 @@ describe('JsonRpcSocket', () => {
 
     const responseListener = (_response: JsonRpcResponse): void => {};
     const subscription = await client.subscribe(request, responseListener);
-    expect(client['messageHandlers'].has(subscriptionId)).to.be.true;
+    expect(client['messageHandlers'].has(subscriptionId)).toBe(true);
 
     // removes the handler after the subscription is closed
     await subscription.close!();
-    expect(client['messageHandlers'].has(subscriptionId)).to.be.false;
+    expect(client['messageHandlers'].has(subscriptionId)).toBe(false);
   });
 
   it('removes listener if subscription json rpc is rejected ', async () => {
@@ -120,8 +118,8 @@ describe('JsonRpcSocket', () => {
     const responseListener = (_response: JsonRpcResponse): void => {};
 
     const subscription = await client.subscribe(request, responseListener);
-    expect(subscription.response.error).to.not.be.undefined;
-    expect(client['messageHandlers'].has(subscribeId)).to.be.false;
+    expect(subscription.response.error).toBeDefined();
+    expect(client['messageHandlers'].has(subscribeId)).toBe(false);
   });
 
   it('opens a subscription', async () => {
@@ -141,7 +139,7 @@ describe('JsonRpcSocket', () => {
     const responseListener = (_response: JsonRpcResponse): void => {};
 
     const subscription = await client.subscribe(request, responseListener);
-    expect(subscription.response.error).to.be.undefined;
+    expect(subscription.response.error).toBeUndefined();
     // wait for the messages to arrive
     await sleepWhileWaitingForEvents();
     // the original response
@@ -156,9 +154,9 @@ describe('JsonRpcSocket', () => {
     const request = createJsonRpcRequest(requestId, 'test.method', { param1: 'test-param1', param2: 'test-param2' });
     try {
       await client.subscribe(request, () => {});
-      expect.fail('Expected an error to be thrown');
+      throw new Error('Expected an error to be thrown');
     } catch (error: any) {
-      expect(error.message).to.contain('subscribe rpc requests must include the `rpc.subscribe` prefix');
+      expect(error.message).toContain('subscribe rpc requests must include the `rpc.subscribe` prefix');
     }
   });
 
@@ -168,57 +166,57 @@ describe('JsonRpcSocket', () => {
     const request = createJsonRpcRequest(requestId, 'rpc.subscribe.test.method', { param1: 'test-param1', param2: 'test-param2' });
     try {
       await client.subscribe(request, () => {});
-      expect.fail('Expected an error to be thrown');
+      throw new Error('Expected an error to be thrown');
     } catch (error: any) {
-      expect(error.message).to.contain('subscribe rpc requests must include subscribe options');
+      expect(error.message).toContain('subscribe rpc requests must include subscribe options');
     }
   });
 
   it('calls onclose handler', async () => {
     // test injected handler
     const onCloseHandler = { onclose: ():void => {} };
-    const onCloseSpy = sinon.spy(onCloseHandler, 'onclose');
+    const onCloseSpy = spyOn(onCloseHandler, 'onclose');
     const client = await JsonRpcSocket.connect(socketDwnUrl, { onclose: onCloseHandler.onclose });
     client.close();
 
     await sleepWhileWaitingForEvents();
-    expect(onCloseSpy.callCount).to.equal(1);
+    expect(onCloseSpy).toHaveBeenCalledTimes(1);
 
     // test default logger
-    const logInfoSpy = sinon.stub(console, 'info');
+    const logInfoSpy = spyOn(console, 'info').mockImplementation(() => {});
     const defaultClient = await JsonRpcSocket.connect(socketDwnUrl);
     defaultClient.close();
 
     await sleepWhileWaitingForEvents();
-    expect(logInfoSpy.callCount).to.equal(1);
+    expect(logInfoSpy).toHaveBeenCalledTimes(1);
 
     // extract log message from argument
-    const logMessage:string = logInfoSpy.args[0][0]!;
-    expect(logMessage).to.equal(`JSON RPC Socket close ${socketDwnUrl}`);
+    const logMessage:string = logInfoSpy.mock.calls[0][0]!;
+    expect(logMessage).toBe(`JSON RPC Socket close ${socketDwnUrl}`);
   });
 
   describe('event simulation', function () {
     it('calls onerror handler', async () => {
       // test injected handler
       const onErrorHandler = { onerror: ():void => {} };
-      const onErrorSpy = sinon.spy(onErrorHandler, 'onerror');
+      const onErrorSpy = spyOn(onErrorHandler, 'onerror');
       const client = await JsonRpcSocket.connect(socketDwnUrl, { onerror: onErrorHandler.onerror });
       client['socket'].dispatchEvent(new Event('error'));
 
       await sleepWhileWaitingForEvents();
-      expect(onErrorSpy.callCount).to.equal(1, 'error');
+      expect(onErrorSpy).toHaveBeenCalledTimes(1);
 
       // test default logger
-      const logInfoSpy = sinon.stub(console, 'error');
+      const logInfoSpy = spyOn(console, 'error').mockImplementation(() => {});
       const defaultClient = await JsonRpcSocket.connect(socketDwnUrl);
       defaultClient['socket'].dispatchEvent(new Event('error'));
 
       await sleepWhileWaitingForEvents();
-      expect(logInfoSpy.callCount).to.equal(1, 'log');
+      expect(logInfoSpy).toHaveBeenCalledTimes(1);
 
       // extract log message from argument
-      const logMessage:string = logInfoSpy.args[0][0]!;
-      expect(logMessage).to.equal(`JSON RPC Socket error ${socketDwnUrl}`);
+      const logMessage:string = logInfoSpy.mock.calls[0][0]!;
+      expect(logMessage).toBe(`JSON RPC Socket error ${socketDwnUrl}`);
     });
 
     it('closes subscription upon receiving a JsonRpc Error for a long running subscription', async () => {
@@ -238,7 +236,7 @@ describe('JsonRpcSocket', () => {
       let errorCounter = 0;
       let responseCounter = 0;
       const responseListener = (response: JsonRpcResponse): void => {
-        expect(response.id).to.equal(subscriptionId);
+        expect(response.id).toBe(subscriptionId);
         if (response.error) {
           errorCounter++;
         }
@@ -249,7 +247,7 @@ describe('JsonRpcSocket', () => {
       };
 
       const subscription = await client.subscribe(request, responseListener);
-      expect(subscription.response.error).to.be.undefined;
+      expect(subscription.response.error).toBeUndefined();
       // wait for the messages to arrive
 
       // induce positive result
@@ -262,8 +260,8 @@ describe('JsonRpcSocket', () => {
 
       await sleepWhileWaitingForEvents();
       // the original response
-      expect(responseCounter).to.equal(1, 'response');
-      expect(errorCounter).to.equal(1, 'error');
+      expect(responseCounter).toBe(1);
+      expect(errorCounter).toBe(1);
     });
   });
 });

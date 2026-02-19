@@ -1,6 +1,6 @@
 import sinon from 'sinon';
 
-import { expect } from 'chai';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
 import type { PortableDid } from '@enbox/dids';
 import type { PortableIdentity } from '../src/index.js';
@@ -16,7 +16,7 @@ describe('AgentIdentityApi', () => {
     it('returns instance if no parameters are given', () => {
       expect(
         new AgentIdentityApi()
-      ).to.not.throw;
+      ).toBeDefined();
     });
   });
 
@@ -28,15 +28,15 @@ describe('AgentIdentityApi', () => {
       };
       const identityApi = new AgentIdentityApi({ agent: mockAgent });
       const agent = identityApi.agent;
-      expect(agent).to.exist;
-      expect(agent.agentDid).to.equal('did:method:abc123');
+      expect(agent).toBeDefined();
+      expect(agent.agentDid).toBe('did:method:abc123');
     });
 
     it(`throws an error if the 'agent' instance property is undefined`, () => {
       const identityApi = new AgentIdentityApi();
       expect(() =>
         identityApi.agent
-      ).to.throw(Error, 'Unable to determine agent execution context');
+      ).toThrow('Unable to determine agent execution context');
     });
   });
 
@@ -45,7 +45,7 @@ describe('AgentIdentityApi', () => {
       const identityApi = new AgentIdentityApi();
       expect(() =>
         identityApi.tenant
-      ).to.throw(Error, 'The agent must be set to perform tenant specific actions.');
+      ).toThrow('The agent must be set to perform tenant specific actions.');
     });
 
     it('should return the did of the agent as the tenant', async () => {
@@ -53,7 +53,7 @@ describe('AgentIdentityApi', () => {
         agentDid: { uri: 'did:method:abc123' }
       };
       const identityApi = new AgentIdentityApi({ agent: mockAgent });
-      expect(identityApi.tenant).to.equal('did:method:abc123');
+      expect(identityApi.tenant).toBe('did:method:abc123');
     });
   });
 
@@ -66,7 +66,7 @@ describe('AgentIdentityApi', () => {
     describe(`with ${agentStoreType} DID store`, () => {
       let testHarness: PlatformAgentTestHarness;
 
-      before(async () => {
+      beforeAll(async () => {
         testHarness = await PlatformAgentTestHarness.setup({
           agentClass  : TestAgent,
           agentStores : agentStoreType
@@ -74,12 +74,14 @@ describe('AgentIdentityApi', () => {
       });
 
       beforeEach(async () => {
+        mock.restore();
         sinon.restore();
         await testHarness.clearStorage();
         await testHarness.createAgentDid();
       });
 
-      after(async () => {
+      afterAll(async () => {
+        mock.restore();
         sinon.restore();
         await testHarness.clearStorage();
         await testHarness.closeStorage();
@@ -90,9 +92,9 @@ describe('AgentIdentityApi', () => {
           const identityApi = new AgentIdentityApi({ agent: testHarness.agent });
           try {
             await identityApi.export({ didUri: 'did:method:xyz123' });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.include('AgentIdentityApi: Failed to export due to Identity not found');
+            expect(error.message).toContain('AgentIdentityApi: Failed to export due to Identity not found');
           }
         });
 
@@ -117,7 +119,7 @@ describe('AgentIdentityApi', () => {
           // those are not exposed in the returned BearIdentity object, so we add them to the rest of the identity we are comparing
           portableIdentity.portableDid.privateKeys = exportedIdentity.portableDid.privateKeys;
 
-          expect(exportedIdentity).to.deep.equal(portableIdentity);
+          expect(exportedIdentity).toEqual(portableIdentity);
         });
       });
 
@@ -136,8 +138,8 @@ describe('AgentIdentityApi', () => {
           });
 
           // Verify the result.
-          expect(identity).to.have.property('did');
-          expect(identity).to.have.property('metadata');
+          expect(identity).toHaveProperty('did');
+          expect(identity).toHaveProperty('metadata');
         });
       });
 
@@ -159,18 +161,18 @@ describe('AgentIdentityApi', () => {
 
           // List identities and verify the result.
           const storedIdentities = await testHarness.agent.identity.list();
-          expect(storedIdentities).to.have.length(3);
+          expect(storedIdentities).toHaveLength(3);
 
           const createdIdentities = [alice.did.uri, bob.did.uri, carol.did.uri];
           for (const storedIdentity of storedIdentities) {
-            expect(createdIdentities).to.include(storedIdentity.did.uri);
+            expect(createdIdentities).toContain(storedIdentity.did.uri);
           }
         });
 
         it('returns an empty array if the store contains no Identities', async () => {
           // List identities and verify the result is empty.
           const storedIdentities = await testHarness.agent.identity.list();
-          expect(storedIdentities).to.be.empty;
+          expect(storedIdentities).toHaveLength(0);
         });
       });
 
@@ -185,20 +187,20 @@ describe('AgentIdentityApi', () => {
 
           // Verify that the Identity exists.
           let storedIdentity = await testHarness.agent.identity.get({ didUri: identity.did.uri });
-          expect(storedIdentity).to.exist;
-          expect(storedIdentity?.did.uri).to.equal(identity.did.uri);
+          expect(storedIdentity).toBeDefined();
+          expect(storedIdentity?.did.uri).toBe(identity.did.uri);
 
           // Delete the Identity.
           await testHarness.agent.identity.delete({ didUri: identity.did.uri });
 
           // Verify that the Identity no longer exists.
           storedIdentity = await testHarness.agent.identity.get({ didUri: identity.did.uri });
-          expect(storedIdentity).to.not.exist;
+          expect(storedIdentity).toBeUndefined();
 
           // Verify that the DID still exists
           const storedDid = await testHarness.agent.did.get({ didUri: identity.did.uri });
-          expect(storedDid).to.not.be.undefined;
-          expect(storedDid!.uri).to.equal(identity.did.uri);
+          expect(storedDid).toBeDefined();
+          expect(storedDid!.uri).toBe(identity.did.uri);
         });
 
         it('fails with not found error if the Identity does not exist', async () => {
@@ -206,9 +208,9 @@ describe('AgentIdentityApi', () => {
           const didUri = 'did:method:xyz123';
           try {
             await testHarness.agent.identity.delete({ didUri });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.include('AgentIdentityApi: Failed to purge due to Identity not found');
+            expect(error.message).toContain('AgentIdentityApi: Failed to purge due to Identity not found');
           }
         });
 
@@ -217,9 +219,9 @@ describe('AgentIdentityApi', () => {
           const didUri = 'did:method:xyz123';
           try {
             await testHarness.agent.identity.delete({ didUri });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.include('AgentIdentityApi: Failed to purge due to Identity not found');
+            expect(error.message).toContain('AgentIdentityApi: Failed to purge due to Identity not found');
           }
         });
       });
@@ -344,9 +346,9 @@ describe('AgentIdentityApi', () => {
           const newEndpoints = ['https://example.com/dwn2'];
           await testHarness.agent.identity.setDwnEndpoints({ didUri: testPortableDid.uri, endpoints: newEndpoints });
 
-          expect(updateSpy.calledOnce).to.be.true;
+          expect(updateSpy.calledOnce).toBe(true);
           // expect the updated DID to have the new DWN service
-          expect(updateSpy.firstCall.args[0].portableDid.document.service).to.deep.equal([{
+          expect(updateSpy.firstCall.args[0].portableDid.document.service).toEqual([{
             id              : `${testPortableDid.uri}#dwn`,
             type            : 'DecentralizedWebNode',
             serviceEndpoint : newEndpoints,
@@ -362,18 +364,18 @@ describe('AgentIdentityApi', () => {
           // set the same endpoints
           try {
             await testHarness.agent.identity.setDwnEndpoints({ didUri: testPortableDid.uri, endpoints: ['https://example.com/dwn'] });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.include('AgentDidApi: No changes detected');
+            expect(error.message).toContain('AgentDidApi: No changes detected');
           }
         });
 
         it('should throw an error if the DID is not found', async () => {
           try {
             await testHarness.agent.identity.setDwnEndpoints({ didUri: 'did:method:xyz123', endpoints: ['https://example.com/dwn'] });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.include('AgentIdentityApi: Failed to set DWN endpoints due to DID not found');
+            expect(error.message).toContain('AgentIdentityApi: Failed to set DWN endpoints due to DID not found');
           }
         });
 
@@ -387,19 +389,19 @@ describe('AgentIdentityApi', () => {
           // control: get the service endpoints of the created DID, should fail
           try {
             await testHarness.agent.identity.getDwnEndpoints({ didUri: testPortableDid.uri });
-            expect.fail('should have thrown an error');
+            throw new Error('should have thrown an error');
           } catch (error: any) {
-            expect(error.message).to.include('Failed to dereference');
+            expect(error.message).toContain('Failed to dereference');
           }
 
           // set new endpoints
           const newEndpoints = ['https://example.com/dwn2'];
           await testHarness.agent.identity.setDwnEndpoints({ didUri: testPortableDid.uri, endpoints: newEndpoints });
 
-          expect(updateSpy.calledOnce).to.be.true;
+          expect(updateSpy.calledOnce).toBe(true);
 
           // expect the updated DID to have the new DWN service
-          expect(updateSpy.firstCall.args[0].portableDid.document.service).to.deep.equal([{
+          expect(updateSpy.firstCall.args[0].portableDid.document.service).toEqual([{
             id              : 'dwn',
             type            : 'DecentralizedWebNode',
             serviceEndpoint : newEndpoints,
@@ -418,9 +420,9 @@ describe('AgentIdentityApi', () => {
           // control: get the service endpoints of the created DID, should fail
           try {
             await testHarness.agent.identity.getDwnEndpoints({ didUri: testPortableDidWithDifferentService.uri });
-            expect.fail('should have thrown an error');
+            throw new Error('should have thrown an error');
           } catch (error: any) {
-            expect(error.message).to.include('Failed to dereference');
+            expect(error.message).toContain('Failed to dereference');
           }
 
           // set new endpoints
@@ -428,8 +430,8 @@ describe('AgentIdentityApi', () => {
           await testHarness.agent.identity.setDwnEndpoints({ didUri: testPortableDidWithDifferentService.uri, endpoints: newEndpoints });
 
           // expect the updated DID to have the new DWN service as well as the existing service
-          expect(updateSpy.calledOnce).to.be.true;
-          expect(updateSpy.firstCall.args[0].portableDid.document.service).to.deep.equal([{
+          expect(updateSpy.calledOnce).toBe(true);
+          expect(updateSpy.firstCall.args[0].portableDid.document.service).toEqual([{
             id              : 'other',
             type            : 'Other',
             serviceEndpoint : ['https://example.com/other']
@@ -454,33 +456,33 @@ describe('AgentIdentityApi', () => {
               }]
             }
           });
-          expect(identity.metadata.name).to.equal('Test Identity');
+          expect(identity.metadata.name).toBe('Test Identity');
 
           // sanity fetch the identity
           let storedIdentity = await testHarness.agent.identity.get({ didUri: identity.did.uri });
-          expect(storedIdentity).to.exist;
-          expect(storedIdentity?.metadata.name).to.equal('Test Identity');
+          expect(storedIdentity).toBeDefined();
+          expect(storedIdentity?.metadata.name).toBe('Test Identity');
 
           // update the identity
           await testHarness.agent.identity.setMetadataName({ didUri: identity.did.uri, name: 'Updated Identity' });
 
           // fetch the updated identity
           storedIdentity = await testHarness.agent.identity.get({ didUri: identity.did.uri });
-          expect(storedIdentity).to.exist;
-          expect(storedIdentity?.metadata.name).to.equal('Updated Identity');
+          expect(storedIdentity).toBeDefined();
+          expect(storedIdentity?.metadata.name).toBe('Updated Identity');
         });
 
         it('should throw if identity does not exist', async () => {
           try {
             await testHarness.agent.identity.setMetadataName({ didUri: 'did:method:xyz123', name: 'Updated Identity' });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.include('AgentIdentityApi: Failed to set metadata name due to Identity not found');
+            expect(error.message).toContain('AgentIdentityApi: Failed to set metadata name due to Identity not found');
           }
         });
 
         it('should throw if name is missing or empty', async () => {
-          const storeSpy = sinon.spy(testHarness.agent.identity['_store'], 'set');
+          const storeSpy = spyOn(testHarness.agent.identity['_store'], 'set');
           const identity = await testHarness.agent.identity.create({
             metadata   : { name: 'Test Identity' },
             didMethod  : 'jwk',
@@ -491,29 +493,29 @@ describe('AgentIdentityApi', () => {
             }
           });
 
-          expect(storeSpy.callCount).to.equal(1);
+          expect(storeSpy.mock.calls.length).toBe(1);
 
           try {
             await testHarness.agent.identity.setMetadataName({ didUri: identity.did.uri, name: '' });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.include('Failed to set metadata name due to missing name value');
+            expect(error.message).toContain('Failed to set metadata name due to missing name value');
           }
 
           try {
             await testHarness.agent.identity.setMetadataName({ didUri: identity.did.uri, name: undefined! });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.include('Failed to set metadata name due to missing name value');
+            expect(error.message).toContain('Failed to set metadata name due to missing name value');
           }
 
           // call count should not have changed
-          expect(storeSpy.callCount).to.equal(1);
+          expect(storeSpy.mock.calls.length).toBe(1);
 
           // sanity confirm the name did not change
           const storedIdentity = await testHarness.agent.identity.get({ didUri: identity.did.uri });
-          expect(storedIdentity).to.exist;
-          expect(storedIdentity?.metadata.name).to.equal('Test Identity');
+          expect(storedIdentity).toBeDefined();
+          expect(storedIdentity?.metadata.name).toBe('Test Identity');
         });
 
         it('should throw if the updated name is the same as the current name', async () => {
@@ -527,28 +529,28 @@ describe('AgentIdentityApi', () => {
             }
           });
 
-          const storeSpy = sinon.spy(testHarness.agent.identity['_store'], 'set');
+          const storeSpy = spyOn(testHarness.agent.identity['_store'], 'set');
 
           try {
             await testHarness.agent.identity.setMetadataName({ didUri: identity.did.uri, name: 'Test Identity' });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.include('AgentIdentityApi: No changes detected');
+            expect(error.message).toContain('AgentIdentityApi: No changes detected');
           }
 
           // confirm set has not been called
-          expect(storeSpy.notCalled).to.be.true;
+          expect(storeSpy).not.toHaveBeenCalled();
 
           // sanity update the name to something else
           await testHarness.agent.identity.setMetadataName({ didUri: identity.did.uri, name: 'Updated Identity' });
 
           // confirm set has been called
-          expect(storeSpy.calledOnce).to.be.true;
+          expect(storeSpy).toHaveBeenCalledTimes(1);
 
           // confirm the name was updated
           const storedIdentity = await testHarness.agent.identity.get({ didUri: identity.did.uri });
-          expect(storedIdentity).to.exist;
-          expect(storedIdentity?.metadata.name).to.equal('Updated Identity');
+          expect(storedIdentity).toBeDefined();
+          expect(storedIdentity?.metadata.name).toBe('Updated Identity');
         });
       });
 
@@ -559,7 +561,7 @@ describe('AgentIdentityApi', () => {
 
           // no identities exist, return undefined
           const noIdentities = await testHarness.agent.identity.connectedIdentity();
-          expect(noIdentities).to.be.undefined;
+          expect(noIdentities).toBeUndefined();
 
           // Create a non-connected Identity.
           await testHarness.agent.identity.create({
@@ -569,7 +571,7 @@ describe('AgentIdentityApi', () => {
 
           // attempt to get a connected identity when none exist
           const notConnected = await testHarness.agent.identity.connectedIdentity();
-          expect(notConnected).to.be.undefined;
+          expect(notConnected).toBeUndefined();
 
           // Create a connected Identity.
           const connectedDid1 = await testHarness.agent.identity.create({
@@ -585,13 +587,13 @@ describe('AgentIdentityApi', () => {
 
           // get the first connected identity
           const connectedIdentity = await testHarness.agent.identity.connectedIdentity();
-          expect(connectedIdentity).to.exist;
-          expect(connectedIdentity!.did.uri).to.equal(connectedDid1.did.uri);
+          expect(connectedIdentity).toBeDefined();
+          expect(connectedIdentity!.did.uri).toBe(connectedDid1.did.uri);
 
           // get the first identity connected to a specific connectedDid
           const connectedIdentity2 = await testHarness.agent.identity.connectedIdentity({ connectedDid: 'did:method:def456' });
-          expect(connectedIdentity2).to.exist;
-          expect(connectedIdentity2!.did.uri).to.equal(connectedDid2.did.uri);
+          expect(connectedIdentity2).toBeDefined();
+          expect(connectedIdentity2!.did.uri).toBe(connectedDid2.did.uri);
         });
       });
     });

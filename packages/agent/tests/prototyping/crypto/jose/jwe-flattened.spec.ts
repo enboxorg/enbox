@@ -1,6 +1,6 @@
 import type { Jwk } from '@enbox/crypto';
 
-import { expect } from 'chai';
+import { beforeEach, describe, expect, it } from 'bun:test';
 
 import type { Web5PlatformAgent } from '../../../../src/types/agent.js';
 
@@ -37,12 +37,12 @@ describe('FlattenedJwe', () => {
         keyManager
       });
 
-      expect(result.plaintext).to.be.instanceOf(Uint8Array);
-      expect(result.plaintext).to.deep.equal(new Uint8Array([1, 2, 3, 4]));
-      expect(result.protectedHeader).to.deep.equal({ alg: 'dir', enc: 'A256GCM' });
-      expect(result.unprotectedHeader).to.be.undefined;
-      expect(result.additionalAuthenticatedData).to.be.undefined;
-      expect(result.sharedUnprotectedHeader).to.be.undefined;
+      expect(result.plaintext).toBeInstanceOf(Uint8Array);
+      expect(result.plaintext).toEqual(new Uint8Array([1, 2, 3, 4]));
+      expect(result.protectedHeader).toEqual({ alg: 'dir', enc: 'A256GCM' });
+      expect(result.unprotectedHeader).toBeUndefined();
+      expect(result.additionalAuthenticatedData).toBeUndefined();
+      expect(result.sharedUnprotectedHeader).toBeUndefined();
     });
 
     it('returns the expected result given a decryption Key URI and Flattened JWE', async () => {
@@ -67,12 +67,12 @@ describe('FlattenedJwe', () => {
         keyManager
       });
 
-      expect(result.plaintext).to.be.instanceOf(Uint8Array);
-      expect(result.plaintext).to.deep.equal(new Uint8Array([1, 2, 3, 4]));
-      expect(result.protectedHeader).to.deep.equal({ alg: 'dir', enc: 'A256GCM' });
-      expect(result.unprotectedHeader).to.be.undefined;
-      expect(result.additionalAuthenticatedData).to.be.undefined;
-      expect(result.sharedUnprotectedHeader).to.be.undefined;
+      expect(result.plaintext).toBeInstanceOf(Uint8Array);
+      expect(result.plaintext).toEqual(new Uint8Array([1, 2, 3, 4]));
+      expect(result.protectedHeader).toEqual({ alg: 'dir', enc: 'A256GCM' });
+      expect(result.unprotectedHeader).toBeUndefined();
+      expect(result.additionalAuthenticatedData).toBeUndefined();
+      expect(result.sharedUnprotectedHeader).toBeUndefined();
     });
   });
 
@@ -93,14 +93,14 @@ describe('FlattenedJwe', () => {
         keyManager
       });
 
-      expect(flattenedJwe.aad).to.be.undefined;
-      expect(flattenedJwe.ciphertext).to.be.a('string');
-      expect(flattenedJwe.iv).to.be.a('string');
-      expect(flattenedJwe.protected).to.be.a('string');
-      expect(flattenedJwe.tag).to.be.a('string');
-      expect(flattenedJwe.unprotected).to.be.undefined;
-      expect(flattenedJwe.header).to.be.undefined;
-      expect(flattenedJwe.encrypted_key).to.be.undefined;
+      expect(flattenedJwe.aad).toBeUndefined();
+      expect(typeof flattenedJwe.ciphertext).toBe('string');
+      expect(typeof flattenedJwe.iv).toBe('string');
+      expect(typeof flattenedJwe.protected).toBe('string');
+      expect(typeof flattenedJwe.tag).toBe('string');
+      expect(flattenedJwe.unprotected).toBeUndefined();
+      expect(flattenedJwe.header).toBeUndefined();
+      expect(flattenedJwe.encrypted_key).toBeUndefined();
     });
 
     it('encrypts and returns a Flattened JWE given an encryption Key URI', async () => {
@@ -121,14 +121,14 @@ describe('FlattenedJwe', () => {
         keyManager
       });
 
-      expect(flattenedJwe.aad).to.be.undefined;
-      expect(flattenedJwe.ciphertext).to.be.a('string');
-      expect(flattenedJwe.iv).to.be.a('string');
-      expect(flattenedJwe.protected).to.be.a('string');
-      expect(flattenedJwe.tag).to.be.a('string');
-      expect(flattenedJwe.unprotected).to.be.undefined;
-      expect(flattenedJwe.header).to.be.undefined;
-      expect(flattenedJwe.encrypted_key).to.be.undefined;
+      expect(flattenedJwe.aad).toBeUndefined();
+      expect(typeof flattenedJwe.ciphertext).toBe('string');
+      expect(typeof flattenedJwe.iv).toBe('string');
+      expect(typeof flattenedJwe.protected).toBe('string');
+      expect(typeof flattenedJwe.tag).toBe('string');
+      expect(flattenedJwe.unprotected).toBeUndefined();
+      expect(flattenedJwe.header).toBeUndefined();
+      expect(flattenedJwe.encrypted_key).toBeUndefined();
     });
   });
 });

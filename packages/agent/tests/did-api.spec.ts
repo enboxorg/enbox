@@ -1,6 +1,6 @@
 import sinon from 'sinon';
 
-import { expect } from 'chai';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import type { BearerDid, PortableDid } from '@enbox/dids';
 import { DidDht, DidJwk } from '@enbox/dids';
 
@@ -15,15 +15,15 @@ describe('AgentDidApi', () => {
   describe('constructor', () => {
     it('accepts an array of DID method implementations', () => {
       expect(
-        new AgentDidApi({ didMethods: [DidJwk] })
-      ).to.not.throw;
+        () => new AgentDidApi({ didMethods: [DidJwk] })
+      ).not.toThrow();
     });
 
     it('throws an exception if didMethods input is missing', () => {
       expect(() =>
         // @ts-expect-error because an empty object is intentionally specified to trigger the error.
         new AgentDidApi({})
-      ).to.throw(TypeError, `Required parameter missing: 'didMethods'`);
+      ).toThrow(TypeError);
     });
   });
 
@@ -35,15 +35,15 @@ describe('AgentDidApi', () => {
       };
       const didApi = new AgentDidApi({ didMethods: [DidJwk], agent: mockAgent });
       const agent = didApi.agent;
-      expect(agent).to.exist;
-      expect(agent.agentDid.uri).to.equal('did:method:abc123');
+      expect(agent).toBeDefined();
+      expect(agent.agentDid.uri).toBe('did:method:abc123');
     });
 
     it(`throws an error if the 'agent' instance property is undefined`, () => {
       const didApi = new AgentDidApi({ didMethods: [DidJwk] });
       expect(() =>
         didApi.agent
-      ).to.throw(Error, 'Unable to determine agent execution context');
+      ).toThrow('Unable to determine agent execution context');
     });
   });
 
@@ -54,7 +54,7 @@ describe('AgentDidApi', () => {
     describe(`with ${agentStoreType} DID store`, () => {
       let testHarness: PlatformAgentTestHarness;
 
-      before(async () => {
+      beforeAll(async () => {
         testHarness = await PlatformAgentTestHarness.setup({
           agentClass  : TestAgent,
           agentStores : agentStoreType
@@ -67,7 +67,7 @@ describe('AgentDidApi', () => {
         await testHarness.createAgentDid();
       });
 
-      after(async () => {
+      afterAll(async () => {
         sinon.restore();
         await testHarness.clearStorage();
         await testHarness.closeStorage();
@@ -86,9 +86,9 @@ describe('AgentDidApi', () => {
           });
 
           // Verify the result.
-          expect(did).to.have.property('uri');
-          expect(did).to.have.property('document');
-          expect(did).to.have.property('metadata');
+          expect(did).toHaveProperty('uri');
+          expect(did).toHaveProperty('document');
+          expect(did).toHaveProperty('metadata');
         });
 
         it('supports DID DHT', async () => {
@@ -105,9 +105,9 @@ describe('AgentDidApi', () => {
           });
 
           // Verify the result.
-          expect(did).to.have.property('uri');
-          expect(did).to.have.property('document');
-          expect(did).to.have.property('metadata');
+          expect(did).toHaveProperty('uri');
+          expect(did).toHaveProperty('document');
+          expect(did).toHaveProperty('metadata');
         });
 
         it(`adds generated keys to the Agent's KeyManager`, async () => {
@@ -121,10 +121,10 @@ describe('AgentDidApi', () => {
           const storedPublicKey = await testHarness.agent.keyManager.getPublicKey({ keyUri: storedKeyUri });
 
           // Verify the key was found.
-          expect(storedPublicKey).to.exist;
-          expect(storedPublicKey).to.have.property('kty', did.document.verificationMethod![0].publicKeyJwk!.kty);
-          expect(storedPublicKey).to.have.property('crv', did.document.verificationMethod![0].publicKeyJwk!.crv);
-          expect(storedPublicKey).to.have.property('x', did.document.verificationMethod![0].publicKeyJwk!.x);
+          expect(storedPublicKey).toBeDefined();
+          expect(storedPublicKey).toHaveProperty('kty', did.document.verificationMethod![0].publicKeyJwk!.kty);
+          expect(storedPublicKey).toHaveProperty('crv', did.document.verificationMethod![0].publicKeyJwk!.crv);
+          expect(storedPublicKey).toHaveProperty('x', did.document.verificationMethod![0].publicKeyJwk!.x);
         });
 
         it('creates DIDs under the tenant of the new DID, by default', async () => {
@@ -133,11 +133,11 @@ describe('AgentDidApi', () => {
 
           // Verify that the DID was NOT stored under the Agent's tenant.
           let storedDid = await testHarness.agent.did.get({ didUri: did.uri });
-          expect(storedDid).to.not.exist;
+          expect(storedDid).toBeUndefined();
 
           // Verify that the DID WAS stored under the new DID's tenant.
           storedDid = await testHarness.agent.did.get({ didUri: did.uri, tenant: did.uri });
-          expect(storedDid).to.exist;
+          expect(storedDid).toBeDefined();
         });
 
         it('creates DIDs under the tenant of the specified DID', async () => {
@@ -149,20 +149,20 @@ describe('AgentDidApi', () => {
 
           // Verify that the DID WAS stored under the Agent's tenant.
           let storedDid = await testHarness.agent.did.get({ didUri: did.uri });
-          expect(storedDid).to.exist;
+          expect(storedDid).toBeDefined();
 
           // Verify that the DID was NOT stored under the new DID's tenant.
           storedDid = await testHarness.agent.did.get({ didUri: did.uri, tenant: did.uri });
-          expect(storedDid).to.not.exist;
+          expect(storedDid).toBeUndefined();
         });
 
         it('throws an error if the DID method is an empty string', async () => {
           try {
             // @ts-expect-error because an empty method is intentionally specified to trigger the error.
             await testHarness.agent.did.create({ method: '' });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.include('Method not supported');
+            expect(error.message).toContain('Method not supported');
           }
         });
 
@@ -170,9 +170,9 @@ describe('AgentDidApi', () => {
           try {
             // @ts-expect-error because an unsupported method is intentionally specified to trigger the error.
             await testHarness.agent.did.create({ method: 'not-supported' });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.include('Method not supported');
+            expect(error.message).toContain('Method not supported');
           }
         });
       });
@@ -187,38 +187,38 @@ describe('AgentDidApi', () => {
 
           // attempt to get the DID
           let storedDid = await testHarness.agent.did.get({ didUri: did.uri, tenant: agentDid });
-          expect(storedDid).to.not.be.undefined;
-          expect(storedDid!.uri).to.equal(did.uri);
+          expect(storedDid).toBeDefined();
+          expect(storedDid!.uri).toBe(did.uri);
 
           // delete the DID
           await testHarness.agent.did.delete({ didUri: did.uri, tenant: agentDid });
 
           // attempt to get the DID again
           storedDid = await testHarness.agent.did.get({ didUri: did.uri, tenant: agentDid });
-          expect(storedDid).to.be.undefined;
+          expect(storedDid).toBeUndefined();
         });
 
         it('should throw not found if the DID does not exist', async () => {
           try {
             await testHarness.agent.did.delete({ didUri: 'did:method:abc123', tenant: testHarness.agent.agentDid.uri });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.include('AgentDidApi: Could not delete, DID not found');
+            expect(error.message).toContain('AgentDidApi: Could not delete, DID not found');
           }
         });
 
-        it('should not be able to get signer for tenant after the tenant DID is deleted and the deleteKey parameter is set not false', async function () {
+        it('should not be able to get signer for tenant after the tenant DID is deleted and the deleteKey parameter is set not false', async () => {
           // This test is only relevant for the DWN store as it needs a signer to perform storage operations
           if (agentStoreType !== 'dwn') {
-            this.skip();
+            return;
           }
           // Generate a new DID, since no tenant is provided it will be stored under its own tenant
           const did = await testHarness.agent.did.create({ method: 'jwk', store: true }); // store
 
           // attempt to get the DID
           let storedDid = await testHarness.agent.did.get({ didUri: did.uri, tenant: did.uri });
-          expect(storedDid).to.not.be.undefined;
-          expect(storedDid!.uri).to.equal(did.uri);
+          expect(storedDid).toBeDefined();
+          expect(storedDid!.uri).toBe(did.uri);
 
           // delete the DID
           await testHarness.agent.did.delete({ didUri: did.uri, tenant: did.uri });
@@ -226,9 +226,9 @@ describe('AgentDidApi', () => {
           // attempt to get the DID again
           try {
             storedDid = await testHarness.agent.did.get({ didUri: did.uri, tenant: did.uri });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error:any) {
-            expect(error.message).to.include('Unable to get signer for author');
+            expect(error.message).toContain('Unable to get signer for author');
           }
         });
 
@@ -238,8 +238,8 @@ describe('AgentDidApi', () => {
 
           // attempt to get the DID
           let storedDid = await testHarness.agent.did.get({ didUri: did.uri, tenant: did.uri });
-          expect(storedDid).to.not.be.undefined;
-          expect(storedDid!.uri).to.equal(did.uri);
+          expect(storedDid).toBeDefined();
+          expect(storedDid!.uri).toBe(did.uri);
 
           // spy on deleteKey
           const keyManagerSpy = sinon.spy(testHarness.agent.keyManager, 'deleteKey');
@@ -247,11 +247,11 @@ describe('AgentDidApi', () => {
           // delete the DID without deleting the key
           await testHarness.agent.did.delete({ didUri: did.uri, tenant: did.uri, deleteKey: false });
 
-          expect(keyManagerSpy.called).to.be.false;
+          expect(keyManagerSpy.called).toBe(false);
 
           // attempt to get the DID again this will not fail because the key still exists
           storedDid = await testHarness.agent.did.get({ didUri: did.uri, tenant: did.uri });
-          expect(storedDid).to.be.undefined;
+          expect(storedDid).toBeUndefined();
         });
 
         it('should skip non Jwk encoded verification methods', async () => {
@@ -277,7 +277,7 @@ describe('AgentDidApi', () => {
           // delete the DID
           await testHarness.agent.did.delete({ didUri: 'did:example:123' });
 
-          expect(keyManagerSpy.called).to.be.false;
+          expect(keyManagerSpy.called).toBe(false);
         });
 
         it('skips if verificationMethod is not defined', async () => {
@@ -297,7 +297,7 @@ describe('AgentDidApi', () => {
           // delete the DID
           await testHarness.agent.did.delete({ didUri: 'did:example:123' });
 
-          expect(keyManagerDeleteSpy.called).to.be.false;
+          expect(keyManagerDeleteSpy.called).toBe(false);
         });
       });
 
@@ -314,12 +314,12 @@ describe('AgentDidApi', () => {
           const exportedDid = await testHarness.agent.did.export({ didUri: did.uri, tenant: testHarness.agent.agentDid.uri });
 
           // Verify the result.
-          expect(exportedDid).to.have.property('uri', did.uri);
-          expect(exportedDid).to.have.property('document');
-          expect(exportedDid).to.have.property('metadata');
+          expect(exportedDid).toHaveProperty('uri', did.uri);
+          expect(exportedDid).toHaveProperty('document');
+          expect(exportedDid).toHaveProperty('metadata');
 
           // Verify the exported document.
-          expect(exportedDid.document).to.deep.equal(portableDid.document);
+          expect(exportedDid.document).toEqual(portableDid.document);
         });
       });
 
@@ -341,8 +341,8 @@ describe('AgentDidApi', () => {
           const storedDid = await testHarness.agent.did.get({ didUri: importedDid.uri });
 
           if (storedDid === undefined) {throw new Error('Type guard unexpectedly threw');} // Type guard.
-          expect(storedDid.uri).to.equal(portableDid.uri);
-          expect(storedDid.document).to.deep.equal(portableDid.document);
+          expect(storedDid.uri).toBe(portableDid.uri);
+          expect(storedDid.document).toEqual(portableDid.document);
         });
 
         it('supports importing multiple DIDs to the same Identity/tenant', async () => {
@@ -362,13 +362,13 @@ describe('AgentDidApi', () => {
 
           // Verify that DID 1 WAS stored under the Agent's tenant.
           const storedDid1 = await testHarness.agent.did.get({ didUri: did1Import.uri });
-          expect(storedDid1).to.exist;
-          expect(storedDid1?.uri).to.equal(did1.uri);
+          expect(storedDid1).toBeDefined();
+          expect(storedDid1?.uri).toBe(did1.uri);
 
           // Verify that DID 2 WAS stored under the Agent's tenant.
           const storedDid2 = await testHarness.agent.did.get({ didUri: did2Import.uri });
-          expect(storedDid2).to.exist;
-          expect(storedDid2?.uri).to.equal(did2.uri);
+          expect(storedDid2).toBeDefined();
+          expect(storedDid2?.uri).toBe(did2.uri);
         });
 
         it('does not mutate DID input during import', async () => {
@@ -385,7 +385,7 @@ describe('AgentDidApi', () => {
           await testHarness.agent.did.import({ portableDid });
 
           // Verify the input object was not mutated during import.
-          expect(portableDid).to.deep.equal(portableDidClone);
+          expect(portableDid).toEqual(portableDidClone);
         });
 
         it('imports DIDs under the tenant of the imported DID, by default', async () => {
@@ -397,11 +397,11 @@ describe('AgentDidApi', () => {
 
           // Verify that the DID was NOT stored under the Agent's tenant.
           let storedDid = await testHarness.agent.did.get({ didUri: importedDid.uri });
-          expect(storedDid).to.not.exist;
+          expect(storedDid).toBeUndefined();
 
           // Verify that the DID WAS stored under the new DID's tenant.
           storedDid = await testHarness.agent.did.get({ didUri: importedDid.uri, tenant: importedDid.uri });
-          expect(storedDid).to.exist;
+          expect(storedDid).toBeDefined();
         });
 
         it('imports DIDs under the tenant of the specified DID', async () => {
@@ -416,11 +416,11 @@ describe('AgentDidApi', () => {
 
           // Verify that the DID was stored under the Agent's tenant.
           let storedDid = await testHarness.agent.did.get({ didUri: importedDid.uri });
-          expect(storedDid).to.exist;
+          expect(storedDid).toBeDefined();
 
           // Verify that the DID was NOT stored under the new DID's tenant.
           storedDid = await testHarness.agent.did.get({ didUri: importedDid.uri, tenant: importedDid.uri });
-          expect(storedDid).to.not.exist;
+          expect(storedDid).toBeUndefined();
         });
       });
 
@@ -433,11 +433,11 @@ describe('AgentDidApi', () => {
             }
           });
 
-          expect(response.ok).to.be.true;
-          expect(response.status.code).to.equal(201);
-          expect(response.result).to.have.property('uri');
-          expect(response.result).to.have.property('document');
-          expect(response.result).to.have.property('metadata');
+          expect(response.ok).toBe(true);
+          expect(response.status.code).toBe(201);
+          expect(response.result).toHaveProperty('uri');
+          expect(response.result).toHaveProperty('document');
+          expect(response.result).toHaveProperty('metadata');
         });
 
         it('returns an error response for unsupported DID Create method', async () => {
@@ -449,8 +449,8 @@ describe('AgentDidApi', () => {
             }
           });
 
-          expect(response.ok).to.be.false;
-          expect(response.status.code).to.equal(500);
+          expect(response.ok).toBe(false);
+          expect(response.status.code).toBe(500);
         });
 
         it('handles DID Resolve requests', async () => {
@@ -465,12 +465,12 @@ describe('AgentDidApi', () => {
             }
           });
 
-          expect(response.ok).to.be.true;
-          expect(response.status.code).to.equal(200);
-          expect(response.result).to.have.property('didDocument');
-          expect(response.result!.didDocument).to.have.property('id', did.uri);
-          expect(response.result).to.have.property('didResolutionMetadata');
-          expect(response.result).to.have.property('didDocumentMetadata');
+          expect(response.ok).toBe(true);
+          expect(response.status.code).toBe(200);
+          expect(response.result).toHaveProperty('didDocument');
+          expect(response.result!.didDocument).toHaveProperty('id', did.uri);
+          expect(response.result).toHaveProperty('didResolutionMetadata');
+          expect(response.result).toHaveProperty('didDocumentMetadata');
         });
 
         it('returns a DID resolution error for unsupported DID Resolve method', async () => {
@@ -481,21 +481,21 @@ describe('AgentDidApi', () => {
             }
           });
 
-          expect(response.ok).to.be.true;
-          expect(response.status.code).to.equal(200);
-          expect(response.result).to.have.property('didDocument', null);
-          expect(response.result).to.have.property('didResolutionMetadata');
-          expect(response.result).to.have.property('didDocumentMetadata');
-          expect(response.result!.didResolutionMetadata).to.have.property('error', 'methodNotSupported');
+          expect(response.ok).toBe(true);
+          expect(response.status.code).toBe(200);
+          expect(response.result).toHaveProperty('didDocument', null);
+          expect(response.result).toHaveProperty('didResolutionMetadata');
+          expect(response.result).toHaveProperty('didDocumentMetadata');
+          expect(response.result!.didResolutionMetadata).toHaveProperty('error', 'methodNotSupported');
         });
 
         it('throws an error for unsupported request types', async () => {
           try {
             // @ts-expect-error because an unsupported message type is intentionally specified to trigger the error.
             await testHarness.agent.did.processRequest({ messageType: 'unsupported', messageParams: {} });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.include('Unsupported request type');
+            expect(error.message).toContain('Unsupported request type');
           }
         });
       });
@@ -565,12 +565,12 @@ describe('AgentDidApi', () => {
           const updatedDid = await testHarness.agent.did.get({ didUri: did.uri, tenant: testHarness.agent.agentDid.uri });
 
           // Verify the result.
-          expect(updatedDid).to.have.property('uri', did.uri);
-          expect(updatedDid).to.have.property('document');
-          expect(updatedDid).to.have.property('metadata');
+          expect(updatedDid).toHaveProperty('uri', did.uri);
+          expect(updatedDid).toHaveProperty('document');
+          expect(updatedDid).toHaveProperty('metadata');
 
           // Verify the updated document.
-          expect(updatedDid!.document).to.deep.equal(updateDid.document);
+          expect(updatedDid!.document).toEqual(updateDid.document);
         });
 
         it('updates a DID DHT and publishes it by default', async () => {
@@ -594,15 +594,15 @@ describe('AgentDidApi', () => {
           const updatedDid = await testHarness.agent.did.get({ didUri: did.uri, tenant: testHarness.agent.agentDid.uri });
 
           // Verify the result.
-          expect(updatedDid).to.have.property('uri', did.uri);
-          expect(updatedDid).to.have.property('document');
-          expect(updatedDid).to.have.property('metadata');
+          expect(updatedDid).toHaveProperty('uri', did.uri);
+          expect(updatedDid).toHaveProperty('document');
+          expect(updatedDid).toHaveProperty('metadata');
 
           // Verify the updated document.
-          expect(updatedDid!.document).to.deep.equal(updateDid.document);
+          expect(updatedDid!.document).toEqual(updateDid.document);
 
           // Verify publish was called
-          expect(publishSpy.called).to.be.true;
+          expect(publishSpy.called).toBe(true);
         });
 
         it('updates a DID DHT and does not publish it if publish is false', async () => {
@@ -626,15 +626,15 @@ describe('AgentDidApi', () => {
           const updatedDid = await testHarness.agent.did.get({ didUri: did.uri, tenant: testHarness.agent.agentDid.uri });
 
           // Verify the result.
-          expect(updatedDid).to.have.property('uri', did.uri);
-          expect(updatedDid).to.have.property('document');
-          expect(updatedDid).to.have.property('metadata');
+          expect(updatedDid).toHaveProperty('uri', did.uri);
+          expect(updatedDid).toHaveProperty('document');
+          expect(updatedDid).toHaveProperty('metadata');
 
           // Verify the updated document.
-          expect(updatedDid!.document).to.deep.equal(updateDid.document);
+          expect(updatedDid!.document).toEqual(updateDid.document);
 
           // Verify publish was called
-          expect(publishSpy.called).to.be.false;
+          expect(publishSpy.called).toBe(false);
         });
 
         it('updates a DID under the tenant of the updated DID if tenant is not provided ', async () => {
@@ -657,12 +657,12 @@ describe('AgentDidApi', () => {
           const updatedDid = await testHarness.agent.did.get({ didUri: did.uri, tenant: did.uri });
 
           // Verify the result.
-          expect(updatedDid).to.have.property('uri', did.uri);
-          expect(updatedDid).to.have.property('document');
-          expect(updatedDid).to.have.property('metadata');
+          expect(updatedDid).toHaveProperty('uri', did.uri);
+          expect(updatedDid).toHaveProperty('document');
+          expect(updatedDid).toHaveProperty('metadata');
 
           // Verify the updated document.
-          expect(updatedDid!.document).to.deep.equal(updateDid.document);
+          expect(updatedDid!.document).toEqual(updateDid.document);
         });
 
         it('throws if DID does not exist in the store', async () => {
@@ -682,9 +682,9 @@ describe('AgentDidApi', () => {
           try {
             // Update the DID.
             await testHarness.agent.did.update({ portableDid: updateDid, tenant: testHarness.agent.agentDid.uri });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.include('AgentDidApi: Could not update, DID not found');
+            expect(error.message).toContain('AgentDidApi: Could not update, DID not found');
           }
         });
 
@@ -696,9 +696,9 @@ describe('AgentDidApi', () => {
           try {
             // Update the DID.
             await testHarness.agent.did.update({ portableDid, tenant: testHarness.agent.agentDid.uri });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.include('AgentDidApi: No changes detected, update aborted');
+            expect(error.message).toContain('AgentDidApi: No changes detected, update aborted');
           }
         });
       });

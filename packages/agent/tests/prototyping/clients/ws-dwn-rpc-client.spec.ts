@@ -1,8 +1,6 @@
 import type { Persona, RecordSubscriptionHandler, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
-import sinon from 'sinon';
-
-import { expect } from 'chai';
+import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
 import { HttpDwnRpcClient } from '../../../src/prototyping/clients/http-dwn-rpc-client.js';
 import { JsonRpcSocket } from '../../../src/prototyping/clients/json-rpc-socket.js';
@@ -29,12 +27,12 @@ describe('WebSocketDwnRpcClient', () => {
     dwnUrl.protocol = dwnUrl.protocol === 'http:' ? 'ws:' : 'wss:';
     socketDwnUrl = dwnUrl.toString();
 
-    sinon.restore();
+    mock.restore();
     alice = await TestDataGenerator.generateDidKeyPersona();
   });
 
-  after(() => {
-    sinon.restore();
+  afterAll(() => {
+    mock.restore();
   });
 
   describe('sendDwnRequest', () => {
@@ -54,9 +52,9 @@ describe('WebSocketDwnRpcClient', () => {
       });
 
       // should return success but without any records as none exist yet
-      expect(response.status.code).to.equal(200);
-      expect(response.entries).to.exist;
-      expect(response.entries?.length).to.equal(0);
+      expect(response.status.code).toBe(200);
+      expect(response.entries).toBeDefined();
+      expect(response.entries?.length).toBe(0);
     });
 
     it('only supports WebSocket and Secure WebSocket protocols', async () => {
@@ -79,9 +77,9 @@ describe('WebSocketDwnRpcClient', () => {
           targetDid : alice.did,
           message,
         });
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).to.equal('Invalid websocket protocol http:');
+        expect(error.message).toBe('Invalid websocket protocol http:');
       }
     });
 
@@ -96,7 +94,7 @@ describe('WebSocketDwnRpcClient', () => {
       });
 
       // avoid print default error logging
-      sinon.stub(console, 'error');
+      spyOn(console, 'error').mockImplementation(() => {});
 
       try {
         await client.sendDwnRequest({
@@ -104,9 +102,9 @@ describe('WebSocketDwnRpcClient', () => {
           targetDid : alice.did,
           message,
         }, { connectTimeout: 5 }); // set a short connect timeout
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).to.include('Error connecting to 127.0.0.1:10');
+        expect(error.message).toContain('Error connecting to 127.0.0.1:10');
       }
     });
 
@@ -124,7 +122,7 @@ describe('WebSocketDwnRpcClient', () => {
         message   : writeMessage,
         data      : dataBytes,
       });
-      expect(writeResponse.status.code).to.equal(202);
+      expect(writeResponse.status.code).toBe(202);
 
       // query for records matching the schema of the record we inserted
       const { message: readMessage } = await RecordsRead.create({
@@ -142,9 +140,9 @@ describe('WebSocketDwnRpcClient', () => {
       });
 
       // should return success, and the record we inserted
-      expect(readResponse.status.code).to.equal(200);
-      expect(readResponse.entry).to.exist;
-      expect(readResponse.entry?.recordsWrite?.recordId).to.equal(writeMessage.recordId);
+      expect(readResponse.status.code).toBe(200);
+      expect(readResponse.entry).toBeDefined();
+      expect(readResponse.entry?.recordsWrite?.recordId).toBe(writeMessage.recordId);
     });
 
     it('subscribes to updates to a record', async () => {
@@ -161,7 +159,7 @@ describe('WebSocketDwnRpcClient', () => {
         message   : writeMessage,
         data      : dataBytes,
       });
-      expect(writeResponse.status.code).to.equal(202);
+      expect(writeResponse.status.code).toBe(202);
 
       // create a subscription
       const { message: subscribeMessage } = await TestDataGenerator.generateRecordsSubscribe({
@@ -174,8 +172,8 @@ describe('WebSocketDwnRpcClient', () => {
       const dataCids:string[] = [];
       const subscriptionHandler: RecordSubscriptionHandler = (event) => {
         const { message, initialWrite } = event;
-        expect(initialWrite!.recordId).to.equal(writeMessage.recordId);
-        expect(initialWrite!.descriptor.dataCid).to.equal(writeMessage.descriptor.dataCid);
+        expect(initialWrite!.recordId).toBe(writeMessage.recordId);
+        expect(initialWrite!.descriptor.dataCid).toBe(writeMessage.descriptor.dataCid);
         if (message.descriptor.interface + message.descriptor.method === DwnInterfaceName.Records + DwnMethodName.Write) {
           dataCids.push((message as RecordsWriteMessage).descriptor.dataCid);
         }
@@ -187,8 +185,8 @@ describe('WebSocketDwnRpcClient', () => {
         message   : subscribeMessage,
         subscriptionHandler
       });
-      expect(subscribeResponse.status.code).to.equal(200);
-      expect(subscribeResponse.subscription).to.exist;
+      expect(subscribeResponse.status.code).toBe(200);
+      expect(subscribeResponse.subscription).toBeDefined();
 
       // update the record
       const { message: update1, recordsWrite: updateWrite, dataBytes: update1Data } = await TestDataGenerator.generateFromRecordsWrite({
@@ -202,7 +200,7 @@ describe('WebSocketDwnRpcClient', () => {
         message   : update1,
         data      : update1Data,
       });
-      expect(updateReply.status.code).to.equal(202);
+      expect(updateReply.status.code).toBe(202);
 
       // make another update
       const { message: update2, dataBytes: update2Data } = await TestDataGenerator.generateFromRecordsWrite({
@@ -215,16 +213,16 @@ describe('WebSocketDwnRpcClient', () => {
         message   : update2,
         data      : update2Data,
       });
-      expect(updateReply.status.code).to.equal(202);
+      expect(updateReply.status.code).toBe(202);
 
       // wait for events to emit
       await sleepWhileWaitingForEvents();
       await subscribeResponse.subscription!.close();
 
-      expect(dataCids).to.have.members([
+      expect(dataCids).toEqual(expect.arrayContaining([
         update1.descriptor.dataCid,
         update2.descriptor.dataCid
-      ]);
+      ]));
     });
 
     describe('processMessage', () => {
@@ -242,7 +240,7 @@ describe('WebSocketDwnRpcClient', () => {
           socket,
         };
 
-        sinon.stub(socket, 'request').resolves({
+        spyOn(socket, 'request').mockResolvedValue({
           jsonrpc : '2.0',
           id      : 'id',
           error   : { message: 'some error',code: JsonRpcErrorCodes.BadRequest }
@@ -250,9 +248,9 @@ describe('WebSocketDwnRpcClient', () => {
 
         try {
           await WebSocketDwnRpcClient['processMessage'](connection, alice.did, message);
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.equal('error sending DWN request: some error');
+          expect(error.message).toBe('error sending DWN request: some error');
         }
       });
     });
@@ -272,7 +270,7 @@ describe('WebSocketDwnRpcClient', () => {
           socket,
         };
 
-        sinon.stub(socket, 'subscribe').resolves({
+        spyOn(socket, 'subscribe').mockResolvedValue({
           response: {
             jsonrpc : '2.0',
             id      : 'id',
@@ -282,9 +280,9 @@ describe('WebSocketDwnRpcClient', () => {
 
         try {
           await WebSocketDwnRpcClient['subscriptionRequest'](connection, alice.did, message, () => {});
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.equal('could not subscribe via jsonrpc socket: some error');
+          expect(error.message).toBe('could not subscribe via jsonrpc socket: some error');
         }
       });
 
@@ -303,7 +301,7 @@ describe('WebSocketDwnRpcClient', () => {
           socket,
         };
 
-        const subscribeStub = sinon.stub(socket, 'subscribe').resolves({
+        const subscribeStub = spyOn(socket, 'subscribe').mockResolvedValue({
           response: {
             jsonrpc : '2.0',
             id      : 'id',
@@ -320,8 +318,8 @@ describe('WebSocketDwnRpcClient', () => {
         });
 
         const processMessage = await WebSocketDwnRpcClient['subscriptionRequest'](connection, alice.did, message, () => {});
-        expect(processMessage.status.code).to.equal(200);
-        const subscriptionCallArgs = [...subscribeStub.args][0];
+        expect(processMessage.status.code).toBe(200);
+        const subscriptionCallArgs = [...subscribeStub.mock.calls][0];
         const subRequest = subscriptionCallArgs[0];
         const subHandler = subscriptionCallArgs[1];
 
@@ -332,7 +330,7 @@ describe('WebSocketDwnRpcClient', () => {
           close : (): void => {}
         };
         // spy on the close function
-        const closeSpy = sinon.spy(subscription, 'close');
+        const closeSpy = spyOn(subscription, 'close');
 
         // add to the subscriptions map
         subscriptions.set(subscriptionId, subscription);
@@ -341,8 +339,8 @@ describe('WebSocketDwnRpcClient', () => {
         subHandler(jsonError);
 
         // confirm close was called and subscription was removed
-        expect(closeSpy.callCount).to.equal(1);
-        expect(subscriptions.size).to.equal(0);
+        expect(closeSpy).toHaveBeenCalledTimes(1);
+        expect(subscriptions.size).toBe(0);
       });
     });
   });
