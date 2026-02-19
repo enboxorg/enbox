@@ -291,6 +291,14 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     // Make a copy so that the stored copy is not subject to external, unexpected modification.
     const message = JSON.parse(JSON.stringify(recordsWriteMessage)) as RecordsWriteMessage;
 
+    // Validate the message against the JSON schema.
+    // We strip internal properties that the MessageStore may attach to stored messages
+    // but are not part of the RecordsWrite JSON schema:
+    //   - `encodedData`:  base64url-encoded payload for small records
+    //   - `initialWrite`: the initial RecordsWrite when this message is an update
+    const { encodedData: _, initialWrite: __, ...messageToValidate } = message as RecordsWriteMessage & Record<string, unknown>;
+    Message.validateJsonSchema(messageToValidate);
+
     // asynchronous checks that are required by the constructor to initialize members properly
 
     await Message.validateSignatureStructure(message.authorization.signature, message.descriptor, 'RecordsWriteSignaturePayload');

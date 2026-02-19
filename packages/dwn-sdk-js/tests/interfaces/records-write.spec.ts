@@ -364,7 +364,7 @@ describe('RecordsWrite', () => {
   });
 
   describe('parse()', () => {
-    it.skip('should invoke JSON schema validation when parsing a RecordsWrite', async () => {
+    it('should invoke JSON schema validation when parsing a RecordsWrite', async () => {
       const alice = await TestDataGenerator.generatePersona();
 
       const recordsWrite = await RecordsWrite.create({
