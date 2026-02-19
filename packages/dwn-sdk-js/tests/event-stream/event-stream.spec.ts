@@ -7,11 +7,7 @@ import { TestEventStream } from '../test-event-stream.js';
 import { Message, TestDataGenerator } from '../../src/index.js';
 
 import sinon from 'sinon';
-
-import chaiAsPromised from 'chai-as-promised';
-import chai, { expect } from 'chai';
-
-chai.use(chaiAsPromised);
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 // NOTE: We use `Poller.pollUntilSuccessOrTimeout` to poll for the expected results.
 // In some cases, the EventStream is a coordinated pub/sub system and the messages/events are emitted over the network
@@ -28,7 +24,7 @@ export function testEventStream(): void {
     const originalConsoleErrorFunction = console.error;
     let eventStream: EventStream;
 
-    before(async () => {
+    beforeAll(async () => {
       eventStream = TestEventStream.get();
       await eventStream.open();
 
@@ -40,7 +36,7 @@ export function testEventStream(): void {
       sinon.restore();
     });
 
-    after(async () => {
+    afterAll(async () => {
       sinon.restore();
       console.error = originalConsoleErrorFunction;
       // Clean up after each test by closing and clearing the event stream
@@ -80,8 +76,8 @@ export function testEventStream(): void {
 
       // Use the Poller to poll until the expected results are met
       await Poller.pollUntilSuccessOrTimeout(async () => {
-        expect(messageCids1).to.have.members([ message1Cid, message2Cid, message3Cid ]);
-        expect(messageCids2).to.have.members([ message1Cid, message2Cid, message3Cid ]);
+        expect(messageCids1).toEqual(expect.arrayContaining([ message1Cid, message2Cid, message3Cid ]));
+        expect(messageCids2).toEqual(expect.arrayContaining([ message1Cid, message2Cid, message3Cid ]));
       });
 
       await subscription1.close();
@@ -118,11 +114,11 @@ export function testEventStream(): void {
 
       // Use the Poller to poll until the expected results are met
       await Poller.pollUntilSuccessOrTimeout(async () => {
-        expect(sub1MessageCids).to.have.length(1);
-        expect(sub1MessageCids).to.have.members([ message1Cid ]);
+        expect(sub1MessageCids).toHaveLength(1);
+        expect(sub1MessageCids).toEqual(expect.arrayContaining([ message1Cid ]));
 
-        expect(sub2MessageCids).to.have.length(1);
-        expect(sub2MessageCids).to.have.members([ message1Cid ]);
+        expect(sub2MessageCids).toHaveLength(1);
+        expect(sub2MessageCids).toEqual(expect.arrayContaining([ message1Cid ]));
       });
 
       await subscription1.close(); // close subscription 1
@@ -134,12 +130,12 @@ export function testEventStream(): void {
       // Use the Poller to poll until the expected results are met
       await Poller.pollUntilSuccessOrTimeout(async() => {
         // subscription 2 should have received the message
-        expect(sub2MessageCids.length).to.equal(2);
-        expect(sub2MessageCids).to.have.members([ message1Cid, message2Cid]);
+        expect(sub2MessageCids.length).toBe(2);
+        expect(sub2MessageCids).toEqual(expect.arrayContaining([ message1Cid, message2Cid]));
 
         // subscription 1 should not have received the message
-        expect(sub1MessageCids).to.have.length(1);
-        expect(sub1MessageCids).to.have.members([ message1Cid ]);
+        expect(sub1MessageCids).toHaveLength(1);
+        expect(sub1MessageCids).toEqual(expect.arrayContaining([ message1Cid ]));
       });
 
       await subscription2.close();

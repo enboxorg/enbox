@@ -3,11 +3,9 @@ import type { EventStream } from '../../src/types/subscriptions.js';
 import type { ResumableTask } from '../../src/core/resumable-task-manager.js';
 import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import EventEmitter from 'events';
 import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
 import sinon from 'sinon';
-import chai, { expect } from 'chai';
 
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Dwn } from '../../src/dwn.js';
@@ -19,14 +17,14 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { useFakeTimers } from 'sinon';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { ProtocolsConfigure, RecordsDelete, RecordsQuery } from '../../src/index.js';
 import { ResumableTaskManager, ResumableTaskName } from '../../src/core/resumable-task-manager.js';
 
-chai.use(chaiAsPromised);
 
 export function testResumableTasks(): void {
-  describe('resumable tasks', async () => {
+  describe('resumable tasks', () => {
     let clock: sinon.SinonFakeTimers;
     let didResolver: DidResolver;
     let messageStore: MessageStore;
@@ -39,7 +37,7 @@ export function testResumableTasks(): void {
 
     // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
     // so that different test suites can reuse the same backend store for testing
-    before(async () => {
+    beforeAll(async () => {
       // suppress console.error output during tests
       consoleError = console.error;
       console.error = ():void => { };
@@ -73,7 +71,7 @@ export function testResumableTasks(): void {
       }
     });
 
-    after(async () => {
+    afterAll(async () => {
       // restore console.error
       console.error = consoleError;
       await dwn.close();
@@ -95,7 +93,7 @@ export function testResumableTasks(): void {
         signer     : Jws.createSigner(alice)
       });
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // 1. Write a record to DWN (for deletion later).
       const data = TestDataGenerator.randomBytes(100);
@@ -109,7 +107,7 @@ export function testResumableTasks(): void {
 
       const recordsWrite = await RecordsWrite.create(messageOptions);
       const recordsWriteResponse = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: DataStream.fromBytes(data) });
-      expect(recordsWriteResponse.status.code).equals(202);
+      expect(recordsWriteResponse.status.code).toBe(202);
 
       // 2. Insert a resumable `RecordDelete` task into the resumable task store bypassing message handler to avoid it being processed.
 
@@ -137,8 +135,8 @@ export function testResumableTasks(): void {
       });
 
       const readReply = await dwn.processMessage(alice.did, recordsRead.message);
-      expect(readReply.status.code).to.equal(200);
-      expect(readReply.entry!.recordsWrite).to.exist;
+      expect(readReply.status.code).toBe(200);
+      expect(readReply.entry!.recordsWrite).toBeDefined();
 
       // 3. Restart the DWN to trigger the resumable task to be resumed.
       await dwn.close();
@@ -146,8 +144,8 @@ export function testResumableTasks(): void {
 
       // 4. Verify that the record is deleted.
       const readReply2 = await dwn.processMessage(alice.did, recordsRead.message);
-      expect(readReply2.status.code).to.equal(404);
-      expect(readReply2.entry!.recordsWrite).to.be.undefined;
+      expect(readReply2.status.code).toBe(404);
+      expect(readReply2.entry!.recordsWrite).toBeUndefined();
     });
 
     it('should only resume tasks that are timed-out up to the batch size when DWN starts', async () => {
@@ -173,7 +171,7 @@ export function testResumableTasks(): void {
         signer     : Jws.createSigner(alice)
       });
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // 1. Set ResumableTaskManager.resumableTaskBatchSize to 2.
       const originalResumableTaskBatchSize = dwn['resumableTaskManager']['resumableTaskBatchSize'];
@@ -193,7 +191,7 @@ export function testResumableTasks(): void {
 
         const recordsWrite = await RecordsWrite.create(messageOptions);
         const recordsWriteResponse = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: DataStream.fromBytes(data) });
-        expect(recordsWriteResponse.status.code).equals(202);
+        expect(recordsWriteResponse.status.code).toBe(202);
 
         recordsWrites.push(recordsWrite);
       }
@@ -227,21 +225,21 @@ export function testResumableTasks(): void {
       await dwn.open();
 
       // 5. Verify tasks were resumed in 2 batches (2 calls of `ResumableTaskStore.grab()`).
-      expect(grabSpy.calledThrice).to.be.true;
+      expect(grabSpy.calledThrice).toBe(true);
 
       const resumeTaskBatch1 = await grabSpy.firstCall.returnValue;
       const resumeTaskBatch2 = await grabSpy.secondCall.returnValue;
       const resumeTaskBatch3 = await grabSpy.thirdCall.returnValue;
-      expect(resumeTaskBatch1.length).to.equal(2);
-      expect(resumeTaskBatch2.length).to.equal(1);
-      expect(resumeTaskBatch3.length).to.equal(0);
+      expect(resumeTaskBatch1.length).toBe(2);
+      expect(resumeTaskBatch2.length).toBe(1);
+      expect(resumeTaskBatch3.length).toBe(0);
 
       // 6. Verify that 3 processed resumable tasks are deleted from resumable task store.
       const [task2, task3] = resumeTaskBatch1;
       const [task4] = resumeTaskBatch2;
-      expect(await resumableTaskStore.read(task2.id)).to.be.undefined;
-      expect(await resumableTaskStore.read(task3.id)).to.be.undefined;
-      expect(await resumableTaskStore.read(task4.id)).to.be.undefined;
+      expect(await resumableTaskStore.read(task2.id)).toBeUndefined();
+      expect(await resumableTaskStore.read(task3.id)).toBeUndefined();
+      expect(await resumableTaskStore.read(task4.id)).toBeUndefined();
 
       // 7. Verify that only 1 record remains in the DWN.
       const recordsQuery = await RecordsQuery.create({
@@ -249,9 +247,9 @@ export function testResumableTasks(): void {
         filter : { protocol: protocolDefinition.protocol }
       });
       const recordsQueryResponse = await dwn.processMessage(alice.did, recordsQuery.message);
-      expect(recordsQueryResponse.status.code).equals(200);
-      expect(recordsQueryResponse.entries).to.have.lengthOf(1);
-      expect(recordsQueryResponse.entries![0].recordId).to.equal(recordsWrites[0].message.recordId);
+      expect(recordsQueryResponse.status.code).toBe(200);
+      expect(recordsQueryResponse.entries).toHaveLength(1);
+      expect(recordsQueryResponse.entries![0].recordId).toBe(recordsWrites[0].message.recordId);
 
       // 8. Set ResumableTaskManager.resumableTaskBatchSize back to original value.
       dwn['resumableTaskManager']['resumableTaskBatchSize'] = originalResumableTaskBatchSize;
@@ -298,7 +296,7 @@ export function testResumableTasks(): void {
       await dwn.open();
 
       // 3. Verify the task is retried until it succeeds.
-      expect(attemptCount).to.equal(2);
+      expect(attemptCount).toBe(2);
     });
 
     it('should extend long running tasks automatically to prevent it from timing out', async () => {
@@ -320,7 +318,7 @@ export function testResumableTasks(): void {
         signer     : Jws.createSigner(alice)
       });
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // 1. Mock code to never complete the `RecordsDelete` until given a signal to complete.
       const completeDeleteSignal = new EventEmitter();
@@ -343,7 +341,7 @@ export function testResumableTasks(): void {
 
       const recordsWrite = await RecordsWrite.create(messageOptions);
       const recordsWriteResponse = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: DataStream.fromBytes(data) });
-      expect(recordsWriteResponse.status.code).equals(202);
+      expect(recordsWriteResponse.status.code).toBe(202);
 
       // 3. Submit a `RecordsDelete` without awaiting on its completion.
       const resumableTaskRegisterSpy = sinon.spy(resumableTaskStore, 'register');
@@ -384,7 +382,7 @@ export function testResumableTasks(): void {
       let latestResumableTaskState;
       await Poller.pollUntilSuccessOrTimeout(async () => {
         latestResumableTaskState = await resumableTaskStore.read(initialResumableTaskState.id);
-        expect(latestResumableTaskState!.timeout).to.be.greaterThan(initialResumableTaskState.timeout);
+        expect(latestResumableTaskState!.timeout).toBeGreaterThan(initialResumableTaskState.timeout);
       });
 
       // 5. Signal the mocked code to complete the `RecordsDelete`.
@@ -392,15 +390,15 @@ export function testResumableTasks(): void {
 
       // wait until the `RecordsDelete` is completed
       await recordsDeletePromise;
-      expect(isDeleteComplete).to.be.true;
+      expect(isDeleteComplete).toBe(true);
 
       // 6. Verify that automatic timeout extension loop is cleared.
-      expect(clearTimeoutExtensionTimerSpy.calledOnce).to.be.true;
+      expect(clearTimeoutExtensionTimerSpy.calledOnce).toBe(true);
 
       // 7. Verify that the resumable task is deleted.
       await Poller.pollUntilSuccessOrTimeout(async () => {
         latestResumableTaskState = await resumableTaskStore.read(initialResumableTaskState.id);
-        expect(latestResumableTaskState).to.be.undefined;
+        expect(latestResumableTaskState).toBeUndefined();
       });
     });
   });

@@ -1,6 +1,6 @@
-import { expect } from 'chai';
 import { Message } from '../../../../src/core/message.js';
 import { TestDataGenerator } from '../../../utils/test-data-generator.js';
+import { describe, expect, it } from 'bun:test';
 
 describe('RecordsWrite schema definition', () => {
   it('should allow descriptor with only required properties', async () => {
@@ -36,7 +36,7 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(message);
-    }).throws('must have required property \'recordId\'');
+    }).toThrow('must have required property \'recordId\'');
   });
 
   it('should throw if `authorization` is missing', () => {
@@ -55,7 +55,7 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).throws('must have required property \'authorization\'');
+    }).toThrow('must have required property \'authorization\'');
   });
 
   it('should throw if unknown property is given in message', () => {
@@ -76,7 +76,7 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).throws('unevaluated properties: RecordsWrite: unknownProperty');
+    }).toThrow('unevaluated properties: RecordsWrite: unknownProperty');
   });
 
   it('should throw if unknown property is given in the `descriptor`', () => {
@@ -97,7 +97,7 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).throws('must NOT have additional properties');
+    }).toThrow('must NOT have additional properties');
   });
 
   it('should pass if `protocol` exists and its related properties are all present', () => {
@@ -143,7 +143,7 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).throws('protocolPath: must match pattern "^[a-zA-Z]+(/[a-zA-Z]+)*$');
+    }).toThrow('protocolPath: must match pattern "^[a-zA-Z]+(/[a-zA-Z]+)*$');
   });
 
   it('should throw if `contextId` is malformed', () => {
@@ -171,19 +171,19 @@ describe('RecordsWrite schema definition', () => {
     invalidMessage1.contextId = 'invalid:path', // `:` is not a valid char in `contextId`
     expect(() => {
       Message.validateJsonSchema(invalidMessage1);
-    }).throws(expectedErrorMessage);
+    }).toThrow(expectedErrorMessage);
 
     const invalidMessage2 = { ...validMessage };
     invalidMessage2.contextId = '/invalid/context'; // not allowed to start with `/`
     expect(() => {
       Message.validateJsonSchema(invalidMessage2);
-    }).throws(expectedErrorMessage);
+    }).toThrow(expectedErrorMessage);
 
     const invalidMessage3 = { ...validMessage };
     invalidMessage3.contextId = 'invalid/context/'; // not allowed to end with `/`
     expect(() => {
       Message.validateJsonSchema(invalidMessage3);
-    }).throws(expectedErrorMessage);
+    }).toThrow(expectedErrorMessage);
   });
 
   it('should pass if none of `protocol` related properties are present', () => {
@@ -222,7 +222,7 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).throws('must have required property \'protocol\'');
+    }).toThrow('must have required property \'protocol\'');
   });
 
   it('should throw if `protocol` is defined but `contextId` is missing', () => {
@@ -243,7 +243,7 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).throws('must have required property \'contextId\'');
+    }).toThrow('must have required property \'contextId\'');
   });
 
   it('#434 - should throw if `parentId` is defined without other protocol related properties', () => {
@@ -267,7 +267,7 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).throws('must have property protocol when property parentId is present');
+    }).toThrow('must have property protocol when property parentId is present');
   });
 
   it('should throw if `protocol` is defined but `protocolPath` is missing', () => {
@@ -290,7 +290,7 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).throws('descriptor: must have required property \'protocolPath\'');
+    }).toThrow('descriptor: must have required property \'protocolPath\'');
   });
 
   it('should throw if `protocolPath` is defined but `protocol` is missing', () => {
@@ -313,7 +313,7 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).throws('descriptor: must have required property \'protocol\'');
+    }).toThrow('descriptor: must have required property \'protocol\'');
   });
 
   it('should throw if `protocol` is undefined but `recipient` is defined', () => {
@@ -338,7 +338,7 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).throws('descriptor: must have required property \'protocol\'');
+    }).toThrow('descriptor: must have required property \'protocol\'');
   });
 
   it('should pass if `protocol` is defined but `recipient` undefined', () => {
@@ -406,7 +406,7 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).throws('published: must be equal to one of the allowed values');
+    }).toThrow('published: must be equal to one of the allowed values');
   });
 
   it('should throw if published is true but datePublished is missing', () => {
@@ -427,7 +427,7 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).throws('must have required property \'datePublished\'');
+    }).toThrow('must have required property \'datePublished\'');
   });
 
   it('should throw if published is missing and datePublished is present', () => {
@@ -448,6 +448,6 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).throws('must have required property \'published\'');
+    }).toThrow('must have required property \'published\'');
   });
 });

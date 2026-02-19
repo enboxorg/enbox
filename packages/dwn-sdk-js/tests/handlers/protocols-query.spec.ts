@@ -8,9 +8,7 @@ import type {
   StateIndex,
 } from '../../src/index.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
-import chai, { expect } from 'chai';
 
 import { GeneralJwsBuilder } from '../../src/jose/jws/general/builder.js';
 import { Message } from '../../src/core/message.js';
@@ -20,10 +18,9 @@ import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Jws, PermissionsProtocol, ProtocolsQuery, RecordsWrite } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-
-chai.use(chaiAsPromised);
 
 export function testProtocolsQueryHandler(): void {
   describe('ProtocolsQueryHandler.handle()', () => {
@@ -39,7 +36,7 @@ export function testProtocolsQueryHandler(): void {
 
       // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
       // so that different test suites can reuse the same backend store for testing
-      before(async () => {
+      beforeAll(async () => {
         didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
         const stores = TestStores.get();
@@ -62,7 +59,7 @@ export function testProtocolsQueryHandler(): void {
         await stateIndex.clear();
       });
 
-      after(async () => {
+      afterAll(async () => {
         await dwn.close();
       });
 
@@ -89,8 +86,8 @@ export function testProtocolsQueryHandler(): void {
 
         const reply = await dwn.processMessage(alice.did, queryMessageData.message);
 
-        expect(reply.status.code).to.equal(200);
-        expect(reply.entries?.length).to.equal(1); // only 1 entry should match the query on protocol
+        expect(reply.status.code).toBe(200);
+        expect(reply.entries?.length).toBe(1); // only 1 entry should match the query on protocol
 
         // testing fetch-all query without filter
         const queryMessageData2 = await TestDataGenerator.generateProtocolsQuery({
@@ -99,8 +96,8 @@ export function testProtocolsQueryHandler(): void {
 
         const reply2 = await dwn.processMessage(alice.did, queryMessageData2.message);
 
-        expect(reply2.status.code).to.equal(200);
-        expect(reply2.entries?.length).to.equal(3); // expecting all 3 entries written above match the query
+        expect(reply2.status.code).toBe(200);
+        expect(reply2.entries?.length).toBe(3); // expecting all 3 entries written above match the query
       });
 
 
@@ -130,11 +127,11 @@ export function testProtocolsQueryHandler(): void {
         });
 
         const conditionalQueryReply = await dwn.processMessage(alice.did, conditionalQuery.message);
-        expect(conditionalQueryReply.status.code).to.equal(200);
-        expect(conditionalQueryReply.entries?.length).to.equal(1); // only 1 entry should match the query on protocol
+        expect(conditionalQueryReply.status.code).toBe(200);
+        expect(conditionalQueryReply.entries?.length).toBe(1); // only 1 entry should match the query on protocol
 
         const protocolConfigured = conditionalQueryReply.entries![0] as ProtocolsConfigureMessage;
-        expect(protocolConfigured).to.deep.equal(protocol2.message);
+        expect(protocolConfigured).toEqual(protocol2.message);
 
         // testing authenticated but unauthorized conditional query, it should return only matching published ProtocolsConfigures
         const signedConditionalQuery = await ProtocolsQuery.create({
@@ -143,21 +140,21 @@ export function testProtocolsQueryHandler(): void {
         });
 
         const signedConditionalQueryReply = await dwn.processMessage(alice.did, signedConditionalQuery.message);
-        expect(signedConditionalQueryReply.status.code).to.equal(200);
-        expect(signedConditionalQueryReply.entries?.length).to.equal(1); // only 1 entry should match the query on protocol
+        expect(signedConditionalQueryReply.status.code).toBe(200);
+        expect(signedConditionalQueryReply.entries?.length).toBe(1); // only 1 entry should match the query on protocol
 
         const protocolConfigured2 = conditionalQueryReply.entries![0] as ProtocolsConfigureMessage;
-        expect(protocolConfigured2).to.deep.equal(protocol2.message);
+        expect(protocolConfigured2).toEqual(protocol2.message);
 
         // testing unauthenticated fetch-all query without filter
         const fetchAllQuery = await ProtocolsQuery.create({
         });
 
         const fetchAllQueryReply = await dwn.processMessage(alice.did, fetchAllQuery.message);
-        expect(fetchAllQueryReply.status.code).to.equal(200);
-        expect(fetchAllQueryReply.entries?.length).to.equal(2);
-        expect(fetchAllQueryReply.entries).to.deep.include(protocol2.message);
-        expect(fetchAllQueryReply.entries).to.deep.include(protocol3.message);
+        expect(fetchAllQueryReply.status.code).toBe(200);
+        expect(fetchAllQueryReply.entries?.length).toBe(2);
+        expect(fetchAllQueryReply.entries).toContainEqual(protocol2.message);
+        expect(fetchAllQueryReply.entries).toContainEqual(protocol3.message);
 
         // testing authenticated but unauthorized fetch-all query without filter, it should return all matching published ProtocolsConfigures
         const signedFetchAllQuery = await ProtocolsQuery.create({
@@ -165,10 +162,10 @@ export function testProtocolsQueryHandler(): void {
         });
 
         const signedFetchAllQueryReply = await dwn.processMessage(alice.did, signedFetchAllQuery.message);
-        expect(signedFetchAllQueryReply.status.code).to.equal(200);
-        expect(signedFetchAllQueryReply.entries?.length).to.equal(2);
-        expect(signedFetchAllQueryReply.entries).to.deep.include(protocol2.message);
-        expect(signedFetchAllQueryReply.entries).to.deep.include(protocol3.message);
+        expect(signedFetchAllQueryReply.status.code).toBe(200);
+        expect(signedFetchAllQueryReply.entries?.length).toBe(2);
+        expect(signedFetchAllQueryReply.entries).toContainEqual(protocol2.message);
+        expect(signedFetchAllQueryReply.entries).toContainEqual(protocol3.message);
       });
 
       it('should return 400 if protocol is not normalized', async () => {
@@ -191,8 +188,8 @@ export function testProtocolsQueryHandler(): void {
 
       // Send records write message
       const reply = await dwn.processMessage(alice.did, protocolsQuery.message);
-      expect(reply.status.code).to.equal(400);
-      expect(reply.status.detail).to.contain(DwnErrorCode.UrlProtocolNotNormalized);
+      expect(reply.status.code).toBe(400);
+      expect(reply.status.detail).toContain(DwnErrorCode.UrlProtocolNotNormalized);
       });
 
       it('should fail with 400 if signature payload is referencing a different message (`descriptorCid`)', async () => {
@@ -210,8 +207,8 @@ export function testProtocolsQueryHandler(): void {
 
         const reply = await dwn.processMessage(tenant, message);
 
-        expect(reply.status.code).to.equal(400);
-        expect(reply.status.detail).to.contain(`${incorrectDescriptorCid} does not match expected CID`);
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain(`${incorrectDescriptorCid} does not match expected CID`);
       });
 
       it('should return 401 if auth fails', async () => {
@@ -223,8 +220,8 @@ export function testProtocolsQueryHandler(): void {
         message.authorization!.signature.signatures[0].signature = badSignature;
 
         const reply = await dwn.processMessage(alice.did, message);
-        expect(reply.status.code).to.equal(401);
-        expect(reply.status.detail).to.contain(DwnErrorCode.GeneralJwsVerifierInvalidSignature);
+        expect(reply.status.code).toBe(401);
+        expect(reply.status.detail).toContain(DwnErrorCode.GeneralJwsVerifierInvalidSignature);
       });
 
       describe('Grant authorization', () => {
@@ -246,7 +243,7 @@ export function testProtocolsQueryHandler(): void {
           });
 
           const { status: publicProtocolStatus } = await dwn.processMessage(alice.did, publicProtocolMessage);
-          expect(publicProtocolStatus.code).to.equal(202);
+          expect(publicProtocolStatus.code).toBe(202);
 
           const { message: privateProtocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
             author    : alice,
@@ -254,7 +251,7 @@ export function testProtocolsQueryHandler(): void {
           });
 
           const { status: privateProtocolStatus } = await dwn.processMessage(alice.did, privateProtocolMessage);
-          expect(privateProtocolStatus.code).to.equal(202);
+          expect(privateProtocolStatus.code).toBe(202);
 
           // 1. Alice grants Bob the access to ProtocolsQuery on her DWN
           const permissionGrant = await PermissionsProtocol.createGrant({
@@ -266,7 +263,7 @@ export function testProtocolsQueryHandler(): void {
           const dataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
 
           const grantRecordsWriteReply = await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, { dataStream });
-          expect(grantRecordsWriteReply.status.code).to.equal(202);
+          expect(grantRecordsWriteReply.status.code).toBe(202);
 
           // 2. Verify Bob can perform a ProtocolsQuery
           const permissionGrantId = permissionGrant.recordsWrite.message.recordId;
@@ -275,8 +272,8 @@ export function testProtocolsQueryHandler(): void {
             permissionGrantId,
           });
           const protocolsQueryReply = await dwn.processMessage(alice.did, protocolsQuery.message);
-          expect(protocolsQueryReply.status.code).to.equal(200);
-          expect(protocolsQueryReply.entries?.length).to.equal(2);
+          expect(protocolsQueryReply.status.code).toBe(200);
+          expect(protocolsQueryReply.entries?.length).toBe(2);
 
           // 3. Verify that Mallory cannot to use Bob's permission grant to gain access to Alice's DWN
           const malloryProtocolsQuery = await TestDataGenerator.generateProtocolsQuery({
@@ -284,8 +281,8 @@ export function testProtocolsQueryHandler(): void {
             permissionGrantId,
           });
           const malloryProtocolsQueryReply = await dwn.processMessage(alice.did, malloryProtocolsQuery.message);
-          expect(malloryProtocolsQueryReply.status.code).to.equal(401);
-          expect(malloryProtocolsQueryReply.status.detail).to.contain(DwnErrorCode.GrantAuthorizationNotGrantedToAuthor);
+          expect(malloryProtocolsQueryReply.status.code).toBe(401);
+          expect(malloryProtocolsQueryReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationNotGrantedToAuthor);
 
           // 4. Alice revokes Bob's grant
           const revokeWrite = await PermissionsProtocol.createRevocation({
@@ -299,7 +296,7 @@ export function testProtocolsQueryHandler(): void {
             revokeWrite.recordsWrite.message,
             { dataStream: DataStream.fromBytes(revokeWrite.permissionRevocationBytes) }
           );
-          expect(revokeWriteReply.status.code).to.equal(202);
+          expect(revokeWriteReply.status.code).toBe(202);
 
           // 5. Verify Bob cannot perform ProtocolsQuery with the revoked grant
           const unauthorizedProtocolsQuery = await TestDataGenerator.generateProtocolsQuery({
@@ -307,8 +304,8 @@ export function testProtocolsQueryHandler(): void {
             permissionGrantId,
           });
           const unauthorizedProtocolsQueryReply = await dwn.processMessage(alice.did, unauthorizedProtocolsQuery.message);
-          expect(unauthorizedProtocolsQueryReply.status.code).to.equal(401);
-          expect(unauthorizedProtocolsQueryReply.status.detail).to.contain(DwnErrorCode.GrantAuthorizationGrantRevoked);
+          expect(unauthorizedProtocolsQueryReply.status.code).toBe(401);
+          expect(unauthorizedProtocolsQueryReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationGrantRevoked);
         });
 
         it('should allow to scope a ProtocolsQuery to a specific protocol', async () => {
@@ -322,7 +319,7 @@ export function testProtocolsQueryHandler(): void {
           });
           const allowedProtocol = allowedProtocolMessage.descriptor.definition.protocol;
           const { status: allowedStatus } = await dwn.processMessage(alice.did, allowedProtocolMessage);
-          expect(allowedStatus.code).to.equal(202);
+          expect(allowedStatus.code).toBe(202);
 
 
           const { message: notAllowedProtocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
@@ -331,7 +328,7 @@ export function testProtocolsQueryHandler(): void {
           });
           const notAllowedProtocol = notAllowedProtocolMessage.descriptor.definition.protocol;
           const { status: notAllowedStatus } = await dwn.processMessage(alice.did, notAllowedProtocolMessage);
-          expect(notAllowedStatus.code).to.equal(202);
+          expect(notAllowedStatus.code).toBe(202);
 
           const { message: publishedProtocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
             author    : alice,
@@ -339,7 +336,7 @@ export function testProtocolsQueryHandler(): void {
           });
           const publishedProtocol = publishedProtocolMessage.descriptor.definition.protocol;
           const { status: publishedStatus } = await dwn.processMessage(alice.did, publishedProtocolMessage);
-          expect(publishedStatus.code).to.equal(202);
+          expect(publishedStatus.code).toBe(202);
 
 
           // Alice grants Bob the access to ProtocolsQuery on her DWN for a specific protocol
@@ -352,7 +349,7 @@ export function testProtocolsQueryHandler(): void {
 
           const dataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
           const grantRecordsWriteReply = await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, { dataStream });
-          expect(grantRecordsWriteReply.status.code).to.equal(202);
+          expect(grantRecordsWriteReply.status.code).toBe(202);
 
           // Bob tries to ProtocolsQuery to Alice's DWN for the allowed protocol
           const protocolsQueryAllowed = await TestDataGenerator.generateProtocolsQuery({
@@ -364,9 +361,9 @@ export function testProtocolsQueryHandler(): void {
           });
 
           const protocolQueryAllowedReply = await dwn.processMessage(alice.did, protocolsQueryAllowed.message);
-          expect(protocolQueryAllowedReply.status.code).to.equal(200);
-          expect(protocolQueryAllowedReply.entries?.length).to.equal(1);
-          expect(protocolQueryAllowedReply.entries![0].descriptor.definition.protocol).to.deep.equal(allowedProtocol);
+          expect(protocolQueryAllowedReply.status.code).toBe(200);
+          expect(protocolQueryAllowedReply.entries?.length).toBe(1);
+          expect(protocolQueryAllowedReply.entries![0].descriptor.definition.protocol).toEqual(allowedProtocol);
 
           // Bob tries to ProtocolsQuery to Alice's DWN for a different protocol
           const protocolQueryNotAllowed = await TestDataGenerator.generateProtocolsQuery({
@@ -378,8 +375,8 @@ export function testProtocolsQueryHandler(): void {
           });
 
           const protocolQueryNotAllowedReply = await dwn.processMessage(alice.did, protocolQueryNotAllowed.message);
-          expect(protocolQueryNotAllowedReply.status.code).to.equal(200);
-          expect(protocolQueryNotAllowedReply.entries?.length).to.equal(0);
+          expect(protocolQueryNotAllowedReply.status.code).toBe(200);
+          expect(protocolQueryNotAllowedReply.entries?.length).toBe(0);
 
           // Bob tries to ProtocolsQuery to Alice's DWN for a published protocol with the same grant
           const protocolQueryPublished = await TestDataGenerator.generateProtocolsQuery({
@@ -391,9 +388,9 @@ export function testProtocolsQueryHandler(): void {
           });
 
           const protocolQueryPublishedReply = await dwn.processMessage(alice.did, protocolQueryPublished.message);
-          expect(protocolQueryPublishedReply.status.code).to.equal(200);
-          expect(protocolQueryPublishedReply.entries?.length).to.equal(1);
-          expect(protocolQueryPublishedReply.entries![0].descriptor.definition.protocol).to.deep.equal(publishedProtocol);
+          expect(protocolQueryPublishedReply.status.code).toBe(200);
+          expect(protocolQueryPublishedReply.entries?.length).toBe(1);
+          expect(protocolQueryPublishedReply.entries![0].descriptor.definition.protocol).toEqual(publishedProtocol);
 
           // Bob tries to ProtocolsQuery to Alice's DWN with no filters, using the same grant
           const protocolQueryNoFilters = await ProtocolsQuery.create({
@@ -402,9 +399,9 @@ export function testProtocolsQueryHandler(): void {
           });
 
           const protocolQueryNoFiltersReply = await dwn.processMessage(alice.did, protocolQueryNoFilters.message);
-          expect(protocolQueryNoFiltersReply.status.code).to.equal(200);
-          expect(protocolQueryNoFiltersReply.entries?.length).to.equal(1);
-          expect(protocolQueryNoFiltersReply.entries![0].descriptor.definition.protocol).to.deep.equal(publishedProtocol);
+          expect(protocolQueryNoFiltersReply.status.code).toBe(200);
+          expect(protocolQueryNoFiltersReply.entries?.length).toBe(1);
+          expect(protocolQueryNoFiltersReply.entries![0].descriptor.definition.protocol).toEqual(publishedProtocol);
         });
 
         it('rejects with 401 when an external party attempts to ProtocolsQuery if they present an expired grant', async () => {
@@ -423,7 +420,7 @@ export function testProtocolsQueryHandler(): void {
           const dataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
 
           const permissionGrantWriteReply = await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, { dataStream });
-          expect(permissionGrantWriteReply.status.code).to.equal(202);
+          expect(permissionGrantWriteReply.status.code).toBe(202);
 
           // Bob does ProtocolsQuery after the grant has expired
           const protocolsQuery = await TestDataGenerator.generateProtocolsQuery({
@@ -431,8 +428,8 @@ export function testProtocolsQueryHandler(): void {
             permissionGrantId : permissionGrant.recordsWrite.message.recordId,
           });
           const protocolsQueryReply = await dwn.processMessage(alice.did, protocolsQuery.message);
-          expect(protocolsQueryReply.status.code).to.equal(401);
-          expect(protocolsQueryReply.status.detail).to.contain(DwnErrorCode.GrantAuthorizationGrantExpired);
+          expect(protocolsQueryReply.status.code).toBe(401);
+          expect(protocolsQueryReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationGrantExpired);
         });
 
         it('rejects with 401 when an external party attempts to ProtocolsQuery if the grant is not yet active', async () => {
@@ -456,7 +453,7 @@ export function testProtocolsQueryHandler(): void {
           const dataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
 
           const permissionGrantWriteReply = await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, { dataStream });
-          expect(permissionGrantWriteReply.status.code).to.equal(202);
+          expect(permissionGrantWriteReply.status.code).toBe(202);
 
           // Bob does ProtocolsQuery but his message has timestamp before the grant is active
           const protocolsQuery = await TestDataGenerator.generateProtocolsQuery({
@@ -465,8 +462,8 @@ export function testProtocolsQueryHandler(): void {
             permissionGrantId : permissionGrant.recordsWrite.message.recordId,
           });
           const protocolsQueryReply = await dwn.processMessage(alice.did, protocolsQuery.message);
-          expect(protocolsQueryReply.status.code).to.equal(401);
-          expect(protocolsQueryReply.status.detail).to.contain(DwnErrorCode.GrantAuthorizationGrantNotYetActive);
+          expect(protocolsQueryReply.status.code).toBe(401);
+          expect(protocolsQueryReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationGrantNotYetActive);
         });
 
         it('rejects with 401 when an external party attempts to ProtocolsQuery using a grant that has a different scope', async () => {
@@ -485,7 +482,7 @@ export function testProtocolsQueryHandler(): void {
           const dataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
 
           const grantRecordsWriteReply = await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, { dataStream });
-          expect(grantRecordsWriteReply.status.code).to.equal(202);
+          expect(grantRecordsWriteReply.status.code).toBe(202);
 
           // Bob tries to ProtocolsQuery
           const protocolsQuery = await TestDataGenerator.generateProtocolsQuery({
@@ -493,8 +490,8 @@ export function testProtocolsQueryHandler(): void {
             permissionGrantId : permissionGrant.recordsWrite.message.recordId,
           });
           const protocolsQueryReply = await dwn.processMessage(alice.did, protocolsQuery.message);
-          expect(protocolsQueryReply.status.code).to.equal(401);
-          expect(protocolsQueryReply.status.detail).to.contain(DwnErrorCode.GrantAuthorizationInterfaceMismatch);
+          expect(protocolsQueryReply.status.code).toBe(401);
+          expect(protocolsQueryReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationInterfaceMismatch);
         });
 
         it('rejects with 401 if the permission grant cannot be found', async () => {
@@ -509,8 +506,8 @@ export function testProtocolsQueryHandler(): void {
             permissionGrantId : await TestDataGenerator.randomCborSha256Cid(),
           });
           const protocolsQueryReply = await dwn.processMessage(alice.did, protocolsQuery.message);
-          expect(protocolsQueryReply.status.code).to.equal(401);
-          expect(protocolsQueryReply.status.detail).to.contain(DwnErrorCode.GrantAuthorizationGrantMissing);
+          expect(protocolsQueryReply.status.code).toBe(401);
+          expect(protocolsQueryReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationGrantMissing);
         });
 
         it('rejects with 401 if the permission grant has not been grantedFor the tenant', async () => {
@@ -536,7 +533,7 @@ export function testProtocolsQueryHandler(): void {
           await bobWrappedGrant.signAsOwner(Jws.createSigner(bob));
 
           const grantRecordsWriteReply = await dwn.processMessage(bob.did, bobWrappedGrant.message, { dataStream });
-          expect(grantRecordsWriteReply.status.code).to.equal(202);
+          expect(grantRecordsWriteReply.status.code).toBe(202);
 
           // 3. Verify that Carol cannot use permission grant to gain access to Bob's DWN
           const permissionGrantId = permissionGrant.recordsWrite.message.recordId;
@@ -545,8 +542,8 @@ export function testProtocolsQueryHandler(): void {
             permissionGrantId,
           });
           const protocolsQueryReply = await dwn.processMessage(bob.did, protocolsQuery.message);
-          expect(protocolsQueryReply.status.code).to.equal(401);
-          expect(protocolsQueryReply.status.detail).to.contain(DwnErrorCode.GrantAuthorizationNotGrantedForTenant);
+          expect(protocolsQueryReply.status.code).toBe(401);
+          expect(protocolsQueryReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationNotGrantedForTenant);
         });
       });
     });

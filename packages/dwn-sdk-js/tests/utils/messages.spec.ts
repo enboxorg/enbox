@@ -7,15 +7,11 @@ import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, TestDataGenerator
 
 import sinon from 'sinon';
 
-import chaiAsPromised from 'chai-as-promised';
-import chai, { expect } from 'chai';
-
-
-chai.use(chaiAsPromised);
+import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 
 describe('Messages Utils', () => {
 
-  after(() => {
+  afterAll(() => {
     sinon.restore();
   });
 
@@ -29,8 +25,8 @@ describe('Messages Utils', () => {
         { protocol: 'http://example.com/protocol/' },
       ];
       const result = Messages.normalizeFilters(filters);
-      expect(result).to.have.length(1);
-      expect(result[0].protocol).to.equal('http://example.com/protocol');
+      expect(result).toHaveLength(1);
+      expect(result[0].protocol).toBe('http://example.com/protocol');
     });
 
     it('removes undefined properties from filters', () => {
@@ -38,9 +34,9 @@ describe('Messages Utils', () => {
         { interface: DwnInterfaceName.Records, protocol: undefined },
       ];
       const result = Messages.normalizeFilters(filters);
-      expect(result).to.have.length(1);
-      expect(result[0]).to.not.have.property('protocol');
-      expect(result[0].interface).to.equal(DwnInterfaceName.Records);
+      expect(result).toHaveLength(1);
+      expect(result[0]).not.toHaveProperty('protocol');
+      expect(result[0].interface).toBe(DwnInterfaceName.Records);
     });
 
     it('excludes filters that become empty after removing undefined properties', () => {
@@ -48,7 +44,7 @@ describe('Messages Utils', () => {
         { protocol: undefined } as any,
       ];
       const result = Messages.normalizeFilters(filters);
-      expect(result).to.have.length(0);
+      expect(result).toHaveLength(0);
     });
 
     it('returns multiple normalized filters', () => {
@@ -57,9 +53,9 @@ describe('Messages Utils', () => {
         { interface: DwnInterfaceName.Records, method: DwnMethodName.Write },
       ];
       const result = Messages.normalizeFilters(filters);
-      expect(result).to.have.length(2);
-      expect(result[0].protocol).to.equal('http://example.com/a');
-      expect(result[1].interface).to.equal(DwnInterfaceName.Records);
+      expect(result).toHaveLength(2);
+      expect(result[0].protocol).toBe('http://example.com/a');
+      expect(result[1].interface).toBe(DwnInterfaceName.Records);
     });
   });
 
@@ -71,9 +67,9 @@ describe('Messages Utils', () => {
       };
 
       const messageFilter: Filter[] = Messages.convertFilters([messagesFilter]);
-      expect(messageFilter.length).to.equal(1);
-      expect(messageFilter[0].interface).to.equal(DwnInterfaceName.Records);
-      expect(messageFilter[0].method).to.deep.equal(DwnMethodName.Write);
+      expect(messageFilter.length).toBe(1);
+      expect(messageFilter[0].interface).toBe(DwnInterfaceName.Records);
+      expect(messageFilter[0].method).toEqual(DwnMethodName.Write);
     });
 
     it('applies appropriate tag filters to protocol-filtered messages', async () => {
@@ -92,18 +88,18 @@ describe('Messages Utils', () => {
       // the first filter should be the protocol tag filter applied to the permissions protocol uri
       // the second filter should be the remaining filter, only containing a protocol filter to the protocol we are targeting
       const protocolMessageFilter: Filter[] = Messages.convertFilters([protocolMessagesFilter]);
-      expect(protocolMessageFilter.length).to.equal(2);
+      expect(protocolMessageFilter.length).toBe(2);
 
       const permissionRecordsFilter = protocolMessageFilter[0];
       // should have two filter properties: protocol tag filter and a protocol filter for the permissions protocol
-      expect(Object.keys(permissionRecordsFilter).length).to.equal(2);
-      expect(permissionRecordsFilter['tag.protocol']).to.equal(exampleProtocol);
-      expect(permissionRecordsFilter.protocol).to.equal(PermissionsProtocol.uri);
+      expect(Object.keys(permissionRecordsFilter).length).toBe(2);
+      expect(permissionRecordsFilter['tag.protocol']).toBe(exampleProtocol);
+      expect(permissionRecordsFilter.protocol).toBe(PermissionsProtocol.uri);
 
       // should only have a protocol filter for the targeted protocol
       const remainingFilter = protocolMessageFilter[1];
-      expect(Object.keys(remainingFilter).length).to.equal(1);
-      expect(remainingFilter.protocol).to.equal(exampleProtocol);
+      expect(Object.keys(remainingFilter).length).toBe(1);
+      expect(remainingFilter.protocol).toBe(exampleProtocol);
 
 
       // with other filters in addition to the filtered protocol
@@ -114,20 +110,20 @@ describe('Messages Utils', () => {
       };
 
       const messageFilter: Filter[] = Messages.convertFilters([otherMessagesFilter]);
-      expect(messageFilter.length).to.equal(2);
+      expect(messageFilter.length).toBe(2);
 
       const protocolTagFilter2 = messageFilter[0];
       // should have two filter properties: protocol tag filter and a protocol filter for the permissions protocol
-      expect(Object.keys(protocolTagFilter2).length).to.equal(2);
-      expect(permissionRecordsFilter['tag.protocol']).to.equal(exampleProtocol);
-      expect(permissionRecordsFilter.protocol).to.equal(PermissionsProtocol.uri);
+      expect(Object.keys(protocolTagFilter2).length).toBe(2);
+      expect(permissionRecordsFilter['tag.protocol']).toBe(exampleProtocol);
+      expect(permissionRecordsFilter.protocol).toBe(PermissionsProtocol.uri);
 
       const remainingFilter2 = messageFilter[1];
       // should have the remaining filters
-      expect(Object.keys(remainingFilter2).length).to.equal(3);
-      expect(remainingFilter2.protocol).to.equal(exampleProtocol);
-      expect(remainingFilter2.interface).to.equal(DwnInterfaceName.Records);
-      expect(remainingFilter2.method).to.deep.equal(DwnMethodName.Write);
+      expect(Object.keys(remainingFilter2).length).toBe(3);
+      expect(remainingFilter2.protocol).toBe(exampleProtocol);
+      expect(remainingFilter2.interface).toBe(DwnInterfaceName.Records);
+      expect(remainingFilter2.method).toEqual(DwnMethodName.Write);
     });
 
     it('applies appropriate tag filters to protocol-filtered messages with messageTimestamp filter', async () => {
@@ -145,16 +141,16 @@ describe('Messages Utils', () => {
       };
 
       const messageFilter: Filter[] = Messages.convertFilters([withDateUpdatedFilter]);
-      expect(messageFilter.length).to.equal(2);
-      expect(messageFilter[0].protocol).to.equal(PermissionsProtocol.uri);
-      expect(messageFilter[0]['tag.protocol']).to.equal(exampleProtocol);
-      expect(messageFilter[0].messageTimestamp).to.deep.equal(messageTimestampFilterResult);
+      expect(messageFilter.length).toBe(2);
+      expect(messageFilter[0].protocol).toBe(PermissionsProtocol.uri);
+      expect(messageFilter[0]['tag.protocol']).toBe(exampleProtocol);
+      expect(messageFilter[0].messageTimestamp).toEqual(messageTimestampFilterResult);
 
 
-      expect(messageFilter[1].protocol).to.equal(exampleProtocol);
-      expect(messageFilter[1].interface).to.equal(DwnInterfaceName.Records);
-      expect(messageFilter[1].method).to.deep.equal(DwnMethodName.Write);
-      expect(messageFilter[1].messageTimestamp).to.deep.equal(messageTimestampFilterResult);
+      expect(messageFilter[1].protocol).toBe(exampleProtocol);
+      expect(messageFilter[1].interface).toBe(DwnInterfaceName.Records);
+      expect(messageFilter[1].method).toEqual(DwnMethodName.Write);
+      expect(messageFilter[1].messageTimestamp).toEqual(messageTimestampFilterResult);
     });
   });
 });

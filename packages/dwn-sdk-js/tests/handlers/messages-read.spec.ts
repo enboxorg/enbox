@@ -8,17 +8,16 @@ import type {
   StateIndex,
 } from '../../src/index.js';
 
-import { expect } from 'chai';
 import { GeneralJwsVerifier } from '../../src/jose/jws/general/verifier.js';
 import { Message } from '../../src/core/message.js';
 import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
+import sinon from 'sinon';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DataStream, Dwn, DwnConstant, DwnErrorCode, DwnInterfaceName, DwnMethodName, Jws, PermissionGrant, PermissionsProtocol, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-
-import sinon from 'sinon';
 
 export function testMessagesReadHandler(): void {
   describe('MessagesReadHandler.handle()', () => {
@@ -32,7 +31,7 @@ export function testMessagesReadHandler(): void {
 
     // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
     // so that different test suites can reuse the same backend store for testing
-    before(async () => {
+    beforeAll(async () => {
       didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
       const stores = TestStores.get();
@@ -55,7 +54,7 @@ export function testMessagesReadHandler(): void {
       sinon.restore(); // wipe all previous stubs/spies/mocks/fakes
     });
 
-    after(async () => {
+    afterAll(async () => {
       sinon.restore();
       await dwn.close();
     });
@@ -73,8 +72,8 @@ export function testMessagesReadHandler(): void {
 
       // alice is not the author of the message
       const reply = await dwn.processMessage(alice.did, message);
-      expect(reply.status.code).to.equal(401);
-      expect(reply.status.detail).to.include('Invalid signature');
+      expect(reply.status.code).toBe(401);
+      expect(reply.status.detail).toContain('Invalid signature');
     });
 
     it('returns a 400 if message is invalid', async () => {
@@ -90,7 +89,7 @@ export function testMessagesReadHandler(): void {
 
       const reply = await dwn.processMessage(alice.did, message);
 
-      expect(reply.status.code).to.equal(400);
+      expect(reply.status.code).toBe(400);
     });
 
     it('returns a 400 if message contains an invalid message cid', async () => {
@@ -106,9 +105,9 @@ export function testMessagesReadHandler(): void {
 
       const reply: MessagesReadReply = await dwn.processMessage(alice.did, message);
 
-      expect(reply.status.code).to.equal(400);
-      expect(reply.status.detail).to.include('is not a valid CID');
-      expect(reply.entry).to.be.undefined;
+      expect(reply.status.code).toBe(400);
+      expect(reply.status.detail).toContain('is not a valid CID');
+      expect(reply.entry).toBeUndefined();
     });
 
     it('returns a 404 and the entry as undefined in reply entry when a messageCid is not found', async () => {
@@ -123,8 +122,8 @@ export function testMessagesReadHandler(): void {
 
       // returns a 404 because the RecordsWrite created above was never stored
       const reply: MessagesReadReply = await dwn.processMessage(alice.did, message);
-      expect(reply.status.code).to.equal(404);
-      expect(reply.entry).to.be.undefined;
+      expect(reply.status.code).toBe(404);
+      expect(reply.entry).toBeUndefined();
     });
 
     describe('without a grant', () =>{
@@ -136,7 +135,7 @@ export function testMessagesReadHandler(): void {
           // bob creates a record that alice will try and get
           const { message: recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: bob });
           const { status } = await dwn.processMessage(bob.did, recordsWrite, { dataStream });
-          expect(status.code).to.equal(202);
+          expect(status.code).toBe(202);
 
           // alice tries to read the message
           const { message } = await TestDataGenerator.generateMessagesRead({
@@ -145,8 +144,8 @@ export function testMessagesReadHandler(): void {
           });
           const reply = await dwn.processMessage(bob.did, message);
 
-          expect(reply.status.code).to.equal(401);
-          expect(reply.status.detail).to.include(DwnErrorCode.MessagesReadAuthorizationFailed);
+          expect(reply.status.code).toBe(401);
+          expect(reply.status.detail).toContain(DwnErrorCode.MessagesReadAuthorizationFailed);
         });
 
         describe('gets record data in the reply entry', () => {
@@ -159,7 +158,7 @@ export function testMessagesReadHandler(): void {
             });
 
             const reply = await dwn.processMessage(alice.did, recordsWrite, { dataStream });
-            expect(reply.status.code).to.equal(202);
+            expect(reply.status.code).toBe(202);
 
             const recordsWriteMessageCid = await Message.getCid(recordsWrite);
             const { message } = await TestDataGenerator.generateMessagesRead({
@@ -168,17 +167,17 @@ export function testMessagesReadHandler(): void {
             });
 
             const messagesReadReply: MessagesReadReply = await dwn.processMessage(alice.did, message);
-            expect(messagesReadReply.status.code).to.equal(200);
-            expect(messagesReadReply.entry).to.exist;
+            expect(messagesReadReply.status.code).toBe(200);
+            expect(messagesReadReply.entry).toBeDefined();
 
             const messageReply = messagesReadReply.entry!;
-            expect(messageReply.messageCid).to.exist;
-            expect(messageReply.messageCid).to.equal(recordsWriteMessageCid);
+            expect(messageReply.messageCid).toBeDefined();
+            expect(messageReply.messageCid).toBe(recordsWriteMessageCid);
 
-            expect(messageReply.message).to.exist.and.not.be.undefined;
-            expect(messageReply.data).to.exist.and.not.be.undefined;
+            expect(messageReply.message).toBeDefined();
+            expect(messageReply.data).toBeDefined();
             const messageData = await DataStream.toBytes(messageReply.data!);
-            expect(messageData).to.eql(dataBytes);
+            expect(messageData).toEqual(dataBytes);
           });
 
           it('data is greater than threshold', async () => {
@@ -190,7 +189,7 @@ export function testMessagesReadHandler(): void {
             });
 
             const reply = await dwn.processMessage(alice.did, recordsWrite, { dataStream });
-            expect(reply.status.code).to.equal(202);
+            expect(reply.status.code).toBe(202);
 
             const recordsWriteMessageCid = await Message.getCid(recordsWrite);
             const { message } = await TestDataGenerator.generateMessagesRead({
@@ -199,17 +198,17 @@ export function testMessagesReadHandler(): void {
             });
 
             const messagesReadReply: MessagesReadReply = await dwn.processMessage(alice.did, message);
-            expect(messagesReadReply.status.code).to.equal(200);
-            expect(messagesReadReply.entry).to.exist;
+            expect(messagesReadReply.status.code).toBe(200);
+            expect(messagesReadReply.entry).toBeDefined();
 
             const messageReply = messagesReadReply.entry!;
-            expect(messageReply.messageCid).to.exist;
-            expect(messageReply.messageCid).to.equal(recordsWriteMessageCid);
+            expect(messageReply.messageCid).toBeDefined();
+            expect(messageReply.messageCid).toBe(recordsWriteMessageCid);
 
-            expect(messageReply.message).to.exist.and.not.be.undefined;
-            expect(messageReply.data).to.exist.and.not.be.undefined;
+            expect(messageReply.message).toBeDefined();
+            expect(messageReply.data).toBeDefined();
             const messageData = await DataStream.toBytes(messageReply.data!);
-            expect(messageData).to.eql(dataBytes);
+            expect(messageData).toEqual(dataBytes);
           });
 
           it('data is not available', async () => {
@@ -224,7 +223,7 @@ export function testMessagesReadHandler(): void {
             const initialMessageCid = await Message.getCid(recordsWriteMessage);
 
             let reply = await dwn.processMessage(alice.did, recordsWriteMessage, { dataStream });
-            expect(reply.status.code).to.equal(202);
+            expect(reply.status.code).toBe(202);
 
             const { recordsWrite: updateMessage, dataStream: updateDataStream } = await TestDataGenerator.generateFromRecordsWrite({
               author        : alice,
@@ -233,7 +232,7 @@ export function testMessagesReadHandler(): void {
             });
 
             reply = await dwn.processMessage(alice.did, updateMessage.toJSON(), { dataStream: updateDataStream });
-            expect(reply.status.code).to.equal(202);
+            expect(reply.status.code).toBe(202);
 
             const { message } = await TestDataGenerator.generateMessagesRead({
               author     : alice,
@@ -241,15 +240,15 @@ export function testMessagesReadHandler(): void {
             });
 
             const messagesReadReply: MessagesReadReply = await dwn.processMessage(alice.did, message);
-            expect(messagesReadReply.status.code).to.equal(200);
-            expect(messagesReadReply.entry).to.exist;
+            expect(messagesReadReply.status.code).toBe(200);
+            expect(messagesReadReply.entry).toBeDefined();
 
             const messageReply = messagesReadReply.entry!;
-            expect(messageReply.messageCid).to.exist;
-            expect(messageReply.messageCid).to.equal(initialMessageCid);
+            expect(messageReply.messageCid).toBeDefined();
+            expect(messageReply.messageCid).toBe(initialMessageCid);
 
-            expect(messageReply.message).to.exist.and.not.be.undefined;
-            expect(messageReply.data).to.be.undefined;
+            expect(messageReply.message).toBeDefined();
+            expect(messageReply.data).toBeUndefined();
           });
         });
       });
@@ -273,7 +272,7 @@ export function testMessagesReadHandler(): void {
             protocolDefinition : unpublishedProtocolDefinition
           });
           const unpublishedProtocolsConfigureReply = await dwn.processMessage(alice.did, unpublishedProtocolsConfigure);
-          expect(unpublishedProtocolsConfigureReply.status.code).to.equal(202);
+          expect(unpublishedProtocolsConfigureReply.status.code).toBe(202);
 
           // published protocol configuration
           const publishedProtocolDefinition = {
@@ -286,7 +285,7 @@ export function testMessagesReadHandler(): void {
             protocolDefinition : publishedProtocolDefinition
           });
           const publishedProtocolsConfigureReply = await dwn.processMessage(alice.did, publishedProtocolsConfigure);
-          expect(publishedProtocolsConfigureReply.status.code).to.equal(202);
+          expect(publishedProtocolsConfigureReply.status.code).toBe(202);
 
           // get the message CIDs
           const unpublishedProtocolMessageCid = await Message.getCid(unpublishedProtocolsConfigure);
@@ -298,9 +297,9 @@ export function testMessagesReadHandler(): void {
             messageCid : unpublishedProtocolMessageCid,
           });
           const getUnpublishedProtocolConfigureReply = await dwn.processMessage(alice.did, getUnpublishedProtocolConfigure);
-          expect(getUnpublishedProtocolConfigureReply.status.code).to.equal(401);
-          expect(getUnpublishedProtocolConfigureReply.status.detail).to.include(DwnErrorCode.MessagesReadAuthorizationFailed);
-          expect(getUnpublishedProtocolConfigureReply.entry).to.be.undefined;
+          expect(getUnpublishedProtocolConfigureReply.status.code).toBe(401);
+          expect(getUnpublishedProtocolConfigureReply.status.detail).toContain(DwnErrorCode.MessagesReadAuthorizationFailed);
+          expect(getUnpublishedProtocolConfigureReply.entry).toBeUndefined();
 
           // bob attempts to read the published protocol configuration
           const { message: getPublishedProtocolConfigure } = await TestDataGenerator.generateMessagesRead({
@@ -308,9 +307,9 @@ export function testMessagesReadHandler(): void {
             messageCid : publishedProtocolMessageCid,
           });
           const getPublishedProtocolConfigureReply = await dwn.processMessage(alice.did, getPublishedProtocolConfigure);
-          expect(getPublishedProtocolConfigureReply.status.code).to.equal(401);
-          expect(getPublishedProtocolConfigureReply.status.detail).to.include(DwnErrorCode.MessagesReadAuthorizationFailed);
-          expect(getPublishedProtocolConfigureReply.entry).to.be.undefined;
+          expect(getPublishedProtocolConfigureReply.status.code).toBe(401);
+          expect(getPublishedProtocolConfigureReply.status.detail).toContain(DwnErrorCode.MessagesReadAuthorizationFailed);
+          expect(getPublishedProtocolConfigureReply.entry).toBeUndefined();
 
           // control: alice is able to read both the published and unpublished protocol configurations
           const { message: getUnpublishedProtocolConfigureAlice } = await TestDataGenerator.generateMessagesRead({
@@ -318,20 +317,20 @@ export function testMessagesReadHandler(): void {
             messageCid : unpublishedProtocolMessageCid,
           });
           const getUnpublishedProtocolConfigureAliceReply = await dwn.processMessage(alice.did, getUnpublishedProtocolConfigureAlice);
-          expect(getUnpublishedProtocolConfigureAliceReply.status.code).to.equal(200);
-          expect(getUnpublishedProtocolConfigureAliceReply.entry).to.exist;
-          expect(getUnpublishedProtocolConfigureAliceReply.entry!.messageCid).to.equal(unpublishedProtocolMessageCid);
-          expect(getUnpublishedProtocolConfigureAliceReply.entry!.message).to.deep.equal(unpublishedProtocolsConfigure);
+          expect(getUnpublishedProtocolConfigureAliceReply.status.code).toBe(200);
+          expect(getUnpublishedProtocolConfigureAliceReply.entry).toBeDefined();
+          expect(getUnpublishedProtocolConfigureAliceReply.entry!.messageCid).toBe(unpublishedProtocolMessageCid);
+          expect(getUnpublishedProtocolConfigureAliceReply.entry!.message).toEqual(unpublishedProtocolsConfigure);
 
           const { message: getPublishedProtocolConfigureAlice } = await TestDataGenerator.generateMessagesRead({
             author     : alice,
             messageCid : publishedProtocolMessageCid,
           });
           const getPublishedProtocolConfigureAliceReply = await dwn.processMessage(alice.did, getPublishedProtocolConfigureAlice);
-          expect(getPublishedProtocolConfigureAliceReply.status.code).to.equal(200);
-          expect(getPublishedProtocolConfigureAliceReply.entry).to.exist;
-          expect(getPublishedProtocolConfigureAliceReply.entry!.messageCid).to.equal(publishedProtocolMessageCid);
-          expect(getPublishedProtocolConfigureAliceReply.entry!.message).to.deep.equal(publishedProtocolsConfigure);
+          expect(getPublishedProtocolConfigureAliceReply.status.code).toBe(200);
+          expect(getPublishedProtocolConfigureAliceReply.entry).toBeDefined();
+          expect(getPublishedProtocolConfigureAliceReply.entry!.messageCid).toBe(publishedProtocolMessageCid);
+          expect(getPublishedProtocolConfigureAliceReply.entry!.message).toEqual(publishedProtocolsConfigure);
         });
       });
     });
@@ -349,7 +348,7 @@ export function testMessagesReadHandler(): void {
           protocolDefinition : minimalProtocolDefinition
         });
         const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).to.equal(202);
+        expect(protocolsConfigureReply.status.code).toBe(202);
 
         // Alice writes a record which Bob will later try to read
         const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
@@ -358,7 +357,7 @@ export function testMessagesReadHandler(): void {
           protocolPath : 'foo',
         });
         const recordsWriteReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
-        expect(recordsWriteReply.status.code).to.equal(202);
+        expect(recordsWriteReply.status.code).toBe(202);
 
         // Alice gives Bob a permission grant scoped to a RecordsWrite and the protocol
         const permissionGrant = await PermissionsProtocol.createGrant({
@@ -377,7 +376,7 @@ export function testMessagesReadHandler(): void {
           permissionGrant.recordsWrite.message,
           { dataStream: grantDataStream }
         );
-        expect(permissionGrantWriteReply.status.code).to.equal(202);
+        expect(permissionGrantWriteReply.status.code).toBe(202);
 
         // Bob tries to MessagesRead using the RecordsWrite grant
         const messagesRead = await TestDataGenerator.generateMessagesRead({
@@ -386,8 +385,8 @@ export function testMessagesReadHandler(): void {
           permissionGrantId : permissionGrant.recordsWrite.message.recordId,
         });
         const messagesReadReply = await dwn.processMessage(alice.did, messagesRead.message);
-        expect(messagesReadReply.status.code).to.equal(401);
-        expect(messagesReadReply.status.detail).to.contain(DwnErrorCode.GrantAuthorizationInterfaceMismatch);
+        expect(messagesReadReply.status.code).toBe(401);
+        expect(messagesReadReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationInterfaceMismatch);
       });
 
       it('allows external parties to read a message using a grant with unrestricted scope', async () => {
@@ -402,7 +401,7 @@ export function testMessagesReadHandler(): void {
           author: alice,
         });
         const writeReply = await dwn.processMessage(alice.did, message, { dataStream });
-        expect(writeReply.status.code).to.equal(202);
+        expect(writeReply.status.code).toBe(202);
         const messageCid = await Message.getCid(message);
 
         // Alice issues a permission grant allowing Bob to read any record in her DWN
@@ -417,7 +416,7 @@ export function testMessagesReadHandler(): void {
         });
         const grantDataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
         const grantReply = await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, { dataStream: grantDataStream });
-        expect(grantReply.status.code).to.equal(202);
+        expect(grantReply.status.code).toBe(202);
 
         // Bob invokes that grant to read a record from Alice's DWN
         const messagesRead = await TestDataGenerator.generateMessagesRead({
@@ -426,9 +425,9 @@ export function testMessagesReadHandler(): void {
           messageCid,
         });
         const readReply = await dwn.processMessage(alice.did, messagesRead.message);
-        expect(readReply.status.code).to.equal(200);
-        expect(readReply.entry).to.not.be.undefined;
-        expect(readReply.entry!.messageCid).to.equal(messageCid);
+        expect(readReply.status.code).toBe(200);
+        expect(readReply.entry).toBeDefined();
+        expect(readReply.entry!.messageCid).toBe(messageCid);
       });
 
       describe('protocol scoped messages', () => {
@@ -459,7 +458,7 @@ export function testMessagesReadHandler(): void {
             protocolDefinition
           });
           const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).to.equal(202);
+          expect(protocolsConfigureReply.status.code).toBe(202);
           const protocolConfigureMessageCid = await Message.getCid(protocolsConfig.message);
 
           // Carol requests a grant to write records to the protocol
@@ -478,7 +477,7 @@ export function testMessagesReadHandler(): void {
             permissionRequestCarol.recordsWrite.message,
             { dataStream: requestDataStreamCarol }
           );
-          expect(permissionRequestWriteReplyCarol.status.code).to.equal(202);
+          expect(permissionRequestWriteReplyCarol.status.code).toBe(202);
 
           // Alice gives Carol a grant to write records to the protocol
           const permissionGrantCarol = await PermissionsProtocol.createGrant({
@@ -495,7 +494,7 @@ export function testMessagesReadHandler(): void {
             permissionGrantCarol.recordsWrite.message,
             { dataStream: grantDataStreamCarol }
           );
-          expect(permissionGrantWriteReplyCarol.status.code).to.equal(202);
+          expect(permissionGrantWriteReplyCarol.status.code).toBe(202);
           const carolGrantMessageCiD = await Message.getCid(permissionGrantCarol.recordsWrite.message);
 
           // Alice writes a record associated with the protocol
@@ -505,7 +504,7 @@ export function testMessagesReadHandler(): void {
             protocolPath : 'foo',
           });
           const recordsWriteReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
-          expect(recordsWriteReply.status.code).to.equal(202);
+          expect(recordsWriteReply.status.code).toBe(202);
           const aliceRecordMessageCid = await Message.getCid(recordsWrite.message);
 
           // Alice deletes a record associated with the protocol
@@ -514,7 +513,7 @@ export function testMessagesReadHandler(): void {
             recordId : recordsWrite.message.recordId,
           });
           const recordsDeleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
-          expect(recordsDeleteReply.status.code).to.equal(202);
+          expect(recordsDeleteReply.status.code).toBe(202);
 
           // Carol writes a record associated with the protocol
           const { recordsWrite: recordsWriteCarol, dataStream: dataStreamCarol } = await TestDataGenerator.generateRecordsWrite({
@@ -524,7 +523,7 @@ export function testMessagesReadHandler(): void {
             permissionGrantId : permissionGrantCarol.recordsWrite.message.recordId,
           });
           const recordsWriteReplyCarol = await dwn.processMessage(alice.did, recordsWriteCarol.message, { dataStream: dataStreamCarol });
-          expect(recordsWriteReplyCarol.status.code).to.equal(202);
+          expect(recordsWriteReplyCarol.status.code).toBe(202);
           const carolRecordMessageCid = await Message.getCid(recordsWriteCarol.message);
 
           // Alice revokes Carol's grant
@@ -538,7 +537,7 @@ export function testMessagesReadHandler(): void {
             permissionRevocationCarol.recordsWrite.message,
             { dataStream: permissionRevocationCarolDataStream }
           );
-          expect(permissionRevocationCarolReply.status.code).to.equal(202);
+          expect(permissionRevocationCarolReply.status.code).toBe(202);
 
           // Alice gives Bob a permission grant with scope MessagesRead
           const permissionGrant = await PermissionsProtocol.createGrant({
@@ -557,7 +556,7 @@ export function testMessagesReadHandler(): void {
             permissionGrant.recordsWrite.message,
             { dataStream: grantDataStream }
           );
-          expect(permissionGrantWriteReply.status.code).to.equal(202);
+          expect(permissionGrantWriteReply.status.code).toBe(202);
 
           // Bob is unable to read the message without using the permission grant
           const messagesReadWithoutGrant = await TestDataGenerator.generateMessagesRead({
@@ -565,8 +564,8 @@ export function testMessagesReadHandler(): void {
             messageCid : aliceRecordMessageCid,
           });
           const messagesReadWithoutGrantReply = await dwn.processMessage(alice.did, messagesReadWithoutGrant.message);
-          expect(messagesReadWithoutGrantReply.status.code).to.equal(401);
-          expect(messagesReadWithoutGrantReply.status.detail).to.contain(DwnErrorCode.MessagesReadAuthorizationFailed);
+          expect(messagesReadWithoutGrantReply.status.code).toBe(401);
+          expect(messagesReadWithoutGrantReply.status.detail).toContain(DwnErrorCode.MessagesReadAuthorizationFailed);
 
           // Bob is able to read all the associated messages when using the permission grant
           // Expected Messages:
@@ -585,9 +584,9 @@ export function testMessagesReadHandler(): void {
             permissionGrantId : permissionGrant.recordsWrite.message.recordId,
           });
           const messagesReadProtocolConfigureReply = await dwn.processMessage(alice.did, messagesReadProtocolConfigure.message);
-          expect(messagesReadProtocolConfigureReply.status.code).to.equal(200);
-          expect(messagesReadProtocolConfigureReply.entry).to.exist;
-          expect(messagesReadProtocolConfigureReply.entry!.message).to.deep.equal(protocolsConfig.message);
+          expect(messagesReadProtocolConfigureReply.status.code).toBe(200);
+          expect(messagesReadProtocolConfigureReply.entry).toBeDefined();
+          expect(messagesReadProtocolConfigureReply.entry!.message).toEqual(protocolsConfig.message);
 
           // alice RecordsWrite
           const messagesReadWithGrant = await TestDataGenerator.generateMessagesRead({
@@ -596,9 +595,9 @@ export function testMessagesReadHandler(): void {
             permissionGrantId : permissionGrant.recordsWrite.message.recordId,
           });
           const messagesReadWithGrantReply = await dwn.processMessage(alice.did, messagesReadWithGrant.message);
-          expect(messagesReadWithGrantReply.status.code).to.equal(200);
-          expect(messagesReadWithGrantReply.entry).to.exist;
-          expect(messagesReadWithGrantReply.entry!.message).to.deep.equal(recordsWrite.message);
+          expect(messagesReadWithGrantReply.status.code).toBe(200);
+          expect(messagesReadWithGrantReply.entry).toBeDefined();
+          expect(messagesReadWithGrantReply.entry!.message).toEqual(recordsWrite.message);
 
           // alice RecordsDelete
           const messagesReadDelete = await TestDataGenerator.generateMessagesRead({
@@ -607,9 +606,9 @@ export function testMessagesReadHandler(): void {
             permissionGrantId : permissionGrant.recordsWrite.message.recordId,
           });
           const messagesReadDeleteReply = await dwn.processMessage(alice.did, messagesReadDelete.message);
-          expect(messagesReadDeleteReply.status.code).to.equal(200);
-          expect(messagesReadDeleteReply.entry).to.exist;
-          expect(messagesReadDeleteReply.entry!.message).to.deep.equal(recordsDelete.message);
+          expect(messagesReadDeleteReply.status.code).toBe(200);
+          expect(messagesReadDeleteReply.entry).toBeDefined();
+          expect(messagesReadDeleteReply.entry!.message).toEqual(recordsDelete.message);
 
           // carol's Permission Request
           const messagesReadCarolRequest = await TestDataGenerator.generateMessagesRead({
@@ -618,9 +617,9 @@ export function testMessagesReadHandler(): void {
             permissionGrantId : permissionGrant.recordsWrite.message.recordId,
           });
           const messagesReadCarolRequestReply = await dwn.processMessage(alice.did, messagesReadCarolRequest.message);
-          expect(messagesReadCarolRequestReply.status.code).to.equal(200);
-          expect(messagesReadCarolRequestReply.entry).to.exist;
-          expect(messagesReadCarolRequestReply.entry!.message).to.deep.equal(permissionRequestCarol.recordsWrite.message);
+          expect(messagesReadCarolRequestReply.status.code).toBe(200);
+          expect(messagesReadCarolRequestReply.entry).toBeDefined();
+          expect(messagesReadCarolRequestReply.entry!.message).toEqual(permissionRequestCarol.recordsWrite.message);
 
           // carol's Permission Grant
           const messagesReadCarolGrant = await TestDataGenerator.generateMessagesRead({
@@ -629,9 +628,9 @@ export function testMessagesReadHandler(): void {
             permissionGrantId : permissionGrant.recordsWrite.message.recordId,
           });
           const messagesReadCarolGrantReply = await dwn.processMessage(alice.did, messagesReadCarolGrant.message);
-          expect(messagesReadCarolGrantReply.status.code).to.equal(200);
-          expect(messagesReadCarolGrantReply.entry).to.exist;
-          expect(messagesReadCarolGrantReply.entry!.message).to.deep.equal(permissionGrantCarol.recordsWrite.message);
+          expect(messagesReadCarolGrantReply.status.code).toBe(200);
+          expect(messagesReadCarolGrantReply.entry).toBeDefined();
+          expect(messagesReadCarolGrantReply.entry!.message).toEqual(permissionGrantCarol.recordsWrite.message);
 
           // carol's RecordsWrite
           const messagesReadCarolRecord = await TestDataGenerator.generateMessagesRead({
@@ -640,9 +639,9 @@ export function testMessagesReadHandler(): void {
             permissionGrantId : permissionGrant.recordsWrite.message.recordId,
           });
           const messagesReadCarolRecordReply = await dwn.processMessage(alice.did, messagesReadCarolRecord.message);
-          expect(messagesReadCarolRecordReply.status.code).to.equal(200);
-          expect(messagesReadCarolRecordReply.entry).to.exist;
-          expect(messagesReadCarolRecordReply.entry!.message).to.deep.equal(recordsWriteCarol.message);
+          expect(messagesReadCarolRecordReply.status.code).toBe(200);
+          expect(messagesReadCarolRecordReply.entry).toBeDefined();
+          expect(messagesReadCarolRecordReply.entry!.message).toEqual(recordsWriteCarol.message);
 
           // carol's Grant Revocation
           const messagesReadCarolGrantRevocation = await TestDataGenerator.generateMessagesRead({
@@ -651,16 +650,16 @@ export function testMessagesReadHandler(): void {
             permissionGrantId : permissionGrant.recordsWrite.message.recordId,
           });
           const messagesReadCarolGrantRevocationReply = await dwn.processMessage(alice.did, messagesReadCarolGrantRevocation.message);
-          expect(messagesReadCarolGrantRevocationReply.status.code).to.equal(200);
-          expect(messagesReadCarolGrantRevocationReply.entry).to.exist;
-          expect(messagesReadCarolGrantRevocationReply.entry!.message).to.deep.equal(permissionRevocationCarol.recordsWrite.message);
+          expect(messagesReadCarolGrantRevocationReply.status.code).toBe(200);
+          expect(messagesReadCarolGrantRevocationReply.entry).toBeDefined();
+          expect(messagesReadCarolGrantRevocationReply.entry!.message).toEqual(permissionRevocationCarol.recordsWrite.message);
 
           // CONTROL: Alice writes a record not associated with the protocol
           const { recordsWrite: recordsWriteControl, dataStream: dataStreamControl } = await TestDataGenerator.generateRecordsWrite({
             author: alice,
           });
           const recordsWriteControlReply = await dwn.processMessage(alice.did, recordsWriteControl.message, { dataStream: dataStreamControl });
-          expect(recordsWriteControlReply.status.code).to.equal(202);
+          expect(recordsWriteControlReply.status.code).toBe(202);
 
           // Bob is unable to read the control message
           const messagesReadControl = await TestDataGenerator.generateMessagesRead({
@@ -669,7 +668,7 @@ export function testMessagesReadHandler(): void {
             permissionGrantId : permissionGrant.recordsWrite.message.recordId,
           });
           const messagesReadControlReply = await dwn.processMessage(alice.did, messagesReadControl.message);
-          expect(messagesReadControlReply.status.code).to.equal(401);
+          expect(messagesReadControlReply.status.code).toBe(401);
         });
 
         it('rejects message read of protocol messages with mismatching protocol grant scopes', async () => {
@@ -687,7 +686,7 @@ export function testMessagesReadHandler(): void {
             protocolDefinition
           });
           const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).to.equal(202);
+          expect(protocolsConfigureReply.status.code).toBe(202);
 
           // Alice writes a record which Bob will later try to read
           const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
@@ -696,7 +695,7 @@ export function testMessagesReadHandler(): void {
             protocolPath : 'foo',
           });
           const recordsWriteReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
-          expect(recordsWriteReply.status.code).to.equal(202);
+          expect(recordsWriteReply.status.code).toBe(202);
 
           // Alice gives Bob a permission grant with scope MessagesRead
           const permissionGrant = await PermissionsProtocol.createGrant({
@@ -715,7 +714,7 @@ export function testMessagesReadHandler(): void {
             permissionGrant.recordsWrite.message,
             { dataStream: grantDataStream }
           );
-          expect(permissionGrantWriteReply.status.code).to.equal(202);
+          expect(permissionGrantWriteReply.status.code).toBe(202);
 
           // Bob is unable to read the record using the mismatched permission grant
           const messagesReadWithoutGrant = await TestDataGenerator.generateMessagesRead({
@@ -724,8 +723,8 @@ export function testMessagesReadHandler(): void {
             permissionGrantId : permissionGrant.recordsWrite.message.recordId,
           });
           const messagesReadWithoutGrantReply = await dwn.processMessage(alice.did, messagesReadWithoutGrant.message);
-          expect(messagesReadWithoutGrantReply.status.code).to.equal(401);
-          expect(messagesReadWithoutGrantReply.status.detail).to.contain(DwnErrorCode.MessagesReadVerifyScopeFailed);
+          expect(messagesReadWithoutGrantReply.status.code).toBe(401);
+          expect(messagesReadWithoutGrantReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
         });
 
         it('rejects message if the RecordsWrite message is not found for a RecordsDelete being retrieved', async () => {
@@ -742,7 +741,7 @@ export function testMessagesReadHandler(): void {
             protocolDefinition,
           });
           const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).to.equal(202);
+          expect(protocolsConfigureReply.status.code).toBe(202);
 
           // Alice gives bob a grant to read messages in the protocol
           const permissionGrant = await PermissionsProtocol.createGrant({
@@ -761,7 +760,7 @@ export function testMessagesReadHandler(): void {
             permissionGrant.recordsWrite.message,
             { dataStream: grantDataStream }
           );
-          expect(permissionGrantWriteReply.status.code).to.equal(202);
+          expect(permissionGrantWriteReply.status.code).toBe(202);
 
           // Alice creates the records write and records delete messages
           const { recordsWrite } = await TestDataGenerator.generateRecordsWrite({
@@ -787,8 +786,8 @@ export function testMessagesReadHandler(): void {
             permissionGrantId : permissionGrant.recordsWrite.message.recordId,
           });
           const messagesReadReply = await dwn.processMessage(alice.did, messagesRead.message);
-          expect(messagesReadReply.status.code).to.equal(401);
-          expect(messagesReadReply.status.detail).to.contain(DwnErrorCode.RecordsWriteGetNewestWriteRecordNotFound);
+          expect(messagesReadReply.status.code).toBe(401);
+          expect(messagesReadReply.status.detail).toContain(DwnErrorCode.RecordsWriteGetNewestWriteRecordNotFound);
         });
       });
     });

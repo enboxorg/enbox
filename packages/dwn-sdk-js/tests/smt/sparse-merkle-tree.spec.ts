@@ -1,4 +1,4 @@
-import { expect } from 'chai';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import type { Hash, SMTNodeStore } from '../../src/types/smt-types.js';
 
@@ -24,17 +24,17 @@ describe('SparseMerkleTree', () => {
     it('should return the default empty root for a new tree', async () => {
       const root = await smt.getRoot();
       const defaultHashes = await initDefaultHashes();
-      expect(hashEquals(root, defaultHashes[0])).to.be.true;
+      expect(hashEquals(root, defaultHashes[0])).toBe(true);
     });
 
     it('should precompute default hashes for all 256 levels + leaf level', async () => {
       const defaultHashes = await initDefaultHashes();
-      expect(defaultHashes.length).to.equal(SMT_DEPTH + 1);
+      expect(defaultHashes.length).toBe(SMT_DEPTH + 1);
       // Leaf level should be zero hash
-      expect(hashEquals(defaultHashes[SMT_DEPTH], ZERO_HASH)).to.be.true;
+      expect(hashEquals(defaultHashes[SMT_DEPTH], ZERO_HASH)).toBe(true);
       // Each level should be different from its neighbor
       for (let i = 0; i < SMT_DEPTH; i++) {
-        expect(hashEquals(defaultHashes[i], defaultHashes[i + 1])).to.be.false;
+        expect(hashEquals(defaultHashes[i], defaultHashes[i + 1])).toBe(false);
       }
     });
   });
@@ -44,7 +44,7 @@ describe('SparseMerkleTree', () => {
       const emptyRoot = await smt.getRoot();
       await smt.insert('bafyreigtest1');
       const newRoot = await smt.getRoot();
-      expect(hashEquals(emptyRoot, newRoot)).to.be.false;
+      expect(hashEquals(emptyRoot, newRoot)).toBe(false);
     });
 
     it('should produce different roots for different values', async () => {
@@ -61,7 +61,7 @@ describe('SparseMerkleTree', () => {
 
       const rootA = await smtA.getRoot();
       const rootB = await smtB.getRoot();
-      expect(hashEquals(rootA, rootB)).to.be.false;
+      expect(hashEquals(rootA, rootB)).toBe(false);
 
       await smtA.close();
       await smtB.close();
@@ -88,7 +88,7 @@ describe('SparseMerkleTree', () => {
 
       const rootA = await smtA.getRoot();
       const rootB = await smtB.getRoot();
-      expect(hashEquals(rootA, rootB)).to.be.true;
+      expect(hashEquals(rootA, rootB)).toBe(true);
 
       await smtA.close();
       await smtB.close();
@@ -106,7 +106,7 @@ describe('SparseMerkleTree', () => {
 
       // Verify all exist
       for (const cid of cids) {
-        expect(await smt.has(cid)).to.be.true;
+        expect(await smt.has(cid)).toBe(true);
       }
     });
 
@@ -117,31 +117,31 @@ describe('SparseMerkleTree', () => {
       await smt.insert('bafyreigtest1');
       const rootAfterSecond = await smt.getRoot();
 
-      expect(hashEquals(rootAfterFirst, rootAfterSecond)).to.be.true;
+      expect(hashEquals(rootAfterFirst, rootAfterSecond)).toBe(true);
     });
   });
 
   describe('has', () => {
     it('should return false for an empty tree', async () => {
-      expect(await smt.has('bafyreigtest1')).to.be.false;
+      expect(await smt.has('bafyreigtest1')).toBe(false);
     });
 
     it('should return true for an inserted element', async () => {
       await smt.insert('bafyreigtest1');
-      expect(await smt.has('bafyreigtest1')).to.be.true;
+      expect(await smt.has('bafyreigtest1')).toBe(true);
     });
 
     it('should return false for an element not in the tree', async () => {
       await smt.insert('bafyreigtest1');
-      expect(await smt.has('bafyreigtest2')).to.be.false;
+      expect(await smt.has('bafyreigtest2')).toBe(false);
     });
 
     it('should return false after deletion', async () => {
       await smt.insert('bafyreigtest1');
-      expect(await smt.has('bafyreigtest1')).to.be.true;
+      expect(await smt.has('bafyreigtest1')).toBe(true);
 
       await smt.delete('bafyreigtest1');
-      expect(await smt.has('bafyreigtest1')).to.be.false;
+      expect(await smt.has('bafyreigtest1')).toBe(false);
     });
   });
 
@@ -151,11 +151,11 @@ describe('SparseMerkleTree', () => {
 
       await smt.insert('bafyreigtest1');
       const nonEmptyRoot = await smt.getRoot();
-      expect(hashEquals(emptyRoot, nonEmptyRoot)).to.be.false;
+      expect(hashEquals(emptyRoot, nonEmptyRoot)).toBe(false);
 
       await smt.delete('bafyreigtest1');
       const rootAfterDelete = await smt.getRoot();
-      expect(hashEquals(emptyRoot, rootAfterDelete)).to.be.true;
+      expect(hashEquals(emptyRoot, rootAfterDelete)).toBe(true);
     });
 
     it('should not change the root when deleting a non-existent element', async () => {
@@ -165,7 +165,7 @@ describe('SparseMerkleTree', () => {
       await smt.delete('bafyreigtest2');
       const rootAfter = await smt.getRoot();
 
-      expect(hashEquals(rootBefore, rootAfter)).to.be.true;
+      expect(hashEquals(rootBefore, rootAfter)).toBe(true);
     });
 
     it('should produce the same root regardless of insert-delete order', async () => {
@@ -187,7 +187,7 @@ describe('SparseMerkleTree', () => {
 
       const rootA = await smtA.getRoot();
       const rootB = await smtB.getRoot();
-      expect(hashEquals(rootA, rootB)).to.be.true;
+      expect(hashEquals(rootA, rootB)).toBe(true);
 
       await smtA.close();
       await smtB.close();
@@ -206,7 +206,7 @@ describe('SparseMerkleTree', () => {
       }
 
       const rootAfter = await smt.getRoot();
-      expect(hashEquals(emptyRoot, rootAfter)).to.be.true;
+      expect(hashEquals(emptyRoot, rootAfter)).toBe(true);
     });
 
     it('should handle interleaved inserts and deletes', async () => {
@@ -218,10 +218,10 @@ describe('SparseMerkleTree', () => {
       await smt.insert('bafyreiD');
 
       // Should have C and D
-      expect(await smt.has('bafyreiA')).to.be.false;
-      expect(await smt.has('bafyreiB')).to.be.false;
-      expect(await smt.has('bafyreiC')).to.be.true;
-      expect(await smt.has('bafyreiD')).to.be.true;
+      expect(await smt.has('bafyreiA')).toBe(false);
+      expect(await smt.has('bafyreiB')).toBe(false);
+      expect(await smt.has('bafyreiC')).toBe(true);
+      expect(await smt.has('bafyreiD')).toBe(true);
     });
   });
 
@@ -230,9 +230,9 @@ describe('SparseMerkleTree', () => {
       await smt.insert('bafyreigtest1');
       const proof = await smt.getProof('bafyreigtest1');
 
-      expect(proof.leafNode).to.not.be.undefined;
-      expect(proof.leafNode!.valueCid).to.equal('bafyreigtest1');
-      expect(proof.leafNode!.type).to.equal('leaf');
+      expect(proof.leafNode).toBeDefined();
+      expect(proof.leafNode!.valueCid).toBe('bafyreigtest1');
+      expect(proof.leafNode!.type).toBe('leaf');
     });
 
     it('should generate a proof for a non-existent element (non-inclusion)', async () => {
@@ -243,14 +243,14 @@ describe('SparseMerkleTree', () => {
       if (proof.leafNode !== undefined) {
         // The proof terminates at a leaf with a different key
         const expectedKeyHash = await hashKey('bafyreigtest2');
-        expect(hashEquals(proof.leafNode.keyHash, expectedKeyHash)).to.be.false;
+        expect(hashEquals(proof.leafNode.keyHash, expectedKeyHash)).toBe(false);
       }
     });
 
     it('should generate an empty proof for an empty tree', async () => {
       const proof = await smt.getProof('bafyreigtest1');
-      expect(proof.leafNode).to.be.undefined;
-      expect(proof.siblings.length).to.equal(0);
+      expect(proof.leafNode).toBeUndefined();
+      expect(proof.siblings.length).toBe(0);
     });
   });
 
@@ -258,7 +258,7 @@ describe('SparseMerkleTree', () => {
     it('should return default hash for empty subtree', async () => {
       const defaultHashes = await initDefaultHashes();
       const subtreeHash = await smt.getSubtreeHash([false]); // left child of root
-      expect(hashEquals(subtreeHash, defaultHashes[1])).to.be.true;
+      expect(hashEquals(subtreeHash, defaultHashes[1])).toBe(true);
     });
 
     it('should return different hashes for subtrees with different contents', async () => {
@@ -272,14 +272,14 @@ describe('SparseMerkleTree', () => {
       const defaultHashes = await initDefaultHashes();
       const leftIsDefault = hashEquals(leftHash, defaultHashes[1]);
       const rightIsDefault = hashEquals(rightHash, defaultHashes[1]);
-      expect(leftIsDefault && rightIsDefault).to.be.false;
+      expect(leftIsDefault && rightIsDefault).toBe(false);
     });
   });
 
   describe('getLeaves', () => {
     it('should return empty array for empty tree', async () => {
       const leaves = await smt.getLeaves([]);
-      expect(leaves).to.deep.equal([]);
+      expect(leaves).toEqual([]);
     });
 
     it('should return all leaves for empty prefix', async () => {
@@ -289,7 +289,7 @@ describe('SparseMerkleTree', () => {
       }
 
       const leaves = await smt.getLeaves([]);
-      expect(leaves.sort()).to.deep.equal([...cids].sort());
+      expect(leaves.sort()).toEqual([...cids].sort());
     });
 
     it('should return only leaves under the specified prefix', async () => {
@@ -308,12 +308,12 @@ describe('SparseMerkleTree', () => {
 
       // Together they should contain all CIDs
       const allLeaves = [...leftLeaves, ...rightLeaves].sort();
-      expect(allLeaves).to.deep.equal([...cids].sort());
+      expect(allLeaves).toEqual([...cids].sort());
 
       // Neither should be empty (with 20 random-ish hashes, both sides should have elements)
       // (This is probabilistic but 20 elements should reliably split)
-      expect(leftLeaves.length).to.be.greaterThan(0);
-      expect(rightLeaves.length).to.be.greaterThan(0);
+      expect(leftLeaves.length).toBeGreaterThan(0);
+      expect(rightLeaves.length).toBeGreaterThan(0);
     });
   });
 
@@ -330,8 +330,8 @@ describe('SparseMerkleTree', () => {
       }
 
       const diff = await smt.diff(smtB);
-      expect(diff.onlyLocal).to.deep.equal([]);
-      expect(diff.onlyRemote).to.deep.equal([]);
+      expect(diff.onlyLocal).toEqual([]);
+      expect(diff.onlyRemote).toEqual([]);
 
       await smtB.close();
     });
@@ -342,8 +342,8 @@ describe('SparseMerkleTree', () => {
       await smtB.initialize();
 
       const diff = await smt.diff(smtB);
-      expect(diff.onlyLocal).to.deep.equal([]);
-      expect(diff.onlyRemote).to.deep.equal([]);
+      expect(diff.onlyLocal).toEqual([]);
+      expect(diff.onlyRemote).toEqual([]);
 
       await smtB.close();
     });
@@ -358,8 +358,8 @@ describe('SparseMerkleTree', () => {
       await smtB.insert('bafyreiA');
 
       const diff = await smt.diff(smtB);
-      expect(diff.onlyLocal.sort()).to.deep.equal(['bafyreiB']);
-      expect(diff.onlyRemote).to.deep.equal([]);
+      expect(diff.onlyLocal.sort()).toEqual(['bafyreiB']);
+      expect(diff.onlyRemote).toEqual([]);
 
       await smtB.close();
     });
@@ -374,8 +374,8 @@ describe('SparseMerkleTree', () => {
       await smtB.insert('bafyreiB');
 
       const diff = await smt.diff(smtB);
-      expect(diff.onlyLocal).to.deep.equal([]);
-      expect(diff.onlyRemote.sort()).to.deep.equal(['bafyreiB']);
+      expect(diff.onlyLocal).toEqual([]);
+      expect(diff.onlyRemote.sort()).toEqual(['bafyreiB']);
 
       await smtB.close();
     });
@@ -401,8 +401,8 @@ describe('SparseMerkleTree', () => {
       await smtB.insert('bafyreiRemoteOnly3');
 
       const diff = await smt.diff(smtB);
-      expect(diff.onlyLocal.sort()).to.deep.equal(['bafyreiLocalOnly1', 'bafyreiLocalOnly2'].sort());
-      expect(diff.onlyRemote.sort()).to.deep.equal(['bafyreiRemoteOnly1', 'bafyreiRemoteOnly2', 'bafyreiRemoteOnly3'].sort());
+      expect(diff.onlyLocal.sort()).toEqual(['bafyreiLocalOnly1', 'bafyreiLocalOnly2'].sort());
+      expect(diff.onlyRemote.sort()).toEqual(['bafyreiRemoteOnly1', 'bafyreiRemoteOnly2', 'bafyreiRemoteOnly3'].sort());
 
       await smtB.close();
     });
@@ -418,8 +418,8 @@ describe('SparseMerkleTree', () => {
       await smtB.insert('bafyreiD');
 
       const diff = await smt.diff(smtB);
-      expect(diff.onlyLocal.sort()).to.deep.equal(['bafyreiA', 'bafyreiB'].sort());
-      expect(diff.onlyRemote.sort()).to.deep.equal(['bafyreiC', 'bafyreiD'].sort());
+      expect(diff.onlyLocal.sort()).toEqual(['bafyreiA', 'bafyreiB'].sort());
+      expect(diff.onlyRemote.sort()).toEqual(['bafyreiC', 'bafyreiD'].sort());
 
       await smtB.close();
     });
@@ -453,8 +453,8 @@ describe('SparseMerkleTree', () => {
       }
 
       const diff = await smt.diff(smtB);
-      expect(diff.onlyLocal.sort()).to.deep.equal(localOnly.sort());
-      expect(diff.onlyRemote.sort()).to.deep.equal(remoteOnly.sort());
+      expect(diff.onlyLocal.sort()).toEqual(localOnly.sort());
+      expect(diff.onlyRemote.sort()).toEqual(remoteOnly.sort());
 
       await smtB.close();
     });
@@ -468,8 +468,8 @@ describe('SparseMerkleTree', () => {
       await smtB.insert('bafyreiB');
 
       const diff = await smt.diff(smtB);
-      expect(diff.onlyLocal).to.deep.equal([]);
-      expect(diff.onlyRemote.sort()).to.deep.equal(['bafyreiA', 'bafyreiB'].sort());
+      expect(diff.onlyLocal).toEqual([]);
+      expect(diff.onlyRemote.sort()).toEqual(['bafyreiA', 'bafyreiB'].sort());
 
       await smtB.close();
     });
@@ -483,8 +483,8 @@ describe('SparseMerkleTree', () => {
       await smt.insert('bafyreiB');
 
       const diff = await smt.diff(smtB);
-      expect(diff.onlyLocal.sort()).to.deep.equal(['bafyreiA', 'bafyreiB'].sort());
-      expect(diff.onlyRemote).to.deep.equal([]);
+      expect(diff.onlyLocal.sort()).toEqual(['bafyreiA', 'bafyreiB'].sort());
+      expect(diff.onlyRemote).toEqual([]);
 
       await smtB.close();
     });
@@ -500,9 +500,9 @@ describe('SparseMerkleTree', () => {
       await smt.clear();
       const rootAfterClear = await smt.getRoot();
 
-      expect(hashEquals(emptyRoot, rootAfterClear)).to.be.true;
-      expect(await smt.has('bafyreiA')).to.be.false;
-      expect(await smt.has('bafyreiB')).to.be.false;
+      expect(hashEquals(emptyRoot, rootAfterClear)).toBe(true);
+      expect(await smt.has('bafyreiA')).toBe(false);
+      expect(await smt.has('bafyreiB')).toBe(false);
     });
   });
 
@@ -521,7 +521,7 @@ describe('SparseMerkleTree', () => {
       const subtreeHash = await smt.getSubtreeHash(matchingPrefix);
       // Should be the leaf hash (non-default) since the leaf is under this prefix
       const expectedLeafHash = await hashLeaf(keyHash, 'bafyreiA');
-      expect(hashEquals(subtreeHash, expectedLeafHash)).to.be.true;
+      expect(hashEquals(subtreeHash, expectedLeafHash)).toBe(true);
     });
 
     it('should return default hash when leaf does not match the prefix', async () => {
@@ -534,7 +534,7 @@ describe('SparseMerkleTree', () => {
       const nonMatchingPrefix = [!firstBit]; // opposite of the first bit
 
       const subtreeHash = await smt.getSubtreeHash(nonMatchingPrefix);
-      expect(hashEquals(subtreeHash, defaultHashes[1])).to.be.true;
+      expect(hashEquals(subtreeHash, defaultHashes[1])).toBe(true);
     });
   });
 
@@ -550,7 +550,7 @@ describe('SparseMerkleTree', () => {
       }
 
       const leaves = await smt.getLeaves(matchingPrefix);
-      expect(leaves).to.deep.equal(['bafyreiA']);
+      expect(leaves).toEqual(['bafyreiA']);
     });
 
     it('should return empty when leaf does not match the prefix', async () => {
@@ -562,7 +562,7 @@ describe('SparseMerkleTree', () => {
       const nonMatchingPrefix = [!firstBit];
 
       const leaves = await smt.getLeaves(nonMatchingPrefix);
-      expect(leaves).to.deep.equal([]);
+      expect(leaves).toEqual([]);
     });
   });
 
@@ -573,10 +573,10 @@ describe('SparseMerkleTree', () => {
       await smt.insert('bafyreiB');
 
       const proof = await smt.getProof('bafyreiA');
-      expect(proof.leafNode).to.not.be.undefined;
-      expect(proof.leafNode!.valueCid).to.equal('bafyreiA');
+      expect(proof.leafNode).toBeDefined();
+      expect(proof.leafNode!.valueCid).toBe('bafyreiA');
       // With two elements, there should be at least one sibling hash
-      expect(proof.siblings.length).to.be.greaterThan(0);
+      expect(proof.siblings.length).toBeGreaterThan(0);
     });
 
     it('should return empty proof when store node is missing (corrupted store)', async () => {
@@ -609,8 +609,8 @@ describe('SparseMerkleTree', () => {
       const proof = await corruptSmt.getProof('bafyreiProofCorrupt');
 
       // Should return a proof without a leaf node since the node is missing
-      expect(proof.leafNode).to.be.undefined;
-      expect(proof.siblings).to.have.length(0);
+      expect(proof.leafNode).toBeUndefined();
+      expect(proof.siblings).toHaveLength(0);
 
       corruptDuringProof = false;
       await corruptSmt.close();
@@ -645,8 +645,8 @@ describe('SparseMerkleTree', () => {
       await smtB.insert(remoteOnly);
 
       const diff = await smt.diff(smtB);
-      expect(diff.onlyLocal).to.include(localOnly);
-      expect(diff.onlyRemote).to.include(remoteOnly);
+      expect(diff.onlyLocal).toContain(localOnly);
+      expect(diff.onlyRemote).toContain(remoteOnly);
 
       await smtB.close();
     });
@@ -663,8 +663,8 @@ describe('SparseMerkleTree', () => {
       await smtB.insert('bafyreiOnlyInRemote');
 
       const diff = await smt.diff(smtB);
-      expect(diff.onlyLocal).to.deep.equal(['bafyreiOnlyInLocal']);
-      expect(diff.onlyRemote).to.deep.equal(['bafyreiOnlyInRemote']);
+      expect(diff.onlyLocal).toEqual(['bafyreiOnlyInLocal']);
+      expect(diff.onlyRemote).toEqual(['bafyreiOnlyInRemote']);
 
       await smtB.close();
     });
@@ -697,8 +697,8 @@ describe('SparseMerkleTree', () => {
 
       const diff = await smtA.diff(smtB);
       // Same key, different value → both appear as unique
-      expect(diff.onlyLocal).to.deep.equal(['valueCidA']);
-      expect(diff.onlyRemote).to.deep.equal(['valueCidB']);
+      expect(diff.onlyLocal).toEqual(['valueCidA']);
+      expect(diff.onlyRemote).toEqual(['valueCidB']);
 
       await smtA.close();
       await smtB.close();
@@ -755,7 +755,7 @@ describe('SparseMerkleTree', () => {
 
       // The diff should still complete — fallback collects leaves from the other side
       // Normal tree's elements should be in onlyLocal
-      expect(diff.onlyLocal.sort()).to.deep.equal(
+      expect(diff.onlyLocal.sort()).toEqual(
         ['bafyreiNormal1', 'bafyreiNormal2', 'bafyreiNormal3'].sort()
       );
 
@@ -823,7 +823,7 @@ describe('SparseMerkleTree', () => {
 
       // The diff should complete. Remote leaves should appear in onlyRemote
       // since the corrupt local can't prove they exist locally.
-      expect(diff.onlyRemote.length).to.be.greaterThan(0);
+      expect(diff.onlyRemote.length).toBeGreaterThan(0);
 
       corruptDuringDiff = false;
       await corruptSmt.close();
@@ -842,7 +842,7 @@ describe('SparseMerkleTree', () => {
       const sizeAfterDeletes = store.size;
 
       // After deleting everything, the store should have fewer nodes than after inserts
-      expect(sizeAfterDeletes).to.be.lessThan(sizeAfterInserts);
+      expect(sizeAfterDeletes).toBeLessThan(sizeAfterInserts);
     });
   });
 });
@@ -852,8 +852,8 @@ describe('SMT Utility Functions', () => {
     it('should return default hashes after initialization', async () => {
       await initDefaultHashes();
       const hashes = getDefaultHashes();
-      expect(hashes).to.have.length(SMT_DEPTH + 1);
-      expect(hashEquals(hashes[SMT_DEPTH], ZERO_HASH)).to.be.true;
+      expect(hashes).toHaveLength(SMT_DEPTH + 1);
+      expect(hashEquals(hashes[SMT_DEPTH], ZERO_HASH)).toBe(true);
     });
 
     it('should throw when called before initDefaultHashes()', async () => {
@@ -862,9 +862,9 @@ describe('SMT Utility Functions', () => {
 
       try {
         getDefaultHashes();
-        expect.fail('Expected an error');
+        throw new Error('Expected an error');
       } catch (e: any) {
-        expect(e.message).to.include('Default hashes not initialized');
+        expect(e.message).toContain('Default hashes not initialized');
       }
 
       // Re-initialize so subsequent tests aren't affected
@@ -876,7 +876,7 @@ describe('SMT Utility Functions', () => {
     it('should return false for hashes of different lengths', () => {
       const a = new Uint8Array(32);
       const b = new Uint8Array(16);
-      expect(hashEquals(a, b)).to.be.false;
+      expect(hashEquals(a, b)).toBe(false);
     });
   });
 
@@ -884,18 +884,18 @@ describe('SMT Utility Functions', () => {
     it('should produce consistent hashes for the same input', async () => {
       const hash1 = await hashKey('bafyreigtest');
       const hash2 = await hashKey('bafyreigtest');
-      expect(hashEquals(hash1, hash2)).to.be.true;
+      expect(hashEquals(hash1, hash2)).toBe(true);
     });
 
     it('should produce different hashes for different inputs', async () => {
       const hash1 = await hashKey('bafyreigtest1');
       const hash2 = await hashKey('bafyreigtest2');
-      expect(hashEquals(hash1, hash2)).to.be.false;
+      expect(hashEquals(hash1, hash2)).toBe(false);
     });
 
     it('should produce 32-byte hashes', async () => {
       const hash = await hashKey('bafyreigtest');
-      expect(hash.length).to.equal(32);
+      expect(hash.length).toBe(32);
     });
   });
 });

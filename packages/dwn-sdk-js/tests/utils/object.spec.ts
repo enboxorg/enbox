@@ -1,4 +1,4 @@
-import { expect } from 'chai';
+import { describe, expect, it } from 'bun:test';
 import { removeEmptyObjects, removeUndefinedProperties } from '../../src/utils/object.js';
 
 describe('Object', () => {
@@ -21,7 +21,7 @@ describe('Object', () => {
 
       removeUndefinedProperties(mockObject);
 
-      expect(mockObject).to.deep.equal(expectedResult);
+      expect(mockObject).toEqual(expectedResult);
     });
   });
 
@@ -34,7 +34,7 @@ describe('Object', () => {
       };
       removeEmptyObjects(obj);
 
-      expect(obj).to.deep.equal({ buzz: 'hello' });
+      expect(obj).toEqual({ buzz: 'hello' });
     });
   });
 });

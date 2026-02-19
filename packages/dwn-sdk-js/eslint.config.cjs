@@ -9,7 +9,7 @@ module.exports = [{
     parserOptions: {
       ecmaFeatures: { modules: true },
       ecmaVersion: 'latest',
-      project: './tsconfig.json',
+      project: ['./tsconfig.json', './tests/tsconfig.json'],
     },
   },
   plugins: {

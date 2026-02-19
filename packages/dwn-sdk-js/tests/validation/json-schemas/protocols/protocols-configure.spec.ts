@@ -1,9 +1,9 @@
 import { ProtocolAction, type ProtocolDefinition, type ProtocolsConfigureMessage } from '../../../../src/types/protocols-types.js';
 
-import { expect } from 'chai';
 import { Message } from '../../../../src/core/message.js';
 import { TestDataGenerator } from '../../../utils/test-data-generator.js';
 import { validateJsonSchema } from '../../../../src/schema-validator.js';
+import { describe, expect, it } from 'bun:test';
 import { DwnInterfaceName, DwnMethodName } from '../../../../src/index.js';
 
 describe('ProtocolsConfigure schema definition', () => {
@@ -41,7 +41,7 @@ describe('ProtocolsConfigure schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(message);
-    }).throws('/$actions/0');
+    }).toThrow('/$actions/0');
   });
 
   describe('rule-set tests', () => {
@@ -65,7 +65,7 @@ describe('ProtocolsConfigure schema definition', () => {
       for (const ruleSet of [invalidRuleSet1, invalidRuleSet2]) {
         expect(() => {
           validateJsonSchema('ProtocolRuleSet', ruleSet);
-        }).throws('/$actions/0');
+        }).toThrow('/$actions/0');
       }
     });
   });

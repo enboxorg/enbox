@@ -1,22 +1,19 @@
 import type { MessageStore } from '../../src/index.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
-import chai, { expect } from 'chai';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { Jws } from '../../src/utils/jws.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestStores } from '../test-stores.js';
 import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, PermissionGrant, PermissionRequest, PermissionsProtocol, Time } from '../../src/index.js';
 
-chai.use(chaiAsPromised);
-
 describe('PermissionsProtocol', () => {
   let messageStore: MessageStore;
 
-  // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
+  // important to follow the `beforeAll` and `afterAll` pattern to initialize and clean the stores in tests
   // so that different test suites can reuse the same backend store for testing
-  before(async () => {
+  beforeAll(async () => {
 
     const stores = TestStores.get();
     messageStore = stores.messageStore;
@@ -31,7 +28,7 @@ describe('PermissionsProtocol', () => {
     await messageStore.clear();
   });
 
-  after(async () => {
+  afterAll(async () => {
     await messageStore.close();
   });
 
@@ -59,7 +56,7 @@ describe('PermissionsProtocol', () => {
         permissionRequest.dataEncodedMessage
       );
 
-      expect(scope).to.deep.equal(request.scope);
+      expect(scope).toEqual(request.scope);
     });
 
     it('should get scope from a permission grant record', async () => {
@@ -85,7 +82,7 @@ describe('PermissionsProtocol', () => {
         grantMessage
       );
 
-      expect(scope).to.deep.equal(grant.scope);
+      expect(scope).toEqual(grant.scope);
     });
 
     it('should get scope from a permission revocation record', async () => {
@@ -120,7 +117,7 @@ describe('PermissionsProtocol', () => {
         revocation.dataEncodedMessage
       );
 
-      expect(scope).to.deep.equal(grant.scope);
+      expect(scope).toEqual(grant.scope);
     });
 
     it('should throw if there is no grant for the revocation', async () => {
@@ -150,7 +147,7 @@ describe('PermissionsProtocol', () => {
         alice.did,
         messageStore,
         revocation.dataEncodedMessage
-      )).to.eventually.be.rejectedWith(DwnErrorCode.GrantAuthorizationGrantMissing);
+      )).rejects.toThrow(DwnErrorCode.GrantAuthorizationGrantMissing);
     });
 
     it('should throw if the message is not a permission protocol record', async () => {
@@ -164,7 +161,7 @@ describe('PermissionsProtocol', () => {
         recordsWriteMessage.author.did,
         messageStore,
         dataEncodedMessage
-      )).to.eventually.be.rejectedWith(DwnErrorCode.PermissionsProtocolGetScopeInvalidProtocol);
+      )).rejects.toThrow(DwnErrorCode.PermissionsProtocolGetScopeInvalidProtocol);
     });
   });
 });

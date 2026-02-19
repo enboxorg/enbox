@@ -3,9 +3,7 @@ import type { EventStream } from '../../src/types/subscriptions.js';
 import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
 import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
-import chai, { expect } from 'chai';
 
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Dwn } from '../../src/dwn.js';
@@ -15,11 +13,10 @@ import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-
 import { DwnErrorCode, ProtocolsConfigure } from '../../src/index.js';
 
-chai.use(chaiAsPromised);
 
 export function testProtocolCreateAction(): void {
   describe('Protocol `create` action', () => {
@@ -33,7 +30,7 @@ export function testProtocolCreateAction(): void {
 
     // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
     // so that different test suites can reuse the same backend store for testing
-    before(async () => {
+    beforeAll(async () => {
       didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
       const stores = TestStores.get();
@@ -56,7 +53,7 @@ export function testProtocolCreateAction(): void {
       await stateIndex.clear();
     });
 
-    after(async () => {
+    afterAll(async () => {
       await dwn.close();
     });
 
@@ -126,7 +123,7 @@ export function testProtocolCreateAction(): void {
       });
 
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // Verify Bob cannot create a record without a matching create rule
       const bobFooBytes = TestDataGenerator.randomBytes(100);
@@ -144,8 +141,8 @@ export function testProtocolCreateAction(): void {
 
       const bobUnauthorizedCreateReply
         = await dwn.processMessage(alice.did, bobUnauthorizedWrite.message, { dataStream: DataStream.fromBytes(bobFooBytes) });
-      expect(bobUnauthorizedCreateReply.status.code).to.equal(401);
-      expect(bobUnauthorizedCreateReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+      expect(bobUnauthorizedCreateReply.status.code).toBe(401);
+      expect(bobUnauthorizedCreateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
 
       // Alice gives Bob the "admin" role to be able to write `foo` records.
       const adminBobRecordsWrite = await TestDataGenerator.generateRecordsWrite({
@@ -156,7 +153,7 @@ export function testProtocolCreateAction(): void {
       });
       const adminBobRecordsWriteReply
         = await dwn.processMessage(alice.did, adminBobRecordsWrite.message, { dataStream: adminBobRecordsWrite.dataStream });
-      expect(adminBobRecordsWriteReply.status.code).to.equal(202);
+      expect(adminBobRecordsWriteReply.status.code).toBe(202);
 
       // Verify that Bob can create `foo` by invoking the admin role.
       const bobRoleAuthorizedFoo = await RecordsWrite.create(
@@ -173,7 +170,7 @@ export function testProtocolCreateAction(): void {
       );
       const bobRoleAuthorizedCreateReply
         = await dwn.processMessage(alice.did, bobRoleAuthorizedFoo.message, { dataStream: DataStream.fromBytes(bobFooBytes) });
-      expect(bobRoleAuthorizedCreateReply.status.code).to.equal(202);
+      expect(bobRoleAuthorizedCreateReply.status.code).toBe(202);
 
       // Verify that Bob cannot update `foo`
       const bobUnauthorizedFooUpdate = await RecordsWrite.createFrom(
@@ -185,8 +182,8 @@ export function testProtocolCreateAction(): void {
       );
       const bobUnauthorizedFooUpdateReply
         = await dwn.processMessage(alice.did, bobUnauthorizedFooUpdate.message);
-      expect(bobUnauthorizedFooUpdateReply.status.code).to.equal(401);
-      expect(bobUnauthorizedFooUpdateReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+      expect(bobUnauthorizedFooUpdateReply.status.code).toBe(401);
+      expect(bobUnauthorizedFooUpdateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
 
       // Verify that Bob can create `bar` as the author of the ancestor `foo`
       const bobBarBytes = TestDataGenerator.randomBytes(100);
@@ -203,7 +200,7 @@ export function testProtocolCreateAction(): void {
       );
       const bobBarCreateReply
         = await dwn.processMessage(alice.did, bobAuthorAuthorizedBar.message, { dataStream: DataStream.fromBytes(bobBarBytes) });
-      expect(bobBarCreateReply.status.code).to.equal(202);
+      expect(bobBarCreateReply.status.code).toBe(202);
 
       // Verify that Bob cannot update `bar`
       const bobUnauthorizedBarUpdate = await RecordsWrite.createFrom(
@@ -215,8 +212,8 @@ export function testProtocolCreateAction(): void {
       );
       const bobUnauthorizedBarUpdateReply
         = await dwn.processMessage(alice.did, bobUnauthorizedBarUpdate.message);
-      expect(bobUnauthorizedBarUpdateReply.status.code).to.equal(401);
-      expect(bobUnauthorizedBarUpdateReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+      expect(bobUnauthorizedBarUpdateReply.status.code).toBe(401);
+      expect(bobUnauthorizedBarUpdateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
 
       // Verify that Carol can create `bar` as the recipient of the ancestor `foo`
       const carolBarBytes = TestDataGenerator.randomBytes(100);
@@ -233,7 +230,7 @@ export function testProtocolCreateAction(): void {
       );
       const carolBarCreateReply
         = await dwn.processMessage(alice.did, carolRecipientAuthorizedBar.message, { dataStream: DataStream.fromBytes(carolBarBytes) });
-      expect(carolBarCreateReply.status.code).to.equal(202);
+      expect(carolBarCreateReply.status.code).toBe(202);
 
       // Verify that Carol cannot update `bar`
       const carolUnauthorizedBarUpdate = await RecordsWrite.createFrom(
@@ -245,8 +242,8 @@ export function testProtocolCreateAction(): void {
       );
       const carolUnauthorizedBarUpdateReply
         = await dwn.processMessage(alice.did, carolUnauthorizedBarUpdate.message);
-      expect(carolUnauthorizedBarUpdateReply.status.code).to.equal(401);
-      expect(carolUnauthorizedBarUpdateReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+      expect(carolUnauthorizedBarUpdateReply.status.code).toBe(401);
+      expect(carolUnauthorizedBarUpdateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
 
       // Verify that Daniel cannot create `bar` as no create rule applies to him
       const danielBarBytes = TestDataGenerator.randomBytes(100);
@@ -263,8 +260,8 @@ export function testProtocolCreateAction(): void {
       );
       const danielUnauthorizedBarCreateReply
         = await dwn.processMessage(alice.did, danielUnauthorizedBar.message, { dataStream: DataStream.fromBytes(danielBarBytes) });
-      expect(danielUnauthorizedBarCreateReply.status.code).to.equal(401);
-      expect(danielUnauthorizedBarCreateReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+      expect(danielUnauthorizedBarCreateReply.status.code).toBe(401);
+      expect(danielUnauthorizedBarCreateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
 
       // Verify anyone can create `baz`
       const danielBazBytes = TestDataGenerator.randomBytes(100);
@@ -281,7 +278,7 @@ export function testProtocolCreateAction(): void {
       );
       const danielBazCreateReply
         = await dwn.processMessage(alice.did, danielAnyoneAuthorizedBar.message, { dataStream: DataStream.fromBytes(danielBazBytes) });
-      expect(danielBazCreateReply.status.code).to.equal(202);
+      expect(danielBazCreateReply.status.code).toBe(202);
 
       // Verify that Daniel cannot update `baz`
       const danielUnauthorizedBazUpdate = await RecordsWrite.createFrom(
@@ -293,8 +290,8 @@ export function testProtocolCreateAction(): void {
       );
       const danielUnauthorizedBazUpdateReply
         = await dwn.processMessage(alice.did, danielUnauthorizedBazUpdate.message);
-      expect(danielUnauthorizedBazUpdateReply.status.code).to.equal(401);
-      expect(danielUnauthorizedBazUpdateReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+      expect(danielUnauthorizedBazUpdateReply.status.code).toBe(401);
+      expect(danielUnauthorizedBazUpdateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
     });
   });
 }

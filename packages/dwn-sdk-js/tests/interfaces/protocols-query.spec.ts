@@ -1,6 +1,3 @@
-import chaiAsPromised from 'chai-as-promised';
-import chai, { expect } from 'chai';
-
 import type { ProtocolsQueryMessage } from '../../src/index.js';
 
 import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
@@ -8,8 +5,7 @@ import { Jws } from '../../src/index.js';
 import { ProtocolsQuery } from '../../src/interfaces/protocols-query.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { Time } from '../../src/utils/time.js';
-
-chai.use(chaiAsPromised);
+import { describe, expect, it } from 'bun:test';
 
 describe('ProtocolsQuery', () => {
   describe('create()', () => {
@@ -23,7 +19,7 @@ describe('ProtocolsQuery', () => {
         signer           : Jws.createSigner(alice),
       });
 
-      expect(protocolsQuery.message.descriptor.messageTimestamp).to.equal(currentTime);
+      expect(protocolsQuery.message.descriptor.messageTimestamp).toBe(currentTime);
     });
 
 
@@ -42,8 +38,7 @@ describe('ProtocolsQuery', () => {
 
       const message = protocolsConfig.message as ProtocolsQueryMessage;
 
-      expect(message.descriptor.filter!.protocol).to.eq('http://example.com');
+      expect(message.descriptor.filter!.protocol).toBe('http://example.com');
     });
   });
 });
-

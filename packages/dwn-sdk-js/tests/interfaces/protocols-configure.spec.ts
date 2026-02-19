@@ -1,6 +1,3 @@
-import chaiAsPromised from 'chai-as-promised';
-import chai, { expect } from 'chai';
-
 import type { ProtocolsConfigureDescriptor, ProtocolsConfigureMessage } from '../../src/index.js';
 
 import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
@@ -9,9 +6,8 @@ import { ProtocolAction } from '../../src/types/protocols-types.js';
 import { ProtocolsConfigure } from '../../src/interfaces/protocols-configure.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { Time } from '../../src/utils/time.js';
+import { describe, expect, it } from 'bun:test';
 import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Message } from '../../src/index.js';
-
-chai.use(chaiAsPromised);
 
 describe('ProtocolsConfigure', () => {
   describe('parse()', () => {
@@ -49,7 +45,7 @@ describe('ProtocolsConfigure', () => {
       const message = { descriptor, authorization };
 
       const parsePromise = ProtocolsConfigure.parse(message);
-      await expect(parsePromise).to.be.rejectedWith(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded);
+      await expect(parsePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureRecordNestingDepthExceeded);
     });
   });
 
@@ -65,7 +61,7 @@ describe('ProtocolsConfigure', () => {
         signer           : Jws.createSigner(alice),
       });
 
-      expect(protocolsConfigure.message.descriptor.messageTimestamp).to.equal(currentTime);
+      expect(protocolsConfigure.message.descriptor.messageTimestamp).toBe(currentTime);
     });
 
     it('should include permissionGrantId in the descriptor when provided', async () => {
@@ -79,7 +75,7 @@ describe('ProtocolsConfigure', () => {
         permissionGrantId : grantId,
       });
 
-      expect(protocolsConfigure.message.descriptor.permissionGrantId).to.equal(grantId);
+      expect(protocolsConfigure.message.descriptor.permissionGrantId).toBe(grantId);
     });
 
     it('should not include permissionGrantId in the descriptor when not provided', async () => {
@@ -91,7 +87,7 @@ describe('ProtocolsConfigure', () => {
         signer: Jws.createSigner(alice),
       });
 
-      expect(protocolsConfigure.message.descriptor.permissionGrantId).to.be.undefined;
+      expect(protocolsConfigure.message.descriptor.permissionGrantId).toBeUndefined();
     });
 
     it('should auto-normalize protocol URI', async () => {
@@ -109,7 +105,7 @@ describe('ProtocolsConfigure', () => {
 
       const message = protocolsConfig.message as ProtocolsConfigureMessage;
 
-      expect(message.descriptor.definition.protocol).to.eq('http://example.com');
+      expect(message.descriptor.definition.protocol).toBe('http://example.com');
     });
 
     it('should auto-normalize schema URIs', async () => {
@@ -129,7 +125,7 @@ describe('ProtocolsConfigure', () => {
       const protocolsConfig = await ProtocolsConfigure.create(options);
 
       const message = protocolsConfig.message as ProtocolsConfigureMessage;
-      expect(message.descriptor.definition.types.ask.schema).to.eq('http://ask');
+      expect(message.descriptor.definition.types.ask.schema).toBe('http://ask');
     });
 
     describe('protocol definition validations', () => {
@@ -152,7 +148,7 @@ describe('ProtocolsConfigure', () => {
           definition
         });
 
-        await expect(createPromise).to.be.rejectedWith(DwnErrorCode.ProtocolsConfigureInvalidRuleSetRecordType);
+        await expect(createPromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidRuleSetRecordType);
       });
 
       it('should allow `role` property in an `action` to have protocol path to a role record.', async () => {
@@ -190,7 +186,7 @@ describe('ProtocolsConfigure', () => {
           definition
         });
 
-        expect(protocolsConfigure.message.descriptor.definition).not.to.be.undefined;
+        expect(protocolsConfigure.message.descriptor.definition).toBeDefined();
       });
 
       it('should allow `role` property in an `action` that have protocol path to a role record.', async () => {
@@ -224,7 +220,7 @@ describe('ProtocolsConfigure', () => {
           definition
         });
 
-        expect(protocolsConfigure.message.descriptor.definition).not.to.be.undefined;
+        expect(protocolsConfigure.message.descriptor.definition).toBeDefined();
       });
 
       it('rejects protocol definitions with `role` actions that contain invalid roles', async () => {
@@ -256,7 +252,7 @@ describe('ProtocolsConfigure', () => {
         });
 
         await expect(createProtocolsConfigurePromise)
-          .to.be.rejectedWith(DwnErrorCode.ProtocolsConfigureRoleDoesNotExistAtGivenPath);
+          .rejects.toThrow(DwnErrorCode.ProtocolsConfigureRoleDoesNotExistAtGivenPath);
       });
 
       it('rejects protocol definitions with actions that contain `of` and  `who` is `anyone`', async () => {
@@ -285,7 +281,7 @@ describe('ProtocolsConfigure', () => {
         });
 
         await expect(createProtocolsConfigurePromise)
-          .to.be.rejectedWith(DwnErrorCode.ProtocolsConfigureInvalidActionOfNotAllowed);
+          .rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidActionOfNotAllowed);
       });
 
       it('rejects protocol definitions with actions that have direct-recipient-can rules with actions other than delete or update', async () => {
@@ -313,7 +309,7 @@ describe('ProtocolsConfigure', () => {
         });
 
         await expect(createProtocolsConfigurePromise)
-          .to.be.rejectedWith(DwnErrorCode.ProtocolsConfigureInvalidRecipientOfAction);
+          .rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidRecipientOfAction);
       });
 
       it('rejects protocol definitions with actions that don\'t contain `of` and  `who` is `author`', async () => {
@@ -342,7 +338,7 @@ describe('ProtocolsConfigure', () => {
         });
 
         await expect(createProtocolsConfigurePromise)
-          .to.be.rejectedWith(DwnErrorCode.ProtocolsConfigureInvalidActionMissingOf);
+          .rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidActionMissingOf);
       });
 
       it('allows `who`-based rules with `of` that have read action', async () => {
@@ -365,13 +361,12 @@ describe('ProtocolsConfigure', () => {
 
         const alice = await TestDataGenerator.generatePersona();
 
-        const createProtocolsConfigurePromise = ProtocolsConfigure.create({
+        const result = await ProtocolsConfigure.create({
           signer: Jws.createSigner(alice),
           definition
         });
 
-        await expect(createProtocolsConfigurePromise)
-          .to.eventually.exist;
+        expect(result).toBeDefined();
       });
 
       it('allows `who`-based rules with `of` that have read action alongside other actions', async () => {
@@ -394,13 +389,12 @@ describe('ProtocolsConfigure', () => {
 
         const alice = await TestDataGenerator.generatePersona();
 
-        const createProtocolsConfigurePromise = ProtocolsConfigure.create({
+        const result = await ProtocolsConfigure.create({
           signer: Jws.createSigner(alice),
           definition
         });
 
-        await expect(createProtocolsConfigurePromise)
-          .to.eventually.exist;
+        expect(result).toBeDefined();
       });
 
       it('allows $size min and max to be set on a protocol path', async () => {
@@ -427,7 +421,7 @@ describe('ProtocolsConfigure', () => {
           definition
         });
 
-        expect(protocolsConfigure.message.descriptor.definition).not.to.be.undefined;
+        expect(protocolsConfigure.message.descriptor.definition).toBeDefined();
       });
 
       it('allows $size max to be set on a protocol path (min defaults to 0)', async () => {
@@ -453,7 +447,7 @@ describe('ProtocolsConfigure', () => {
           definition
         });
 
-        expect(protocolsConfigure.message.descriptor.definition).not.to.be.undefined;
+        expect(protocolsConfigure.message.descriptor.definition).toBeDefined();
       });
 
       it('rejects $size when max is less than min', async () => {
@@ -480,9 +474,8 @@ describe('ProtocolsConfigure', () => {
           definition
         });
 
-        await expect(createProtocolsConfigurePromise).to.eventually.be.rejectedWith(DwnErrorCode.ProtocolsConfigureInvalidSize);
+        await expect(createProtocolsConfigurePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidSize);
       });
     });
   });
 });
-

@@ -1,5 +1,7 @@
 import type { DataStore, EventStream, MessageStore, ResumableTaskStore, StateIndex } from '../src/index.js';
 
+import { beforeAll } from 'bun:test';
+
 import { testAuthorDelegatedGrant } from './features/author-delegated-grant.spec.js';
 import { testDeletedRecordScenarios } from './scenarios/deleted-record.spec.js';
 import { testDwnClass } from './dwn.spec.js';
@@ -47,7 +49,7 @@ export class TestSuite {
     resumableTaskStore?: ResumableTaskStore,
   }): void {
 
-    before(async () => {
+    beforeAll(async () => {
       TestEventStream.override(overrides);
       TestStores.override(overrides);
     });

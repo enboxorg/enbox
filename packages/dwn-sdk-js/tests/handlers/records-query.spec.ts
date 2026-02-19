@@ -4,9 +4,9 @@ import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore, S
 import type { GenericMessage, RecordsWriteMessage } from '../../src/index.js';
 import type { RecordsQueryReply, RecordsQueryReplyEntry, RecordsWriteDescriptor } from '../../src/types/records-types.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
-import chai, { expect } from 'chai';
+
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
@@ -30,8 +30,6 @@ import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { DataStoreLevel, Dwn, MessageStoreLevel, RecordsWrite, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
-chai.use(chaiAsPromised);
-
 export function testRecordsQueryHandler(): void {
   describe('RecordsQueryHandler.handle()', () => {
 
@@ -50,7 +48,7 @@ export function testRecordsQueryHandler(): void {
 
       // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
       // so that different test suites can reuse the same backend store for testing
-      before(async () => {
+      beforeAll(async () => {
         didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
         const stores = TestStores.get();
@@ -71,7 +69,7 @@ export function testRecordsQueryHandler(): void {
         await stateIndex.clear();
       });
 
-      after(async () => {
+      afterAll(async () => {
         await dwn.close();
       });
 
@@ -83,19 +81,19 @@ export function testRecordsQueryHandler(): void {
 
         //control
         let reply = await dwn.processMessage(alice.did, query.message);
-        expect(reply.status.code).to.equal(200);
+        expect(reply.status.code).toBe(200);
 
         // modify dateSort to publishedAscending
         query.message.descriptor.dateSort = DateSort.PublishedAscending;
         reply = await dwn.processMessage(alice.did, query.message);
-        expect(reply.status.code).to.equal(400);
-        expect(reply.status.detail).to.include('queries must not filter for `published:false` and sort');
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain('queries must not filter for `published:false` and sort');
 
         // modify dateSort to publishedDescending
         query.message.descriptor.dateSort = DateSort.PublishedDescending;
         reply = await dwn.processMessage(alice.did, query.message);
-        expect(reply.status.code).to.equal(400);
-        expect(reply.status.detail).to.include('queries must not filter for `published:false` and sort');
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain('queries must not filter for `published:false` and sort');
       });
 
       it('should return recordId, descriptor, authorization and attestation', async () => {
@@ -106,17 +104,17 @@ export function testRecordsQueryHandler(): void {
 
         const write = await TestDataGenerator.generateRecordsWrite({ author: alice, attesters: [bob], dataFormat });
         const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
-        expect(writeReply.status.code).to.equal(202);
+        expect(writeReply.status.code).toBe(202);
 
         const query = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { dataFormat } });
         const reply = await dwn.processMessage(alice.did, query.message);
 
-        expect(reply.entries?.length).to.equal(1);
+        expect(reply.entries?.length).toBe(1);
         const entry = reply.entries![0];
-        expect(entry.authorization).to.deep.equal(write.message.authorization);
-        expect(entry.attestation).to.deep.equal(write.message.attestation);
-        expect(entry.descriptor).to.deep.equal(write.message.descriptor);
-        expect(entry.recordId).to.equal(write.message.recordId);
+        expect(entry.authorization).toEqual(write.message.authorization);
+        expect(entry.attestation).toEqual(write.message.attestation);
+        expect(entry.descriptor).toEqual(write.message.descriptor);
+        expect(entry.recordId).toBe(write.message.recordId);
       });
 
       it('should return records matching the query', async () => {
@@ -135,17 +133,17 @@ export function testRecordsQueryHandler(): void {
         const writeReply1 = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
         const writeReply2 = await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
         const writeReply3 = await dwn.processMessage(alice.did, write3.message, { dataStream: write3.dataStream });
-        expect(writeReply1.status.code).to.equal(202);
-        expect(writeReply2.status.code).to.equal(202);
-        expect(writeReply3.status.code).to.equal(202);
+        expect(writeReply1.status.code).toBe(202);
+        expect(writeReply2.status.code).toBe(202);
+        expect(writeReply3.status.code).toBe(202);
 
         // testing singular conditional query
         const messageData = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { dataFormat } });
 
         const reply = await dwn.processMessage(alice.did, messageData.message);
 
-        expect(reply.status.code).to.equal(200);
-        expect(reply.entries?.length).to.equal(2); // only 2 entries should match the query on protocol
+        expect(reply.status.code).toBe(200);
+        expect(reply.entries?.length).toBe(2); // only 2 entries should match the query on protocol
 
         // testing multi-conditional query, reuse data generated above for bob
         const messageData2 = await TestDataGenerator.generateRecordsQuery({
@@ -158,8 +156,8 @@ export function testRecordsQueryHandler(): void {
 
         const reply2 = await dwn.processMessage(alice.did, messageData2.message);
 
-        expect(reply2.status.code).to.equal(200);
-        expect(reply2.entries?.length).to.equal(1); // only 1 entry should match the query
+        expect(reply2.status.code).toBe(200);
+        expect(reply2.entries?.length).toBe(1); // only 1 entry should match the query
       });
 
       it('should return `encodedData` if data size is within the spec threshold', async () => {
@@ -168,14 +166,14 @@ export function testRecordsQueryHandler(): void {
         const write= await TestDataGenerator.generateRecordsWrite({ author: alice, data });
 
         const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
-        expect(writeReply.status.code).to.equal(202);
+        expect(writeReply.status.code).toBe(202);
 
         const messageData = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { recordId: write.message.recordId } });
         const reply = await dwn.processMessage(alice.did, messageData.message);
 
-        expect(reply.status.code).to.equal(200);
-        expect(reply.entries?.length).to.equal(1);
-        expect(reply.entries![0].encodedData).to.equal(Encoder.bytesToBase64Url(data));
+        expect(reply.status.code).toBe(200);
+        expect(reply.entries?.length).toBe(1);
+        expect(reply.entries![0].encodedData).toBe(Encoder.bytesToBase64Url(data));
       });
 
       it('should not return `encodedData` if data size is greater then spec threshold', async () => {
@@ -184,14 +182,14 @@ export function testRecordsQueryHandler(): void {
         const write= await TestDataGenerator.generateRecordsWrite({ author: alice, data });
 
         const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
-        expect(writeReply.status.code).to.equal(202);
+        expect(writeReply.status.code).toBe(202);
 
         const messageData = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { recordId: write.message.recordId } });
         const reply = await dwn.processMessage(alice.did, messageData.message);
 
-        expect(reply.status.code).to.equal(200);
-        expect(reply.entries?.length).to.equal(1);
-        expect(reply.entries![0].encodedData).to.be.undefined;
+        expect(reply.status.code).toBe(200);
+        expect(reply.entries?.length).toBe(1);
+        expect(reply.entries![0].encodedData).toBeUndefined();
       });
 
       it('should include `initialWrite` property if RecordsWrite is not initial write', async () => {
@@ -199,21 +197,21 @@ export function testRecordsQueryHandler(): void {
         const write = await TestDataGenerator.generateRecordsWrite({ author: alice, published: false });
 
         const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
-        expect(writeReply.status.code).to.equal(202);
+        expect(writeReply.status.code).toBe(202);
 
         // write an update to the record
         const write2 = await RecordsWrite.createFrom({ recordsWriteMessage: write.message, published: true, signer: Jws.createSigner(alice) });
         const write2Reply = await dwn.processMessage(alice.did, write2.message);
-        expect(write2Reply.status.code).to.equal(202);
+        expect(write2Reply.status.code).toBe(202);
 
         // make sure result returned now has `initialWrite` property
         const messageData = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { recordId: write.message.recordId } });
         const reply = await dwn.processMessage(alice.did, messageData.message);
 
-        expect(reply.status.code).to.equal(200);
-        expect(reply.entries?.length).to.equal(1);
-        expect(reply.entries![0].initialWrite).to.exist;
-        expect(reply.entries![0].initialWrite?.recordId).to.equal(write.message.recordId);
+        expect(reply.status.code).toBe(200);
+        expect(reply.entries?.length).toBe(1);
+        expect(reply.entries![0].initialWrite).toBeDefined();
+        expect(reply.entries![0].initialWrite?.recordId).toBe(write.message.recordId);
 
       });
 
@@ -227,15 +225,15 @@ export function testRecordsQueryHandler(): void {
         // insert data
         const writeReply1 = await dwn.processMessage(alice.did, recordsWrite1.message, { dataStream: recordsWrite1.dataStream });
         const writeReply2 = await dwn.processMessage(alice.did, recordsWrite2.message, { dataStream: recordsWrite2.dataStream });
-        expect(writeReply1.status.code).to.equal(202);
-        expect(writeReply2.status.code).to.equal(202);
+        expect(writeReply1.status.code).toBe(202);
+        expect(writeReply2.status.code).toBe(202);
 
         // testing attester filter
         const recordsQuery1 = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { attester: alice.did } });
         const reply1 = await dwn.processMessage(alice.did, recordsQuery1.message);
-        expect(reply1.entries?.length).to.equal(1);
+        expect(reply1.entries?.length).toBe(1);
         const reply1Attester = Jws.getSignerDid(reply1.entries![0].attestation!.signatures[0]);
-        expect(reply1Attester).to.equal(alice.did);
+        expect(reply1Attester).toBe(alice.did);
 
         // testing attester + another filter
         const recordsQuery2 = await TestDataGenerator.generateRecordsQuery({
@@ -243,15 +241,15 @@ export function testRecordsQueryHandler(): void {
           filter : { attester: bob.did, schema: recordsWrite2.message.descriptor.schema }
         });
         const reply2 = await dwn.processMessage(alice.did, recordsQuery2.message);
-        expect(reply2.entries?.length).to.equal(1);
+        expect(reply2.entries?.length).toBe(1);
         const reply2Attester = Jws.getSignerDid(reply2.entries![0].attestation!.signatures[0]);
-        expect(reply2Attester).to.equal(bob.did);
+        expect(reply2Attester).toBe(bob.did);
 
         // testing attester filter that yields no results
         const carol = await TestDataGenerator.generateDidKeyPersona();
         const recordsQuery3 = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { attester: carol.did } });
         const reply3 = await dwn.processMessage(alice.did, recordsQuery3.message);
-        expect(reply3.entries?.length).to.equal(0);
+        expect(reply3.entries?.length).toBe(0);
       });
 
       it('should be able to query by author', async () => {
@@ -267,7 +265,7 @@ export function testRecordsQueryHandler(): void {
           protocolDefinition
         });
         const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).to.equal(202);
+        expect(protocolsConfigureReply.status.code).toBe(202);
 
         const aliceAuthorWrite = await TestDataGenerator.generateRecordsWrite({
           author       : alice,
@@ -277,7 +275,7 @@ export function testRecordsQueryHandler(): void {
           protocolPath : 'post'
         });
         const aliceAuthorReply = await dwn.processMessage(alice.did, aliceAuthorWrite.message, { dataStream: aliceAuthorWrite.dataStream });
-        expect(aliceAuthorReply.status.code).to.equal(202);
+        expect(aliceAuthorReply.status.code).toBe(202);
 
         const bobAuthorWrite = await TestDataGenerator.generateRecordsWrite({
           author       : bob,
@@ -287,7 +285,7 @@ export function testRecordsQueryHandler(): void {
           protocolPath : 'post'
         });
         const bobAuthorReply = await dwn.processMessage(alice.did, bobAuthorWrite.message, { dataStream: bobAuthorWrite.dataStream });
-        expect(bobAuthorReply.status.code).to.equal(202);
+        expect(bobAuthorReply.status.code).toBe(202);
 
         // alice queries with an empty filter, gets both
         let recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -300,8 +298,8 @@ export function testRecordsQueryHandler(): void {
           }
         });
         let queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-        expect(queryReply.status.code).to.equal(200);
-        expect(queryReply.entries?.length).to.equal(2);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries?.length).toBe(2);
 
         // filter for bob as author
         recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -315,9 +313,9 @@ export function testRecordsQueryHandler(): void {
           }
         });
         queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-        expect(queryReply.status.code).to.equal(200);
-        expect(queryReply.entries?.length).to.equal(1);
-        expect(queryReply.entries![0].recordId).to.equal(bobAuthorWrite.message.recordId);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries?.length).toBe(1);
+        expect(queryReply.entries![0].recordId).toBe(bobAuthorWrite.message.recordId);
 
         // empty array for author should return all same as undefined author field
         recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -331,8 +329,8 @@ export function testRecordsQueryHandler(): void {
           }
         });
         queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-        expect(queryReply.status.code).to.equal(200);
-        expect(queryReply.entries?.length).to.equal(2);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries?.length).toBe(2);
 
         // query for both authors explicitly
         recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -346,8 +344,8 @@ export function testRecordsQueryHandler(): void {
           }
         });
         queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-        expect(queryReply.status.code).to.equal(200);
-        expect(queryReply.entries?.length).to.equal(2);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries?.length).toBe(2);
       });
 
       it('should be able to query by recipient', async () => {
@@ -364,7 +362,7 @@ export function testRecordsQueryHandler(): void {
           protocolDefinition
         });
         const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).to.equal(202);
+        expect(protocolsConfigureReply.status.code).toBe(202);
 
         const aliceToBob = await TestDataGenerator.generateRecordsWrite({
           author       : alice,
@@ -375,7 +373,7 @@ export function testRecordsQueryHandler(): void {
           protocolPath : 'post'
         });
         const aliceToBobReply = await dwn.processMessage(alice.did, aliceToBob.message, { dataStream: aliceToBob.dataStream });
-        expect(aliceToBobReply.status.code).to.equal(202);
+        expect(aliceToBobReply.status.code).toBe(202);
 
         const aliceToCarol = await TestDataGenerator.generateRecordsWrite({
           author       : alice,
@@ -386,7 +384,7 @@ export function testRecordsQueryHandler(): void {
           protocolPath : 'post'
         });
         const aliceToCarolReply = await dwn.processMessage(alice.did, aliceToCarol.message, { dataStream: aliceToCarol.dataStream });
-        expect(aliceToCarolReply.status.code).to.equal(202);
+        expect(aliceToCarolReply.status.code).toBe(202);
 
         // alice queries with an empty filter, gets both
         let recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -399,8 +397,8 @@ export function testRecordsQueryHandler(): void {
           }
         });
         let queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-        expect(queryReply.status.code).to.equal(200);
-        expect(queryReply.entries?.length).to.equal(2);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries?.length).toBe(2);
 
         // filter for bob as recipient
         recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -414,9 +412,9 @@ export function testRecordsQueryHandler(): void {
           }
         });
         queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-        expect(queryReply.status.code).to.equal(200);
-        expect(queryReply.entries?.length).to.equal(1);
-        expect(queryReply.entries![0].recordId).to.equal(aliceToBob.message.recordId);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries?.length).toBe(1);
+        expect(queryReply.entries![0].recordId).toBe(aliceToBob.message.recordId);
 
         // filter for carol as recipient
         recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -430,9 +428,9 @@ export function testRecordsQueryHandler(): void {
           }
         });
         queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-        expect(queryReply.status.code).to.equal(200);
-        expect(queryReply.entries?.length).to.equal(1);
-        expect(queryReply.entries![0].recordId).to.equal(aliceToCarol.message.recordId);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries?.length).toBe(1);
+        expect(queryReply.entries![0].recordId).toBe(aliceToCarol.message.recordId);
 
         // empty array for recipient should return all same as undefined recipient field
         recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -446,8 +444,8 @@ export function testRecordsQueryHandler(): void {
           }
         });
         queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-        expect(queryReply.status.code).to.equal(200);
-        expect(queryReply.entries?.length).to.equal(2);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries?.length).toBe(2);
 
         // query for both recipients explicitly
         recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -461,8 +459,8 @@ export function testRecordsQueryHandler(): void {
           }
         });
         queryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-        expect(queryReply.status.code).to.equal(200);
-        expect(queryReply.entries?.length).to.equal(2);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries?.length).toBe(2);
       });
 
       it('should be able to query for published records', async () => {
@@ -472,33 +470,33 @@ export function testRecordsQueryHandler(): void {
         // create a published record
         const publishedWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true, schema: 'post' });
         const publishedWriteReply = await dwn.processMessage(alice.did, publishedWrite.message, { dataStream: publishedWrite.dataStream });
-        expect(publishedWriteReply.status.code).to.equal(202);
+        expect(publishedWriteReply.status.code).toBe(202);
 
         // create an unpublished record
         const draftWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'post' });
         const draftWriteReply = await dwn.processMessage(alice.did, draftWrite.message, { dataStream: draftWrite.dataStream });
-        expect(draftWriteReply.status.code).to.equal(202);
+        expect(draftWriteReply.status.code).toBe(202);
 
         // query for only published records
         const publishedPostQuery = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { schema: 'post', published: true } });
         let publishedPostReply = await dwn.processMessage(alice.did, publishedPostQuery.message);
-        expect(publishedPostReply.status.code).to.equal(200);
-        expect(publishedPostReply.entries?.length).to.equal(1);
-        expect(publishedPostReply.entries![0].recordId).to.equal(publishedWrite.message.recordId);
+        expect(publishedPostReply.status.code).toBe(200);
+        expect(publishedPostReply.entries?.length).toBe(1);
+        expect(publishedPostReply.entries![0].recordId).toBe(publishedWrite.message.recordId);
 
         // make an query for published records from non owner
         const notOwnerPostQuery = await TestDataGenerator.generateRecordsQuery({ author: bob, filter: { schema: 'post', published: true } });
         let notOwnerPublishedPostReply = await dwn.processMessage(alice.did, notOwnerPostQuery.message);
-        expect(notOwnerPublishedPostReply.status.code).to.equal(200);
-        expect(notOwnerPublishedPostReply.entries?.length).to.equal(1);
-        expect(notOwnerPublishedPostReply.entries![0].recordId).to.equal(publishedWrite.message.recordId);
+        expect(notOwnerPublishedPostReply.status.code).toBe(200);
+        expect(notOwnerPublishedPostReply.entries?.length).toBe(1);
+        expect(notOwnerPublishedPostReply.entries![0].recordId).toBe(publishedWrite.message.recordId);
 
         // anonymous query for published records
         const anonymousPostQuery = await RecordsQuery.create({ filter: { schema: 'post', published: true } });
         let anonymousPublishedPostReply = await dwn.processMessage(alice.did, anonymousPostQuery.message);
-        expect(anonymousPublishedPostReply.status.code).to.equal(200);
-        expect(anonymousPublishedPostReply.entries?.length).to.equal(1);
-        expect(anonymousPublishedPostReply.entries![0].recordId).to.equal(publishedWrite.message.recordId);
+        expect(anonymousPublishedPostReply.status.code).toBe(200);
+        expect(anonymousPublishedPostReply.entries?.length).toBe(1);
+        expect(anonymousPublishedPostReply.entries![0].recordId).toBe(publishedWrite.message.recordId);
 
         // publish the unpublished record
         const publishedDraftWrite = await RecordsWrite.createFrom({
@@ -507,30 +505,30 @@ export function testRecordsQueryHandler(): void {
           signer              : Jws.createSigner(alice)
         });
         const publishedDraftReply = await dwn.processMessage(alice.did, publishedDraftWrite.message);
-        expect(publishedDraftReply.status.code).to.equal(202);
+        expect(publishedDraftReply.status.code).toBe(202);
 
         // issue the same query for published records
         publishedPostReply = await dwn.processMessage(alice.did, publishedPostQuery.message);
-        expect(publishedPostReply.status.code).to.equal(200);
-        expect(publishedPostReply.entries?.length).to.equal(2);
+        expect(publishedPostReply.status.code).toBe(200);
+        expect(publishedPostReply.entries?.length).toBe(2);
         const returnedRecordIds = publishedPostReply.entries?.map(e => e.recordId);
 
         // ensure that both records now exist in results
-        expect(returnedRecordIds).to.have.members([ publishedWrite.message.recordId, draftWrite.message.recordId ]);
+        expect(returnedRecordIds).toEqual(expect.arrayContaining([ publishedWrite.message.recordId, draftWrite.message.recordId ]));
 
         // query after publishing from non owner
         notOwnerPublishedPostReply = await dwn.processMessage(alice.did, anonymousPostQuery.message);
-        expect(notOwnerPublishedPostReply.status.code).to.equal(200);
-        expect(notOwnerPublishedPostReply.entries?.length).to.equal(2);
+        expect(notOwnerPublishedPostReply.status.code).toBe(200);
+        expect(notOwnerPublishedPostReply.entries?.length).toBe(2);
         const nonOwnerReturnedRecordIds = notOwnerPublishedPostReply.entries?.map(e => e.recordId);
-        expect(nonOwnerReturnedRecordIds).to.have.members([ publishedWrite.message.recordId, draftWrite.message.recordId ]);
+        expect(nonOwnerReturnedRecordIds).toEqual(expect.arrayContaining([ publishedWrite.message.recordId, draftWrite.message.recordId ]));
 
         // anonymous query after publishing
         anonymousPublishedPostReply = await dwn.processMessage(alice.did, anonymousPostQuery.message);
-        expect(anonymousPublishedPostReply.status.code).to.equal(200);
-        expect(anonymousPublishedPostReply.entries?.length).to.equal(2);
+        expect(anonymousPublishedPostReply.status.code).toBe(200);
+        expect(anonymousPublishedPostReply.entries?.length).toBe(2);
         const anonymousReturnedRecordIds = anonymousPublishedPostReply.entries?.map(e => e.recordId);
-        expect(anonymousReturnedRecordIds).to.have.members([ publishedWrite.message.recordId, draftWrite.message.recordId ]);
+        expect(anonymousReturnedRecordIds).toEqual(expect.arrayContaining([ publishedWrite.message.recordId, draftWrite.message.recordId ]));
       });
 
       it('should be able to query for unpublished records', async () => {
@@ -539,19 +537,19 @@ export function testRecordsQueryHandler(): void {
         // create a published record
         const publishedWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true, schema: 'post' });
         const publishedWriteReply = await dwn.processMessage(alice.did, publishedWrite.message, { dataStream: publishedWrite.dataStream });
-        expect(publishedWriteReply.status.code).to.equal(202);
+        expect(publishedWriteReply.status.code).toBe(202);
 
         // create an unpublished record
         const draftWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'post' });
         const draftWriteReply = await dwn.processMessage(alice.did, draftWrite.message, { dataStream: draftWrite.dataStream });
-        expect(draftWriteReply.status.code).to.equal(202);
+        expect(draftWriteReply.status.code).toBe(202);
 
         // query for only unpublished records
         const unpublishedPostQuery = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { schema: 'post', published: false } });
         let unpublishedPostReply = await dwn.processMessage(alice.did, unpublishedPostQuery.message);
-        expect(unpublishedPostReply.status.code).to.equal(200);
-        expect(unpublishedPostReply.entries?.length).to.equal(1);
-        expect(unpublishedPostReply.entries![0].recordId).to.equal(draftWrite.message.recordId);
+        expect(unpublishedPostReply.status.code).toBe(200);
+        expect(unpublishedPostReply.entries?.length).toBe(1);
+        expect(unpublishedPostReply.entries![0].recordId).toBe(draftWrite.message.recordId);
 
         // publish the unpublished record
         const publishedDraftWrite = await RecordsWrite.createFrom({
@@ -560,12 +558,12 @@ export function testRecordsQueryHandler(): void {
           signer              : Jws.createSigner(alice)
         });
         const publishedDraftReply = await dwn.processMessage(alice.did, publishedDraftWrite.message);
-        expect(publishedDraftReply.status.code).to.equal(202);
+        expect(publishedDraftReply.status.code).toBe(202);
 
         // issue the same query for unpublished records
         unpublishedPostReply = await dwn.processMessage(alice.did, unpublishedPostQuery.message);
-        expect(unpublishedPostReply.status.code).to.equal(200);
-        expect(unpublishedPostReply.entries?.length).to.equal(0);
+        expect(unpublishedPostReply.status.code).toBe(200);
+        expect(unpublishedPostReply.entries?.length).toBe(0);
       });
 
       it('should not be able to query for unpublished records if unauthorized', async () => {
@@ -575,18 +573,18 @@ export function testRecordsQueryHandler(): void {
         // create a published record
         const publishedWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true, schema: 'post' });
         const publishedWriteReply = await dwn.processMessage(alice.did, publishedWrite.message, { dataStream: publishedWrite.dataStream });
-        expect(publishedWriteReply.status.code).to.equal(202);
+        expect(publishedWriteReply.status.code).toBe(202);
 
         // create an unpublished record
         const draftWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'post' });
         const draftWriteReply = await dwn.processMessage(alice.did, draftWrite.message, { dataStream: draftWrite.dataStream });
-        expect(draftWriteReply.status.code).to.equal(202);
+        expect(draftWriteReply.status.code).toBe(202);
 
         // bob queries for unpublished records returns zero
         const unpublishedNotOwner = await TestDataGenerator.generateRecordsQuery({ author: bob, filter: { schema: 'post', published: false } });
         let notOwnerPostReply = await dwn.processMessage(alice.did, unpublishedNotOwner.message);
-        expect(notOwnerPostReply.status.code).to.equal(200);
-        expect(notOwnerPostReply.entries?.length).to.equal(0);
+        expect(notOwnerPostReply.status.code).toBe(200);
+        expect(notOwnerPostReply.entries?.length).toBe(0);
 
         // publish the unpublished record
         const publishedDraftWrite = await RecordsWrite.createFrom({
@@ -595,24 +593,24 @@ export function testRecordsQueryHandler(): void {
           signer              : Jws.createSigner(alice)
         });
         const publishedDraftReply = await dwn.processMessage(alice.did, publishedDraftWrite.message);
-        expect(publishedDraftReply.status.code).to.equal(202);
+        expect(publishedDraftReply.status.code).toBe(202);
 
         // without published filter
         let publishedNotOwner = await TestDataGenerator.generateRecordsQuery({ author: bob, filter: { schema: 'post' } });
         let publishedNotOwnerReply = await dwn.processMessage(alice.did, publishedNotOwner.message);
-        expect(publishedNotOwnerReply.status.code).to.equal(200);
-        expect(publishedNotOwnerReply.entries?.length).to.equal(2);
+        expect(publishedNotOwnerReply.status.code).toBe(200);
+        expect(publishedNotOwnerReply.entries?.length).toBe(2);
 
         // with explicit published true
         publishedNotOwner = await TestDataGenerator.generateRecordsQuery({ author: bob, filter: { schema: 'post', published: true } });
         publishedNotOwnerReply = await dwn.processMessage(alice.did, publishedNotOwner.message);
-        expect(publishedNotOwnerReply.status.code).to.equal(200);
-        expect(publishedNotOwnerReply.entries?.length).to.equal(2);
+        expect(publishedNotOwnerReply.status.code).toBe(200);
+        expect(publishedNotOwnerReply.entries?.length).toBe(2);
 
         // with explicit published false after publishing should still return nothing
         notOwnerPostReply = await dwn.processMessage(alice.did, unpublishedNotOwner.message);
-        expect(notOwnerPostReply.status.code).to.equal(200);
-        expect(notOwnerPostReply.entries?.length).to.equal(0);
+        expect(notOwnerPostReply.status.code).toBe(200);
+        expect(notOwnerPostReply.entries?.length).toBe(0);
       });
 
       it('should be able to query for a record by a dataCid', async () => {
@@ -621,15 +619,15 @@ export function testRecordsQueryHandler(): void {
         // create a record
         const writeRecord = await TestDataGenerator.generateRecordsWrite({ author: alice });
         const writeRecordReply = await dwn.processMessage(alice.did, writeRecord.message, { dataStream: writeRecord.dataStream });
-        expect(writeRecordReply.status.code).to.equal(202);
+        expect(writeRecordReply.status.code).toBe(202);
         const recordDataCid = writeRecord.message.descriptor.dataCid;
 
         // query for the record by it's dataCid
         const dataCidQuery = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { dataCid: recordDataCid } });
         const dataCidQueryReply = await dwn.processMessage(alice.did, dataCidQuery.message);
-        expect(dataCidQueryReply.status.code).to.equal(200);
-        expect(dataCidQueryReply.entries?.length).to.equal(1);
-        expect(dataCidQueryReply.entries![0].recordId).to.equal(writeRecord.message.recordId);
+        expect(dataCidQueryReply.status.code).toBe(200);
+        expect(dataCidQueryReply.entries?.length).toBe(1);
+        expect(dataCidQueryReply.entries![0].recordId).toBe(writeRecord.message.recordId);
       });
 
       it('should be able to query with `dataSize` filter (half-open range)', async () => {
@@ -642,9 +640,9 @@ export function testRecordsQueryHandler(): void {
         const writeReply1 = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
         const writeReply2 = await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
         const writeReply3 = await dwn.processMessage(alice.did, write3.message, { dataStream: write3.dataStream });
-        expect(writeReply1.status.code).to.equal(202);
-        expect(writeReply2.status.code).to.equal(202);
-        expect(writeReply3.status.code).to.equal(202);
+        expect(writeReply1.status.code).toBe(202);
+        expect(writeReply2.status.code).toBe(202);
+        expect(writeReply3.status.code).toBe(202);
 
         // testing gt
         const recordsQuery1 = await TestDataGenerator.generateRecordsQuery({
@@ -652,14 +650,14 @@ export function testRecordsQueryHandler(): void {
           filter : { dataSize: { gt: 10 } },
         });
         const reply1 = await dwn.processMessage(alice.did, recordsQuery1.message);
-        expect(reply1.entries?.length).to.equal(2);
+        expect(reply1.entries?.length).toBe(2);
 
         expect(
           reply1.entries?.map((entry) => entry.encodedData)
-        ).to.have.members([
+        ).toEqual(expect.arrayContaining([
           Encoder.bytesToBase64Url(write2.dataBytes!),
           Encoder.bytesToBase64Url(write3.dataBytes!)
-        ]);
+        ]));
 
         // testing lt
         const recordsQuery2 = await TestDataGenerator.generateRecordsQuery({
@@ -667,13 +665,13 @@ export function testRecordsQueryHandler(): void {
           filter : { dataSize: { lt: 100 } },
         });
         const reply2 = await dwn.processMessage(alice.did, recordsQuery2.message);
-        expect(reply2.entries?.length).to.equal(2);
+        expect(reply2.entries?.length).toBe(2);
         expect(
           reply2.entries?.map((entry) => entry.encodedData)
-        ).to.have.members([
+        ).toEqual(expect.arrayContaining([
           Encoder.bytesToBase64Url(write1.dataBytes!),
           Encoder.bytesToBase64Url(write2.dataBytes!)
-        ]);
+        ]));
 
         // testing gte
         const recordsQuery3 = await TestDataGenerator.generateRecordsQuery({
@@ -681,14 +679,14 @@ export function testRecordsQueryHandler(): void {
           filter : { dataSize: { gte: 10 } },
         });
         const reply3 = await dwn.processMessage(alice.did, recordsQuery3.message);
-        expect(reply3.entries?.length).to.equal(3);
+        expect(reply3.entries?.length).toBe(3);
         expect(
           reply3.entries?.map((entry) => entry.encodedData)
-        ).to.have.members([
+        ).toEqual(expect.arrayContaining([
           Encoder.bytesToBase64Url(write1.dataBytes!),
           Encoder.bytesToBase64Url(write2.dataBytes!),
           Encoder.bytesToBase64Url(write3.dataBytes!)
-        ]);
+        ]));
 
         // testing lte
         const recordsQuery4 = await TestDataGenerator.generateRecordsQuery({
@@ -696,14 +694,14 @@ export function testRecordsQueryHandler(): void {
           filter : { dataSize: { lte: 100 } },
         });
         const reply4 = await dwn.processMessage(alice.did, recordsQuery4.message);
-        expect(reply4.entries?.length).to.equal(3);
+        expect(reply4.entries?.length).toBe(3);
         expect(
           reply4.entries?.map((entry) => entry.encodedData)
-        ).to.have.members([
+        ).toEqual(expect.arrayContaining([
           Encoder.bytesToBase64Url(write1.dataBytes!),
           Encoder.bytesToBase64Url(write2.dataBytes!),
           Encoder.bytesToBase64Url(write3.dataBytes!)
-        ]);
+        ]));
       });
 
       it('should be able to range query with `dataSize` filter (open & closed range)', async () => {
@@ -716,9 +714,9 @@ export function testRecordsQueryHandler(): void {
         const writeReply1 = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
         const writeReply2 = await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
         const writeReply3 = await dwn.processMessage(alice.did, write3.message, { dataStream: write3.dataStream });
-        expect(writeReply1.status.code).to.equal(202);
-        expect(writeReply2.status.code).to.equal(202);
-        expect(writeReply3.status.code).to.equal(202);
+        expect(writeReply1.status.code).toBe(202);
+        expect(writeReply2.status.code).toBe(202);
+        expect(writeReply3.status.code).toBe(202);
 
         // testing range using gt & lt
         const recordsQuery1 = await TestDataGenerator.generateRecordsQuery({
@@ -726,8 +724,8 @@ export function testRecordsQueryHandler(): void {
           filter : { dataSize: { gt: 10, lt: 60 } },
         });
         const reply1 = await dwn.processMessage(alice.did, recordsQuery1.message);
-        expect(reply1.entries?.length).to.equal(1);
-        expect(reply1.entries![0].recordId).to.equal(write2.message.recordId);
+        expect(reply1.entries?.length).toBe(1);
+        expect(reply1.entries![0].recordId).toBe(write2.message.recordId);
 
         // testing range using gte & lt
         const recordsQuery2 = await TestDataGenerator.generateRecordsQuery({
@@ -735,9 +733,9 @@ export function testRecordsQueryHandler(): void {
           filter : { dataSize: { gte: 10, lt: 60 } },
         });
         const reply2 = await dwn.processMessage(alice.did, recordsQuery2.message);
-        expect(reply2.entries?.length).to.equal(2);
+        expect(reply2.entries?.length).toBe(2);
         const reply2RecordIds = reply2.entries?.map(e => e.recordId);
-        expect(reply2RecordIds).to.have.members([ write1.message.recordId, write2.message.recordId ]);
+        expect(reply2RecordIds).toEqual(expect.arrayContaining([ write1.message.recordId, write2.message.recordId ]));
 
         // testing range using gt & lte
         const recordsQuery3 = await TestDataGenerator.generateRecordsQuery({
@@ -745,8 +743,8 @@ export function testRecordsQueryHandler(): void {
           filter : { dataSize: { gt: 50, lte: 100 } },
         });
         const reply3 = await dwn.processMessage(alice.did, recordsQuery3.message);
-        expect(reply3.entries?.length).to.equal(1);
-        expect(reply3.entries![0].recordId).to.equal(write3.message.recordId);
+        expect(reply3.entries?.length).toBe(1);
+        expect(reply3.entries![0].recordId).toBe(write3.message.recordId);
 
         // testing range using gte & lte
         const recordsQuery4 = await TestDataGenerator.generateRecordsQuery({
@@ -754,9 +752,9 @@ export function testRecordsQueryHandler(): void {
           filter : { dataSize: { gte: 10, lte: 100 } },
         });
         const reply4 = await dwn.processMessage(alice.did, recordsQuery4.message);
-        expect(reply4.entries?.length).to.equal(3);
+        expect(reply4.entries?.length).toBe(3);
         const reply4RecordIds = reply4.entries?.map(e => e.recordId);
-        expect(reply4RecordIds).to.have.members([ write1.message.recordId, write2.message.recordId, write3.message.recordId ]);
+        expect(reply4RecordIds).toEqual(expect.arrayContaining([ write1.message.recordId, write2.message.recordId, write3.message.recordId ]));
       });
 
       it('should be able to range query by `dateCreated`', async () => {
@@ -774,9 +772,9 @@ export function testRecordsQueryHandler(): void {
         const writeReply1 = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
         const writeReply2 = await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
         const writeReply3 = await dwn.processMessage(alice.did, write3.message, { dataStream: write3.dataStream });
-        expect(writeReply1.status.code).to.equal(202);
-        expect(writeReply2.status.code).to.equal(202);
-        expect(writeReply3.status.code).to.equal(202);
+        expect(writeReply1.status.code).toBe(202);
+        expect(writeReply2.status.code).toBe(202);
+        expect(writeReply3.status.code).toBe(202);
 
         // testing `from` range
         const lastDayOf2021 = Time.createTimestamp({ year: 2021, month: 12, day: 31 });
@@ -786,9 +784,9 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply1 = await dwn.processMessage(alice.did, recordsQuery1.message);
-        expect(reply1.entries?.length).to.equal(2);
-        expect(reply1.entries![0].encodedData).to.equal(Encoder.bytesToBase64Url(write2.dataBytes!));
-        expect(reply1.entries![1].encodedData).to.equal(Encoder.bytesToBase64Url(write3.dataBytes!));
+        expect(reply1.entries?.length).toBe(2);
+        expect(reply1.entries![0].encodedData).toBe(Encoder.bytesToBase64Url(write2.dataBytes!));
+        expect(reply1.entries![1].encodedData).toBe(Encoder.bytesToBase64Url(write3.dataBytes!));
 
         // testing `to` range
         const lastDayOf2022 = Time.createTimestamp({ year: 2022, month: 12, day: 31 });
@@ -798,9 +796,9 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply2 = await dwn.processMessage(alice.did, recordsQuery2.message);
-        expect(reply2.entries?.length).to.equal(2);
-        expect(reply2.entries![0].encodedData).to.equal(Encoder.bytesToBase64Url(write1.dataBytes!));
-        expect(reply2.entries![1].encodedData).to.equal(Encoder.bytesToBase64Url(write2.dataBytes!));
+        expect(reply2.entries?.length).toBe(2);
+        expect(reply2.entries![0].encodedData).toBe(Encoder.bytesToBase64Url(write1.dataBytes!));
+        expect(reply2.entries![1].encodedData).toBe(Encoder.bytesToBase64Url(write2.dataBytes!));
 
         // testing `from` and `to` range
         const lastDayOf2023 = Time.createTimestamp({ year: 2023, month: 12, day: 31 });
@@ -810,8 +808,8 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply3 = await dwn.processMessage(alice.did, recordsQuery3.message);
-        expect(reply3.entries?.length).to.equal(1);
-        expect(reply3.entries![0].encodedData).to.equal(Encoder.bytesToBase64Url(write3.dataBytes!));
+        expect(reply3.entries?.length).toBe(1);
+        expect(reply3.entries![0].encodedData).toBe(Encoder.bytesToBase64Url(write3.dataBytes!));
 
         // testing edge case where value equals `from` and `to`
         const recordsQuery4 = await TestDataGenerator.generateRecordsQuery({
@@ -820,8 +818,8 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply4 = await dwn.processMessage(alice.did, recordsQuery4.message);
-        expect(reply4.entries?.length).to.equal(1);
-        expect(reply4.entries![0].encodedData).to.equal(Encoder.bytesToBase64Url(write2.dataBytes!));
+        expect(reply4.entries?.length).toBe(1);
+        expect(reply4.entries![0].encodedData).toBe(Encoder.bytesToBase64Url(write2.dataBytes!));
       });
 
       it('should not return records that were published and then unpublished ', async () => {
@@ -847,9 +845,9 @@ export function testRecordsQueryHandler(): void {
         const writeReply1 = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
         const writeReply2 = await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
         const writeReply3 = await dwn.processMessage(alice.did, write3.message, { dataStream: write3.dataStream });
-        expect(writeReply1.status.code).to.equal(202);
-        expect(writeReply2.status.code).to.equal(202);
-        expect(writeReply3.status.code).to.equal(202);
+        expect(writeReply1.status.code).toBe(202);
+        expect(writeReply2.status.code).toBe(202);
+        expect(writeReply3.status.code).toBe(202);
 
         // confirm range before un-publishing.
         const lastDayOf2021 = Time.createTimestamp({ year: 2021, month: 12, day: 31 });
@@ -859,9 +857,9 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply1 = await dwn.processMessage(alice.did, ownerRangeQuery.message);
-        expect(reply1.entries?.length).to.equal(2);
+        expect(reply1.entries?.length).toBe(2);
         const reply1RecordIds = reply1.entries?.map(e => e.recordId);
-        expect(reply1RecordIds).to.have.members([ write2.message.recordId, write3.message.recordId ]);
+        expect(reply1RecordIds).toEqual(expect.arrayContaining([ write2.message.recordId, write3.message.recordId ]));
 
         // confirm published true filter before un-publishing
         const ownerPublishedQuery = await TestDataGenerator.generateRecordsQuery({
@@ -870,10 +868,10 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         let ownerPublishedReply = await dwn.processMessage(alice.did, ownerPublishedQuery.message);
-        expect(ownerPublishedReply.status.code).to.equal(200);
-        expect(ownerPublishedReply.entries?.length).to.equal(3);
+        expect(ownerPublishedReply.status.code).toBe(200);
+        expect(ownerPublishedReply.entries?.length).toBe(3);
         const ownerPublishedIds = ownerPublishedReply.entries?.map(e => e.recordId);
-        expect(ownerPublishedIds).to.have.members([ write1.message.recordId, write2.message.recordId, write3.message.recordId ]);
+        expect(ownerPublishedIds).toEqual(expect.arrayContaining([ write1.message.recordId, write2.message.recordId, write3.message.recordId ]));
 
         // confirm for anonymous query before un-publishing
         const anonymousRangeQuery = await RecordsQuery.create({
@@ -882,10 +880,10 @@ export function testRecordsQueryHandler(): void {
         });
 
         let anonymousRangeReply = await dwn.processMessage(alice.did, anonymousRangeQuery.message);
-        expect(anonymousRangeReply.status.code).to.equal(200);
-        expect(anonymousRangeReply.entries?.length).to.equal(2);
+        expect(anonymousRangeReply.status.code).toBe(200);
+        expect(anonymousRangeReply.entries?.length).toBe(2);
         const anonymousReplyIds = anonymousRangeReply.entries?.map(e => e.recordId);
-        expect(anonymousReplyIds).to.have.members([ write2.message.recordId, write3.message.recordId ]);
+        expect(anonymousReplyIds).toEqual(expect.arrayContaining([ write2.message.recordId, write3.message.recordId ]));
 
         // confirm anonymous published true filter before un-publishing
         const anonymousPublishedQuery = await RecordsQuery.create({
@@ -893,10 +891,10 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         let anonymousPublishedReply = await dwn.processMessage(alice.did, anonymousPublishedQuery.message);
-        expect(anonymousPublishedReply.status.code).to.equal(200);
-        expect(anonymousPublishedReply.entries?.length).to.equal(3);
+        expect(anonymousPublishedReply.status.code).toBe(200);
+        expect(anonymousPublishedReply.entries?.length).toBe(3);
         const anonymousPublishedIds = anonymousPublishedReply.entries?.map(e => e.recordId);
-        expect(anonymousPublishedIds).to.have.members([ write1.message.recordId, write2.message.recordId, write3.message.recordId ]);
+        expect(anonymousPublishedIds).toEqual(expect.arrayContaining([ write1.message.recordId, write2.message.recordId, write3.message.recordId ]));
 
         //unpublish records
         const write1Unpublish = await RecordsWrite.createFrom({
@@ -917,29 +915,29 @@ export function testRecordsQueryHandler(): void {
         const unpublished1Response = await dwn.processMessage(alice.did, write1Unpublish.message);
         const unpublished2Response = await dwn.processMessage(alice.did, write2Unpublish.message);
         const unpublished3Response = await dwn.processMessage(alice.did, write3Unpublish.message);
-        expect(unpublished1Response.status.code).to.equal(202);
-        expect(unpublished2Response.status.code).to.equal(202);
-        expect(unpublished3Response.status.code).to.equal(202);
+        expect(unpublished1Response.status.code).toBe(202);
+        expect(unpublished2Response.status.code).toBe(202);
+        expect(unpublished3Response.status.code).toBe(202);
 
         // try datePublished range query as an anonymous user after unpublish
         anonymousRangeReply = await dwn.processMessage(alice.did, anonymousRangeQuery.message);
-        expect(anonymousRangeReply.status.code).to.equal(200);
-        expect(anonymousRangeReply.entries?.length).to.equal(0);
+        expect(anonymousRangeReply.status.code).toBe(200);
+        expect(anonymousRangeReply.entries?.length).toBe(0);
 
         // try published:true filter as an anonymous user after unpublish
         anonymousPublishedReply = await dwn.processMessage(alice.did, anonymousPublishedQuery.message);
-        expect(anonymousPublishedReply.status.code).to.equal(200);
-        expect(anonymousPublishedReply.entries?.length).to.equal(0);
+        expect(anonymousPublishedReply.status.code).toBe(200);
+        expect(anonymousPublishedReply.entries?.length).toBe(0);
 
         // try datePublished range query as owner after unpublish
         const ownerRangeReply = await dwn.processMessage(alice.did, ownerRangeQuery.message);
-        expect(ownerRangeReply.status.code).to.equal(200);
-        expect(ownerRangeReply.entries?.length).to.equal(0);
+        expect(ownerRangeReply.status.code).toBe(200);
+        expect(ownerRangeReply.entries?.length).toBe(0);
 
         // try published:true filter as owner after unpublish
         ownerPublishedReply = await dwn.processMessage(alice.did, ownerPublishedQuery.message);
-        expect(ownerPublishedReply.status.code).to.equal(200);
-        expect(ownerPublishedReply.entries?.length).to.equal(0);
+        expect(ownerPublishedReply.status.code).toBe(200);
+        expect(ownerPublishedReply.entries?.length).toBe(0);
       });
 
       it('should be able to range query by `datePublished`', async () => {
@@ -965,9 +963,9 @@ export function testRecordsQueryHandler(): void {
         const writeReply1 = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
         const writeReply2 = await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
         const writeReply3 = await dwn.processMessage(alice.did, write3.message, { dataStream: write3.dataStream });
-        expect(writeReply1.status.code).to.equal(202);
-        expect(writeReply2.status.code).to.equal(202);
-        expect(writeReply3.status.code).to.equal(202);
+        expect(writeReply1.status.code).toBe(202);
+        expect(writeReply2.status.code).toBe(202);
+        expect(writeReply3.status.code).toBe(202);
 
         // testing `from` range
         const lastDayOf2021 = Time.createTimestamp({ year: 2021, month: 12, day: 31 });
@@ -977,9 +975,9 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply1 = await dwn.processMessage(alice.did, recordsQuery1.message);
-        expect(reply1.entries?.length).to.equal(2);
+        expect(reply1.entries?.length).toBe(2);
         const reply1RecordIds = reply1.entries?.map(e => e.recordId);
-        expect(reply1RecordIds).to.have.members([ write2.message.recordId, write3.message.recordId ]);
+        expect(reply1RecordIds).toEqual(expect.arrayContaining([ write2.message.recordId, write3.message.recordId ]));
 
         // testing `to` range
         const lastDayOf2022 = Time.createTimestamp({ year: 2022, month: 12, day: 31 });
@@ -989,9 +987,9 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply2 = await dwn.processMessage(alice.did, recordsQuery2.message);
-        expect(reply2.entries?.length).to.equal(2);
+        expect(reply2.entries?.length).toBe(2);
         const reply2RecordIds = reply2.entries?.map(e => e.recordId);
-        expect(reply2RecordIds).to.have.members([ write1.message.recordId, write2.message.recordId ]);
+        expect(reply2RecordIds).toEqual(expect.arrayContaining([ write1.message.recordId, write2.message.recordId ]));
 
         // testing `from` and `to` range
         const lastDayOf2023 = Time.createTimestamp({ year: 2023, month: 12, day: 31 });
@@ -1001,8 +999,8 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply3 = await dwn.processMessage(alice.did, recordsQuery3.message);
-        expect(reply3.entries?.length).to.equal(1);
-        expect(reply3.entries![0].recordId).to.equal(write3.message.recordId);
+        expect(reply3.entries?.length).toBe(1);
+        expect(reply3.entries![0].recordId).toBe(write3.message.recordId);
 
         // testing edge case where value equals `from` and `to`
         const recordsQuery4 = await TestDataGenerator.generateRecordsQuery({
@@ -1011,8 +1009,8 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply4 = await dwn.processMessage(alice.did, recordsQuery4.message);
-        expect(reply4.entries?.length).to.equal(1);
-        expect(reply4.entries![0].recordId).to.equal(write2.message.recordId);
+        expect(reply4.entries?.length).toBe(1);
+        expect(reply4.entries![0].recordId).toBe(write2.message.recordId);
 
         // check for anonymous range query
         const anonymousRecordQuery = await RecordsQuery.create({
@@ -1021,10 +1019,10 @@ export function testRecordsQueryHandler(): void {
         });
 
         const anonymousReply = await dwn.processMessage(alice.did, anonymousRecordQuery.message);
-        expect(anonymousReply.status.code).to.equal(200);
-        expect(anonymousReply.entries?.length).to.equal(2);
+        expect(anonymousReply.status.code).toBe(200);
+        expect(anonymousReply.entries?.length).toBe(2);
         const anonymousReplyIds = anonymousReply.entries?.map(e => e.recordId);
-        expect(anonymousReplyIds).to.have.members([ write2.message.recordId, write3.message.recordId ]);
+        expect(anonymousReplyIds).toEqual(expect.arrayContaining([ write2.message.recordId, write3.message.recordId ]));
 
         // check for non owner range query
         const bob = await TestDataGenerator.generateDidKeyPersona();
@@ -1035,10 +1033,10 @@ export function testRecordsQueryHandler(): void {
         });
 
         const nonOwnerReply = await dwn.processMessage(alice.did, nonOwnerRange.message);
-        expect(nonOwnerReply.status.code).to.equal(200);
-        expect(nonOwnerReply.entries?.length).to.equal(2);
+        expect(nonOwnerReply.status.code).toBe(200);
+        expect(nonOwnerReply.entries?.length).toBe(2);
         const nonOwnerReplyIds = nonOwnerReply.entries?.map(e => e.recordId);
-        expect(nonOwnerReplyIds).to.have.members([ write2.message.recordId, write3.message.recordId ]);
+        expect(nonOwnerReplyIds).toEqual(expect.arrayContaining([ write2.message.recordId, write3.message.recordId ]));
       });
 
       it('should be able to range query by `dateUpdated`', async () => {
@@ -1066,9 +1064,9 @@ export function testRecordsQueryHandler(): void {
         const writeReply1 = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
         const writeReply2 = await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
         const writeReply3 = await dwn.processMessage(alice.did, write3.message, { dataStream: write3.dataStream });
-        expect(writeReply1.status.code).to.equal(202);
-        expect(writeReply2.status.code).to.equal(202);
-        expect(writeReply3.status.code).to.equal(202);
+        expect(writeReply1.status.code).toBe(202);
+        expect(writeReply2.status.code).toBe(202);
+        expect(writeReply3.status.code).toBe(202);
 
         // update to published
         const write1Update = await RecordsWrite.createFrom({
@@ -1097,9 +1095,9 @@ export function testRecordsQueryHandler(): void {
         const writeReplyUpdate1 = await dwn.processMessage(alice.did, write1Update.message);
         const writeReplyUpdate2 = await dwn.processMessage(alice.did, write2Update.message);
         const writeReplyUpdate3 = await dwn.processMessage(alice.did, write3Update.message);
-        expect(writeReplyUpdate1.status.code).to.equal(202);
-        expect(writeReplyUpdate2.status.code).to.equal(202);
-        expect(writeReplyUpdate3.status.code).to.equal(202);
+        expect(writeReplyUpdate1.status.code).toBe(202);
+        expect(writeReplyUpdate2.status.code).toBe(202);
+        expect(writeReplyUpdate3.status.code).toBe(202);
 
         // testing `from` range
         const lastDayOf2021 = Time.createTimestamp({ year: 2021, month: 12, day: 31 });
@@ -1109,9 +1107,9 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply1 = await dwn.processMessage(alice.did, recordsQuery1.message);
-        expect(reply1.entries?.length).to.equal(2);
+        expect(reply1.entries?.length).toBe(2);
         const reply1RecordIds = reply1.entries?.map(e => e.recordId);
-        expect(reply1RecordIds).to.have.members([ write2.message.recordId, write3.message.recordId ]);
+        expect(reply1RecordIds).toEqual(expect.arrayContaining([ write2.message.recordId, write3.message.recordId ]));
 
         // testing `to` range
         const lastDayOf2022 = Time.createTimestamp({ year: 2022, month: 12, day: 31 });
@@ -1121,9 +1119,9 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply2 = await dwn.processMessage(alice.did, recordsQuery2.message);
-        expect(reply2.entries?.length).to.equal(2);
+        expect(reply2.entries?.length).toBe(2);
         const reply2RecordIds = reply2.entries?.map(e => e.recordId);
-        expect(reply2RecordIds).to.have.members([ write1.message.recordId, write2.message.recordId ]);
+        expect(reply2RecordIds).toEqual(expect.arrayContaining([ write1.message.recordId, write2.message.recordId ]));
 
         // testing `from` and `to` range
         const lastDayOf2023 = Time.createTimestamp({ year: 2023, month: 12, day: 31 });
@@ -1133,8 +1131,8 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply3 = await dwn.processMessage(alice.did, recordsQuery3.message);
-        expect(reply3.entries?.length).to.equal(1);
-        expect(reply3.entries![0].recordId).to.equal(write3.message.recordId);
+        expect(reply3.entries?.length).toBe(1);
+        expect(reply3.entries![0].recordId).toBe(write3.message.recordId);
 
         // testing edge case where value equals `from` and `to`
         const recordsQuery4 = await TestDataGenerator.generateRecordsQuery({
@@ -1143,8 +1141,8 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedAscending
         });
         const reply4 = await dwn.processMessage(alice.did, recordsQuery4.message);
-        expect(reply4.entries?.length).to.equal(1);
-        expect(reply4.entries![0].recordId).to.equal(write2.message.recordId);
+        expect(reply4.entries?.length).toBe(1);
+        expect(reply4.entries![0].recordId).toBe(write2.message.recordId);
       });
 
       it('should be able use range and exact match queries at the same time', async () => {
@@ -1169,9 +1167,9 @@ export function testRecordsQueryHandler(): void {
         const writeReply1 = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
         const writeReply2 = await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
         const writeReply3 = await dwn.processMessage(alice.did, write3.message, { dataStream: write3.dataStream });
-        expect(writeReply1.status.code).to.equal(202);
-        expect(writeReply2.status.code).to.equal(202);
-        expect(writeReply3.status.code).to.equal(202);
+        expect(writeReply1.status.code).toBe(202);
+        expect(writeReply2.status.code).toBe(202);
+        expect(writeReply3.status.code).toBe(202);
 
         // testing range criterion with another exact match
         const lastDayOf2021 = Time.createTimestamp({ year: 2021, month: 12, day: 31 });
@@ -1185,8 +1183,8 @@ export function testRecordsQueryHandler(): void {
           dateSort: DateSort.CreatedAscending
         });
         const reply = await dwn.processMessage(alice.did, recordsQuery5.message);
-        expect(reply.entries?.length).to.equal(1);
-        expect(reply.entries![0].encodedData).to.equal(Encoder.bytesToBase64Url(write2.dataBytes!));
+        expect(reply.entries?.length).toBe(1);
+        expect(reply.entries![0].encodedData).toBe(Encoder.bytesToBase64Url(write2.dataBytes!));
       });
 
       it('should include `authorization` in returned records', async () => {
@@ -1198,7 +1196,7 @@ export function testRecordsQueryHandler(): void {
         sinon.stub(didResolver, 'resolve').resolves(mockResolution);
 
         const writeReply = await dwn.processMessage(alice.did, message, { dataStream });
-        expect(writeReply.status.code).to.equal(202);
+        expect(writeReply.status.code).toBe(202);
 
         const queryData = await TestDataGenerator.generateRecordsQuery({
           author : alice,
@@ -1206,9 +1204,9 @@ export function testRecordsQueryHandler(): void {
         });
 
         const queryReply = await dwn.processMessage(alice.did, queryData.message);
-        expect(queryReply.status.code).to.equal(200);
-        expect(queryReply.entries?.length).to.equal(1);
-        expect((queryReply.entries![0] as any).authorization).to.deep.equal(message.authorization);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries?.length).toBe(1);
+        expect((queryReply.entries![0] as any).authorization).toEqual(message.authorization);
       });
 
       it('should include `attestation` in returned records', async () => {
@@ -1218,7 +1216,7 @@ export function testRecordsQueryHandler(): void {
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, attesters: [alice] });
 
         const writeReply = await dwn.processMessage(alice.did, message, { dataStream });
-        expect(writeReply.status.code).to.equal(202);
+        expect(writeReply.status.code).toBe(202);
 
         const queryData = await TestDataGenerator.generateRecordsQuery({
           author : alice,
@@ -1226,11 +1224,11 @@ export function testRecordsQueryHandler(): void {
         });
 
         const queryReply = await dwn.processMessage(alice.did, queryData.message);
-        expect(queryReply.status.code).to.equal(200);
-        expect(queryReply.entries?.length).to.equal(1);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries?.length).toBe(1);
 
         const recordsWriteMessage = queryReply.entries![0] as any;
-        expect(recordsWriteMessage.attestation?.signatures?.length).to.equal(1);
+        expect(recordsWriteMessage.attestation?.signatures?.length).toBe(1);
       });
 
       it('should omit records that are not published if `dateSort` sorts on `datePublished`', async () => {
@@ -1252,8 +1250,8 @@ export function testRecordsQueryHandler(): void {
         const publishedWriteReply = await dwn.processMessage(alice.did, publishedWriteData.message, { dataStream: publishedWriteData.dataStream });
         const unpublishedWriteReply =
           await dwn.processMessage(alice.did, unpublishedWriteData.message, { dataStream: unpublishedWriteData.dataStream });
-        expect(publishedWriteReply.status.code).to.equal(202);
-        expect(unpublishedWriteReply.status.code).to.equal(202);
+        expect(publishedWriteReply.status.code).toBe(202);
+        expect(unpublishedWriteReply.status.code).toBe(202);
 
         // test published date ascending sort does not include any records that are not published
         const publishedAscendingQueryData = await TestDataGenerator.generateRecordsQuery({
@@ -1262,8 +1260,8 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         const publishedAscendingQueryReply = await dwn.processMessage(alice.did, publishedAscendingQueryData.message);
-        expect(publishedAscendingQueryReply.entries?.length).to.equal(1);
-        expect(publishedAscendingQueryReply.entries![0].recordId).to.equal(publishedWriteData.message.recordId);
+        expect(publishedAscendingQueryReply.entries?.length).toBe(1);
+        expect(publishedAscendingQueryReply.entries![0].recordId).toBe(publishedWriteData.message.recordId);
 
         // test published date scending sort does not include any records that are not published
         const publishedDescendingQueryData = await TestDataGenerator.generateRecordsQuery({
@@ -1272,8 +1270,8 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         const publishedDescendingQueryReply = await dwn.processMessage(alice.did, publishedDescendingQueryData.message);
-        expect(publishedDescendingQueryReply.entries?.length).to.equal(1);
-        expect(publishedDescendingQueryReply.entries![0].recordId).to.equal(publishedWriteData.message.recordId);
+        expect(publishedDescendingQueryReply.entries?.length).toBe(1);
+        expect(publishedDescendingQueryReply.entries![0].recordId).toBe(publishedWriteData.message.recordId);
       });
 
       it('should sort records if `dateSort` is specified with and without a cursor', async () => {
@@ -1295,9 +1293,9 @@ export function testRecordsQueryHandler(): void {
         const writeReply2 = await dwn.processMessage(alice.did, write2Data.message, { dataStream: write2Data.dataStream });
         const writeReply1 = await dwn.processMessage(alice.did, write1Data.message, { dataStream: write1Data.dataStream });
         const writeReply3 = await dwn.processMessage(alice.did, write3Data.message, { dataStream: write3Data.dataStream });
-        expect(writeReply1.status.code).to.equal(202);
-        expect(writeReply2.status.code).to.equal(202);
-        expect(writeReply3.status.code).to.equal(202);
+        expect(writeReply1.status.code).toBe(202);
+        expect(writeReply2.status.code).toBe(202);
+        expect(writeReply3.status.code).toBe(202);
 
         // createdAscending test
         let createdAscendingQueryData = await TestDataGenerator.generateRecordsQuery({
@@ -1306,10 +1304,10 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         let createdAscendingQueryReply = await dwn.processMessage(alice.did, createdAscendingQueryData.message);
-        expect(createdAscendingQueryReply.entries!.length).to.equal(3);
-        expect(createdAscendingQueryReply.entries?.[0].recordId).to.equal(write1Data.message.recordId);
-        expect(createdAscendingQueryReply.entries?.[1].recordId).to.equal(write2Data.message.recordId);
-        expect(createdAscendingQueryReply.entries?.[2].recordId).to.equal(write3Data.message.recordId);
+        expect(createdAscendingQueryReply.entries!.length).toBe(3);
+        expect(createdAscendingQueryReply.entries?.[0].recordId).toBe(write1Data.message.recordId);
+        expect(createdAscendingQueryReply.entries?.[1].recordId).toBe(write2Data.message.recordId);
+        expect(createdAscendingQueryReply.entries?.[2].recordId).toBe(write3Data.message.recordId);
 
         // to test with a cursor we first get a single record
         createdAscendingQueryData = await TestDataGenerator.generateRecordsQuery({
@@ -1319,7 +1317,7 @@ export function testRecordsQueryHandler(): void {
           pagination : { limit: 1 }
         });
         createdAscendingQueryReply = await dwn.processMessage(alice.did, createdAscendingQueryData.message);
-        expect(createdAscendingQueryReply.entries!.length).to.equal(1);
+        expect(createdAscendingQueryReply.entries!.length).toBe(1);
 
         // we then use the single record query's cursor to get the rest of the records
         createdAscendingQueryData = await TestDataGenerator.generateRecordsQuery({
@@ -1329,9 +1327,9 @@ export function testRecordsQueryHandler(): void {
           pagination : { cursor: createdAscendingQueryReply.cursor }
         });
         createdAscendingQueryReply = await dwn.processMessage(alice.did, createdAscendingQueryData.message);
-        expect(createdAscendingQueryReply.entries!.length).to.equal(2);
-        expect(createdAscendingQueryReply.entries![0].recordId).to.equal(write2Data.message.recordId);
-        expect(createdAscendingQueryReply.entries![1].recordId).to.equal(write3Data.message.recordId);
+        expect(createdAscendingQueryReply.entries!.length).toBe(2);
+        expect(createdAscendingQueryReply.entries![0].recordId).toBe(write2Data.message.recordId);
+        expect(createdAscendingQueryReply.entries![1].recordId).toBe(write3Data.message.recordId);
 
         // createdDescending test
         let createdDescendingQueryData = await TestDataGenerator.generateRecordsQuery({
@@ -1340,10 +1338,10 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         let createdDescendingQueryReply = await dwn.processMessage(alice.did, createdDescendingQueryData.message);
-        expect(createdDescendingQueryReply.entries!.length).to.equal(3);
-        expect(createdDescendingQueryReply.entries?.[0].recordId).to.equal(write3Data.message.recordId);
-        expect(createdDescendingQueryReply.entries?.[1].recordId).to.equal(write2Data.message.recordId);
-        expect(createdDescendingQueryReply.entries?.[2].recordId).to.equal(write1Data.message.recordId);
+        expect(createdDescendingQueryReply.entries!.length).toBe(3);
+        expect(createdDescendingQueryReply.entries?.[0].recordId).toBe(write3Data.message.recordId);
+        expect(createdDescendingQueryReply.entries?.[1].recordId).toBe(write2Data.message.recordId);
+        expect(createdDescendingQueryReply.entries?.[2].recordId).toBe(write1Data.message.recordId);
 
         // to test with a cursor we first get a single record
         createdDescendingQueryData = await TestDataGenerator.generateRecordsQuery({
@@ -1353,7 +1351,7 @@ export function testRecordsQueryHandler(): void {
           pagination : { limit: 1 }
         });
         createdDescendingQueryReply = await dwn.processMessage(alice.did, createdDescendingQueryData.message);
-        expect(createdDescendingQueryReply.entries!.length).to.equal(1);
+        expect(createdDescendingQueryReply.entries!.length).toBe(1);
 
         // we then use the single record query's cursor to get the rest of the records
         createdDescendingQueryData = await TestDataGenerator.generateRecordsQuery({
@@ -1363,9 +1361,9 @@ export function testRecordsQueryHandler(): void {
           pagination : { cursor: createdDescendingQueryReply.cursor }
         });
         createdDescendingQueryReply = await dwn.processMessage(alice.did, createdDescendingQueryData.message);
-        expect(createdDescendingQueryReply.entries!.length).to.equal(2);
-        expect(createdDescendingQueryReply.entries![0].recordId).to.equal(write2Data.message.recordId);
-        expect(createdDescendingQueryReply.entries![1].recordId).to.equal(write1Data.message.recordId);
+        expect(createdDescendingQueryReply.entries!.length).toBe(2);
+        expect(createdDescendingQueryReply.entries![0].recordId).toBe(write2Data.message.recordId);
+        expect(createdDescendingQueryReply.entries![1].recordId).toBe(write1Data.message.recordId);
 
         // publishedAscending test
         let publishedAscendingQueryData = await TestDataGenerator.generateRecordsQuery({
@@ -1374,10 +1372,10 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         let publishedAscendingQueryReply = await dwn.processMessage(alice.did, publishedAscendingQueryData.message);
-        expect(publishedAscendingQueryReply.entries!.length).to.equal(3);
-        expect(publishedAscendingQueryReply.entries?.[0].recordId).to.equal(write1Data.message.recordId);
-        expect(publishedAscendingQueryReply.entries?.[1].recordId).to.equal(write2Data.message.recordId);
-        expect(publishedAscendingQueryReply.entries?.[2].recordId).to.equal(write3Data.message.recordId);
+        expect(publishedAscendingQueryReply.entries!.length).toBe(3);
+        expect(publishedAscendingQueryReply.entries?.[0].recordId).toBe(write1Data.message.recordId);
+        expect(publishedAscendingQueryReply.entries?.[1].recordId).toBe(write2Data.message.recordId);
+        expect(publishedAscendingQueryReply.entries?.[2].recordId).toBe(write3Data.message.recordId);
 
         // to test with a cursor we first get a single record
         publishedAscendingQueryData = await TestDataGenerator.generateRecordsQuery({
@@ -1387,7 +1385,7 @@ export function testRecordsQueryHandler(): void {
           pagination : { limit: 1 }
         });
         publishedAscendingQueryReply = await dwn.processMessage(alice.did, publishedAscendingQueryData.message);
-        expect(publishedAscendingQueryReply.entries!.length).to.equal(1);
+        expect(publishedAscendingQueryReply.entries!.length).toBe(1);
 
         publishedAscendingQueryData = await TestDataGenerator.generateRecordsQuery({
           author     : alice,
@@ -1396,9 +1394,9 @@ export function testRecordsQueryHandler(): void {
           pagination : { cursor: publishedAscendingQueryReply.cursor }
         });
         publishedAscendingQueryReply = await dwn.processMessage(alice.did, publishedAscendingQueryData.message);
-        expect(publishedAscendingQueryReply.entries!.length).to.equal(2);
-        expect(publishedAscendingQueryReply.entries![0].recordId).to.equal(write2Data.message.recordId);
-        expect(publishedAscendingQueryReply.entries![1].recordId).to.equal(write3Data.message.recordId);
+        expect(publishedAscendingQueryReply.entries!.length).toBe(2);
+        expect(publishedAscendingQueryReply.entries![0].recordId).toBe(write2Data.message.recordId);
+        expect(publishedAscendingQueryReply.entries![1].recordId).toBe(write3Data.message.recordId);
 
         // publishedDescending test
         let publishedDescendingQueryData = await TestDataGenerator.generateRecordsQuery({
@@ -1407,10 +1405,10 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         let publishedDescendingQueryReply = await dwn.processMessage(alice.did, publishedDescendingQueryData.message);
-        expect(publishedDescendingQueryReply.entries!.length).to.equal(3);
-        expect(publishedDescendingQueryReply.entries?.[0].recordId).to.equal(write3Data.message.recordId);
-        expect(publishedDescendingQueryReply.entries?.[1].recordId).to.equal(write2Data.message.recordId);
-        expect(publishedDescendingQueryReply.entries?.[2].recordId).to.equal(write1Data.message.recordId);
+        expect(publishedDescendingQueryReply.entries!.length).toBe(3);
+        expect(publishedDescendingQueryReply.entries?.[0].recordId).toBe(write3Data.message.recordId);
+        expect(publishedDescendingQueryReply.entries?.[1].recordId).toBe(write2Data.message.recordId);
+        expect(publishedDescendingQueryReply.entries?.[2].recordId).toBe(write1Data.message.recordId);
 
         publishedDescendingQueryData = await TestDataGenerator.generateRecordsQuery({
           author     : alice,
@@ -1419,7 +1417,7 @@ export function testRecordsQueryHandler(): void {
           pagination : { limit: 1 }
         });
         publishedDescendingQueryReply = await dwn.processMessage(alice.did, publishedDescendingQueryData.message);
-        expect(publishedDescendingQueryReply.entries!.length).to.equal(1);
+        expect(publishedDescendingQueryReply.entries!.length).toBe(1);
 
         publishedDescendingQueryData = await TestDataGenerator.generateRecordsQuery({
           author     : alice,
@@ -1428,9 +1426,9 @@ export function testRecordsQueryHandler(): void {
           pagination : { cursor: publishedDescendingQueryReply.cursor }
         });
         publishedDescendingQueryReply = await dwn.processMessage(alice.did, publishedDescendingQueryData.message);
-        expect(publishedDescendingQueryReply.entries!.length).to.equal(2);
-        expect(publishedDescendingQueryReply.entries![0].recordId).to.equal(write2Data.message.recordId);
-        expect(publishedDescendingQueryReply.entries![1].recordId).to.equal(write1Data.message.recordId);
+        expect(publishedDescendingQueryReply.entries!.length).toBe(2);
+        expect(publishedDescendingQueryReply.entries![0].recordId).toBe(write2Data.message.recordId);
+        expect(publishedDescendingQueryReply.entries![1].recordId).toBe(write1Data.message.recordId);
       });
 
       it('should sort records by `updatedAscending` and `updatedDescending`', async () => {
@@ -1447,9 +1445,9 @@ export function testRecordsQueryHandler(): void {
         const writeReply2 = await dwn.processMessage(alice.did, write2Data.message, { dataStream: write2Data.dataStream });
         const writeReply1 = await dwn.processMessage(alice.did, write1Data.message, { dataStream: write1Data.dataStream });
         const writeReply3 = await dwn.processMessage(alice.did, write3Data.message, { dataStream: write3Data.dataStream });
-        expect(writeReply1.status.code).to.equal(202);
-        expect(writeReply2.status.code).to.equal(202);
-        expect(writeReply3.status.code).to.equal(202);
+        expect(writeReply1.status.code).toBe(202);
+        expect(writeReply2.status.code).toBe(202);
+        expect(writeReply3.status.code).toBe(202);
 
         // updatedAscending test
         const updatedAscendingQueryData = await TestDataGenerator.generateRecordsQuery({
@@ -1458,10 +1456,10 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         const updatedAscendingQueryReply = await dwn.processMessage(alice.did, updatedAscendingQueryData.message);
-        expect(updatedAscendingQueryReply.entries!.length).to.equal(3);
-        expect(updatedAscendingQueryReply.entries?.[0].recordId).to.equal(write1Data.message.recordId);
-        expect(updatedAscendingQueryReply.entries?.[1].recordId).to.equal(write2Data.message.recordId);
-        expect(updatedAscendingQueryReply.entries?.[2].recordId).to.equal(write3Data.message.recordId);
+        expect(updatedAscendingQueryReply.entries!.length).toBe(3);
+        expect(updatedAscendingQueryReply.entries?.[0].recordId).toBe(write1Data.message.recordId);
+        expect(updatedAscendingQueryReply.entries?.[1].recordId).toBe(write2Data.message.recordId);
+        expect(updatedAscendingQueryReply.entries?.[2].recordId).toBe(write3Data.message.recordId);
 
         // updatedDescending test
         const updatedDescendingQueryData = await TestDataGenerator.generateRecordsQuery({
@@ -1470,10 +1468,10 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         const updatedDescendingQueryReply = await dwn.processMessage(alice.did, updatedDescendingQueryData.message);
-        expect(updatedDescendingQueryReply.entries!.length).to.equal(3);
-        expect(updatedDescendingQueryReply.entries?.[0].recordId).to.equal(write3Data.message.recordId);
-        expect(updatedDescendingQueryReply.entries?.[1].recordId).to.equal(write2Data.message.recordId);
-        expect(updatedDescendingQueryReply.entries?.[2].recordId).to.equal(write1Data.message.recordId);
+        expect(updatedDescendingQueryReply.entries!.length).toBe(3);
+        expect(updatedDescendingQueryReply.entries?.[0].recordId).toBe(write3Data.message.recordId);
+        expect(updatedDescendingQueryReply.entries?.[1].recordId).toBe(write2Data.message.recordId);
+        expect(updatedDescendingQueryReply.entries?.[2].recordId).toBe(write1Data.message.recordId);
       });
 
       it('should sort by `messageTimestamp` (not `dateCreated`) when using updated sort with genuinely updated records', async () => {
@@ -1496,9 +1494,9 @@ export function testRecordsQueryHandler(): void {
         const writeReply1 = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
         const writeReply2 = await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
         const writeReply3 = await dwn.processMessage(alice.did, write3.message, { dataStream: write3.dataStream });
-        expect(writeReply1.status.code).to.equal(202);
-        expect(writeReply2.status.code).to.equal(202);
-        expect(writeReply3.status.code).to.equal(202);
+        expect(writeReply1.status.code).toBe(202);
+        expect(writeReply2.status.code).toBe(202);
+        expect(writeReply3.status.code).toBe(202);
 
         // update in reverse order: write3 first, then write2, then write1
         const update3 = await RecordsWrite.createFrom({
@@ -1520,9 +1518,9 @@ export function testRecordsQueryHandler(): void {
         const updateReply3 = await dwn.processMessage(alice.did, update3.message);
         const updateReply2 = await dwn.processMessage(alice.did, update2.message);
         const updateReply1 = await dwn.processMessage(alice.did, update1.message);
-        expect(updateReply3.status.code).to.equal(202);
-        expect(updateReply2.status.code).to.equal(202);
-        expect(updateReply1.status.code).to.equal(202);
+        expect(updateReply3.status.code).toBe(202);
+        expect(updateReply2.status.code).toBe(202);
+        expect(updateReply1.status.code).toBe(202);
 
         // updatedAscending should return: write3 (2021), write2 (2022), write1 (2023)
         const updatedAscQuery = await TestDataGenerator.generateRecordsQuery({
@@ -1531,10 +1529,10 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         const updatedAscReply = await dwn.processMessage(alice.did, updatedAscQuery.message);
-        expect(updatedAscReply.entries!.length).to.equal(3);
-        expect(updatedAscReply.entries![0].recordId).to.equal(write3.message.recordId);
-        expect(updatedAscReply.entries![1].recordId).to.equal(write2.message.recordId);
-        expect(updatedAscReply.entries![2].recordId).to.equal(write1.message.recordId);
+        expect(updatedAscReply.entries!.length).toBe(3);
+        expect(updatedAscReply.entries![0].recordId).toBe(write3.message.recordId);
+        expect(updatedAscReply.entries![1].recordId).toBe(write2.message.recordId);
+        expect(updatedAscReply.entries![2].recordId).toBe(write1.message.recordId);
 
         // updatedDescending should return: write1 (2023), write2 (2022), write3 (2021)
         const updatedDescQuery = await TestDataGenerator.generateRecordsQuery({
@@ -1543,10 +1541,10 @@ export function testRecordsQueryHandler(): void {
           filter   : { schema }
         });
         const updatedDescReply = await dwn.processMessage(alice.did, updatedDescQuery.message);
-        expect(updatedDescReply.entries!.length).to.equal(3);
-        expect(updatedDescReply.entries![0].recordId).to.equal(write1.message.recordId);
-        expect(updatedDescReply.entries![1].recordId).to.equal(write2.message.recordId);
-        expect(updatedDescReply.entries![2].recordId).to.equal(write3.message.recordId);
+        expect(updatedDescReply.entries!.length).toBe(3);
+        expect(updatedDescReply.entries![0].recordId).toBe(write1.message.recordId);
+        expect(updatedDescReply.entries![1].recordId).toBe(write2.message.recordId);
+        expect(updatedDescReply.entries![2].recordId).toBe(write3.message.recordId);
       });
 
       it('should tiebreak using `messageCid` when sorting encounters identical values', async () => {
@@ -1568,11 +1566,11 @@ export function testRecordsQueryHandler(): void {
 
         // intentionally write the RecordsWrite of out lexicographical order to avoid the test query below accidentally having the correct order
         const reply2 = await dwn.processMessage(alice.did, middleWrite.message, { dataStream: middleWrite.dataStream });
-        expect(reply2.status.code).to.equal(202);
+        expect(reply2.status.code).toBe(202);
         const reply3 = await dwn.processMessage(alice.did, newestWrite.message, { dataStream: newestWrite.dataStream });
-        expect(reply3.status.code).to.equal(202);
+        expect(reply3.status.code).toBe(202);
         const reply1 = await dwn.processMessage(alice.did, oldestWrite.message, { dataStream: oldestWrite.dataStream });
-        expect(reply1.status.code).to.equal(202);
+        expect(reply1.status.code).toBe(202);
 
         const queryMessageData = await TestDataGenerator.generateRecordsQuery({
           author   : alice,
@@ -1582,11 +1580,11 @@ export function testRecordsQueryHandler(): void {
         const queryReply = await dwn.processMessage(alice.did, queryMessageData.message);
 
         // verify that messages returned are sorted/tiebreak by `messageCid`
-        expect(queryReply.status.code).to.equal(200);
-        expect(queryReply.entries?.length).to.equal(3);
-        expect((queryReply.entries![0]).recordId).to.equal(oldestWrite.message.recordId);
-        expect((queryReply.entries![1]).recordId).to.equal(middleWrite.message.recordId);
-        expect((queryReply.entries![2]).recordId).to.equal(newestWrite.message.recordId);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries?.length).toBe(3);
+        expect((queryReply.entries![0]).recordId).toBe(oldestWrite.message.recordId);
+        expect((queryReply.entries![1]).recordId).toBe(middleWrite.message.recordId);
+        expect((queryReply.entries![2]).recordId).toBe(newestWrite.message.recordId);
 
         // sort descending should be reversed
         const queryMessageDescending = await TestDataGenerator.generateRecordsQuery({
@@ -1595,9 +1593,9 @@ export function testRecordsQueryHandler(): void {
           dateSort : DateSort.CreatedDescending
         });
         const descendingReply = await dwn.processMessage(alice.did, queryMessageDescending.message);
-        expect((descendingReply.entries![0]).recordId).to.equal(newestWrite.message.recordId);
-        expect((descendingReply.entries![1]).recordId).to.equal(middleWrite.message.recordId);
-        expect((descendingReply.entries![2]).recordId).to.equal(oldestWrite.message.recordId);
+        expect((descendingReply.entries![0]).recordId).toBe(newestWrite.message.recordId);
+        expect((descendingReply.entries![1]).recordId).toBe(middleWrite.message.recordId);
+        expect((descendingReply.entries![2]).recordId).toBe(oldestWrite.message.recordId);
       });
 
       it('should paginate all records in ascending order', async () => {
@@ -1609,7 +1607,7 @@ export function testRecordsQueryHandler(): void {
         })));
         for (const message of messages) {
           const result = await dwn.processMessage(alice.did, message.message, { dataStream: message.dataStream });
-          expect(result.status.code).to.equal(202);
+          expect(result.status.code).toBe(202);
         }
 
         const limit = 5;
@@ -1629,15 +1627,15 @@ export function testRecordsQueryHandler(): void {
           });
 
           const pageReply = await dwn.processMessage(alice.did, pageQuery.message);
-          expect(pageReply.status.code).to.equal(200);
+          expect(pageReply.status.code).toBe(200);
           cursor = pageReply.cursor;
-          expect(pageReply.entries?.length).to.be.lte(limit);
+          expect(pageReply.entries?.length).toBeLessThanOrEqual(limit);
           results.push(...pageReply.entries!);
           if (cursor === undefined) {
             break;
           }
         }
-        expect(results.length).to.equal(messages.length);
+        expect(results.length).toBe(messages.length);
         expect(messages.every(({ message }) => results.map(e => (e as RecordsWriteMessage).recordId).includes(message.recordId)));
       });
 
@@ -1650,7 +1648,7 @@ export function testRecordsQueryHandler(): void {
         })));
         for (const message of messages) {
           const result = await dwn.processMessage(alice.did, message.message, { dataStream: message.dataStream });
-          expect(result.status.code).to.equal(202);
+          expect(result.status.code).toBe(202);
         }
 
         const limit = 5;
@@ -1670,15 +1668,15 @@ export function testRecordsQueryHandler(): void {
           });
 
           const pageReply = await dwn.processMessage(alice.did, pageQuery.message);
-          expect(pageReply.status.code).to.equal(200);
+          expect(pageReply.status.code).toBe(200);
           cursor = pageReply.cursor;
-          expect(pageReply.entries?.length).to.be.lte(limit);
+          expect(pageReply.entries?.length).toBeLessThanOrEqual(limit);
           results.push(...pageReply.entries!);
           if (cursor === undefined) {
             break;
           }
         }
-        expect(results.length).to.equal(messages.length);
+        expect(results.length).toBe(messages.length);
         expect(messages.every(({ message }) => results.map(e => (e as RecordsWriteMessage).recordId).includes(message.recordId)));
       });
 
@@ -1695,9 +1693,9 @@ export function testRecordsQueryHandler(): void {
         );
 
         const recordsWrite1Reply = await dwn.processMessage(alice.did, record1Data.message, { dataStream: record1Data.dataStream });
-        expect(recordsWrite1Reply.status.code).to.equal(202);
+        expect(recordsWrite1Reply.status.code).toBe(202);
         const recordsWrite2Reply = await dwn.processMessage(alice.did, record2Data.message, { dataStream: record2Data.dataStream });
-        expect(recordsWrite2Reply.status.code).to.equal(202);
+        expect(recordsWrite2Reply.status.code).toBe(202);
 
         // test correctness for anonymous query
         const anonymousQueryMessageData = await TestDataGenerator.generateRecordsQuery({
@@ -1706,13 +1704,13 @@ export function testRecordsQueryHandler(): void {
         });
 
         // sanity check
-        expect(anonymousQueryMessageData.message.authorization).to.not.exist;
+        expect(anonymousQueryMessageData.message.authorization).toBeUndefined();
 
         const replyToQuery = await dwn.processMessage(alice.did, anonymousQueryMessageData.message);
 
-        expect(replyToQuery.status.code).to.equal(200);
-        expect(replyToQuery.entries?.length).to.equal(1);
-        expect((replyToQuery.entries![0].descriptor as RecordsWriteDescriptor).schema).to.equal('https://schema2');
+        expect(replyToQuery.status.code).toBe(200);
+        expect(replyToQuery.entries?.length).toBe(1);
+        expect((replyToQuery.entries![0].descriptor as RecordsWriteDescriptor).schema).toBe('https://schema2');
 
         // explicitly for published records
         const anonymousQueryPublished = await TestDataGenerator.generateRecordsQuery({
@@ -1720,13 +1718,13 @@ export function testRecordsQueryHandler(): void {
           filter    : { dateCreated: { from: '2000-01-01T10:20:30.123456Z' }, published: true }
         });
         // sanity check
-        expect(anonymousQueryPublished.message.authorization).to.not.exist;
+        expect(anonymousQueryPublished.message.authorization).toBeUndefined();
 
         // should return the published records
         const publishedReply = await dwn.processMessage(alice.did, anonymousQueryPublished.message);
-        expect(publishedReply.status.code).to.equal(200);
-        expect(publishedReply.entries?.length).to.equal(1);
-        expect((publishedReply.entries![0].descriptor as RecordsWriteDescriptor).schema).to.equal('https://schema2');
+        expect(publishedReply.status.code).toBe(200);
+        expect(publishedReply.entries?.length).toBe(1);
+        expect((publishedReply.entries![0].descriptor as RecordsWriteDescriptor).schema).toBe('https://schema2');
       });
 
       it('should only return published records and unpublished records that are meant for specific recipient(s)', async () => {
@@ -1745,7 +1743,7 @@ export function testRecordsQueryHandler(): void {
           protocolDefinition : freeForAll
         });
         const protocolConfigureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-        expect(protocolConfigureReply.status.code).to.equal(202);
+        expect(protocolConfigureReply.status.code).toBe(202);
 
         // write private records for bob and carol
         const alicePrivateToBob = await TestDataGenerator.generateRecordsWrite({
@@ -1758,7 +1756,7 @@ export function testRecordsQueryHandler(): void {
         });
 
         const alicePrivateToBobReply = await dwn.processMessage(alice.did, alicePrivateToBob.message, { dataStream: alicePrivateToBob.dataStream });
-        expect(alicePrivateToBobReply.status.code).to.equal(202);
+        expect(alicePrivateToBobReply.status.code).toBe(202);
 
         const alicePrivateToCarol = await TestDataGenerator.generateRecordsWrite({
           author       : alice,
@@ -1771,7 +1769,7 @@ export function testRecordsQueryHandler(): void {
         const alicePrivateToCarolReply = await dwn.processMessage(alice.did, alicePrivateToCarol.message, {
           dataStream: alicePrivateToCarol.dataStream
         });
-        expect(alicePrivateToCarolReply.status.code).to.equal(202);
+        expect(alicePrivateToCarolReply.status.code).toBe(202);
 
         // write private records from carol to alice and bob
         const carolPrivateToAlice = await TestDataGenerator.generateRecordsWrite({
@@ -1785,7 +1783,7 @@ export function testRecordsQueryHandler(): void {
         const carolPrivateToAliceReply = await dwn.processMessage(alice.did, carolPrivateToAlice.message, {
           dataStream: carolPrivateToAlice.dataStream
         });
-        expect(carolPrivateToAliceReply.status.code).to.equal(202);
+        expect(carolPrivateToAliceReply.status.code).toBe(202);
 
         const carolPrivateToBob = await TestDataGenerator.generateRecordsWrite({
           author       : carol,
@@ -1798,7 +1796,7 @@ export function testRecordsQueryHandler(): void {
         const carolPrivateToBobReply = await dwn.processMessage(alice.did, carolPrivateToBob.message, {
           dataStream: carolPrivateToBob.dataStream
         });
-        expect(carolPrivateToBobReply.status.code).to.equal(202);
+        expect(carolPrivateToBobReply.status.code).toBe(202);
 
         // write private records from bob to alice and carol
         const bobPrivateToAlice = await TestDataGenerator.generateRecordsWrite({
@@ -1813,7 +1811,7 @@ export function testRecordsQueryHandler(): void {
         const bobPrivateToAliceReply = await dwn.processMessage(alice.did, bobPrivateToAlice.message, {
           dataStream: bobPrivateToAlice.dataStream
         });
-        expect(bobPrivateToAliceReply.status.code).to.equal(202);
+        expect(bobPrivateToAliceReply.status.code).toBe(202);
 
         const bobPrivateToCarol = await TestDataGenerator.generateRecordsWrite({
           author       : bob,
@@ -1826,7 +1824,7 @@ export function testRecordsQueryHandler(): void {
         const bobPrivateToCarolReply = await dwn.processMessage(alice.did, bobPrivateToCarol.message, {
           dataStream: bobPrivateToCarol.dataStream
         });
-        expect(bobPrivateToCarolReply.status.code).to.equal(202);
+        expect(bobPrivateToCarolReply.status.code).toBe(202);
 
         // write public records from alice to bob and carol
         const alicePublicToBob = await TestDataGenerator.generateRecordsWrite({
@@ -1841,7 +1839,7 @@ export function testRecordsQueryHandler(): void {
         const alicePublicToBobReply = await dwn.processMessage(alice.did, alicePublicToBob.message, {
           dataStream: alicePublicToBob.dataStream
         });
-        expect(alicePublicToBobReply.status.code).to.equal(202);
+        expect(alicePublicToBobReply.status.code).toBe(202);
 
         const alicePublicToCarol = await TestDataGenerator.generateRecordsWrite({
           author       : alice,
@@ -1855,7 +1853,7 @@ export function testRecordsQueryHandler(): void {
         const alicePublicToCarolReply = await dwn.processMessage(alice.did, alicePublicToCarol.message, {
           dataStream: alicePublicToCarol.dataStream
         });
-        expect(alicePublicToCarolReply.status.code).to.equal(202);
+        expect(alicePublicToCarolReply.status.code).toBe(202);
 
         // write public records from bob to alice and carol
         const bobPublicToAlice = await TestDataGenerator.generateRecordsWrite({
@@ -1870,7 +1868,7 @@ export function testRecordsQueryHandler(): void {
         const bobPublicToAliceReply = await dwn.processMessage(alice.did, bobPublicToAlice.message, {
           dataStream: bobPublicToAlice.dataStream
         });
-        expect(bobPublicToAliceReply.status.code).to.equal(202);
+        expect(bobPublicToAliceReply.status.code).toBe(202);
 
         const bobPublicToCarol = await TestDataGenerator.generateRecordsWrite({
           author       : bob,
@@ -1884,7 +1882,7 @@ export function testRecordsQueryHandler(): void {
         const bobPublicToCarolReply = await dwn.processMessage(alice.did, bobPublicToCarol.message, {
           dataStream: bobPublicToCarol.dataStream
         });
-        expect(bobPublicToCarolReply.status.code).to.equal(202);
+        expect(bobPublicToCarolReply.status.code).toBe(202);
 
         // write public records from carol to alice and bob
         const carolPublicToAlice = await TestDataGenerator.generateRecordsWrite({
@@ -1899,7 +1897,7 @@ export function testRecordsQueryHandler(): void {
         const carolPublicToAliceReply = await dwn.processMessage(alice.did, carolPublicToAlice.message, {
           dataStream: carolPublicToAlice.dataStream
         });
-        expect(carolPublicToAliceReply.status.code).to.equal(202);
+        expect(carolPublicToAliceReply.status.code).toBe(202);
 
         const carolPublicToBob = await TestDataGenerator.generateRecordsWrite({
           author       : carol,
@@ -1913,7 +1911,7 @@ export function testRecordsQueryHandler(): void {
         const carolPublicToBobReply = await dwn.processMessage(alice.did, carolPublicToBob.message, {
           dataStream: carolPublicToBob.dataStream
         });
-        expect(carolPublicToBobReply.status.code).to.equal(202);
+        expect(carolPublicToBobReply.status.code).toBe(202);
 
         // bob queries for records with himself and alice as recipients
         const bobQueryMessagesForBobAlice = await TestDataGenerator.generateRecordsQuery({
@@ -1921,15 +1919,15 @@ export function testRecordsQueryHandler(): void {
           filter : { protocol: freeForAll.protocol, protocolPath: 'post', recipient: [bob.did, alice.did] }
         });
         const bobQueryMessagesForBobAliceReply = await dwn.processMessage(alice.did, bobQueryMessagesForBobAlice.message);
-        expect(bobQueryMessagesForBobAliceReply.status.code).to.equal(200);
-        expect(bobQueryMessagesForBobAliceReply.entries?.length).to.equal(7);
+        expect(bobQueryMessagesForBobAliceReply.status.code).toBe(200);
+        expect(bobQueryMessagesForBobAliceReply.entries?.length).toBe(7);
 
         // Since Bob is the author if the query, we expect for him to be able to see:
         // Private Messages THAT ANYONE sent to Bob
         // Private Messages THAT ONLY HE sent to Alice
         // Public Messages THAT ANYONE sent to Alice
         // Public Messages THAT ANYONE sent to Bob
-        expect(bobQueryMessagesForBobAliceReply.entries!.map(e => e.recordId)).to.have.members([
+        expect(bobQueryMessagesForBobAliceReply.entries!.map(e => e.recordId)).toEqual(expect.arrayContaining([
           alicePrivateToBob.message.recordId,
           carolPrivateToBob.message.recordId,
           bobPrivateToAlice.message.recordId,
@@ -1937,7 +1935,7 @@ export function testRecordsQueryHandler(): void {
           bobPublicToAlice.message.recordId,
           carolPublicToAlice.message.recordId,
           carolPublicToBob.message.recordId,
-        ]);
+        ]));
 
         // carol queries for records with herself as the recipient
         const carolQueryMessagesForCarolAlice = await TestDataGenerator.generateRecordsQuery({
@@ -1945,20 +1943,20 @@ export function testRecordsQueryHandler(): void {
           filter : { protocol: freeForAll.protocol, protocolPath: 'post', recipient: carol.did }
         });
         const carolQueryMessagesForCarolAliceReply = await dwn.processMessage(alice.did, carolQueryMessagesForCarolAlice.message);
-        expect(carolQueryMessagesForCarolAliceReply.status.code).to.equal(200);
-        expect(carolQueryMessagesForCarolAliceReply.entries?.length).to.equal(4);
+        expect(carolQueryMessagesForCarolAliceReply.status.code).toBe(200);
+        expect(carolQueryMessagesForCarolAliceReply.entries?.length).toBe(4);
 
         // Since Carol is the author if the query, we expect for her to be able to see:
         // Private Messages THAT ANYONE sent to Carol
         // Private Messages THAT ONLY SHE sent to Alice
         // Public Messages THAT ANYONE sent to Alice
         // Public Messages THAT ANYONE sent to Carol
-        expect(carolQueryMessagesForCarolAliceReply.entries!.map(e => e.recordId)).to.have.members([
+        expect(carolQueryMessagesForCarolAliceReply.entries!.map(e => e.recordId)).toEqual(expect.arrayContaining([
           alicePrivateToCarol.message.recordId,
           bobPrivateToCarol.message.recordId,
           alicePublicToCarol.message.recordId,
           bobPublicToCarol.message.recordId,
-        ]);
+        ]));
 
         // alice queries for ONLY published records with herself and bob as recipients
         const aliceQueryPublished = await TestDataGenerator.generateRecordsQuery({
@@ -1966,14 +1964,14 @@ export function testRecordsQueryHandler(): void {
           filter : { protocol: freeForAll.protocol, protocolPath: 'post', recipient: [alice.did, bob.did], published: true }
         });
         const aliceQueryPublishedReply = await dwn.processMessage(alice.did, aliceQueryPublished.message);
-        expect(aliceQueryPublishedReply.status.code).to.equal(200);
-        expect(aliceQueryPublishedReply.entries?.length).to.equal(4);
-        expect(aliceQueryPublishedReply.entries!.map(e => e.recordId)).to.have.members([
+        expect(aliceQueryPublishedReply.status.code).toBe(200);
+        expect(aliceQueryPublishedReply.entries?.length).toBe(4);
+        expect(aliceQueryPublishedReply.entries!.map(e => e.recordId)).toEqual(expect.arrayContaining([
           alicePublicToBob.message.recordId,
           carolPublicToBob.message.recordId,
           bobPublicToAlice.message.recordId,
           carolPublicToAlice.message.recordId,
-        ]);
+        ]));
 
         // carol queries for ONLY private records with herself and alice as the recipients
         const carolQueryPrivate = await TestDataGenerator.generateRecordsQuery({
@@ -1981,14 +1979,14 @@ export function testRecordsQueryHandler(): void {
           filter : { protocol: freeForAll.protocol, protocolPath: 'post', recipient: [carol.did, alice.did], published: false }
         });
         const carolQueryPrivateReply = await dwn.processMessage(alice.did, carolQueryPrivate.message);
-        expect(carolQueryPrivateReply.status.code).to.equal(200);
-        expect(carolQueryPrivateReply.entries?.length).to.equal(3);
+        expect(carolQueryPrivateReply.status.code).toBe(200);
+        expect(carolQueryPrivateReply.entries?.length).toBe(3);
         // Carol can query for private messages she authored to alice, and her own private messages with herself as the recipient
-        expect(carolQueryPrivateReply.entries!.map(e => e.recordId)).to.have.members([
+        expect(carolQueryPrivateReply.entries!.map(e => e.recordId)).toEqual(expect.arrayContaining([
           alicePrivateToCarol.message.recordId,
           bobPrivateToCarol.message.recordId,
           carolPrivateToAlice.message.recordId,
-        ]);
+        ]));
       });
 
       it('should only return published records and unpublished records that are authored by specific author(s)', async () => {
@@ -2007,7 +2005,7 @@ export function testRecordsQueryHandler(): void {
           protocolDefinition : freeForAll
         });
         const protocolConfigureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-        expect(protocolConfigureReply.status.code).to.equal(202);
+        expect(protocolConfigureReply.status.code).toBe(202);
 
         // write private records for bob and carol
         const alicePrivateToBob = await TestDataGenerator.generateRecordsWrite({
@@ -2020,7 +2018,7 @@ export function testRecordsQueryHandler(): void {
         });
 
         const alicePrivateToBobReply = await dwn.processMessage(alice.did, alicePrivateToBob.message, { dataStream: alicePrivateToBob.dataStream });
-        expect(alicePrivateToBobReply.status.code).to.equal(202);
+        expect(alicePrivateToBobReply.status.code).toBe(202);
 
         const alicePrivateToCarol = await TestDataGenerator.generateRecordsWrite({
           author       : alice,
@@ -2033,7 +2031,7 @@ export function testRecordsQueryHandler(): void {
         const alicePrivateToCarolReply = await dwn.processMessage(alice.did, alicePrivateToCarol.message, {
           dataStream: alicePrivateToCarol.dataStream
         });
-        expect(alicePrivateToCarolReply.status.code).to.equal(202);
+        expect(alicePrivateToCarolReply.status.code).toBe(202);
 
         // write private records from carol to alice and bob
         const carolPrivateToAlice = await TestDataGenerator.generateRecordsWrite({
@@ -2047,7 +2045,7 @@ export function testRecordsQueryHandler(): void {
         const carolPrivateToAliceReply = await dwn.processMessage(alice.did, carolPrivateToAlice.message, {
           dataStream: carolPrivateToAlice.dataStream
         });
-        expect(carolPrivateToAliceReply.status.code).to.equal(202);
+        expect(carolPrivateToAliceReply.status.code).toBe(202);
 
         const carolPrivateToBob = await TestDataGenerator.generateRecordsWrite({
           author       : carol,
@@ -2060,7 +2058,7 @@ export function testRecordsQueryHandler(): void {
         const carolPrivateToBobReply = await dwn.processMessage(alice.did, carolPrivateToBob.message, {
           dataStream: carolPrivateToBob.dataStream
         });
-        expect(carolPrivateToBobReply.status.code).to.equal(202);
+        expect(carolPrivateToBobReply.status.code).toBe(202);
 
         // write private records from bob to alice and carol
         const bobPrivateToAlice = await TestDataGenerator.generateRecordsWrite({
@@ -2075,7 +2073,7 @@ export function testRecordsQueryHandler(): void {
         const bobPrivateToAliceReply = await dwn.processMessage(alice.did, bobPrivateToAlice.message, {
           dataStream: bobPrivateToAlice.dataStream
         });
-        expect(bobPrivateToAliceReply.status.code).to.equal(202);
+        expect(bobPrivateToAliceReply.status.code).toBe(202);
 
         const bobPrivateToCarol = await TestDataGenerator.generateRecordsWrite({
           author       : bob,
@@ -2088,7 +2086,7 @@ export function testRecordsQueryHandler(): void {
         const bobPrivateToCarolReply = await dwn.processMessage(alice.did, bobPrivateToCarol.message, {
           dataStream: bobPrivateToCarol.dataStream
         });
-        expect(bobPrivateToCarolReply.status.code).to.equal(202);
+        expect(bobPrivateToCarolReply.status.code).toBe(202);
 
         // write public records from alice to bob and carol
         const alicePublicToBob = await TestDataGenerator.generateRecordsWrite({
@@ -2103,7 +2101,7 @@ export function testRecordsQueryHandler(): void {
         const alicePublicToBobReply = await dwn.processMessage(alice.did, alicePublicToBob.message, {
           dataStream: alicePublicToBob.dataStream
         });
-        expect(alicePublicToBobReply.status.code).to.equal(202);
+        expect(alicePublicToBobReply.status.code).toBe(202);
 
         const alicePublicToCarol = await TestDataGenerator.generateRecordsWrite({
           author       : alice,
@@ -2117,7 +2115,7 @@ export function testRecordsQueryHandler(): void {
         const alicePublicToCarolReply = await dwn.processMessage(alice.did, alicePublicToCarol.message, {
           dataStream: alicePublicToCarol.dataStream
         });
-        expect(alicePublicToCarolReply.status.code).to.equal(202);
+        expect(alicePublicToCarolReply.status.code).toBe(202);
 
         // write public records from bob to alice and carol
         const bobPublicToAlice = await TestDataGenerator.generateRecordsWrite({
@@ -2132,7 +2130,7 @@ export function testRecordsQueryHandler(): void {
         const bobPublicToAliceReply = await dwn.processMessage(alice.did, bobPublicToAlice.message, {
           dataStream: bobPublicToAlice.dataStream
         });
-        expect(bobPublicToAliceReply.status.code).to.equal(202);
+        expect(bobPublicToAliceReply.status.code).toBe(202);
 
         const bobPublicToCarol = await TestDataGenerator.generateRecordsWrite({
           author       : bob,
@@ -2146,7 +2144,7 @@ export function testRecordsQueryHandler(): void {
         const bobPublicToCarolReply = await dwn.processMessage(alice.did, bobPublicToCarol.message, {
           dataStream: bobPublicToCarol.dataStream
         });
-        expect(bobPublicToCarolReply.status.code).to.equal(202);
+        expect(bobPublicToCarolReply.status.code).toBe(202);
 
         // write public records from carol to alice and bob
         const carolPublicToAlice = await TestDataGenerator.generateRecordsWrite({
@@ -2161,7 +2159,7 @@ export function testRecordsQueryHandler(): void {
         const carolPublicToAliceReply = await dwn.processMessage(alice.did, carolPublicToAlice.message, {
           dataStream: carolPublicToAlice.dataStream
         });
-        expect(carolPublicToAliceReply.status.code).to.equal(202);
+        expect(carolPublicToAliceReply.status.code).toBe(202);
 
         const carolPublicToBob = await TestDataGenerator.generateRecordsWrite({
           author       : carol,
@@ -2175,7 +2173,7 @@ export function testRecordsQueryHandler(): void {
         const carolPublicToBobReply = await dwn.processMessage(alice.did, carolPublicToBob.message, {
           dataStream: carolPublicToBob.dataStream
         });
-        expect(carolPublicToBobReply.status.code).to.equal(202);
+        expect(carolPublicToBobReply.status.code).toBe(202);
 
         // bob queries for records with himself and alice as authors
         const bobQueryMessagesForBobAlice = await TestDataGenerator.generateRecordsQuery({
@@ -2183,15 +2181,15 @@ export function testRecordsQueryHandler(): void {
           filter : { protocol: freeForAll.protocol, protocolPath: 'post', author: [bob.did, alice.did] }
         });
         const bobQueryMessagesForBobAliceReply = await dwn.processMessage(alice.did, bobQueryMessagesForBobAlice.message);
-        expect(bobQueryMessagesForBobAliceReply.status.code).to.equal(200);
-        expect(bobQueryMessagesForBobAliceReply.entries?.length).to.equal(7);
+        expect(bobQueryMessagesForBobAliceReply.status.code).toBe(200);
+        expect(bobQueryMessagesForBobAliceReply.entries?.length).toBe(7);
 
         // Since Bob is the author if the query, we expect for him to be able to see:
         // Private Messages Bob authored TO ANYONE
         // Private Messages Alice authored To Bob
         // Public Messages Alice authored
         // Public Messages Bob authored
-        expect(bobQueryMessagesForBobAliceReply.entries!.map(e => e.recordId)).to.have.members([
+        expect(bobQueryMessagesForBobAliceReply.entries!.map(e => e.recordId)).toEqual(expect.arrayContaining([
           alicePrivateToBob.message.recordId,
           bobPrivateToAlice.message.recordId,
           bobPrivateToCarol.message.recordId,
@@ -2199,7 +2197,7 @@ export function testRecordsQueryHandler(): void {
           alicePublicToCarol.message.recordId,
           bobPublicToAlice.message.recordId,
           bobPublicToCarol.message.recordId
-        ]);
+        ]));
 
         // carol queries for records with herself as the author
         const carolQueryMessagesForCarolAlice = await TestDataGenerator.generateRecordsQuery({
@@ -2207,17 +2205,17 @@ export function testRecordsQueryHandler(): void {
           filter : { protocol: freeForAll.protocol, protocolPath: 'post', author: carol.did }
         });
         const carolQueryMessagesForCarolAliceReply = await dwn.processMessage(alice.did, carolQueryMessagesForCarolAlice.message);
-        expect(carolQueryMessagesForCarolAliceReply.status.code).to.equal(200);
-        expect(carolQueryMessagesForCarolAliceReply.entries?.length).to.equal(4);
+        expect(carolQueryMessagesForCarolAliceReply.status.code).toBe(200);
+        expect(carolQueryMessagesForCarolAliceReply.entries?.length).toBe(4);
 
         // Since Carol is the author if the query, we expect for her to be able to see:
         // All messages that Carol sent to anyone, private or public
-        expect(carolQueryMessagesForCarolAliceReply.entries!.map(e => e.recordId)).to.have.members([
+        expect(carolQueryMessagesForCarolAliceReply.entries!.map(e => e.recordId)).toEqual(expect.arrayContaining([
           carolPrivateToAlice.message.recordId,
           carolPrivateToBob.message.recordId,
           carolPublicToAlice.message.recordId,
           carolPublicToBob.message.recordId
-        ]);
+        ]));
 
         // alice queries for ONLY published records with herself and bob as authors
         const aliceQueryPublished = await TestDataGenerator.generateRecordsQuery({
@@ -2225,14 +2223,14 @@ export function testRecordsQueryHandler(): void {
           filter : { protocol: freeForAll.protocol, protocolPath: 'post', author: [alice.did, bob.did], published: true }
         });
         const aliceQueryPublishedReply = await dwn.processMessage(alice.did, aliceQueryPublished.message);
-        expect(aliceQueryPublishedReply.status.code).to.equal(200);
-        expect(aliceQueryPublishedReply.entries?.length).to.equal(4);
-        expect(aliceQueryPublishedReply.entries!.map(e => e.recordId)).to.have.members([
+        expect(aliceQueryPublishedReply.status.code).toBe(200);
+        expect(aliceQueryPublishedReply.entries?.length).toBe(4);
+        expect(aliceQueryPublishedReply.entries!.map(e => e.recordId)).toEqual(expect.arrayContaining([
           alicePublicToBob.message.recordId,
           alicePublicToCarol.message.recordId,
           bobPublicToAlice.message.recordId,
           bobPublicToCarol.message.recordId
-        ]);
+        ]));
 
         // carol queries for ONLY private records with herself and alice as the authors
         const carolQueryPrivate = await TestDataGenerator.generateRecordsQuery({
@@ -2240,13 +2238,13 @@ export function testRecordsQueryHandler(): void {
           filter : { protocol: freeForAll.protocol, protocolPath: 'post', author: [carol.did, alice.did], published: false }
         });
         const carolQueryPrivateReply = await dwn.processMessage(alice.did, carolQueryPrivate.message);
-        expect(carolQueryPrivateReply.status.code).to.equal(200);
-        expect(carolQueryPrivateReply.entries?.length).to.equal(3);
-        expect(carolQueryPrivateReply.entries!.map(e => e.recordId)).to.have.members([
+        expect(carolQueryPrivateReply.status.code).toBe(200);
+        expect(carolQueryPrivateReply.entries?.length).toBe(3);
+        expect(carolQueryPrivateReply.entries!.map(e => e.recordId)).toEqual(expect.arrayContaining([
           alicePrivateToCarol.message.recordId,
           carolPrivateToAlice.message.recordId,
           carolPrivateToBob.message.recordId
-        ]);
+        ]));
       });
 
       it('should paginate correctly for fetchRecordsAsNonOwner()', async () => {
@@ -2315,9 +2313,9 @@ export function testRecordsQueryHandler(): void {
         });
 
         let results = await dwn.processMessage(alice.did, aliceQueryMessageDataPage1.message) ;
-        expect(results.status.code).to.equal(200);
-        expect(results.entries?.length).to.equal(10, 'alice page 1');
-        expect(results.cursor, 'alice page 1 cursor').to.not.be.undefined;
+        expect(results.status.code).toBe(200);
+        expect(results.entries?.length).toBe(10, 'alice page 1');
+        expect(results.cursor, 'alice page 1 cursor').toBeDefined();
         aliceRetrieved.push(...results.entries!);
 
         // page2 alice
@@ -2328,9 +2326,9 @@ export function testRecordsQueryHandler(): void {
           pagination : { limit: 10, cursor: results.cursor },
         });
         results = await dwn.processMessage(alice.did, aliceQueryMessageDataPage2.message) ;
-        expect(results.status.code).to.equal(200);
-        expect(results.entries?.length).to.equal(10, 'alice page 2');
-        expect(results.cursor, 'alice page 2 cursor').to.not.be.undefined;
+        expect(results.status.code).toBe(200);
+        expect(results.entries?.length).toBe(10, 'alice page 2');
+        expect(results.cursor, 'alice page 2 cursor').toBeDefined();
         aliceRetrieved.push(...results.entries!);
 
         // page3 alice
@@ -2341,9 +2339,9 @@ export function testRecordsQueryHandler(): void {
           pagination : { limit: 10, cursor: results.cursor },
         });
         results = await dwn.processMessage(alice.did, aliceQueryMessageDataPage3.message) ;
-        expect(results.status.code).to.equal(200);
-        expect(results.entries?.length).to.equal(5, 'alice page 3');
-        expect(results.cursor, 'alice page 3 cursor').to.not.exist;
+        expect(results.status.code).toBe(200);
+        expect(results.entries?.length).toBe(5, 'alice page 3');
+        expect(results.cursor, 'alice page 3 cursor').toBeUndefined();
         aliceRetrieved.push(...results.entries!);
 
         const compareRecordId = (a: GenericMessage, b:GenericMessage): boolean => {
@@ -2368,9 +2366,9 @@ export function testRecordsQueryHandler(): void {
           pagination : { limit: 10 },
         });
         results = await dwn.processMessage(alice.did, bobQueryMessagePage1.message) ;
-        expect(results.status.code).to.equal(200);
-        expect(results.entries?.length).to.equal(10, 'bob page 1');
-        expect(results.cursor, 'bob page 1 cursor').to.not.be.undefined;
+        expect(results.status.code).toBe(200);
+        expect(results.entries?.length).toBe(10, 'bob page 1');
+        expect(results.cursor, 'bob page 1 cursor').toBeDefined();
         bobRetrieved.push(...results.entries!);
 
         const bobQueryMessagePage2 = await TestDataGenerator.generateRecordsQuery({
@@ -2380,9 +2378,9 @@ export function testRecordsQueryHandler(): void {
           pagination : { limit: 10, cursor: results.cursor },
         });
         results = await dwn.processMessage(alice.did, bobQueryMessagePage2.message) ;
-        expect(results.status.code).to.equal(200);
-        expect(results.entries?.length).to.equal(10, 'bob page 2');
-        expect(results.cursor, 'bob page 2 cursor').to.not.exist;
+        expect(results.status.code).toBe(200);
+        expect(results.entries?.length).toBe(10, 'bob page 2');
+        expect(results.cursor, 'bob page 2 cursor').toBeUndefined();
         bobRetrieved.push(...results.entries!);
 
         expect(bobSorted.every((m, i) => compareRecordId(bobRetrieved.at(i)!, m)));
@@ -2398,7 +2396,7 @@ export function testRecordsQueryHandler(): void {
         );
 
         const result1 = await dwn.processMessage(alice.did, unpublishedRecordsWrite.message, { dataStream: unpublishedRecordsWrite.dataStream });
-        expect(result1.status.code).to.equal(202);
+        expect(result1.status.code).toBe(202);
 
         // alice should be able to see the unpublished record
         const queryByAlice = await TestDataGenerator.generateRecordsQuery({
@@ -2406,8 +2404,8 @@ export function testRecordsQueryHandler(): void {
           filter : { schema }
         });
         const replyToAliceQuery = await dwn.processMessage(alice.did, queryByAlice.message);
-        expect(replyToAliceQuery.status.code).to.equal(200);
-        expect(replyToAliceQuery.entries?.length).to.equal(1);
+        expect(replyToAliceQuery.status.code).toBe(200);
+        expect(replyToAliceQuery.entries?.length).toBe(1);
 
         // actual test: bob should not be able to see unpublished record
         const queryByBob = await TestDataGenerator.generateRecordsQuery({
@@ -2415,8 +2413,8 @@ export function testRecordsQueryHandler(): void {
           filter : { schema }
         });
         const replyToBobQuery = await dwn.processMessage(alice.did, queryByBob.message);
-        expect(replyToBobQuery.status.code).to.equal(200);
-        expect(replyToBobQuery.entries?.length).to.equal(0);
+        expect(replyToBobQuery.status.code).toBe(200);
+        expect(replyToBobQuery.entries?.length).toBe(0);
       });
 
       it('should allow DWN owner to use `recipient` as a filter in queries', async () => {
@@ -2430,7 +2428,7 @@ export function testRecordsQueryHandler(): void {
 
         const replyToBobQuery = await dwn.processMessage(alice.did, bobQueryMessageData.message);
 
-        expect(replyToBobQuery.status.code).to.equal(200);
+        expect(replyToBobQuery.status.code).toBe(200);
       });
 
       it('should not fetch entries across tenants', async () => {
@@ -2452,8 +2450,8 @@ export function testRecordsQueryHandler(): void {
 
         const reply = await dwn.processMessage(alice.did, aliceQueryMessageData.message);
 
-        expect(reply.status.code).to.equal(200);
-        expect(reply.entries?.length).to.equal(1);
+        expect(reply.status.code).toBe(200);
+        expect(reply.entries?.length).toBe(1);
       });
 
       it('should return 400 if protocol is not normalized', async () => {
@@ -2476,8 +2474,8 @@ export function testRecordsQueryHandler(): void {
 
         // Send records write message
         const reply = await dwn.processMessage(alice.did, recordsQuery.message);
-        expect(reply.status.code).to.equal(400);
-        expect(reply.status.detail).to.contain(DwnErrorCode.UrlProtocolNotNormalized);
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain(DwnErrorCode.UrlProtocolNotNormalized);
       });
 
       it('should return 400 if schema is not normalized', async () => {
@@ -2500,8 +2498,8 @@ export function testRecordsQueryHandler(): void {
 
         // Send records write message
         const reply = await dwn.processMessage(alice.did, recordsQuery.message);
-        expect(reply.status.code).to.equal(400);
-        expect(reply.status.detail).to.contain(DwnErrorCode.UrlSchemaNotNormalized);
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain(DwnErrorCode.UrlSchemaNotNormalized);
       });
 
       it('should return 400 if published is set to false and a datePublished range is provided', async () => {
@@ -2516,8 +2514,8 @@ export function testRecordsQueryHandler(): void {
         // set to false
         recordQuery.message.descriptor.filter.published = false;
         const queryResponse = await dwn.processMessage(alice.did, recordQuery.message);
-        expect(queryResponse.status.code).to.equal(400);
-        expect(queryResponse.status.detail).to.contain('descriptor/filter/published: must be equal to one of the allowed values');
+        expect(queryResponse.status.code).toBe(400);
+        expect(queryResponse.status.detail).toContain('descriptor/filter/published: must be equal to one of the allowed values');
       });
 
       it('should return 401 for anonymous queries that filter explicitly for unpublished records', async () => {
@@ -2526,20 +2524,20 @@ export function testRecordsQueryHandler(): void {
         // create an unpublished record
         const draftWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'post' });
         const draftWriteReply = await dwn.processMessage(alice.did, draftWrite.message, { dataStream: draftWrite.dataStream });
-        expect(draftWriteReply.status.code).to.equal(202);
+        expect(draftWriteReply.status.code).toBe(202);
 
         // validate that alice can query
         const unpublishedPostQuery = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: { schema: 'post', published: false } });
         const unpublishedPostReply = await dwn.processMessage(alice.did, unpublishedPostQuery.message);
-        expect(unpublishedPostReply.status.code).to.equal(200);
-        expect(unpublishedPostReply.entries?.length).to.equal(1);
-        expect(unpublishedPostReply.entries![0].recordId).to.equal(draftWrite.message.recordId);
+        expect(unpublishedPostReply.status.code).toBe(200);
+        expect(unpublishedPostReply.entries?.length).toBe(1);
+        expect(unpublishedPostReply.entries![0].recordId).toBe(draftWrite.message.recordId);
 
         // anonymous query for unpublished records
         const unpublishedAnonymous = await RecordsQuery.create({ filter: { schema: 'post', published: false } });
         const anonymousPostReply = await dwn.processMessage(alice.did, unpublishedAnonymous.message);
-        expect(anonymousPostReply.status.code).to.equal(401);
-        expect(anonymousPostReply.status.detail).contains('Missing JWS');
+        expect(anonymousPostReply.status.code).toBe(401);
+        expect(anonymousPostReply.status.detail).toContain('Missing JWS');
       });
 
       describe('protocol based queries', () => {
@@ -2561,8 +2559,7 @@ export function testRecordsQueryHandler(): void {
             protocolDefinition
           });
           const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).to.equal(202);
-
+          expect(protocolsConfigureReply.status.code).toBe(202);
 
           // 1. Alice writes 2 foos, 2 bars under foo1, and 2 bazes under bar1
 
@@ -2577,11 +2574,11 @@ export function testRecordsQueryHandler(): void {
 
           const foo1 = await TestDataGenerator.generateRecordsWrite(fooOptions);
           const foo1WriteResponse = await dwn.processMessage(alice.did, foo1.message, { dataStream: foo1.dataStream });
-          expect(foo1WriteResponse.status.code).equals(202);
+          expect(foo1WriteResponse.status.code).toBe(202);
 
           const foo2 = await TestDataGenerator.generateRecordsWrite(fooOptions);
           const foo2WriteResponse = await dwn.processMessage(alice.did, foo2.message, { dataStream: foo2.dataStream });
-          expect(foo2WriteResponse.status.code).equals(202);
+          expect(foo2WriteResponse.status.code).toBe(202);
 
           // write 2 bars under foo1
           const barOptions = {
@@ -2595,11 +2592,11 @@ export function testRecordsQueryHandler(): void {
 
           const bar1 = await TestDataGenerator.generateRecordsWrite(barOptions);
           const bar1WriteResponse = await dwn.processMessage(alice.did, bar1.message, { dataStream: bar1.dataStream });
-          expect(bar1WriteResponse.status.code).equals(202);
+          expect(bar1WriteResponse.status.code).toBe(202);
 
           const bar2 = await TestDataGenerator.generateRecordsWrite(barOptions);
           const bar2WriteResponse = await dwn.processMessage(alice.did, bar2.message, { dataStream: bar2.dataStream });
-          expect(bar2WriteResponse.status.code).equals(202);
+          expect(bar2WriteResponse.status.code).toBe(202);
 
           // write 2 bazes under bar1
           const bazOptions = {
@@ -2613,12 +2610,11 @@ export function testRecordsQueryHandler(): void {
 
           const baz1 = await TestDataGenerator.generateRecordsWrite(bazOptions);
           const baz1WriteResponse = await dwn.processMessage(alice.did, baz1.message, { dataStream: baz1.dataStream });
-          expect(baz1WriteResponse.status.code).equals(202);
+          expect(baz1WriteResponse.status.code).toBe(202);
 
           const baz2 = await TestDataGenerator.generateRecordsWrite(bazOptions);
           const baz2WriteResponse = await dwn.processMessage(alice.did, baz2.message, { dataStream: baz2.dataStream });
-          expect(baz2WriteResponse.status.code).equals(202);
-
+          expect(baz2WriteResponse.status.code).toBe(202);
 
           // 2. Alice should be able to query for all messages under foo1
           const foo1ContextIdQuery = await TestDataGenerator.generateRecordsQuery({
@@ -2626,15 +2622,15 @@ export function testRecordsQueryHandler(): void {
             filter : { contextId: foo1.message.contextId }
           });
           const foo1ContextIdQueryReply = await dwn.processMessage(alice.did, foo1ContextIdQuery.message);
-          expect(foo1ContextIdQueryReply.status.code).to.equal(200);
-          expect(foo1ContextIdQueryReply.entries?.length).to.equal(5);
-          expect(foo1ContextIdQueryReply.entries!.map((entry) => entry.recordId)).to.include.members([
+          expect(foo1ContextIdQueryReply.status.code).toBe(200);
+          expect(foo1ContextIdQueryReply.entries?.length).toBe(5);
+          expect(foo1ContextIdQueryReply.entries!.map((entry) => entry.recordId)).toEqual(expect.arrayContaining([
             foo1.message.recordId,
             bar1.message.recordId,
             bar2.message.recordId,
             baz1.message.recordId,
             baz2.message.recordId
-          ]);
+          ]));
 
           // 3. Alice should be able to query for all messages under bar1
           const bar1ContextIdQuery = await TestDataGenerator.generateRecordsQuery({
@@ -2642,14 +2638,13 @@ export function testRecordsQueryHandler(): void {
             filter : { contextId: bar1.message.contextId }
           });
           const bar1ContextIdQueryReply = await dwn.processMessage(alice.did, bar1ContextIdQuery.message);
-          expect(bar1ContextIdQueryReply.status.code).to.equal(200);
-          expect(bar1ContextIdQueryReply.entries?.length).to.equal(3);
-          expect(bar1ContextIdQueryReply.entries!.map((entry) => entry.recordId)).to.include.members([
+          expect(bar1ContextIdQueryReply.status.code).toBe(200);
+          expect(bar1ContextIdQueryReply.entries?.length).toBe(3);
+          expect(bar1ContextIdQueryReply.entries!.map((entry) => entry.recordId)).toEqual(expect.arrayContaining([
             bar1.message.recordId,
             baz1.message.recordId,
             baz2.message.recordId
-          ]);
-
+          ]));
 
           // 4. Alice should be able to query for all messages under baz1
           const baz1ContextIdQuery = await TestDataGenerator.generateRecordsQuery({
@@ -2657,9 +2652,9 @@ export function testRecordsQueryHandler(): void {
             filter : { contextId: baz1.message.contextId }
           });
           const baz1ContextIdQueryReply = await dwn.processMessage(alice.did, baz1ContextIdQuery.message);
-          expect(baz1ContextIdQueryReply.status.code).to.equal(200);
-          expect(baz1ContextIdQueryReply.entries?.length).to.equal(1);
-          expect(baz1ContextIdQueryReply.entries!.map((entry) => entry.recordId)).to.include.members([ baz1.message.recordId ]);
+          expect(baz1ContextIdQueryReply.status.code).toBe(200);
+          expect(baz1ContextIdQueryReply.entries?.length).toBe(1);
+          expect(baz1ContextIdQueryReply.entries!.map((entry) => entry.recordId)).toEqual(expect.arrayContaining([ baz1.message.recordId ]));
         });
 
         it('does not try protocol authorization if protocolRole is not invoked', async () => {
@@ -2677,7 +2672,7 @@ export function testRecordsQueryHandler(): void {
             protocolDefinition
           });
           const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).to.equal(202);
+          expect(protocolsConfigureReply.status.code).toBe(202);
 
           // Alice writes a 'thread' record
           const threadRecord = await TestDataGenerator.generateRecordsWrite({
@@ -2686,7 +2681,7 @@ export function testRecordsQueryHandler(): void {
             protocolPath : 'thread',
           });
           const threadRoleReply = await dwn.processMessage(alice.did, threadRecord.message, { dataStream: threadRecord.dataStream });
-          expect(threadRoleReply.status.code).to.equal(202);
+          expect(threadRoleReply.status.code).toBe(202);
 
           // Alice writes one 'chat' record addressed to Bob
           const chatRecordForBob = await TestDataGenerator.generateRecordsWrite({
@@ -2699,7 +2694,7 @@ export function testRecordsQueryHandler(): void {
             data            : new TextEncoder().encode('Bob can read this cuz he is my friend'),
           });
           const chatRecordForBobReply = await dwn.processMessage(alice.did, chatRecordForBob.message, { dataStream: chatRecordForBob.dataStream });
-          expect(chatRecordForBobReply.status.code).to.equal(202);
+          expect(chatRecordForBobReply.status.code).toBe(202);
 
           // Alice writes two 'chat' records NOT addressed to Bob
           for (let i = 0; i < 2; i++) {
@@ -2713,7 +2708,7 @@ export function testRecordsQueryHandler(): void {
               data            : new TextEncoder().encode('Bob cannot read this'),
             });
             const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
-            expect(chatReply.status.code).to.equal(202);
+            expect(chatReply.status.code).toBe(202);
           }
 
           // Bob queries without invoking any protocolRole
@@ -2724,9 +2719,9 @@ export function testRecordsQueryHandler(): void {
             },
           });
           const chatQueryReply = await dwn.processMessage(alice.did, chatQuery.message);
-          expect(chatQueryReply.status.code).to.equal(200);
-          expect(chatQueryReply.entries?.length).to.equal(1);
-          expect(chatQueryReply.entries![0].recordId).to.eq(chatRecordForBob.message.recordId);
+          expect(chatQueryReply.status.code).toBe(200);
+          expect(chatQueryReply.entries?.length).toBe(1);
+          expect(chatQueryReply.entries![0].recordId).toBe(chatRecordForBob.message.recordId);
 
           // bob queries without invoking any protocolRole and filters for unpublished records
           const unpublishedChatQuery = await TestDataGenerator.generateRecordsQuery({
@@ -2737,9 +2732,9 @@ export function testRecordsQueryHandler(): void {
             },
           });
           const unpublishedChatReply = await dwn.processMessage(alice.did, unpublishedChatQuery.message);
-          expect(unpublishedChatReply.status.code).to.equal(200);
-          expect(unpublishedChatReply.entries?.length).to.equal(1);
-          expect(unpublishedChatReply.entries![0].recordId).to.equal(chatRecordForBob.message.recordId);
+          expect(unpublishedChatReply.status.code).toBe(200);
+          expect(unpublishedChatReply.entries?.length).toBe(1);
+          expect(unpublishedChatReply.entries![0].recordId).toBe(chatRecordForBob.message.recordId);
 
         });
 
@@ -2757,7 +2752,7 @@ export function testRecordsQueryHandler(): void {
             protocolDefinition
           });
           const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).to.equal(202);
+          expect(protocolsConfigureReply.status.code).toBe(202);
 
           // Alice writes a 'friend' root-level role record with Bob as recipient
           const friendRoleRecord = await TestDataGenerator.generateRecordsWrite({
@@ -2768,7 +2763,7 @@ export function testRecordsQueryHandler(): void {
             data         : new TextEncoder().encode('Bob is my friend'),
           });
           const friendRoleReply = await dwn.processMessage(alice.did, friendRoleRecord.message, { dataStream: friendRoleRecord.dataStream });
-          expect(friendRoleReply.status.code).to.equal(202);
+          expect(friendRoleReply.status.code).toBe(202);
 
           // Alice writes three 'chat' records
           const chatRecordIds = [];
@@ -2782,7 +2777,7 @@ export function testRecordsQueryHandler(): void {
               data         : new TextEncoder().encode('Bob can read this cuz he is my friend'),
             });
             const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
-            expect(chatReply.status.code).to.equal(202);
+            expect(chatReply.status.code).toBe(202);
             chatRecordIds.push(chatRecord.message.recordId);
           }
 
@@ -2796,9 +2791,9 @@ export function testRecordsQueryHandler(): void {
             protocolRole: 'friend',
           });
           const chatQueryReply = await dwn.processMessage(alice.did, chatQuery.message);
-          expect(chatQueryReply.status.code).to.equal(200);
-          expect(chatQueryReply.entries?.length).to.equal(3);
-          expect(chatQueryReply.entries!.map((record) => record.recordId)).to.have.all.members(chatRecordIds);
+          expect(chatQueryReply.status.code).toBe(200);
+          expect(chatQueryReply.entries?.length).toBe(3);
+          expect(chatQueryReply.entries!.map((record) => record.recordId)).toEqual(expect.arrayContaining(chatRecordIds));
 
           // Bob invokes his friendRole along with an explicit filter for unpublished records
           const unpublishedChatQuery = await TestDataGenerator.generateRecordsQuery({
@@ -2811,9 +2806,9 @@ export function testRecordsQueryHandler(): void {
             protocolRole: 'friend',
           });
           const unpublishedChatReply = await dwn.processMessage(alice.did, unpublishedChatQuery.message);
-          expect(unpublishedChatReply.status.code).to.equal(200);
-          expect(unpublishedChatReply.entries?.length).to.equal(3);
-          expect(unpublishedChatReply.entries!.map((record) => record.recordId)).to.have.all.members(chatRecordIds);
+          expect(unpublishedChatReply.status.code).toBe(200);
+          expect(unpublishedChatReply.entries?.length).toBe(3);
+          expect(unpublishedChatReply.entries!.map((record) => record.recordId)).toEqual(expect.arrayContaining(chatRecordIds));
         });
 
         it('can authorize queries using a context role.', async () => {
@@ -2829,7 +2824,7 @@ export function testRecordsQueryHandler(): void {
             protocolDefinition
           });
           const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).to.equal(202);
+          expect(protocolsConfigureReply.status.code).toBe(202);
 
           // Alice writes a 'thread' record
           const threadRecord = await TestDataGenerator.generateRecordsWrite({
@@ -2838,7 +2833,7 @@ export function testRecordsQueryHandler(): void {
             protocolPath : 'thread',
           });
           const threadRoleReply = await dwn.processMessage(alice.did, threadRecord.message, { dataStream: threadRecord.dataStream });
-          expect(threadRoleReply.status.code).to.equal(202);
+          expect(threadRoleReply.status.code).toBe(202);
 
           // Alice writes a 'participant' role record with Bob as recipient
           const participantRoleRecord = await TestDataGenerator.generateRecordsWrite({
@@ -2851,7 +2846,7 @@ export function testRecordsQueryHandler(): void {
           });
           const participantRoleReply =
             await dwn.processMessage(alice.did, participantRoleRecord.message, { dataStream: participantRoleRecord.dataStream });
-          expect(participantRoleReply.status.code).to.equal(202);
+          expect(participantRoleReply.status.code).toBe(202);
 
           // Alice writes three 'chat' records
           const chatRecordIds = [];
@@ -2866,7 +2861,7 @@ export function testRecordsQueryHandler(): void {
               data            : new TextEncoder().encode('Bob can read this cuz he is my friend'),
             });
             const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
-            expect(chatReply.status.code).to.equal(202);
+            expect(chatReply.status.code).toBe(202);
             chatRecordIds.push(chatRecord.message.recordId);
           }
 
@@ -2881,9 +2876,9 @@ export function testRecordsQueryHandler(): void {
             protocolRole: 'thread/participant',
           });
           const chatQueryReply = await dwn.processMessage(alice.did, chatQuery.message) as RecordsQueryReply;
-          expect(chatQueryReply.status.code).to.equal(200);
-          expect(chatQueryReply.entries?.length).to.equal(3);
-          expect(chatQueryReply.entries!.map((record) => record.recordId)).to.have.all.members(chatRecordIds);
+          expect(chatQueryReply.status.code).toBe(200);
+          expect(chatQueryReply.entries?.length).toBe(3);
+          expect(chatQueryReply.entries!.map((record) => record.recordId)).toEqual(expect.arrayContaining(chatRecordIds));
         });
 
         it('does not execute protocol queries where protocolPath is missing from the filter', async () => {
@@ -2900,7 +2895,7 @@ export function testRecordsQueryHandler(): void {
             protocolDefinition
           });
           const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).to.equal(202);
+          expect(protocolsConfigureReply.status.code).toBe(202);
 
           // Alice writes a 'friend' root-level role record with Bob as recipient
           const friendRoleRecord = await TestDataGenerator.generateRecordsWrite({
@@ -2911,7 +2906,7 @@ export function testRecordsQueryHandler(): void {
             data         : new TextEncoder().encode('Bob is my friend'),
           });
           const friendRoleReply = await dwn.processMessage(alice.did, friendRoleRecord.message, { dataStream: friendRoleRecord.dataStream });
-          expect(friendRoleReply.status.code).to.equal(202);
+          expect(friendRoleReply.status.code).toBe(202);
 
           // Alice writes three 'chat' records
           const chatRecordIds = [];
@@ -2925,7 +2920,7 @@ export function testRecordsQueryHandler(): void {
               data         : new TextEncoder().encode('Bob can read this cuz he is my friend'),
             });
             const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
-            expect(chatReply.status.code).to.equal(202);
+            expect(chatReply.status.code).toBe(202);
             chatRecordIds.push(chatRecord.message.recordId);
           }
 
@@ -2939,8 +2934,8 @@ export function testRecordsQueryHandler(): void {
             protocolRole: 'friend',
           });
           const chatQueryReply = await dwn.processMessage(alice.did, chatQuery.message) as RecordsQueryReply;
-          expect(chatQueryReply.status.code).to.equal(400);
-          expect(chatQueryReply.status.detail).to.contain(DwnErrorCode.RecordsQueryFilterMissingRequiredProperties);
+          expect(chatQueryReply.status.code).toBe(400);
+          expect(chatQueryReply.status.detail).toContain(DwnErrorCode.RecordsQueryFilterMissingRequiredProperties);
         });
 
         it('does not execute context role authorized queries where contextId is missing from the filter', async () => {
@@ -2956,7 +2951,7 @@ export function testRecordsQueryHandler(): void {
             protocolDefinition
           });
           const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).to.equal(202);
+          expect(protocolsConfigureReply.status.code).toBe(202);
 
           // Alice writes a 'thread' record
           const threadRecord = await TestDataGenerator.generateRecordsWrite({
@@ -2965,7 +2960,7 @@ export function testRecordsQueryHandler(): void {
             protocolPath : 'thread',
           });
           const threadRoleReply = await dwn.processMessage(alice.did, threadRecord.message, { dataStream: threadRecord.dataStream });
-          expect(threadRoleReply.status.code).to.equal(202);
+          expect(threadRoleReply.status.code).toBe(202);
 
           // Alice writes a 'friend' root-level role record with Bob as recipient
           const participantRoleRecord = await TestDataGenerator.generateRecordsWrite({
@@ -2978,7 +2973,7 @@ export function testRecordsQueryHandler(): void {
           });
           const participantRoleReply =
             await dwn.processMessage(alice.did, participantRoleRecord.message, { dataStream: participantRoleRecord.dataStream });
-          expect(participantRoleReply.status.code).to.equal(202);
+          expect(participantRoleReply.status.code).toBe(202);
 
           // Alice writes three 'chat' records
           const chatRecordIds = [];
@@ -2993,7 +2988,7 @@ export function testRecordsQueryHandler(): void {
               data            : new TextEncoder().encode('Bob can read this cuz he is my friend'),
             });
             const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
-            expect(chatReply.status.code).to.equal(202);
+            expect(chatReply.status.code).toBe(202);
             chatRecordIds.push(chatRecord.message.recordId);
           }
 
@@ -3008,8 +3003,8 @@ export function testRecordsQueryHandler(): void {
             protocolRole: 'thread/participant',
           });
           const chatQueryReply = await dwn.processMessage(alice.did, chatQuery.message) as RecordsQueryReply;
-          expect(chatQueryReply.status.code).to.eq(401);
-          expect(chatQueryReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationMissingContextId);
+          expect(chatQueryReply.status.code).toBe(401);
+          expect(chatQueryReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMissingContextId);
         });
 
         it('should reject root-level role authorized queries if a matching root-level role record is not found for the message author', async () => {
@@ -3026,7 +3021,7 @@ export function testRecordsQueryHandler(): void {
             protocolDefinition
           });
           const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).to.equal(202);
+          expect(protocolsConfigureReply.status.code).toBe(202);
 
           // Alice writes three 'chat' records
           const chatRecordIds = [];
@@ -3040,7 +3035,7 @@ export function testRecordsQueryHandler(): void {
               data         : new TextEncoder().encode('Bob can read this cuz he is my friend'),
             });
             const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
-            expect(chatReply.status.code).to.equal(202);
+            expect(chatReply.status.code).toBe(202);
             chatRecordIds.push(chatRecord.message.recordId);
           }
 
@@ -3054,8 +3049,8 @@ export function testRecordsQueryHandler(): void {
             protocolRole: 'friend',
           });
           const chatQueryReply = await dwn.processMessage(alice.did, chatQuery.message) as RecordsQueryReply;
-          expect(chatQueryReply.status.code).to.eq(401);
-          expect(chatQueryReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+          expect(chatQueryReply.status.code).toBe(401);
+          expect(chatQueryReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
         });
 
         it('should reject context role authorized queries if a matching context role record is not found for the message author', async () => {
@@ -3070,7 +3065,7 @@ export function testRecordsQueryHandler(): void {
             protocolDefinition
           });
           const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).to.equal(202);
+          expect(protocolsConfigureReply.status.code).toBe(202);
 
           // Alice writes a 'thread' record
           const threadRecord = await TestDataGenerator.generateRecordsWrite({
@@ -3079,7 +3074,7 @@ export function testRecordsQueryHandler(): void {
             protocolPath : 'thread',
           });
           const threadRoleReply = await dwn.processMessage(alice.did, threadRecord.message, { dataStream: threadRecord.dataStream });
-          expect(threadRoleReply.status.code).to.equal(202);
+          expect(threadRoleReply.status.code).toBe(202);
 
           // Alice writes three 'chat' records
           const chatRecordIds = [];
@@ -3094,7 +3089,7 @@ export function testRecordsQueryHandler(): void {
               data            : new TextEncoder().encode('Bob can read this cuz he is my friend'),
             });
             const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
-            expect(chatReply.status.code).to.equal(202);
+            expect(chatReply.status.code).toBe(202);
             chatRecordIds.push(chatRecord.message.recordId);
           }
 
@@ -3109,8 +3104,8 @@ export function testRecordsQueryHandler(): void {
             protocolRole: 'thread/participant',
           });
           const chatQueryReply = await dwn.processMessage(alice.did, chatQuery.message) as RecordsQueryReply;
-          expect(chatQueryReply.status.code).to.eq(401);
-          expect(chatQueryReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+          expect(chatQueryReply.status.code).toBe(401);
+          expect(chatQueryReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
         });
 
         describe('who-based query/subscribe action rules', () => {
@@ -3146,7 +3141,7 @@ export function testRecordsQueryHandler(): void {
               protocolDefinition : whoQueryProtocol,
             });
             const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).to.equal(202);
+            expect(protocolsConfigureReply.status.code).toBe(202);
 
             // Alice writes 2 messages for Bob
             const bobRecordIds: string[] = [];
@@ -3161,7 +3156,7 @@ export function testRecordsQueryHandler(): void {
                 data         : new TextEncoder().encode(`message for bob ${i}`),
               });
               const reply = await dwn.processMessage(alice.did, msg.message, { dataStream: msg.dataStream });
-              expect(reply.status.code).to.equal(202);
+              expect(reply.status.code).toBe(202);
               bobRecordIds.push(msg.message.recordId);
             }
 
@@ -3176,7 +3171,7 @@ export function testRecordsQueryHandler(): void {
               data         : new TextEncoder().encode('message for carol'),
             });
             const carolWriteReply = await dwn.processMessage(alice.did, carolMsg.message, { dataStream: carolMsg.dataStream });
-            expect(carolWriteReply.status.code).to.equal(202);
+            expect(carolWriteReply.status.code).toBe(202);
 
             // Bob queries — should see exactly his 2 messages
             const bobQuery = await TestDataGenerator.generateRecordsQuery({
@@ -3187,9 +3182,9 @@ export function testRecordsQueryHandler(): void {
               },
             });
             const bobQueryReply = await dwn.processMessage(alice.did, bobQuery.message) as RecordsQueryReply;
-            expect(bobQueryReply.status.code).to.equal(200);
-            expect(bobQueryReply.entries?.length).to.equal(2);
-            expect(bobQueryReply.entries!.map((e) => e.recordId)).to.have.members(bobRecordIds);
+            expect(bobQueryReply.status.code).toBe(200);
+            expect(bobQueryReply.entries?.length).toBe(2);
+            expect(bobQueryReply.entries!.map((e) => e.recordId)).toEqual(expect.arrayContaining(bobRecordIds));
 
             // Carol queries — should see exactly her 1 message
             const carolQuery = await TestDataGenerator.generateRecordsQuery({
@@ -3200,9 +3195,9 @@ export function testRecordsQueryHandler(): void {
               },
             });
             const carolQueryReply = await dwn.processMessage(alice.did, carolQuery.message) as RecordsQueryReply;
-            expect(carolQueryReply.status.code).to.equal(200);
-            expect(carolQueryReply.entries?.length).to.equal(1);
-            expect(carolQueryReply.entries![0].recordId).to.equal(carolMsg.message.recordId);
+            expect(carolQueryReply.status.code).toBe(200);
+            expect(carolQueryReply.entries?.length).toBe(1);
+            expect(carolQueryReply.entries![0].recordId).toBe(carolMsg.message.recordId);
           });
 
           it('author can query their own records via who-based rule', async () => {
@@ -3217,7 +3212,7 @@ export function testRecordsQueryHandler(): void {
               protocolDefinition : whoQueryProtocol,
             });
             const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).to.equal(202);
+            expect(protocolsConfigureReply.status.code).toBe(202);
 
             // Bob writes a message to Alice's DWN (anyone can create)
             const bobMsg = await TestDataGenerator.generateRecordsWrite({
@@ -3230,7 +3225,7 @@ export function testRecordsQueryHandler(): void {
               data         : new TextEncoder().encode('message from bob'),
             });
             const bobWriteReply = await dwn.processMessage(alice.did, bobMsg.message, { dataStream: bobMsg.dataStream });
-            expect(bobWriteReply.status.code).to.equal(202);
+            expect(bobWriteReply.status.code).toBe(202);
 
             // Bob queries — should see the message he authored
             const bobQuery = await TestDataGenerator.generateRecordsQuery({
@@ -3241,9 +3236,9 @@ export function testRecordsQueryHandler(): void {
               },
             });
             const bobQueryReply = await dwn.processMessage(alice.did, bobQuery.message) as RecordsQueryReply;
-            expect(bobQueryReply.status.code).to.equal(200);
-            expect(bobQueryReply.entries?.length).to.equal(1);
-            expect(bobQueryReply.entries![0].recordId).to.equal(bobMsg.message.recordId);
+            expect(bobQueryReply.status.code).toBe(200);
+            expect(bobQueryReply.entries?.length).toBe(1);
+            expect(bobQueryReply.entries![0].recordId).toBe(bobMsg.message.recordId);
 
             // Carol queries — should see nothing (she is neither author nor recipient)
             const carolQuery = await TestDataGenerator.generateRecordsQuery({
@@ -3254,8 +3249,8 @@ export function testRecordsQueryHandler(): void {
               },
             });
             const carolQueryReply = await dwn.processMessage(alice.did, carolQuery.message) as RecordsQueryReply;
-            expect(carolQueryReply.status.code).to.equal(200);
-            expect(carolQueryReply.entries?.length).to.equal(0);
+            expect(carolQueryReply.status.code).toBe(200);
+            expect(carolQueryReply.entries?.length).toBe(0);
           });
 
           it('unauthorized party cannot see any unpublished records via query', async () => {
@@ -3270,7 +3265,7 @@ export function testRecordsQueryHandler(): void {
               protocolDefinition : whoQueryProtocol,
             });
             const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).to.equal(202);
+            expect(protocolsConfigureReply.status.code).toBe(202);
 
             // Alice writes messages to Bob
             for (let i = 0; i < 3; i++) {
@@ -3284,7 +3279,7 @@ export function testRecordsQueryHandler(): void {
                 data         : new TextEncoder().encode(`secret message ${i}`),
               });
               const reply = await dwn.processMessage(alice.did, msg.message, { dataStream: msg.dataStream });
-              expect(reply.status.code).to.equal(202);
+              expect(reply.status.code).toBe(202);
             }
 
             // Dave queries — he is neither author nor recipient of any record
@@ -3296,8 +3291,8 @@ export function testRecordsQueryHandler(): void {
               },
             });
             const daveQueryReply = await dwn.processMessage(alice.did, daveQuery.message) as RecordsQueryReply;
-            expect(daveQueryReply.status.code).to.equal(200);
-            expect(daveQueryReply.entries?.length).to.equal(0);
+            expect(daveQueryReply.status.code).toBe(200);
+            expect(daveQueryReply.entries?.length).toBe(0);
 
             // Dave queries with explicit unpublished filter — still sees nothing
             const daveUnpubQuery = await TestDataGenerator.generateRecordsQuery({
@@ -3309,8 +3304,8 @@ export function testRecordsQueryHandler(): void {
               },
             });
             const daveUnpubReply = await dwn.processMessage(alice.did, daveUnpubQuery.message) as RecordsQueryReply;
-            expect(daveUnpubReply.status.code).to.equal(200);
-            expect(daveUnpubReply.entries?.length).to.equal(0);
+            expect(daveUnpubReply.status.code).toBe(200);
+            expect(daveUnpubReply.entries?.length).toBe(0);
           });
 
           it('who-based query rules do not grant role-like broad access', async () => {
@@ -3351,7 +3346,7 @@ export function testRecordsQueryHandler(): void {
               protocolDefinition : mixedProtocol,
             });
             const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).to.equal(202);
+            expect(protocolsConfigureReply.status.code).toBe(202);
 
             // Alice creates a thread
             const threadRecord = await TestDataGenerator.generateRecordsWrite({
@@ -3360,7 +3355,7 @@ export function testRecordsQueryHandler(): void {
               protocolPath : 'thread',
             });
             const threadReply = await dwn.processMessage(alice.did, threadRecord.message, { dataStream: threadRecord.dataStream });
-            expect(threadReply.status.code).to.equal(202);
+            expect(threadReply.status.code).toBe(202);
 
             // Alice adds Bob as participant (role)
             const participantRecord = await TestDataGenerator.generateRecordsWrite({
@@ -3371,7 +3366,7 @@ export function testRecordsQueryHandler(): void {
               parentContextId : threadRecord.message.contextId,
             });
             const participantReply = await dwn.processMessage(alice.did, participantRecord.message, { dataStream: participantRecord.dataStream });
-            expect(participantReply.status.code).to.equal(202);
+            expect(participantReply.status.code).toBe(202);
 
             // Alice writes chat messages
             for (let i = 0; i < 3; i++) {
@@ -3386,7 +3381,7 @@ export function testRecordsQueryHandler(): void {
                 data            : new TextEncoder().encode(`chat message ${i}`),
               });
               const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
-              expect(chatReply.status.code).to.equal(202);
+              expect(chatReply.status.code).toBe(202);
             }
 
             // Bob (who IS a participant) can query with his role — should succeed
@@ -3400,8 +3395,8 @@ export function testRecordsQueryHandler(): void {
               protocolRole: 'thread/participant',
             });
             const bobRoleQueryReply = await dwn.processMessage(alice.did, bobRoleQuery.message) as RecordsQueryReply;
-            expect(bobRoleQueryReply.status.code).to.equal(200);
-            expect(bobRoleQueryReply.entries?.length).to.equal(3);
+            expect(bobRoleQueryReply.status.code).toBe(200);
+            expect(bobRoleQueryReply.entries?.length).toBe(3);
 
             // Dave (who is NOT a participant) tries to invoke the role — should be rejected
             const daveRoleQuery = await TestDataGenerator.generateRecordsQuery({
@@ -3414,8 +3409,8 @@ export function testRecordsQueryHandler(): void {
               protocolRole: 'thread/participant',
             });
             const daveRoleQueryReply = await dwn.processMessage(alice.did, daveRoleQuery.message) as RecordsQueryReply;
-            expect(daveRoleQueryReply.status.code).to.equal(401);
-            expect(daveRoleQueryReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+            expect(daveRoleQueryReply.status.code).toBe(401);
+            expect(daveRoleQueryReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
 
             // Dave without a role — should get 200 but zero results (no records addressed to him)
             const daveNoRoleQuery = await TestDataGenerator.generateRecordsQuery({
@@ -3426,8 +3421,8 @@ export function testRecordsQueryHandler(): void {
               },
             });
             const daveNoRoleQueryReply = await dwn.processMessage(alice.did, daveNoRoleQuery.message) as RecordsQueryReply;
-            expect(daveNoRoleQueryReply.status.code).to.equal(200);
-            expect(daveNoRoleQueryReply.entries?.length).to.equal(0);
+            expect(daveNoRoleQueryReply.status.code).toBe(200);
+            expect(daveNoRoleQueryReply.entries?.length).toBe(0);
           });
         });
       });
@@ -3447,7 +3442,7 @@ export function testRecordsQueryHandler(): void {
       const recordsQueryHandler = new RecordsQueryHandler(didResolver, messageStoreStub, dataStoreStub);
       const reply = await recordsQueryHandler.handle({ tenant, message });
 
-      expect(reply.status.code).to.equal(401);
+      expect(reply.status.code).toBe(401);
     });
 
     it('should return 400 if fail parsing the message', async () => {
@@ -3464,7 +3459,7 @@ export function testRecordsQueryHandler(): void {
       sinon.stub(RecordsQuery, 'parse').throws('anyError');
       const reply = await recordsQueryHandler.handle({ tenant, message });
 
-      expect(reply.status.code).to.equal(400);
+      expect(reply.status.code).toBe(400);
     });
   });
 }

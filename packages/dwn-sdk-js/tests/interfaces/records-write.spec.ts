@@ -1,9 +1,8 @@
 import type { EncryptionInput, RecordsWriteOptions } from '../../src/interfaces/records-write.js';
 import type { MessageSigner, PermissionScope } from '../../src/index.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
-import chai, { expect } from 'chai';
+import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
@@ -13,8 +12,6 @@ import { Time } from '../../src/utils/time.js';
 
 import { DwnInterfaceName, DwnMethodName, Encoder, Jws, KeyDerivationScheme, Message, MessageStoreLevel, PermissionsProtocol } from '../../src/index.js';
 
-
-chai.use(chaiAsPromised);
 
 describe('RecordsWrite', () => {
   beforeEach(() => {
@@ -37,10 +34,10 @@ describe('RecordsWrite', () => {
 
       const message = recordsWrite.message;
 
-      expect(message.authorization).to.exist;
-      expect(message.descriptor.dataFormat).to.equal(options.dataFormat);
-      expect(message.descriptor.dateCreated).to.equal(options.dateCreated);
-      expect(message.recordId).to.equal(options.recordId);
+      expect(message.authorization).toBeDefined();
+      expect(message.descriptor.dataFormat).toBe(options.dataFormat);
+      expect(message.descriptor.dateCreated).toBe(options.dateCreated);
+      expect(message.recordId).toBe(options.recordId);
 
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
 
@@ -59,7 +56,7 @@ describe('RecordsWrite', () => {
         permissionGrantId : grantId,
       });
 
-      expect(recordsWrite.message.descriptor.permissionGrantId).to.equal(grantId);
+      expect(recordsWrite.message.descriptor.permissionGrantId).toBe(grantId);
     });
 
     it('should not include permissionGrantId in the descriptor when not provided', async () => {
@@ -72,7 +69,7 @@ describe('RecordsWrite', () => {
         signer     : Jws.createSigner(alice),
       });
 
-      expect(recordsWrite.message.descriptor.permissionGrantId).to.be.undefined;
+      expect(recordsWrite.message.descriptor.permissionGrantId).toBeUndefined();
     });
 
     it('should be able to auto-fill `datePublished` when `published` set to `true` but `datePublished` not given', async () => {
@@ -89,7 +86,7 @@ describe('RecordsWrite', () => {
 
       const message = recordsWrite.message;
 
-      expect(message.descriptor.datePublished).to.exist;
+      expect(message.descriptor.datePublished).toBeDefined();
     });
 
     it('should not allow `data` and `dataCid` to be both defined or undefined', async () => {
@@ -107,7 +104,7 @@ describe('RecordsWrite', () => {
       };
       const createPromise1 = RecordsWrite.create(options1);
 
-      await expect(createPromise1).to.be.rejectedWith(DwnErrorCode.RecordsWriteCreateDataAndDataCidMutuallyExclusive);
+      await expect(createPromise1).rejects.toThrow(DwnErrorCode.RecordsWriteCreateDataAndDataCidMutuallyExclusive);
 
       // testing `data` and `dataCid` both undefined
       const options2 = {
@@ -122,7 +119,7 @@ describe('RecordsWrite', () => {
       };
       const createPromise2 = RecordsWrite.create(options2);
 
-      await expect(createPromise2).to.be.rejectedWith(DwnErrorCode.RecordsWriteCreateDataAndDataCidMutuallyExclusive);
+      await expect(createPromise2).rejects.toThrow(DwnErrorCode.RecordsWriteCreateDataAndDataCidMutuallyExclusive);
     });
 
     it('should required `dataCid` and `dataSize` to be both defined or undefined at the same time', async () => {
@@ -139,7 +136,7 @@ describe('RecordsWrite', () => {
       };
       const createPromise1 = RecordsWrite.create(options1);
 
-      await expect(createPromise1).to.be.rejectedWith('`dataCid` and `dataSize` must both be defined or undefined at the same time');
+      await expect(createPromise1).rejects.toThrow('`dataCid` and `dataSize` must both be defined or undefined at the same time');
 
       const options2 = {
         recipient  : alice.did,
@@ -153,7 +150,7 @@ describe('RecordsWrite', () => {
       };
       const createPromise2 = RecordsWrite.create(options2);
 
-      await expect(createPromise2).to.be.rejectedWith('`dataCid` and `dataSize` must both be defined or undefined at the same time');
+      await expect(createPromise2).rejects.toThrow('`dataCid` and `dataSize` must both be defined or undefined at the same time');
     });
 
     it('should auto-normalize protocol URL', async () => {
@@ -172,7 +169,7 @@ describe('RecordsWrite', () => {
 
       const message = recordsWrite.message;
 
-      expect(message.descriptor.protocol).to.eq('http://example.com');
+      expect(message.descriptor.protocol).toBe('http://example.com');
     });
 
     it('should required `protocol` and `protocolPath` to be both defined or undefined at the same time', async () => {
@@ -190,7 +187,7 @@ describe('RecordsWrite', () => {
       };
       const createPromise1 = RecordsWrite.create(options1);
 
-      await expect(createPromise1).to.be.rejectedWith('`protocol` and `protocolPath` must both be defined or undefined at the same time');
+      await expect(createPromise1).rejects.toThrow('`protocol` and `protocolPath` must both be defined or undefined at the same time');
 
       const options2 = {
         recipient    : alice.did,
@@ -205,7 +202,7 @@ describe('RecordsWrite', () => {
       };
       const createPromise2 = RecordsWrite.create(options2);
 
-      await expect(createPromise2).to.be.rejectedWith('`protocol` and `protocolPath` must both be defined or undefined at the same time');
+      await expect(createPromise2).rejects.toThrow('`protocol` and `protocolPath` must both be defined or undefined at the same time');
     });
 
     it('should be able to create a RecordsWrite successfully using a custom signer', async () => {
@@ -234,7 +231,7 @@ describe('RecordsWrite', () => {
 
       const recordsWrite = await RecordsWrite.create(options);
 
-      expect(recordsWrite.message.authorization!.signature.signatures[0].signature).to.equal(Encoder.bytesToBase64Url(hardCodedSignature));
+      expect(recordsWrite.message.authorization!.signature.signatures[0].signature).toBe(Encoder.bytesToBase64Url(hardCodedSignature));
     });
 
     it('should throw if attempting to use `protocols` key derivation encryption scheme on non-protocol-based record', async () => {
@@ -260,7 +257,7 @@ describe('RecordsWrite', () => {
         encryptionInput
       });
 
-      await expect(createPromise).to.be.rejectedWith(DwnErrorCode.RecordsWriteMissingProtocol);
+      await expect(createPromise).rejects.toThrow(DwnErrorCode.RecordsWriteMissingProtocol);
     });
 
     it('should throw if attempting to use `schemas` key derivation encryption scheme on a record without `schema`', async () => {
@@ -286,7 +283,7 @@ describe('RecordsWrite', () => {
         encryptionInput
       });
 
-      await expect(createPromise).to.be.rejectedWith(DwnErrorCode.RecordsWriteMissingSchema);
+      await expect(createPromise).rejects.toThrow(DwnErrorCode.RecordsWriteMissingSchema);
     });
 
     it('should throw if delegated grant is given but signer is not given', async () => {
@@ -313,7 +310,7 @@ describe('RecordsWrite', () => {
         data           : TestDataGenerator.randomBytes(10),
       });
 
-      await expect(createPromise).to.be.rejectedWith(DwnErrorCode.RecordsWriteCreateMissingSigner);
+      await expect(createPromise).rejects.toThrow(DwnErrorCode.RecordsWriteCreateMissingSigner);
     });
   });
 
@@ -329,7 +326,7 @@ describe('RecordsWrite', () => {
         signer              : Jws.createSigner(author)
       });
 
-      expect(write.message.descriptor.published).to.be.true;
+      expect(write.message.descriptor.published).toBe(true);
     });
 
     it('replace tags with updated tags, if tags do not exist in createFrom remove them', async () => {
@@ -340,9 +337,9 @@ describe('RecordsWrite', () => {
           tag1: [ 'value1', 'value2' ]
         }
       });
-      expect(message.descriptor.tags).to.exist;
-      expect(message.descriptor.tags!.tag1).to.exist;
-      expect(message.descriptor.tags!.tag1).to.have.members([ 'value1', 'value2' ]);
+      expect(message.descriptor.tags).toBeDefined();
+      expect(message.descriptor.tags!.tag1).toBeDefined();
+      expect(message.descriptor.tags!.tag1).toEqual(expect.arrayContaining([ 'value1', 'value2' ]));
 
       // update the record's tags
       const write = await RecordsWrite.createFrom({
@@ -352,22 +349,22 @@ describe('RecordsWrite', () => {
           tag2: [ 'value1', 'value2', 'value3' ]
         }
       });
-      expect(write.message.descriptor.tags).to.exist;
-      expect(write.message.descriptor.tags!.tag1).to.not.exist;
-      expect(write.message.descriptor.tags!.tag2).to.exist;
-      expect(write.message.descriptor.tags!.tag2).to.have.members([ 'value1', 'value2', 'value3' ]);
+      expect(write.message.descriptor.tags).toBeDefined();
+      expect(write.message.descriptor.tags!.tag1).toBeUndefined();
+      expect(write.message.descriptor.tags!.tag2).toBeDefined();
+      expect(write.message.descriptor.tags!.tag2).toEqual(expect.arrayContaining([ 'value1', 'value2', 'value3' ]));
 
       // update without tags
       const write2 = await RecordsWrite.createFrom({
         recordsWriteMessage : write.message,
         signer              : Jws.createSigner(author),
       });
-      expect(write2.message.descriptor.tags).to.not.exist;
+      expect(write2.message.descriptor.tags).toBeUndefined();
     });
   });
 
   describe('parse()', () => {
-    xit('should invoke JSON schema validation when parsing a RecordsWrite', async () => {
+    it.skip('should invoke JSON schema validation when parsing a RecordsWrite', async () => {
       const alice = await TestDataGenerator.generatePersona();
 
       const recordsWrite = await RecordsWrite.create({
@@ -380,7 +377,7 @@ describe('RecordsWrite', () => {
 
       await RecordsWrite.parse(recordsWrite.message);
 
-      expect(validateJsonSchemaSpy.called).to.be.true;
+      expect(validateJsonSchemaSpy.called).toBe(true);
     });
   });
 
@@ -396,7 +393,7 @@ describe('RecordsWrite', () => {
       });
 
       const isSignedByAuthorDelegate = recordsWrite.isSignedByAuthorDelegate;
-      expect(isSignedByAuthorDelegate).to.be.false;
+      expect(isSignedByAuthorDelegate).toBe(false);
     });
   });
 
@@ -412,7 +409,7 @@ describe('RecordsWrite', () => {
       });
 
       const isSignedByOwnerDelegate = recordsWrite.isSignedByOwnerDelegate;
-      expect(isSignedByOwnerDelegate).to.be.false;
+      expect(isSignedByOwnerDelegate).toBe(false);
     });
   });
 
@@ -420,7 +417,7 @@ describe('RecordsWrite', () => {
     it('should return false if given message is not a RecordsWrite', async () => {
       const { message }= await TestDataGenerator.generateRecordsQuery();
       const isInitialWrite = await RecordsWrite.isInitialWrite(message);
-      expect(isInitialWrite).to.be.false;
+      expect(isInitialWrite).toBe(false);
     });
   });
 
@@ -428,7 +425,7 @@ describe('RecordsWrite', () => {
     it('should throw if the given author is undefined', async () => {
       const { message }= await TestDataGenerator.generateRecordsWrite();
       const author = undefined;
-      expect(RecordsWrite.getEntryId(author, message.descriptor)).to.be.rejectedWith(DwnErrorCode.RecordsWriteGetEntryIdUndefinedAuthor);
+      await expect(RecordsWrite.getEntryId(author, message.descriptor)).rejects.toThrow(DwnErrorCode.RecordsWriteGetEntryIdUndefinedAuthor);
     });
   });
 
@@ -442,14 +439,14 @@ describe('RecordsWrite', () => {
       };
       const recordsWrite = await RecordsWrite.create(options);
 
-      expect(recordsWrite.author).to.not.exist;
-      expect(recordsWrite.signaturePayload).to.not.exist;
+      expect(recordsWrite.author).toBeUndefined();
+      expect(recordsWrite.signaturePayload).toBeUndefined();
 
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      await expect(recordsWrite.signAsOwner(Jws.createSigner(alice))).to.be.rejectedWith(DwnErrorCode.RecordsWriteSignAsOwnerUnknownAuthor);
+      await expect(recordsWrite.signAsOwner(Jws.createSigner(alice))).rejects.toThrow(DwnErrorCode.RecordsWriteSignAsOwnerUnknownAuthor);
 
-      expect(recordsWrite.owner).to.be.undefined;
-      expect(recordsWrite.ownerSignaturePayload).to.be.undefined;
+      expect(recordsWrite.owner).toBeUndefined();
+      expect(recordsWrite.ownerSignaturePayload).toBeUndefined();
     });
   });
 
@@ -463,8 +460,8 @@ describe('RecordsWrite', () => {
       };
       const recordsWrite = await RecordsWrite.create(options);
 
-      expect(recordsWrite.author).to.not.exist;
-      expect(recordsWrite.signaturePayload).to.not.exist;
+      expect(recordsWrite.author).toBeUndefined();
+      expect(recordsWrite.signaturePayload).toBeUndefined();
 
       // create a delegated grant
       const alice = await TestDataGenerator.generateDidKeyPersona();
@@ -483,10 +480,10 @@ describe('RecordsWrite', () => {
       });
 
       await expect(recordsWrite.signAsOwnerDelegate(Jws.createSigner(bob), ownerDelegatedGrant.dataEncodedMessage))
-        .to.be.rejectedWith(DwnErrorCode.RecordsWriteSignAsOwnerDelegateUnknownAuthor);
+        .rejects.toThrow(DwnErrorCode.RecordsWriteSignAsOwnerDelegateUnknownAuthor);
 
-      expect(recordsWrite.owner).to.be.undefined;
-      expect(recordsWrite.ownerSignaturePayload).to.be.undefined;
+      expect(recordsWrite.owner).toBeUndefined();
+      expect(recordsWrite.ownerSignaturePayload).toBeUndefined();
     });
   });
 
@@ -500,7 +497,7 @@ describe('RecordsWrite', () => {
       };
       const recordsWrite = await RecordsWrite.create(options);
 
-      expect(recordsWrite.ownerSignatureSigner).to.be.undefined;
+      expect(recordsWrite.ownerSignatureSigner).toBeUndefined();
     });
   });
 
@@ -514,10 +511,10 @@ describe('RecordsWrite', () => {
       };
       const recordsWrite = await RecordsWrite.create(options);
 
-      expect(recordsWrite.author).to.not.exist;
-      expect(recordsWrite.signaturePayload).to.not.exist;
+      expect(recordsWrite.author).toBeUndefined();
+      expect(recordsWrite.signaturePayload).toBeUndefined();
 
-      expect(() => recordsWrite.message).to.throw(DwnErrorCode.RecordsWriteMissingSigner);
+      expect(() => recordsWrite.message).toThrow(DwnErrorCode.RecordsWriteMissingSigner);
     });
   });
 
@@ -548,9 +545,9 @@ describe('RecordsWrite', () => {
       };
       await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput1);
 
-      expect(recordsWrite['_message'].encryption).to.exist;
-      expect(recordsWrite['_message'].encryption!.keyEncryption).to.have.length(1);
-      expect(recordsWrite['_message'].encryption!.keyEncryption[0].derivationScheme).to.equal('protocolPath');
+      expect(recordsWrite['_message'].encryption).toBeDefined();
+      expect(recordsWrite['_message'].encryption!.keyEncryption).toHaveLength(1);
+      expect(recordsWrite['_message'].encryption!.keyEncryption[0].derivationScheme).toBe('protocolPath');
 
       // Second encryption (replace mode) — should overwrite
       const encryptionInput2: EncryptionInput = {
@@ -565,8 +562,8 @@ describe('RecordsWrite', () => {
       await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput2);
 
       // Should have replaced — only 1 entry with Schemas scheme
-      expect(recordsWrite['_message'].encryption!.keyEncryption).to.have.length(1);
-      expect(recordsWrite['_message'].encryption!.keyEncryption[0].derivationScheme).to.equal('schemas');
+      expect(recordsWrite['_message'].encryption!.keyEncryption).toHaveLength(1);
+      expect(recordsWrite['_message'].encryption!.keyEncryption[0].derivationScheme).toBe('schemas');
     });
 
     it('should append keyEncryption entries when append option is true', async () => {
@@ -612,22 +609,22 @@ describe('RecordsWrite', () => {
 
       // Should have both entries
       const encryption = recordsWrite['_message'].encryption!;
-      expect(encryption.keyEncryption).to.have.length(2);
-      expect(encryption.keyEncryption[0].derivationScheme).to.equal('protocolPath');
-      expect(encryption.keyEncryption[1].derivationScheme).to.equal('protocolContext');
+      expect(encryption.keyEncryption).toHaveLength(2);
+      expect(encryption.keyEncryption[0].derivationScheme).toBe('protocolPath');
+      expect(encryption.keyEncryption[1].derivationScheme).toBe('protocolContext');
 
       // Original IV and algorithm should be preserved
-      expect(encryption.initializationVector).to.equal(originalIV);
-      expect(encryption.algorithm).to.equal(originalAlgorithm);
+      expect(encryption.initializationVector).toBe(originalIV);
+      expect(encryption.algorithm).toBe(originalAlgorithm);
 
       // ProtocolContext entry should have derivedPublicKey
-      expect(encryption.keyEncryption[1].derivedPublicKey).to.exist;
+      expect(encryption.keyEncryption[1].derivedPublicKey).toBeDefined();
 
       // Authorization was already wiped by the first (non-append) call, so
       // append mode preserves whatever state exists — which is undefined here.
       // When starting from a parsed/signed message (the signAsOwner test
       // below), authorization IS preserved by append mode.
-      expect(recordsWrite['_message'].authorization).to.not.exist;
+      expect(recordsWrite['_message'].authorization).toBeUndefined();
     });
 
     it('should allow signAsOwner after append (reactive root-record upgrade)', async () => {
@@ -661,12 +658,12 @@ describe('RecordsWrite', () => {
       await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput1);
       await recordsWrite.sign({ signer: Jws.createSigner(bob) });
 
-      expect(recordsWrite.author).to.equal(bob.did);
-      expect(recordsWrite['_message'].authorization).to.exist;
+      expect(recordsWrite.author).toBe(bob.did);
+      expect(recordsWrite['_message'].authorization).toBeDefined();
 
       // Simulate: Alice parses Bob's message and appends ProtocolContext
       const parsed = await RecordsWrite.parse(recordsWrite.message);
-      expect(parsed.author).to.equal(bob.did);
+      expect(parsed.author).toBe(bob.did);
 
       const encryptionInput2: EncryptionInput = {
         initializationVector : dataEncryptionIV,
@@ -680,20 +677,20 @@ describe('RecordsWrite', () => {
       await parsed.encryptSymmetricEncryptionKey(encryptionInput2, { append: true });
 
       // Author and authorization should be preserved after append
-      expect(parsed.author).to.equal(bob.did);
-      expect(parsed['_message'].authorization).to.exist;
+      expect(parsed.author).toBe(bob.did);
+      expect(parsed['_message'].authorization).toBeDefined();
 
       // Alice signs as owner — should NOT throw
       await parsed.signAsOwner(Jws.createSigner(alice));
 
-      expect(parsed.owner).to.equal(alice.did);
-      expect(parsed['_message'].authorization!.ownerSignature).to.exist;
+      expect(parsed.owner).toBe(alice.did);
+      expect(parsed['_message'].authorization!.ownerSignature).toBeDefined();
 
       // Both keyEncryption entries should be present
       const encryption = parsed['_message'].encryption!;
-      expect(encryption.keyEncryption).to.have.length(2);
-      expect(encryption.keyEncryption[0].derivationScheme).to.equal('protocolPath');
-      expect(encryption.keyEncryption[1].derivationScheme).to.equal('protocolContext');
+      expect(encryption.keyEncryption).toHaveLength(2);
+      expect(encryption.keyEncryption[0].derivationScheme).toBe('protocolPath');
+      expect(encryption.keyEncryption[1].derivationScheme).toBe('protocolContext');
 
       // validateIntegrity should pass — the stale encryptionCid in the
       // author's signature is allowed when ownerSignature is present
@@ -725,7 +722,7 @@ describe('RecordsWrite', () => {
 
       await expect(
         recordsWrite.encryptSymmetricEncryptionKey(encryptionInput, { append: true })
-      ).to.be.rejectedWith(DwnErrorCode.RecordsWriteMissingEncryption);
+      ).rejects.toThrow(DwnErrorCode.RecordsWriteMissingEncryption);
     });
   });
 });

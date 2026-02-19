@@ -1,4 +1,4 @@
-import { expect } from 'chai';
+import { describe, expect, it } from 'bun:test';
 
 import type { GeneralJws } from '../../src/types/jws-types.js';
 
@@ -14,9 +14,9 @@ describe('Jws', () => {
 
       try {
         await Jws.verifySignature('payload', signatureEntry, jwkPublic);
-        expect.fail('Expected an error');
+        throw new Error('Expected an error');
       } catch (e: any) {
-        expect(e.code).to.equal(DwnErrorCode.JwsVerifySignatureUnsupportedCrv);
+        expect(e.code).toBe(DwnErrorCode.JwsVerifySignatureUnsupportedCrv);
       }
     });
   });
@@ -30,9 +30,9 @@ describe('Jws', () => {
 
       try {
         Jws.decodePlainObjectPayload(jws);
-        expect.fail('Expected an error');
+        throw new Error('Expected an error');
       } catch (e: any) {
-        expect(e.code).to.equal(DwnErrorCode.JwsDecodePlainObjectPayloadInvalid);
+        expect(e.code).toBe(DwnErrorCode.JwsDecodePlainObjectPayloadInvalid);
       }
     });
 
@@ -46,9 +46,9 @@ describe('Jws', () => {
 
       try {
         Jws.decodePlainObjectPayload(jws);
-        expect.fail('Expected an error');
+        throw new Error('Expected an error');
       } catch (e: any) {
-        expect(e.code).to.equal(DwnErrorCode.JwsDecodePlainObjectPayloadInvalid);
+        expect(e.code).toBe(DwnErrorCode.JwsDecodePlainObjectPayloadInvalid);
       }
     });
   });

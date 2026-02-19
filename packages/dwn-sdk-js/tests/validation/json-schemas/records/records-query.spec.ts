@@ -1,6 +1,6 @@
-import { expect } from 'chai';
 import { Message } from '../../../../src/core/message.js';
 import { TestDataGenerator } from '../../../utils/test-data-generator.js';
+import { describe, expect, it } from 'bun:test';
 
 describe('RecordsQuery schema validation', () => {
   it('should allow descriptor with only required properties', async () => {
@@ -30,7 +30,7 @@ describe('RecordsQuery schema validation', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).throws('must NOT have additional properties');
+    }).toThrow('must NOT have additional properties');
   });
 
   it('should throw if unknown property is given in the `descriptor`', () => {
@@ -47,7 +47,7 @@ describe('RecordsQuery schema validation', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).throws('must NOT have additional properties');
+    }).toThrow('must NOT have additional properties');
   });
 
   it('should only allows string values from the spec for `dateSort`', () => {
@@ -82,7 +82,7 @@ describe('RecordsQuery schema validation', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).throws('dateSort: must be equal to one of the allowed values');
+    }).toThrow('dateSort: must be equal to one of the allowed values');
   });
 
   it('should throw if `ownerSignature` is specified in `authorization`', () => {
@@ -101,7 +101,7 @@ describe('RecordsQuery schema validation', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).throws('must NOT have additional properties');
+    }).toThrow('must NOT have additional properties');
   });
 
   describe('`filter` property validation', () => {
@@ -118,7 +118,7 @@ describe('RecordsQuery schema validation', () => {
 
       expect(() => {
         Message.validateJsonSchema(invalidMessage);
-      }).throws('/descriptor/filter: must NOT have fewer than 1 properties');
+      }).toThrow('/descriptor/filter: must NOT have fewer than 1 properties');
     });
 
     it('should throw if `dateCreated` criteria given is an empty object', () => {
@@ -134,7 +134,7 @@ describe('RecordsQuery schema validation', () => {
 
       expect(() => {
         Message.validateJsonSchema(invalidMessage);
-      }).throws('dateCreated: must NOT have fewer than 1 properties');
+      }).toThrow('dateCreated: must NOT have fewer than 1 properties');
     });
 
     it('should throw if `dateCreated` criteria has unexpected properties', () => {
@@ -150,7 +150,7 @@ describe('RecordsQuery schema validation', () => {
 
       expect(() => {
         Message.validateJsonSchema(invalidMessage);
-      }).throws('must NOT have additional properties');
+      }).toThrow('must NOT have additional properties');
     });
   });
 });

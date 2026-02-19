@@ -1,10 +1,10 @@
 import { ArrayUtility } from '../../src/utils/array.js';
 import { DataStream } from '../../src/index.js';
 import { Encryption } from '../../src/utils/encryption.js';
-import { expect } from 'chai';
 import { Secp256k1 } from '../../src/utils/secp256k1.js';
 import { etc as Secp256k1Etc } from '@noble/secp256k1';
 import { TestDataGenerator } from './test-data-generator.js';
+import { describe, expect, it } from 'bun:test';
 
 describe('Encryption', () => {
   describe('AES-256-CTR', () => {
@@ -20,7 +20,7 @@ describe('Encryption', () => {
       const plaintextStream = await Encryption.aes256CtrDecrypt(key, initializationVector, cipherStream);
       const plaintextBytes = await DataStream.toBytes(plaintextStream);
 
-      expect(ArrayUtility.byteArraysEqual(inputBytes, plaintextBytes)).to.be.true;
+      expect(ArrayUtility.byteArraysEqual(inputBytes, plaintextBytes)).toBe(true);
     });
 
     it('should propagate error on encrypt if the plaintext data stream errors', async () => {
@@ -42,9 +42,9 @@ describe('Encryption', () => {
       // Reading the cipher stream should propagate the error
       try {
         await DataStream.toBytes(cipherStream);
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).to.equal(simulatedErrorMessage);
+        expect(error.message).toBe(simulatedErrorMessage);
       }
     });
 
@@ -67,9 +67,9 @@ describe('Encryption', () => {
       // Reading the plaintext stream should propagate the error
       try {
         await DataStream.toBytes(plaintextStream);
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).to.equal(simulatedErrorMessage);
+        expect(error.message).toBe(simulatedErrorMessage);
       }
     });
   });
@@ -83,7 +83,7 @@ describe('Encryption', () => {
       const decryptionInput = { privateKey, ...encryptionOutput };
       const decryptedPlaintext = await Encryption.eciesSecp256k1Decrypt(decryptionInput);
 
-      expect(ArrayUtility.byteArraysEqual(originalPlaintext, decryptedPlaintext)).to.be.true;
+      expect(ArrayUtility.byteArraysEqual(originalPlaintext, decryptedPlaintext)).toBe(true);
     });
 
     it('should be able to accept both compressed and uncompressed publicKeys', async () => {
@@ -97,7 +97,7 @@ describe('Encryption', () => {
       for (const publicKey of [compressed, uncompressed]) {
         const encrypted = await Encryption.eciesSecp256k1Encrypt(publicKey, originalPlaintext);
         const decrypted = await Encryption.eciesSecp256k1Decrypt({ privateKey, ...encrypted });
-        expect(ArrayUtility.byteArraysEqual(originalPlaintext, decrypted)).to.be.true;
+        expect(ArrayUtility.byteArraysEqual(originalPlaintext, decrypted)).toBe(true);
       }
     });
   });

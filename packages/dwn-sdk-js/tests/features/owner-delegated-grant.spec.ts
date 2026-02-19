@@ -2,11 +2,8 @@ import type { DidResolver } from '@enbox/dids';
 import type { EventStream } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, PermissionScope, ResumableTaskStore, StateIndex } from '../../src/index.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
 import sinon from 'sinon';
-
-import chai, { expect } from 'chai';
 
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Dwn } from '../../src/dwn.js';
@@ -18,14 +15,13 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { Time } from '../../src/utils/time.js';
-
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName, Encoder, PermissionsProtocol, ProtocolsConfigure } from '../../src/index.js';
 
-chai.use(chaiAsPromised);
 
 export function testOwnerDelegatedGrant(): void {
-  describe('owner delegated grant', async () => {
+  describe('owner delegated grant', () => {
     let didResolver: DidResolver;
     let messageStore: MessageStore;
     let dataStore: DataStore;
@@ -36,7 +32,7 @@ export function testOwnerDelegatedGrant(): void {
 
     // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
     // so that different test suites can reuse the same backend store for testing
-    before(async () => {
+    beforeAll(async () => {
       didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
       const stores = TestStores.get();
@@ -59,11 +55,11 @@ export function testOwnerDelegatedGrant(): void {
       await stateIndex.clear();
     });
 
-    after(async () => {
+    afterAll(async () => {
       await dwn.close();
     });
 
-    describe('RecordsWrite.parse()', async () => {
+    describe('RecordsWrite.parse()', () => {
       it('should throw if a message invokes an owner-delegated grant (ID) but the owner-delegated grant is not given', async () => {
         const alice = await TestDataGenerator.generatePersona();
         const bob = await TestDataGenerator.generatePersona();
@@ -97,7 +93,7 @@ export function testOwnerDelegatedGrant(): void {
         delete recordsWrite.message.authorization!.ownerDelegatedGrant; // intentionally remove `ownerDelegatedGrant`
         const parsePromise = RecordsWrite.parse(recordsWrite.message);
 
-        await expect(parsePromise).to.be.rejectedWith(DwnErrorCode.RecordsOwnerDelegatedGrantAndIdExistenceMismatch);
+        await expect(parsePromise).rejects.toThrow(DwnErrorCode.RecordsOwnerDelegatedGrantAndIdExistenceMismatch);
       });
 
       it('should throw if a message includes an owner-delegated grant but does not reference it in owner signature', async () => {
@@ -136,7 +132,7 @@ export function testOwnerDelegatedGrant(): void {
         recordsWrite.message.authorization!.ownerSignature!.payload = Encoder.stringToBase64Url(JSON.stringify(ownerSignaturePayloadCopy));
         const parsePromise = RecordsWrite.parse(recordsWrite.message);
 
-        await expect(parsePromise).to.be.rejectedWith(DwnErrorCode.RecordsOwnerDelegatedGrantAndIdExistenceMismatch);
+        await expect(parsePromise).rejects.toThrow(DwnErrorCode.RecordsOwnerDelegatedGrantAndIdExistenceMismatch);
       });
     });
 
@@ -162,7 +158,7 @@ export function testOwnerDelegatedGrant(): void {
         definition : protocolDefinition
       });
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a delegated grant for app X to write in the protocol
       const scope: PermissionScope = {
@@ -195,7 +191,7 @@ export function testOwnerDelegatedGrant(): void {
         bobRecordsWrite.message,
         { dataStream: DataStream.fromBytes(bobRecordsWriteBytes) }
       );
-      expect(unauthorizedRecordsWriteReply.status.code).to.equal(401);
+      expect(unauthorizedRecordsWriteReply.status.code).toBe(401);
 
       // 5. Verify that App Y cannot write Bob's message in Alice's DWN by invoking the delegated grant for App X.
       const appYAugmentedWrite = await RecordsWrite.parse(bobRecordsWrite.message);
@@ -205,8 +201,8 @@ export function testOwnerDelegatedGrant(): void {
         appYAugmentedWrite.message,
         { dataStream: DataStream.fromBytes(bobRecordsWriteBytes) }
       );
-      expect(appYWriteReply.status.code).to.equal(400);
-      expect(appYWriteReply.status.detail).to.contain(DwnErrorCode.RecordsOwnerDelegatedGrantGrantedToAndOwnerSignatureMismatch);
+      expect(appYWriteReply.status.code).toBe(400);
+      expect(appYWriteReply.status.detail).toContain(DwnErrorCode.RecordsOwnerDelegatedGrantGrantedToAndOwnerSignatureMismatch);
 
       // 6. Verify that App X can successfully write Bob's message in Alice's DWN by invoking an owner-delegated grant
       const appXAugmentedWrite = await RecordsWrite.parse(bobRecordsWrite.message);
@@ -217,7 +213,7 @@ export function testOwnerDelegatedGrant(): void {
         appXAugmentedWrite.message,
         { dataStream: DataStream.fromBytes(bobRecordsWriteBytes) }
       );
-      expect(appXWriteReply.status.code).to.equal(202);
+      expect(appXWriteReply.status.code).toBe(202);
 
       // 7. Sanity verify the RecordsWrite written by App X
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -225,14 +221,14 @@ export function testOwnerDelegatedGrant(): void {
         filter : { protocol }
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-      expect(recordsQueryReply.status.code).to.equal(200);
-      expect(recordsQueryReply.entries?.length).to.equal(1);
+      expect(recordsQueryReply.status.code).toBe(200);
+      expect(recordsQueryReply.entries?.length).toBe(1);
 
       const fetchedEntry = recordsQueryReply.entries![0];
-      expect(fetchedEntry.encodedData).to.equal(Encoder.bytesToBase64Url(bobRecordsWriteBytes));
+      expect(fetchedEntry.encodedData).toBe(Encoder.bytesToBase64Url(bobRecordsWriteBytes));
 
       const fetchedRecordsWrite = await RecordsWrite.parse(fetchedEntry);
-      expect(fetchedRecordsWrite.author).to.equal(bob.did);
+      expect(fetchedRecordsWrite.author).toBe(bob.did);
     });
 
     it('should not allow entity using a non-delegated grant as an owner-delegated grant to invoke write', async () => {
@@ -254,7 +250,7 @@ export function testOwnerDelegatedGrant(): void {
         definition : protocolDefinition
       });
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a non-delegated grant for app X to write in the protocol
       const scope: PermissionScope = {
@@ -293,8 +289,8 @@ export function testOwnerDelegatedGrant(): void {
         appXAugmentedWrite.message,
         { dataStream: DataStream.fromBytes(bobRecordsWriteBytes) }
       );
-      expect(appXWriteReply.status.code).to.equal(400);
-      expect(appXWriteReply.status.detail).to.contain(DwnErrorCode.RecordsOwnerDelegatedGrantNotADelegatedGrant);
+      expect(appXWriteReply.status.code).toBe(400);
+      expect(appXWriteReply.status.detail).toContain(DwnErrorCode.RecordsOwnerDelegatedGrantNotADelegatedGrant);
 
       // 5. Sanity verify the RecordsWrite is not written by App X
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -302,8 +298,8 @@ export function testOwnerDelegatedGrant(): void {
         filter : { protocol }
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-      expect(recordsQueryReply.status.code).to.equal(200);
-      expect(recordsQueryReply.entries?.length).to.equal(0);
+      expect(recordsQueryReply.status.code).toBe(200);
+      expect(recordsQueryReply.entries?.length).toBe(0);
     });
 
     it('should fail if owner-delegated grant invoked for write has a mismatching interface method or protocol scope', async () => {
@@ -327,7 +323,7 @@ export function testOwnerDelegatedGrant(): void {
         definition : protocolDefinition
       });
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a delegated grant for app X to read in the protocol
       const readScope: PermissionScope = {
@@ -381,8 +377,8 @@ export function testOwnerDelegatedGrant(): void {
         appXAugmentedWrite.message,
         { dataStream: DataStream.fromBytes(bobRecordsWriteBytes) }
       );
-      expect(appXWriteReply.status.code).to.equal(401);
-      expect(appXWriteReply.status.detail).to.contain(DwnErrorCode.GrantAuthorizationMethodMismatch);
+      expect(appXWriteReply.status.code).toBe(401);
+      expect(appXWriteReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationMethodMismatch);
 
       // 6. Verify that App X cannot write Bob's message in Alice's DWN by invoking a delegated grant for writing in another random protocol
       const appXAugmentedWrite2 = await RecordsWrite.parse(bobRecordsWrite.message);
@@ -396,8 +392,8 @@ export function testOwnerDelegatedGrant(): void {
         appXAugmentedWrite2.message,
         { dataStream: DataStream.fromBytes(bobRecordsWriteBytes) }
       );
-      expect(appXWriteReply2.status.code).to.equal(401);
-      expect(appXWriteReply2.status.detail).to.contain(DwnErrorCode.RecordsGrantAuthorizationScopeProtocolMismatch);
+      expect(appXWriteReply2.status.code).toBe(401);
+      expect(appXWriteReply2.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeProtocolMismatch);
 
       // 7. Sanity verify the RecordsWrite is not written by App X
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -405,8 +401,8 @@ export function testOwnerDelegatedGrant(): void {
         filter : { protocol }
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-      expect(recordsQueryReply.status.code).to.equal(200);
-      expect(recordsQueryReply.entries?.length).to.equal(0);
+      expect(recordsQueryReply.status.code).toBe(200);
+      expect(recordsQueryReply.entries?.length).toBe(0);
     });
 
     it('should fail RecordsWrite if presented with an owner-delegated grant with invalid grantor signature', async () => {
@@ -428,7 +424,7 @@ export function testOwnerDelegatedGrant(): void {
         definition : protocolDefinition
       });
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a delegated grant for App X to write as Alice, but with invalid signature
       const scope: PermissionScope = {
@@ -467,8 +463,8 @@ export function testOwnerDelegatedGrant(): void {
         appXAugmentedWrite.message,
         { dataStream: DataStream.fromBytes(bobRecordsWriteBytes) }
       );
-      expect(appXWriteReply.status.code).to.equal(401);
-      expect(appXWriteReply.status.detail).to.contain(DwnErrorCode.GeneralJwsVerifierInvalidSignature);
+      expect(appXWriteReply.status.code).toBe(401);
+      expect(appXWriteReply.status.detail).toContain(DwnErrorCode.GeneralJwsVerifierInvalidSignature);
 
       // 5. Sanity verify the RecordsWrite is not written by App X
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -476,8 +472,8 @@ export function testOwnerDelegatedGrant(): void {
         filter : { protocol }
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-      expect(recordsQueryReply.status.code).to.equal(200);
-      expect(recordsQueryReply.entries?.length).to.equal(0);
+      expect(recordsQueryReply.status.code).toBe(200);
+      expect(recordsQueryReply.entries?.length).toBe(0);
     });
 
     it('should fail RecordsWrite if grant ID in owner signature payload and CID of owner-delegated grant are mismatching', async () => {
@@ -499,7 +495,7 @@ export function testOwnerDelegatedGrant(): void {
         definition : protocolDefinition
       });
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // 2. Creates two delegated grant for App X to write as Alice
       const scope: PermissionScope = {
@@ -547,8 +543,8 @@ export function testOwnerDelegatedGrant(): void {
         appXAugmentedWrite.message,
         { dataStream: DataStream.fromBytes(bobRecordsWriteBytes) }
       );
-      expect(appXWriteReply.status.code).to.equal(400);
-      expect(appXWriteReply.status.detail).to.contain(DwnErrorCode.RecordsOwnerDelegatedGrantCidMismatch);
+      expect(appXWriteReply.status.code).toBe(400);
+      expect(appXWriteReply.status.detail).toContain(DwnErrorCode.RecordsOwnerDelegatedGrantCidMismatch);
 
       // 5. Sanity verify the RecordsWrite is not written by App X
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -556,8 +552,8 @@ export function testOwnerDelegatedGrant(): void {
         filter : { protocol }
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-      expect(recordsQueryReply.status.code).to.equal(200);
-      expect(recordsQueryReply.entries?.length).to.equal(0);
+      expect(recordsQueryReply.status.code).toBe(200);
+      expect(recordsQueryReply.entries?.length).toBe(0);
     });
 
     it('should fail RecordsWrite if owner-delegated grant is revoked', async () => {
@@ -580,7 +576,7 @@ export function testOwnerDelegatedGrant(): void {
         definition : protocolDefinition
       });
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a delegated grant for App X to write as Alice
       const scope: PermissionScope = {
@@ -598,7 +594,7 @@ export function testOwnerDelegatedGrant(): void {
       });
       const grantDataStream = DataStream.fromBytes(appXGrant.permissionGrantBytes);
       const permissionGrantWriteReply = await dwn.processMessage(alice.did, appXGrant.recordsWrite.message, { dataStream: grantDataStream });
-      expect(permissionGrantWriteReply.status.code).to.equal(202);
+      expect(permissionGrantWriteReply.status.code).toBe(202);
 
       // 3. Alice revokes the grant
       const permissionRevoke = await PermissionsProtocol.createRevocation({
@@ -611,7 +607,7 @@ export function testOwnerDelegatedGrant(): void {
         permissionRevoke.recordsWrite.message,
         { dataStream: revocationDataStream }
       );
-      expect(permissionRevokeReply.status.code).to.equal(202);
+      expect(permissionRevokeReply.status.code).toBe(202);
 
       // 4. A third party (Bob) authors a RecordsWrite
       const bobRecordsWriteBytes = new TextEncoder().encode('message from Bob');
@@ -632,8 +628,8 @@ export function testOwnerDelegatedGrant(): void {
         appXAugmentedWrite.message,
         { dataStream: DataStream.fromBytes(bobRecordsWriteBytes) }
       );
-      expect(appXWriteReply.status.code).to.equal(401);
-      expect(appXWriteReply.status.detail).to.contain(DwnErrorCode.GrantAuthorizationGrantRevoked);
+      expect(appXWriteReply.status.code).toBe(401);
+      expect(appXWriteReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationGrantRevoked);
 
       // 6. Sanity verify the RecordsWrite is not written by App X
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -641,8 +637,8 @@ export function testOwnerDelegatedGrant(): void {
         filter : { protocol }
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-      expect(recordsQueryReply.status.code).to.equal(200);
-      expect(recordsQueryReply.entries?.length).to.equal(0);
+      expect(recordsQueryReply.status.code).toBe(200);
+      expect(recordsQueryReply.entries?.length).toBe(0);
     });
 
     it('should fail RecordsWrite if owner-delegated grant is expired', async () => {
@@ -664,7 +660,7 @@ export function testOwnerDelegatedGrant(): void {
         definition : protocolDefinition
       });
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a delegated grant for App X to write as Alice, but make it expired
       const scope: PermissionScope = {
@@ -700,8 +696,8 @@ export function testOwnerDelegatedGrant(): void {
         appXAugmentedWrite.message,
         { dataStream: DataStream.fromBytes(bobRecordsWriteBytes) }
       );
-      expect(appXWriteReply.status.code).to.equal(401);
-      expect(appXWriteReply.status.detail).to.contain(DwnErrorCode.GrantAuthorizationGrantExpired);
+      expect(appXWriteReply.status.code).toBe(401);
+      expect(appXWriteReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationGrantExpired);
 
       // 5. Sanity verify the RecordsWrite is not written by App X
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({
@@ -709,8 +705,8 @@ export function testOwnerDelegatedGrant(): void {
         filter : { protocol }
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
-      expect(recordsQueryReply.status.code).to.equal(200);
-      expect(recordsQueryReply.entries?.length).to.equal(0);
+      expect(recordsQueryReply.status.code).toBe(200);
+      expect(recordsQueryReply.entries?.length).toBe(0);
     });
   });
 }

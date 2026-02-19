@@ -2,9 +2,8 @@ import type { DidResolver } from '@enbox/dids';
 import type { EventStream } from '../../src/types/subscriptions.js';
 import { type DataStore, DataStream, type MessageStore, type ProtocolDefinition, type ResumableTaskStore, type StateIndex } from '../../src/index.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
-import chai, { expect } from 'chai';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { Dwn } from '../../src/dwn.js';
 import { Jws } from '../../src/utils/jws.js';
@@ -15,8 +14,6 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-
-chai.use(chaiAsPromised);
 
 // This is a test suite that demonstrates how to use the DWN to create aggregators
 // Aggregators allows multiple authors to write records to the aggregator's DID based on a role
@@ -77,9 +74,9 @@ describe('Aggregator Model', () => {
     }
   };
 
-  // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
+  // important to follow the `beforeAll` and `afterAll` pattern to initialize and clean the stores in tests
   // so that different test suites can reuse the same backend store for testing
-  before(async () => {
+  beforeAll(async () => {
     didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
     const stores = TestStores.get();
@@ -102,7 +99,7 @@ describe('Aggregator Model', () => {
     await stateIndex.clear();
   });
 
-  after(async () => {
+  afterAll(async () => {
     await dwn.close();
   });
 
@@ -124,7 +121,7 @@ describe('Aggregator Model', () => {
       definition : aggregatorProtocolDefinition,
     });
     const aggregatorProtocolReply = await dwn.processMessage(aggregator.did, aggregatorProtocolConfigure.message);
-    expect(aggregatorProtocolReply.status.code).to.equal(202, 'aggregator configure');
+    expect(aggregatorProtocolReply.status.code).toBe(202, 'aggregator configure');
 
     // create 4 users and install user note protocol
     const alice = await TestDataGenerator.generateDidKeyPersona();
@@ -133,7 +130,7 @@ describe('Aggregator Model', () => {
       definition : userProtocolDefinition,
     });
     const aliceProtocolReply = await dwn.processMessage(alice.did, aliceProtocolConfigure.message);
-    expect(aliceProtocolReply.status.code).to.equal(202, 'alice configure');
+    expect(aliceProtocolReply.status.code).toBe(202, 'alice configure');
 
     const bob = await TestDataGenerator.generateDidKeyPersona();
     const bobProtocolConfigure = await ProtocolsConfigure.create({
@@ -141,7 +138,7 @@ describe('Aggregator Model', () => {
       definition : userProtocolDefinition,
     });
     const bobProtocolReply = await dwn.processMessage(bob.did, bobProtocolConfigure.message);
-    expect(bobProtocolReply.status.code).to.equal(202, 'bob configure');
+    expect(bobProtocolReply.status.code).toBe(202, 'bob configure');
 
     const carol = await TestDataGenerator.generateDidKeyPersona();
     const carolProtocolConfigure = await ProtocolsConfigure.create({
@@ -149,7 +146,7 @@ describe('Aggregator Model', () => {
       definition : userProtocolDefinition,
     });
     const carolProtocolReply = await dwn.processMessage(carol.did, carolProtocolConfigure.message);
-    expect(carolProtocolReply.status.code).to.equal(202, 'carol configure');
+    expect(carolProtocolReply.status.code).toBe(202, 'carol configure');
 
     const daniel = await TestDataGenerator.generateDidKeyPersona();
     const danielProtocolConfigure = await ProtocolsConfigure.create({
@@ -157,7 +154,7 @@ describe('Aggregator Model', () => {
       definition : userProtocolDefinition,
     });
     const danielProtocolReply = await dwn.processMessage(daniel.did, danielProtocolConfigure.message);
-    expect(danielProtocolReply.status.code).to.equal(202, 'daniel configure');
+    expect(danielProtocolReply.status.code).toBe(202, 'daniel configure');
 
 
     // The aggregator creates member records for alice, bob and carol
@@ -173,7 +170,7 @@ describe('Aggregator Model', () => {
       data         : aliceMemberData,
     });
     const aliceMemberReply = await dwn.processMessage(aggregator.did, aliceMember.message, { dataStream: DataStream.fromBytes(aliceMemberData) });
-    expect(aliceMemberReply.status.code).to.equal(202, 'alice member ' + aliceMemberReply.status.detail);
+    expect(aliceMemberReply.status.code).toBe(202, 'alice member ' + aliceMemberReply.status.detail);
 
     const bobMemberData = TestDataGenerator.randomBytes(256);
     const bobMember = await RecordsWrite.create({
@@ -186,7 +183,7 @@ describe('Aggregator Model', () => {
       data         : bobMemberData,
     });
     const bobMemberReply = await dwn.processMessage(aggregator.did, bobMember.message, { dataStream: DataStream.fromBytes(bobMemberData) });
-    expect(bobMemberReply.status.code).to.equal(202, 'bob member');
+    expect(bobMemberReply.status.code).toBe(202, 'bob member');
 
     const carolMemberData = TestDataGenerator.randomBytes(256);
     const carolMember = await RecordsWrite.create({
@@ -200,7 +197,7 @@ describe('Aggregator Model', () => {
     });
 
     const carolMemberReply = await dwn.processMessage(aggregator.did, carolMember.message, { dataStream: DataStream.fromBytes(carolMemberData) });
-    expect(carolMemberReply.status.code).to.equal(202, 'carol member');
+    expect(carolMemberReply.status.code).toBe(202, 'carol member');
 
     // alice writes a public note to carol and posts it in the aggregator
     const aliceNoteData = TestDataGenerator.randomBytes(256);
@@ -218,11 +215,11 @@ describe('Aggregator Model', () => {
 
     // Alice writes it to her own DWN and the aggregator
     const aliceLocalDWN = await dwn.processMessage(alice.did, aliceNoteToCarol.message, { dataStream: DataStream.fromBytes(aliceNoteData) });
-    expect(aliceLocalDWN.status.code).to.equal(202, 'alice note');
+    expect(aliceLocalDWN.status.code).toBe(202, 'alice note');
     const aliceAggregatorDWN = await dwn.processMessage(aggregator.did, aliceNoteToCarol.message, {
       dataStream: DataStream.fromBytes(aliceNoteData)
     });
-    expect(aliceAggregatorDWN.status.code).to.equal(202, 'alice note aggregator');
+    expect(aliceAggregatorDWN.status.code).toBe(202, 'alice note aggregator');
 
     // bob writes a public note to alice and posts it in the aggregator
     const bobNoteToAliceData = TestDataGenerator.randomBytes(256);
@@ -240,11 +237,11 @@ describe('Aggregator Model', () => {
 
     // Bob writes it to his own DWN and the aggregator
     const bobLocalDWN = await dwn.processMessage(bob.did, bobNoteToAlice.message, { dataStream: DataStream.fromBytes(bobNoteToAliceData) });
-    expect(bobLocalDWN.status.code).to.equal(202, 'bob note');
+    expect(bobLocalDWN.status.code).toBe(202, 'bob note');
     const bobAggregatorDWN = await dwn.processMessage(aggregator.did, bobNoteToAlice.message, {
       dataStream: DataStream.fromBytes(bobNoteToAliceData)
     });
-    expect(bobAggregatorDWN.status.code).to.equal(202, 'bob note aggregator');
+    expect(bobAggregatorDWN.status.code).toBe(202, 'bob note aggregator');
 
     // carol writes a public note to bob and posts it in the aggregator
     const carolNoteToBobData = TestDataGenerator.randomBytes(256);
@@ -264,11 +261,11 @@ describe('Aggregator Model', () => {
     const carolLocalDWN = await dwn.processMessage(carol.did, carolNoteToBob.message, {
       dataStream: DataStream.fromBytes(carolNoteToBobData)
     });
-    expect(carolLocalDWN.status.code).to.equal(202, 'carol note');
+    expect(carolLocalDWN.status.code).toBe(202, 'carol note');
     const carolAggregatorDWN = await dwn.processMessage(aggregator.did, carolNoteToBob.message, {
       dataStream: DataStream.fromBytes(carolNoteToBobData)
     });
-    expect(carolAggregatorDWN.status.code).to.equal(202, 'carol note aggregator');
+    expect(carolAggregatorDWN.status.code).toBe(202, 'carol note aggregator');
 
     // daniel writes a public note to alice and posts it in the aggregator (which will reject it as he is not a member)
     const danielNoteToAlice = TestDataGenerator.randomBytes(256);
@@ -286,9 +283,9 @@ describe('Aggregator Model', () => {
 
     // Daniel writes it to his own DWN and the aggregator
     const danielLocalDWN = await dwn.processMessage(daniel.did, danielNote.message, { dataStream: DataStream.fromBytes(danielNoteToAlice) });
-    expect(danielLocalDWN.status.code).to.equal(202, 'daniel note');
+    expect(danielLocalDWN.status.code).toBe(202, 'daniel note');
     const danielAggregatorDWN = await dwn.processMessage(aggregator.did, danielNote.message, { dataStream: DataStream.fromBytes(danielNoteToAlice) });
-    expect(danielAggregatorDWN.status.code).to.equal(401, 'daniel note aggregator');
+    expect(danielAggregatorDWN.status.code).toBe(401, 'daniel note aggregator');
 
 
     // daniel can read public notes from multiple authors in a single query
@@ -302,10 +299,10 @@ describe('Aggregator Model', () => {
     });
 
     const danielReadReply = await dwn.processMessage(aggregator.did, danielRead.message);
-    expect(danielReadReply.status.code).to.equal(200, 'daniel read');
-    expect(danielReadReply.entries?.length).to.equal(2, 'daniel read records');
-    expect(danielReadReply.entries![0].recordId).to.equal(aliceNoteToCarol.message.recordId, 'daniel read alice note');
-    expect(danielReadReply.entries![1].recordId).to.equal(bobNoteToAlice.message.recordId, 'daniel read bob note');
+    expect(danielReadReply.status.code).toBe(200, 'daniel read');
+    expect(danielReadReply.entries?.length).toBe(2, 'daniel read records');
+    expect(danielReadReply.entries![0].recordId).toBe(aliceNoteToCarol.message.recordId, 'daniel read alice note');
+    expect(danielReadReply.entries![1].recordId).toBe(bobNoteToAlice.message.recordId, 'daniel read bob note');
 
     // create  private notes to carol from alice and bob
     const alicePrivateNoteToCarol = TestDataGenerator.randomBytes(256);
@@ -324,12 +321,12 @@ describe('Aggregator Model', () => {
     const aliceNoteToCarolLocal = await dwn.processMessage(alice.did, aliceNoteToCarolPrivate.message, {
       dataStream: DataStream.fromBytes(alicePrivateNoteToCarol)
     });
-    expect(aliceNoteToCarolLocal.status.code).to.equal(202, 'alice private note');
+    expect(aliceNoteToCarolLocal.status.code).toBe(202, 'alice private note');
 
     const aliceNoteToCarolAggregator = await dwn.processMessage(aggregator.did, aliceNoteToCarolPrivate.message, {
       dataStream: DataStream.fromBytes(alicePrivateNoteToCarol)
     });
-    expect(aliceNoteToCarolAggregator.status.code).to.equal(202, 'alice private note aggregator');
+    expect(aliceNoteToCarolAggregator.status.code).toBe(202, 'alice private note aggregator');
 
     const bobPrivateNoteToCarol = TestDataGenerator.randomBytes(256);
     const bobNoteToCarolPrivate = await RecordsWrite.create({
@@ -347,12 +344,12 @@ describe('Aggregator Model', () => {
     const bobNoteToCarolLocal = await dwn.processMessage(bob.did, bobNoteToCarolPrivate.message, {
       dataStream: DataStream.fromBytes(bobPrivateNoteToCarol)
     });
-    expect(bobNoteToCarolLocal.status.code).to.equal(202, 'bob private note');
+    expect(bobNoteToCarolLocal.status.code).toBe(202, 'bob private note');
 
     const bobNoteToCarolAggregator = await dwn.processMessage(aggregator.did, bobNoteToCarolPrivate.message, {
       dataStream: DataStream.fromBytes(bobPrivateNoteToCarol)
     });
-    expect(bobNoteToCarolAggregator.status.code).to.equal(202, 'bob private note aggregator');
+    expect(bobNoteToCarolAggregator.status.code).toBe(202, 'bob private note aggregator');
 
     // create a private note from bob to alice
     const bobNoteToAlicePrivateData = TestDataGenerator.randomBytes(256);
@@ -371,11 +368,11 @@ describe('Aggregator Model', () => {
     const bobNoteToAliceLocal = await dwn.processMessage(bob.did, bobNoteToAlicePrivate.message, {
       dataStream: DataStream.fromBytes(bobNoteToAlicePrivateData)
     });
-    expect(bobNoteToAliceLocal.status.code).to.equal(202, 'alice private note to bob');
+    expect(bobNoteToAliceLocal.status.code).toBe(202, 'alice private note to bob');
     const bobNoteToAliceAggregator = await dwn.processMessage(aggregator.did, bobNoteToAlicePrivate.message, {
       dataStream: DataStream.fromBytes(bobNoteToAlicePrivateData)
     });
-    expect(bobNoteToAliceAggregator.status.code).to.equal(202, 'alice private note to bob aggregator');
+    expect(bobNoteToAliceAggregator.status.code).toBe(202, 'alice private note to bob aggregator');
 
     // confirm daniel can still only read the public notes
     const danielRead2 = await RecordsQuery.create({
@@ -388,10 +385,10 @@ describe('Aggregator Model', () => {
     });
 
     const danielReadReply2 = await dwn.processMessage(aggregator.did, danielRead2.message);
-    expect(danielReadReply2.status.code).to.equal(200, 'daniel read 2');
-    expect(danielReadReply2.entries?.length).to.equal(2, 'daniel read records 2');
-    expect(danielReadReply2.entries![0].recordId).to.equal(aliceNoteToCarol.message.recordId, 'daniel read alice note 2');
-    expect(danielReadReply2.entries![1].recordId).to.equal(bobNoteToAlice.message.recordId, 'daniel read bob note 2');
+    expect(danielReadReply2.status.code).toBe(200, 'daniel read 2');
+    expect(danielReadReply2.entries?.length).toBe(2, 'daniel read records 2');
+    expect(danielReadReply2.entries![0].recordId).toBe(aliceNoteToCarol.message.recordId, 'daniel read alice note 2');
+    expect(danielReadReply2.entries![1].recordId).toBe(bobNoteToAlice.message.recordId, 'daniel read bob note 2');
 
     // carol queries for notes from alice and bob and gets the public notes and private notes destined for her
     // carol does not see the private note from alice to bob
@@ -405,12 +402,12 @@ describe('Aggregator Model', () => {
     });
 
     const carolReadReply = await dwn.processMessage(aggregator.did, carolRead.message);
-    expect(carolReadReply.status.code).to.equal(200, 'carol read');
-    expect(carolReadReply.entries?.length).to.equal(4, 'carol read records');
-    expect(carolReadReply.entries![0].recordId).to.equal(aliceNoteToCarol.message.recordId, 'carol read alice note');
-    expect(carolReadReply.entries![1].recordId).to.equal(bobNoteToAlice.message.recordId, 'carol read bob note');
-    expect(carolReadReply.entries![2].recordId).to.equal(aliceNoteToCarolPrivate.message.recordId, 'carol read alice private note');
-    expect(carolReadReply.entries![3].recordId).to.equal(bobNoteToCarolPrivate.message.recordId, 'carol read bob private note');
+    expect(carolReadReply.status.code).toBe(200, 'carol read');
+    expect(carolReadReply.entries?.length).toBe(4, 'carol read records');
+    expect(carolReadReply.entries![0].recordId).toBe(aliceNoteToCarol.message.recordId, 'carol read alice note');
+    expect(carolReadReply.entries![1].recordId).toBe(bobNoteToAlice.message.recordId, 'carol read bob note');
+    expect(carolReadReply.entries![2].recordId).toBe(aliceNoteToCarolPrivate.message.recordId, 'carol read alice private note');
+    expect(carolReadReply.entries![3].recordId).toBe(bobNoteToCarolPrivate.message.recordId, 'carol read bob private note');
 
     // alice queries for notes from bob and carol and gets the public notes and private notes destined for her
     const aliceRead = await RecordsQuery.create({
@@ -423,11 +420,11 @@ describe('Aggregator Model', () => {
     });
 
     const aliceReadReply = await dwn.processMessage(aggregator.did, aliceRead.message);
-    expect(aliceReadReply.status.code).to.equal(200, 'alice read');
-    expect(aliceReadReply.entries?.length).to.equal(3, 'alice read records');
-    expect(aliceReadReply.entries![0].recordId).to.equal(bobNoteToAlice.message.recordId, 'alice note to carol public');
-    expect(aliceReadReply.entries![1].recordId).to.equal(carolNoteToBob.message.recordId, 'carol note to bob public');
-    expect(aliceReadReply.entries![2].recordId).to.equal(bobNoteToAlicePrivate.message.recordId, 'bob note to alice private');
+    expect(aliceReadReply.status.code).toBe(200, 'alice read');
+    expect(aliceReadReply.entries?.length).toBe(3, 'alice read records');
+    expect(aliceReadReply.entries![0].recordId).toBe(bobNoteToAlice.message.recordId, 'alice note to carol public');
+    expect(aliceReadReply.entries![1].recordId).toBe(carolNoteToBob.message.recordId, 'carol note to bob public');
+    expect(aliceReadReply.entries![2].recordId).toBe(bobNoteToAlicePrivate.message.recordId, 'bob note to alice private');
   });
 
   it('should support querying from multiple recipients', async () => {
@@ -439,7 +436,7 @@ describe('Aggregator Model', () => {
       definition : aggregatorProtocolDefinition,
     });
     const aggregatorProtocolReply = await dwn.processMessage(aggregator.did, aggregatorProtocolConfigure.message);
-    expect(aggregatorProtocolReply.status.code).to.equal(202, 'aggregator configure');
+    expect(aggregatorProtocolReply.status.code).toBe(202, 'aggregator configure');
 
     // create 4 users and install user note protocol
     const alice = await TestDataGenerator.generateDidKeyPersona();
@@ -448,7 +445,7 @@ describe('Aggregator Model', () => {
       definition : userProtocolDefinition,
     });
     const aliceProtocolReply = await dwn.processMessage(alice.did, aliceProtocolConfigure.message);
-    expect(aliceProtocolReply.status.code).to.equal(202, 'alice configure');
+    expect(aliceProtocolReply.status.code).toBe(202, 'alice configure');
 
     const bob = await TestDataGenerator.generateDidKeyPersona();
     const bobProtocolConfigure = await ProtocolsConfigure.create({
@@ -456,7 +453,7 @@ describe('Aggregator Model', () => {
       definition : userProtocolDefinition,
     });
     const bobProtocolReply = await dwn.processMessage(bob.did, bobProtocolConfigure.message);
-    expect(bobProtocolReply.status.code).to.equal(202, 'bob configure');
+    expect(bobProtocolReply.status.code).toBe(202, 'bob configure');
 
     const carol = await TestDataGenerator.generateDidKeyPersona();
     const carolProtocolConfigure = await ProtocolsConfigure.create({
@@ -464,7 +461,7 @@ describe('Aggregator Model', () => {
       definition : userProtocolDefinition,
     });
     const carolProtocolReply = await dwn.processMessage(carol.did, carolProtocolConfigure.message);
-    expect(carolProtocolReply.status.code).to.equal(202, 'carol configure');
+    expect(carolProtocolReply.status.code).toBe(202, 'carol configure');
 
     const daniel = await TestDataGenerator.generateDidKeyPersona();
     const danielProtocolConfigure = await ProtocolsConfigure.create({
@@ -472,7 +469,7 @@ describe('Aggregator Model', () => {
       definition : userProtocolDefinition,
     });
     const danielProtocolReply = await dwn.processMessage(daniel.did, danielProtocolConfigure.message);
-    expect(danielProtocolReply.status.code).to.equal(202, 'daniel configure');
+    expect(danielProtocolReply.status.code).toBe(202, 'daniel configure');
 
 
     // The aggregator creates member records for alice, bob and carol
@@ -488,7 +485,7 @@ describe('Aggregator Model', () => {
       data         : aliceMemberData,
     });
     const aliceMemberReply = await dwn.processMessage(aggregator.did, aliceMember.message, { dataStream: DataStream.fromBytes(aliceMemberData) });
-    expect(aliceMemberReply.status.code).to.equal(202, 'alice member ' + aliceMemberReply.status.detail);
+    expect(aliceMemberReply.status.code).toBe(202, 'alice member ' + aliceMemberReply.status.detail);
 
     const bobMemberData = TestDataGenerator.randomBytes(256);
     const bobMember = await RecordsWrite.create({
@@ -501,7 +498,7 @@ describe('Aggregator Model', () => {
       data         : bobMemberData,
     });
     const bobMemberReply = await dwn.processMessage(aggregator.did, bobMember.message, { dataStream: DataStream.fromBytes(bobMemberData) });
-    expect(bobMemberReply.status.code).to.equal(202, 'bob member');
+    expect(bobMemberReply.status.code).toBe(202, 'bob member');
 
     const carolMemberData = TestDataGenerator.randomBytes(256);
     const carolMember = await RecordsWrite.create({
@@ -515,7 +512,7 @@ describe('Aggregator Model', () => {
     });
 
     const carolMemberReply = await dwn.processMessage(aggregator.did, carolMember.message, { dataStream: DataStream.fromBytes(carolMemberData) });
-    expect(carolMemberReply.status.code).to.equal(202, 'carol member');
+    expect(carolMemberReply.status.code).toBe(202, 'carol member');
 
     // alice writes a public note to carol and posts it in the aggregator
     const aliceNoteData = TestDataGenerator.randomBytes(256);
@@ -533,11 +530,11 @@ describe('Aggregator Model', () => {
 
     // Alice writes it to her own DWN and the aggregator
     const aliceLocalDWN = await dwn.processMessage(alice.did, aliceNoteToCarol.message, { dataStream: DataStream.fromBytes(aliceNoteData) });
-    expect(aliceLocalDWN.status.code).to.equal(202, 'alice note');
+    expect(aliceLocalDWN.status.code).toBe(202, 'alice note');
     const aliceAggregatorDWN = await dwn.processMessage(aggregator.did, aliceNoteToCarol.message, {
       dataStream: DataStream.fromBytes(aliceNoteData)
     });
-    expect(aliceAggregatorDWN.status.code).to.equal(202, 'alice note aggregator');
+    expect(aliceAggregatorDWN.status.code).toBe(202, 'alice note aggregator');
 
     // bob writes a public note to alice and posts it in the aggregator
     const bobNoteToAliceData = TestDataGenerator.randomBytes(256);
@@ -555,11 +552,11 @@ describe('Aggregator Model', () => {
 
     // Bob writes it to his own DWN and the aggregator
     const bobLocalDWN = await dwn.processMessage(bob.did, bobNoteToAlice.message, { dataStream: DataStream.fromBytes(bobNoteToAliceData) });
-    expect(bobLocalDWN.status.code).to.equal(202, 'bob note');
+    expect(bobLocalDWN.status.code).toBe(202, 'bob note');
     const bobAggregatorDWN = await dwn.processMessage(aggregator.did, bobNoteToAlice.message, {
       dataStream: DataStream.fromBytes(bobNoteToAliceData)
     });
-    expect(bobAggregatorDWN.status.code).to.equal(202, 'bob note aggregator');
+    expect(bobAggregatorDWN.status.code).toBe(202, 'bob note aggregator');
 
     // carol writes a public note to bob and posts it in the aggregator
     const carolNoteToBobData = TestDataGenerator.randomBytes(256);
@@ -579,11 +576,11 @@ describe('Aggregator Model', () => {
     const carolLocalDWN = await dwn.processMessage(carol.did, carolNoteToBob.message, {
       dataStream: DataStream.fromBytes(carolNoteToBobData)
     });
-    expect(carolLocalDWN.status.code).to.equal(202, 'carol note');
+    expect(carolLocalDWN.status.code).toBe(202, 'carol note');
     const carolAggregatorDWN = await dwn.processMessage(aggregator.did, carolNoteToBob.message, {
       dataStream: DataStream.fromBytes(carolNoteToBobData)
     });
-    expect(carolAggregatorDWN.status.code).to.equal(202, 'carol note aggregator');
+    expect(carolAggregatorDWN.status.code).toBe(202, 'carol note aggregator');
 
     // daniel writes a public note to alice and posts it in the aggregator (which will reject it as he is not a member)
     const danielNoteToAlice = TestDataGenerator.randomBytes(256);
@@ -601,9 +598,9 @@ describe('Aggregator Model', () => {
 
     // Daniel writes it to his own DWN and the aggregator
     const danielLocalDWN = await dwn.processMessage(daniel.did, danielNote.message, { dataStream: DataStream.fromBytes(danielNoteToAlice) });
-    expect(danielLocalDWN.status.code).to.equal(202, 'daniel note');
+    expect(danielLocalDWN.status.code).toBe(202, 'daniel note');
     const danielAggregatorDWN = await dwn.processMessage(aggregator.did, danielNote.message, { dataStream: DataStream.fromBytes(danielNoteToAlice) });
-    expect(danielAggregatorDWN.status.code).to.equal(401, 'daniel note aggregator');
+    expect(danielAggregatorDWN.status.code).toBe(401, 'daniel note aggregator');
 
 
     // daniel can read public notes from multiple authors in a single query
@@ -617,10 +614,10 @@ describe('Aggregator Model', () => {
     });
 
     const danielReadReply = await dwn.processMessage(aggregator.did, danielRead.message);
-    expect(danielReadReply.status.code).to.equal(200, 'daniel read');
-    expect(danielReadReply.entries?.length).to.equal(2, 'daniel read records');
-    expect(danielReadReply.entries![0].recordId).to.equal(aliceNoteToCarol.message.recordId, 'daniel read alice note');
-    expect(danielReadReply.entries![1].recordId).to.equal(bobNoteToAlice.message.recordId, 'daniel read bob note');
+    expect(danielReadReply.status.code).toBe(200, 'daniel read');
+    expect(danielReadReply.entries?.length).toBe(2, 'daniel read records');
+    expect(danielReadReply.entries![0].recordId).toBe(aliceNoteToCarol.message.recordId, 'daniel read alice note');
+    expect(danielReadReply.entries![1].recordId).toBe(bobNoteToAlice.message.recordId, 'daniel read bob note');
 
     // create  private notes to carol from alice and bob
     const alicePrivateNoteToCarol = TestDataGenerator.randomBytes(256);
@@ -639,12 +636,12 @@ describe('Aggregator Model', () => {
     const aliceNoteToCarolLocal = await dwn.processMessage(alice.did, aliceNoteToCarolPrivate.message, {
       dataStream: DataStream.fromBytes(alicePrivateNoteToCarol)
     });
-    expect(aliceNoteToCarolLocal.status.code).to.equal(202, 'alice private note');
+    expect(aliceNoteToCarolLocal.status.code).toBe(202, 'alice private note');
 
     const aliceNoteToCarolAggregator = await dwn.processMessage(aggregator.did, aliceNoteToCarolPrivate.message, {
       dataStream: DataStream.fromBytes(alicePrivateNoteToCarol)
     });
-    expect(aliceNoteToCarolAggregator.status.code).to.equal(202, 'alice private note aggregator');
+    expect(aliceNoteToCarolAggregator.status.code).toBe(202, 'alice private note aggregator');
 
     const bobPrivateNoteToCarol = TestDataGenerator.randomBytes(256);
     const bobNoteToCarolPrivate = await RecordsWrite.create({
@@ -662,12 +659,12 @@ describe('Aggregator Model', () => {
     const bobNoteToCarolLocal = await dwn.processMessage(bob.did, bobNoteToCarolPrivate.message, {
       dataStream: DataStream.fromBytes(bobPrivateNoteToCarol)
     });
-    expect(bobNoteToCarolLocal.status.code).to.equal(202, 'bob private note');
+    expect(bobNoteToCarolLocal.status.code).toBe(202, 'bob private note');
 
     const bobNoteToCarolAggregator = await dwn.processMessage(aggregator.did, bobNoteToCarolPrivate.message, {
       dataStream: DataStream.fromBytes(bobPrivateNoteToCarol)
     });
-    expect(bobNoteToCarolAggregator.status.code).to.equal(202, 'bob private note aggregator');
+    expect(bobNoteToCarolAggregator.status.code).toBe(202, 'bob private note aggregator');
 
     // create a private note from bob to alice
     const bobNoteToAlicePrivateData = TestDataGenerator.randomBytes(256);
@@ -686,11 +683,11 @@ describe('Aggregator Model', () => {
     const bobNoteToAliceLocal = await dwn.processMessage(bob.did, bobNoteToAlicePrivate.message, {
       dataStream: DataStream.fromBytes(bobNoteToAlicePrivateData)
     });
-    expect(bobNoteToAliceLocal.status.code).to.equal(202, 'alice private note to bob');
+    expect(bobNoteToAliceLocal.status.code).toBe(202, 'alice private note to bob');
     const bobNoteToAliceAggregator = await dwn.processMessage(aggregator.did, bobNoteToAlicePrivate.message, {
       dataStream: DataStream.fromBytes(bobNoteToAlicePrivateData)
     });
-    expect(bobNoteToAliceAggregator.status.code).to.equal(202, 'alice private note to bob aggregator');
+    expect(bobNoteToAliceAggregator.status.code).toBe(202, 'alice private note to bob aggregator');
 
     // confirm daniel can still only read the public notes
     const danielRead2 = await RecordsQuery.create({
@@ -703,10 +700,10 @@ describe('Aggregator Model', () => {
     });
 
     const danielReadReply2 = await dwn.processMessage(aggregator.did, danielRead2.message);
-    expect(danielReadReply2.status.code).to.equal(200, 'daniel read 2');
-    expect(danielReadReply2.entries?.length).to.equal(2, 'daniel read records 2');
-    expect(danielReadReply2.entries![0].recordId).to.equal(aliceNoteToCarol.message.recordId, 'daniel read alice note 2');
-    expect(danielReadReply2.entries![1].recordId).to.equal(bobNoteToAlice.message.recordId, 'daniel read bob note 2');
+    expect(danielReadReply2.status.code).toBe(200, 'daniel read 2');
+    expect(danielReadReply2.entries?.length).toBe(2, 'daniel read records 2');
+    expect(danielReadReply2.entries![0].recordId).toBe(aliceNoteToCarol.message.recordId, 'daniel read alice note 2');
+    expect(danielReadReply2.entries![1].recordId).toBe(bobNoteToAlice.message.recordId, 'daniel read bob note 2');
 
     // carol queries for notes from alice and bob and gets the public notes and private notes destined for her
     // carol does not see the private note from alice to bob
@@ -720,12 +717,12 @@ describe('Aggregator Model', () => {
     });
 
     const carolReadReply = await dwn.processMessage(aggregator.did, carolRead.message);
-    expect(carolReadReply.status.code).to.equal(200, 'carol read');
-    expect(carolReadReply.entries?.length).to.equal(4, 'carol read records');
-    expect(carolReadReply.entries![0].recordId).to.equal(aliceNoteToCarol.message.recordId, 'carol read alice note');
-    expect(carolReadReply.entries![1].recordId).to.equal(bobNoteToAlice.message.recordId, 'carol read bob note');
-    expect(carolReadReply.entries![2].recordId).to.equal(aliceNoteToCarolPrivate.message.recordId, 'carol read alice private note');
-    expect(carolReadReply.entries![3].recordId).to.equal(bobNoteToCarolPrivate.message.recordId, 'carol read bob private note');
+    expect(carolReadReply.status.code).toBe(200, 'carol read');
+    expect(carolReadReply.entries?.length).toBe(4, 'carol read records');
+    expect(carolReadReply.entries![0].recordId).toBe(aliceNoteToCarol.message.recordId, 'carol read alice note');
+    expect(carolReadReply.entries![1].recordId).toBe(bobNoteToAlice.message.recordId, 'carol read bob note');
+    expect(carolReadReply.entries![2].recordId).toBe(aliceNoteToCarolPrivate.message.recordId, 'carol read alice private note');
+    expect(carolReadReply.entries![3].recordId).toBe(bobNoteToCarolPrivate.message.recordId, 'carol read bob private note');
 
     // alice queries for notes from bob and carol and gets the public notes and private notes destined for her
     const aliceRead = await RecordsQuery.create({
@@ -738,10 +735,10 @@ describe('Aggregator Model', () => {
     });
 
     const aliceReadReply = await dwn.processMessage(aggregator.did, aliceRead.message);
-    expect(aliceReadReply.status.code).to.equal(200, 'alice read');
-    expect(aliceReadReply.entries?.length).to.equal(3, 'alice read records');
-    expect(aliceReadReply.entries![0].recordId).to.equal(aliceNoteToCarol.message.recordId, 'alice note to carol public');
-    expect(aliceReadReply.entries![1].recordId).to.equal(carolNoteToBob.message.recordId, 'carol note to bob public');
-    expect(aliceReadReply.entries![2].recordId).to.equal(aliceNoteToCarolPrivate.message.recordId, 'alice to carol private');
+    expect(aliceReadReply.status.code).toBe(200, 'alice read');
+    expect(aliceReadReply.entries?.length).toBe(3, 'alice read records');
+    expect(aliceReadReply.entries![0].recordId).toBe(aliceNoteToCarol.message.recordId, 'alice note to carol public');
+    expect(aliceReadReply.entries![1].recordId).toBe(carolNoteToBob.message.recordId, 'carol note to bob public');
+    expect(aliceReadReply.entries![2].recordId).toBe(aliceNoteToCarolPrivate.message.recordId, 'alice to carol private');
   });
 });

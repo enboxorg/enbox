@@ -3,9 +3,7 @@ import type { EventStream } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
 import type { ProtocolDefinition, ProtocolsConfigureDescriptor } from '../../src/types/protocols-types.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
-import chai, { expect } from 'chai';
 
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Dwn } from '../../src/dwn.js';
@@ -17,10 +15,10 @@ import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Message, ProtocolsConfigure, RecordsDelete, Time } from '../../src/index.js';
 
-chai.use(chaiAsPromised);
 
 export function testProtocolDeleteAction(): void {
   describe('Protocol `delete` action', () => {
@@ -34,7 +32,7 @@ export function testProtocolDeleteAction(): void {
 
     // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
     // so that different test suites can reuse the same backend store for testing
-    before(async () => {
+    beforeAll(async () => {
       didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
       const stores = TestStores.get();
@@ -57,7 +55,7 @@ export function testProtocolDeleteAction(): void {
       await stateIndex.clear();
     });
 
-    after(async () => {
+    afterAll(async () => {
       await dwn.close();
     });
 
@@ -103,7 +101,7 @@ export function testProtocolDeleteAction(): void {
       });
 
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // 2. Alice gives Bob and Carol the "user" role to be able to write `foo` records.
       const userBobRecordsWrite = await TestDataGenerator.generateRecordsWrite({
@@ -114,7 +112,7 @@ export function testProtocolDeleteAction(): void {
       });
       const userBobRecordsWriteReply
         = await dwn.processMessage(alice.did, userBobRecordsWrite.message, { dataStream: userBobRecordsWrite.dataStream });
-      expect(userBobRecordsWriteReply.status.code).to.equal(202);
+      expect(userBobRecordsWriteReply.status.code).toBe(202);
 
       const userCarolRecordsWrite = await TestDataGenerator.generateRecordsWrite({
         author       : alice,
@@ -124,7 +122,7 @@ export function testProtocolDeleteAction(): void {
       });
       const userCarolRecordsWriteReply
         = await dwn.processMessage(alice.did, userCarolRecordsWrite.message, { dataStream: userCarolRecordsWrite.dataStream });
-      expect(userCarolRecordsWriteReply.status.code).to.equal(202);
+      expect(userCarolRecordsWriteReply.status.code).toBe(202);
 
       // 3. Bob creates a `foo` by invoking the user role.
       const bobFooBytes = TestDataGenerator.randomBytes(100);
@@ -141,7 +139,7 @@ export function testProtocolDeleteAction(): void {
       );
       const bobRoleAuthorizedCreateReply
         = await dwn.processMessage(alice.did, bobRoleAuthorizedFoo.message, { dataStream: DataStream.fromBytes(bobFooBytes) });
-      expect(bobRoleAuthorizedCreateReply.status.code).to.equal(202);
+      expect(bobRoleAuthorizedCreateReply.status.code).toBe(202);
 
       // 4. Verify that Bob can delete his `foo`
       const bobAuthorizedFooDelete = await RecordsDelete.create(
@@ -153,7 +151,7 @@ export function testProtocolDeleteAction(): void {
       );
       const bobAuthorizedFooDeleteReply
         = await dwn.processMessage(alice.did, bobAuthorizedFooDelete.message);
-      expect(bobAuthorizedFooDeleteReply.status.code).to.equal(202);
+      expect(bobAuthorizedFooDeleteReply.status.code).toBe(202);
 
       //   4a. Sanity verify that the delete took effect by reading the record back
       const recordsRead = await RecordsRead.create({
@@ -163,7 +161,7 @@ export function testProtocolDeleteAction(): void {
         signer: Jws.createSigner(alice)
       });
       const recordsReadReply = await dwn.processMessage(alice.did, recordsRead.message);
-      expect(recordsReadReply.status.code).to.equal(404);
+      expect(recordsReadReply.status.code).toBe(404);
 
       // 5. Carol creates a `foo` by invoking the user role.
       const carolFooBytes = TestDataGenerator.randomBytes(100);
@@ -180,7 +178,7 @@ export function testProtocolDeleteAction(): void {
       );
       const carolRoleAuthorizedCreateReply
         = await dwn.processMessage(alice.did, carolRoleAuthorizedFoo.message, { dataStream: DataStream.fromBytes(carolFooBytes) });
-      expect(carolRoleAuthorizedCreateReply.status.code).to.equal(202);
+      expect(carolRoleAuthorizedCreateReply.status.code).toBe(202);
 
       // 6. Verify that Bob cannot delete Carol's `foo`
       const bobUnauthorizedFooDelete = await RecordsDelete.create(
@@ -192,8 +190,8 @@ export function testProtocolDeleteAction(): void {
       );
       const bobUnauthorizedFooDeleteReply
         = await dwn.processMessage(alice.did, bobUnauthorizedFooDelete.message);
-      expect(bobUnauthorizedFooDeleteReply.status.code).to.equal(401);
-      expect(bobUnauthorizedFooDeleteReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+      expect(bobUnauthorizedFooDeleteReply.status.code).toBe(401);
+      expect(bobUnauthorizedFooDeleteReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
     });
 
     it('should only allow author of an author/recipient-authorized create to delete', async () => {
@@ -253,7 +251,7 @@ export function testProtocolDeleteAction(): void {
       });
 
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a `foo` with Bob being the recipient, so that Bob can create `bar`.
       const fooForBob = await TestDataGenerator.generateRecordsWrite({
@@ -263,7 +261,7 @@ export function testProtocolDeleteAction(): void {
         protocolPath : 'foo'
       });
       const fooForBobReply = await dwn.processMessage(alice.did, fooForBob.message, { dataStream: fooForBob.dataStream });
-      expect(fooForBobReply.status.code).to.equal(202);
+      expect(fooForBobReply.status.code).toBe(202);
 
       // 3. Alice creates a `foo` with Carol being the recipient, so that Carol can create `bar`.
       const fooForCarol = await TestDataGenerator.generateRecordsWrite({
@@ -273,7 +271,7 @@ export function testProtocolDeleteAction(): void {
         protocolPath : 'foo'
       });
       const fooForCarolReply = await dwn.processMessage(alice.did, fooForCarol.message, { dataStream: fooForCarol.dataStream });
-      expect(fooForCarolReply.status.code).to.equal(202);
+      expect(fooForCarolReply.status.code).toBe(202);
 
       // 4. Bob creates a recipient-authorized `bar`.
       const bobBarBytes = TestDataGenerator.randomBytes(100);
@@ -290,7 +288,7 @@ export function testProtocolDeleteAction(): void {
       );
       const bobRecipientAuthorizedBarReply
         = await dwn.processMessage(alice.did, bobRecipientAuthorizedBar.message, { dataStream: DataStream.fromBytes(bobBarBytes) });
-      expect(bobRecipientAuthorizedBarReply.status.code).to.equal(202);
+      expect(bobRecipientAuthorizedBarReply.status.code).toBe(202);
 
       // 5. Bob creates a author-authorized `baz` after his `bar`.
       const bobBazBytes = TestDataGenerator.randomBytes(100);
@@ -307,7 +305,7 @@ export function testProtocolDeleteAction(): void {
       );
       const bobAuthorAuthorizedBazReply
         = await dwn.processMessage(alice.did, bobAuthorAuthorizedBaz.message, { dataStream: DataStream.fromBytes(bobBazBytes) });
-      expect(bobAuthorAuthorizedBazReply.status.code).to.equal(202);
+      expect(bobAuthorAuthorizedBazReply.status.code).toBe(202);
 
       // 6. Carol creates a recipient-authorized `bar`.
       const carolBarBytes = TestDataGenerator.randomBytes(100);
@@ -324,7 +322,7 @@ export function testProtocolDeleteAction(): void {
       );
       const carolRecipientAuthorizedBarReply
         = await dwn.processMessage(alice.did, carolRecipientAuthorizedBar.message, { dataStream: DataStream.fromBytes(carolBarBytes) });
-      expect(carolRecipientAuthorizedBarReply.status.code).to.equal(202);
+      expect(carolRecipientAuthorizedBarReply.status.code).toBe(202);
 
       // 7. Carol creates a author-authorized `baz` after her `bar`.
       const carolBazBytes = TestDataGenerator.randomBytes(100);
@@ -341,7 +339,7 @@ export function testProtocolDeleteAction(): void {
       );
       const carolAuthorAuthorizedBazReply
         = await dwn.processMessage(alice.did, carolAuthorAuthorizedBaz.message, { dataStream: DataStream.fromBytes(carolBazBytes) });
-      expect(carolAuthorAuthorizedBazReply.status.code).to.equal(202);
+      expect(carolAuthorAuthorizedBazReply.status.code).toBe(202);
 
       // 8. Verify that Bob can delete his `baz`
       const bobAuthorizedBazDelete = await RecordsDelete.create(
@@ -352,7 +350,7 @@ export function testProtocolDeleteAction(): void {
       );
       const bobAuthorizedBazDeleteReply
         = await dwn.processMessage(alice.did, bobAuthorizedBazDelete.message);
-      expect(bobAuthorizedBazDeleteReply.status.code).to.equal(202);
+      expect(bobAuthorizedBazDeleteReply.status.code).toBe(202);
 
       //   8a. Sanity verify that the delete took effect by reading the record back.
       const bobBarRead = await RecordsRead.create({
@@ -362,7 +360,7 @@ export function testProtocolDeleteAction(): void {
         signer: Jws.createSigner(alice)
       });
       const bobBarReadReply = await dwn.processMessage(alice.did, bobBarRead.message);
-      expect(bobBarReadReply.status.code).to.equal(404);
+      expect(bobBarReadReply.status.code).toBe(404);
 
       // 9. Verify that Bob can delete his `bar`.
       const bobAuthorizedBarDelete = await RecordsDelete.create(
@@ -373,7 +371,7 @@ export function testProtocolDeleteAction(): void {
       );
       const bobAuthorizedBarDeleteReply
         = await dwn.processMessage(alice.did, bobAuthorizedBarDelete.message);
-      expect(bobAuthorizedBarDeleteReply.status.code).to.equal(202);
+      expect(bobAuthorizedBarDeleteReply.status.code).toBe(202);
 
       // 10. Verify that Bob cannot delete Carol's `bar`.
       const bobUnauthorizedBarDelete = await RecordsDelete.create(
@@ -384,8 +382,8 @@ export function testProtocolDeleteAction(): void {
       );
       const bobUnauthorizedBarDeleteReply
         = await dwn.processMessage(alice.did, bobUnauthorizedBarDelete.message);
-      expect(bobUnauthorizedBarDeleteReply.status.code).to.equal(401);
-      expect(bobUnauthorizedBarDeleteReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+      expect(bobUnauthorizedBarDeleteReply.status.code).toBe(401);
+      expect(bobUnauthorizedBarDeleteReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
 
       // 11. Verify that Bob cannot delete Carol's `baz`
       const bobUnauthorizedBazDelete = await RecordsDelete.create(
@@ -396,8 +394,8 @@ export function testProtocolDeleteAction(): void {
       );
       const bobUnauthorizedBazDeleteReply
         = await dwn.processMessage(alice.did, bobUnauthorizedBazDelete.message);
-      expect(bobUnauthorizedBazDeleteReply.status.code).to.equal(401);
-      expect(bobUnauthorizedBazDeleteReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+      expect(bobUnauthorizedBazDeleteReply.status.code).toBe(401);
+      expect(bobUnauthorizedBazDeleteReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
     });
 
     it('should only allow author of an anyone-authorized create to delete', async () => {
@@ -437,7 +435,7 @@ export function testProtocolDeleteAction(): void {
       });
 
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // 2. Bob creates an anyone-authorized `foo`.
       const bobFooBytes = TestDataGenerator.randomBytes(100);
@@ -453,7 +451,7 @@ export function testProtocolDeleteAction(): void {
       );
       const bobAnyoneAuthorizedFooReply
         = await dwn.processMessage(alice.did, bobAnyoneAuthorizedFoo.message, { dataStream: DataStream.fromBytes(bobFooBytes) });
-      expect(bobAnyoneAuthorizedFooReply.status.code).to.equal(202);
+      expect(bobAnyoneAuthorizedFooReply.status.code).toBe(202);
 
       // 3. Carol creates a anyone-authorized `foo`.
       const carolFooBytes = TestDataGenerator.randomBytes(100);
@@ -469,7 +467,7 @@ export function testProtocolDeleteAction(): void {
       );
       const carolAnyoneAuthorizedFooReply
         = await dwn.processMessage(alice.did, carolAnyoneAuthorizedFoo.message, { dataStream: DataStream.fromBytes(carolFooBytes) });
-      expect(carolAnyoneAuthorizedFooReply.status.code).to.equal(202);
+      expect(carolAnyoneAuthorizedFooReply.status.code).toBe(202);
 
       // 4. Verify that Bob can delete his `foo`.
       const bobAuthorizedFooDelete = await RecordsDelete.create(
@@ -480,7 +478,7 @@ export function testProtocolDeleteAction(): void {
       );
       const bobAuthorizedFooDeleteReply
         = await dwn.processMessage(alice.did, bobAuthorizedFooDelete.message);
-      expect(bobAuthorizedFooDeleteReply.status.code).to.equal(202);
+      expect(bobAuthorizedFooDeleteReply.status.code).toBe(202);
 
       //   4a. Sanity verify that the delete took effect by reading the record back.
       const bobBarRead = await RecordsRead.create({
@@ -490,7 +488,7 @@ export function testProtocolDeleteAction(): void {
         signer: Jws.createSigner(alice)
       });
       const bobFooReadReply = await dwn.processMessage(alice.did, bobBarRead.message);
-      expect(bobFooReadReply.status.code).to.equal(404);
+      expect(bobFooReadReply.status.code).toBe(404);
 
       // 5. Verify that Bob cannot delete Carol's `foo`.
       const bobUnauthorizedBarDelete = await RecordsDelete.create(
@@ -501,8 +499,8 @@ export function testProtocolDeleteAction(): void {
       );
       const bobUnauthorizedFooDeleteReply
         = await dwn.processMessage(alice.did, bobUnauthorizedBarDelete.message);
-      expect(bobUnauthorizedFooDeleteReply.status.code).to.equal(401);
-      expect(bobUnauthorizedFooDeleteReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+      expect(bobUnauthorizedFooDeleteReply.status.code).toBe(401);
+      expect(bobUnauthorizedFooDeleteReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
     });
 
     it('should not allow creation of a protocol definition with action rule containing `delete` without `create`', async () => {
@@ -530,7 +528,7 @@ export function testProtocolDeleteAction(): void {
         signer     : Jws.createSigner(alice)
       });
 
-      await expect(protocolsConfigureCreatePromise).to.be.rejectedWith(DwnErrorCode.ProtocolsConfigureInvalidActionDeleteWithoutCreate);
+      await expect(protocolsConfigureCreatePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidActionDeleteWithoutCreate);
     });
 
     it('should reject ProtocolsConfigure with action rule containing `delete` action without `create` during processing', async () => {
@@ -568,8 +566,8 @@ export function testProtocolDeleteAction(): void {
       const protocolsConfigureMessage = { descriptor, authorization };
 
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfigureMessage);
-      expect(protocolsConfigureReply.status.code).to.equal(400);
-      expect(protocolsConfigureReply.status.detail).to.contain(DwnErrorCode.ProtocolsConfigureInvalidActionDeleteWithoutCreate);
+      expect(protocolsConfigureReply.status.code).toBe(400);
+      expect(protocolsConfigureReply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureInvalidActionDeleteWithoutCreate);
     });
 
     describe('ProtocolAuthorization.getActionsSeekingARuleMatch()', () => {
@@ -584,10 +582,10 @@ export function testProtocolDeleteAction(): void {
         );
         const bobUnauthorizedFooDeleteReply
           = await dwn.processMessage(alice.did, bobUnauthorizedFooDelete.message);
-        expect(bobUnauthorizedFooDeleteReply.status.code).to.equal(404);
+        expect(bobUnauthorizedFooDeleteReply.status.code).toBe(404);
 
         const actionsSeekingARuleMatch = await ProtocolAuthorization['getActionsSeekingARuleMatch'](alice.did, bobUnauthorizedFooDelete, messageStore);
-        expect(actionsSeekingARuleMatch).to.be.empty;
+        expect(actionsSeekingARuleMatch).toHaveLength(0);
       });
     });
   });

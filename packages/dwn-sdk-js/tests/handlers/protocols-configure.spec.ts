@@ -10,12 +10,9 @@ import type {
   StateIndex,
 } from '../../src/index.js';
 
-import chaiAsPromised from 'chai-as-promised';
-import sinon from 'sinon';
-import chai, { expect } from 'chai';
-
 import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
 import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
+import sinon from 'sinon';
 
 import { GeneralJwsBuilder } from '../../src/jose/jws/general/builder.js';
 import { lexicographicalCompare } from '../../src/utils/string.js';
@@ -26,11 +23,9 @@ import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
-
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Jws, PermissionGrant, PermissionsProtocol, RecordsDelete, RecordsRead, RecordsWrite } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-
-chai.use(chaiAsPromised);
 
 export function testProtocolsConfigureHandler(): void {
   describe('ProtocolsConfigureHandler.handle()', () => {
@@ -46,7 +41,7 @@ export function testProtocolsConfigureHandler(): void {
 
       // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
       // so that different test suites can reuse the same backend store for testing
-      before(async () => {
+      beforeAll(async () => {
         didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
         const stores = TestStores.get();
@@ -69,7 +64,7 @@ export function testProtocolsConfigureHandler(): void {
         await stateIndex.clear();
       });
 
-      after(async () => {
+      afterAll(async () => {
         await dwn.close();
       });
 
@@ -83,7 +78,7 @@ export function testProtocolsConfigureHandler(): void {
         });
 
         const reply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(reply.status.code).to.equal(202);
+        expect(reply.status.code).toBe(202);
       });
 
       it('should return 400 if more than 1 signature is provided in `authorization`', async () => {
@@ -104,8 +99,8 @@ export function testProtocolsConfigureHandler(): void {
 
         const reply = await dwn.processMessage(tenant, message);
 
-        expect(reply.status.code).to.equal(400);
-        expect(reply.status.detail).to.contain('expected no more than 1 signature');
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain('expected no more than 1 signature');
       });
 
       it('should return 401 if auth fails', async () => {
@@ -117,8 +112,8 @@ export function testProtocolsConfigureHandler(): void {
         message.authorization.signature.signatures[0].signature = badSignature;
 
         const reply = await dwn.processMessage(alice.did, message);
-        expect(reply.status.code).to.equal(401);
-        expect(reply.status.detail).to.contain(DwnErrorCode.GeneralJwsVerifierInvalidSignature);
+        expect(reply.status.code).toBe(401);
+        expect(reply.status.detail).toContain(DwnErrorCode.GeneralJwsVerifierInvalidSignature);
       });
 
       it('should store all protocol versions and query should only return the latest', async () => {
@@ -138,11 +133,11 @@ export function testProtocolsConfigureHandler(): void {
 
         // first ProtocolsConfigure
         const reply1 = await dwn.processMessage(alice.did, middleProtocolsConfigure.message);
-        expect(reply1.status.code).to.equal(202);
+        expect(reply1.status.code).toBe(202);
 
         // older messages are also accepted (stored as historical versions)
         const reply2 = await dwn.processMessage(alice.did, oldProtocolsConfigure.message);
-        expect(reply2.status.code).to.equal(202);
+        expect(reply2.status.code).toBe(202);
 
         // newer message is also accepted and becomes the latest
         const newProtocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
@@ -150,7 +145,7 @@ export function testProtocolsConfigureHandler(): void {
           protocolDefinition,
         });
         const reply3 = await dwn.processMessage(alice.did, newProtocolsConfigure.message);
-        expect(reply3.status.code).to.equal(202);
+        expect(reply3.status.code).toBe(202);
 
         // only the newest protocol should be returned by query (ProtocolsQuery returns only latest)
         const queryMessageData = await TestDataGenerator.generateProtocolsQuery({
@@ -159,8 +154,8 @@ export function testProtocolsConfigureHandler(): void {
         });
         const queryReply = await dwn.processMessage(alice.did, queryMessageData.message);
 
-        expect(queryReply.status.code).to.equal(200);
-        expect(queryReply.entries?.length).to.equal(1);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries?.length).toBe(1);
       });
 
       it('should store all protocol versions with identical timestamps and query should only return the newest (by CID tiebreak)', async () => {
@@ -212,15 +207,15 @@ export function testProtocolsConfigureHandler(): void {
 
         // write the protocol with the middle lexicographic value
         const reply1 = await dwn.processMessage(alice.did, middleProtocolsConfigure.message);
-        expect(reply1.status.code).to.equal(202);
+        expect(reply1.status.code).toBe(202);
 
         // all versions are accepted (stored as historical versions)
         const reply2 = await dwn.processMessage(alice.did, lowestProtocolsConfigure.message);
-        expect(reply2.status.code).to.equal(202);
+        expect(reply2.status.code).toBe(202);
 
         // highest lexicographic value is also accepted and becomes the latest
         const reply3 = await dwn.processMessage(alice.did, highestProtocolsConfigure.message);
-        expect(reply3.status.code).to.equal(202);
+        expect(reply3.status.code).toBe(202);
 
         // query should only return the latest protocol definition (highest by CID tiebreak)
         const queryMessageData = await TestDataGenerator.generateProtocolsQuery({
@@ -229,8 +224,8 @@ export function testProtocolsConfigureHandler(): void {
         });
         const queryReply = await dwn.processMessage(alice.did, queryMessageData.message);
 
-        expect(queryReply.status.code).to.equal(200);
-        expect(queryReply.entries?.length).to.equal(1);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries?.length).toBe(1);
       });
 
       it('should return 400 if protocol is not normalized', async () => {
@@ -253,8 +248,8 @@ export function testProtocolsConfigureHandler(): void {
 
         // Send records write message
         const reply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(reply.status.code).to.equal(400);
-        expect(reply.status.detail).to.contain(DwnErrorCode.UrlProtocolNotNormalized);
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain(DwnErrorCode.UrlProtocolNotNormalized);
       });
 
       it('should return 400 if schema is not normalized', async () => {
@@ -277,8 +272,8 @@ export function testProtocolsConfigureHandler(): void {
 
         // Send records write message
         const reply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(reply.status.code).to.equal(400);
-        expect(reply.status.detail).to.contain(DwnErrorCode.UrlSchemaNotNormalized);
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain(DwnErrorCode.UrlSchemaNotNormalized);
       });
 
       it('rejects non-tenant non-granted ProtocolsConfigures with 401', async () => {
@@ -292,8 +287,8 @@ export function testProtocolsConfigureHandler(): void {
           protocolDefinition,
         });
         const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).to.equal(401);
-        expect(protocolsConfigureReply.status.detail).to.contain(DwnErrorCode.ProtocolsConfigureAuthorizationFailed);
+        expect(protocolsConfigureReply.status.code).toBe(401);
+        expect(protocolsConfigureReply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureAuthorizationFailed);
       });
 
       it('should reject ProtocolsConfigure with action rule containing duplicated actor (`who` or `who` + `of` combination) within a rule set', async () => {
@@ -337,8 +332,8 @@ export function testProtocolsConfigureHandler(): void {
         const protocolsConfigureMessage = { descriptor, authorization };
 
         const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfigureMessage);
-        expect(protocolsConfigureReply.status.code).to.equal(400);
-        expect(protocolsConfigureReply.status.detail).to.contain(DwnErrorCode.ProtocolsConfigureDuplicateActorInRuleSet);
+        expect(protocolsConfigureReply.status.code).toBe(400);
+        expect(protocolsConfigureReply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureDuplicateActorInRuleSet);
 
 
         // similar test as above but with `of` property
@@ -384,8 +379,8 @@ export function testProtocolsConfigureHandler(): void {
         const protocolsConfigureMessage2 = { descriptor: descriptor2, authorization: authorization2 };
 
         const protocolsConfigure2Reply = await dwn.processMessage(alice.did, protocolsConfigureMessage2);
-        expect(protocolsConfigure2Reply.status.code).to.equal(400);
-        expect(protocolsConfigure2Reply.status.detail).to.contain(DwnErrorCode.ProtocolsConfigureDuplicateActorInRuleSet);
+        expect(protocolsConfigure2Reply.status.code).toBe(400);
+        expect(protocolsConfigure2Reply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureDuplicateActorInRuleSet);
       });
 
       it('should reject ProtocolsConfigure with action rule containing duplicated role within a rule set', async () => {
@@ -433,8 +428,8 @@ export function testProtocolsConfigureHandler(): void {
         const protocolsConfigureMessage = { descriptor, authorization };
 
         const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfigureMessage);
-        expect(protocolsConfigureReply.status.code).to.equal(400);
-        expect(protocolsConfigureReply.status.detail).to.contain(DwnErrorCode.ProtocolsConfigureDuplicateRoleInRuleSet);
+        expect(protocolsConfigureReply.status.code).toBe(400);
+        expect(protocolsConfigureReply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureDuplicateRoleInRuleSet);
       });
 
       it('should reject ProtocolsConfigure with action rule `of` pointing to a sibling type (not an ancestor)', async () => {
@@ -480,8 +475,8 @@ export function testProtocolsConfigureHandler(): void {
         const protocolsConfigureMessage = { descriptor, authorization };
 
         const reply = await dwn.processMessage(alice.did, protocolsConfigureMessage);
-        expect(reply.status.code).to.equal(400);
-        expect(reply.status.detail).to.contain(DwnErrorCode.ProtocolsConfigureInvalidActionOfNotAnAncestor);
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureInvalidActionOfNotAnAncestor);
       });
 
       it('should reject ProtocolsConfigure with action rule `of` pointing to an unrelated type', async () => {
@@ -526,8 +521,8 @@ export function testProtocolsConfigureHandler(): void {
         const protocolsConfigureMessage = { descriptor, authorization };
 
         const reply = await dwn.processMessage(alice.did, protocolsConfigureMessage);
-        expect(reply.status.code).to.equal(400);
-        expect(reply.status.detail).to.contain(DwnErrorCode.ProtocolsConfigureInvalidActionOfNotAnAncestor);
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureInvalidActionOfNotAnAncestor);
       });
 
       it('should accept ProtocolsConfigure with action rule `of` pointing to itself (same protocol path)', async () => {
@@ -562,7 +557,7 @@ export function testProtocolsConfigureHandler(): void {
         });
 
         const reply = await dwn.processMessage(alice.did, protocolsConfigure.message);
-        expect(reply.status.code).to.equal(202);
+        expect(reply.status.code).toBe(202);
       });
 
       it('should accept ProtocolsConfigure with action rule `of` pointing to a valid ancestor', async () => {
@@ -607,7 +602,7 @@ export function testProtocolsConfigureHandler(): void {
         });
 
         const reply = await dwn.processMessage(alice.did, protocolsConfigure.message);
-        expect(reply.status.code).to.equal(202);
+        expect(reply.status.code).toBe(202);
       });
 
       describe('Grant authorization', () => {
@@ -632,7 +627,7 @@ export function testProtocolsConfigureHandler(): void {
           const dataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
 
           const grantRecordsWriteReply = await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, { dataStream });
-          expect(grantRecordsWriteReply.status.code).to.equal(202);
+          expect(grantRecordsWriteReply.status.code).toBe(202);
 
           // 2. Verify Bob can perform a ProtocolsConfigure
           const permissionGrantId = permissionGrant.recordsWrite.message.recordId;
@@ -642,7 +637,7 @@ export function testProtocolsConfigureHandler(): void {
             protocolDefinition : minimalProtocolDefinition
           });
           const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfigure.message);
-          expect(protocolsConfigureReply.status.code).to.equal(202);
+          expect(protocolsConfigureReply.status.code).toBe(202);
 
           // 3. Verify that Mallory cannot to use Bob's permission grant to gain access to Alice's DWN
           const malloryProtocolsQuery = await TestDataGenerator.generateProtocolsConfigure({
@@ -651,8 +646,8 @@ export function testProtocolsConfigureHandler(): void {
             protocolDefinition : minimalProtocolDefinition
           });
           const malloryProtocolsQueryReply = await dwn.processMessage(alice.did, malloryProtocolsQuery.message);
-          expect(malloryProtocolsQueryReply.status.code).to.equal(401);
-          expect(malloryProtocolsQueryReply.status.detail).to.contain(DwnErrorCode.GrantAuthorizationNotGrantedToAuthor);
+          expect(malloryProtocolsQueryReply.status.code).toBe(401);
+          expect(malloryProtocolsQueryReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationNotGrantedToAuthor);
 
           // 4. Alice revokes Bob's grant
           const revokeWrite = await PermissionsProtocol.createRevocation({
@@ -666,7 +661,7 @@ export function testProtocolsConfigureHandler(): void {
             revokeWrite.recordsWrite.message,
             { dataStream: DataStream.fromBytes(revokeWrite.permissionRevocationBytes) }
           );
-          expect(revokeWriteReply.status.code).to.equal(202);
+          expect(revokeWriteReply.status.code).toBe(202);
 
           // 5. Verify Bob cannot perform ProtocolsQuery with the revoked grant
           const unauthorizedProtocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
@@ -678,8 +673,8 @@ export function testProtocolsConfigureHandler(): void {
             }
           });
           const unauthorizedProtocolsConfigureReply = await dwn.processMessage(alice.did, unauthorizedProtocolsConfigure.message);
-          expect(unauthorizedProtocolsConfigureReply.status.code).to.equal(401);
-          expect(unauthorizedProtocolsConfigureReply.status.detail).to.contain(DwnErrorCode.GrantAuthorizationGrantRevoked);
+          expect(unauthorizedProtocolsConfigureReply.status.code).toBe(401);
+          expect(unauthorizedProtocolsConfigureReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationGrantRevoked);
         });
 
         it('should allow to scope a ProtocolsConfigure to a specific protocol', async () => {
@@ -696,7 +691,7 @@ export function testProtocolsConfigureHandler(): void {
 
           const dataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
           const grantRecordsWriteReply = await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, { dataStream });
-          expect(grantRecordsWriteReply.status.code).to.equal(202);
+          expect(grantRecordsWriteReply.status.code).toBe(202);
 
           // Bob tries to ProtocolsConfigure to Alice's DWN for the allowed protocol
           const protocolConfigureAllowed = await TestDataGenerator.generateProtocolsConfigure({
@@ -709,7 +704,7 @@ export function testProtocolsConfigureHandler(): void {
           });
 
           const protocolConfigureAllowedReply = await dwn.processMessage(alice.did, protocolConfigureAllowed.message);
-          expect(protocolConfigureAllowedReply.status.code).to.equal(202);
+          expect(protocolConfigureAllowedReply.status.code).toBe(202);
 
           // Bob tries to ProtocolsConfigure to Alice's DWN for a different protocol
           const protocolConfigureNotAllowed = await TestDataGenerator.generateProtocolsConfigure({
@@ -722,7 +717,7 @@ export function testProtocolsConfigureHandler(): void {
           });
 
           const protocolConfigureNotAllowedReply = await dwn.processMessage(alice.did, protocolConfigureNotAllowed.message);
-          expect(protocolConfigureNotAllowedReply.status.code).to.equal(401);
+          expect(protocolConfigureNotAllowedReply.status.code).toBe(401);
         });
       });
 
@@ -732,13 +727,13 @@ export function testProtocolsConfigureHandler(): void {
           const { message } = await TestDataGenerator.generateProtocolsConfigure({ author: alice });
 
           const reply = await dwn.processMessage(alice.did, message);
-          expect(reply.status.code).to.equal(202);
+          expect(reply.status.code).toBe(202);
 
           const events = await stateIndex.getLeaves(alice.did, []);
-          expect(events.length).to.equal(1);
+          expect(events.length).toBe(1);
 
           const messageCid = await Message.getCid(message);
-          expect(events[0]).to.equal(messageCid);
+          expect(events[0]).toBe(messageCid);
         });
 
         it('should retain all ProtocolsConfigure events for protocol versioning', async () => {
@@ -748,18 +743,18 @@ export function testProtocolsConfigureHandler(): void {
           const newestWrite = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: minimalProtocolDefinition });
 
           let reply = await dwn.processMessage(alice.did, oldestWrite.message);
-          expect(reply.status.code).to.equal(202);
+          expect(reply.status.code).toBe(202);
 
           reply = await dwn.processMessage(alice.did, newestWrite.message);
-          expect(reply.status.code).to.equal(202);
+          expect(reply.status.code).toBe(202);
 
           const events = await stateIndex.getLeaves(alice.did, []);
-          expect(events.length).to.equal(2);
+          expect(events.length).toBe(2);
 
           const oldestMessageCid = await Message.getCid(oldestWrite.message);
           const newestMessageCid = await Message.getCid(newestWrite.message);
-          expect(events).to.include(oldestMessageCid);
-          expect(events).to.include(newestMessageCid);
+          expect(events).toContain(oldestMessageCid);
+          expect(events).toContain(newestMessageCid);
         });
       });
 
@@ -797,7 +792,7 @@ export function testProtocolsConfigureHandler(): void {
             protocolDefinition : protocolDefinitionV1,
           });
           const configureV1Reply = await dwn.processMessage(alice.did, configureV1.message);
-          expect(configureV1Reply.status.code).to.equal(202);
+          expect(configureV1Reply.status.code).toBe(202);
 
           // write a `post` record under v1
           const postRecord = await TestDataGenerator.generateRecordsWrite({
@@ -808,7 +803,7 @@ export function testProtocolsConfigureHandler(): void {
             dataFormat   : 'application/json',
           });
           const postReply = await dwn.processMessage(alice.did, postRecord.message, { dataStream: postRecord.dataStream });
-          expect(postReply.status.code).to.equal(202);
+          expect(postReply.status.code).toBe(202);
 
           // write a `comment` record under v1
           const commentRecord = await TestDataGenerator.generateRecordsWrite({
@@ -820,7 +815,7 @@ export function testProtocolsConfigureHandler(): void {
             parentContextId : postRecord.message.contextId,
           });
           const commentReply = await dwn.processMessage(alice.did, commentRecord.message, { dataStream: commentRecord.dataStream });
-          expect(commentReply.status.code).to.equal(202);
+          expect(commentReply.status.code).toBe(202);
 
           await Time.minimalSleep();
 
@@ -843,7 +838,7 @@ export function testProtocolsConfigureHandler(): void {
             protocolDefinition : protocolDefinitionV2,
           });
           const configureV2Reply = await dwn.processMessage(alice.did, configureV2.message);
-          expect(configureV2Reply.status.code).to.equal(202);
+          expect(configureV2Reply.status.code).toBe(202);
 
           // read the v1 `post` record — should succeed because read authorization uses v1 definition
           const readPost = await RecordsRead.create({
@@ -851,7 +846,7 @@ export function testProtocolsConfigureHandler(): void {
             signer : Jws.createSigner(alice),
           });
           const readPostReply = await dwn.processMessage(alice.did, readPost.message);
-          expect(readPostReply.status.code).to.equal(200);
+          expect(readPostReply.status.code).toBe(200);
 
           // read the v1 `comment` record — should succeed (governed by v1 definition where `comment` exists)
           const readComment = await RecordsRead.create({
@@ -859,7 +854,7 @@ export function testProtocolsConfigureHandler(): void {
             signer : Jws.createSigner(alice),
           });
           const readCommentReply = await dwn.processMessage(alice.did, readComment.message);
-          expect(readCommentReply.status.code).to.equal(200);
+          expect(readCommentReply.status.code).toBe(200);
 
           // update the v1 `post` record — should succeed (governed by v1 definition)
           const updatedData = new TextEncoder().encode('{"title":"updated post"}');
@@ -871,7 +866,7 @@ export function testProtocolsConfigureHandler(): void {
           const updatePostReply = await dwn.processMessage(
             alice.did, updatePost.message, { dataStream: DataStream.fromBytes(updatedData) }
           );
-          expect(updatePostReply.status.code).to.equal(202);
+          expect(updatePostReply.status.code).toBe(202);
         });
 
         it('should authorize new records against the latest protocol definition, not an older one', async () => {
@@ -901,7 +896,7 @@ export function testProtocolsConfigureHandler(): void {
             protocolDefinition : protocolDefinitionV1,
           });
           const configureV1Reply = await dwn.processMessage(alice.did, configureV1.message);
-          expect(configureV1Reply.status.code).to.equal(202);
+          expect(configureV1Reply.status.code).toBe(202);
 
           await Time.minimalSleep();
 
@@ -924,7 +919,7 @@ export function testProtocolsConfigureHandler(): void {
             protocolDefinition : protocolDefinitionV2,
           });
           const configureV2Reply = await dwn.processMessage(alice.did, configureV2.message);
-          expect(configureV2Reply.status.code).to.equal(202);
+          expect(configureV2Reply.status.code).toBe(202);
 
           // write a new record with v1 schema — should fail (latest definition requires v2 schema)
           const postV1 = await TestDataGenerator.generateRecordsWrite({
@@ -935,8 +930,8 @@ export function testProtocolsConfigureHandler(): void {
             dataFormat   : 'application/json',
           });
           const postV1Reply = await dwn.processMessage(alice.did, postV1.message, { dataStream: postV1.dataStream });
-          expect(postV1Reply.status.code).to.equal(400);
-          expect(postV1Reply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationInvalidSchema);
+          expect(postV1Reply.status.code).toBe(400);
+          expect(postV1Reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationInvalidSchema);
 
           // write a new record with v2 schema — should succeed
           const postV2 = await TestDataGenerator.generateRecordsWrite({
@@ -947,7 +942,7 @@ export function testProtocolsConfigureHandler(): void {
             dataFormat   : 'application/json',
           });
           const postV2Reply = await dwn.processMessage(alice.did, postV2.message, { dataStream: postV2.dataStream });
-          expect(postV2Reply.status.code).to.equal(202);
+          expect(postV2Reply.status.code).toBe(202);
         });
 
         it('should authorize deletes of v1 records after re-configuring to v2 that removes the type', async () => {
@@ -981,7 +976,7 @@ export function testProtocolsConfigureHandler(): void {
             protocolDefinition : protocolDefinitionV1,
           });
           const configureV1Reply = await dwn.processMessage(alice.did, configureV1.message);
-          expect(configureV1Reply.status.code).to.equal(202);
+          expect(configureV1Reply.status.code).toBe(202);
 
           // write a `post` record
           const postRecord = await TestDataGenerator.generateRecordsWrite({
@@ -990,7 +985,7 @@ export function testProtocolsConfigureHandler(): void {
             protocolPath : 'post',
           });
           const postReply = await dwn.processMessage(alice.did, postRecord.message, { dataStream: postRecord.dataStream });
-          expect(postReply.status.code).to.equal(202);
+          expect(postReply.status.code).toBe(202);
 
           // write a `comment` record under the post
           const commentRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1000,7 +995,7 @@ export function testProtocolsConfigureHandler(): void {
             parentContextId : postRecord.message.contextId,
           });
           const commentReply = await dwn.processMessage(alice.did, commentRecord.message, { dataStream: commentRecord.dataStream });
-          expect(commentReply.status.code).to.equal(202);
+          expect(commentReply.status.code).toBe(202);
 
           await Time.minimalSleep();
 
@@ -1023,7 +1018,7 @@ export function testProtocolsConfigureHandler(): void {
             protocolDefinition : protocolDefinitionV2,
           });
           const configureV2Reply = await dwn.processMessage(alice.did, configureV2.message);
-          expect(configureV2Reply.status.code).to.equal(202);
+          expect(configureV2Reply.status.code).toBe(202);
 
           // delete the v1 `comment` record — should succeed (governed by v1 definition)
           const deleteComment = await RecordsDelete.create({
@@ -1031,7 +1026,7 @@ export function testProtocolsConfigureHandler(): void {
             recordId : commentRecord.message.recordId,
           });
           const deleteReply = await dwn.processMessage(alice.did, deleteComment.message);
-          expect(deleteReply.status.code).to.equal(202);
+          expect(deleteReply.status.code).toBe(202);
         });
 
         it('should not retroactively apply v2 action rules to records created under v1', async () => {
@@ -1062,7 +1057,7 @@ export function testProtocolsConfigureHandler(): void {
             protocolDefinition : protocolDefinitionV1,
           });
           const configureV1Reply = await dwn.processMessage(alice.did, configureV1.message);
-          expect(configureV1Reply.status.code).to.equal(202);
+          expect(configureV1Reply.status.code).toBe(202);
 
           // Bob writes a `post` record to Alice's DWN under v1
           const postRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1071,7 +1066,7 @@ export function testProtocolsConfigureHandler(): void {
             protocolPath : 'post',
           });
           const postReply = await dwn.processMessage(alice.did, postRecord.message, { dataStream: postRecord.dataStream });
-          expect(postReply.status.code).to.equal(202);
+          expect(postReply.status.code).toBe(202);
 
           await Time.minimalSleep();
 
@@ -1094,7 +1089,7 @@ export function testProtocolsConfigureHandler(): void {
             protocolDefinition : protocolDefinitionV2,
           });
           const configureV2Reply = await dwn.processMessage(alice.did, configureV2.message);
-          expect(configureV2Reply.status.code).to.equal(202);
+          expect(configureV2Reply.status.code).toBe(202);
 
           // Bob updates his v1 record — should succeed because v1 definition (which governs this record) allowed update
           const updatedData = new TextEncoder().encode('updated-post-data');
@@ -1106,7 +1101,7 @@ export function testProtocolsConfigureHandler(): void {
           const updateReply = await dwn.processMessage(
             alice.did, updatePost.message, { dataStream: DataStream.fromBytes(updatedData) }
           );
-          expect(updateReply.status.code).to.equal(202);
+          expect(updateReply.status.code).toBe(202);
         });
 
         it('should handle out-of-order protocol configure processing correctly', async () => {
@@ -1158,11 +1153,11 @@ export function testProtocolsConfigureHandler(): void {
 
           // process v2 first (out of order)
           const configureV2Reply = await dwn.processMessage(alice.did, configureV2.message);
-          expect(configureV2Reply.status.code).to.equal(202);
+          expect(configureV2Reply.status.code).toBe(202);
 
           // process v1 second (older, arrives later)
           const configureV1Reply = await dwn.processMessage(alice.did, configureV1.message);
-          expect(configureV1Reply.status.code).to.equal(202);
+          expect(configureV1Reply.status.code).toBe(202);
 
           // query should return only v2 (the latest)
           const queryMessageData = await TestDataGenerator.generateProtocolsQuery({
@@ -1170,9 +1165,9 @@ export function testProtocolsConfigureHandler(): void {
             filter : { protocol: protocolUri }
           });
           const queryReply = await dwn.processMessage(alice.did, queryMessageData.message);
-          expect(queryReply.status.code).to.equal(200);
-          expect(queryReply.entries?.length).to.equal(1);
-          expect(queryReply.entries![0].descriptor.definition.types.post.schema).to.equal('https://example.com/post-v2');
+          expect(queryReply.status.code).toBe(200);
+          expect(queryReply.entries?.length).toBe(1);
+          expect(queryReply.entries![0].descriptor.definition.types.post.schema).toBe('https://example.com/post-v2');
 
           // writing a new record with v2 schema should succeed (latest definition)
           const postV2 = await TestDataGenerator.generateRecordsWrite({
@@ -1183,7 +1178,7 @@ export function testProtocolsConfigureHandler(): void {
             dataFormat   : 'application/json',
           });
           const postV2Reply = await dwn.processMessage(alice.did, postV2.message, { dataStream: postV2.dataStream });
-          expect(postV2Reply.status.code).to.equal(202);
+          expect(postV2Reply.status.code).toBe(202);
         });
       });
     });

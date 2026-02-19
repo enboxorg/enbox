@@ -1,8 +1,8 @@
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
-import { expect } from 'chai';
 import { MessageStoreLevel } from '../../src/index.js';
 import { ProtocolAuthorization } from '../../src/core/protocol-authorization.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
+import { beforeEach, describe, expect, it } from 'bun:test';
 
 import sinon from 'sinon';
 
@@ -24,7 +24,7 @@ describe('ProtocolAuthorization', () => {
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
       messageStoreStub.query.resolves({ messages: [] }); // simulate parent not in message store
 
-      await expect(ProtocolAuthorization.authorizeWrite(alice.did, recordsWrite, messageStoreStub)).to.be.rejectedWith(
+      await expect(ProtocolAuthorization.authorizeWrite(alice.did, recordsWrite, messageStoreStub)).rejects.toThrow(
         DwnErrorCode.ProtocolAuthorizationParentNotFoundConstructingRecordChain
       );
     });
@@ -43,7 +43,7 @@ describe('ProtocolAuthorization', () => {
       } as any;
 
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
-      expect(ProtocolAuthorization['getActionsSeekingARuleMatch'](alice.did, deliberatelyCraftedInvalidMessage, messageStoreStub)).to.be.empty;
+      expect(await ProtocolAuthorization['getActionsSeekingARuleMatch'](alice.did, deliberatelyCraftedInvalidMessage, messageStoreStub)).toHaveLength(0);
     });
   });
 });

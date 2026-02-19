@@ -3,9 +3,9 @@ import type { DidResolver } from '@enbox/dids';
 import type { EventStream } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, ProtocolDefinition, ProtocolsConfigureMessage, RecordsReadReply, ResumableTaskStore, StateIndex } from '../../src/index.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
 import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { authenticate } from '../../src/core/auth.js';
 import { Encoder } from '../../src/index.js';
@@ -16,11 +16,8 @@ import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 
-import chai, { expect } from 'chai';
 import { DataStream, Dwn, Jws, Protocols, ProtocolsConfigure, ProtocolsQuery, Records, RecordsRead } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-
-chai.use(chaiAsPromised);
 
 export function testEndToEndScenarios(): void {
   describe('End-to-end Scenarios Spanning Features', () => {
@@ -32,9 +29,9 @@ export function testEndToEndScenarios(): void {
     let eventStream: EventStream;
     let dwn: Dwn;
 
-    // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
+    // important to follow the `beforeAll` and `afterAll` pattern to initialize and clean the stores in tests
     // so that different test suites can reuse the same backend store for testing
-    before(async () => {
+    beforeAll(async () => {
       didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
       const stores = TestStores.get();
@@ -57,7 +54,7 @@ export function testEndToEndScenarios(): void {
       await stateIndex.clear();
     });
 
-    after(async () => {
+    afterAll(async () => {
       await dwn.close();
     });
 
@@ -90,7 +87,7 @@ export function testEndToEndScenarios(): void {
         alice.did,
         protocolsConfigureForAlice.message
       );
-      expect(protocolsConfigureForAliceReply.status.code).to.equal(202);
+      expect(protocolsConfigureForAliceReply.status.code).toBe(202);
 
       // Bob configures chat protocol with encryption
       const protocolDefinitionForBob
@@ -101,7 +98,7 @@ export function testEndToEndScenarios(): void {
       });
 
       const protocolsConfigureReply = await dwn.processMessage(bob.did, protocolsConfigureForBob.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // 1. Alice starts a chat thread writing to her own DWN
       const threadBytes = Encoder.objectToBytes({ title: 'Top Secret' });
@@ -114,7 +111,7 @@ export function testEndToEndScenarios(): void {
         encryptSymmetricKeyWithProtocolContextDerivedKey : true
       });
       const threadRecordReply1 = await dwn.processMessage(alice.did, threadRecord.message, { dataStream: threadRecord.dataStream });
-      expect(threadRecordReply1.status.code).to.equal(202);
+      expect(threadRecordReply1.status.code).toBe(202);
 
       // 2. Alice adds Bob as a participant giving him the [context-derived private key] encrypted using [Bob's participant-level public key]
 
@@ -138,7 +135,7 @@ export function testEndToEndScenarios(): void {
       // Alice verifies that the chat protocol definition is authored by Bob
       await authenticate(protocolConfigureMessageOfBobFetched.authorization, didResolver);
       const protocolsConfigureOfBobFetched = await ProtocolsConfigure.parse(protocolConfigureMessageOfBobFetched);
-      expect(protocolsConfigureOfBobFetched.author).to.equal(bob.did);
+      expect(protocolsConfigureOfBobFetched.author).toBe(bob.did);
 
       // generate the encrypted participant record using Bob's protocol configuration fetched
       const participantBobRecord = await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
@@ -153,7 +150,7 @@ export function testEndToEndScenarios(): void {
       });
       const participantRecordReply =
         await dwn.processMessage(alice.did, participantBobRecord.message, { dataStream: participantBobRecord.dataStream });
-      expect(participantRecordReply.status.code).to.equal(202);
+      expect(participantRecordReply.status.code).toBe(202);
 
       // 3. Alice writes a chat message(s) in the thread
       const messageByAlice = 'Message from Alice';
@@ -170,7 +167,7 @@ export function testEndToEndScenarios(): void {
         encryptSymmetricKeyWithProtocolContextDerivedKey : true
       });
       const chatMessageReply = await dwn.processMessage(alice.did, chatMessageByAlice.message, { dataStream: chatMessageByAlice.dataStream });
-      expect(chatMessageReply.status.code).to.equal(202);
+      expect(chatMessageReply.status.code).toBe(202);
 
       // Assume the below steps can be done since it is a common DWN usage pattern
       // 4. Alice sends an invite to Bob's DWN with the [context/thread ID]
@@ -188,7 +185,7 @@ export function testEndToEndScenarios(): void {
         },
       });
       const participantReadReply = await dwn.processMessage(alice.did, participantRead.message) as RecordsReadReply;
-      expect(participantReadReply.status.code).to.equal(200);
+      expect(participantReadReply.status.code).toBe(200);
 
       // Test that Bob is able to read the thread root record
       const threadRead = await RecordsRead.create({
@@ -200,8 +197,8 @@ export function testEndToEndScenarios(): void {
         protocolRole: 'thread/participant'
       });
       const threadReadReply = await dwn.processMessage(alice.did, threadRead.message) as RecordsReadReply;
-      expect(threadReadReply.status.code).to.equal(200);
-      expect(threadReadReply.entry!.recordsWrite).to.exist;
+      expect(threadReadReply.status.code).toBe(200);
+      expect(threadReadReply.entry!.recordsWrite).toBeDefined();
 
       // Test Bob can invoke his 'participant' role to read the chat message
       // TODO: #555 - We currently lack role-authorized RecordsQuery for a realistic scenario (https://github.com/enboxorg/enbox/issues/555)
@@ -214,8 +211,8 @@ export function testEndToEndScenarios(): void {
         protocolRole: 'thread/participant'
       });
       const chatReadReply = await dwn.processMessage(alice.did, chatRead.message) as RecordsReadReply;
-      expect(chatReadReply.status.code).to.equal(200);
-      expect(chatReadReply.entry!.recordsWrite).to.exist;
+      expect(chatReadReply.status.code).toBe(200);
+      expect(chatReadReply.entry!.recordsWrite).toBeDefined();
 
       // 7. Bob is able to decrypt all thread content
       // Bob decrypts the participant message to obtain the context-derived private key
@@ -234,7 +231,7 @@ export function testEndToEndScenarios(): void {
         DataStream.fromBytes(encryptedContextDerivedPrivateKeyBytes)
       );
       const decryptedContextDerivedPrivateKey = await DataStream.toObject(decryptedContextDerivedKeyStream) as DerivedPrivateJwk;
-      expect(decryptedContextDerivedPrivateKey).to.deep.equal(contextDerivedPrivateKey);
+      expect(decryptedContextDerivedPrivateKey).toEqual(contextDerivedPrivateKey);
 
       // Arguably unrelated to the scenario, but let's sanity check that Bob's root key can also decrypt the encrypted context-derived private key
       const decryptedContextDerivedKeyStream2 = await Records.decrypt(
@@ -243,7 +240,7 @@ export function testEndToEndScenarios(): void {
         DataStream.fromBytes(encryptedContextDerivedPrivateKeyBytes)
       );
       const decryptedContextDerivedPrivateKey2 = await DataStream.toObject(decryptedContextDerivedKeyStream2) as DerivedPrivateJwk;
-      expect(decryptedContextDerivedPrivateKey2).to.deep.equal(contextDerivedPrivateKey);
+      expect(decryptedContextDerivedPrivateKey2).toEqual(contextDerivedPrivateKey);
 
       // Verify that Bob can now decrypt Alice's chat thread record using the decrypted context-derived key
       const decryptedChatThread = await Records.decrypt(
@@ -251,7 +248,7 @@ export function testEndToEndScenarios(): void {
         decryptedContextDerivedPrivateKey,
         threadReadReply.entry!.data!
       );
-      expect(await DataStream.toBytes(decryptedChatThread)).to.deep.equal(threadBytes);
+      expect(await DataStream.toBytes(decryptedChatThread)).toEqual(threadBytes);
 
       // Verify that Bob can now decrypt Alice's chat message using the decrypted context-derived key
       const encryptedChatMessageBytes = await DataStream.toBytes(chatReadReply.entry!.data!); // to create streams for testing
@@ -260,7 +257,7 @@ export function testEndToEndScenarios(): void {
         decryptedContextDerivedPrivateKey,
         DataStream.fromBytes(encryptedChatMessageBytes)
       );
-      expect(await DataStream.toBytes(decryptedChatMessage)).to.deep.equal(Encoder.stringToBytes(messageByAlice));
+      expect(await DataStream.toBytes(decryptedChatMessage)).toEqual(Encoder.stringToBytes(messageByAlice));
 
       // Arguably unrelated to the scenario, but let's also sanity check that Alice's root key can also decrypt the encrypted chat message
       const decryptedChatMessageStream2 = await Records.decrypt(
@@ -268,7 +265,7 @@ export function testEndToEndScenarios(): void {
         aliceRootKey,
         DataStream.fromBytes(encryptedChatMessageBytes)
       );
-      expect(await DataStream.toBytes(decryptedChatMessageStream2)).to.deep.equal(Encoder.stringToBytes(messageByAlice));
+      expect(await DataStream.toBytes(decryptedChatMessageStream2)).toEqual(Encoder.stringToBytes(messageByAlice));
     });
   });
 }

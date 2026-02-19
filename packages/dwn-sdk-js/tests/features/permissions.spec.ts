@@ -3,9 +3,7 @@ import type { EventStream } from '../../src/types/subscriptions.js';
 import type { PermissionScope } from '../../src/index.js';
 import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import sinon from 'sinon';
-import chai, { expect } from 'chai';
 
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Dwn } from '../../src/dwn.js';
@@ -17,13 +15,13 @@ import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, RecordsQuery, Time } from '../../src/index.js';
 
-chai.use(chaiAsPromised);
 
 export function testPermissions(): void {
-  describe('permissions', async () => {
+  describe('permissions', () => {
     let didResolver: DidResolver;
     let messageStore: MessageStore;
     let dataStore: DataStore;
@@ -34,7 +32,7 @@ export function testPermissions(): void {
 
     // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
     // so that different test suites can reuse the same backend store for testing
-    before(async () => {
+    beforeAll(async () => {
       didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
       const stores = TestStores.get();
@@ -57,7 +55,7 @@ export function testPermissions(): void {
       await stateIndex.clear();
     });
 
-    after(async () => {
+    afterAll(async () => {
       sinon.restore();
       await dwn.close();
     });
@@ -78,7 +76,7 @@ export function testPermissions(): void {
           protocol  : testProtocol,
         }
       });
-      expect(requestWrite.recordsWrite.message.descriptor.tags).to.deep.equal({ protocol: testProtocol });
+      expect(requestWrite.recordsWrite.message.descriptor.tags).toEqual({ protocol: testProtocol });
 
       // createGrant with a protocol
       const grantWrite = await PermissionsProtocol.createGrant({
@@ -92,7 +90,7 @@ export function testPermissions(): void {
           protocol  : testProtocol,
         }
       });
-      expect(grantWrite.recordsWrite.message.descriptor.tags).to.deep.equal({ protocol: testProtocol });
+      expect(grantWrite.recordsWrite.message.descriptor.tags).toEqual({ protocol: testProtocol });
 
       // createRevocation with a protocol derived from the grant
       const revokeWrite = await PermissionsProtocol.createRevocation({
@@ -100,7 +98,7 @@ export function testPermissions(): void {
         grant       : await PermissionGrant.parse(grantWrite.dataEncodedMessage),
         dateRevoked : Time.getCurrentTimestamp()
       });
-      expect(revokeWrite.recordsWrite.message.descriptor.tags).to.deep.equal({ protocol: testProtocol });
+      expect(revokeWrite.recordsWrite.message.descriptor.tags).toEqual({ protocol: testProtocol });
     });
 
     it('should normalize the protocol URL in the scope of a Request, Grant, and Revocation', async () => {
@@ -118,7 +116,7 @@ export function testPermissions(): void {
           protocol  : 'any-protocol' // URL will normalize to `http://any-protocol`
         }
       });
-      expect(requestWrite.recordsWrite.message.descriptor.tags).to.deep.equal({ protocol: 'http://any-protocol' });
+      expect(requestWrite.recordsWrite.message.descriptor.tags).toEqual({ protocol: 'http://any-protocol' });
 
       // createRequest with a protocol that is already normalized to `https://any-protocol`
       const requestWrite2 = await PermissionsProtocol.createRequest({
@@ -131,7 +129,7 @@ export function testPermissions(): void {
           protocol  : 'https://any-protocol'
         }
       });
-      expect(requestWrite2.recordsWrite.message.descriptor.tags).to.deep.equal({ protocol: 'https://any-protocol' });
+      expect(requestWrite2.recordsWrite.message.descriptor.tags).toEqual({ protocol: 'https://any-protocol' });
 
       // createGrant with a protocol that will be normalized to `http://any-protocol`
       const grantWrite = await PermissionsProtocol.createGrant({
@@ -145,7 +143,7 @@ export function testPermissions(): void {
           protocol  : 'any-protocol' // URL will normalize to `http://any-protocol`
         }
       });
-      expect(grantWrite.recordsWrite.message.descriptor.tags).to.deep.equal({ protocol: 'http://any-protocol' });
+      expect(grantWrite.recordsWrite.message.descriptor.tags).toEqual({ protocol: 'http://any-protocol' });
 
       // createGrant with a protocol that is already normalized to `https://any-protocol`
       const grantWrite2 = await PermissionsProtocol.createGrant({
@@ -159,7 +157,7 @@ export function testPermissions(): void {
           protocol  : 'https://any-protocol'
         }
       });
-      expect(grantWrite2.recordsWrite.message.descriptor.tags).to.deep.equal({ protocol: 'https://any-protocol' });
+      expect(grantWrite2.recordsWrite.message.descriptor.tags).toEqual({ protocol: 'https://any-protocol' });
     });
 
     it('should derive the grantId and protocol from the grant record when creating a revocation', async () => {
@@ -183,7 +181,7 @@ export function testPermissions(): void {
       const grantWriteReply = await dwn.processMessage(alice.did, grantWrite.recordsWrite.message, {
         dataStream: DataStream.fromBytes(grantWrite.permissionGrantBytes)
       });
-      expect(grantWriteReply.status.code).to.equal(202);
+      expect(grantWriteReply.status.code).toBe(202);
 
       // derive the grantId and protocol from the grant record
       const revokeWrite = await PermissionsProtocol.createRevocation({
@@ -193,10 +191,10 @@ export function testPermissions(): void {
       });
 
       // check that the protocol is in the revocation record's tags
-      expect(revokeWrite.recordsWrite.message.descriptor.tags).to.deep.equal({ protocol: grantProtocol });
+      expect(revokeWrite.recordsWrite.message.descriptor.tags).toEqual({ protocol: grantProtocol });
 
       // check that the revocation's parentId is the grant's recordId
-      expect(revokeWrite.recordsWrite.message.descriptor.parentId).to.equal(grantWrite.recordsWrite.message.recordId);
+      expect(revokeWrite.recordsWrite.message.descriptor.parentId).toBe(grantWrite.recordsWrite.message.recordId);
     });
 
     it('should support permission management through use of Request, Grants, and Revocations', async () => {
@@ -233,7 +231,7 @@ export function testPermissions(): void {
         requestToAlice.recordsWrite.message,
         { dataStream: DataStream.fromBytes(requestToAlice.permissionRequestBytes) }
       );
-      expect(requestWriteReply.status.code).to.equal(202);
+      expect(requestWriteReply.status.code).toBe(202);
 
       // 2. Alice queries her DWN for new permission requests
       const requestQuery = await RecordsQuery.create({
@@ -247,9 +245,9 @@ export function testPermissions(): void {
 
       const requestQueryReply = await dwn.processMessage(alice.did, requestQuery.message);
       const requestFromBob = requestQueryReply.entries?.[0]!;
-      expect(requestQueryReply.status.code).to.equal(200);
-      expect(requestQueryReply.entries?.length).to.equal(1);
-      expect(requestFromBob.recordId).to.equal(requestToAlice.recordsWrite.message.recordId);
+      expect(requestQueryReply.status.code).toBe(200);
+      expect(requestQueryReply.entries?.length).toBe(1);
+      expect(requestFromBob.recordId).toBe(requestToAlice.recordsWrite.message.recordId);
 
       // 3. Verify a non-owner cannot create a grant for Bob in Alice's DWN
       const decodedRequest = PermissionsProtocol.parseRequest(requestFromBob.encodedData!);
@@ -266,8 +264,8 @@ export function testPermissions(): void {
         unauthorizedGrantWrite.recordsWrite.message,
         { dataStream: DataStream.fromBytes(unauthorizedGrantWrite.permissionGrantBytes) }
       );
-      expect(unauthorizedGrantWriteReply.status.code).to.equal(401);
-      expect(unauthorizedGrantWriteReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+      expect(unauthorizedGrantWriteReply.status.code).toBe(401);
+      expect(unauthorizedGrantWriteReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
 
       // 4. Alice creates a permission grant for Bob in her DWN
       const grantWrite = await PermissionsProtocol.createGrant({
@@ -283,7 +281,7 @@ export function testPermissions(): void {
         grantWrite.recordsWrite.message,
         { dataStream: DataStream.fromBytes(grantWrite.permissionGrantBytes) }
       );
-      expect(grantWriteReply.status.code).to.equal(202);
+      expect(grantWriteReply.status.code).toBe(202);
 
       // 5. Verify that Bob can query the permission grant from Alice's DWN (even though Alice can also send it directly to Bob)
       const grantQuery = await RecordsQuery.create({
@@ -297,9 +295,9 @@ export function testPermissions(): void {
 
       const grantQueryReply = await dwn.processMessage(alice.did, grantQuery.message);
       const grantFromBob = grantQueryReply.entries?.[0]!;
-      expect(grantQueryReply.status.code).to.equal(200);
-      expect(grantQueryReply.entries?.length).to.equal(1);
-      expect(grantFromBob.recordId).to.equal(grantWrite.recordsWrite.message.recordId);
+      expect(grantQueryReply.status.code).toBe(200);
+      expect(grantQueryReply.entries?.length).toBe(1);
+      expect(grantFromBob.recordId).toBe(grantWrite.recordsWrite.message.recordId);
 
       // 6. Verify that any third-party can fetch revocation of the grant and find it is still active (not revoked)
       const revocationRead = await RecordsRead.create({
@@ -311,7 +309,7 @@ export function testPermissions(): void {
       });
 
       const revocationReadReply = await dwn.processMessage(alice.did, revocationRead.message);
-      expect(revocationReadReply.status.code).to.equal(404);
+      expect(revocationReadReply.status.code).toBe(404);
 
       // 7. Verify that non-owner cannot revoke the grant
       const unauthorizedRevokeWrite = await PermissionsProtocol.createRevocation({
@@ -325,8 +323,8 @@ export function testPermissions(): void {
         unauthorizedRevokeWrite.recordsWrite.message,
         { dataStream: DataStream.fromBytes(unauthorizedRevokeWrite.permissionRevocationBytes) }
       );
-      expect(unauthorizedRevokeWriteReply.status.code).to.equal(401);
-      expect(unauthorizedGrantWriteReply.status.detail).to.contain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+      expect(unauthorizedRevokeWriteReply.status.code).toBe(401);
+      expect(unauthorizedGrantWriteReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
 
       // 8. Alice revokes the permission grant for Bob
       const revokeWrite = await PermissionsProtocol.createRevocation({
@@ -340,12 +338,12 @@ export function testPermissions(): void {
         revokeWrite.recordsWrite.message,
         { dataStream: DataStream.fromBytes(revokeWrite.permissionRevocationBytes) }
       );
-      expect(revokeWriteReply.status.code).to.equal(202);
+      expect(revokeWriteReply.status.code).toBe(202);
 
       // 9. Verify that any third-party can fetch the revocation status of the permission grant
       const revocationReadReply2 = await dwn.processMessage(alice.did, revocationRead.message);
-      expect(revocationReadReply2.status.code).to.equal(200);
-      expect(revocationReadReply2.entry!.recordsWrite?.recordId).to.equal(revokeWrite.recordsWrite.message.recordId);
+      expect(revocationReadReply2.status.code).toBe(200);
+      expect(revocationReadReply2.entry!.recordsWrite?.recordId).toBe(revokeWrite.recordsWrite.message.recordId);
     });
 
     it('should fail if a RecordsPermissionScope in a Request or Grant record is created without a protocol', async () => {
@@ -363,7 +361,7 @@ export function testPermissions(): void {
         delegated   : false,
         scope       : permissionScope as any // explicity as any to test the validation
       });
-      await expect(requestWrite).to.eventually.be.rejectedWith(DwnErrorCode.PermissionsProtocolCreateRequestRecordsScopeMissingProtocol);
+      await expect(requestWrite).rejects.toThrow(DwnErrorCode.PermissionsProtocolCreateRequestRecordsScopeMissingProtocol);
 
 
       const grantWrite = PermissionsProtocol.createGrant({
@@ -373,7 +371,7 @@ export function testPermissions(): void {
         grantedTo   : bob.did,
         scope       : permissionScope as any // explicity as any to test the validation
       });
-      await expect(grantWrite).to.eventually.be.rejectedWith(DwnErrorCode.PermissionsProtocolCreateGrantRecordsScopeMissingProtocol);
+      await expect(grantWrite).rejects.toThrow(DwnErrorCode.PermissionsProtocolCreateGrantRecordsScopeMissingProtocol);
     });
 
     it('should fail if an invalid protocolPath is used during Permissions schema validation', async () => {
@@ -388,7 +386,7 @@ export function testPermissions(): void {
 
       expect(
         () => PermissionsProtocol.validateSchema(message, dataBytes!)
-      ).to.throw(DwnErrorCode.PermissionsProtocolValidateSchemaUnexpectedRecord);
+      ).toThrow(DwnErrorCode.PermissionsProtocolValidateSchemaUnexpectedRecord);
     });
 
     it('performs additional validation to the tagged protocol in a Revocation message ensuring it matches the Grant it is revoking', async () => {
@@ -419,7 +417,7 @@ export function testPermissions(): void {
       const grantWriteReply = await dwn.processMessage(alice.did, grantWrite.recordsWrite.message, {
         dataStream: DataStream.fromBytes(grantWrite.permissionGrantBytes)
       });
-      expect(grantWriteReply.status.code).to.equal(202);
+      expect(grantWriteReply.status.code).toBe(202);
 
       // attempt to revoke the grant without a protocol set
       const permissionRevocationBytes = Encoder.objectToBytes({ description: 'Revoking the grant' });
@@ -435,9 +433,9 @@ export function testPermissions(): void {
       const revokeWriteWithoutProtocolReply = await dwn.processMessage(alice.did, revokeWithoutProtocolRecordsWrite.message, {
         dataStream: DataStream.fromBytes(permissionRevocationBytes)
       });
-      expect(revokeWriteWithoutProtocolReply.status.code).to.equal(400);
-      expect(revokeWriteWithoutProtocolReply.status.detail).to.contain(DwnErrorCode.PermissionsProtocolValidateRevocationProtocolTagMismatch);
-      expect(revokeWriteWithoutProtocolReply.status.detail).to.contain(
+      expect(revokeWriteWithoutProtocolReply.status.code).toBe(400);
+      expect(revokeWriteWithoutProtocolReply.status.detail).toContain(DwnErrorCode.PermissionsProtocolValidateRevocationProtocolTagMismatch);
+      expect(revokeWriteWithoutProtocolReply.status.detail).toContain(
         `Revocation protocol undefined does not match grant protocol ${grantProtocol}`
       );
 
@@ -455,9 +453,9 @@ export function testPermissions(): void {
       const revokeWriteWithMissMatchedProtocolReply = await dwn.processMessage(alice.did, revokeWriteWithMissMatchedProtocol.message, {
         dataStream: DataStream.fromBytes(permissionRevocationBytes)
       });
-      expect(revokeWriteWithMissMatchedProtocolReply.status.code).to.equal(400);
-      expect(revokeWriteWithMissMatchedProtocolReply.status.detail).to.contain(DwnErrorCode.PermissionsProtocolValidateRevocationProtocolTagMismatch);
-      expect(revokeWriteWithMissMatchedProtocolReply.status.detail).to.contain(
+      expect(revokeWriteWithMissMatchedProtocolReply.status.code).toBe(400);
+      expect(revokeWriteWithMissMatchedProtocolReply.status.detail).toContain(DwnErrorCode.PermissionsProtocolValidateRevocationProtocolTagMismatch);
+      expect(revokeWriteWithMissMatchedProtocolReply.status.detail).toContain(
         `Revocation protocol ${invalidProtocol} does not match grant protocol ${grantProtocol}`
       );
 
@@ -475,7 +473,7 @@ export function testPermissions(): void {
       const revokeWriteReply = await dwn.processMessage(alice.did, revokeWrite.message, {
         dataStream: DataStream.fromBytes(permissionRevocationBytes)
       });
-      expect(revokeWriteReply.status.code).to.equal(202);
+      expect(revokeWriteReply.status.code).toBe(202);
     });
 
     // These set of tets are primarily to ensure SchemaValidation passes for the various permission request and grant messages and their scopes
@@ -500,7 +498,7 @@ export function testPermissions(): void {
         const messagesReadPermissionsReply = await dwn.processMessage(alice.did, messagesReadPermissions.recordsWrite.message, {
           dataStream: DataStream.fromBytes(messagesReadPermissions.permissionGrantBytes)
         });
-        expect(messagesReadPermissionsReply.status.code).to.equal(202);
+        expect(messagesReadPermissionsReply.status.code).toBe(202);
       });
 
       it('MessagesSubscribe', async () => {
@@ -523,7 +521,7 @@ export function testPermissions(): void {
         const messagesSubscribePermissionsReply = await dwn.processMessage(alice.did, messagesSubscribePermissions.recordsWrite.message, {
           dataStream: DataStream.fromBytes(messagesSubscribePermissions.permissionGrantBytes)
         });
-        expect(messagesSubscribePermissionsReply.status.code).to.equal(202);
+        expect(messagesSubscribePermissionsReply.status.code).toBe(202);
       });
 
       it('RecordsDelete', async () => {
@@ -547,7 +545,7 @@ export function testPermissions(): void {
         const withContextIdReply = await dwn.processMessage(alice.did, withContextId.recordsWrite.message, {
           dataStream: DataStream.fromBytes(withContextId.permissionGrantBytes)
         });
-        expect(withContextIdReply.status.code).to.equal(202);
+        expect(withContextIdReply.status.code).toBe(202);
 
         // create a permission request with protocol and protocolPath
         const withProtocolPath = await PermissionsProtocol.createGrant({
@@ -566,7 +564,7 @@ export function testPermissions(): void {
         const withProtocolPathReply = await dwn.processMessage(alice.did, withProtocolPath.recordsWrite.message, {
           dataStream: DataStream.fromBytes(withProtocolPath.permissionGrantBytes)
         });
-        expect(withProtocolPathReply.status.code).to.equal(202);
+        expect(withProtocolPathReply.status.code).toBe(202);
       });
 
       it('RecordsQuery', async () => {
@@ -591,7 +589,7 @@ export function testPermissions(): void {
         const withContextIdReply = await dwn.processMessage(alice.did, withContextId.recordsWrite.message, {
           dataStream: DataStream.fromBytes(withContextId.permissionGrantBytes)
         });
-        expect(withContextIdReply.status.code).to.equal(202);
+        expect(withContextIdReply.status.code).toBe(202);
 
         // create a permission request with protocol and protocolPath scope
         const withProtocolPath = await PermissionsProtocol.createRequest({
@@ -609,7 +607,7 @@ export function testPermissions(): void {
         const withProtocolPathReply = await dwn.processMessage(bob.did, withProtocolPath.recordsWrite.message, {
           dataStream: DataStream.fromBytes(withProtocolPath.permissionRequestBytes)
         });
-        expect(withProtocolPathReply.status.code).to.equal(202);
+        expect(withProtocolPathReply.status.code).toBe(202);
       });
 
       it('RecordsRead', async () => {
@@ -634,7 +632,7 @@ export function testPermissions(): void {
         const withContextIdReply = await dwn.processMessage(alice.did, withContextId.recordsWrite.message, {
           dataStream: DataStream.fromBytes(withContextId.permissionGrantBytes)
         });
-        expect(withContextIdReply.status.code).to.equal(202);
+        expect(withContextIdReply.status.code).toBe(202);
 
         // create a permission request with protocol and protocolPath scope
         const withProtocolPath = await PermissionsProtocol.createGrant({
@@ -654,7 +652,7 @@ export function testPermissions(): void {
         const withProtocolPathReply = await dwn.processMessage(alice.did, withProtocolPath.recordsWrite.message, {
           dataStream: DataStream.fromBytes(withProtocolPath.permissionGrantBytes)
         });
-        expect(withProtocolPathReply.status.code).to.equal(202);
+        expect(withProtocolPathReply.status.code).toBe(202);
       });
 
       it('RecordsSubscribe', async () => {
@@ -679,7 +677,7 @@ export function testPermissions(): void {
         const withContextIdReply = await dwn.processMessage(alice.did, withContextId.recordsWrite.message, {
           dataStream: DataStream.fromBytes(withContextId.permissionGrantBytes)
         });
-        expect(withContextIdReply.status.code).to.equal(202);
+        expect(withContextIdReply.status.code).toBe(202);
 
         // create a permission request with protocol and protocolPath scope
         const withProtocolPath = await PermissionsProtocol.createGrant({
@@ -699,7 +697,7 @@ export function testPermissions(): void {
         const withProtocolPathReply = await dwn.processMessage(alice.did, withProtocolPath.recordsWrite.message, {
           dataStream: DataStream.fromBytes(withProtocolPath.permissionGrantBytes)
         });
-        expect(withProtocolPathReply.status.code).to.equal(202);
+        expect(withProtocolPathReply.status.code).toBe(202);
       });
 
       it('RecordsWrite', async () => {
@@ -724,7 +722,7 @@ export function testPermissions(): void {
         const withContextIdReply = await dwn.processMessage(alice.did, withContextId.recordsWrite.message, {
           dataStream: DataStream.fromBytes(withContextId.permissionGrantBytes)
         });
-        expect(withContextIdReply.status.code).to.equal(202);
+        expect(withContextIdReply.status.code).toBe(202);
 
         // create a permission request with protocol and protocolPath scope
         const withProtocolPath = await PermissionsProtocol.createGrant({
@@ -744,7 +742,7 @@ export function testPermissions(): void {
         const withProtocolPathReply = await dwn.processMessage(alice.did, withProtocolPath.recordsWrite.message, {
           dataStream: DataStream.fromBytes(withProtocolPath.permissionGrantBytes)
         });
-        expect(withProtocolPathReply.status.code).to.equal(202);
+        expect(withProtocolPathReply.status.code).toBe(202);
       });
 
       it('ProtocolsQuery', async () => {
@@ -766,11 +764,11 @@ export function testPermissions(): void {
         const protocolQueryPermissionsReply = await dwn.processMessage(alice.did, protocolQueryPermissions.recordsWrite.message, {
           dataStream: DataStream.fromBytes(protocolQueryPermissions.permissionGrantBytes)
         });
-        expect(protocolQueryPermissionsReply.status.code).to.equal(202);
+        expect(protocolQueryPermissionsReply.status.code).toBe(202);
       });
     });
 
-    describe('validateScopeAndTags', async () => {
+    describe('validateScopeAndTags', () => {
       it('should be called for a Request or Grant record', async () => {
         // spy on `validateScope`
         const validateScopeSpy = sinon.spy(PermissionsProtocol as any, 'validateScopeAndTags');
@@ -796,8 +794,8 @@ export function testPermissions(): void {
           requestToAlice.recordsWrite.message,
           { dataStream: DataStream.fromBytes(requestToAlice.permissionRequestBytes) }
         );
-        expect(requestToAliceReply.status.code).to.equal(202);
-        expect(validateScopeSpy.calledOnce).to.be.true;
+        expect(requestToAliceReply.status.code).toBe(202);
+        expect(validateScopeSpy.calledOnce).toBe(true);
 
         // create a grant
         const grantedToBob = await PermissionsProtocol.createGrant({
@@ -813,8 +811,8 @@ export function testPermissions(): void {
           grantedToBob.recordsWrite.message,
           { dataStream: DataStream.fromBytes(grantedToBob.permissionGrantBytes) }
         );
-        expect(grantWriteReply.status.code).to.equal(202);
-        expect(validateScopeSpy.calledTwice).to.be.true; // called twice, once for the request and once for the grant
+        expect(grantWriteReply.status.code).toBe(202);
+        expect(validateScopeSpy.calledTwice).toBe(true); // called twice, once for the request and once for the grant
       });
 
       it('should throw if the scope is a RecordsPermissionScope and a protocol tag is not defined on the Request and Grant record', async () => {
@@ -837,7 +835,7 @@ export function testPermissions(): void {
 
         expect(
           () => PermissionsProtocol['validateScopeAndTags'](permissionScope, requestWrite.message)
-        ).to.throw(DwnErrorCode.PermissionsProtocolValidateScopeMissingProtocolTag);
+        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeMissingProtocolTag);
 
         // create a permission grant without a protocol tag
         const grantRecordsWrite = await TestDataGenerator.generateRecordsWrite({
@@ -850,7 +848,7 @@ export function testPermissions(): void {
 
         expect(
           () => PermissionsProtocol['validateScopeAndTags'](permissionScope, grantRecordsWrite.message)
-        ).to.throw(DwnErrorCode.PermissionsProtocolValidateScopeMissingProtocolTag);
+        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeMissingProtocolTag);
       });
 
       it('should throw if the scope is a RecordsPermissionScope and the Request and Grant record has no tags', async () => {
@@ -872,7 +870,7 @@ export function testPermissions(): void {
 
         expect(
           () => PermissionsProtocol['validateScopeAndTags'](permissionScope, requestWrite.message)
-        ).to.throw(DwnErrorCode.PermissionsProtocolValidateScopeMissingProtocolTag);
+        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeMissingProtocolTag);
 
         // create a permission grant without a protocol tag
         const grantRecordsWrite = await TestDataGenerator.generateRecordsWrite({
@@ -884,7 +882,7 @@ export function testPermissions(): void {
 
         expect(
           () => PermissionsProtocol['validateScopeAndTags'](permissionScope, grantRecordsWrite.message)
-        ).to.throw(DwnErrorCode.PermissionsProtocolValidateScopeMissingProtocolTag);
+        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeMissingProtocolTag);
       });
 
       it('should throw if the protocol tag in the Request and Grant record does not match the protocol defined in the scope', async () => {
@@ -908,7 +906,7 @@ export function testPermissions(): void {
 
         expect(
           () => PermissionsProtocol['validateScopeAndTags'](permissionScope, requestWrite.message)
-        ).to.throw(DwnErrorCode.PermissionsProtocolValidateScopeProtocolMismatch);
+        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeProtocolMismatch);
 
         // create a permission grant with a protocol tag that does not match the scope
         const grantRecordsWrite = await TestDataGenerator.generateRecordsWrite({
@@ -921,7 +919,7 @@ export function testPermissions(): void {
 
         expect(
           () => PermissionsProtocol['validateScopeAndTags'](permissionScope, grantRecordsWrite.message)
-        ).to.throw(DwnErrorCode.PermissionsProtocolValidateScopeProtocolMismatch);
+        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeProtocolMismatch);
       });
 
       it('should throw if protocolPath and contextId are both defined in the scope for a Request and Grant record', async () => {
@@ -946,7 +944,7 @@ export function testPermissions(): void {
 
         expect(
           () => PermissionsProtocol['validateScopeAndTags'](permissionScope, requestRecordsWrite.message)
-        ).to.throw(DwnErrorCode.PermissionsProtocolValidateScopeContextIdProhibitedProperties);
+        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeContextIdProhibitedProperties);
 
         // create a permission grant with a scope that has both protocolPath and contextId
         const grantRecordsWrite = await TestDataGenerator.generateRecordsWrite({
@@ -959,7 +957,7 @@ export function testPermissions(): void {
 
         expect(
           () => PermissionsProtocol['validateScopeAndTags'](permissionScope, grantRecordsWrite.message)
-        ).to.throw(DwnErrorCode.PermissionsProtocolValidateScopeContextIdProhibitedProperties);
+        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeContextIdProhibitedProperties);
       });
     });
   });

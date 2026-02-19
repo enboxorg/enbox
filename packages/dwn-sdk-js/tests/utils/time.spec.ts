@@ -1,7 +1,7 @@
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
-import { expect } from 'chai';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { Time } from '../../src/utils/time.js';
+import { describe, expect, it } from 'bun:test';
 
 
 describe('time', () => {
@@ -15,15 +15,15 @@ describe('time', () => {
       ];
       invalidTimestamps.forEach((timestamp) => {
         it(`should throw an exception if an invalid timestamp is passed: ${timestamp}`, () => {
-          expect(() => Time.validateTimestamp(timestamp)).to.throw(DwnErrorCode.TimestampInvalid);
+          expect(() => Time.validateTimestamp(timestamp)).toThrow(DwnErrorCode.TimestampInvalid);
         });
       });
     });
 
     describe('valid timestamps', () => {
       it('should pass if a valid timestamp is passed', () => {
-        expect(() => Time.validateTimestamp('2022-04-29T10:30:00.123456Z')).to.not.throw();
-        expect(() => Time.validateTimestamp(TestDataGenerator.randomTimestamp())).to.not.throw();
+        expect(() => Time.validateTimestamp('2022-04-29T10:30:00.123456Z')).not.toThrow();
+        expect(() => Time.validateTimestamp(TestDataGenerator.randomTimestamp())).not.toThrow();
       });
     });
   });
@@ -40,7 +40,7 @@ describe('time', () => {
         millisecond : 123,
         microsecond : 456
       });
-      expect(timestamp).to.equal('2022-04-29T10:30:00.123456Z');
+      expect(timestamp).toBe('2022-04-29T10:30:00.123456Z');
     });
 
     for (let i = 0; i < 5; i++) {
@@ -55,7 +55,7 @@ describe('time', () => {
 
       it(`should create a valid timestamp for random values ${i}`, () => {
         const timestamp = Time.createTimestamp({ year, month, day, hour, minute, second, millisecond, microsecond });
-        expect(()=> Time.validateTimestamp(timestamp)).to.not.throw();
+        expect(()=> Time.validateTimestamp(timestamp)).not.toThrow();
       });
     }
   });
@@ -65,7 +65,7 @@ describe('time', () => {
       const baseTimestamp = '2000-04-29T10:30:00.123456Z';
       const offsetTimestamp = Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 * 365 }, baseTimestamp);
 
-      expect(offsetTimestamp).to.equal('2001-04-29T10:30:00.123456Z');
+      expect(offsetTimestamp).toBe('2001-04-29T10:30:00.123456Z');
     });
   });
 });

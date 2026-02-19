@@ -2,10 +2,10 @@ import type { JwkParamsEcPublic } from '@enbox/crypto';
 
 import { base64url } from 'multiformats/bases/base64';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
-import { expect } from 'chai';
 import { p256 } from '@noble/curves/p256';
 import { Secp256r1 } from '../../src/utils/secp256r1.js';
 import { TestDataGenerator } from './test-data-generator.js';
+import { describe, expect, it } from 'bun:test';
 
 describe('Secp256r1', () => {
   describe('validateKey()', () => {
@@ -14,10 +14,10 @@ describe('Secp256r1', () => {
 
       expect(() =>
         Secp256r1.validateKey({ ...validKey, kty: 'invalidKty' as any })
-      ).to.throw(DwnErrorCode.Secp256r1KeyNotValid);
+      ).toThrow(DwnErrorCode.Secp256r1KeyNotValid);
       expect(() =>
         Secp256r1.validateKey({ ...validKey, crv: 'invalidCrv' as any })
-      ).to.throw(DwnErrorCode.Secp256r1KeyNotValid);
+      ).toThrow(DwnErrorCode.Secp256r1KeyNotValid);
     });
   });
 
@@ -39,8 +39,8 @@ describe('Secp256r1', () => {
       const publicJwk1 = await Secp256r1.publicKeyToJwk(compressedPublicKey);
       const publicJwk2 = await Secp256r1.publicKeyToJwk(uncompressedPublicKey);
 
-      expect((publicJwk1 as JwkParamsEcPublic).x).to.equal((publicJwk2 as JwkParamsEcPublic).x);
-      expect((publicJwk1 as JwkParamsEcPublic).y).to.equal((publicJwk2 as JwkParamsEcPublic).y);
+      expect((publicJwk1 as JwkParamsEcPublic).x).toBe((publicJwk2 as JwkParamsEcPublic).x);
+      expect((publicJwk1 as JwkParamsEcPublic).y).toBe((publicJwk2 as JwkParamsEcPublic).y);
     });
   });
 
@@ -58,7 +58,7 @@ describe('Secp256r1', () => {
 
       const result = await Secp256r1.verify(content, derSignature, publicJwk);
 
-      expect(result).to.equal(true);
+      expect(result).toBe(true);
     });
   });
 
@@ -69,7 +69,7 @@ describe('Secp256r1', () => {
       const contentBytes = TestDataGenerator.randomBytes(16);
       const signatureBytes = await Secp256r1.sign(contentBytes, privateJwk);
 
-      expect(signatureBytes.length).to.equal(64); // DER format would be 70 bytes
+      expect(signatureBytes.length).toBe(64); // DER format would be 70 bytes
     });
   });
 });

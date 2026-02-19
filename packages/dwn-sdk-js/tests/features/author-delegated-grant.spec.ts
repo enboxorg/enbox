@@ -3,13 +3,10 @@ import type { EventStream } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, PermissionScope, ResumableTaskStore, StateIndex } from '../../src/index.js';
 import type { RecordEvent, RecordsWriteMessage } from '../../src/types/records-types.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' with { type: 'json' };
 import messageProtocolDefinition from '../vectors/protocol-definitions/message.json' with { type: 'json' };
 import sinon from 'sinon';
 import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
-
-import chai, { expect } from 'chai';
 
 import { base64url } from 'multiformats/bases/base64';
 import { DataStream } from '../../src/utils/data-stream.js';
@@ -23,14 +20,13 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { Time } from '../../src/utils/time.js';
-
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName, Encoder, Message, PermissionsProtocol, RecordsDelete, RecordsQuery, RecordsRead, RecordsSubscribe } from '../../src/index.js';
 
-chai.use(chaiAsPromised);
 
 export function testAuthorDelegatedGrant(): void {
-  describe('author delegated grant', async () => {
+  describe('author delegated grant', () => {
     let didResolver: DidResolver;
     let messageStore: MessageStore;
     let dataStore: DataStore;
@@ -41,7 +37,7 @@ export function testAuthorDelegatedGrant(): void {
 
     // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
     // so that different test suites can reuse the same backend store for testing
-    before(async () => {
+    beforeAll(async () => {
       didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
       const stores = TestStores.get();
@@ -64,7 +60,7 @@ export function testAuthorDelegatedGrant(): void {
       await stateIndex.clear();
     });
 
-    after(async () => {
+    afterAll(async () => {
       await dwn.close();
     });
 
@@ -97,7 +93,7 @@ export function testAuthorDelegatedGrant(): void {
 
         // Bob should be able to configure a protocol on behalf of alice
         const protocolConfigureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-        expect(protocolConfigureReply.status.code).to.equal(202);
+        expect(protocolConfigureReply.status.code).toBe(202);
 
         // verify the protocol configure message was processed
         const protocolsQuery = await TestDataGenerator.generateProtocolsQuery({
@@ -106,18 +102,18 @@ export function testAuthorDelegatedGrant(): void {
         });
 
         const { status, entries } = await dwn.processMessage(alice.did, protocolsQuery.message);
-        expect(status.code).to.equal(200);
-        expect(entries?.length).to.equal(1);
+        expect(status.code).toBe(200);
+        expect(entries?.length).toBe(1);
 
         const fetchedProtocolConfigure = entries![0];
-        expect(fetchedProtocolConfigure.descriptor.definition).to.deep.equal(emailProtocolDefinition);
+        expect(fetchedProtocolConfigure.descriptor.definition).toEqual(emailProtocolDefinition);
 
         // author should be alice
         const author = Message.getAuthor(fetchedProtocolConfigure);
-        expect(author).to.equal(alice.did);
+        expect(author).toBe(alice.did);
 
         const signer = Message.getSigner(fetchedProtocolConfigure);
-        expect(signer).to.equal(bob.did);
+        expect(signer).toBe(bob.did);
       });
 
       it('should allow author-delegated grant to configure a specific protocol', async () => {
@@ -149,7 +145,7 @@ export function testAuthorDelegatedGrant(): void {
 
         // Bob should be able to configure a protocol on behalf of alice
         const protocolConfigureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-        expect(protocolConfigureReply.status.code).to.equal(202);
+        expect(protocolConfigureReply.status.code).toBe(202);
 
         // verify the protocol configure message was processed
         const protocolsQuery = await TestDataGenerator.generateProtocolsQuery({
@@ -158,18 +154,18 @@ export function testAuthorDelegatedGrant(): void {
         });
 
         const { status, entries } = await dwn.processMessage(alice.did, protocolsQuery.message);
-        expect(status.code).to.equal(200);
-        expect(entries?.length).to.equal(1);
+        expect(status.code).toBe(200);
+        expect(entries?.length).toBe(1);
 
         const fetchedProtocolConfigure = entries![0];
-        expect(fetchedProtocolConfigure.descriptor.definition).to.deep.equal(emailProtocolDefinition);
+        expect(fetchedProtocolConfigure.descriptor.definition).toEqual(emailProtocolDefinition);
 
         // author should be alice
         const author = Message.getAuthor(fetchedProtocolConfigure);
-        expect(author).to.equal(alice.did);
+        expect(author).toBe(alice.did);
 
         const signer = Message.getSigner(fetchedProtocolConfigure);
-        expect(signer).to.equal(bob.did);
+        expect(signer).toBe(bob.did);
 
         // verify that bob cannot configure a different protocol
         const otherProtocolDefinition = {
@@ -184,12 +180,12 @@ export function testAuthorDelegatedGrant(): void {
         });
 
         const otherProtocolConfigureReply = await dwn.processMessage(alice.did, otherProtocolConfigure.message);
-        expect(otherProtocolConfigureReply.status.code).to.equal(401);
-        expect(otherProtocolConfigureReply.status.detail).to.contain(DwnErrorCode.ProtocolsGrantAuthorizationScopeProtocolMismatch);
+        expect(otherProtocolConfigureReply.status.code).toBe(401);
+        expect(otherProtocolConfigureReply.status.detail).toContain(DwnErrorCode.ProtocolsGrantAuthorizationScopeProtocolMismatch);
       });
     });
 
-    describe('RecordsWrite.parse()', async () => {
+    describe('RecordsWrite.parse()', () => {
       it('should throw if a message invokes a author-delegated grant (ID) but the author-delegated grant is not given', async () => {
         const alice = await TestDataGenerator.generatePersona();
         const bob = await TestDataGenerator.generatePersona();
@@ -220,7 +216,7 @@ export function testAuthorDelegatedGrant(): void {
         delete recordsWrite.message.authorization!.authorDelegatedGrant; // intentionally remove `authorDelegatedGrant`
         const parsePromise = RecordsWrite.parse(recordsWrite.message);
 
-        await expect(parsePromise).to.be.rejectedWith(DwnErrorCode.RecordsAuthorDelegatedGrantAndIdExistenceMismatch);
+        await expect(parsePromise).rejects.toThrow(DwnErrorCode.RecordsAuthorDelegatedGrantAndIdExistenceMismatch);
       });
 
       it('should throw if a message includes an author-delegated grant but does not reference it in author signature', async () => {
@@ -256,7 +252,7 @@ export function testAuthorDelegatedGrant(): void {
         recordsWrite.message.authorization!.signature!.payload = Encoder.stringToBase64Url(JSON.stringify(authorSignaturePayloadCopy));
         const parsePromise = RecordsWrite.parse(recordsWrite.message);
 
-        await expect(parsePromise).to.be.rejectedWith(DwnErrorCode.RecordsAuthorDelegatedGrantAndIdExistenceMismatch);
+        await expect(parsePromise).rejects.toThrow(DwnErrorCode.RecordsAuthorDelegatedGrantAndIdExistenceMismatch);
       });
     });
 
@@ -280,7 +276,7 @@ export function testAuthorDelegatedGrant(): void {
         protocolDefinition
       });
       const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolConfigureReply.status.code).to.equal(202);
+      expect(protocolConfigureReply.status.code).toBe(202);
 
       // Alice creates a delegated grant for device X and device Y
       const scope: PermissionScope = {
@@ -319,7 +315,7 @@ export function testAuthorDelegatedGrant(): void {
       });
 
       const deviceXWriteReply = await dwn.processMessage(bob.did, messageByDeviceX.message, { dataStream: deviceXDataStream });
-      expect(deviceXWriteReply.status.code).to.equal(202);
+      expect(deviceXWriteReply.status.code).toBe(202);
 
       // verify the message by device X got written to Bob's DWN, AND Alice is the logical author
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
@@ -327,14 +323,14 @@ export function testAuthorDelegatedGrant(): void {
         filter : { protocol }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
-      expect(bobRecordsQueryReply.status.code).to.equal(200);
-      expect(bobRecordsQueryReply.entries?.length).to.equal(1);
+      expect(bobRecordsQueryReply.status.code).toBe(200);
+      expect(bobRecordsQueryReply.entries?.length).toBe(1);
 
       const fetchedDeviceXWriteEntry = bobRecordsQueryReply.entries![0];
-      expect(fetchedDeviceXWriteEntry.encodedData).to.equal(base64url.baseEncode(deviceXData));
+      expect(fetchedDeviceXWriteEntry.encodedData).toBe(base64url.baseEncode(deviceXData));
 
       const fetchedDeviceXWrite = await RecordsWrite.parse(fetchedDeviceXWriteEntry);
-      expect(fetchedDeviceXWrite.author).to.equal(alice.did);
+      expect(fetchedDeviceXWrite.author).toBe(alice.did);
 
       // generate a new message by device Y updating the existing record device X created, and write to Bob's DWN
       const deviceYData = new TextEncoder().encode('message from device Y');
@@ -347,18 +343,18 @@ export function testAuthorDelegatedGrant(): void {
       });
 
       const deviceYWriteReply = await dwn.processMessage(bob.did, messageByDeviceY.message, { dataStream: deviceYDataStream });
-      expect(deviceYWriteReply.status.code).to.equal(202);
+      expect(deviceYWriteReply.status.code).toBe(202);
 
       // verify the message by device Y got written to Bob's DWN, AND Alice is the logical author
       const bobRecordsQueryReply2 = await dwn.processMessage(bob.did, recordsQueryByBob.message);
-      expect(bobRecordsQueryReply2.status.code).to.equal(200);
-      expect(bobRecordsQueryReply2.entries?.length).to.equal(1);
+      expect(bobRecordsQueryReply2.status.code).toBe(200);
+      expect(bobRecordsQueryReply2.entries?.length).toBe(1);
 
       const fetchedDeviceYWriteEntry = bobRecordsQueryReply2.entries![0];
-      expect(fetchedDeviceYWriteEntry.encodedData).to.equal(base64url.baseEncode(deviceYData));
+      expect(fetchedDeviceYWriteEntry.encodedData).toBe(base64url.baseEncode(deviceYData));
 
       const fetchedDeviceYWrite = await RecordsWrite.parse(fetchedDeviceYWriteEntry);
-      expect(fetchedDeviceYWrite.author).to.equal(alice.did);
+      expect(fetchedDeviceYWrite.author).toBe(alice.did);
 
       // Verify that Carol cannot write a chat message as Alice by invoking the Device X's grant
       const messageByCarolAsAlice = new TextEncoder().encode('Message from Carol pretending to be Alice');
@@ -374,8 +370,8 @@ export function testAuthorDelegatedGrant(): void {
 
       const carolWriteReply =
         await dwn.processMessage(carol.did, writeByCarolAsAlice.message, { dataStream: DataStream.fromBytes(messageByCarolAsAlice) });
-      expect(carolWriteReply.status.code).to.equal(400);
-      expect(carolWriteReply.status.detail).to.contain(DwnErrorCode.RecordsAuthorDelegatedGrantGrantedToAndOwnerSignatureMismatch);
+      expect(carolWriteReply.status.code).toBe(400);
+      expect(carolWriteReply.status.detail).toContain(DwnErrorCode.RecordsAuthorDelegatedGrantGrantedToAndOwnerSignatureMismatch);
     });
 
     it('should only allow correct entity invoking an author-delegated grant to read and query ', async () => {
@@ -397,7 +393,7 @@ export function testAuthorDelegatedGrant(): void {
         protocolDefinition
       });
       const protocolsConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // Bob starts a chat thread
       const threadRecord = await TestDataGenerator.generateRecordsWrite({
@@ -406,7 +402,7 @@ export function testAuthorDelegatedGrant(): void {
         protocolPath : 'thread',
       });
       const threadRoleReply = await dwn.processMessage(bob.did, threadRecord.message, { dataStream: threadRecord.dataStream });
-      expect(threadRoleReply.status.code).to.equal(202);
+      expect(threadRoleReply.status.code).toBe(202);
 
       // Bob adds Alice as a participant in the thread
       const participantRoleRecord = await TestDataGenerator.generateRecordsWrite({
@@ -418,7 +414,7 @@ export function testAuthorDelegatedGrant(): void {
         data            : new TextEncoder().encode('Alice is my friend'),
       });
       const participantRoleReply = await dwn.processMessage(bob.did, participantRoleRecord.message, { dataStream: participantRoleRecord.dataStream });
-      expect(participantRoleReply.status.code).to.equal(202);
+      expect(participantRoleReply.status.code).toBe(202);
 
       // Bob writes a chat message in the thread
       const chatRecord = await TestDataGenerator.generateRecordsWrite({
@@ -428,7 +424,7 @@ export function testAuthorDelegatedGrant(): void {
         parentContextId : threadRecord.message.contextId,
       });
       const chatRecordReply = await dwn.processMessage(bob.did, chatRecord.message, { dataStream: chatRecord.dataStream });
-      expect(chatRecordReply.status.code).to.equal(202);
+      expect(chatRecordReply.status.code).toBe(202);
 
       // Alice creates a delegated query grant for device X to act as Alice.
       const queryGrantForDeviceX = await PermissionsProtocol.createGrant({
@@ -462,8 +458,8 @@ export function testAuthorDelegatedGrant(): void {
         filter : { protocol }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
-      expect(bobRecordsQueryReply.status.code).to.equal(200);
-      expect(bobRecordsQueryReply.entries?.length).to.equal(3);
+      expect(bobRecordsQueryReply.status.code).toBe(200);
+      expect(bobRecordsQueryReply.entries?.length).toBe(3);
 
       // sanity verify Alice herself is able to query for the chat message from Bob's DWN
       const recordsQueryByAlice = await RecordsQuery.create({
@@ -476,8 +472,8 @@ export function testAuthorDelegatedGrant(): void {
         }
       });
       const aliceRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByAlice.message);
-      expect(aliceRecordsQueryReply.status.code).to.equal(200);
-      expect(aliceRecordsQueryReply.entries?.length).to.equal(1);
+      expect(aliceRecordsQueryReply.status.code).toBe(200);
+      expect(aliceRecordsQueryReply.entries?.length).toBe(1);
 
       // verify device X is able to query for the chat message from Bob's DWN
       const recordsQueryByDeviceX = await RecordsQuery.create({
@@ -491,8 +487,8 @@ export function testAuthorDelegatedGrant(): void {
         }
       });
       const deviceXRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByDeviceX.message);
-      expect(deviceXRecordsQueryReply.status.code).to.equal(200);
-      expect(deviceXRecordsQueryReply.entries?.length).to.equal(1);
+      expect(deviceXRecordsQueryReply.status.code).toBe(200);
+      expect(deviceXRecordsQueryReply.entries?.length).toBe(1);
 
       // verify device X is able to read the chat message from Bob's DWN
       const recordsReadByDeviceX = await RecordsRead.create({
@@ -504,8 +500,8 @@ export function testAuthorDelegatedGrant(): void {
         }
       });
       const deviceXRecordsReadReply = await dwn.processMessage(bob.did, recordsReadByDeviceX.message);
-      expect(deviceXRecordsReadReply.status.code).to.equal(200);
-      expect(deviceXRecordsReadReply.entry!.recordsWrite?.recordId).to.equal(chatRecord.message.recordId);
+      expect(deviceXRecordsReadReply.status.code).toBe(200);
+      expect(deviceXRecordsReadReply.entry!.recordsWrite?.recordId).toBe(chatRecord.message.recordId);
 
       // Verify that Carol cannot query as Alice by invoking the delegated grant granted to Device X
       const recordsQueryByCarol = await RecordsQuery.create({
@@ -519,8 +515,8 @@ export function testAuthorDelegatedGrant(): void {
         }
       });
       const recordsQueryByCarolReply = await dwn.processMessage(bob.did, recordsQueryByCarol.message);
-      expect(recordsQueryByCarolReply.status.code).to.equal(400);
-      expect(recordsQueryByCarolReply.status.detail).to.contain(DwnErrorCode.RecordsAuthorDelegatedGrantGrantedToAndOwnerSignatureMismatch);
+      expect(recordsQueryByCarolReply.status.code).toBe(400);
+      expect(recordsQueryByCarolReply.status.detail).toContain(DwnErrorCode.RecordsAuthorDelegatedGrantGrantedToAndOwnerSignatureMismatch);
 
       // Verify that Carol cannot read as Alice by invoking the delegated grant granted to Device X
       const recordsReadByCarol = await RecordsRead.create({
@@ -532,8 +528,8 @@ export function testAuthorDelegatedGrant(): void {
         }
       });
       const recordsReadByCarolReply = await dwn.processMessage(bob.did, recordsReadByCarol.message);
-      expect(recordsReadByCarolReply.status.code).to.equal(400);
-      expect(recordsQueryByCarolReply.status.detail).to.contain(DwnErrorCode.RecordsAuthorDelegatedGrantGrantedToAndOwnerSignatureMismatch);
+      expect(recordsReadByCarolReply.status.code).toBe(400);
+      expect(recordsQueryByCarolReply.status.detail).toContain(DwnErrorCode.RecordsAuthorDelegatedGrantGrantedToAndOwnerSignatureMismatch);
     });
 
     it('should only allow correct entity invoking an author-delegated grant to subscribe', async () => {
@@ -561,7 +557,7 @@ export function testAuthorDelegatedGrant(): void {
         protocolDefinition
       });
       const protocolsConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // Bob starts a chat thread
       const threadRecord = await TestDataGenerator.generateRecordsWrite({
@@ -570,7 +566,7 @@ export function testAuthorDelegatedGrant(): void {
         protocolPath : 'thread',
       });
       const threadRoleReply = await dwn.processMessage(bob.did, threadRecord.message, { dataStream: threadRecord.dataStream });
-      expect(threadRoleReply.status.code).to.equal(202);
+      expect(threadRoleReply.status.code).toBe(202);
 
       // Bob adds Alice as a participant in the thread
       const participantRoleRecord = await TestDataGenerator.generateRecordsWrite({
@@ -582,7 +578,7 @@ export function testAuthorDelegatedGrant(): void {
         data            : new TextEncoder().encode('Alice is my friend'),
       });
       const participantRoleReply = await dwn.processMessage(bob.did, participantRoleRecord.message, { dataStream: participantRoleRecord.dataStream });
-      expect(participantRoleReply.status.code).to.equal(202);
+      expect(participantRoleReply.status.code).toBe(202);
 
       // Alice creates a delegated subscribe grant for device X to act as Alice.
       const subscribeGrantForDeviceX = await PermissionsProtocol.createGrant({
@@ -621,7 +617,7 @@ export function testAuthorDelegatedGrant(): void {
         }
       });
       const recordsSubscribeByDeviceXWithoutGrantReply = await dwn.processMessage(bob.did, recordsSubscribeByDeviceXWithoutGrant.message);
-      expect(recordsSubscribeByDeviceXWithoutGrantReply.status.code).to.equal(401, 'device X without grant subscribe');
+      expect(recordsSubscribeByDeviceXWithoutGrantReply.status.code).toBe(401, 'device X without grant subscribe');
 
       // control: verify that Carol cannot subscribe as Alice by invoking the delegated grant granted to Device X
       const recordsSubscribeByCarol = await RecordsSubscribe.create({
@@ -635,8 +631,8 @@ export function testAuthorDelegatedGrant(): void {
         }
       });
       const recordsSubscribeByCarolReply = await dwn.processMessage(bob.did, recordsSubscribeByCarol.message);
-      expect(recordsSubscribeByCarolReply.status.code).to.equal(400, 'carol subscribe');
-      expect(recordsSubscribeByCarolReply.status.detail).to.contain(DwnErrorCode.RecordsAuthorDelegatedGrantGrantedToAndOwnerSignatureMismatch);
+      expect(recordsSubscribeByCarolReply.status.code).toBe(400, 'carol subscribe');
+      expect(recordsSubscribeByCarolReply.status.detail).toContain(DwnErrorCode.RecordsAuthorDelegatedGrantGrantedToAndOwnerSignatureMismatch);
 
       // verify device X is able to subscribe the chat message from Bob's DWN using the delegated grant
       const recordsSubscribeByDeviceX = await RecordsSubscribe.create({
@@ -652,7 +648,7 @@ export function testAuthorDelegatedGrant(): void {
       const recordsSubscribeByDeviceXReply = await dwn.processMessage(bob.did, recordsSubscribeByDeviceX.message, {
         subscriptionHandler: captureChatRecords
       });
-      expect(recordsSubscribeByDeviceXReply.status.code).to.equal(200, 'subscribe');
+      expect(recordsSubscribeByDeviceXReply.status.code).toBe(200, 'subscribe');
 
       // Bob writes chat messages in the thread
       const chatRecord1 = await TestDataGenerator.generateRecordsWrite({
@@ -662,7 +658,7 @@ export function testAuthorDelegatedGrant(): void {
         parentContextId : threadRecord.message.contextId,
       });
       const chatRecord1Reply = await dwn.processMessage(bob.did, chatRecord1.message, { dataStream: chatRecord1.dataStream });
-      expect(chatRecord1Reply.status.code).to.equal(202);
+      expect(chatRecord1Reply.status.code).toBe(202);
 
       const chatRecord2 = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
@@ -671,11 +667,11 @@ export function testAuthorDelegatedGrant(): void {
         parentContextId : threadRecord.message.contextId,
       });
       const chatRecord2Reply = await dwn.processMessage(bob.did, chatRecord2.message, { dataStream: chatRecord2.dataStream });
-      expect(chatRecord2Reply.status.code).to.equal(202);
+      expect(chatRecord2Reply.status.code).toBe(202);
 
       await Poller.pollUntilSuccessOrTimeout(async () => {
-        expect(subscriptionChatRecords.size).to.equal(2);
-        expect([ ...subscriptionChatRecords ]).to.have.members([ chatRecord1.message.recordId, chatRecord2.message.recordId ]);
+        expect(subscriptionChatRecords.size).toBe(2);
+        expect([ ...subscriptionChatRecords ]).toEqual(expect.arrayContaining([ chatRecord1.message.recordId, chatRecord2.message.recordId ]));
       });
 
       await recordsSubscribeByDeviceXReply.subscription?.close();
@@ -701,7 +697,7 @@ export function testAuthorDelegatedGrant(): void {
         protocolDefinition
       });
       const protocolsConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // Bob adds Alice as an admin
       const globalAdminRecord = await TestDataGenerator.generateRecordsWrite({
@@ -712,7 +708,7 @@ export function testAuthorDelegatedGrant(): void {
         data         : new TextEncoder().encode('I trust Alice to manage my chat thread'),
       });
       const globalAdminRecordReply = await dwn.processMessage(bob.did, globalAdminRecord.message, { dataStream: globalAdminRecord.dataStream });
-      expect(globalAdminRecordReply.status.code).to.equal(202);
+      expect(globalAdminRecordReply.status.code).toBe(202);
 
       // Bob starts a chat thread
       const threadRecord = await TestDataGenerator.generateRecordsWrite({
@@ -721,7 +717,7 @@ export function testAuthorDelegatedGrant(): void {
         protocolPath : 'thread',
       });
       const threadRoleReply = await dwn.processMessage(bob.did, threadRecord.message, { dataStream: threadRecord.dataStream });
-      expect(threadRoleReply.status.code).to.equal(202);
+      expect(threadRoleReply.status.code).toBe(202);
 
       // Bob adds Carol as a participant in the thread
       const participantRoleRecord = await TestDataGenerator.generateRecordsWrite({
@@ -732,7 +728,7 @@ export function testAuthorDelegatedGrant(): void {
         parentContextId : threadRecord.message.contextId
       });
       const participantRoleReply = await dwn.processMessage(bob.did, participantRoleRecord.message, { dataStream: participantRoleRecord.dataStream });
-      expect(participantRoleReply.status.code).to.equal(202);
+      expect(participantRoleReply.status.code).toBe(202);
 
       // Carol writes a chat message in the thread
       const chatRecord = await TestDataGenerator.generateRecordsWrite({
@@ -744,7 +740,7 @@ export function testAuthorDelegatedGrant(): void {
         data            : new TextEncoder().encode('A rude message'),
       });
       const chatRecordReply = await dwn.processMessage(bob.did, chatRecord.message, { dataStream: chatRecord.dataStream });
-      expect(chatRecordReply.status.code).to.equal(202);
+      expect(chatRecordReply.status.code).toBe(202);
 
       // Alice creates a delegated delete grant for device X to act as Alice.
       const deleteGrantForDeviceX = await PermissionsProtocol.createGrant({
@@ -767,7 +763,7 @@ export function testAuthorDelegatedGrant(): void {
         recordId       : chatRecord.message.recordId
       });
       const carolRecordsDeleteReply = await dwn.processMessage(bob.did, recordsDeleteByCarol.message);
-      expect(carolRecordsDeleteReply.status.code).to.equal(400);
+      expect(carolRecordsDeleteReply.status.code).toBe(400);
 
       // sanity verify the chat message is still in Bob's DWN
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
@@ -775,8 +771,8 @@ export function testAuthorDelegatedGrant(): void {
         filter : { protocolPath: 'thread/chat' }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
-      expect(bobRecordsQueryReply.status.code).to.equal(200);
-      expect(bobRecordsQueryReply.entries?.length).to.equal(1);
+      expect(bobRecordsQueryReply.status.code).toBe(200);
+      expect(bobRecordsQueryReply.entries?.length).toBe(1);
 
       // verify device X is able to delete Carol's chat message from Bob's DWN
       const recordsDeleteByDeviceX = await RecordsDelete.create({
@@ -786,12 +782,12 @@ export function testAuthorDelegatedGrant(): void {
         recordId       : chatRecord.message.recordId
       });
       const deviceXRecordsDeleteReply = await dwn.processMessage(bob.did, recordsDeleteByDeviceX.message);
-      expect(deviceXRecordsDeleteReply.status.code).to.equal(202);
+      expect(deviceXRecordsDeleteReply.status.code).toBe(202);
 
       // sanity verify the chat message is no longer queryable from Bob's DWN
       const bobRecordsQueryReply2 = await dwn.processMessage(bob.did, recordsQueryByBob.message);
-      expect(bobRecordsQueryReply2.status.code).to.equal(200);
-      expect(bobRecordsQueryReply2.entries?.length).to.equal(0);
+      expect(bobRecordsQueryReply2.status.code).toBe(200);
+      expect(bobRecordsQueryReply2.entries?.length).toBe(0);
     });
 
     it('should not allow entity using a non-delegated grant as an author-delegated grant to invoke write', async () => {
@@ -812,7 +808,7 @@ export function testAuthorDelegatedGrant(): void {
         protocolDefinition
       });
       const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolConfigureReply.status.code).to.equal(202);
+      expect(protocolConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a non-delegated grant for device X
       const scope: PermissionScope = {
@@ -843,8 +839,8 @@ export function testAuthorDelegatedGrant(): void {
       });
 
       const deviceXWriteReply = await dwn.processMessage(bob.did, messageByDeviceX.message, { dataStream: deviceXDataStream });
-      expect(deviceXWriteReply.status.code).to.equal(400);
-      expect(deviceXWriteReply.status.detail).to.contain(DwnErrorCode.RecordsAuthorDelegatedGrantNotADelegatedGrant);
+      expect(deviceXWriteReply.status.code).toBe(400);
+      expect(deviceXWriteReply.status.detail).toContain(DwnErrorCode.RecordsAuthorDelegatedGrantNotADelegatedGrant);
 
       // 4. Sanity verify the message by device X did not get written to Bob's DWN
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
@@ -852,17 +848,17 @@ export function testAuthorDelegatedGrant(): void {
         filter : { protocol }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
-      expect(bobRecordsQueryReply.status.code).to.equal(200);
-      expect(bobRecordsQueryReply.entries?.length).to.equal(0);
+      expect(bobRecordsQueryReply.status.code).toBe(200);
+      expect(bobRecordsQueryReply.entries?.length).toBe(0);
     });
 
-    xit('should not allow entity using a non-delegated grant as an author-delegated grant to invoke read', async () => {
+    it.skip('should not allow entity using a non-delegated grant as an author-delegated grant to invoke read', async () => {
     });
 
-    xit('should not allow entity using a non-delegated grant as an author-delegated grant to invoke query', async () => {
+    it.skip('should not allow entity using a non-delegated grant as an author-delegated grant to invoke query', async () => {
     });
 
-    xit('should not allow entity using a non-delegated grant as an author-delegated grant to invoke delete', async () => {
+    it.skip('should not allow entity using a non-delegated grant as an author-delegated grant to invoke delete', async () => {
     });
 
     it('should fail if author-delegated grant has a mismatching protocol scope - write', async () => {
@@ -898,7 +894,7 @@ export function testAuthorDelegatedGrant(): void {
         protocolDefinition
       });
       const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolConfigureReply.status.code).to.equal(202);
+      expect(protocolConfigureReply.status.code).toBe(202);
 
       // 3. Device X attempts to use the delegated grant to write an email to Bob as Alice
       const deviceXData = new TextEncoder().encode('message from device X');
@@ -914,8 +910,8 @@ export function testAuthorDelegatedGrant(): void {
       });
 
       const deviceXWriteReply = await dwn.processMessage(bob.did, messageByDeviceX.message, { dataStream: deviceXDataStream });
-      expect(deviceXWriteReply.status.code).to.equal(401);
-      expect(deviceXWriteReply.status.detail).to.contain(DwnErrorCode.RecordsGrantAuthorizationScopeProtocolMismatch);
+      expect(deviceXWriteReply.status.code).toBe(401);
+      expect(deviceXWriteReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeProtocolMismatch);
     });
 
     it('should fail if author-delegated grant has a mismatching protocol scope - query, subscribe & read', async () => {
@@ -938,7 +934,7 @@ export function testAuthorDelegatedGrant(): void {
         protocolDefinition
       });
       const protocolsConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // Bob starts a chat thread
       const threadRecord = await TestDataGenerator.generateRecordsWrite({
@@ -947,7 +943,7 @@ export function testAuthorDelegatedGrant(): void {
         protocolPath : 'thread',
       });
       const threadRoleReply = await dwn.processMessage(bob.did, threadRecord.message, { dataStream: threadRecord.dataStream });
-      expect(threadRoleReply.status.code).to.equal(202);
+      expect(threadRoleReply.status.code).toBe(202);
 
       // Bob adds Alice as a participant in the thread
       const participantRoleRecord = await TestDataGenerator.generateRecordsWrite({
@@ -959,7 +955,7 @@ export function testAuthorDelegatedGrant(): void {
         data            : new TextEncoder().encode('Alice is my friend'),
       });
       const participantRoleReply = await dwn.processMessage(bob.did, participantRoleRecord.message, { dataStream: participantRoleRecord.dataStream });
-      expect(participantRoleReply.status.code).to.equal(202);
+      expect(participantRoleReply.status.code).toBe(202);
 
       // Bob writes a chat message in the thread
       const chatRecord = await TestDataGenerator.generateRecordsWrite({
@@ -969,7 +965,7 @@ export function testAuthorDelegatedGrant(): void {
         parentContextId : threadRecord.message.contextId,
       });
       const chatRecordReply = await dwn.processMessage(bob.did, chatRecord.message, { dataStream: chatRecord.dataStream });
-      expect(chatRecordReply.status.code).to.equal(202);
+      expect(chatRecordReply.status.code).toBe(202);
 
 
       // 2. Alice creates a delegated grant for device X to act as her for a protocol that is NOT chat protocol
@@ -1028,8 +1024,8 @@ export function testAuthorDelegatedGrant(): void {
         }
       });
       const deviceXRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByDeviceX.message);
-      expect(deviceXRecordsQueryReply.status.code).to.equal(401);
-      expect(deviceXRecordsQueryReply.status.detail).to.contain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch);
+      expect(deviceXRecordsQueryReply.status.code).toBe(401);
+      expect(deviceXRecordsQueryReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch);
 
       // verify device X reading for the chat message from Bob's DWN fails
       const recordsReadByDeviceX = await RecordsRead.create({
@@ -1041,8 +1037,8 @@ export function testAuthorDelegatedGrant(): void {
         }
       });
       const deviceXReadReply = await dwn.processMessage(bob.did, recordsReadByDeviceX.message);
-      expect(deviceXReadReply.status.code).to.equal(401);
-      expect(deviceXReadReply.status.detail).to.contain(DwnErrorCode.RecordsGrantAuthorizationScopeProtocolMismatch);
+      expect(deviceXReadReply.status.code).toBe(401);
+      expect(deviceXReadReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeProtocolMismatch);
 
       // verify device X subscribing to the chat message from Bob's DWN fails
       const recordsSubscribeByDeviceX = await RecordsSubscribe.create({
@@ -1056,8 +1052,8 @@ export function testAuthorDelegatedGrant(): void {
         }
       });
       const deviceXRecordsSubscribeReply = await dwn.processMessage(bob.did, recordsSubscribeByDeviceX.message);
-      expect(deviceXRecordsSubscribeReply.status.code).to.equal(401);
-      expect(deviceXRecordsSubscribeReply.status.detail).to.contain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch);
+      expect(deviceXRecordsSubscribeReply.status.code).toBe(401);
+      expect(deviceXRecordsSubscribeReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch);
     });
 
     it('should fail if author-delegated grant has a mismatching protocol scope - delete', async () => {
@@ -1078,7 +1074,7 @@ export function testAuthorDelegatedGrant(): void {
         protocolDefinition
       });
       const protocolsConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // Bob adds Alice as an admin
       const globalAdminRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1089,7 +1085,7 @@ export function testAuthorDelegatedGrant(): void {
         data         : new TextEncoder().encode('I trust Alice to manage my chat thread'),
       });
       const globalAdminRecordReply = await dwn.processMessage(bob.did, globalAdminRecord.message, { dataStream: globalAdminRecord.dataStream });
-      expect(globalAdminRecordReply.status.code).to.equal(202);
+      expect(globalAdminRecordReply.status.code).toBe(202);
 
       // Bob starts a chat thread
       const threadRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1098,7 +1094,7 @@ export function testAuthorDelegatedGrant(): void {
         protocolPath : 'thread',
       });
       const threadRoleReply = await dwn.processMessage(bob.did, threadRecord.message, { dataStream: threadRecord.dataStream });
-      expect(threadRoleReply.status.code).to.equal(202);
+      expect(threadRoleReply.status.code).toBe(202);
 
       // Bob adds Carol as a participant in the thread
       const participantRoleRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1109,7 +1105,7 @@ export function testAuthorDelegatedGrant(): void {
         parentContextId : threadRecord.message.contextId
       });
       const participantRoleReply = await dwn.processMessage(bob.did, participantRoleRecord.message, { dataStream: participantRoleRecord.dataStream });
-      expect(participantRoleReply.status.code).to.equal(202);
+      expect(participantRoleReply.status.code).toBe(202);
 
       // Carol writes a chat message in the thread
       const chatRecord = await TestDataGenerator.generateRecordsWrite({
@@ -1121,7 +1117,7 @@ export function testAuthorDelegatedGrant(): void {
         data            : new TextEncoder().encode('A rude message'),
       });
       const chatRecordReply = await dwn.processMessage(bob.did, chatRecord.message, { dataStream: chatRecord.dataStream });
-      expect(chatRecordReply.status.code).to.equal(202);
+      expect(chatRecordReply.status.code).toBe(202);
 
       // Alice creates a delegated delete grant for Device X to act as her for a protocol that is NOT chat protocol
       const delegatedGrantForDeviceX = await PermissionsProtocol.createGrant({
@@ -1144,8 +1140,8 @@ export function testAuthorDelegatedGrant(): void {
         recordId       : chatRecord.message.recordId
       });
       const deviceXRecordsDeleteReply = await dwn.processMessage(bob.did, recordsDeleteByDeviceX.message);
-      expect(deviceXRecordsDeleteReply.status.code).to.equal(401);
-      expect(deviceXRecordsDeleteReply.status.detail).to.contain(DwnErrorCode.RecordsGrantAuthorizationDeleteProtocolScopeMismatch);
+      expect(deviceXRecordsDeleteReply.status.code).toBe(401);
+      expect(deviceXRecordsDeleteReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationDeleteProtocolScopeMismatch);
 
       // sanity verify the chat message is still in Bob's DWN
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
@@ -1153,8 +1149,8 @@ export function testAuthorDelegatedGrant(): void {
         filter : { protocolPath: 'thread/chat' }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
-      expect(bobRecordsQueryReply.status.code).to.equal(200);
-      expect(bobRecordsQueryReply.entries?.length).to.equal(1);
+      expect(bobRecordsQueryReply.status.code).toBe(200);
+      expect(bobRecordsQueryReply.entries?.length).toBe(1);
     });
 
     it('should fail if presented with an author-delegated grant with invalid grantor signature - write', async () => {
@@ -1175,7 +1171,7 @@ export function testAuthorDelegatedGrant(): void {
         protocolDefinition
       });
       const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolConfigureReply.status.code).to.equal(202);
+      expect(protocolConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a delegated grant for device X to write as Alice, but with invalid signature
       const scope: PermissionScope = {
@@ -1209,8 +1205,8 @@ export function testAuthorDelegatedGrant(): void {
       });
 
       const deviceXWriteReply = await dwn.processMessage(bob.did, messageByDeviceX.message, { dataStream: deviceXDataStream });
-      expect(deviceXWriteReply.status.code).to.equal(401);
-      expect(deviceXWriteReply.status.detail).to.contain(DwnErrorCode.GeneralJwsVerifierInvalidSignature);
+      expect(deviceXWriteReply.status.code).toBe(401);
+      expect(deviceXWriteReply.status.detail).toContain(DwnErrorCode.GeneralJwsVerifierInvalidSignature);
 
       // 4. Sanity verify the message by device X did not get written to Bob's DWN
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
@@ -1218,8 +1214,8 @@ export function testAuthorDelegatedGrant(): void {
         filter : { protocol }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
-      expect(bobRecordsQueryReply.status.code).to.equal(200);
-      expect(bobRecordsQueryReply.entries?.length).to.equal(0);
+      expect(bobRecordsQueryReply.status.code).toBe(200);
+      expect(bobRecordsQueryReply.entries?.length).toBe(0);
     });
 
     it('should fail if the CID of the author-delegated grant and the grant ID in the payload of the message signature is mismatching - write', async () => {
@@ -1240,7 +1236,7 @@ export function testAuthorDelegatedGrant(): void {
         protocolDefinition
       });
       const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolConfigureReply.status.code).to.equal(202);
+      expect(protocolConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates two delegated grants for device X to write as Alice
       const scope: PermissionScope = {
@@ -1283,8 +1279,8 @@ export function testAuthorDelegatedGrant(): void {
       messageByDeviceX.message.authorization.authorDelegatedGrant = deviceXGrant2.dataEncodedMessage; // intentionally have a mismatching grant
 
       const deviceXWriteReply = await dwn.processMessage(bob.did, messageByDeviceX.message, { dataStream: deviceXDataStream });
-      expect(deviceXWriteReply.status.code).to.equal(400);
-      expect(deviceXWriteReply.status.detail).to.contain(DwnErrorCode.RecordsAuthorDelegatedGrantCidMismatch);
+      expect(deviceXWriteReply.status.code).toBe(400);
+      expect(deviceXWriteReply.status.detail).toContain(DwnErrorCode.RecordsAuthorDelegatedGrantCidMismatch);
 
       // 4. Sanity verify the message by device X did not get written to Bob's DWN
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
@@ -1292,8 +1288,8 @@ export function testAuthorDelegatedGrant(): void {
         filter : { protocol }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
-      expect(bobRecordsQueryReply.status.code).to.equal(200);
-      expect(bobRecordsQueryReply.entries?.length).to.equal(0);
+      expect(bobRecordsQueryReply.status.code).toBe(200);
+      expect(bobRecordsQueryReply.entries?.length).toBe(0);
     });
 
     it('should fail if author-delegated grant is revoked - write', async () => {
@@ -1315,7 +1311,7 @@ export function testAuthorDelegatedGrant(): void {
         protocolDefinition
       });
       const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolConfigureReply.status.code).to.equal(202);
+      expect(protocolConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a delegated grant for device X to write as Alice
       const scope: PermissionScope = {
@@ -1337,7 +1333,7 @@ export function testAuthorDelegatedGrant(): void {
         deviceXGrant.recordsWrite.message,
         { dataStream: deviceXGrantDataStream }
       );
-      expect(permissionGrantWriteReply.status.code).to.equal(202);
+      expect(permissionGrantWriteReply.status.code).toBe(202);
 
       // 3. Alice revokes the grant
       const permissionRevoke = await PermissionsProtocol.createRevocation({
@@ -1346,7 +1342,7 @@ export function testAuthorDelegatedGrant(): void {
       });
       const revocationDataStream = DataStream.fromBytes(permissionRevoke.permissionRevocationBytes);
       const permissionRevokeReply = await dwn.processMessage(alice.did, permissionRevoke.recordsWrite.message, { dataStream: revocationDataStream });
-      expect(permissionRevokeReply.status.code).to.equal(202);
+      expect(permissionRevokeReply.status.code).toBe(202);
 
       // 3. Verify that device X cannot write a `RecordsWrite` message to Bob's DWN as Alice using a mismatching delegated grant ID
       const deviceXData = new TextEncoder().encode('message from device X');
@@ -1362,8 +1358,8 @@ export function testAuthorDelegatedGrant(): void {
       });
 
       const deviceXWriteReply = await dwn.processMessage(bob.did, messageByDeviceX.message, { dataStream: deviceXDataStream });
-      expect(deviceXWriteReply.status.code).to.equal(401);
-      expect(deviceXWriteReply.status.detail).to.contain(DwnErrorCode.GrantAuthorizationGrantRevoked);
+      expect(deviceXWriteReply.status.code).toBe(401);
+      expect(deviceXWriteReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationGrantRevoked);
 
       // 4. Sanity verify the message by device X did not get written to Bob's DWN
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
@@ -1371,8 +1367,8 @@ export function testAuthorDelegatedGrant(): void {
         filter : { protocol }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
-      expect(bobRecordsQueryReply.status.code).to.equal(200);
-      expect(bobRecordsQueryReply.entries?.length).to.equal(0);
+      expect(bobRecordsQueryReply.status.code).toBe(200);
+      expect(bobRecordsQueryReply.entries?.length).toBe(0);
     });
 
     it('should fail if author-delegated grant is expired - write', async () => {
@@ -1393,7 +1389,7 @@ export function testAuthorDelegatedGrant(): void {
         protocolDefinition
       });
       const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolConfigureReply.status.code).to.equal(202);
+      expect(protocolConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a delegated grant for device X to write as Alice, but make it expired
       const scope: PermissionScope = {
@@ -1424,8 +1420,8 @@ export function testAuthorDelegatedGrant(): void {
       });
 
       const deviceXWriteReply = await dwn.processMessage(bob.did, messageByDeviceX.message, { dataStream: deviceXDataStream });
-      expect(deviceXWriteReply.status.code).to.equal(401);
-      expect(deviceXWriteReply.status.detail).to.contain(DwnErrorCode.GrantAuthorizationGrantExpired);
+      expect(deviceXWriteReply.status.code).toBe(401);
+      expect(deviceXWriteReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationGrantExpired);
 
       // 4. Sanity verify the message by device X did not get written to Bob's DWN
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
@@ -1433,8 +1429,8 @@ export function testAuthorDelegatedGrant(): void {
         filter : { protocol }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
-      expect(bobRecordsQueryReply.status.code).to.equal(200);
-      expect(bobRecordsQueryReply.entries?.length).to.equal(0);
+      expect(bobRecordsQueryReply.status.code).toBe(200);
+      expect(bobRecordsQueryReply.entries?.length).toBe(0);
     });
   });
 }

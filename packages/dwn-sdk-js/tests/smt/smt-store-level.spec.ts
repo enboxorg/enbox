@@ -1,4 +1,4 @@
-import { expect } from 'chai';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { SMTStoreLevel } from '../../src/smt/smt-store-level.js';
 import { SMTStoreMemory } from '../../src/smt/smt-store-memory.js';
@@ -47,11 +47,11 @@ describe('SMTStoreLevel', () => {
 
     await smt.insert('bafyreigtest1');
     const root = await smt.getRoot();
-    expect(hashEquals(emptyRoot, root)).to.be.false;
+    expect(hashEquals(emptyRoot, root)).toBe(false);
 
     // Root should be retrievable after insertion
     const rootAgain = await smt.getRoot();
-    expect(hashEquals(root, rootAgain)).to.be.true;
+    expect(hashEquals(root, rootAgain)).toBe(true);
   });
 
   it('should handle insert and delete with LevelDB persistence', async () => {
@@ -59,14 +59,14 @@ describe('SMTStoreLevel', () => {
     await smt.insert('bafyreigtest2');
     await smt.insert('bafyreigtest3');
 
-    expect(await smt.has('bafyreigtest1')).to.be.true;
-    expect(await smt.has('bafyreigtest2')).to.be.true;
-    expect(await smt.has('bafyreigtest3')).to.be.true;
+    expect(await smt.has('bafyreigtest1')).toBe(true);
+    expect(await smt.has('bafyreigtest2')).toBe(true);
+    expect(await smt.has('bafyreigtest3')).toBe(true);
 
     await smt.delete('bafyreigtest2');
-    expect(await smt.has('bafyreigtest1')).to.be.true;
-    expect(await smt.has('bafyreigtest2')).to.be.false;
-    expect(await smt.has('bafyreigtest3')).to.be.true;
+    expect(await smt.has('bafyreigtest1')).toBe(true);
+    expect(await smt.has('bafyreigtest2')).toBe(false);
+    expect(await smt.has('bafyreigtest3')).toBe(true);
   });
 
   it('should produce order-independent roots with LevelDB', async () => {
@@ -94,7 +94,7 @@ describe('SMTStoreLevel', () => {
 
     const rootA = await smtA.getRoot();
     const rootB = await smtB.getRoot();
-    expect(hashEquals(rootA, rootB)).to.be.true;
+    expect(hashEquals(rootA, rootB)).toBe(true);
 
     await smtA.clear();
     await smtA.close();
@@ -119,8 +119,8 @@ describe('SMTStoreLevel', () => {
     await smtB.insert('bafyreiRemoteOnly');
 
     const diff = await smt.diff(smtB);
-    expect(diff.onlyLocal.sort()).to.deep.equal(['bafyreiLocalOnly']);
-    expect(diff.onlyRemote.sort()).to.deep.equal(['bafyreiRemoteOnly']);
+    expect(diff.onlyLocal.sort()).toEqual(['bafyreiLocalOnly']);
+    expect(diff.onlyRemote.sort()).toEqual(['bafyreiRemoteOnly']);
 
     await smtB.close();
   });
@@ -133,8 +133,8 @@ describe('SMTStoreLevel', () => {
 
     await smt.clear();
     const root = await smt.getRoot();
-    expect(hashEquals(root, defaultHashes[0])).to.be.true;
-    expect(await smt.has('bafyreiA')).to.be.false;
+    expect(hashEquals(root, defaultHashes[0])).toBe(true);
+    expect(await smt.has('bafyreiA')).toBe(false);
   });
 
   it('should throw when calling methods before open()', async () => {
@@ -143,9 +143,9 @@ describe('SMTStoreLevel', () => {
 
     try {
       await uninitStore.getNode(new Uint8Array(32));
-      expect.fail('Expected an error');
+      throw new Error('Expected an error');
     } catch (e: any) {
-      expect(e.message).to.include('not initialized');
+      expect(e.message).toContain('not initialized');
     }
 
     await db.close();
@@ -156,6 +156,6 @@ describe('SMTStoreLevel', () => {
     const randomHash = new Uint8Array(32);
     randomHash[0] = 0xff; // ensure it's not all zeros
     const node = await store.getNode(randomHash);
-    expect(node).to.be.undefined;
+    expect(node).toBeUndefined();
   });
 });

@@ -2,21 +2,18 @@ import type { DidResolver } from '@enbox/dids';
 import type { EventStream } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import freeForAllProtocolDefinition from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 import sinon from 'sinon';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 
-import chai, { expect } from 'chai';
 import { DataStream, Dwn, Jws, ProtocolsConfigure, RecordsRead } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { Encoder, RecordsDelete, RecordsWrite } from '../../src/index.js';
-
-chai.use(chaiAsPromised);
 
 export function testDeletedRecordScenarios(): void {
   describe('End-to-end Scenarios Spanning Features', () => {
@@ -28,9 +25,9 @@ export function testDeletedRecordScenarios(): void {
     let eventStream: EventStream;
     let dwn: Dwn;
 
-    // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
+    // important to follow the `beforeAll` and `afterAll` pattern to initialize and clean the stores in tests
     // so that different test suites can reuse the same backend store for testing
-    before(async () => {
+    beforeAll(async () => {
       didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
       const stores = TestStores.get();
@@ -53,7 +50,7 @@ export function testDeletedRecordScenarios(): void {
       await stateIndex.clear();
     });
 
-    after(async () => {
+    afterAll(async () => {
       await dwn.close();
     });
 
@@ -76,7 +73,7 @@ export function testDeletedRecordScenarios(): void {
         alice.did,
         protocolsConfigure.message
       );
-      expect(protocolsConfigureForAliceReply.status.code).to.equal(202);
+      expect(protocolsConfigureForAliceReply.status.code).toBe(202);
 
       const data = Encoder.stringToBytes('some post content');
       const { message: recordsWriteMessage } = await RecordsWrite.create({
@@ -88,7 +85,7 @@ export function testDeletedRecordScenarios(): void {
         data,
       });
       const writeReply = await dwn.processMessage(alice.did, recordsWriteMessage, { dataStream: DataStream.fromBytes(data) });
-      expect(writeReply.status.code).to.equal(202);
+      expect(writeReply.status.code).toBe(202);
 
       // 1. Alice deletes an existing record.
       const recordsDelete = await RecordsDelete.create({
@@ -97,7 +94,7 @@ export function testDeletedRecordScenarios(): void {
       });
 
       const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
-      expect(deleteReply.status.code).to.equal(202);
+      expect(deleteReply.status.code).toBe(202);
 
       // 2. Alice attempts to read the deleted record.
       const readData = await RecordsRead.create({
@@ -107,11 +104,11 @@ export function testDeletedRecordScenarios(): void {
       const readReply = await dwn.processMessage(alice.did, readData.message);
 
       // Expected outcome: Alice should get a 404 error with the reply containing the deleted record and the initial write of the record.
-      expect(readReply.status.code).to.equal(404);
-      expect(readReply.entry!.recordsDelete).to.exist;
-      expect(readReply.entry!.recordsDelete).to.deep.equal(recordsDelete.message);
-      expect(readReply.entry!.initialWrite).to.exist;
-      expect(readReply.entry!.initialWrite).to.deep.equal(recordsWriteMessage);
+      expect(readReply.status.code).toBe(404);
+      expect(readReply.entry!.recordsDelete).toBeDefined();
+      expect(readReply.entry!.recordsDelete).toEqual(recordsDelete.message);
+      expect(readReply.entry!.initialWrite).toBeDefined();
+      expect(readReply.entry!.initialWrite).toEqual(recordsWriteMessage);
     });
   });
 }

@@ -2,15 +2,15 @@ import type { MessageStore } from '../../src/index.js';
 import type { CreateLevelDatabaseOptions, LevelDatabase } from '../../src/store/level-wrapper.js';
 
 import { createLevelDatabase } from '../../src/store/level-wrapper.js';
-import { expect } from 'chai';
 import { MessageStoreLevel } from '../../src/store/message-store-level.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 let messageStore: MessageStore;
 
 describe('MessageStoreLevel Test Suite', () => {
   // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
   // so that different test suites can reuse the same backend store for testing
-  before(async () => {
+  beforeAll(async () => {
     messageStore = new MessageStoreLevel({
       blockstoreLocation : 'TEST-MESSAGESTORE',
       indexLocation      : 'TEST-INDEX'
@@ -22,7 +22,7 @@ describe('MessageStoreLevel Test Suite', () => {
     await messageStore.clear(); // clean up before each test rather than after so that a test does not depend on other tests to do the clean up
   });
 
-  after(async () => {
+  afterAll(async () => {
     await messageStore.close();
   });
 
@@ -43,7 +43,7 @@ describe('MessageStoreLevel Test Suite', () => {
       });
       await messageStore.open();
 
-      expect(locations).to.eql(new Set([ 'TEST-MESSAGESTORE', 'TEST-INDEX' ]));
+      expect(locations).toEqual(new Set([ 'TEST-MESSAGESTORE', 'TEST-INDEX' ]));
     });
   });
 });

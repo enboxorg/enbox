@@ -2,10 +2,8 @@ import type { DidResolver } from '@enbox/dids';
 import type { EventStream } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
 
-import chaiAsPromised from 'chai-as-promised';
 import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
 import sinon from 'sinon';
-import chai, { expect } from 'chai';
 
 import { ArrayUtility } from '../../src/utils/array.js';
 import { DataStream } from '../../src/utils/data-stream.js';
@@ -17,12 +15,12 @@ import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
-chai.use(chaiAsPromised);
 
 export function testOwnerSignature(): void {
-  describe('owner signature', async () => {
+  describe('owner signature', () => {
     let didResolver: DidResolver;
     let messageStore: MessageStore;
     let dataStore: DataStore;
@@ -33,7 +31,7 @@ export function testOwnerSignature(): void {
 
     // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
     // so that different test suites can reuse the same backend store for testing
-    before(async () => {
+    beforeAll(async () => {
       didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
       const stores = TestStores.get();
@@ -56,7 +54,7 @@ export function testOwnerSignature(): void {
       await stateIndex.clear();
     });
 
-    after(async () => {
+    afterAll(async () => {
       await dwn.close();
     });
 
@@ -68,7 +66,7 @@ export function testOwnerSignature(): void {
       // Bob writes a message to his DWN
       const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: bob, published: true });
       const writeReply = await dwn.processMessage(bob.did, message, { dataStream });
-      expect(writeReply.status.code).to.equal(202);
+      expect(writeReply.status.code).toBe(202);
 
       // Alice fetches the message from Bob's DWN
       const recordsRead = await RecordsRead.create({
@@ -77,9 +75,9 @@ export function testOwnerSignature(): void {
       });
 
       const readReply = await dwn.processMessage(bob.did, recordsRead.message);
-      expect(readReply.status.code).to.equal(200);
-      expect(readReply.entry!.recordsWrite).to.exist;
-      expect(readReply.entry!.recordsWrite?.descriptor).to.exist;
+      expect(readReply.status.code).toBe(200);
+      expect(readReply.entry!.recordsWrite).toBeDefined();
+      expect(readReply.entry!.recordsWrite?.descriptor).toBeDefined();
 
       // Alice augments Bob's message as an external owner
       const { entry } = readReply; // remove data from message
@@ -89,16 +87,16 @@ export function testOwnerSignature(): void {
       // Test that Alice can successfully retain/write Bob's message to her DWN
       const aliceDataStream = readReply.entry!.data!;
       const aliceWriteReply = await dwn.processMessage(alice.did, ownerSignedMessage.message, { dataStream: aliceDataStream });
-      expect(aliceWriteReply.status.code).to.equal(202);
+      expect(aliceWriteReply.status.code).toBe(202);
 
       // Test that Bob's message can be read from Alice's DWN
       const readReply2 = await dwn.processMessage(alice.did, recordsRead.message);
-      expect(readReply2.status.code).to.equal(200);
-      expect(readReply2.entry!.recordsWrite).to.exist;
-      expect(readReply2.entry!.recordsWrite?.descriptor).to.exist;
+      expect(readReply2.status.code).toBe(200);
+      expect(readReply2.entry!.recordsWrite).toBeDefined();
+      expect(readReply2.entry!.recordsWrite?.descriptor).toBeDefined();
 
       const dataFetched = await DataStream.toBytes(readReply2.entry!.data!);
-      expect(ArrayUtility.byteArraysEqual(dataFetched, dataBytes!)).to.be.true;
+      expect(ArrayUtility.byteArraysEqual(dataFetched, dataBytes!)).toBe(true);
     });
 
     it('should use `ownerSignature` for authorization when it is given - protocol-space', async () => {
@@ -115,7 +113,7 @@ export function testOwnerSignature(): void {
         protocolDefinition
       });
       const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // Sanity test that Bob cannot write to a protocol record to Alice's DWN
       const bobRecordsWrite = await TestDataGenerator.generateRecordsWrite({
@@ -124,7 +122,7 @@ export function testOwnerSignature(): void {
         protocolPath : 'foo'
       });
       const recordsWriteReply = await dwn.processMessage(alice.did, bobRecordsWrite.message, { dataStream: bobRecordsWrite.dataStream });
-      expect(recordsWriteReply.status.code).to.equal(401);
+      expect(recordsWriteReply.status.code).toBe(401);
 
       // Skipping Alice fetching the message from Bob's DWN (as this is tested already in the flat-space test)
 
@@ -135,7 +133,7 @@ export function testOwnerSignature(): void {
       // Test that Alice can successfully retain/write Bob's message to her DWN
       const aliceDataStream = DataStream.fromBytes(bobRecordsWrite.dataBytes!);
       const aliceWriteReply = await dwn.processMessage(alice.did, ownerSignedMessage.message, { dataStream: aliceDataStream });
-      expect(aliceWriteReply.status.code).to.equal(202);
+      expect(aliceWriteReply.status.code).toBe(202);
 
       // Test that Bob's message can be read from Alice's DWN
       const recordsRead = await RecordsRead.create({
@@ -143,12 +141,12 @@ export function testOwnerSignature(): void {
         signer : Jws.createSigner(alice)
       });
       const readReply = await dwn.processMessage(alice.did, recordsRead.message);
-      expect(readReply.status.code).to.equal(200);
-      expect(readReply.entry!.recordsWrite).to.exist;
-      expect(readReply.entry!.recordsWrite?.descriptor).to.exist;
+      expect(readReply.status.code).toBe(200);
+      expect(readReply.entry!.recordsWrite).toBeDefined();
+      expect(readReply.entry!.recordsWrite?.descriptor).toBeDefined();
 
       const dataFetched = await DataStream.toBytes(readReply.entry!.data!);
-      expect(ArrayUtility.byteArraysEqual(dataFetched, bobRecordsWrite.dataBytes!)).to.be.true;
+      expect(ArrayUtility.byteArraysEqual(dataFetched, bobRecordsWrite.dataBytes!)).toBe(true);
     });
 
     it('should throw if `ownerSignature` in `authorization` is mismatching with the tenant - flat-space', async () => {
@@ -165,8 +163,8 @@ export function testOwnerSignature(): void {
 
       // Test that Carol is not able to store the message Alice created
       const carolWriteReply = await dwn.processMessage(carol.did, recordsWrite.message, { dataStream });
-      expect(carolWriteReply.status.code).to.equal(401);
-      expect(carolWriteReply.status.detail).to.contain('RecordsWriteOwnerAndTenantMismatch');
+      expect(carolWriteReply.status.code).toBe(401);
+      expect(carolWriteReply.status.detail).toContain('RecordsWriteOwnerAndTenantMismatch');
     });
 
     it('should throw if `ownerSignature` in `authorization` is mismatching with the tenant - protocol-space', async () => {
@@ -194,12 +192,12 @@ export function testOwnerSignature(): void {
         protocolDefinition
       });
       const protocolsConfigureReply = await dwn.processMessage(carol.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).to.equal(202);
+      expect(protocolsConfigureReply.status.code).toBe(202);
 
       // Test that Carol is not able to store the message Alice created
       const carolWriteReply = await dwn.processMessage(carol.did, recordsWrite.message, { dataStream });
-      expect(carolWriteReply.status.code).to.equal(401);
-      expect(carolWriteReply.status.detail).to.contain('RecordsWriteOwnerAndTenantMismatch');
+      expect(carolWriteReply.status.code).toBe(401);
+      expect(carolWriteReply.status.detail).toContain('RecordsWriteOwnerAndTenantMismatch');
     });
 
     it('should throw if `ownerSignature` fails verification', async () => {
@@ -218,7 +216,7 @@ export function testOwnerSignature(): void {
 
           // Test that Bob is not able to store the message in Alice's DWN using an invalid `ownerSignature`
           const aliceWriteReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
-          expect(aliceWriteReply.status.detail).to.contain(DwnErrorCode.GeneralJwsVerifierInvalidSignature);
+          expect(aliceWriteReply.status.detail).toContain(DwnErrorCode.GeneralJwsVerifierInvalidSignature);
     });
   });
 }
