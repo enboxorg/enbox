@@ -223,15 +223,13 @@ describe('AgentCryptoApi', () => {
       }
     });
 
-    it('supports PBES with HMAC-256/A128KW, HMAC-384/A192KW, HMAC-512/A256KW', async () => {
-      // Setup.
-      const privateKeyHex = '857fb5c80014e9a642c06a958987c084889a4f2bb53d444cb30a08e08426898e'; // 32-bytes / 256-bits
-      const privateKeyBytes = Convert.hex(privateKeyHex).toUint8Array();
+    for (const algorithm of ['PBES2-HS256+A128KW', 'PBES2-HS384+A192KW', 'PBES2-HS512+A256KW'] as const) {
+      const skipThis = noA192 && algorithm.includes('A192');
+      it.skipIf(skipThis)(`supports PBES with ${algorithm}`, async () => {
+        // Setup.
+        const privateKeyHex = '857fb5c80014e9a642c06a958987c084889a4f2bb53d444cb30a08e08426898e'; // 32-bytes / 256-bits
+        const privateKeyBytes = Convert.hex(privateKeyHex).toUint8Array();
 
-      const allAlgorithms = ['PBES2-HS256+A128KW', 'PBES2-HS384+A192KW', 'PBES2-HS512+A256KW'] as const;
-      // A192KW is not supported in Chrome or WebKit's WebCrypto — filter it out.
-      const algorithms = noA192 ? allAlgorithms.filter((a) => !a.includes('A192')) : allAlgorithms;
-      for (const algorithm of algorithms) {
         // Test the method.
         const derivedKey = await cryptoApi.deriveKey({
           algorithm    : algorithm,
@@ -247,8 +245,8 @@ describe('AgentCryptoApi', () => {
         const derivedKeyBytes = Convert.base64Url(derivedKey.k).toUint8Array();
         const expectedKeyLength = parseInt(derivedKeyAlgorithm.slice(1, 4), 10);
         expect(derivedKeyBytes.byteLength).toBe(expectedKeyLength / 8);
-      }
-    });
+      });
+    }
 
     it(`throws an error if the "algorithm" is unsupported`, async () => {
       try {
