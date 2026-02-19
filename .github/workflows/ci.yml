@@ -38,6 +38,7 @@ jobs:
               - '!docs/**'
               - '!LICENSE'
               - '!.changeset/**'
+              - '!scripts/**'
 
   # ---------------------------------------------------------------------------
   # Shared setup: install, lint, build, then upload the workspace as an artifact
