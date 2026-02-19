@@ -39,6 +39,7 @@ export type * from './types/key-converter.js';
 export type * from './types/key-deriver.js';
 export type * from './types/key-generator.js';
 export type * from './types/key-io.js';
+export type * from './types/key-manager.js';
 export type * from './types/key-wrapper.js';
 export type * from './types/params-direct.js';
 export type * from './types/params-enclosed.js';

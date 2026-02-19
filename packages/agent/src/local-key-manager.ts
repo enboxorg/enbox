@@ -9,6 +9,7 @@ import type {
   KeyGenerator,
   KeyIdentifier,
   KeyWrapper,
+  KmsCipherParams,
   KmsDigestParams,
   KmsExportKeyParams,
   KmsGenerateKeyParams,
@@ -16,13 +17,16 @@ import type {
   KmsGetPublicKeyParams,
   KmsImportKeyParams,
   KmsSignParams,
+  KmsUnwrapKeyParams,
   KmsVerifyParams,
+  KmsWrapKeyParams,
   PublicKeyJwk,
   Signer,
   SignParams,
   UnwrapKeyParams,
   VerifyParams,
-  WrapKeyParams } from '@enbox/crypto';
+  WrapKeyParams,
+} from '@enbox/crypto';
 
 import {
   AesGcmAlgorithm,
@@ -43,7 +47,6 @@ import { Encryption, HdKey, Secp256k1 } from '@enbox/dwn-sdk-js';
 import type { AgentDataStore } from './store-data.js';
 import type { AgentKeyManager } from './types/key-manager.js';
 import type { Web5PlatformAgent } from './types/agent.js';
-import type { KmsCipherParams, KmsUnwrapKeyParams, KmsWrapKeyParams } from './prototyping/crypto/types/params-kms.js';
 
 import { AesKwAlgorithm } from './prototyping/crypto/algorithms/aes-kw.js';
 import { InMemoryKeyStore } from './store-key.js';

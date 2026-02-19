@@ -1,9 +1,22 @@
-import type { Cipher, Jwk, KeyIdentifier, KeyWrapper, KmsExportKeyParams, KmsImportKeyParams, PublicKeyJwk } from '@enbox/crypto';
+import type {
+  Cipher,
+  Jwk,
+  KeyDeleter,
+  KeyExporter,
+  KeyIdentifier,
+  KeyImporter,
+  KeyManager,
+  KeyWrapper,
+  KmsCipherParams,
+  KmsDeleteKeyParams,
+  KmsExportKeyParams,
+  KmsImportKeyParams,
+  KmsUnwrapKeyParams,
+  KmsWrapKeyParams,
+  PublicKeyJwk,
+} from '@enbox/crypto';
 
-import type { KeyManager } from '../prototyping/crypto/types/key-manager.js';
 import type { Web5PlatformAgent } from './agent.js';
-import type { KeyDeleter, KeyExporter, KeyImporter } from '../prototyping/crypto/types/key-io.js';
-import type { KmsCipherParams, KmsDeleteKeyParams, KmsUnwrapKeyParams, KmsWrapKeyParams } from '../prototyping/crypto/types/params-kms.js';
 
 export interface AgentKeyManager extends KeyManager,
   Cipher<KmsCipherParams, KmsCipherParams>,

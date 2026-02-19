@@ -1,5 +1,6 @@
 import type {
   AesGcmParams,
+  AsymmetricKeyConverter,
   AsymmetricKeyGenerator,
   BytesToPrivateKeyParams,
   BytesToPublicKeyParams,
@@ -13,6 +14,8 @@ import type {
   Hasher,
   HkdfParams,
   Jwk,
+  KeyBytesDeriver,
+  KeyConverter,
   KeyWrapper,
   KmsGetKeyUriParams,
   Pbkdf2Params,
@@ -22,14 +25,12 @@ import type {
   SignParams,
   UnwrapKeyParams,
   VerifyParams,
-  WrapKeyParams } from '@enbox/crypto';
-
-import { computeJwkThumbprint, CryptoError, CryptoErrorCode, Sha2Algorithm } from '@enbox/crypto';
+  WrapKeyParams,
+} from '@enbox/crypto';
 
 import type { CryptoApi } from './prototyping/crypto/types/crypto-api.js';
-import type { DeriveKeyParams } from './prototyping/crypto/types/params-direct.js';
-import type { KeyBytesDeriver } from './prototyping/crypto/types/key-deriver.js';
-import type { AsymmetricKeyConverter, KeyConverter } from './prototyping/crypto/types/key-converter.js';
+
+import { computeJwkThumbprint, CryptoError, CryptoErrorCode, Sha2Algorithm } from '@enbox/crypto';
 
 import { AesGcmAlgorithm } from './prototyping/crypto/algorithms/aes-gcm.js';
 import { AesKwAlgorithm } from './prototyping/crypto/algorithms/aes-kw.js';
@@ -37,6 +38,26 @@ import { EcdsaAlgorithm } from './prototyping/crypto/algorithms/ecdsa.js';
 import { EdDsaAlgorithm } from './prototyping/crypto/algorithms/eddsa.js';
 import { HkdfAlgorithm } from './prototyping/crypto/algorithms/hkdf.js';
 import { Pbkdf2Algorithm } from './prototyping/crypto/algorithms/pbkdf2.js';
+
+/**
+ * Parameters for direct key derivation operations used by {@link AgentCryptoApi}.
+ *
+ * Uses raw key bytes and an algorithm identifier rather than a JWK reference, since the
+ * `AgentCryptoApi` operates on direct key material (not KMS-backed references).
+ */
+interface AgentDeriveKeyParams {
+  /** The algorithm identifier for the key derivation. */
+  algorithm: string;
+
+  /** The base key to be used for derivation as a byte array. */
+  baseKeyBytes: Uint8Array;
+
+  /** The algorithm identifier for the derived key. */
+  derivedKeyAlgorithm?: string;
+
+  /** Additional algorithm-specific parameters for key derivation. */
+  [key: string]: unknown;
+}
 
 export interface CryptoApiBytesToPrivateKeyParams extends BytesToPrivateKeyParams {
   algorithm: KeyConversionAlgorithm;
@@ -87,7 +108,7 @@ export interface CryptoApiDeriveKeyBytesOptions {
  * The `CryptoApiDeriveKeyParams` interface defines the algorithm-specific parameters that
  * should be passed into the {@link AgentCryptoApi.deriveKey | `AgentCryptoApi.deriveKey()`} method.
  */
-export type CryptoApiDeriveKeyParams<T extends DeriveKeyAlgorithm> = DeriveKeyParams & {
+export type CryptoApiDeriveKeyParams<T extends DeriveKeyAlgorithm> = AgentDeriveKeyParams & {
   /**
    * A string defining the name of key derivation function to use. The value must be one of the
    * following:
@@ -290,8 +311,8 @@ export class AgentCryptoApi implements CryptoApi<
     return await cipher.decrypt(params);
   }
 
-  public async deriveKey<T extends DeriveKeyAlgorithm>(
-    params: CryptoApiDeriveKeyParams<T>
+  public async deriveKey(
+    params: CryptoApiDeriveKeyParams<DeriveKeyAlgorithm>
   ): Promise<Jwk> {
     // Determine the algorithm name based on the given algorithm identifier.
     const algorithm = this.getAlgorithmName({ algorithm: params.algorithm });
@@ -333,8 +354,8 @@ export class AgentCryptoApi implements CryptoApi<
     return await this.bytesToPrivateKey({ algorithm: derivedKeyAlgorithm, privateKeyBytes });
   }
 
-  public async deriveKeyBytes<T extends DeriveKeyAlgorithm>(
-    params: CryptoApiDeriveKeyBytesParams<T>
+  public async deriveKeyBytes(
+    params: CryptoApiDeriveKeyBytesParams<DeriveKeyAlgorithm>
   ): Promise<Uint8Array> {
     // Determine the algorithm name based on the given algorithm identifier.
     const algorithm = this.getAlgorithmName({ algorithm: params.algorithm });

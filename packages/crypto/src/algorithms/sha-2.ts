@@ -22,7 +22,7 @@ export interface Sha2DigestParams extends DigestParams {
  * of the hash function and arbitrary data as input and returns the hash digest of the data.
  *
  * This class is typically accessed through implementations that extend the
- * {@link CryptoApi | `CryptoApi`} interface.
+ * {@link DsaApi | `DsaApi`} interface.
  */
 export class Sha2Algorithm extends CryptoAlgorithm
   implements Hasher<Sha2DigestParams> {
