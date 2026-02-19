@@ -294,10 +294,4 @@ describe('Encryption Callback Interfaces', () => {
       ).rejects.toThrow('Unable to find a symmetric key encrypted using key');
     });
   });
-
-  // Skipped tests — these will be implemented in future PRs
-  describe.skip('Agent callback factories (PR 3)', () => {
-    it.skip('getEncryptionKeyDeriver() constructs valid EncryptionKeyDeriver', async () => {});
-    it.skip('getKeyDecrypter() constructs valid KeyDecrypter', async () => {});
-  });
 });

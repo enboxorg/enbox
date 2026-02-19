@@ -94,6 +94,29 @@ describe('Protocol', () => {
   });
 
   describe('toJSON()', () => {
-    it.skip('should return all defined properties');
+    it('should return all defined properties', async () => {
+      const protocolUri = `http://example.com/protocol/${TestDataGenerator.randomString(15)}`;
+      const { status, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
+        message: {
+          definition: {
+            ...emailProtocolDefinition,
+            protocol: protocolUri
+          }
+        }
+      });
+      expect(status.code).toBe(202);
+
+      const protocolJson = aliceProtocol.toJSON();
+
+      expect(protocolJson.descriptor).toBeDefined();
+      expect(protocolJson.descriptor.interface).toBe('Protocols');
+      expect(protocolJson.descriptor.method).toBe('Configure');
+      expect(protocolJson.descriptor.messageTimestamp).toBeDefined();
+      expect(protocolJson.descriptor.definition).toEqual({
+        ...emailProtocolDefinition,
+        protocol: protocolUri
+      });
+      expect(protocolJson.authorization).toBeDefined();
+    });
   });
 });
