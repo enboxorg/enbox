@@ -1,15 +1,13 @@
-import type { JsonRpcId, JsonRpcRequest, JsonRpcSuccessResponse } from '../src/lib/json-rpc.js';
+import type { JsonRpcId, JsonRpcRequest, JsonRpcSuccessResponse } from '@enbox/dwn-clients';
 
-import log from 'loglevel';
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocketServer } from 'ws';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
-import { JsonRpcSocket } from '../src/json-rpc-socket.js';
 import {
   createJsonRpcErrorResponse, createJsonRpcRequest, createJsonRpcSubscriptionRequest,
-  createJsonRpcSuccessResponse, JsonRpcErrorCodes,
-} from '../src/lib/json-rpc.js';
+  createJsonRpcSuccessResponse, JsonRpcErrorCodes, JsonRpcSocket,
+} from '@enbox/dwn-clients';
 
 describe('JsonRpcSocket', () => {
   let wsServer: WebSocketServer;
@@ -96,7 +94,7 @@ describe('JsonRpcSocket', () => {
 
     const subscription = await client.subscribe(request, responseListener);
     expect(subscription.response.error).toBeDefined();
-    expect(client['socket'].listenerCount('message')).toBe(0);
+    expect(client['messageHandlers'].size).toBe(0);
   });
 
   it('opens a subscription', async () => {
@@ -251,15 +249,15 @@ describe('JsonRpcSocket', () => {
     expect(onCloseSpy).toHaveBeenCalledTimes(1);
 
     // test default logger
-    const logInfoSpy = spyOn(log, 'info');
+    const consoleInfoSpy = spyOn(console, 'info');
     const defaultClient = await JsonRpcSocket.connect('ws://127.0.0.1:9003');
     defaultClient.close();
 
     await new Promise((resolve) => setTimeout(resolve, 5)); // wait for close event to arrive
-    expect(logInfoSpy).toHaveBeenCalledTimes(1);
+    expect(consoleInfoSpy).toHaveBeenCalledTimes(1);
 
     // extract log message from argument
-    const logMessage:string = logInfoSpy.mock.calls[0][0]!;
+    const logMessage:string = consoleInfoSpy.mock.calls[0][0]!;
     expect(logMessage).toBe('JSON RPC Socket close ws://127.0.0.1:9003');
   });
 
@@ -280,16 +278,16 @@ describe('JsonRpcSocket', () => {
     expect(onErrorSpy).toHaveBeenCalledTimes(1);
 
     // test default logger
-    const logErrorSpy = spyOn(log, 'error');
+    const consoleErrorSpy = spyOn(console, 'error');
     try {
       await JsonRpcSocket.connect(badUrl, { connectTimeout: 2000 });
     } catch {
       // expected — connection refused
     }
-    expect(logErrorSpy).toHaveBeenCalledTimes(1);
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
 
     // extract log message from argument
-    const logMessage:string = logErrorSpy.mock.calls[0][0]!;
+    const logMessage:string = consoleErrorSpy.mock.calls[0][0]!;
     expect(logMessage).toBe(`JSON RPC Socket error ${badUrl}`);
   });
 });

@@ -4,14 +4,10 @@ import type {
   HandlerResponse,
   JsonRpcHandler,
 } from '../../lib/json-rpc-router.js';
-import type { JsonRpcId, JsonRpcResponse } from '../../lib/json-rpc.js';
+import type { JsonRpcId, JsonRpcResponse } from '@enbox/dwn-clients';
 
 import { DwnServerErrorCode } from '../../dwn-error.js';
-import {
-  createJsonRpcErrorResponse,
-  createJsonRpcSuccessResponse,
-  JsonRpcErrorCodes,
-} from '../../lib/json-rpc.js';
+import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 
 /**
  * Closes a subscription tied to a specific `SocketConnection`.

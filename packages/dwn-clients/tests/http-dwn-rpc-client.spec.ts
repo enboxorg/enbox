@@ -5,8 +5,10 @@ import sinon from 'sinon';
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 import { RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
-import { HttpDwnRpcClient } from '../../../src/prototyping/clients/http-dwn-rpc-client.js';
-import { testDwnUrl } from '../../utils/test-config.js';
+import { DwnServerInfoCacheMemory } from '../src/dwn-server-info-cache-memory.js';
+import { HttpDwnRpcClient } from '../src/http-dwn-rpc-client.js';
+
+const testDwnUrl = process.env.TEST_DWN_URL || 'http://localhost:3000';
 
 describe('HttpDwnRpcClient', () => {
   const client = new HttpDwnRpcClient();
@@ -125,6 +127,59 @@ describe('HttpDwnRpcClient', () => {
       } catch (error: any) {
         expect(error.message).toContain('(code) - message');
       }
+    });
+  });
+
+  describe('getServerInfo', () => {
+    it('fetches server info from a DWN server', async () => {
+      const serverInfo = await client.getServerInfo(testDwnUrl);
+      expect(serverInfo.maxFileSize).toBeDefined();
+      expect(typeof serverInfo.webSocketSupport).toBe('boolean');
+      expect(Array.isArray(serverInfo.registrationRequirements)).toBe(true);
+    });
+
+    it('returns cached server info on subsequent calls', async () => {
+      const serverInfo1 = await client.getServerInfo(testDwnUrl);
+      const serverInfo2 = await client.getServerInfo(testDwnUrl);
+      expect(serverInfo1).toEqual(serverInfo2);
+    });
+
+    it('throws when server returns a non-ok response', async () => {
+      sinon.stub(globalThis, 'fetch').resolves({
+        ok         : false,
+        status     : 404,
+        statusText : 'Not Found',
+      } as Response);
+
+      try {
+        await client.getServerInfo('http://localhost:9999');
+        throw new Error('Expected an error to be thrown');
+      } catch (error: any) {
+        expect(error.message).toContain('HTTP (404)');
+      }
+    });
+
+    it('throws when fetch fails', async () => {
+      sinon.stub(globalThis, 'fetch').rejects(new Error('network error'));
+
+      try {
+        await client.getServerInfo('http://localhost:9999');
+        throw new Error('Expected an error to be thrown');
+      } catch (error: any) {
+        expect(error.message).toContain('Error encountered while processing response');
+        expect(error.message).toContain('network error');
+      }
+    });
+
+    it('accepts a custom server info cache', async () => {
+      const customCache = new DwnServerInfoCacheMemory({ ttl: '1h' });
+      const customClient = new HttpDwnRpcClient(customCache);
+      const serverInfo = await customClient.getServerInfo(testDwnUrl);
+      expect(serverInfo.maxFileSize).toBeDefined();
+
+      // verify it was cached in the custom cache
+      const cached = await customCache.get(testDwnUrl);
+      expect(cached).toEqual(serverInfo);
     });
   });
 });

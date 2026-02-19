@@ -279,15 +279,17 @@ jobs:
       - name: Run tests with coverage
         run: |
           export DID_DHT_GATEWAY_URI=http://localhost:7527
-          bun run --filter @enbox/dids   test:node:coverage
-          bun run --filter @enbox/agent  test:node:coverage
-          bun run --filter @enbox/api    test:node:coverage
+          bun run --filter @enbox/dids         test:node:coverage
+          bun run --filter @enbox/dwn-clients  test:node:coverage
+          bun run --filter @enbox/agent        test:node:coverage
+          bun run --filter @enbox/api          test:node:coverage
 
       - name: Stage coverage
         if: always()
         run: |
-          mkdir -p coverage-staging/dids coverage-staging/agent coverage-staging/api
+          mkdir -p coverage-staging/dids coverage-staging/dwn-clients coverage-staging/agent coverage-staging/api
           cp packages/dids/coverage/lcov.info coverage-staging/dids/lcov.info 2>/dev/null || true
+          cp packages/dwn-clients/coverage/lcov.info coverage-staging/dwn-clients/lcov.info 2>/dev/null || true
           cp packages/agent/coverage/lcov.info coverage-staging/agent/lcov.info 2>/dev/null || true
           cp packages/api/coverage/lcov.info coverage-staging/api/lcov.info 2>/dev/null || true
 

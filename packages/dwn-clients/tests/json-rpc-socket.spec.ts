@@ -1,13 +1,16 @@
-import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
-
-import type { JsonRpcResponse } from '../../../src/prototyping/clients/json-rpc.js';
+import type { JsonRpcResponse } from '../src/json-rpc.js';
 import type { Persona } from '@enbox/dwn-sdk-js';
 
 import { CryptoUtils } from '@enbox/crypto';
-import { JsonRpcSocket } from '../../../src/prototyping/clients/json-rpc-socket.js';
+import { JsonRpcSocket } from '../src/json-rpc-socket.js';
 import { TestDataGenerator } from '@enbox/dwn-sdk-js';
-import { testDwnUrl } from '../../utils/test-config.js';
-import { createJsonRpcErrorResponse, createJsonRpcRequest, createJsonRpcSubscriptionRequest, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '../../../src/prototyping/clients/json-rpc.js';
+import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import {
+  createJsonRpcErrorResponse, createJsonRpcRequest, createJsonRpcSubscriptionRequest,
+  createJsonRpcSuccessResponse, JsonRpcErrorCodes,
+} from '../src/json-rpc.js';
+
+const testDwnUrl = process.env.TEST_DWN_URL || 'http://localhost:3000';
 
 /** helper method to sleep while waiting for events to process/arrive */
 async function sleepWhileWaitingForEvents(override?: number):Promise<void> {
@@ -89,9 +92,9 @@ describe('JsonRpcSocket', () => {
     const subscriptionId = CryptoUtils.randomUuid();
     const request = createJsonRpcSubscriptionRequest(
       requestId,
-      'dwn.processMessage',
+      'rpc.subscribe.dwn.processMessage',
+      { target: alice.did, message },
       subscriptionId,
-      { target: alice.did, message }
     );
 
     const responseListener = (_response: JsonRpcResponse): void => {};
@@ -110,9 +113,9 @@ describe('JsonRpcSocket', () => {
 
     const request = createJsonRpcSubscriptionRequest(
       requestId,
-      'dwn.processMessage',
-      subscribeId,
+      'rpc.subscribe.dwn.processMessage',
       { },
+      subscribeId,
     );
 
     const responseListener = (_response: JsonRpcResponse): void => {};
@@ -131,9 +134,9 @@ describe('JsonRpcSocket', () => {
     const subscriptionId = CryptoUtils.randomUuid();
     const request = createJsonRpcSubscriptionRequest(
       requestId,
-      'dwn.processMessage',
+      'rpc.subscribe.dwn.processMessage',
+      { target: alice.did, message },
       subscriptionId,
-      { target: alice.did, message }
     );
 
     const responseListener = (_response: JsonRpcResponse): void => {};
@@ -228,9 +231,9 @@ describe('JsonRpcSocket', () => {
       const subscriptionId = CryptoUtils.randomUuid();
       const request = createJsonRpcSubscriptionRequest(
         requestId,
-        'dwn.processMessage',
+        'rpc.subscribe.dwn.processMessage',
+        { target: alice.did, message },
         subscriptionId,
-        { target: alice.did, message }
       );
 
       let errorCounter = 0;

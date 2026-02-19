@@ -1,7 +1,8 @@
+import type { DwnServerInfoCache, ServerInfo } from '../src/server-info-types.js';
+
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
-import { DwnServerInfoCacheMemory } from '../../../src/prototyping/clients/dwn-server-info-cache-memory.js';
-import type { DwnServerInfoCache, ServerInfo } from '../../../src/prototyping/clients/server-info-types.js';
+import { DwnServerInfoCacheMemory } from '../src/dwn-server-info-cache-memory.js';
 
 describe('DwnServerInfoCache', () => {
 

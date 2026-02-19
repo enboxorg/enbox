@@ -10,13 +10,8 @@ import { DataStream, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { config } from '../src/config.js';
 import { getTestDwn } from './test-dwn.js';
 import { HttpApi } from '../src/http-api.js';
-import { JsonRpcSocket } from '../src/json-rpc-socket.js';
 import { WsApi } from '../src/ws-api.js';
-import {
-  createJsonRpcRequest,
-  createJsonRpcSubscriptionRequest,
-  JsonRpcErrorCodes,
-} from '../src/lib/json-rpc.js';
+import { createJsonRpcRequest, createJsonRpcSubscriptionRequest, JsonRpcErrorCodes, JsonRpcSocket } from '@enbox/dwn-clients';
 import { createRecordsWriteMessage, sendHttpMessage, sendWsMessage, waitUntil } from './utils.js';
 
 

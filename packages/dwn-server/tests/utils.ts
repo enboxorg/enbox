@@ -7,9 +7,9 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
 
-import type { JsonRpcResponse } from '../src/lib/json-rpc.js';
+import type { JsonRpcResponse } from '@enbox/dwn-clients';
 
-import { createJsonRpcRequest } from '../src/lib/json-rpc.js';
+import { createJsonRpcRequest } from '@enbox/dwn-clients';
 
 // __filename and __dirname are not defined in ES module scope
 const __filename = fileURLToPath(import.meta.url);

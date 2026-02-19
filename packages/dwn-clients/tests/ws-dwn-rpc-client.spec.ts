@@ -1,13 +1,13 @@
 import type { Persona, RecordSubscriptionHandler, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
+import { HttpDwnRpcClient } from '../src/http-dwn-rpc-client.js';
+import { JsonRpcSocket } from '../src/json-rpc-socket.js';
+import { WebSocketDwnRpcClient } from '../src/web-socket-clients.js';
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
-
-import { HttpDwnRpcClient } from '../../../src/prototyping/clients/http-dwn-rpc-client.js';
-import { JsonRpcSocket } from '../../../src/prototyping/clients/json-rpc-socket.js';
-import { testDwnUrl } from '../../utils/test-config.js';
-import { WebSocketDwnRpcClient } from '../../../src/prototyping/clients/web-socket-clients.js';
-import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '../../../src/prototyping/clients/json-rpc.js';
+import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '../src/json-rpc.js';
 import { DwnInterfaceName, DwnMethodName, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
+
+const testDwnUrl = process.env.TEST_DWN_URL || 'http://localhost:3000';
 
 /** helper method to sleep while waiting for events to process/arrive */
 async function sleepWhileWaitingForEvents(override?: number):Promise<void> {

@@ -1,8 +1,6 @@
-import type { Dwn, MessageSubscriptionHandler } from '@enbox/dwn-sdk-js';
-
-import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from './json-rpc.js';
-
 import type { SocketConnection } from '../connection/socket-connection.js';
+import type { Dwn, MessageSubscriptionHandler } from '@enbox/dwn-sdk-js';
+import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from '@enbox/dwn-clients';
 
 export type RequestContext = {
   transport: 'http' | 'ws';

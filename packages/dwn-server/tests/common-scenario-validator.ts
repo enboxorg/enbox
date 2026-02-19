@@ -1,10 +1,10 @@
-import type { JsonRpcSuccessResponse } from '../src/lib/json-rpc.js';
+import type { JsonRpcSuccessResponse } from '@enbox/dwn-clients';
 import type { Persona } from '@enbox/dwn-sdk-js';
 
 import { expect } from 'bun:test';
 import { v4 as uuidv4 } from 'uuid';
 
-import { createJsonRpcRequest } from '../src/lib/json-rpc.js';
+import { createJsonRpcRequest } from '@enbox/dwn-clients';
 import { getFileAsReadStream } from './utils.js';
 import { Cid, DwnConstant, Jws, ProtocolsConfigure, RecordsRead, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
 

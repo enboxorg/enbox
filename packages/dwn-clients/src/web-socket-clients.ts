@@ -46,7 +46,9 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     return WebSocketDwnRpcClient.processMessage(connection, targetDid, message);
   }
 
-  private static async processMessage(connection: SocketConnection, target: string, message: GenericMessage): Promise<DwnRpcResponse> {
+  private static async processMessage(
+    connection: SocketConnection, target: string, message: GenericMessage
+  ): Promise<DwnRpcResponse> {
     const requestId = CryptoUtils.randomUuid();
     const request = createJsonRpcRequest(requestId, 'dwn.processMessage', { target, message });
 
@@ -66,7 +68,9 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   ): Promise<DwnRpcResponse> {
     const requestId = CryptoUtils.randomUuid();
     const subscriptionId = CryptoUtils.randomUuid();
-    const request = createJsonRpcSubscriptionRequest(requestId, 'dwn.processMessage', subscriptionId, { target, message });
+    const request = createJsonRpcSubscriptionRequest(
+      requestId, 'rpc.subscribe.dwn.processMessage', { target, message }, subscriptionId
+    );
 
     const { socket, subscriptions } = connection;
     const { response, close } = await socket.subscribe(request, (response) => {

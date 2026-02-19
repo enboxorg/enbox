@@ -71,6 +71,7 @@
   },
   "dependencies": {
     "@scure/bip39": "1.2.2",
+    "@enbox/dwn-clients": "workspace:*",
     "@enbox/dwn-sdk-js": "workspace:*",
     "@enbox/common": "workspace:*",
     "@enbox/crypto": "workspace:*",
