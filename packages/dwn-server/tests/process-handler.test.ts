@@ -13,7 +13,7 @@ describe('Process Handlers', () => {
   let processExitStub: ReturnType<typeof spyOn>;
 
   beforeEach(async () => {
-    const dwn = await getTestDwn();
+    dwn = await getTestDwn();
     dwnServer = new DwnServer({ dwn, config: { ...config, port: 0 } });
     await dwnServer.start();
     processExitStub = spyOn(process, 'exit').mockImplementation(() => {});
