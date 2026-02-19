@@ -139,6 +139,11 @@ export class JsonRpcSocket {
     }
 
     const subscriptionId = request.subscription.id;
+
+    // Preserve any existing handler for this subscriptionId so that a rejected
+    // duplicate-subscribe attempt does not clobber an active subscription.
+    const existingHandler = this.messageHandlers.get(subscriptionId);
+
     const socketEventListener = (event: { data: any }):void => {
       const jsonRpcResponse = parseJson(toText(event.data)) as JsonRpcResponse;
       if (jsonRpcResponse.id === subscriptionId) {
@@ -157,7 +162,12 @@ export class JsonRpcSocket {
 
     const response = await this.request(request);
     if (response.error) {
-      this.messageHandlers.delete(subscriptionId);
+      // Restore the previous handler if one existed, otherwise clean up.
+      if (existingHandler) {
+        this.messageHandlers.set(subscriptionId, existingHandler);
+      } else {
+        this.messageHandlers.delete(subscriptionId);
+      }
       return { response };
     }
 
