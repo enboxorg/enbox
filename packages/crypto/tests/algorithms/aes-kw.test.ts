@@ -4,6 +4,7 @@ import { Convert } from '@enbox/common';
 import { beforeAll, describe, expect, it } from 'bun:test';
 
 import { AesKwAlgorithm } from '../../src/algorithms/aes-kw.js';
+import { isChrome } from '../utils/runtimes.js';
 
 describe('AesKwAlgorithm', () => {
   let aesKw: AesKwAlgorithm;
@@ -59,8 +60,21 @@ describe('AesKwAlgorithm', () => {
       expect(privateKey).toHaveProperty('kty', 'oct');
     });
 
-    it('supports A128KW, A192KW, and A256KW algorithms', async () => {
-      const algorithms = ['A128KW', 'A192KW', 'A256KW'] as const;
+    it(`supports 'A128KW' and 'A256KW' algorithms in all supported runtimes`, async () => {
+      const algorithms = ['A128KW', 'A256KW'] as const;
+      for (const algorithm of algorithms) {
+        const privateKey = await aesKw.generateKey({ algorithm });
+        expect(privateKey).toHaveProperty('alg', algorithm);
+        if (!privateKey.k) { throw new Error('Expected privateKey to have a `k` property'); }
+        const privateKeyBytes = Convert.base64Url(privateKey.k).toUint8Array();
+        expect(privateKeyBytes.byteLength * 8).toBe(parseInt(algorithm.slice(1, 4)));
+      }
+    });
+
+    it(`supports 'A192KW' algorithm in all supported runtimes except Chrome browser`, async () => {
+      if (isChrome) { return; }
+
+      const algorithms = ['A192KW'] as const;
       for (const algorithm of algorithms) {
         const privateKey = await aesKw.generateKey({ algorithm });
         expect(privateKey).toHaveProperty('alg', algorithm);
@@ -86,14 +100,24 @@ describe('AesKwAlgorithm', () => {
       expect(privateKeyBytes.byteLength).toBe(32);
     });
 
-    it('produces correct byte length for each algorithm', async () => {
-      const algorithms = ['A128KW', 'A192KW', 'A256KW'] as const;
-      const expectedLengths = [16, 24, 32];
-      for (let i = 0; i < algorithms.length; i++) {
-        const privateKey = await aesKw.generateKey({ algorithm: algorithms[i] });
+    it('produces correct byte length for A128KW and A256KW in all supported runtimes', async () => {
+      const testCases = [
+        { algorithm: 'A128KW' as const, expectedLength: 16 },
+        { algorithm: 'A256KW' as const, expectedLength: 32 },
+      ];
+      for (const { algorithm, expectedLength } of testCases) {
+        const privateKey = await aesKw.generateKey({ algorithm });
         const privateKeyBytes = await aesKw.privateKeyToBytes({ privateKey });
-        expect(privateKeyBytes.byteLength).toBe(expectedLengths[i]);
+        expect(privateKeyBytes.byteLength).toBe(expectedLength);
       }
+    });
+
+    it('produces correct byte length for A192KW in all supported runtimes except Chrome browser', async () => {
+      if (isChrome) { return; }
+
+      const privateKey = await aesKw.generateKey({ algorithm: 'A192KW' });
+      const privateKeyBytes = await aesKw.privateKeyToBytes({ privateKey });
+      expect(privateKeyBytes.byteLength).toBe(24);
     });
   });
 
