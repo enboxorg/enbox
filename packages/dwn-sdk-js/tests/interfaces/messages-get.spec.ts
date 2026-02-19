@@ -1,10 +1,11 @@
-import type { MessagesReadMessage } from '../../src/index.js';
+import type { MessagesReadMessage } from '../../src/types/messages-types.js';
 
+import { DwnErrorCode } from '../../src/core/dwn-error.js';
+import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
-import { MessagesRead } from '../../src/index.js';
+import { MessagesRead } from '../../src/interfaces/messages-read.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { describe, expect, it } from 'bun:test';
-import { DwnErrorCode, Jws } from '../../src/index.js';
 
 describe('MessagesRead Message', () => {
   describe('create', () => {

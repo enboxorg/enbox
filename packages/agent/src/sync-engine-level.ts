@@ -15,6 +15,7 @@ import {
   Message,
   PermissionsProtocol,
 } from '@enbox/dwn-sdk-js';
+import { hashToHex, initDefaultHashes } from '@enbox/dwn-sdk-js';
 
 import type { PermissionsApi } from './types/permissions.js';
 import type { SyncEngine, SyncIdentityOptions } from './types/sync.js';
@@ -54,6 +55,13 @@ export class SyncEngineLevel implements SyncEngine {
   private _db: AbstractLevel<string | Buffer | Uint8Array>;
   private _syncIntervalId?: ReturnType<typeof setInterval>;
   private _syncLock = false;
+
+  /**
+   * Hex-encoded default hashes for empty subtrees at each depth, keyed by depth.
+   * Lazily initialized on first use. Used by `walkTreeDiff` to detect empty subtrees
+   * and short-circuit the recursive walk instead of descending all the way to MAX_DIFF_DEPTH.
+   */
+  private _defaultHashHex?: Map<number, string>;
 
   constructor({ agent, dataPath, db }: SyncEngineLevelParams) {
     this._agent = agent;
@@ -256,6 +264,27 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   // ---------------------------------------------------------------------------
+  // Default Hash Cache
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns the hex-encoded default (empty-subtree) hash for a given depth.
+   * Lazily initializes the cache on first call.
+   */
+  private async getDefaultHashHex(depth: number): Promise<string> {
+    if (this._defaultHashHex === undefined) {
+      const defaults = await initDefaultHashes();
+      const map = new Map<number, string>();
+      // Pre-compute hex strings for depths 0 through MAX_DIFF_DEPTH (inclusive).
+      for (let d = 0; d <= MAX_DIFF_DEPTH; d++) {
+        map.set(d, hashToHex(defaults[d]));
+      }
+      this._defaultHashHex = map;
+    }
+    return this._defaultHashHex.get(depth) ?? '';
+  }
+
+  // ---------------------------------------------------------------------------
   // SMT Root Comparison
   // ---------------------------------------------------------------------------
 
@@ -345,16 +374,17 @@ export class SyncEngineLevel implements SyncEngine {
         return;
       }
 
-      // Short-circuit: if one side is entirely empty, all entries on the other
-      // side are unique.  Enumerate leaves directly instead of recursing further
-      // into the tree — this avoids the exponential walk when the remote DWN
-      // returns empty responses (e.g. auth failure or truly empty tree).
-      if (!remoteHash && localHash) {
+      // Short-circuit: if one side is the default (empty-subtree) hash, all entries
+      // on the other side are unique.  Enumerate leaves directly instead of recursing
+      // further into the tree — this avoids an exponential walk when one DWN has
+      // entries that the other lacks entirely in this subtree.
+      const emptyHash = await this.getDefaultHashHex(prefix.length);
+      if (remoteHash === emptyHash && localHash !== emptyHash) {
         const localLeaves = await this.getLocalLeaves(did, prefix, delegateDid, protocol, permissionGrantId);
         onlyLocal.push(...localLeaves);
         return;
       }
-      if (!localHash && remoteHash) {
+      if (localHash === emptyHash && remoteHash !== emptyHash) {
         const remoteLeaves = await this.getRemoteLeaves(did, dwnUrl, prefix, delegateDid, protocol, permissionGrantId);
         onlyRemote.push(...remoteLeaves);
         return;

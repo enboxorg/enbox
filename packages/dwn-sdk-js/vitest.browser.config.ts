@@ -49,6 +49,10 @@ export default defineConfig({
       'lru-cache',
       'ulidx',
       'ajv',
+      'ajv/dist/2020.js',
+      'ipfs-unixfs-importer',
+      'ipfs-unixfs',
+      '@ipld/dag-pb',
     ],
   },
   test: {
