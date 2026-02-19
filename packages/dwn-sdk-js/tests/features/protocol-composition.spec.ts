@@ -20,7 +20,7 @@ import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { DwnErrorCode, Message, ProtocolsConfigure, RecordsDelete, RecordsQuery, RecordsRead } from '../../src/index.js';
+import { DwnErrorCode, Message, ProtocolsConfigure, RecordsDelete, RecordsQuery, RecordsRead, Time } from '../../src/index.js';
 import { HdKey, KeyDerivationScheme } from '../../src/utils/hd-key.js';
 
 /**
@@ -1431,6 +1431,165 @@ export function testProtocolComposition(): void {
           // JSON schema enforces minProperties: 1 on `uses`
           expect(error.message).toContain('must NOT have fewer than 1 properties');
         }
+      });
+    });
+
+    // =========================================================================
+    // Temporal correctness — governing timestamp for cross-protocol lookups
+    // =========================================================================
+
+    describe('temporal correctness — governing timestamp', () => {
+      it('should use the governing timestamp when fetching the referenced protocol for role verification', async () => {
+        // Scenario:
+        // 1. Install threads V1 (participant has $role: true)
+        // 2. Install comments protocol (uses threads, references threads:thread/participant role)
+        // 3. Create thread, assign Bob as participant, create comment — all under V1
+        // 4. Update threads to V2 where participant is no longer a role ($role removed)
+        // 5. Bob reads the comment using the cross-protocol role
+        //    → should SUCCEED because the comment's governing timestamp pins to threads V1
+
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        // threads V1: participant is a role
+        const threadsV1: ProtocolDefinition = {
+          protocol  : 'https://threads-versioned.example.com',
+          published : true,
+          types     : {
+            thread      : { schema: 'https://threads-versioned.example.com/schemas/thread', dataFormats: ['application/json'] },
+            participant : { schema: 'https://threads-versioned.example.com/schemas/participant', dataFormats: ['application/json'] },
+          },
+          structure: {
+            thread: {
+              $actions    : [{ who: 'anyone', can: ['create', 'read'] }],
+              participant : {
+                $role    : true,
+                $actions : [
+                  { who: 'anyone', can: ['read'] },
+                  { who: 'author', of: 'thread', can: ['create'] },
+                ],
+              },
+            },
+          },
+        };
+
+        // comments protocol: references threads-versioned
+        const commentsVersioned: ProtocolDefinition = {
+          protocol  : 'https://comments-versioned.example.com',
+          published : true,
+          uses      : { threads: 'https://threads-versioned.example.com' },
+          types     : {
+            comment: { schema: 'https://comments-versioned.example.com/schemas/comment', dataFormats: ['application/json'] },
+          },
+          structure: {
+            thread: {
+              $ref    : 'threads:thread',
+              comment : {
+                $actions: [
+                  { who: 'anyone', can: ['create'] },
+                  { role: 'threads:thread/participant', can: ['read'] },
+                ],
+              },
+            },
+          },
+        };
+
+        // Install threads V1
+        const threadsV1Configure = await ProtocolsConfigure.create({
+          definition : threadsV1,
+          signer     : Jws.createSigner(alice),
+        });
+        const threadsV1Reply = await dwn.processMessage(alice.did, threadsV1Configure.message);
+        expect(threadsV1Reply.status.code).toBe(202);
+
+        // Install comments protocol (depends on threads)
+        const commentsConfigure = await ProtocolsConfigure.create({
+          definition : commentsVersioned,
+          signer     : Jws.createSigner(alice),
+        });
+        const commentsReply = await dwn.processMessage(alice.did, commentsConfigure.message);
+        expect(commentsReply.status.code).toBe(202);
+
+        // Alice creates a thread
+        const threadWrite = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol     : threadsV1.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://threads-versioned.example.com/schemas/thread',
+          dataFormat   : 'application/json',
+        });
+        await dwn.processMessage(alice.did, threadWrite.message, { dataStream: threadWrite.dataStream });
+        const threadContextId = threadWrite.message.contextId!;
+
+        // Alice assigns Bob as participant (role record in threads V1)
+        const participantWrite = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          recipient       : bob.did,
+          protocol        : threadsV1.protocol,
+          protocolPath    : 'thread/participant',
+          schema          : 'https://threads-versioned.example.com/schemas/participant',
+          dataFormat      : 'application/json',
+          parentContextId : threadContextId,
+        });
+        await dwn.processMessage(alice.did, participantWrite.message, { dataStream: participantWrite.dataStream });
+
+        // Alice creates a comment (under V1)
+        const commentWrite = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          protocol        : commentsVersioned.protocol,
+          protocolPath    : 'thread/comment',
+          schema          : 'https://comments-versioned.example.com/schemas/comment',
+          dataFormat      : 'application/json',
+          parentContextId : threadContextId,
+        });
+        await dwn.processMessage(alice.did, commentWrite.message, { dataStream: commentWrite.dataStream });
+
+        // Wait to ensure V2 gets a later timestamp
+        await Time.minimalSleep();
+
+        // threads V2: participant is NO LONGER a role ($role removed)
+        const threadsV2: ProtocolDefinition = {
+          protocol  : 'https://threads-versioned.example.com',
+          published : true,
+          types     : {
+            thread      : { schema: 'https://threads-versioned.example.com/schemas/thread', dataFormats: ['application/json'] },
+            participant : { schema: 'https://threads-versioned.example.com/schemas/participant', dataFormats: ['application/json'] },
+          },
+          structure: {
+            thread: {
+              $actions    : [{ who: 'anyone', can: ['create', 'read'] }],
+              participant : {
+                // $role is removed — participant is no longer a role in V2
+                $actions: [
+                  { who: 'anyone', can: ['read'] },
+                  { who: 'author', of: 'thread', can: ['create'] },
+                ],
+              },
+            },
+          },
+        };
+
+        const threadsV2Configure = await ProtocolsConfigure.create({
+          definition : threadsV2,
+          signer     : Jws.createSigner(alice),
+        });
+        const threadsV2Reply = await dwn.processMessage(alice.did, threadsV2Configure.message);
+        expect(threadsV2Reply.status.code).toBe(202);
+
+        // Bob reads the comment using the cross-protocol role.
+        // The comment was created under V1. The governing timestamp pins the referenced protocol
+        // lookup to V1 where participant IS a valid role. This should SUCCEED.
+        const bobRead = await RecordsRead.create({
+          signer       : Jws.createSigner(bob),
+          protocolRole : 'threads:thread/participant',
+          filter       : {
+            protocol     : commentsVersioned.protocol,
+            protocolPath : 'thread/comment',
+            contextId    : threadContextId,
+          },
+        });
+        const bobReadReply = await dwn.processMessage(alice.did, bobRead.message);
+        expect(bobReadReply.status.code).toBe(200);
       });
     });
 

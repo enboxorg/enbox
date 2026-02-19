@@ -50,7 +50,7 @@ export class ProtocolAuthorization {
     // verify declared protocol type exists in protocol and that it conforms to type specification.
     // For cross-protocol composition, the type may be defined in a referenced protocol.
     await ProtocolAuthorization.verifyTypeWithComposition(
-      tenant, incomingMessage.message, protocolDefinition, messageStore
+      tenant, incomingMessage.message, protocolDefinition, messageStore, governingTimestamp
     );
 
     // validate `protocolPath`
@@ -58,6 +58,7 @@ export class ProtocolAuthorization {
       tenant,
       incomingMessage,
       messageStore,
+      governingTimestamp,
     );
 
     // get the rule set for the inbound message
@@ -129,6 +130,7 @@ export class ProtocolAuthorization {
       incomingMessage.message.contextId!,
       protocolDefinition,
       messageStore,
+      governingTimestamp,
     );
 
     // verify method invoked against the allowed actions in the rule set
@@ -188,6 +190,7 @@ export class ProtocolAuthorization {
       newestRecordsWrite.message.contextId!,
       protocolDefinition,
       messageStore,
+      governingTimestamp,
     );
 
     // verify method invoked against the allowed actions in the rule set
@@ -287,6 +290,7 @@ export class ProtocolAuthorization {
       recordsWrite.message.contextId!,
       protocolDefinition,
       messageStore,
+      governingTimestamp,
     );
 
     // verify method invoked against the allowed actions in the rule set
@@ -438,7 +442,8 @@ export class ProtocolAuthorization {
   private static async verifyProtocolPathAndContextId(
     tenant: string,
     inboundMessage: RecordsWrite,
-    messageStore: MessageStore
+    messageStore: MessageStore,
+    governingTimestamp?: string,
   ): Promise<void> {
     const declaredProtocolPath = inboundMessage.message.descriptor.protocolPath!;
     const declaredTypeName = ProtocolAuthorization.getTypeName(declaredProtocolPath);
@@ -461,7 +466,7 @@ export class ProtocolAuthorization {
     // If the parent path segment has a `$ref` in the composing protocol, the parent lives in a different protocol.
     const childProtocol = inboundMessage.message.descriptor.protocol!;
     const parentProtocolUri = await ProtocolAuthorization.resolveParentProtocolUri(
-      tenant, childProtocol, declaredProtocolPath, messageStore
+      tenant, childProtocol, declaredProtocolPath, messageStore, governingTimestamp
     );
 
     // fetch the parent message
@@ -530,6 +535,7 @@ export class ProtocolAuthorization {
     childProtocolUri: string,
     childProtocolPath: string,
     messageStore: MessageStore,
+    governingTimestamp?: string,
   ): Promise<string> {
     const segments = childProtocolPath.split('/');
 
@@ -538,9 +544,9 @@ export class ProtocolAuthorization {
       return childProtocolUri;
     }
 
-    // Fetch the composing protocol's definition
+    // Fetch the composing protocol's definition at the governing timestamp
     const composingDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
-      tenant, childProtocolUri, messageStore
+      tenant, childProtocolUri, messageStore, governingTimestamp
     );
 
     // Walk the structure to find the parent's path segment
@@ -581,6 +587,7 @@ export class ProtocolAuthorization {
     inboundMessage: RecordsWriteMessage,
     protocolDefinition: ProtocolDefinition,
     messageStore: MessageStore,
+    governingTimestamp?: string,
   ): Promise<void> {
     const declaredProtocolPath = inboundMessage.descriptor.protocolPath!;
     const declaredTypeName = ProtocolAuthorization.getTypeName(declaredProtocolPath);
@@ -588,7 +595,7 @@ export class ProtocolAuthorization {
     // Resolve which protocol types map to use.
     // If the first path segment has `$ref`, this record's type might be defined in a referenced protocol.
     const protocolTypes = await ProtocolAuthorization.resolveProtocolTypesForPath(
-      tenant, declaredProtocolPath, protocolDefinition, messageStore
+      tenant, declaredProtocolPath, protocolDefinition, messageStore, governingTimestamp
     );
 
     ProtocolAuthorization.verifyType(inboundMessage, protocolTypes, declaredTypeName);
@@ -604,6 +611,7 @@ export class ProtocolAuthorization {
     protocolPath: string,
     protocolDefinition: ProtocolDefinition,
     messageStore: MessageStore,
+    governingTimestamp?: string,
   ): Promise<ProtocolTypes> {
     const segments = protocolPath.split('/');
 
@@ -616,7 +624,7 @@ export class ProtocolAuthorization {
         const refProtocolUri = protocolDefinition.uses[parsed.alias];
         if (refProtocolUri !== undefined) {
           const refDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
-            tenant, refProtocolUri, messageStore
+            tenant, refProtocolUri, messageStore, governingTimestamp
           );
           return refDefinition.types;
         }
@@ -680,6 +688,7 @@ export class ProtocolAuthorization {
     contextId: string | undefined,
     protocolDefinition: ProtocolDefinition,
     messageStore: MessageStore,
+    governingTimestamp?: string,
   ): Promise<void> {
     const protocolRole = incomingMessage.signaturePayload?.protocolRole;
 
@@ -714,7 +723,7 @@ export class ProtocolAuthorization {
 
       // Fetch the referenced protocol's definition to validate the role exists
       const refDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
-        tenant, roleProtocolUri, messageStore
+        tenant, roleProtocolUri, messageStore, governingTimestamp
       );
       const roleRuleSet = getRuleSetAtPath(roleProtocolPath, refDefinition.structure);
       if (roleRuleSet === undefined || !roleRuleSet.$role) {
