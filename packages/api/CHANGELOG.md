@@ -1,5 +1,15 @@
 # @enbox/api
 
+## 0.0.6
+
+### Patch Changes
+
+- [#140](https://github.com/enboxorg/enbox/pull/140) [`3120dd0`](https://github.com/enboxorg/enbox/commit/3120dd0d2ffc0977d331d297af0665d5593b2d4e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: republish with correct @enbox/agent@0.1.1 dependency
+
+  Previous attempts resolved workspace:_ to @enbox/agent@0.1.0 because bun
+  kept the stale lockfile resolution. This release regenerates the lockfile
+  from scratch so workspace:_ correctly resolves to @enbox/agent@0.1.1.
+
 ## 0.0.5
 
 ### Patch Changes
