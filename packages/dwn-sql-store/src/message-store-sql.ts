@@ -349,6 +349,33 @@ export class MessageStoreSql implements MessageStore {
     return this.processPaginationResults(results, sortProperty, pagination?.limit, options);
   }
 
+  async count(
+    tenant: string,
+    filters: Filter[],
+    messageSort?: MessageSort,
+    options?: MessageStoreOptions
+  ): Promise<number> {
+    if (!this.#db) {
+      throw new Error(
+        'Connection to database not open. Call `open` before using `count`.'
+      );
+    }
+
+    options?.signal?.throwIfAborted();
+
+    let query = this.#db
+      .selectFrom('messageStoreMessages')
+      .leftJoin('messageStoreRecordsTags', 'messageStoreRecordsTags.messageInsertId', 'messageStoreMessages.id')
+      .select(sql<number>`count(distinct ${sql.ref('messageStoreMessages.messageCid')})`.as('count'))
+      .where('tenant', '=', tenant);
+
+    query = filterSelectQuery(filters, query);
+
+    const result = await executeUnlessAborted(query.executeTakeFirstOrThrow(), options?.signal);
+
+    return Number(result.count);
+  }
+
   async delete(
     tenant: string,
     cid: string,

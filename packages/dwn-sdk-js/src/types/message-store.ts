@@ -46,6 +46,17 @@ export interface MessageStore {
   ): Promise<{ messages: GenericMessage[], cursor?: PaginationCursor}>;
 
   /**
+   * Counts the number of messages matching the provided filters without loading full message data.
+   * More efficient than query() when only the count is needed, especially when compound indexes are available.
+   */
+  count(
+    tenant: string,
+    filters: Filter[],
+    messageSort?: MessageSort,
+    options?: MessageStoreOptions
+  ): Promise<number>;
+
+  /**
    * Deletes the message associated with the id provided.
    */
   delete(tenant: string, cid: string, options?: MessageStoreOptions): Promise<void>;

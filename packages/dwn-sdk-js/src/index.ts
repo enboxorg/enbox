@@ -75,7 +75,7 @@ export type { BlockstoreLevelConfig } from './store/blockstore-level.js';
 export { DataStoreLevel } from './store/data-store-level.js';
 export type { DataStoreLevelConfig } from './store/data-store-level.js';
 export { IndexLevel } from './store/index-level.js';
-export type { IndexLevelConfig, IndexedItem, IndexLevelOptions } from './store/index-level.js';
+export type { CompoundIndexDefinition, IndexLevelConfig, IndexedItem, IndexLevelOptions } from './store/index-level.js';
 export { createLevelDatabase, LevelWrapper } from './store/level-wrapper.js';
 export type { CreateLevelDatabaseOptions, LevelDatabase, LevelWrapperConfig, LevelWrapperBatchOperation, LevelWrapperOptions, LevelWrapperIteratorOptions } from './store/level-wrapper.js';
 export { MessageStoreLevel } from './store/message-store-level.js';

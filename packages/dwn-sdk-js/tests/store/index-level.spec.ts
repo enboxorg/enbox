@@ -1,3 +1,4 @@
+import type { CompoundIndexDefinition } from '../../src/store/index-level.js';
 import type { Filter } from '../../src/types/query-types.js';
 import type { IndexedItem } from '../../src/store/index-level.js';
 
@@ -1470,6 +1471,519 @@ describe('IndexLevel', () => {
 
       // control
       expect(IndexLevel.isFilterConcise({ protocol: 'protocol', protocolPath: 'path/to' }, queryOptionsWithoutCursor)).toBe(true);
+    });
+  });
+
+  describe('compound indexes', () => {
+    const compoundIndexes: CompoundIndexDefinition[] = [
+      {
+        name         : 'protocol-protocolPath-messageTimestamp',
+        properties   : ['protocol', 'protocolPath'],
+        sortProperty : 'messageTimestamp',
+      },
+      {
+        name         : 'schema-dateCreated',
+        properties   : ['schema'],
+        sortProperty : 'dateCreated',
+      },
+    ];
+    let compoundIndex: IndexLevel;
+    const compoundTenant = 'did:alice:compound-test';
+
+    beforeAll(async () => {
+      compoundIndex = new IndexLevel({
+        createLevelDatabase,
+        location        : 'TEST-COMPOUND-INDEX',
+        compoundIndexes : compoundIndexes,
+      });
+      await compoundIndex.open();
+    });
+
+    beforeEach(async () => {
+      await compoundIndex.clear();
+    });
+
+    afterAll(async () => {
+      await compoundIndex.close();
+    });
+
+    describe('put and delete lifecycle', () => {
+      it('should create compound index entries during put', async () => {
+        const id = uuid();
+        await compoundIndex.put(compoundTenant, id, {
+          protocol         : 'https://protocol.xyz',
+          protocolPath     : 'chat/message',
+          messageTimestamp : '2024-01-15T10:00:00.000000Z',
+          schema           : 'https://schema.org/Message',
+          dateCreated      : '2024-01-15T10:00:00.000000Z',
+        });
+
+        // query using compound index (protocol + protocolPath sorted by messageTimestamp)
+        const results = await compoundIndex.query(
+          compoundTenant,
+          [{ protocol: 'https://protocol.xyz', protocolPath: 'chat/message' }],
+          { sortProperty: 'messageTimestamp' }
+        );
+
+        expect(results.length).toBe(1);
+        expect(results[0].messageCid).toBe(id);
+      });
+
+      it('should delete compound index entries during delete', async () => {
+        const id = uuid();
+        await compoundIndex.put(compoundTenant, id, {
+          protocol         : 'https://protocol.xyz',
+          protocolPath     : 'chat/message',
+          messageTimestamp : '2024-01-15T10:00:00.000000Z',
+          schema           : 'https://schema.org/Message',
+          dateCreated      : '2024-01-15T10:00:00.000000Z',
+        });
+
+        // verify it exists
+        let results = await compoundIndex.query(
+          compoundTenant,
+          [{ protocol: 'https://protocol.xyz', protocolPath: 'chat/message' }],
+          { sortProperty: 'messageTimestamp' }
+        );
+        expect(results.length).toBe(1);
+
+        // delete
+        await compoundIndex.delete(compoundTenant, id);
+
+        // verify compound index entries are removed
+        results = await compoundIndex.query(
+          compoundTenant,
+          [{ protocol: 'https://protocol.xyz', protocolPath: 'chat/message' }],
+          { sortProperty: 'messageTimestamp' }
+        );
+        expect(results.length).toBe(0);
+      });
+
+      it('should skip compound index entries when required properties are missing', async () => {
+        const id = uuid();
+        // only has schema, not protocol+protocolPath
+        await compoundIndex.put(compoundTenant, id, {
+          schema      : 'https://schema.org/Message',
+          dateCreated : '2024-01-15T10:00:00.000000Z',
+        });
+
+        // the protocol+protocolPath compound index should not have entries
+        // query via the schema compound index should still work
+        const schemaResults = await compoundIndex.query(
+          compoundTenant,
+          [{ schema: 'https://schema.org/Message' }],
+          { sortProperty: 'dateCreated' }
+        );
+        expect(schemaResults.length).toBe(1);
+        expect(schemaResults[0].messageCid).toBe(id);
+      });
+    });
+
+    describe('queryWithCompoundIndex()', () => {
+      it('should return results sorted ascending by the sort property', async () => {
+        const ids = ['msg-c', 'msg-a', 'msg-b'];
+        const timestamps = [
+          '2024-01-15T12:00:00.000000Z',
+          '2024-01-15T10:00:00.000000Z',
+          '2024-01-15T11:00:00.000000Z',
+        ];
+
+        for (let i = 0; i < ids.length; i++) {
+          await compoundIndex.put(compoundTenant, ids[i], {
+            protocol         : 'https://proto.xyz',
+            protocolPath     : 'thread/post',
+            messageTimestamp : timestamps[i],
+          });
+        }
+
+        const results = await compoundIndex.query(
+          compoundTenant,
+          [{ protocol: 'https://proto.xyz', protocolPath: 'thread/post' }],
+          { sortProperty: 'messageTimestamp' }
+        );
+
+        expect(results.length).toBe(3);
+        expect(results.map(r => r.messageCid)).toEqual(['msg-a', 'msg-b', 'msg-c']);
+      });
+
+      it('should return results sorted descending by the sort property', async () => {
+        const ids = ['msg-c', 'msg-a', 'msg-b'];
+        const timestamps = [
+          '2024-01-15T12:00:00.000000Z',
+          '2024-01-15T10:00:00.000000Z',
+          '2024-01-15T11:00:00.000000Z',
+        ];
+
+        for (let i = 0; i < ids.length; i++) {
+          await compoundIndex.put(compoundTenant, ids[i], {
+            protocol         : 'https://proto.xyz',
+            protocolPath     : 'thread/post',
+            messageTimestamp : timestamps[i],
+          });
+        }
+
+        const results = await compoundIndex.query(
+          compoundTenant,
+          [{ protocol: 'https://proto.xyz', protocolPath: 'thread/post' }],
+          { sortProperty: 'messageTimestamp', sortDirection: SortDirection.Descending }
+        );
+
+        expect(results.length).toBe(3);
+        expect(results.map(r => r.messageCid)).toEqual(['msg-c', 'msg-b', 'msg-a']);
+      });
+
+      it('should support limit', async () => {
+        for (let i = 0; i < 5; i++) {
+          await compoundIndex.put(compoundTenant, `msg-${i}`, {
+            protocol         : 'https://proto.xyz',
+            protocolPath     : 'items',
+            messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
+          });
+        }
+
+        const results = await compoundIndex.query(
+          compoundTenant,
+          [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
+          { sortProperty: 'messageTimestamp', limit: 3 }
+        );
+
+        expect(results.length).toBe(3);
+        expect(results.map(r => r.messageCid)).toEqual(['msg-0', 'msg-1', 'msg-2']);
+      });
+
+      it('should support cursor pagination ascending', async () => {
+        for (let i = 0; i < 6; i++) {
+          await compoundIndex.put(compoundTenant, `msg-${i}`, {
+            protocol         : 'https://proto.xyz',
+            protocolPath     : 'items',
+            messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
+          });
+        }
+
+        // first page
+        const page1 = await compoundIndex.query(
+          compoundTenant,
+          [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
+          { sortProperty: 'messageTimestamp', limit: 3 }
+        );
+        expect(page1.length).toBe(3);
+        expect(page1.map(r => r.messageCid)).toEqual(['msg-0', 'msg-1', 'msg-2']);
+
+        // second page using cursor
+        const cursor = IndexLevel.createCursorFromLastArrayItem(page1, 'messageTimestamp');
+        const page2 = await compoundIndex.query(
+          compoundTenant,
+          [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
+          { sortProperty: 'messageTimestamp', cursor }
+        );
+        expect(page2.length).toBe(3);
+        expect(page2.map(r => r.messageCid)).toEqual(['msg-3', 'msg-4', 'msg-5']);
+      });
+
+      it('should support cursor pagination descending', async () => {
+        for (let i = 0; i < 6; i++) {
+          await compoundIndex.put(compoundTenant, `msg-${i}`, {
+            protocol         : 'https://proto.xyz',
+            protocolPath     : 'items',
+            messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
+          });
+        }
+
+        // first page descending
+        const page1 = await compoundIndex.query(
+          compoundTenant,
+          [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
+          { sortProperty: 'messageTimestamp', sortDirection: SortDirection.Descending, limit: 3 }
+        );
+        expect(page1.length).toBe(3);
+        expect(page1.map(r => r.messageCid)).toEqual(['msg-5', 'msg-4', 'msg-3']);
+
+        // second page descending using cursor
+        const cursor = IndexLevel.createCursorFromLastArrayItem(page1, 'messageTimestamp');
+        const page2 = await compoundIndex.query(
+          compoundTenant,
+          [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
+          { sortProperty: 'messageTimestamp', sortDirection: SortDirection.Descending, cursor }
+        );
+        expect(page2.length).toBe(3);
+        expect(page2.map(r => r.messageCid)).toEqual(['msg-2', 'msg-1', 'msg-0']);
+      });
+
+      it('should verify residual filter properties in memory', async () => {
+        // insert records with same protocol+protocolPath but different 'published' values
+        for (let i = 0; i < 4; i++) {
+          await compoundIndex.put(compoundTenant, `msg-${i}`, {
+            protocol         : 'https://proto.xyz',
+            protocolPath     : 'items',
+            messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
+            published        : i % 2 === 0, // msg-0: true, msg-1: false, msg-2: true, msg-3: false
+          });
+        }
+
+        // compound index covers protocol+protocolPath+messageTimestamp but NOT published
+        // published should be verified as a residual filter
+        const results = await compoundIndex.query(
+          compoundTenant,
+          [{ protocol: 'https://proto.xyz', protocolPath: 'items', published: true }],
+          { sortProperty: 'messageTimestamp' }
+        );
+
+        expect(results.length).toBe(2);
+        expect(results.map(r => r.messageCid)).toEqual(['msg-0', 'msg-2']);
+      });
+
+      it('should only return results matching the specific filter values', async () => {
+        // insert records with different protocol paths
+        await compoundIndex.put(compoundTenant, 'msg-1', {
+          protocol         : 'https://proto.xyz',
+          protocolPath     : 'thread/post',
+          messageTimestamp : '2024-01-15T10:00:00.000000Z',
+        });
+        await compoundIndex.put(compoundTenant, 'msg-2', {
+          protocol         : 'https://proto.xyz',
+          protocolPath     : 'thread/reply',
+          messageTimestamp : '2024-01-15T11:00:00.000000Z',
+        });
+        await compoundIndex.put(compoundTenant, 'msg-3', {
+          protocol         : 'https://other.xyz',
+          protocolPath     : 'thread/post',
+          messageTimestamp : '2024-01-15T12:00:00.000000Z',
+        });
+
+        // query for only protocol.xyz + thread/post
+        const results = await compoundIndex.query(
+          compoundTenant,
+          [{ protocol: 'https://proto.xyz', protocolPath: 'thread/post' }],
+          { sortProperty: 'messageTimestamp' }
+        );
+
+        expect(results.length).toBe(1);
+        expect(results[0].messageCid).toBe('msg-1');
+      });
+
+      it('should fall back to non-compound strategy for OR (multi-filter) queries', async () => {
+        await compoundIndex.put(compoundTenant, 'msg-1', {
+          protocol         : 'https://proto.xyz',
+          protocolPath     : 'thread/post',
+          messageTimestamp : '2024-01-15T10:00:00.000000Z',
+        });
+        await compoundIndex.put(compoundTenant, 'msg-2', {
+          protocol         : 'https://proto.xyz',
+          protocolPath     : 'thread/reply',
+          messageTimestamp : '2024-01-15T11:00:00.000000Z',
+        });
+
+        // OR queries (multiple filters) should still work via fallback strategies
+        const results = await compoundIndex.query(
+          compoundTenant,
+          [
+            { protocol: 'https://proto.xyz', protocolPath: 'thread/post' },
+            { protocol: 'https://proto.xyz', protocolPath: 'thread/reply' },
+          ],
+          { sortProperty: 'messageTimestamp' }
+        );
+
+        expect(results.length).toBe(2);
+      });
+
+      it('should prefer the compound index with the most properties', async () => {
+        // both compound indexes could potentially match a query with schema + dateCreated
+        // but only the schema-dateCreated one actually applies
+        // also, the protocol-protocolPath-messageTimestamp index should be preferred over
+        // a hypothetical single-property index when both protocol and protocolPath are present
+
+        await compoundIndex.put(compoundTenant, 'msg-1', {
+          protocol         : 'https://proto.xyz',
+          protocolPath     : 'items',
+          messageTimestamp : '2024-01-15T10:00:00.000000Z',
+          schema           : 'https://schema.org/Item',
+          dateCreated      : '2024-01-15T10:00:00.000000Z',
+        });
+
+        // query using schema compound index
+        const schemaResults = await compoundIndex.query(
+          compoundTenant,
+          [{ schema: 'https://schema.org/Item' }],
+          { sortProperty: 'dateCreated' }
+        );
+        expect(schemaResults.length).toBe(1);
+        expect(schemaResults[0].messageCid).toBe('msg-1');
+
+        // query using protocol+protocolPath compound index
+        const protocolResults = await compoundIndex.query(
+          compoundTenant,
+          [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
+          { sortProperty: 'messageTimestamp' }
+        );
+        expect(protocolResults.length).toBe(1);
+        expect(protocolResults[0].messageCid).toBe('msg-1');
+      });
+
+      it('should not use compound index when sort property does not match', async () => {
+        await compoundIndex.put(compoundTenant, 'msg-1', {
+          protocol         : 'https://proto.xyz',
+          protocolPath     : 'items',
+          messageTimestamp : '2024-01-15T10:00:00.000000Z',
+          schema           : 'https://schema.org/Item',
+          dateCreated      : '2024-01-15T10:00:00.000000Z',
+        });
+
+        // query with protocol+protocolPath but sort by dateCreated (not messageTimestamp)
+        // this should NOT use the protocol-protocolPath-messageTimestamp compound index
+        // it should still return correct results via fallback strategy
+        const results = await compoundIndex.query(
+          compoundTenant,
+          [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
+          { sortProperty: 'dateCreated' }
+        );
+        expect(results.length).toBe(1);
+      });
+    });
+
+    describe('count()', () => {
+      it('should count items matching a compound index filter', async () => {
+        for (let i = 0; i < 10; i++) {
+          await compoundIndex.put(compoundTenant, `msg-${i}`, {
+            protocol         : 'https://proto.xyz',
+            protocolPath     : 'items',
+            messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
+          });
+        }
+
+        // add some non-matching records
+        for (let i = 0; i < 5; i++) {
+          await compoundIndex.put(compoundTenant, `other-${i}`, {
+            protocol         : 'https://other.xyz',
+            protocolPath     : 'items',
+            messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
+          });
+        }
+
+        const count = await compoundIndex.count(
+          compoundTenant,
+          [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
+          { sortProperty: 'messageTimestamp' }
+        );
+
+        expect(count).toBe(10);
+      });
+
+      it('should count items with residual filter verification', async () => {
+        for (let i = 0; i < 6; i++) {
+          await compoundIndex.put(compoundTenant, `msg-${i}`, {
+            protocol         : 'https://proto.xyz',
+            protocolPath     : 'items',
+            messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
+            published        : i % 2 === 0, // msg-0: true, msg-1: false, msg-2: true, msg-3: false, msg-4: true, msg-5: false
+          });
+        }
+
+        const count = await compoundIndex.count(
+          compoundTenant,
+          [{ protocol: 'https://proto.xyz', protocolPath: 'items', published: true }],
+          { sortProperty: 'messageTimestamp' }
+        );
+
+        expect(count).toBe(3); // msg-0, msg-2, msg-4
+      });
+
+      it('should return 0 when no items match', async () => {
+        await compoundIndex.put(compoundTenant, 'msg-1', {
+          protocol         : 'https://proto.xyz',
+          protocolPath     : 'items',
+          messageTimestamp : '2024-01-15T10:00:00.000000Z',
+        });
+
+        const count = await compoundIndex.count(
+          compoundTenant,
+          [{ protocol: 'https://nonexistent.xyz', protocolPath: 'items' }],
+          { sortProperty: 'messageTimestamp' }
+        );
+
+        expect(count).toBe(0);
+      });
+
+      it('should fall back to full query for non-compound-index filters', async () => {
+        for (let i = 0; i < 4; i++) {
+          await compoundIndex.put(compoundTenant, `msg-${i}`, {
+            protocol         : 'https://proto.xyz',
+            protocolPath     : 'items',
+            messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
+            published        : i < 2,
+          });
+        }
+
+        // filter by 'published' alone — no compound index covers this
+        const count = await compoundIndex.count(
+          compoundTenant,
+          [{ published: true }],
+          { sortProperty: 'messageTimestamp' }
+        );
+
+        expect(count).toBe(2);
+      });
+
+      it('should count correctly with OR (multi-filter) queries', async () => {
+        await compoundIndex.put(compoundTenant, 'msg-1', {
+          protocol         : 'https://proto.xyz',
+          protocolPath     : 'thread/post',
+          messageTimestamp : '2024-01-15T10:00:00.000000Z',
+        });
+        await compoundIndex.put(compoundTenant, 'msg-2', {
+          protocol         : 'https://proto.xyz',
+          protocolPath     : 'thread/reply',
+          messageTimestamp : '2024-01-15T11:00:00.000000Z',
+        });
+        await compoundIndex.put(compoundTenant, 'msg-3', {
+          protocol         : 'https://other.xyz',
+          protocolPath     : 'thread/post',
+          messageTimestamp : '2024-01-15T12:00:00.000000Z',
+        });
+
+        // OR query — compound index can't serve this, falls back
+        const count = await compoundIndex.count(
+          compoundTenant,
+          [
+            { protocol: 'https://proto.xyz', protocolPath: 'thread/post' },
+            { protocol: 'https://proto.xyz', protocolPath: 'thread/reply' },
+          ],
+          { sortProperty: 'messageTimestamp' }
+        );
+
+        expect(count).toBe(2);
+      });
+    });
+
+    describe('query() dispatch selects compound index when available', () => {
+      it('should use compound index for matching single-filter queries with cursor', async () => {
+        // compound indexes support cursors natively, unlike in-memory paging
+        // which would normally reject a cursor with "concise" filters
+        for (let i = 0; i < 6; i++) {
+          await compoundIndex.put(compoundTenant, `msg-${i}`, {
+            schema      : 'https://schema.org/Item',
+            dateCreated : `2024-01-15T1${i}:00:00.000000Z`,
+          });
+        }
+
+        // first page
+        const page1 = await compoundIndex.query(
+          compoundTenant,
+          [{ schema: 'https://schema.org/Item' }],
+          { sortProperty: 'dateCreated', limit: 3 }
+        );
+        expect(page1.length).toBe(3);
+        expect(page1.map(r => r.messageCid)).toEqual(['msg-0', 'msg-1', 'msg-2']);
+
+        // second page with cursor — this should still use the compound index
+        const cursor = IndexLevel.createCursorFromLastArrayItem(page1, 'dateCreated');
+        const page2 = await compoundIndex.query(
+          compoundTenant,
+          [{ schema: 'https://schema.org/Item' }],
+          { sortProperty: 'dateCreated', cursor }
+        );
+        expect(page2.length).toBe(3);
+        expect(page2.map(r => r.messageCid)).toEqual(['msg-3', 'msg-4', 'msg-5']);
+      });
     });
   });
 });
