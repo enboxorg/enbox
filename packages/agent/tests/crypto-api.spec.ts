@@ -10,9 +10,6 @@ import { CryptoUtils, isOctPrivateJwk } from '@enbox/crypto';
 const isBrowser = typeof document !== 'undefined';
 // A192GCM / A192KW are not supported in Chrome or WebKit's WebCrypto (only Firefox supports them).
 const noA192 = isBrowser;
-// WebKit does not support PBES2 (PBES2-HS256+A128KW, etc.) via WebCrypto at all.
-const isWebKit = isBrowser && /AppleWebKit\//.test(navigator.userAgent) && !/Chrome\//.test(navigator.userAgent);
-const noPBES = isWebKit;
 
 describe('AgentCryptoApi', () => {
   let cryptoApi: AgentCryptoApi;
@@ -226,18 +223,19 @@ describe('AgentCryptoApi', () => {
     });
 
     for (const algorithm of ['PBES2-HS256+A128KW', 'PBES2-HS384+A192KW', 'PBES2-HS512+A256KW'] as const) {
-      const skipThis = noPBES || (noA192 && algorithm.includes('A192'));
+      const skipThis = noA192 && algorithm.includes('A192');
       it.skipIf(skipThis)(`supports PBES with ${algorithm}`, async () => {
         // Setup.
         const privateKeyHex = '857fb5c80014e9a642c06a958987c084889a4f2bb53d444cb30a08e08426898e'; // 32-bytes / 256-bits
         const privateKeyBytes = Convert.hex(privateKeyHex).toUint8Array();
 
         // Test the method.
+        // Note: WebKit's PBKDF2 rejects an empty salt, so use a non-empty one.
         const derivedKey = await cryptoApi.deriveKey({
           algorithm    : algorithm,
           baseKeyBytes : privateKeyBytes,
           iterations   : 1,
-          salt         : new Uint8Array(0)
+          salt         : new Uint8Array(16)
         });
 
         // Validate the result.
