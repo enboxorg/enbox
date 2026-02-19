@@ -456,8 +456,12 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
 
     if (parsed === undefined) {
       // should not happen if isCrossProtocolRef() returned true, but guard defensively
+      const errorCode = fieldName === 'role'
+        ? DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolRole
+        : DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolOf;
+
       throw new DwnError(
-        DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolRole,
+        errorCode,
         `cross-protocol '${fieldName}' reference '${ref}' at protocol path '${ruleSetProtocolPath}' ` +
         `could not be parsed as a valid 'alias:path' format.`
       );
