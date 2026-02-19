@@ -2,6 +2,8 @@
 
 > **Research Preview** — Enbox is under active development. APIs may change without notice.
 
+[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/agent.json)](https://github.com/enboxorg/enbox/actions/workflows/ci.yml)
+
 The agent framework for decentralized identity management — handles identities, keys, DWN storage, sync, and wallet connect.
 
 ## Overview

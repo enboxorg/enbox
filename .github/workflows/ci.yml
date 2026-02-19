@@ -1,6 +1,8 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_call:
@@ -447,7 +449,7 @@ jobs:
     name: Coverage Check
     runs-on: ubuntu-latest
     needs: [test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server]
-    if: always() && github.event_name == 'pull_request' && !cancelled()
+    if: always() && !cancelled()
 
     steps:
       - name: Download coverage artifacts
@@ -495,6 +497,23 @@ jobs:
               coverage="0.0"
             fi
 
+            # Determine badge color
+            if [ "$(echo "$coverage >= 90" | bc -l)" = "1" ]; then
+              badge_color="brightgreen"
+            elif [ "$(echo "$coverage >= 80" | bc -l)" = "1" ]; then
+              badge_color="green"
+            elif [ "$(echo "$coverage >= 70" | bc -l)" = "1" ]; then
+              badge_color="yellowgreen"
+            elif [ "$(echo "$coverage >= 60" | bc -l)" = "1" ]; then
+              badge_color="yellow"
+            else
+              badge_color="red"
+            fi
+
+            # Write shields.io endpoint JSON for this package
+            mkdir -p coverage-badges
+            printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$coverage" "$badge_color" > "coverage-badges/${pkg}.json"
+
             if [ "$(echo "$coverage < $threshold" | bc -l)" = "1" ]; then
               echo "| $pkg | ${coverage}% | :x: Below ${threshold}% |" >> coverage-report.md
               echo "::error::Coverage for $pkg is ${coverage}%, below ${threshold}% threshold"
@@ -525,7 +544,7 @@ jobs:
           fi
 
       - name: Comment PR with coverage
-        if: always()
+        if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
@@ -557,6 +576,36 @@ jobs:
                 body,
               });
             }
+
+      # Update coverage badge data in a public Gist (main branch only).
+      # TODO: When the repo is made public, migrate to Codecov or GitHub Pages.
+      - name: Update coverage badges
+        if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+        run: |
+          if [ -z "$GIST_TOKEN" ]; then
+            echo "::warning::GIST_TOKEN not set — skipping badge update"
+            exit 0
+          fi
+
+          GIST_ID="02d15f39a46173a612a8862ec6d7cfcf"
+
+          for badge_file in coverage-badges/*.json; do
+            [ -f "$badge_file" ] || continue
+            filename=$(basename "$badge_file")
+            content=$(cat "$badge_file")
+
+            echo "Updating badge: $filename"
+            curl -sf -X PATCH \
+              -H "Authorization: token $GIST_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/gists/$GIST_ID" \
+              -d "$(jq -n --arg fn "$filename" --arg ct "$content" '{files: {($fn): {content: $ct}}}')" \
+              > /dev/null
+          done
+
+          echo "Coverage badges updated"
 
   # ---------------------------------------------------------------------------
   # Gate job for branch protection — always runs so required checks pass even

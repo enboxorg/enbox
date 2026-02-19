@@ -2,6 +2,8 @@
 
 > **Research Preview** — Enbox is under active development. APIs may change without notice.
 
+[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-server.json)](https://github.com/enboxorg/enbox/actions/workflows/ci.yml)
+
 A multi-tenant Decentralized Web Node exposed via JSON-RPC over HTTP and WebSocket, powered by `Bun.serve()`.
 
 - [Supported DBs](#supported-dbs)
