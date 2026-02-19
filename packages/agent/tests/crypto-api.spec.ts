@@ -6,6 +6,11 @@ import { beforeAll, describe, expect, it } from 'bun:test';
 import { AgentCryptoApi } from '../src/crypto-api.js';
 import { CryptoUtils, isOctPrivateJwk } from '@enbox/crypto';
 
+// A192GCM / A192KW are not supported in Chrome or WebKit's WebCrypto.
+const isChrome = typeof navigator !== 'undefined' && /Chrome\//.test(navigator.userAgent) && !/Edg\//.test(navigator.userAgent);
+const isWebKit = typeof navigator !== 'undefined' && /AppleWebKit\//.test(navigator.userAgent) && !/Chrome\//.test(navigator.userAgent);
+const noA192 = isChrome || isWebKit;
+
 describe('AgentCryptoApi', () => {
   let cryptoApi: AgentCryptoApi;
 
@@ -62,7 +67,7 @@ describe('AgentCryptoApi', () => {
       }
     });
 
-    it('supports A192GCM in all supported runtimes except Chrome browser', async () => {
+    it.skipIf(noA192)('supports A192GCM in all supported runtimes except Chrome browser', async () => {
       for (const algorithm of ['A192GCM'] as const) {
         // Setup.
         const privateKeyInput = await cryptoApi.generateKey({ algorithm });
@@ -94,7 +99,7 @@ describe('AgentCryptoApi', () => {
       }
     });
 
-    it('supports A192KW in all supported runtimes except Chrome browser', async () => {
+    it.skipIf(noA192)('supports A192KW in all supported runtimes except Chrome browser', async () => {
       for (const algorithm of ['A192KW'] as const) {
         // Setup.
         const privateKeyInput = await cryptoApi.generateKey({ algorithm });
@@ -222,7 +227,10 @@ describe('AgentCryptoApi', () => {
       const privateKeyHex = '857fb5c80014e9a642c06a958987c084889a4f2bb53d444cb30a08e08426898e'; // 32-bytes / 256-bits
       const privateKeyBytes = Convert.hex(privateKeyHex).toUint8Array();
 
-      for (const algorithm of ['PBES2-HS256+A128KW', 'PBES2-HS384+A192KW', 'PBES2-HS512+A256KW'] as const) {
+      const allAlgorithms = ['PBES2-HS256+A128KW', 'PBES2-HS384+A192KW', 'PBES2-HS512+A256KW'] as const;
+      // A192KW is not supported in Chrome or WebKit's WebCrypto — filter it out.
+      const algorithms = noA192 ? allAlgorithms.filter((a) => !a.includes('A192')) : allAlgorithms;
+      for (const algorithm of algorithms) {
         // Test the method.
         const derivedKey = await cryptoApi.deriveKey({
           algorithm    : algorithm,
