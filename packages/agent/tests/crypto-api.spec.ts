@@ -6,17 +6,11 @@ import { beforeAll, describe, expect, it } from 'bun:test';
 import { AgentCryptoApi } from '../src/crypto-api.js';
 import { CryptoUtils, isOctPrivateJwk } from '@enbox/crypto';
 
-// A192GCM / A192KW are not supported in Chrome or WebKit's WebCrypto.
-// Detect via feature probe rather than UA sniffing.
-const isBrowser = typeof globalThis.crypto?.subtle?.generateKey === 'function' && typeof navigator !== 'undefined';
-let noA192 = false;
-if (isBrowser) {
-  try {
-    await crypto.subtle.generateKey({ name: 'AES-GCM', length: 192 }, false, ['encrypt']);
-  } catch {
-    noA192 = true;
-  }
-}
+// A192GCM / A192KW are not supported in Chrome or WebKit's WebCrypto (only Firefox supports them).
+// CI runs Chromium and WebKit, so skip A192 tests in any browser environment.
+// Note: Bun has `navigator` but not `document`, so use `document` to detect a real browser.
+const isBrowser = typeof document !== 'undefined';
+const noA192 = isBrowser;
 
 describe('AgentCryptoApi', () => {
   let cryptoApi: AgentCryptoApi;
