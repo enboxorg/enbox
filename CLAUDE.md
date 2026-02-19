@@ -30,7 +30,7 @@ bun run --filter @enbox/agent build
 | Path | Purpose |
 |---|---|
 | `packages/agent/src/` | Agent framework source |
-| `packages/agent/tests/` | Agent tests (Mocha + Chai) |
+| `packages/agent/tests/` | Agent tests (bun:test + Sinon) |
 | `packages/agent/src/store-data.ts` | Base `DwnDataStore` class (protocol-backed storage with encryption) |
 | `packages/agent/src/store-key.ts` | `DwnKeyStore` — encrypted private key storage |
 | `packages/agent/src/store-data-protocols.ts` | Protocol definitions (`JwkProtocolDefinition`, `IdentityProtocolDefinition`, `KeyDeliveryProtocolDefinition`) |
@@ -46,20 +46,20 @@ Before any commits get pushed and PRs opened, ALL of the following MUST pass:
 
 1. **Lint** — `bun run lint` (use `bun run lint:fix` to auto-fix issues)
 2. **Build** — `bun run --filter @enbox/agent build` (rebuild `dwn-sdk-js` first if changed)
-3. **Tests** — `bun run test:node` from `packages/agent/`
+3. **Tests** — `export DID_DHT_GATEWAY_URI=http://localhost:7527 && bun run test:node` from `packages/agent/`
 
-Do not push or open a PR until all three checks pass locally.
+Do not push or open a PR until all three checks pass locally. See [Local Test Infrastructure](#local-test-infrastructure) for required services.
 
 ### Running Tests
 
-Most packages use **`bun test`** (Bun's native test runner). The **agent** and **api** packages still use **Mocha + Chai** and require a TypeScript compilation step before running tests.
+All packages use **`bun test`** (Bun's native test runner).
 
 #### Test framework by package
 
 | Package | Runner | Command (from package dir) |
 |---|---|---|
-| `@enbox/agent` | Mocha + Chai + Sinon | `bun run test:node` |
-| `@enbox/api` | Mocha + Chai | `bun run test:node` |
+| `@enbox/agent` | `bun test` | `bun run test:node` |
+| `@enbox/api` | `bun test` | `bun run test:node` |
 | `@enbox/dwn-sdk-js` | `bun test` | `bun run test:node` |
 | `@enbox/dwn-server` | `bun test` | `bun run test` |
 | `@enbox/dwn-sql-store` | `bun test` | `bun run test` |
@@ -67,18 +67,19 @@ Most packages use **`bun test`** (Bun's native test runner). The **agent** and *
 | `@enbox/crypto` | `bun test` | `bun run test:node` |
 | `@enbox/dids` | `bun test` | `bun run test:node` |
 
-#### Agent / API tests (Mocha)
+#### Agent / API tests (bun:test)
+
+**Important:** Always set `DID_DHT_GATEWAY_URI` before running agent or API tests. Without it, ~115 agent tests and ~23 API tests will fail with Pkarr errors.
 
 ```bash
+export DID_DHT_GATEWAY_URI=http://localhost:7527
+
 # Full agent test suite (from packages/agent/):
 bun run test:node
-# Which runs: bun run build:tests:node && bunx --bun mocha
 
 # Single test file (from packages/agent/):
-bun run build:tests:node && bunx --bun mocha --spec 'tests/compiled/tests/store-key.spec.js' --timeout 30000 --exit
+bun test tests/store-key.spec.ts
 ```
-
-Mocha config is at `packages/agent/.mocharc.json` (10s timeout, `tests/compiled/**/*.spec.js`).
 
 #### DWN SDK / other packages (bun test)
 
@@ -97,7 +98,81 @@ bun run test:node
 bun run lint
 ```
 
-**Expect ~66 DHT failures locally** — tests requiring `did:dht` publishing fail without a local Pkarr gateway. CI has one; these pass there.
+## Local Test Infrastructure
+
+Several packages (`dids`, `agent`, `api`, `dwn-server`, `dwn-sql-store`) require external services to run their full test suites. **Always start test infrastructure before running tests.**
+
+### Quick start
+
+```bash
+# Start all test services (Pkarr relay, Postgres, MySQL):
+docker compose -f docker-compose.test.yaml up -d --wait
+
+# Set the Pkarr gateway env var (REQUIRED for did:dht tests):
+export DID_DHT_GATEWAY_URI=http://localhost:7527
+```
+
+Without `DID_DHT_GATEWAY_URI`, tests in `agent` (~115 tests), `api` (~23 tests), and `dids` (~1 test) will fail with `DidError: internalError: Failed to put Pkarr record`. These are NOT real test failures — the tests are correct, they just need the gateway.
+
+### Services provided by `docker-compose.test.yaml`
+
+| Service | Container | Port | Used by |
+|---|---|---|---|
+| Pkarr relay | `enbox-test-pkarr` | `localhost:7527` | `dids`, `agent`, `api` (did:dht publishing) |
+| PostgreSQL 15 | `enbox-test-postgres` | `localhost:5433` | `dwn-server`, `dwn-sql-store` |
+| PostgreSQL 13 | `enbox-test-postgres-sdk` | `localhost:5432` | `dwn-sql-store` (SDK test suite) |
+| MySQL 8 | `enbox-test-mysql` | `localhost:3306` | `dwn-sql-store` |
+
+### DWN server
+
+A local DWN server on `localhost:3000` is required for `agent` and `api` tests. Check if it's running:
+
+```bash
+curl -sf http://localhost:3000/info && echo "DWN server is running"
+```
+
+If not running, start it (requires built packages):
+
+```bash
+export DID_DHT_GATEWAY_URI=http://localhost:7527
+export DS_PORT=3000
+export DWN_BASE_URL=http://localhost:3000
+export DWN_TTL_CACHE_URL="postgres://dwn_user:dwn_password@localhost:5433/dwn"
+export DWN_STORAGE_MESSAGES="postgres://dwn_user:dwn_password@localhost:5433/dwn"
+export DWN_STORAGE_DATA="postgres://dwn_user:dwn_password@localhost:5433/dwn"
+export DWN_STORAGE_STATE_INDEX="postgres://dwn_user:dwn_password@localhost:5433/dwn"
+export DWN_STORAGE_RESUMABLE_TASKS="postgres://dwn_user:dwn_password@localhost:5433/dwn"
+bun packages/dwn-server/dist/esm/src/main.js &
+```
+
+### Running tests with full infrastructure
+
+```bash
+# Ensure services are up:
+docker compose -f docker-compose.test.yaml up -d --wait
+export DID_DHT_GATEWAY_URI=http://localhost:7527
+
+# Now run tests — these will all pass:
+bun run --filter @enbox/agent test:node       # 748 pass, 0 fail
+bun run --filter @enbox/api test:node         # all pass
+bun run --filter @enbox/dids test:node        # all pass
+bun run --filter @enbox/dwn-sdk-js test:node  # 978 pass, 0 fail
+```
+
+### CI coverage thresholds (for reference)
+
+All packages are above 90% line coverage in CI. If local coverage numbers look low, verify the test infrastructure is running.
+
+| Package | CI Coverage |
+|---|---|
+| `agent` | 90.3% |
+| `api` | 99.8% |
+| `common` | 95.7% |
+| `crypto` | 98.6% |
+| `dids` | 99.2% |
+| `dwn-sdk-js` | 98.9% |
+| `dwn-server` | 97.3% |
+| `dwn-sql-store` | 96.9% |
 
 ## Coding Style
 
@@ -210,10 +285,7 @@ private async installProtocol(tenant: string, agent: Web5PlatformAgent): Promise
 
 ### Frameworks
 
-Two test frameworks are in use:
-
-- **`bun test`** — most packages (common, crypto, dids, dwn-sdk-js, dwn-server, dwn-sql-store). Uses `import { describe, expect, it } from 'bun:test'`. Assertions use `expect(...).toBe(...)`, `expect(...).toThrow(...)`, etc.
-- **Mocha + Chai + Sinon** — `agent` and `api` packages only. Uses `describe`/`it` from Mocha, `expect` from Chai, and Sinon for mocks/stubs.
+All packages use **`bun test`** (`import { describe, expect, it } from 'bun:test'`). Assertions use `expect(...).toBe(...)`, `expect(...).toThrow(...)`, etc. Sinon is used for mocks/stubs in `agent` and `api` packages.
 
 Files use `.spec.ts` suffix in all packages.
 
@@ -257,7 +329,7 @@ describe('ComponentName', () => {
 });
 ```
 
-### Agent Test Harness Pattern (Mocha — agent/api only)
+### Agent Test Harness Pattern (agent/api)
 
 Agent tests use `PlatformAgentTestHarness` with `TestAgent`:
 
@@ -268,7 +340,7 @@ import { TestAgent } from './utils/test-agent.js';
 describe('ComponentName', () => {
   let testHarness: PlatformAgentTestHarness;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass       : TestAgent,
       agentStores      : 'memory',  // 'memory' for fast tests, 'dwn' for integration
@@ -281,14 +353,14 @@ describe('ComponentName', () => {
     await testHarness.createAgentDid();  // creates secp256k1 did:jwk
   });
 
-  after(async () => {
+  afterAll(async () => {
     await testHarness.clearStorage();
     await testHarness.closeStorage();
   });
 
   it('should do something', async () => {
     const result = await testHarness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
-    expect(result).to.exist;
+    expect(result).toBeDefined();
   });
 });
 ```
@@ -308,31 +380,16 @@ await harness.agent.start({ password: 'test' });
 
 ### Error Assertions
 
-**bun:test** (dwn-sdk-js and most packages):
+**bun:test** (all packages):
 ```typescript
 expect(() => syncOperation()).toThrow(DwnErrorCode.SomeErrorCode);
 await expect(asyncOperation()).rejects.toThrow('error message');
 ```
 
-**Chai** (agent/api only) — prefer `chai-as-promised`:
-```typescript
-await expect(promise).to.be.rejectedWith(DwnErrorCode.SomeErrorCode);
-```
-
-Or `try/catch` with `expect.fail()` as guard:
-```typescript
-try {
-  await someOperation();
-  expect.fail('Expected an error to be thrown');
-} catch (error: any) {
-  expect(error.message).to.include('specific error text');
-}
-```
-
 ### Test Isolation
 
 - Use unique `testDataLocation` per describe block to avoid LevelDB lock conflicts
-- Clean up in `afterEach`/`after` (Mocha) or `afterAll` (bun:test) hooks — always close LevelDB handles
+- Clean up in `afterEach`/`afterAll` hooks — always close LevelDB handles
 - Test data via helper functions and inline construction, not fixture files
 
 ## Architecture Notes
