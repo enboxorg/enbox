@@ -5,9 +5,9 @@ WORKDIR /app
 
 # Copy package manifest and lockfile first for better layer caching
 COPY examples/web-wallet/package.json ./
-COPY examples/web-wallet/pnpm-lock.yaml ./
+COPY examples/web-wallet/bun.lock ./
 
-# Install dependencies with Bun (reads pnpm lockfile)
+# Install dependencies with Bun
 RUN bun install --frozen-lockfile
 
 # Copy the rest of the app source
