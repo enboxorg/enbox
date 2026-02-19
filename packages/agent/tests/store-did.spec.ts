@@ -36,6 +36,9 @@ describe('DidStore', () => {
   [DwnDidStore, InMemoryDidStore].forEach((DidStore) => {
     describe(DidStore.name, () => {
       let didStore: AgentDataStore<PortableDid>;
+      const isDwnStore = DidStore === DwnDidStore;
+      // Tests that assert DWN-specific signing behavior are not relevant for InMemoryDidStore.
+      const dwnIt = isDwnStore ? it : it.skip;
 
       beforeEach(async () => {
         didStore = new DidStore();
@@ -80,10 +83,7 @@ describe('DidStore', () => {
           expect(deleteResult).toBe(false);
         });
 
-        it.skip('throws an error if no keys exist for specified DID', async () => {
-          // Skip this test for InMemoryDidStore, as checking for keys to sign DWN messages is not
-          // relevant given that the store is in-memory.
-
+        dwnIt('throws an error if no keys exist for specified DID', async () => {
           try {
             await didStore.delete({
               id     : 'did:jwk:eyJrdHkiOiJFQyIsInVzZSI6InNpZyIsImNydiI6InNlY3AyNTZrMSIsImtpZCI6ImkzU1BSQnRKS292SEZzQmFxTTkydGk2eFFDSkxYM0U3WUNld2lIVjJDU2ciLCJ4IjoidmRyYnoyRU96dmJMRFZfLWtMNGVKdDdWSS04VEZaTm1BOVlnV3p2aGg3VSIsInkiOiJWTEZxUU1aUF9Bc3B1Y1hvV1gyLWJHWHBBTzFmUTVMbjE5VjVSQXhyZ3ZVIiwiYWxnIjoiRVMyNTZLIn0',
@@ -122,10 +122,7 @@ describe('DidStore', () => {
           expect(storedDid).toBeUndefined();
         });
 
-        it.skip('throws an error if no keys exist for specified DID', async () => {
-          // Skip this test for InMemoryDidStore, as checking for keys to sign DWN messages is not
-          // relevant given that the store is in-memory.
-
+        dwnIt('throws an error if no keys exist for specified DID', async () => {
           try {
             await didStore.get({
               id     : 'did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IjNFQmFfRUxvczJhbHZMb2pxSVZjcmJLcGlyVlhqNmNqVkQ1djJWaHdMejgifQ',
@@ -204,10 +201,7 @@ describe('DidStore', () => {
           expect(storedDids).toHaveLength(0);
         });
 
-        it.skip('throws an error if the DID records exceed the DWN maximum data size for query results', async () => {
-          // Skip this test for InMemoryDidStore, as the in-memory store returns all records
-          // regardless of the size of the data.
-
+        dwnIt('throws an error if the DID records exceed the DWN maximum data size for query results', async () => {
           const didBytes = Convert.string(new Array(102400 + 1).join('0')).toUint8Array();
 
           // since we are writing directly to the dwn we first initialize the storage protocol
@@ -339,10 +333,7 @@ describe('DidStore', () => {
           }
         });
 
-        it.skip('throws an error if no keys exist for specified DID', async () => {
-          // Skip this test for InMemoryDidStore, as checking for keys to sign DWN messages is not
-          // relevant given that the store is in-memory.
-
+        dwnIt('throws an error if no keys exist for specified DID', async () => {
           // Generate a new DID.
           const bearerDid = await DidJwk.create();
 
