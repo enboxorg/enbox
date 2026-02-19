@@ -27,6 +27,9 @@ describe('WebSocketDwnRpcClient', () => {
     dwnUrl.protocol = dwnUrl.protocol === 'http:' ? 'ws:' : 'wss:';
     socketDwnUrl = dwnUrl.toString();
 
+    // clear cached connections so each test gets a fresh socket
+    (WebSocketDwnRpcClient as any)['connections'].clear();
+
     mock.restore();
     alice = await TestDataGenerator.generateDidKeyPersona();
   });
