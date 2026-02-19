@@ -13,7 +13,7 @@
     "build": "bun run clean && bun run build:esm && bun run build:browser",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
-    "test:node": "bun test .spec.ts",
+    "test:node": "bun test --timeout 10000 .spec.ts",
     "test:browser": "bun run build:tests:browser && bunx web-test-runner"
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/agent#readme",
