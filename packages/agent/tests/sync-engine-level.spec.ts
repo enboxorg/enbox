@@ -2838,5 +2838,65 @@ describe('SyncEngineLevel', () => {
       expect(parentIdx).toBeLessThan(childIdx);
       expect(grantIdx).toBeLessThan(childIdx);
     });
+
+    it('preserves extra properties on message entries through the sort', () => {
+      const protocolUrl = 'https://example.com/proto';
+      const dataBytes = new Uint8Array([1, 2, 3]);
+      const recordsWrite = {
+        ...mockMessage(
+          { protocol: protocolUrl },
+          { recordId: 'rec-1' }
+        ),
+        dataBytes,
+      };
+      const protocolsConfigure = {
+        ...mockMessage({
+          interface  : DwnInterfaceName.Protocols,
+          method     : DwnMethodName.Configure,
+          definition : { protocol: protocolUrl },
+        }),
+      };
+      // Pass in reverse order: records first, protocol second.
+      const result = SyncEngineLevel.topologicalSort([recordsWrite, protocolsConfigure]);
+      expect(result[0]).toBe(protocolsConfigure);
+      expect(result[1]).toBe(recordsWrite);
+      // Verify the dataBytes property survived the sort.
+      expect((result[1] as typeof recordsWrite).dataBytes).toBe(dataBytes);
+    });
+
+    it('sorts RecordsDelete after ProtocolsConfigure for the same protocol', () => {
+      const protocolUrl = 'https://example.com/proto';
+      const recordId = 'rec-1';
+      const ts = '2024-01-01T00:00:00.000000Z';
+      const initialWrite = mockMessage(
+        {
+          protocol         : protocolUrl,
+          dateCreated      : ts,
+          messageTimestamp : ts,
+        },
+        { recordId }
+      );
+      // RecordsDelete has recordId in the descriptor (accessed via msg.descriptor.recordId).
+      const deleteMsg = mockMessage({
+        interface        : DwnInterfaceName.Records,
+        method           : DwnMethodName.Delete,
+        protocol         : protocolUrl,
+        recordId,
+        messageTimestamp : '2024-01-02T00:00:00.000000Z',
+      });
+      // Delete depends on initial write (not directly on ProtocolsConfigure,
+      // but the initial write depends on ProtocolsConfigure).
+      const protocolsConfigure = mockMessage({
+        interface  : DwnInterfaceName.Protocols,
+        method     : DwnMethodName.Configure,
+        definition : { protocol: protocolUrl },
+      });
+      const result = SyncEngineLevel.topologicalSort([deleteMsg, initialWrite, protocolsConfigure]);
+      const configIdx = result.indexOf(protocolsConfigure);
+      const writeIdx = result.indexOf(initialWrite);
+      const deleteIdx = result.indexOf(deleteMsg);
+      expect(configIdx).toBeLessThan(writeIdx);
+      expect(writeIdx).toBeLessThan(deleteIdx);
+    });
   });
 });
