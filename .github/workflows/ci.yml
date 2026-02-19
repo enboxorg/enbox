@@ -591,21 +591,39 @@ jobs:
 
           GIST_ID="02d15f39a46173a612a8862ec6d7cfcf"
 
+          # Build a single JSON payload with all badge files
+          payload='{"files":{'
+          first=true
           for badge_file in coverage-badges/*.json; do
             [ -f "$badge_file" ] || continue
             filename=$(basename "$badge_file")
             content=$(cat "$badge_file")
-
-            echo "Updating badge: $filename"
-            curl -sf -X PATCH \
-              -H "Authorization: token $GIST_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/gists/$GIST_ID" \
-              -d "$(jq -n --arg fn "$filename" --arg ct "$content" '{files: {($fn): {content: $ct}}}')" \
-              > /dev/null
+            if [ "$first" = true ]; then
+              first=false
+            else
+              payload+=','
+            fi
+            # Escape the content for JSON string value
+            escaped=$(printf '%s' "$content" | jq -Rs .)
+            payload+="\"$filename\":{\"content\":$escaped}"
+            echo "  Badge: $filename -> $content"
           done
+          payload+='}}'
 
-          echo "Coverage badges updated"
+          echo "Updating Gist with all badges..."
+          response=$(curl -s -w "\n%{http_code}" -X PATCH \
+            -H "Authorization: token $GIST_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/gists/$GIST_ID" \
+            -d "$payload")
+
+          http_code=$(echo "$response" | tail -1)
+          if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+            echo "Coverage badges updated (HTTP $http_code)"
+          else
+            echo "::warning::Failed to update Gist (HTTP $http_code)"
+            echo "$response" | head -5
+          fi
 
   # ---------------------------------------------------------------------------
   # Gate job for branch protection — always runs so required checks pass even
