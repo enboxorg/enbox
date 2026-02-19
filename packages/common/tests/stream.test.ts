@@ -55,7 +55,7 @@ describe('Stream', () => {
 
       const result = await Stream.consumeToBytes({ readableStream });
       expect(result).toEqual(oneMegabyte);
-    });
+    }, 30_000);
 
     it('chunks the data according to the specified chunk length', async () => {
       const inputBytes = new Uint8Array(250).fill(42);
@@ -125,7 +125,7 @@ describe('Stream', () => {
 
       const result = await Stream.consumeToArrayBuffer({ readableStream });
       expect(new Uint8Array(result)).toEqual(oneMegabyte);
-    });
+    }, 30_000);
 
     it('handles an empty ReadableStream', async () => {
       const readableStream = new ReadableStream({
@@ -198,7 +198,7 @@ describe('Stream', () => {
 
       const result = await Stream.consumeToBlob({ readableStream });
       expect(result.size).toBe(oneMegabyte.length);
-    });
+    }, 30_000);
 
     it('consumes a ReadableStream containing a string and returns the correct Blob', async () => {
       const inputString = 'Hello, World!';
@@ -277,7 +277,7 @@ describe('Stream', () => {
 
       const result = await Stream.consumeToBytes({ readableStream });
       expect(result).toEqual(oneMegabyte);
-    });
+    }, 30_000);
 
     it('handles an empty ReadableStream', async () => {
       const readableStream = new ReadableStream({
@@ -412,7 +412,7 @@ describe('Stream', () => {
 
       const result = await Stream.consumeToText({ readableStream });
       expect(result).toBe(largeText);
-    });
+    }, 30_000);
 
     it('throws an error for a stream that errors', async () => {
       const error = new Error('Stream error');

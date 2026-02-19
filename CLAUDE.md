@@ -159,6 +159,8 @@ bun run --filter @enbox/dids test:node        # all pass
 bun run --filter @enbox/dwn-sdk-js test:node  # 978 pass, 0 fail
 ```
 
+Alternatively, `./scripts/test-with-server.sh` automates the full cycle (start containers, build, run tests, tear down). If `did:dht` tests fail with `Failed to put Pkarr record`, the relay is not running.
+
 ### CI coverage thresholds (for reference)
 
 All packages are above 90% line coverage in CI. If local coverage numbers look low, verify the test infrastructure is running.

@@ -38,9 +38,9 @@ trap cleanup EXIT
 # ---- Parse arguments ----
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --agent)  FILTER="--filter=./packages/agent"; shift ;;
-    --api)    FILTER="--filter=./packages/api"; shift ;;
-    --filter) FILTER="--filter=$2"; shift 2 ;;
+    --agent)  FILTER="--filter @enbox/agent"; shift ;;
+    --api)    FILTER="--filter @enbox/api"; shift ;;
+    --filter) FILTER="--filter $2"; shift 2 ;;
     *)        echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -55,7 +55,7 @@ echo "==> Databases and Pkarr relay are ready."
 if [ ! -d "$ROOT_DIR/packages/dwn-server/dist" ]; then
   echo "==> Building packages (no dist found)..."
   cd "$ROOT_DIR"
-  pnpm --recursive --stream --filter='./packages/*' build
+  bun run --filter '*' build
 fi
 
 # ---- Step 3: Start dwn-server ----
@@ -112,8 +112,12 @@ export MYSQL_PASSWORD=dwn
 export MYSQL_DATABASE=dwn
 
 cd "$ROOT_DIR"
+# When no --filter is specified, run all packages
+if [ -z "$FILTER" ]; then
+  FILTER="--filter '*'"
+fi
 # shellcheck disable=SC2086
-pnpm --recursive --stream --no-bail $FILTER test:node
+bun run $FILTER test:node
 TEST_EXIT=$?
 
 exit $TEST_EXIT

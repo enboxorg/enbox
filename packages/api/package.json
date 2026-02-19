@@ -9,14 +9,13 @@
   "scripts": {
     "clean": "rimraf dist",
     "build:esm": "rimraf dist/esm dist/types && bun tsc -p tsconfig.json",
-    "build:browser": "rimraf dist/browser.mjs dist/browser.js && bun build/bundles.js",
-    "build:tests:browser": "rimraf tests/compiled && bun build/esbuild-tests.cjs",
+    "build:browser": "rimraf dist/browser.mjs && bun ../../build/browser-bundle.js --node-shims --metafile",
     "build": "bun run clean && bun run build:esm && bun run build:browser",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "test:node": "bun test --timeout 10000 .spec.ts",
     "test:node:coverage": "bun test --timeout 10000 --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .spec.ts",
-    "test:browser": "bun run build:tests:browser && bunx web-test-runner"
+    "test:browser": "bunx --bun vitest --config vitest.browser.config.ts --run"
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/api#readme",
   "bugs": "https://github.com/enboxorg/enbox/issues",
@@ -82,7 +81,6 @@
     "@enbox/dwn-clients": "workspace:*"
   },
   "devDependencies": {
-    "@playwright/test": "1.45.3",
     "@enbox/crypto": "workspace:*",
     "@enbox/dids": "workspace:*",
     "@enbox/dwn-sdk-js": "workspace:*",
@@ -90,16 +88,12 @@
     "@types/sinon": "17.0.3",
     "@typescript-eslint/eslint-plugin": "8.32.1",
     "@typescript-eslint/parser": "8.32.1",
-    "@web/test-runner": "0.18.2",
-    "@web/test-runner-playwright": "0.11.0",
+    "@vitest/browser-playwright": "4.0.18",
     "bun-types": "latest",
-    "esbuild": "0.19.8",
     "eslint": "9.7.0",
-    "node-stdlib-browser": "1.2.0",
-    "playwright": "1.45.3",
     "rimraf": "4.4.0",
     "sinon": "18.0.0",
-    "source-map-loader": "4.0.2",
-    "typescript": "5.5.4"
+    "typescript": "5.5.4",
+    "vitest": "4.0.18"
   }
 }

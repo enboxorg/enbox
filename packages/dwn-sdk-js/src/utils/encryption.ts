@@ -1,11 +1,11 @@
-import * as crypto from 'crypto';
-import * as eciesjs from 'eciesjs';
-
-// compress publicKey for message encryption
-eciesjs.ECIES_CONFIG.isEphemeralKeyCompressed = true;
+import { concatBytes } from '@noble/ciphers/utils';
+import { ctr } from '@noble/ciphers/aes';
+import { EciesSecp256k1 } from '@enbox/crypto';
 
 /**
  * Utility class for performing common, non-DWN specific encryption operations.
+ * Uses `@noble/ciphers` for AES-256-CTR and `@enbox/crypto` for ECIES-SECP256K1
+ * (browser-compatible, no Node `crypto` dependency).
  */
 export class Encryption {
   /**
@@ -14,19 +14,7 @@ export class Encryption {
   public static async aes256CtrEncrypt(
     key: Uint8Array, initializationVector: Uint8Array, plaintextStream: ReadableStream<Uint8Array>
   ): Promise<ReadableStream<Uint8Array>> {
-    const cipher = crypto.createCipheriv('aes-256-ctr', key, initializationVector);
-
-    const transform = new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller): void {
-        controller.enqueue(new Uint8Array(cipher.update(chunk)));
-      },
-      flush(controller): void {
-        const finalChunk = cipher.final();
-        if (finalChunk.length > 0) { controller.enqueue(new Uint8Array(finalChunk)); }
-      }
-    });
-
-    return plaintextStream.pipeThrough(transform);
+    return Encryption.processStream(key, initializationVector, plaintextStream, 'encrypt');
   }
 
   /**
@@ -35,19 +23,7 @@ export class Encryption {
   public static async aes256CtrDecrypt(
     key: Uint8Array, initializationVector: Uint8Array, cipherStream: ReadableStream<Uint8Array>
   ): Promise<ReadableStream<Uint8Array>> {
-    const decipher = crypto.createDecipheriv('aes-256-ctr', key, initializationVector);
-
-    const transform = new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller): void {
-        controller.enqueue(new Uint8Array(decipher.update(chunk)));
-      },
-      flush(controller): void {
-        const finalChunk = decipher.final();
-        if (finalChunk.length > 0) { controller.enqueue(new Uint8Array(finalChunk)); }
-      }
-    });
-
-    return cipherStream.pipeThrough(transform);
+    return Encryption.processStream(key, initializationVector, cipherStream, 'decrypt');
   }
 
   /**
@@ -56,60 +32,53 @@ export class Encryption {
    * and AES-GCM for the symmetric encryption and MAC algorithms.
    */
   public static async eciesSecp256k1Encrypt(publicKeyBytes: Uint8Array, plaintext: Uint8Array): Promise<EciesEncryptionOutput> {
-    // underlying library requires Buffer as input
-    const publicKey = Buffer.from(publicKeyBytes);
-    const plaintextBuffer = Buffer.from(plaintext);
-
-    const cryptogram = eciesjs.encrypt(publicKey, plaintextBuffer);
-
-    // split cryptogram returned into constituent parts
-    let start = 0;
-    let end = Encryption.isEphemeralKeyCompressed ? 33 : 65;
-    const ephemeralPublicKey = cryptogram.subarray(start, end);
-
-    start = end;
-    end += eciesjs.ECIES_CONFIG.symmetricNonceLength;
-    const initializationVector = cryptogram.subarray(start, end);
-
-    start = end;
-    end += 16; // eciesjs.consts.AEAD_TAG_LENGTH
-    const messageAuthenticationCode = cryptogram.subarray(start, end);
-
-    const ciphertext = cryptogram.subarray(end);
-
-    return {
-      ciphertext,
-      ephemeralPublicKey,
-      initializationVector,
-      messageAuthenticationCode
-    };
+    return EciesSecp256k1.encrypt(publicKeyBytes, plaintext);
   }
 
   /**
-   * Decrypt the given plaintext using ECIES (Elliptic Curve Integrated Encryption Scheme)
+   * Decrypt the given ciphertext using ECIES (Elliptic Curve Integrated Encryption Scheme)
    * with SECP256K1 for the asymmetric calculations, HKDF as the key-derivation function,
    * and AES-GCM for the symmetric encryption and MAC algorithms.
    */
   public static async eciesSecp256k1Decrypt(input: EciesEncryptionInput): Promise<Uint8Array> {
-    // underlying library requires Buffer as input
-    const privateKeyBuffer = Buffer.from(input.privateKey);
-    const eciesEncryptionOutput = Buffer.concat([
-      input.ephemeralPublicKey,
-      input.initializationVector,
-      input.messageAuthenticationCode,
-      input.ciphertext
-    ]);
-
-    const plaintext = eciesjs.decrypt(privateKeyBuffer, eciesEncryptionOutput);
-
-    return plaintext;
+    return EciesSecp256k1.decrypt(input);
   }
 
   /**
-   * Expose eciesjs library configuration
+   * Whether the ephemeral public key is compressed (always true).
    */
-  static get isEphemeralKeyCompressed():boolean {
-    return eciesjs.ECIES_CONFIG.isEphemeralKeyCompressed;
+  static get isEphemeralKeyCompressed(): boolean {
+    return EciesSecp256k1.isEphemeralKeyCompressed;
+  }
+
+  /**
+   * Reads the input stream, applies AES-256-CTR, and returns a new stream.
+   * Errors from the source stream are forwarded to the returned stream.
+   */
+  private static processStream(
+    key: Uint8Array, iv: Uint8Array, source: ReadableStream<Uint8Array>, op: 'encrypt' | 'decrypt'
+  ): ReadableStream<Uint8Array> {
+    return new ReadableStream<Uint8Array>({
+      async start(controller): Promise<void> {
+        const reader = source.getReader();
+        const chunks: Uint8Array[] = [];
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) { break; }
+            chunks.push(value);
+          }
+          const data = concatBytes(...chunks);
+          const result = op === 'encrypt'
+            ? ctr(key, iv).encrypt(data)
+            : ctr(key, iv).decrypt(data);
+          controller.enqueue(result);
+          controller.close();
+        } catch (error) {
+          controller.error(error);
+        }
+      }
+    });
   }
 }
 

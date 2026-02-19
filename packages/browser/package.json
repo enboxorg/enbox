@@ -7,14 +7,13 @@
   "module": "./dist/esm/index.js",
   "types": "./dist/types/index.d.ts",
   "scripts": {
-    "clean": "rimraf dist tests/compiled",
-    "build:tests": "rimraf tests/compiled && bun build/esbuild-tests.cjs",
+    "clean": "rimraf dist",
     "build:esm": "rimraf dist/esm dist/types && bun tsc -p tsconfig.json",
     "build:browser": "bun run build:esm",
     "build": "bun run clean && bun run build:esm",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
-    "test:browser": "bun run build:tests && bunx web-test-runner"
+    "test:browser": "bunx --bun vitest --config vitest.browser.config.ts --run"
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/browser#readme",
   "bugs": "https://github.com/enboxorg/enbox/issues",
@@ -58,24 +57,12 @@
     "@enbox/dids": "workspace:*"
   },
   "devDependencies": {
-    "@playwright/test": "1.45.3",
-    "@types/chai": "4.3.6",
-    "@types/mocha": "10.0.1",
-    "@types/sinon": "17.0.3",
     "@typescript-eslint/eslint-plugin": "8.32.1",
     "@typescript-eslint/parser": "8.32.1",
-    "@web/test-runner": "0.18.2",
-    "@web/test-runner-playwright": "0.11.0",
-    "chai": "4.3.10",
-    "esbuild": "0.19.8",
+    "@vitest/browser-playwright": "4.0.18",
     "eslint": "9.7.0",
-    "eslint-plugin-mocha": "10.4.3",
-    "mocha": "10.2.0",
-    "mocha-junit-reporter": "2.2.1",
-    "playwright": "1.45.3",
     "rimraf": "4.4.0",
-    "sinon": "18.0.0",
-    "source-map-loader": "4.0.2",
-    "typescript": "5.5.4"
+    "typescript": "5.5.4",
+    "vitest": "4.0.18"
   }
 }
