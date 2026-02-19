@@ -1,14 +1,10 @@
-import type { Jwk, KeyIdentifier } from '@enbox/crypto';
-
-import { Convert } from '@enbox/common';
-import { CryptoError, CryptoErrorCode, CryptoUtils, LocalKeyManager } from '@enbox/crypto';
-
-import type { CryptoApi } from '../types/crypto-api.js';
-import type { KeyManager } from '../types/key-manager.js';
+import type { ExtendedCryptoApi, Jwk, KeyIdentifier, KeyManager } from '@enbox/crypto';
 import type { JweDecryptOptions, JweEncryptOptions, JweHeaderParams } from './jwe.js';
 
+import { Convert } from '@enbox/common';
+import { CryptoError, CryptoErrorCode, CryptoUtils, isCipher, LocalKeyManager } from '@enbox/crypto';
+
 import { AgentCryptoApi } from '../../../crypto-api.js';
-import { isCipher } from '../utils.js';
 import { isValidJweHeader, JweKeyManagement } from './jwe.js';
 
 /**
@@ -198,7 +194,7 @@ export class FlattenedJwe {
 
   public static async decrypt<
     TKeyManager extends KeyManager | undefined = KeyManager,
-    TCrypto extends CryptoApi | undefined = CryptoApi
+    TCrypto extends ExtendedCryptoApi | undefined = ExtendedCryptoApi
   >({
     jwe,
     key,
@@ -339,7 +335,7 @@ export class FlattenedJwe {
 
   public static async encrypt<
     TKeyManager extends KeyManager | undefined = KeyManager,
-    TCrypto extends CryptoApi | undefined = CryptoApi
+    TCrypto extends ExtendedCryptoApi | undefined = ExtendedCryptoApi
   >({
     key,
     plaintext,

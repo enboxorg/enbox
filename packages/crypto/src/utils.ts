@@ -1,4 +1,7 @@
+import type { Cipher } from './types/cipher.js';
 import type { Jwk } from './jose/jwk.js';
+import type { KeyWrapper } from './types/key-wrapper.js';
+import type { KeyExporter, KeyImporter } from './types/key-io.js';
 
 import { crypto } from '@noble/hashes/crypto';
 import { randomBytes as nobleRandomBytes } from '@noble/hashes/utils';
@@ -178,4 +181,54 @@ export class CryptoUtils {
     // Pad the PIN with leading zeros to the desired length.
     return pin.toString().padStart(length, '0');
   }
+}
+
+/**
+ * Type guard that checks whether the given object implements the {@link Cipher} interface.
+ */
+export function isCipher<EncryptInput, DecryptInput>(
+  obj: unknown
+): obj is Cipher<EncryptInput, DecryptInput> {
+  return (
+    obj !== null && typeof obj === 'object'
+    && 'encrypt' in obj && typeof obj.encrypt === 'function'
+    && 'decrypt' in obj && typeof obj.decrypt === 'function'
+  );
+}
+
+/**
+ * Type guard that checks whether the given object implements the {@link KeyExporter} interface.
+ */
+export function isKeyExporter<ExportKeyInput, ExportKeyOutput>(
+  obj: unknown
+): obj is KeyExporter<ExportKeyInput, ExportKeyOutput> {
+  return (
+    obj !== null && typeof obj === 'object'
+    && 'exportKey' in obj && typeof obj.exportKey === 'function'
+  );
+}
+
+/**
+ * Type guard that checks whether the given object implements the {@link KeyImporter} interface.
+ */
+export function isKeyImporter<ImportKeyInput, ImportKeyOutput>(
+  obj: unknown
+): obj is KeyImporter<ImportKeyInput, ImportKeyOutput> {
+  return (
+    obj !== null && typeof obj === 'object'
+    && 'importKey' in obj && typeof obj.importKey === 'function'
+  );
+}
+
+/**
+ * Type guard that checks whether the given object implements the {@link KeyWrapper} interface.
+ */
+export function isKeyWrapper<WrapKeyInput, UnwrapKeyInput>(
+  obj: unknown
+): obj is KeyWrapper<WrapKeyInput, UnwrapKeyInput> {
+  return (
+    obj !== null && typeof obj === 'object'
+    && 'wrapKey' in obj && typeof obj.wrapKey === 'function'
+    && 'unwrapKey' in obj && typeof obj.unwrapKey === 'function'
+  );
 }

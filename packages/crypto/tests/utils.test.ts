@@ -2,7 +2,7 @@ import type { Jwk } from '../src/jose/jwk.js';
 
 import { describe, expect, it } from 'bun:test';
 
-import { CryptoUtils } from '../src/utils.js';
+import { CryptoUtils, isCipher, isKeyExporter, isKeyImporter, isKeyWrapper } from '../src/utils.js';
 
 describe('Crypto Utils', () => {
   describe('getJoseSignatureAlgorithmFromPublicKey()', () => {
@@ -136,6 +136,119 @@ describe('Crypto Utils', () => {
       expect(
         () => CryptoUtils.randomPin({ length: 11 })
       ).toThrow('randomPin() can securely generate a PIN between 3 to 10 digits.');
+    });
+  });
+
+  describe('isCipher()', () => {
+    it('returns true for objects with encrypt and decrypt functions', () => {
+      const cipher = {
+        encrypt : (): Uint8Array => new Uint8Array(0),
+        decrypt : (): Uint8Array => new Uint8Array(0),
+      };
+      expect(isCipher(cipher)).toBe(true);
+    });
+
+    it('returns false for null', () => {
+      expect(isCipher(null)).toBe(false);
+    });
+
+    it('returns false for undefined', () => {
+      expect(isCipher(undefined)).toBe(false);
+    });
+
+    it('returns false for empty objects', () => {
+      expect(isCipher({})).toBe(false);
+    });
+
+    it('returns false when encrypt is missing', () => {
+      expect(isCipher({ decrypt: (): void => {} })).toBe(false);
+    });
+
+    it('returns false when decrypt is missing', () => {
+      expect(isCipher({ encrypt: (): void => {} })).toBe(false);
+    });
+
+    it('returns false when encrypt is not a function', () => {
+      expect(isCipher({ encrypt: 'not-a-function', decrypt: (): void => {} })).toBe(false);
+    });
+
+    it('returns false for primitives', () => {
+      expect(isCipher(42)).toBe(false);
+      expect(isCipher('string')).toBe(false);
+      expect(isCipher(true)).toBe(false);
+    });
+  });
+
+  describe('isKeyExporter()', () => {
+    it('returns true for objects with an exportKey function', () => {
+      const exporter = { exportKey: (): void => {} };
+      expect(isKeyExporter(exporter)).toBe(true);
+    });
+
+    it('returns false for null', () => {
+      expect(isKeyExporter(null)).toBe(false);
+    });
+
+    it('returns false for empty objects', () => {
+      expect(isKeyExporter({})).toBe(false);
+    });
+
+    it('returns false when exportKey is not a function', () => {
+      expect(isKeyExporter({ exportKey: 'not-a-function' })).toBe(false);
+    });
+  });
+
+  describe('isKeyImporter()', () => {
+    it('returns true for objects with an importKey function', () => {
+      const importer = { importKey: (): void => {} };
+      expect(isKeyImporter(importer)).toBe(true);
+    });
+
+    it('returns false for null', () => {
+      expect(isKeyImporter(null)).toBe(false);
+    });
+
+    it('returns false for empty objects', () => {
+      expect(isKeyImporter({})).toBe(false);
+    });
+
+    it('returns false when importKey is not a function', () => {
+      expect(isKeyImporter({ importKey: 'not-a-function' })).toBe(false);
+    });
+  });
+
+  describe('isKeyWrapper()', () => {
+    it('returns true for objects with wrapKey and unwrapKey functions', () => {
+      const wrapper = {
+        wrapKey   : (): void => {},
+        unwrapKey : (): void => {},
+      };
+      expect(isKeyWrapper(wrapper)).toBe(true);
+    });
+
+    it('returns false for null', () => {
+      expect(isKeyWrapper(null)).toBe(false);
+    });
+
+    it('returns false for empty objects', () => {
+      expect(isKeyWrapper({})).toBe(false);
+    });
+
+    it('returns false when wrapKey is missing', () => {
+      expect(isKeyWrapper({ unwrapKey: (): void => {} })).toBe(false);
+    });
+
+    it('returns false when unwrapKey is missing', () => {
+      expect(isKeyWrapper({ wrapKey: (): void => {} })).toBe(false);
+    });
+
+    it('returns false when wrapKey is not a function', () => {
+      expect(isKeyWrapper({ wrapKey: 'not-a-function', unwrapKey: (): void => {} })).toBe(false);
+    });
+
+    it('returns false for primitives', () => {
+      expect(isKeyWrapper(42)).toBe(false);
+      expect(isKeyWrapper('string')).toBe(false);
     });
   });
 });

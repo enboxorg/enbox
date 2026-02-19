@@ -3,7 +3,7 @@ import type { Jwk } from '@enbox/crypto';
 import { Convert } from '@enbox/common';
 import { beforeAll, describe, expect, it } from 'bun:test';
 
-import { AesKwAlgorithm } from '../../../../src/prototyping/crypto/algorithms/aes-kw.js';
+import { AesKwAlgorithm } from '@enbox/crypto';
 import { isChrome } from '../../../utils/runtimes.js';
 
 describe('AesKwAlgorithm', () => {

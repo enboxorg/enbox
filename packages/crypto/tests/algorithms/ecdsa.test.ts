@@ -475,4 +475,150 @@ describe('EcdsaAlgorithm', () => {
       }
     });
   });
+
+  describe('bytesToPrivateKey()', () => {
+    it('returns a private key in JWK format with correct alg for ES256K', async () => {
+      const privateKey = await ecdsa.generateKey({ algorithm: 'ES256K' });
+      const privateKeyBytes = await ecdsa.privateKeyToBytes({ privateKey });
+      const recoveredKey = await ecdsa.bytesToPrivateKey({ algorithm: 'ES256K', privateKeyBytes });
+
+      expect(recoveredKey).toHaveProperty('kty', 'EC');
+      expect(recoveredKey).toHaveProperty('crv', 'secp256k1');
+      expect(recoveredKey).toHaveProperty('alg', 'ES256K');
+      expect(recoveredKey).toHaveProperty('d');
+    });
+
+    it('returns a private key with correct alg for ES256', async () => {
+      const privateKey = await ecdsa.generateKey({ algorithm: 'ES256' });
+      const privateKeyBytes = await ecdsa.privateKeyToBytes({ privateKey });
+      const recoveredKey = await ecdsa.bytesToPrivateKey({ algorithm: 'ES256', privateKeyBytes });
+
+      expect(recoveredKey).toHaveProperty('kty', 'EC');
+      expect(recoveredKey).toHaveProperty('crv', 'P-256');
+      expect(recoveredKey).toHaveProperty('alg', 'ES256');
+    });
+
+    it('supports the secp256k1 alias', async () => {
+      const privateKey = await ecdsa.generateKey({ algorithm: 'secp256k1' });
+      const privateKeyBytes = await ecdsa.privateKeyToBytes({ privateKey });
+      const recoveredKey = await ecdsa.bytesToPrivateKey({ algorithm: 'secp256k1', privateKeyBytes });
+
+      expect(recoveredKey).toHaveProperty('alg', 'ES256K');
+    });
+
+    it('supports the secp256r1 alias', async () => {
+      const privateKey = await ecdsa.generateKey({ algorithm: 'secp256r1' });
+      const privateKeyBytes = await ecdsa.privateKeyToBytes({ privateKey });
+      const recoveredKey = await ecdsa.bytesToPrivateKey({ algorithm: 'secp256r1', privateKeyBytes });
+
+      expect(recoveredKey).toHaveProperty('alg', 'ES256');
+    });
+
+    it('throws for unsupported algorithm', async () => {
+      const privateKeyBytes = new Uint8Array(32);
+      await expect(
+        ecdsa.bytesToPrivateKey({ algorithm: 'unsupported' as any, privateKeyBytes })
+      ).rejects.toThrow('Algorithm not supported');
+    });
+  });
+
+  describe('bytesToPublicKey()', () => {
+    it('returns a public key in JWK format with correct alg for ES256K', async () => {
+      const privateKey = await ecdsa.generateKey({ algorithm: 'ES256K' });
+      const publicKey = await ecdsa.getPublicKey({ key: privateKey });
+      const publicKeyBytes = await ecdsa.publicKeyToBytes({ publicKey });
+      const recoveredKey = await ecdsa.bytesToPublicKey({ algorithm: 'ES256K', publicKeyBytes });
+
+      expect(recoveredKey).toHaveProperty('kty', 'EC');
+      expect(recoveredKey).toHaveProperty('crv', 'secp256k1');
+      expect(recoveredKey).toHaveProperty('alg', 'ES256K');
+      expect(recoveredKey).not.toHaveProperty('d');
+    });
+
+    it('returns a public key with correct alg for ES256', async () => {
+      const privateKey = await ecdsa.generateKey({ algorithm: 'ES256' });
+      const publicKey = await ecdsa.getPublicKey({ key: privateKey });
+      const publicKeyBytes = await ecdsa.publicKeyToBytes({ publicKey });
+      const recoveredKey = await ecdsa.bytesToPublicKey({ algorithm: 'ES256', publicKeyBytes });
+
+      expect(recoveredKey).toHaveProperty('kty', 'EC');
+      expect(recoveredKey).toHaveProperty('crv', 'P-256');
+      expect(recoveredKey).toHaveProperty('alg', 'ES256');
+    });
+
+    it('throws for unsupported algorithm', async () => {
+      const publicKeyBytes = new Uint8Array(33);
+      await expect(
+        ecdsa.bytesToPublicKey({ algorithm: 'unsupported' as any, publicKeyBytes })
+      ).rejects.toThrow('Algorithm not supported');
+    });
+  });
+
+  describe('privateKeyToBytes()', () => {
+    it('returns a byte array for secp256k1 keys', async () => {
+      const privateKey = await ecdsa.generateKey({ algorithm: 'ES256K' });
+      const privateKeyBytes = await ecdsa.privateKeyToBytes({ privateKey });
+
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
+      expect(privateKeyBytes.byteLength).toBe(32);
+    });
+
+    it('returns a byte array for secp256r1 keys', async () => {
+      const privateKey = await ecdsa.generateKey({ algorithm: 'ES256' });
+      const privateKeyBytes = await ecdsa.privateKeyToBytes({ privateKey });
+
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
+      expect(privateKeyBytes.byteLength).toBe(32);
+    });
+
+    it('round-trips with bytesToPrivateKey for secp256k1', async () => {
+      const privateKey = await ecdsa.generateKey({ algorithm: 'ES256K' });
+      const privateKeyBytes = await ecdsa.privateKeyToBytes({ privateKey });
+      const recoveredKey = await ecdsa.bytesToPrivateKey({ algorithm: 'ES256K', privateKeyBytes });
+      expect(recoveredKey.d).toBe(privateKey.d);
+    });
+
+    it('throws for unsupported curve', async () => {
+      const invalidKey = { kty: 'EC' as const, crv: 'P-521', d: 'abc', x: 'def', y: 'ghi' };
+      await expect(
+        ecdsa.privateKeyToBytes({ privateKey: invalidKey })
+      ).rejects.toThrow('Curve not supported');
+    });
+  });
+
+  describe('publicKeyToBytes()', () => {
+    it('returns a byte array for secp256k1 keys', async () => {
+      const privateKey = await ecdsa.generateKey({ algorithm: 'ES256K' });
+      const publicKey = await ecdsa.getPublicKey({ key: privateKey });
+      const publicKeyBytes = await ecdsa.publicKeyToBytes({ publicKey });
+
+      expect(publicKeyBytes).toBeInstanceOf(Uint8Array);
+      expect(publicKeyBytes.byteLength).toBe(65); // Uncompressed public key
+    });
+
+    it('returns a byte array for secp256r1 keys', async () => {
+      const privateKey = await ecdsa.generateKey({ algorithm: 'ES256' });
+      const publicKey = await ecdsa.getPublicKey({ key: privateKey });
+      const publicKeyBytes = await ecdsa.publicKeyToBytes({ publicKey });
+
+      expect(publicKeyBytes).toBeInstanceOf(Uint8Array);
+      expect(publicKeyBytes.byteLength).toBe(65); // Uncompressed public key
+    });
+
+    it('round-trips with bytesToPublicKey for ES256', async () => {
+      const privateKey = await ecdsa.generateKey({ algorithm: 'ES256' });
+      const publicKey = await ecdsa.getPublicKey({ key: privateKey });
+      const publicKeyBytes = await ecdsa.publicKeyToBytes({ publicKey });
+      const recoveredKey = await ecdsa.bytesToPublicKey({ algorithm: 'ES256', publicKeyBytes });
+      expect(recoveredKey.x).toBe(publicKey.x);
+      expect(recoveredKey.y).toBe(publicKey.y);
+    });
+
+    it('throws for unsupported curve', async () => {
+      const invalidKey = { kty: 'EC' as const, crv: 'P-521', x: 'def', y: 'ghi' };
+      await expect(
+        ecdsa.publicKeyToBytes({ publicKey: invalidKey })
+      ).rejects.toThrow('Curve not supported');
+    });
+  });
 });

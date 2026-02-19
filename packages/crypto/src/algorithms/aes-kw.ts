@@ -1,7 +1,12 @@
+import type { Jwk } from '../jose/jwk.js';
+import type { KeyConverter } from '../types/key-converter.js';
+import type { KeyGenerator } from '../types/key-generator.js';
+import type { KeyWrapper } from '../types/key-wrapper.js';
 import type { RequireOnly } from '@enbox/common';
-import type { BytesToPrivateKeyParams, GenerateKeyParams, Jwk, KeyConverter, KeyGenerator, KeyWrapper, PrivateKeyToBytesParams, UnwrapKeyParams, WrapKeyParams } from '@enbox/crypto';
+import type { BytesToPrivateKeyParams, GenerateKeyParams, PrivateKeyToBytesParams, UnwrapKeyParams, WrapKeyParams } from '../types/params-direct.js';
 
-import { AesKw, CryptoAlgorithm } from '@enbox/crypto';
+import { AesKw } from '../primitives/aes-kw.js';
+import { CryptoAlgorithm } from './crypto-algorithm.js';
 
 /**
  * The `AesKwGenerateKeyParams` interface defines the algorithm-specific parameters that should be
@@ -31,6 +36,15 @@ export class AesKwAlgorithm extends CryptoAlgorithm
              KeyGenerator<AesKwGenerateKeyParams, Jwk>,
              KeyWrapper<WrapKeyParams, UnwrapKeyParams> {
 
+  /**
+   * Converts a private key from a byte array to JWK format, setting the `alg` property based on
+   * the key length.
+   *
+   * @param params - The parameters for the private key conversion.
+   * @param params.privateKeyBytes - The raw private key as a Uint8Array.
+   *
+   * @returns A Promise that resolves to the private key in JWK format.
+   */
   public async bytesToPrivateKey({ privateKeyBytes }:
     RequireOnly<BytesToPrivateKeyParams, 'privateKeyBytes'>
   ): Promise<Jwk> {
@@ -84,6 +98,14 @@ export class AesKwAlgorithm extends CryptoAlgorithm
     return privateKey;
   }
 
+  /**
+   * Converts a private key from JWK format to a byte array.
+   *
+   * @param params - The parameters for the private key conversion.
+   * @param params.privateKey - The private key in JWK format.
+   *
+   * @returns A Promise that resolves to the private key as a Uint8Array.
+   */
   public async privateKeyToBytes({ privateKey }:
     PrivateKeyToBytesParams
   ): Promise<Uint8Array> {

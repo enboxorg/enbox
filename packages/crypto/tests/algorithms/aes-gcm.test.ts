@@ -93,4 +93,52 @@ describe('AesGcmAlgorithm', () => {
       }
     });
   });
+
+  describe('bytesToPrivateKey()', () => {
+    it('returns a private key in JWK format', async () => {
+      const privateKeyBytes = new Uint8Array(16);
+      crypto.getRandomValues(privateKeyBytes);
+      const privateKey = await aesGcm.bytesToPrivateKey({ privateKeyBytes });
+
+      expect(privateKey).toHaveProperty('kty', 'oct');
+      expect(privateKey).toHaveProperty('k');
+    });
+
+    it('sets alg to A128GCM for 128-bit keys', async () => {
+      const privateKeyBytes = new Uint8Array(16);
+      const privateKey = await aesGcm.bytesToPrivateKey({ privateKeyBytes });
+      expect(privateKey.alg).toBe('A128GCM');
+    });
+
+    it('sets alg to A192GCM for 192-bit keys', async () => {
+      if (isChrome) { return; }
+      const privateKeyBytes = new Uint8Array(24);
+      const privateKey = await aesGcm.bytesToPrivateKey({ privateKeyBytes });
+      expect(privateKey.alg).toBe('A192GCM');
+    });
+
+    it('sets alg to A256GCM for 256-bit keys', async () => {
+      const privateKeyBytes = new Uint8Array(32);
+      const privateKey = await aesGcm.bytesToPrivateKey({ privateKeyBytes });
+      expect(privateKey.alg).toBe('A256GCM');
+    });
+  });
+
+  describe('privateKeyToBytes()', () => {
+    it('returns key material as a Uint8Array', async () => {
+      const privateKey = await aesGcm.generateKey({ algorithm: 'A256GCM' });
+      const privateKeyBytes = await aesGcm.privateKeyToBytes({ privateKey });
+
+      expect(privateKeyBytes).toBeInstanceOf(Uint8Array);
+      expect(privateKeyBytes.byteLength).toBe(32);
+    });
+
+    it('round-trips with bytesToPrivateKey', async () => {
+      const originalBytes = new Uint8Array(32);
+      crypto.getRandomValues(originalBytes);
+      const privateKey = await aesGcm.bytesToPrivateKey({ privateKeyBytes: originalBytes });
+      const recoveredBytes = await aesGcm.privateKeyToBytes({ privateKey });
+      expect(recoveredBytes).toEqual(originalBytes);
+    });
+  });
 });

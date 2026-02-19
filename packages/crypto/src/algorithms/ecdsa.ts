@@ -1,10 +1,15 @@
 import type { AsymmetricKeyGenerator } from '../types/key-generator.js';
 import type { Jwk } from '../jose/jwk.js';
 import type { Signer } from '../types/signer.js';
+import type { AsymmetricKeyConverter, KeyConverter } from '../types/key-converter.js';
 import type {
+  BytesToPrivateKeyParams,
+  BytesToPublicKeyParams,
   ComputePublicKeyParams,
   GenerateKeyParams,
   GetPublicKeyParams,
+  PrivateKeyToBytesParams,
+  PublicKeyToBytesParams,
   SignParams,
   VerifyParams,
 } from '../types/params-direct.js';
@@ -12,6 +17,7 @@ import type {
 import { CryptoAlgorithm } from './crypto-algorithm.js';
 import { Secp256k1 } from '../primitives/secp256k1.js';
 import { Secp256r1 } from '../primitives/secp256r1.js';
+import { CryptoError, CryptoErrorCode } from '../crypto-error.js';
 import { isEcPrivateJwk, isEcPublicJwk } from '../jose/jwk.js';
 
 /**
@@ -41,7 +47,78 @@ export interface EcdsaGenerateKeyParams extends GenerateKeyParams {
  */
 export class EcdsaAlgorithm extends CryptoAlgorithm
   implements AsymmetricKeyGenerator<EcdsaGenerateKeyParams, Jwk, GetPublicKeyParams>,
+             KeyConverter, AsymmetricKeyConverter,
              Signer<SignParams, VerifyParams> {
+
+  /**
+   * Converts a private key from a byte array to JWK format, setting the `alg` property based on
+   * the algorithm.
+   *
+   * @param params - The parameters for the private key conversion.
+   * @param params.algorithm - The ECDSA algorithm identifier.
+   * @param params.privateKeyBytes - The raw private key as a Uint8Array.
+   *
+   * @returns A Promise that resolves to the private key in JWK format.
+   */
+  public async bytesToPrivateKey({ algorithm, privateKeyBytes }:
+    BytesToPrivateKeyParams & { algorithm: 'ES256' | 'ES256K' | 'secp256k1' | 'secp256r1' }
+  ): Promise<Jwk> {
+    switch (algorithm) {
+
+      case 'ES256K':
+      case 'secp256k1': {
+        const privateKey = await Secp256k1.bytesToPrivateKey({ privateKeyBytes });
+        privateKey.alg = 'ES256K';
+        return privateKey;
+      }
+
+      case 'ES256':
+      case 'secp256r1': {
+        const privateKey = await Secp256r1.bytesToPrivateKey({ privateKeyBytes });
+        privateKey.alg = 'ES256';
+        return privateKey;
+      }
+
+      default: {
+        throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Algorithm not supported: ${algorithm}`);
+      }
+    }
+  }
+
+  /**
+   * Converts a public key from a byte array to JWK format, setting the `alg` property based on
+   * the algorithm.
+   *
+   * @param params - The parameters for the public key conversion.
+   * @param params.algorithm - The ECDSA algorithm identifier.
+   * @param params.publicKeyBytes - The raw public key as a Uint8Array.
+   *
+   * @returns A Promise that resolves to the public key in JWK format.
+   */
+  public async bytesToPublicKey({ algorithm, publicKeyBytes }:
+    BytesToPublicKeyParams & { algorithm: 'ES256' | 'ES256K' | 'secp256k1' | 'secp256r1' }
+  ): Promise<Jwk> {
+    switch (algorithm) {
+
+      case 'ES256K':
+      case 'secp256k1': {
+        const publicKey = await Secp256k1.bytesToPublicKey({ publicKeyBytes });
+        publicKey.alg = 'ES256K';
+        return publicKey;
+      }
+
+      case 'ES256':
+      case 'secp256r1': {
+        const publicKey = await Secp256r1.bytesToPublicKey({ publicKeyBytes });
+        publicKey.alg = 'ES256';
+        return publicKey;
+      }
+
+      default: {
+        throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Algorithm not supported: ${algorithm}`);
+      }
+    }
+  }
 
   /**
    * Derives the public key in JWK format from a given private key.
@@ -269,6 +346,60 @@ export class EcdsaAlgorithm extends CryptoAlgorithm
 
       default: {
         throw new Error(`Unsupported curve: ${key.crv}`);
+      }
+    }
+  }
+
+  /**
+   * Converts a private key from JWK format to a byte array.
+   *
+   * @param params - The parameters for the private key conversion.
+   * @param params.privateKey - The private key in JWK format.
+   *
+   * @returns A Promise that resolves to the private key as a Uint8Array.
+   */
+  public async privateKeyToBytes({ privateKey }:
+    PrivateKeyToBytesParams
+  ): Promise<Uint8Array> {
+    switch (privateKey.crv) {
+
+      case 'secp256k1': {
+        return await Secp256k1.privateKeyToBytes({ privateKey });
+      }
+
+      case 'P-256': {
+        return await Secp256r1.privateKeyToBytes({ privateKey });
+      }
+
+      default: {
+        throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Curve not supported: ${privateKey.crv}`);
+      }
+    }
+  }
+
+  /**
+   * Converts a public key from JWK format to a byte array.
+   *
+   * @param params - The parameters for the public key conversion.
+   * @param params.publicKey - The public key in JWK format.
+   *
+   * @returns A Promise that resolves to the public key as a Uint8Array.
+   */
+  public async publicKeyToBytes({ publicKey }:
+    PublicKeyToBytesParams
+  ): Promise<Uint8Array> {
+    switch (publicKey.crv) {
+
+      case 'secp256k1': {
+        return await Secp256k1.publicKeyToBytes({ publicKey });
+      }
+
+      case 'P-256': {
+        return await Secp256r1.publicKeyToBytes({ publicKey });
+      }
+
+      default: {
+        throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `Curve not supported: ${publicKey.crv}`);
       }
     }
   }

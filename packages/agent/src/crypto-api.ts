@@ -1,5 +1,6 @@
 import type {
   AesGcmParams,
+  AsymmetricKeyConverter,
   AsymmetricKeyGenerator,
   BytesToPrivateKeyParams,
   BytesToPublicKeyParams,
@@ -7,12 +8,16 @@ import type {
   CipherParams,
   CryptoAlgorithm,
   DeriveKeyBytesParams,
+  DeriveKeyFromBytesParams,
   DigestParams,
+  ExtendedCryptoApi,
   GenerateKeyParams,
   GetPublicKeyParams,
   Hasher,
   HkdfParams,
   Jwk,
+  KeyBytesDeriver,
+  KeyConverter,
   KeyWrapper,
   KmsGetKeyUriParams,
   Pbkdf2Params,
@@ -24,19 +29,18 @@ import type {
   VerifyParams,
   WrapKeyParams } from '@enbox/crypto';
 
-import { computeJwkThumbprint, CryptoError, CryptoErrorCode, Sha2Algorithm } from '@enbox/crypto';
-
-import type { CryptoApi } from './prototyping/crypto/types/crypto-api.js';
-import type { DeriveKeyParams } from './prototyping/crypto/types/params-direct.js';
-import type { KeyBytesDeriver } from './prototyping/crypto/types/key-deriver.js';
-import type { AsymmetricKeyConverter, KeyConverter } from './prototyping/crypto/types/key-converter.js';
-
-import { AesGcmAlgorithm } from './prototyping/crypto/algorithms/aes-gcm.js';
-import { AesKwAlgorithm } from './prototyping/crypto/algorithms/aes-kw.js';
-import { EcdsaAlgorithm } from './prototyping/crypto/algorithms/ecdsa.js';
-import { EdDsaAlgorithm } from './prototyping/crypto/algorithms/eddsa.js';
-import { HkdfAlgorithm } from './prototyping/crypto/algorithms/hkdf.js';
-import { Pbkdf2Algorithm } from './prototyping/crypto/algorithms/pbkdf2.js';
+import {
+  AesGcmAlgorithm,
+  AesKwAlgorithm,
+  computeJwkThumbprint,
+  CryptoError,
+  CryptoErrorCode,
+  EcdsaAlgorithm,
+  EdDsaAlgorithm,
+  HkdfAlgorithm,
+  Pbkdf2Algorithm,
+  Sha2Algorithm,
+} from '@enbox/crypto';
 
 export interface CryptoApiBytesToPrivateKeyParams extends BytesToPrivateKeyParams {
   algorithm: KeyConversionAlgorithm;
@@ -87,7 +91,7 @@ export interface CryptoApiDeriveKeyBytesOptions {
  * The `CryptoApiDeriveKeyParams` interface defines the algorithm-specific parameters that
  * should be passed into the {@link AgentCryptoApi.deriveKey | `AgentCryptoApi.deriveKey()`} method.
  */
-export type CryptoApiDeriveKeyParams<T extends DeriveKeyAlgorithm> = DeriveKeyParams & {
+export type CryptoApiDeriveKeyParams<T extends DeriveKeyAlgorithm> = DeriveKeyFromBytesParams & {
   /**
    * A string defining the name of key derivation function to use. The value must be one of the
    * following:
@@ -229,7 +233,7 @@ type KeyGenerationAlgorithms = {
 
 type KeyGenerationAlgorithm = typeof supportedAlgorithms[KeyGenerationAlgorithms]['names'][number];
 
-export class AgentCryptoApi implements CryptoApi<
+export class AgentCryptoApi implements ExtendedCryptoApi<
   CryptoApiGenerateKeyParams, Jwk, GetPublicKeyParams,
   CryptoApiDigestParams,
   SignParams, VerifyParams,
