@@ -55,7 +55,7 @@ describe('WebSocketDwnRpcClient', () => {
       expect(response.status.code).toBe(200);
       expect(response.entries).toBeDefined();
       expect(response.entries?.length).toBe(0);
-    }, 30_000);
+    });
 
     it('only supports WebSocket and Secure WebSocket protocols', async () => {
       // deliberately set 'http' as the protocol
@@ -143,7 +143,7 @@ describe('WebSocketDwnRpcClient', () => {
       expect(readResponse.status.code).toBe(200);
       expect(readResponse.entry).toBeDefined();
       expect(readResponse.entry?.recordsWrite?.recordId).toBe(writeMessage.recordId);
-    }, 30_000);
+    });
 
     it('subscribes to updates to a record', async () => {
       // create an initial record, we will subscribe to updates of this record
@@ -223,7 +223,7 @@ describe('WebSocketDwnRpcClient', () => {
         update1.descriptor.dataCid,
         update2.descriptor.dataCid
       ]));
-    }, 30_000);
+    });
 
     describe('processMessage', () => {
       it('throws when json rpc response errors are returned', async () => {
