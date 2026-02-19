@@ -308,12 +308,12 @@ export function testMessagesSubscribeHandler(): void {
           expect(bobReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationInterfaceMismatch);
         });
 
-        it.skip('rejects subscribe of messages with mismatching method grant scopes', async () => {
+        it('rejects subscribe of messages with mismatching method grant scopes', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
 
           // create grant that is scoped to `MessagesSync` for bob
-          const { recordsWrite: grantWrite, dataStream } = await TestDataGenerator.generateGrantCreate({
+          const { message: grantMessage, dataStream } = await TestDataGenerator.generateGrantCreate({
             author    : alice,
             grantedTo : bob,
             scope     : {
@@ -321,14 +321,13 @@ export function testMessagesSubscribeHandler(): void {
               method    : DwnMethodName.Sync,
             }
           });
-          const grantWriteReply = await dwn.processMessage(alice.did, grantWrite.message, { dataStream });
-          expect(grantWriteReply.status.code).toBe(204);
-
+          const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream });
+          expect(grantReply.status.code).toBe(202);
 
           // bob attempts to use the `MessagesSync` grant on an `MessagesSubscribe` message
           const { message: bobSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
             author            : bob,
-            permissionGrantId : grantWrite.message.recordId
+            permissionGrantId : grantMessage.recordId
           });
           const bobReply = await dwn.processMessage(alice.did, bobSubscribe);
           expect(bobReply.status.code).toBe(401);
