@@ -259,6 +259,7 @@ describe('JsonRpcSocket', () => {
     // extract log message from argument
     const logMessage:string = consoleInfoSpy.mock.calls[0][0]!;
     expect(logMessage).toBe('JSON RPC Socket close ws://127.0.0.1:9003');
+    consoleInfoSpy.mockRestore();
   });
 
   it('calls onerror handler', async () => {
@@ -289,5 +290,6 @@ describe('JsonRpcSocket', () => {
     // extract log message from argument
     const logMessage:string = consoleErrorSpy.mock.calls[0][0]!;
     expect(logMessage).toBe(`JSON RPC Socket error ${badUrl}`);
+    consoleErrorSpy.mockRestore();
   });
 });
