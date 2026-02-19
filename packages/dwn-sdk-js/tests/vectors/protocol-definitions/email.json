@@ -3,7 +3,7 @@
   "published": true,
   "types": {
     "email": {
-      "schema": "email",
+      "schema": "https://schemas.example.com/email",
       "dataFormats": [
         "text/plain"
       ]

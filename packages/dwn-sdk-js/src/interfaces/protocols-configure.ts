@@ -1,7 +1,7 @@
 import type { DataEncodedRecordsWriteMessage } from '../types/records-types.js';
 import type { MessageSigner } from '../types/signer.js';
 import type { MessageStore } from '../types/message-store.js';
-import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureDescriptor, ProtocolsConfigureMessage } from '../types/protocols-types.js';
+import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureDescriptor, ProtocolsConfigureMessage, ProtocolUses } from '../types/protocols-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
 import Ajv from 'ajv/dist/2020.js';
@@ -11,6 +11,7 @@ import { ProtocolsGrantAuthorization } from '../core/protocols-grant-authorizati
 import { Time } from '../utils/time.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
+import { isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 import { normalizeProtocolUrl, normalizeSchemaUrl, validateProtocolUrlNormalized, validateSchemaUrlNormalized } from '../utils/url.js';
 import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
 
@@ -78,7 +79,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
    * Performs validation on the given protocol definition that are not easy to do using a JSON schema.
    */
   private static validateProtocolDefinition(definition: ProtocolDefinition): void {
-    const { protocol, types } = definition;
+    const { protocol, types, uses } = definition;
 
     // validate protocol url
     validateProtocolUrlNormalized(protocol);
@@ -91,16 +92,57 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       }
     }
 
-    // validate `structure
+    // validate `uses` — alias names must be simple identifiers, values must be normalized URLs, and no self-references
+    if (uses !== undefined) {
+      ProtocolsConfigure.validateUses(uses, protocol);
+    }
+
+    // validate `structure`
     ProtocolsConfigure.validateStructure(definition);
   }
 
+  /**
+   * Validates the `uses` map: alias names must match `^[a-zA-Z][a-zA-Z0-9_-]*$`,
+   * values must be normalized protocol URLs, and no alias may reference the protocol itself.
+   */
+  private static validateUses(uses: ProtocolUses, ownProtocolUri: string): void {
+    const aliasPattern = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
+
+    for (const alias in uses) {
+      if (!aliasPattern.test(alias)) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureInvalidUsesAlias,
+          `invalid 'uses' alias '${alias}': must match pattern ${aliasPattern.toString()}.`
+        );
+      }
+
+      try {
+        validateProtocolUrlNormalized(uses[alias]);
+      } catch {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureInvalidUsesProtocolUrl,
+          `invalid 'uses' protocol URL for alias '${alias}': '${uses[alias]}' is not a valid normalized protocol URL.`
+        );
+      }
+
+      // reject self-references: a protocol cannot compose itself
+      if (uses[alias] === ownProtocolUri) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureInvalidUsesSelfReference,
+          `'uses' alias '${alias}' references the protocol's own URI '${ownProtocolUri}'. ` +
+          `a protocol cannot compose itself.`
+        );
+      }
+    }
+  }
+
   private static validateStructure(definition: ProtocolDefinition): void {
+    const { uses } = definition;
 
     // gather all declared record types
     const recordTypes = Object.keys(definition.types);
 
-    // gather all roles
+    // gather all roles (local roles only — cross-protocol roles are validated by alias existence)
     const roles = ProtocolsConfigure.fetchAllRolePathsRecursively('', definition.structure, []);
 
     // validate the entire rule set structure recursively
@@ -108,7 +150,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       ruleSet             : definition.structure,
       ruleSetProtocolPath : '',
       recordTypes,
-      roles
+      roles,
+      uses
     });
   }
 
@@ -153,11 +196,24 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
    * Validates the given rule set structure then recursively validates its nested child rule sets.
    */
   private static validateRuleSetRecursively(
-    input: { ruleSet: ProtocolRuleSet, ruleSetProtocolPath: string, recordTypes: string[], roles: string[] }
+    input: { ruleSet: ProtocolRuleSet, ruleSetProtocolPath: string, recordTypes: string[], roles: string[], uses?: ProtocolUses }
   ): void {
-    const { ruleSet, ruleSetProtocolPath, recordTypes, roles } = input;
+    const { ruleSet, ruleSetProtocolPath, recordTypes, roles, uses } = input;
 
-    // Validate $actions in the rule set
+    // Validate $ref constraints: $ref is only supported at root level (no `/` in protocol path),
+    // and a $ref node is a pure attachment point with no other directives.
+    if (ruleSet.$ref !== undefined) {
+      if (ruleSetProtocolPath.includes('/')) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureInvalidRefNotAtRoot,
+          `'$ref' at protocol path '${ruleSetProtocolPath}' is not allowed: '$ref' nodes are only supported at the root level of the structure.`
+        );
+      }
+
+      ProtocolsConfigure.validateRefNode(ruleSet, ruleSetProtocolPath, uses);
+    }
+
+    // Validate $size
     if (ruleSet.$size !== undefined) {
       const { min = 0, max } = ruleSet.$size;
 
@@ -191,12 +247,17 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
 
       // Validate the `role` property of an `action` if exists.
       if (actionRule.role !== undefined) {
-        // make sure the role contains a valid protocol paths to a role record
-        if (!roles.includes(actionRule.role)) {
-          throw new DwnError(
-            DwnErrorCode.ProtocolsConfigureRoleDoesNotExistAtGivenPath,
-            `Role in action ${JSON.stringify(actionRule)} for rule set ${ruleSetProtocolPath} does not exist.`
-          );
+        if (isCrossProtocolRef(actionRule.role)) {
+          // Cross-protocol role reference: validate alias exists in `uses`
+          ProtocolsConfigure.validateCrossProtocolAlias(actionRule.role, uses, ruleSetProtocolPath, 'role');
+        } else {
+          // Local role: make sure the role contains a valid protocol path to a role record
+          if (!roles.includes(actionRule.role)) {
+            throw new DwnError(
+              DwnErrorCode.ProtocolsConfigureRoleDoesNotExistAtGivenPath,
+              `Role in action ${JSON.stringify(actionRule)} for rule set ${ruleSetProtocolPath} does not exist.`
+            );
+          }
         }
       }
 
@@ -240,13 +301,20 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       // At runtime, `checkActor()` searches the record chain for a matching `protocolPath` equal to `actionRule.of`.
       // If `of` is not the current path or one of its ancestors, the action rule would silently never authorize anyone.
       if (actionRule.of !== undefined && ruleSetProtocolPath !== '') {
-        const isSelfOrAncestor = ruleSetProtocolPath === actionRule.of
-          || ruleSetProtocolPath.startsWith(actionRule.of + '/');
-        if (!isSelfOrAncestor) {
-          throw new DwnError(
-            DwnErrorCode.ProtocolsConfigureInvalidActionOfNotAnAncestor,
-            `'of' value '${actionRule.of}' is not an ancestor of protocol path '${ruleSetProtocolPath}' in action rule ${JSON.stringify(actionRule)}.`
-          );
+        if (isCrossProtocolRef(actionRule.of)) {
+          // Cross-protocol `of` reference: validate alias exists in `uses`
+          ProtocolsConfigure.validateCrossProtocolAlias(actionRule.of, uses, ruleSetProtocolPath, 'of');
+        } else {
+          // Local `of`: must be self or ancestor
+          const isSelfOrAncestor = ruleSetProtocolPath === actionRule.of
+            || ruleSetProtocolPath.startsWith(actionRule.of + '/');
+          if (!isSelfOrAncestor) {
+            throw new DwnError(
+              DwnErrorCode.ProtocolsConfigureInvalidActionOfNotAnAncestor,
+              `'of' value '${actionRule.of}' is not an ancestor of protocol path '${ruleSetProtocolPath}' ` +
+              `in action rule ${JSON.stringify(actionRule)}.`
+            );
+          }
         }
       }
 
@@ -285,7 +353,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
           if (actionRule.who === otherActionRule.who && actionRule.of === otherActionRule.of) {
             throw new DwnError(
               DwnErrorCode.ProtocolsConfigureDuplicateActorInRuleSet,
-              `More than one action rule per actor ${actionRule.who} of ${actionRule.of} not allowed within a rule set: ${JSON.stringify(actionRule)}`
+              `More than one action rule per actor ${actionRule.who} of ${actionRule.of} ` +
+              `not allowed within a rule set: ${JSON.stringify(actionRule)}`
             );
           }
         } else {
@@ -307,14 +376,16 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         continue;
       }
 
-      if (!recordTypes.includes(recordType)) {
+      const childRuleSet = ruleSet[recordType];
+
+      // A structure key whose rule set has `$ref` does not need to be in the local `types` map —
+      // the type comes from the referenced protocol. All other keys must be in `types`.
+      if (childRuleSet.$ref === undefined && !recordTypes.includes(recordType)) {
         throw new DwnError(
           DwnErrorCode.ProtocolsConfigureInvalidRuleSetRecordType,
           `Rule set ${recordType} is not declared as an allowed type in the protocol definition.`
         );
       }
-
-      const childRuleSet = ruleSet[recordType];
 
       let childRuleSetProtocolPath;
       if (ruleSetProtocolPath === '') {
@@ -327,13 +398,94 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         ruleSet             : childRuleSet,
         ruleSetProtocolPath : childRuleSetProtocolPath,
         recordTypes,
-        roles
+        roles,
+        uses
       });
     }
   }
 
+  /**
+   * Validates that a `$ref` node is a pure attachment point: it must NOT have
+   * `$actions`, `$role`, `$size`, `$tags`, or `$encryption`.
+   * Also validates that the `$ref` alias exists in the `uses` map.
+   */
+  private static validateRefNode(ruleSet: ProtocolRuleSet, ruleSetProtocolPath: string, uses: ProtocolUses | undefined): void {
+    const ref = ruleSet.$ref!;
+    const parsed = parseCrossProtocolRef(ref);
+
+    if (parsed === undefined) {
+      throw new DwnError(
+        DwnErrorCode.ProtocolsConfigureInvalidRefAlias,
+        `'$ref' value '${ref}' at protocol path '${ruleSetProtocolPath}' must be in 'alias:typePath' format.`
+      );
+    }
+
+    // validate alias exists in `uses`
+    if (uses === undefined || uses[parsed.alias] === undefined) {
+      throw new DwnError(
+        DwnErrorCode.ProtocolsConfigureInvalidRefAlias,
+        `'$ref' alias '${parsed.alias}' at protocol path '${ruleSetProtocolPath}' does not exist in the 'uses' map.`
+      );
+    }
+
+    // validate that `$ref` nodes do not have other directives
+    const forbiddenDirectives = ['$actions', '$role', '$size', '$tags', '$encryption'] as const;
+    for (const directive of forbiddenDirectives) {
+      if (ruleSet[directive] !== undefined) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureInvalidRefNodeHasDirectives,
+          `'$ref' node at protocol path '${ruleSetProtocolPath}' must not have '${directive}'. ` +
+          `$ref nodes are pure attachment points — directives belong on child rule sets.`
+        );
+      }
+    }
+  }
+
+  /**
+   * Validates that a cross-protocol reference (in `alias:path` format) has a valid alias
+   * that exists in the `uses` map.
+   * @param ref - The cross-protocol reference string (e.g., "threads:thread/participant")
+   * @param uses - The protocol definition's `uses` map
+   * @param ruleSetProtocolPath - The current protocol path (for error messages)
+   * @param fieldName - The field name ('role' or 'of') for error messages
+   */
+  private static validateCrossProtocolAlias(
+    ref: string, uses: ProtocolUses | undefined, ruleSetProtocolPath: string, fieldName: string
+  ): void {
+    const parsed = parseCrossProtocolRef(ref);
+
+    if (parsed === undefined) {
+      // should not happen if isCrossProtocolRef() returned true, but guard defensively
+      const errorCode = fieldName === 'role'
+        ? DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolRole
+        : DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolOf;
+
+      throw new DwnError(
+        errorCode,
+        `cross-protocol '${fieldName}' reference '${ref}' at protocol path '${ruleSetProtocolPath}' ` +
+        `could not be parsed as a valid 'alias:path' format.`
+      );
+    }
+
+    if (uses === undefined || uses[parsed.alias] === undefined) {
+      const errorCode = fieldName === 'role'
+        ? DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolRole
+        : DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolOf;
+
+      throw new DwnError(
+        errorCode,
+        `cross-protocol '${fieldName}' alias '${parsed.alias}' in '${ref}' at protocol path '${ruleSetProtocolPath}' ` +
+        `does not exist in the 'uses' map.`
+      );
+    }
+  }
+
   private static normalizeDefinition(definition: ProtocolDefinition): ProtocolDefinition {
-    const typesCopy = { ...definition.types };
+    // Deep clone types to avoid mutating the caller's nested objects
+    const typesCopy: ProtocolDefinition['types'] = {};
+    for (const typeName in definition.types) {
+      typesCopy[typeName] = { ...definition.types[typeName] };
+    }
 
     // Normalize schema url
     for (const typeName in typesCopy) {
@@ -343,10 +495,24 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       }
     }
 
+    // Normalize `uses` protocol URLs (skip invalid URLs — they will be caught by validateUses)
+    let usesCopy: ProtocolDefinition['uses'];
+    if (definition.uses !== undefined) {
+      usesCopy = {};
+      for (const alias in definition.uses) {
+        try {
+          usesCopy[alias] = normalizeProtocolUrl(definition.uses[alias]);
+        } catch {
+          usesCopy[alias] = definition.uses[alias];
+        }
+      }
+    }
+
     return {
       ...definition,
       protocol : normalizeProtocolUrl(definition.protocol),
       types    : typesCopy,
+      ...(usesCopy !== undefined && { uses: usesCopy }),
     };
   }
 }

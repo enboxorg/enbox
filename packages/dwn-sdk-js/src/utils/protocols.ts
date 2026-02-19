@@ -7,6 +7,64 @@ import { Secp256k1 } from './secp256k1.js';
 import { HdKey, KeyDerivationScheme } from '../utils/hd-key.js';
 
 /**
+ * Result of parsing a cross-protocol reference in `alias:path` format.
+ */
+export type CrossProtocolRef = {
+  /** The alias key from the `uses` map. */
+  alias: string;
+  /** The protocol path within the referenced protocol. */
+  protocolPath: string;
+};
+
+/**
+ * Parses a string that may be a cross-protocol reference in `alias:path` format.
+ * Returns `undefined` if the string is a local (non-cross-protocol) reference.
+ *
+ * Examples:
+ * - `"threads:thread"` → `{ alias: "threads", protocolPath: "thread" }`
+ * - `"threads:thread/participant"` → `{ alias: "threads", protocolPath: "thread/participant" }`
+ * - `"thread/comment"` → `undefined` (local reference, no alias)
+ */
+export function parseCrossProtocolRef(ref: string): CrossProtocolRef | undefined {
+  const colonIndex = ref.indexOf(':');
+  if (colonIndex === -1) {
+    return undefined;
+  }
+
+  const alias = ref.substring(0, colonIndex);
+  const protocolPath = ref.substring(colonIndex + 1);
+
+  return { alias, protocolPath };
+}
+
+/**
+ * Returns `true` if the given string contains a `:` indicating a cross-protocol reference.
+ */
+export function isCrossProtocolRef(ref: string): boolean {
+  return ref.includes(':');
+}
+
+/**
+ * Gets the rule set at a given protocol path within a protocol definition's structure tree.
+ * Returns `undefined` if the path does not exist.
+ */
+export function getRuleSetAtPath(protocolPath: string, structure: { [key: string]: ProtocolRuleSet }): ProtocolRuleSet | undefined {
+  const segments = protocolPath.split('/');
+  let current: ProtocolRuleSet | undefined;
+  let currentLevel: { [key: string]: ProtocolRuleSet } = structure;
+
+  for (const segment of segments) {
+    current = currentLevel[segment];
+    if (current === undefined) {
+      return undefined;
+    }
+    currentLevel = current as { [key: string]: ProtocolRuleSet };
+  }
+
+  return current;
+}
+
+/**
  * Class containing Protocol related utility methods.
  */
 export class Protocols {
@@ -14,6 +72,10 @@ export class Protocols {
    * Derives public encryptions keys and inject it in the `$encryption` property for each protocol path segment of the given Protocol definition,
    * then returns the final encryption-enabled protocol definition.
    * NOTE: The original definition passed in is unmodified.
+   *
+   * `$ref` nodes (cross-protocol attachment points) are skipped during `$encryption` injection
+   * because their records belong to the referenced protocol, whose own encryption keys govern them.
+   * Children of `$ref` nodes are still processed because they belong to the composing protocol.
    *
    * Overload 1 (callback-based): Accepts an EncryptionKeyDeriver that performs
    * key derivation internally. The private key never leaves the caller's boundary.
@@ -53,6 +115,14 @@ export class Protocols {
         for (const key in ruleSet) {
           if (!key.startsWith('$')) {
             const currentPath = [...parentPath, key];
+
+            // Skip $ref nodes — they are governed by the referenced protocol's encryption keys.
+            // Still recurse into children, which belong to the composing protocol.
+            if (ruleSet[key].$ref !== undefined) {
+              await injectKeysViaCallback(ruleSet[key], currentPath);
+              continue;
+            }
+
             const publicKeyJwk = await keyDeriver.derivePublicKey(currentPath);
             ruleSet[key].$encryption = {
               rootKeyId: keyDeriver.rootKeyId,
@@ -76,6 +146,14 @@ export class Protocols {
         // if we encounter a nested rule set (a property name that doesn't begin with '$'), recursively inject the `$encryption` property
         if (!key.startsWith('$')) {
           const derivedPrivateKey = await HdKey.derivePrivateKey(parentKey, [key]);
+
+          // Skip $ref nodes — they are governed by the referenced protocol's encryption keys.
+          // Still recurse into children, which belong to the composing protocol.
+          if (ruleSet[key].$ref !== undefined) {
+            await addEncryptionProperty(ruleSet[key], derivedPrivateKey);
+            continue;
+          }
+
           const publicKeyJwk = await Secp256k1.getPublicJwk(derivedPrivateKey.derivedPrivateKey);
 
           ruleSet[key].$encryption = { rootKeyId, publicKeyJwk };

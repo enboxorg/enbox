@@ -16,10 +16,30 @@ export type ProtocolDefinition = {
    * Denotes if this Protocol Definition can be returned by unauthenticated or unauthorized `ProtocolsQuery`.
    */
   published: boolean;
+
+  /**
+   * Maps alias names to external protocol URIs that this protocol composes with.
+   * Each alias can be used in `$ref` values and cross-protocol `role`/`of` references
+   * using the `alias:path` syntax.
+   *
+   * Example:
+   * ```
+   * "uses": { "threads": "https://threads.example.com" }
+   * ```
+   */
+  uses?: ProtocolUses;
+
   types: ProtocolTypes;
   structure: {
     [key: string]: ProtocolRuleSet;
   }
+};
+
+/**
+ * Maps alias names to external protocol URIs for composition.
+ */
+export type ProtocolUses = {
+  [alias: string]: string;
 };
 
 export type ProtocolType = {
@@ -136,6 +156,25 @@ export type ProtocolRuleSet = {
    * The recipient of a $role record may invoke their role by setting `protocolRole` property to the protocol path of the $role record.
    */
   $role?: boolean;
+
+  /**
+   * References a type from an external protocol declared in `uses`.
+   * Format: `"alias:typePath"` where `alias` is a key in the protocol definition's `uses` map
+   * and `typePath` is the protocol path of the type in the external protocol's structure.
+   *
+   * A `$ref` node is a pure attachment point — it must NOT have `$actions`, `$role`, `$size`,
+   * `$tags`, or `$encryption`. Authorization for the referenced type is governed by its own
+   * protocol. Only children defined under the `$ref` node get `$actions` from the composing protocol.
+   *
+   * Example:
+   * ```
+   * "thread": {
+   *   "$ref": "threads:thread",
+   *   "comment": { "$actions": [{ "who": "anyone", "can": ["create", "read"] }] }
+   * }
+   * ```
+   */
+  $ref?: string;
 
   /**
    * If $size is set, the record size in bytes must be within the limits.
