@@ -852,13 +852,175 @@ export function testAuthorDelegatedGrant(): void {
       expect(bobRecordsQueryReply.entries?.length).toBe(0);
     });
 
-    it.skip('should not allow entity using a non-delegated grant as an author-delegated grant to invoke read', async () => {
+    it('should not allow entity using a non-delegated grant as an author-delegated grant to invoke read', async () => {
+      // scenario:
+      // 1. Bob has the message protocol installed
+      // 2. Alice writes a message to Bob's DWN
+      // 3. Alice creates a non-delegated read grant for device X
+      // 4. Verify that device X cannot read the message from Bob's DWN as Alice using the non-delegated grant
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+      const deviceX = await TestDataGenerator.generateDidKeyPersona();
+
+      // 1. Bob has the message protocol installed
+      const protocolDefinition = messageProtocolDefinition;
+      const protocol = protocolDefinition.protocol;
+      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+        author: bob,
+        protocolDefinition
+      });
+      const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
+      expect(protocolConfigureReply.status.code).toBe(202);
+
+      // 2. Alice writes a message to Bob's DWN
+      const messageByAlice = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol,
+        protocolPath : 'message',
+        schema       : protocolDefinition.types.message.schema,
+        dataFormat   : protocolDefinition.types.message.dataFormats[0],
+      });
+      const aliceWriteReply = await dwn.processMessage(bob.did, messageByAlice.message, { dataStream: messageByAlice.dataStream });
+      expect(aliceWriteReply.status.code).toBe(202);
+
+      // 3. Alice creates a non-delegated read grant for device X
+      const deviceXGrant = await PermissionsProtocol.createGrant({
+        // delegated   : true, // intentionally commented out to show that this is not a delegated grant
+        dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+        grantedTo   : deviceX.did,
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Read,
+          protocol
+        },
+        signer: Jws.createSigner(alice)
+      });
+
+      // 4. Verify that device X cannot read the message from Bob's DWN as Alice using the non-delegated grant
+      const recordsReadByDeviceX = await RecordsRead.create({
+        signer         : Jws.createSigner(deviceX),
+        delegatedGrant : deviceXGrant.dataEncodedMessage,
+        filter         : {
+          recordId: messageByAlice.message.recordId
+        }
+      });
+
+      const deviceXReadReply = await dwn.processMessage(bob.did, recordsReadByDeviceX.message);
+      expect(deviceXReadReply.status.code).toBe(400);
+      expect(deviceXReadReply.status.detail).toContain(DwnErrorCode.RecordsAuthorDelegatedGrantNotADelegatedGrant);
     });
 
-    it.skip('should not allow entity using a non-delegated grant as an author-delegated grant to invoke query', async () => {
+    it('should not allow entity using a non-delegated grant as an author-delegated grant to invoke query', async () => {
+      // scenario:
+      // 1. Bob has the message protocol installed
+      // 2. Alice creates a non-delegated query grant for device X
+      // 3. Verify that device X cannot query Bob's DWN as Alice using the non-delegated grant
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+      const deviceX = await TestDataGenerator.generateDidKeyPersona();
+
+      // 1. Bob has the message protocol installed
+      const protocolDefinition = messageProtocolDefinition;
+      const protocol = protocolDefinition.protocol;
+      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+        author: bob,
+        protocolDefinition
+      });
+      const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
+      expect(protocolConfigureReply.status.code).toBe(202);
+
+      // 2. Alice creates a non-delegated query grant for device X
+      const deviceXGrant = await PermissionsProtocol.createGrant({
+        // delegated   : true, // intentionally commented out to show that this is not a delegated grant
+        dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+        grantedTo   : deviceX.did,
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Query,
+          protocol
+        },
+        signer: Jws.createSigner(alice)
+      });
+
+      // 3. Verify that device X cannot query Bob's DWN as Alice using the non-delegated grant
+      const recordsQueryByDeviceX = await RecordsQuery.create({
+        signer         : Jws.createSigner(deviceX),
+        delegatedGrant : deviceXGrant.dataEncodedMessage,
+        filter         : {
+          protocol,
+          protocolPath: 'message'
+        }
+      });
+
+      const deviceXQueryReply = await dwn.processMessage(bob.did, recordsQueryByDeviceX.message);
+      expect(deviceXQueryReply.status.code).toBe(400);
+      expect(deviceXQueryReply.status.detail).toContain(DwnErrorCode.RecordsAuthorDelegatedGrantNotADelegatedGrant);
     });
 
-    it.skip('should not allow entity using a non-delegated grant as an author-delegated grant to invoke delete', async () => {
+    it('should not allow entity using a non-delegated grant as an author-delegated grant to invoke delete', async () => {
+      // scenario:
+      // 1. Bob has the message protocol installed
+      // 2. Alice writes a message to Bob's DWN
+      // 3. Alice creates a non-delegated delete grant for device X
+      // 4. Verify that device X cannot delete the message from Bob's DWN as Alice using the non-delegated grant
+      // 5. Sanity verify the message still exists in Bob's DWN
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+      const deviceX = await TestDataGenerator.generateDidKeyPersona();
+
+      // 1. Bob has the message protocol installed
+      const protocolDefinition = messageProtocolDefinition;
+      const protocol = protocolDefinition.protocol;
+      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+        author: bob,
+        protocolDefinition
+      });
+      const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
+      expect(protocolConfigureReply.status.code).toBe(202);
+
+      // 2. Alice writes a message to Bob's DWN
+      const messageByAlice = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol,
+        protocolPath : 'message',
+        schema       : protocolDefinition.types.message.schema,
+        dataFormat   : protocolDefinition.types.message.dataFormats[0],
+      });
+      const aliceWriteReply = await dwn.processMessage(bob.did, messageByAlice.message, { dataStream: messageByAlice.dataStream });
+      expect(aliceWriteReply.status.code).toBe(202);
+
+      // 3. Alice creates a non-delegated delete grant for device X
+      const deviceXGrant = await PermissionsProtocol.createGrant({
+        // delegated   : true, // intentionally commented out to show that this is not a delegated grant
+        dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+        grantedTo   : deviceX.did,
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Delete,
+          protocol
+        },
+        signer: Jws.createSigner(alice)
+      });
+
+      // 4. Verify that device X cannot delete the message from Bob's DWN as Alice using the non-delegated grant
+      const recordsDeleteByDeviceX = await RecordsDelete.create({
+        signer         : Jws.createSigner(deviceX),
+        delegatedGrant : deviceXGrant.dataEncodedMessage,
+        recordId       : messageByAlice.message.recordId
+      });
+
+      const deviceXDeleteReply = await dwn.processMessage(bob.did, recordsDeleteByDeviceX.message);
+      expect(deviceXDeleteReply.status.code).toBe(400);
+      expect(deviceXDeleteReply.status.detail).toContain(DwnErrorCode.RecordsAuthorDelegatedGrantNotADelegatedGrant);
+
+      // 5. Sanity verify the message still exists in Bob's DWN
+      const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
+        author : bob,
+        filter : { protocol }
+      });
+      const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
+      expect(bobRecordsQueryReply.status.code).toBe(200);
+      expect(bobRecordsQueryReply.entries?.length).toBe(1);
     });
 
     it('should fail if author-delegated grant has a mismatching protocol scope - write', async () => {
