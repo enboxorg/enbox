@@ -122,14 +122,19 @@ jobs:
           bun run --filter @enbox/common  test:node:coverage
           bun run --filter @enbox/crypto  test:node:coverage
 
+      - name: Stage coverage
+        if: always()
+        run: |
+          mkdir -p coverage-staging/common coverage-staging/crypto
+          cp packages/common/coverage/lcov.info coverage-staging/common/lcov.info 2>/dev/null || true
+          cp packages/crypto/coverage/lcov.info coverage-staging/crypto/lcov.info 2>/dev/null || true
+
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-lightweight
-          path: |
-            packages/common/coverage/lcov.info
-            packages/crypto/coverage/lcov.info
+          path: coverage-staging/
           retention-days: 1
           if-no-files-found: warn
 
@@ -170,12 +175,18 @@ jobs:
       - name: Run tests with coverage
         run: bun run --filter @enbox/dwn-sdk-js test:node:coverage
 
+      - name: Stage coverage
+        if: always()
+        run: |
+          mkdir -p coverage-staging/dwn-sdk-js
+          cp packages/dwn-sdk-js/coverage/lcov.info coverage-staging/dwn-sdk-js/lcov.info 2>/dev/null || true
+
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-dwn-sdk
-          path: packages/dwn-sdk-js/coverage/lcov.info
+          path: coverage-staging/
           retention-days: 1
           if-no-files-found: warn
 
@@ -270,15 +281,20 @@ jobs:
           bun run --filter @enbox/agent  test:node:coverage
           bun run --filter @enbox/api    test:node:coverage
 
+      - name: Stage coverage
+        if: always()
+        run: |
+          mkdir -p coverage-staging/dids coverage-staging/agent coverage-staging/api
+          cp packages/dids/coverage/lcov.info coverage-staging/dids/lcov.info 2>/dev/null || true
+          cp packages/agent/coverage/lcov.info coverage-staging/agent/lcov.info 2>/dev/null || true
+          cp packages/api/coverage/lcov.info coverage-staging/api/lcov.info 2>/dev/null || true
+
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-agent-api
-          path: |
-            packages/dids/coverage/lcov.info
-            packages/agent/coverage/lcov.info
-            packages/api/coverage/lcov.info
+          path: coverage-staging/
           retention-days: 1
           if-no-files-found: warn
 
@@ -357,12 +373,18 @@ jobs:
       - name: Run tests with coverage
         run: bun run --filter @enbox/dwn-sql-store test:node:coverage
 
+      - name: Stage coverage
+        if: always()
+        run: |
+          mkdir -p coverage-staging/dwn-sql-store
+          cp packages/dwn-sql-store/coverage/lcov.info coverage-staging/dwn-sql-store/lcov.info 2>/dev/null || true
+
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-sql-store
-          path: packages/dwn-sql-store/coverage/lcov.info
+          path: coverage-staging/
           retention-days: 1
           if-no-files-found: warn
 
@@ -403,12 +425,18 @@ jobs:
       - name: Run tests with coverage
         run: bun run --filter @enbox/dwn-server test:node:coverage
 
+      - name: Stage coverage
+        if: always()
+        run: |
+          mkdir -p coverage-staging/dwn-server
+          cp packages/dwn-server/coverage/lcov.info coverage-staging/dwn-server/lcov.info 2>/dev/null || true
+
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-dwn-server
-          path: packages/dwn-server/coverage/lcov.info
+          path: coverage-staging/
           retention-days: 1
           if-no-files-found: warn
 
@@ -441,11 +469,11 @@ jobs:
           found_any=false
           threshold=90
 
-          for lcov_file in coverage-artifacts/packages/*/coverage/lcov.info; do
+          for lcov_file in coverage-artifacts/*/lcov.info; do
             [ -f "$lcov_file" ] || continue
             found_any=true
 
-            pkg=$(echo "$lcov_file" | sed 's|coverage-artifacts/packages/\([^/]*\)/.*|\1|')
+            pkg=$(echo "$lcov_file" | sed 's|coverage-artifacts/\([^/]*\)/.*|\1|')
 
             # Filter lcov to only count the package's own src/ files, skip
             # transitive dependency coverage (e.g. ../common/dist/...).
