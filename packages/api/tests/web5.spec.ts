@@ -1,5 +1,5 @@
-import { expect } from 'chai';
 import sinon from 'sinon';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import type { DwnProtocolDefinition } from '@enbox/agent';
 import {
@@ -21,13 +21,13 @@ import { DwnInterfaceName, DwnMethodName, Jws, Time } from '@enbox/dwn-sdk-js';
 describe('web5 api', () => {
   let consoleWarn;
 
-  before(() => {
+  beforeAll(() => {
     // Suppress console.warn output due to default password warnings
     consoleWarn = console.warn;
     console.warn = (): void => {};
   });
 
-  after(() => {
+  afterAll(() => {
     // Restore console.warn output
     console.warn = consoleWarn;
   });
@@ -35,7 +35,7 @@ describe('web5 api', () => {
   describe('using Test Harness', () => {
     let testHarness: PlatformAgentTestHarness;
 
-    before(async () => {
+    beforeAll(async () => {
       testHarness = await PlatformAgentTestHarness.setup({
         agentClass  : Web5UserAgent,
         agentStores : 'memory',
@@ -48,7 +48,7 @@ describe('web5 api', () => {
       await testHarness.createAgentDid();
     });
 
-    after(async () => {
+    afterAll(async () => {
       sinon.restore();
       await testHarness.clearStorage();
       await testHarness.closeStorage();
@@ -67,10 +67,10 @@ describe('web5 api', () => {
           agent        : testHarness.agent,
           connectedDid : socialIdentity.did.uri,
         });
-        expect(web5).to.exist;
-        expect(web5).to.have.property('did');
-        expect(web5).to.have.property('dwn');
-        expect(web5).to.have.property('vc');
+        expect(web5).toBeDefined();
+        expect(web5).toHaveProperty('did');
+        expect(web5).toHaveProperty('dwn');
+        expect(web5).toHaveProperty('vc');
       });
 
       it('supports a single agent with multiple Web5 instances and different DIDs', async () => {
@@ -89,14 +89,14 @@ describe('web5 api', () => {
           agent        : testHarness.agent,
           connectedDid : careerIdentity.did.uri,
         });
-        expect(web5Career).to.exist;
+        expect(web5Career).toBeDefined();
 
         // Instantiate a Web5 instance with the "Social" Identity, write a record, and verify the result.
         const web5Social = new Web5({
           agent        : testHarness.agent,
           connectedDid : socialIdentity.did.uri,
         });
-        expect(web5Social).to.exist;
+        expect(web5Social).toBeDefined();
       });
     });
 
@@ -130,10 +130,10 @@ describe('web5 api', () => {
             dataFormat : 'text/plain',
           },
         });
-        expect(careerResult.status.code).to.equal(202);
-        expect(careerResult.record).to.exist;
-        expect(careerResult.record?.author).to.equal(careerIdentity.did.uri);
-        expect(await careerResult.record?.data.text()).to.equal(
+        expect(careerResult.status.code).toBe(202);
+        expect(careerResult.record).toBeDefined();
+        expect(careerResult.record?.author).toBe(careerIdentity.did.uri);
+        expect(await careerResult.record?.data.text()).toBe(
           'Hello, world!'
         );
 
@@ -149,10 +149,10 @@ describe('web5 api', () => {
             dataFormat : 'text/plain',
           },
         });
-        expect(socialResult.status.code).to.equal(202);
-        expect(socialResult.record).to.exist;
-        expect(socialResult.record?.author).to.equal(socialIdentity.did.uri);
-        expect(await socialResult.record?.data.text()).to.equal(
+        expect(socialResult.status.code).toBe(202);
+        expect(socialResult.record).toBeDefined();
+        expect(socialResult.record?.author).toBe(socialIdentity.did.uri);
+        expect(await socialResult.record?.data.text()).toBe(
           'Hello, everyone!'
         );
       });
@@ -162,7 +162,7 @@ describe('web5 api', () => {
   describe('connect()', () => {
     let testHarness: PlatformAgentTestHarness;
 
-    before(async () => {
+    beforeAll(async () => {
       testHarness = await PlatformAgentTestHarness.setup({
         agentClass  : Web5UserAgent,
         agentStores : 'memory',
@@ -175,7 +175,7 @@ describe('web5 api', () => {
       await testHarness.createAgentDid();
     });
 
-    after(async () => {
+    afterAll(async () => {
       sinon.restore();
       await testHarness.clearStorage();
       await testHarness.closeStorage();
@@ -187,16 +187,16 @@ describe('web5 api', () => {
       sinon.stub(Web5UserAgent, 'create').resolves(testHarness.agent as Web5UserAgent);
 
       const { web5, recoveryPhrase, did } = await Web5.connect();
-      expect(web5).to.exist;
-      expect(web5.agent).to.be.instanceOf(Web5UserAgent);
+      expect(web5).toBeDefined();
+      expect(web5.agent).toBeInstanceOf(Web5UserAgent);
       // Verify recovery phrase is a 12-word string.
-      expect(recoveryPhrase).to.be.a('string');
-      expect(recoveryPhrase.split(' ')).to.have.lengthOf(12);
+      expect(typeof recoveryPhrase).toBe('string');
+      expect(recoveryPhrase.split(' ')).toHaveLength(12);
 
       // if called again, the same DID is returned, and the recovery phrase is not regenerated
       const { recoveryPhrase: recoveryPhraseConnect2, did: didConnect2 } = await Web5.connect();
-      expect(recoveryPhraseConnect2).to.be.undefined;
-      expect(didConnect2).to.equal(did);
+      expect(recoveryPhraseConnect2).toBeUndefined();
+      expect(didConnect2).toBe(did);
     });
 
     it('accepts an externally created DID', async () => {
@@ -213,9 +213,9 @@ describe('web5 api', () => {
         connectedDid : testIdentity.did.uri,
       });
 
-      expect(did).to.exist;
-      expect(web5).to.exist;
-      expect(walletConnectSpy.called).to.be.false;
+      expect(did).toBeDefined();
+      expect(web5).toBeDefined();
+      expect(walletConnectSpy.called).toBe(false);
     });
 
     it('creates an identity using the provided techPreview dwnEndpoints', async () => {
@@ -227,17 +227,17 @@ describe('web5 api', () => {
       const { web5, did } = await Web5.connect({
         techPreview: { dwnEndpoints: ['https://dwn.example.com/preview'] },
       });
-      expect(web5).to.exist;
-      expect(did).to.exist;
+      expect(web5).toBeDefined();
+      expect(did).toBeDefined();
 
-      expect(identityApiSpy.calledOnce, 'identityApiSpy called').to.be.true;
+      expect(identityApiSpy.calledOnce).toBe(true);
       const serviceEndpoints = (
         identityApiSpy.firstCall.args[0].didOptions as any
       ).services[0].serviceEndpoint;
-      expect(serviceEndpoints).to.deep.equal([
+      expect(serviceEndpoints).toEqual([
         'https://dwn.example.com/preview',
       ]);
-      expect(walletConnectSpy.called).to.be.false;
+      expect(walletConnectSpy.called).toBe(false);
     });
 
     it('creates an identity using the provided didCreateOptions dwnEndpoints', async () => {
@@ -249,15 +249,15 @@ describe('web5 api', () => {
       const { web5, did } = await Web5.connect({
         didCreateOptions: { dwnEndpoints: ['https://dwn.example.com'] },
       });
-      expect(web5).to.exist;
-      expect(did).to.exist;
+      expect(web5).toBeDefined();
+      expect(did).toBeDefined();
 
-      expect(identityApiSpy.calledOnce, 'identityApiSpy called').to.be.true;
+      expect(identityApiSpy.calledOnce).toBe(true);
       const serviceEndpoints = (
         identityApiSpy.firstCall.args[0].didOptions as any
       ).services[0].serviceEndpoint;
-      expect(serviceEndpoints).to.deep.equal(['https://dwn.example.com']);
-      expect(walletConnectSpy.called).to.be.false;
+      expect(serviceEndpoints).toEqual(['https://dwn.example.com']);
+      expect(walletConnectSpy.called).toBe(false);
     });
 
     it('defaults to the first identity if multiple identities exist', async () => {
@@ -269,8 +269,8 @@ describe('web5 api', () => {
       // create an identity by connecting
       sinon.stub(Web5UserAgent, 'create').resolves(testHarness.agent as Web5UserAgent);
       const { web5, did } = await Web5.connect({ techPreview: { dwnEndpoints: [ testDwnUrl ] } });
-      expect(web5).to.exist;
-      expect(did).to.exist;
+      expect(web5).toBeDefined();
+      expect(did).toBeDefined();
 
       // create a second identity
       await testHarness.agent.identity.create({
@@ -280,7 +280,7 @@ describe('web5 api', () => {
 
       // connect again
       const { did: did2 } = await Web5.connect();
-      expect(did2).to.equal(did);
+      expect(did2).toBe(did);
     });
 
     it('defaults to `https://enbox-dwn.fly.dev` as the single DWN Service endpoint if non is provided', async () => {
@@ -289,14 +289,14 @@ describe('web5 api', () => {
         .resolves(testHarness.agent as Web5UserAgent);
       const identityApiSpy = sinon.spy(AgentIdentityApi.prototype, 'create');
       const { web5, did } = await Web5.connect();
-      expect(web5).to.exist;
-      expect(did).to.exist;
+      expect(web5).toBeDefined();
+      expect(did).toBeDefined();
 
-      expect(identityApiSpy.calledOnce, 'identityApiSpy called').to.be.true;
+      expect(identityApiSpy.calledOnce).toBe(true);
       const serviceEndpoints = (
         identityApiSpy.firstCall.args[0].didOptions as any
       ).services[0].serviceEndpoint;
-      expect(serviceEndpoints).to.deep.equal(['https://enbox-dwn.fly.dev']);
+      expect(serviceEndpoints).toEqual(['https://enbox-dwn.fly.dev']);
     });
 
     describe('walletConnectOptions', () => {
@@ -330,7 +330,7 @@ describe('web5 api', () => {
             definition: protocol,
           },
         });
-        expect(protocolConfigReply.status.code).to.equal(202);
+        expect(protocolConfigReply.status.code).toBe(202);
 
         // send the protocol to alice's remote DWN
         const { reply: protocolSendReply } = await testHarness.agent.dwn.sendRequest({
@@ -339,7 +339,7 @@ describe('web5 api', () => {
           messageType : DwnInterface.ProtocolsConfigure,
           rawMessage  : protocolConfigureMessage,
         });
-        expect(protocolSendReply.status.code).to.equal(202);
+        expect(protocolSendReply.status.code).toBe(202);
 
         // create an identity for the app to use
         const app = await testHarness.agent.did.create({
@@ -368,7 +368,7 @@ describe('web5 api', () => {
           rawMessage  : writeGrantMessage,
           dataStream  : new Blob([ Convert.base64Url(writeGrantEncodedData).toUint8Array() ])
         });
-        expect(writeGrantSend.reply.status.code).to.equal(202);
+        expect(writeGrantSend.reply.status.code).toBe(202);
 
         const readGrant = await testHarness.agent.permissions.createGrant({
           delegated   : true,
@@ -390,7 +390,7 @@ describe('web5 api', () => {
           rawMessage  : readGrantMessage,
           dataStream  : new Blob([ Convert.base64Url(readGrantEncodedData).toUint8Array() ])
         });
-        expect(readGrantSend.reply.status.code).to.equal(202);
+        expect(readGrantSend.reply.status.code).toBe(202);
 
         // create MessagesSync and MessagesRead grants so that sync does not fail
         const messagesSyncGrant = await testHarness.agent.permissions.createGrant({
@@ -412,7 +412,7 @@ describe('web5 api', () => {
           rawMessage  : messagesSyncGrantMessage,
           dataStream  : new Blob([ Convert.base64Url(messagesSyncGrantEncodedData).toUint8Array() ])
         });
-        expect(messagesSyncGrantSend.reply.status.code).to.equal(202);
+        expect(messagesSyncGrantSend.reply.status.code).toBe(202);
 
         const messagesReadGrant = await testHarness.agent.permissions.createGrant({
           store       : true,
@@ -433,7 +433,7 @@ describe('web5 api', () => {
           rawMessage  : messagesReadGrantMessage,
           dataStream  : new Blob([ Convert.base64Url(messagesReadEncodedData).toUint8Array() ])
         });
-        expect(messagesReadGrantSend.reply.status.code).to.equal(202);
+        expect(messagesReadGrantSend.reply.status.code).toBe(202);
 
         // stub the walletInit method
         sinon.stub(WalletConnect, 'initClient').resolves({
@@ -464,11 +464,11 @@ describe('web5 api', () => {
             permissionRequests : []
           }
         });
-        expect(web5).to.exist;
-        expect(did).to.exist;
-        expect(delegateDid).to.exist;
-        expect(did).to.equal(alice.did.uri);
-        expect(delegateDid).to.equal(app.uri);
+        expect(web5).toBeDefined();
+        expect(did).toBeDefined();
+        expect(delegateDid).toBeDefined();
+        expect(did).toBe(alice.did.uri);
+        expect(delegateDid).toBe(app.uri);
 
         // use the grant to write a record
         const writeResult = await web5.dwn.records.write({
@@ -478,12 +478,12 @@ describe('web5 api', () => {
             protocolPath : 'foo',
           }
         });
-        expect(writeResult.status.code).to.equal(202);
-        expect(writeResult.record).to.exist;
+        expect(writeResult.status.code).toBe(202);
+        expect(writeResult.record).toBeDefined();
         // test that the logical author is the connected DID and the signer is the impersonator DID
-        expect(writeResult.record.author).to.equal(did);
+        expect(writeResult.record.author).toBe(did);
         const writeSigner = Jws.getSignerDid(writeResult.record.authorization.signature.signatures[0]);
-        expect(writeSigner).to.equal(delegateDid);
+        expect(writeSigner).toBe(delegateDid);
 
         const readResult = await web5.dwn.records.read({
           protocol : protocol.protocol,
@@ -491,12 +491,12 @@ describe('web5 api', () => {
             filter: { recordId: writeResult.record.id }
           }
         });
-        expect(readResult.status.code).to.equal(200);
-        expect(readResult.record).to.exist;
+        expect(readResult.status.code).toBe(200);
+        expect(readResult.record).toBeDefined();
         // test that the logical author is the connected DID and the signer is the impersonator DID
-        expect(readResult.record.author).to.equal(did);
+        expect(readResult.record.author).toBe(did);
         const readSigner = Jws.getSignerDid(readResult.record.authorization.signature.signatures[0]);
-        expect(readSigner).to.equal(delegateDid);
+        expect(readSigner).toBe(delegateDid);
 
         // Because no grants exist for query, it will not fail but instead author AND sign as the delegate DID.
         // It will only return results if they are public, here it will return none. This is tested elsewhere.
@@ -506,8 +506,8 @@ describe('web5 api', () => {
             filter: { protocol: protocol.protocol }
           }
         });
-        expect(noPermissionQuery.status.code).to.equal(200);
-        expect(noPermissionQuery.records).to.have.lengthOf(0);
+        expect(noPermissionQuery.status.code).toBe(200);
+        expect(noPermissionQuery.records).toHaveLength(0);
 
         try {
           await web5.dwn.records.delete({
@@ -517,9 +517,9 @@ describe('web5 api', () => {
             }
           });
 
-          expect.fail('Should have thrown an error');
+          throw new Error('Should have thrown an error');
         } catch (error:any) {
-          expect(error.message).to.include('CachedPermissions: No permissions found for RecordsDelete');
+          expect(error.message).toContain('CachedPermissions: No permissions found for RecordsDelete');
         }
 
         // grant query and delete permissions
@@ -562,7 +562,7 @@ describe('web5 api', () => {
             recordId: writeResult.record.id
           }
         });
-        expect(deleteResult.status.code).to.equal(202);
+        expect(deleteResult.status.code).toBe(202);
 
         // attempt to query using the grant
         const queryResult = await web5.dwn.records.query({
@@ -571,13 +571,13 @@ describe('web5 api', () => {
             filter: { protocol: protocol.protocol }
           }
         });
-        expect(queryResult.status.code).to.equal(200);
-        expect(queryResult.records).to.have.lengthOf(0); // record has been deleted
+        expect(queryResult.status.code).toBe(200);
+        expect(queryResult.records).toHaveLength(0); // record has been deleted
 
         // connecting a 2nd time will return the same connectedDID and delegatedDID
         const { did: did2, delegateDid: delegateDid2 } = await Web5.connect();
-        expect(did2).to.equal(did);
-        expect(delegateDid2).to.equal(delegateDid);
+        expect(did2).toBe(did);
+        expect(delegateDid2).toBe(delegateDid);
 
         // Close the app test harness storage.
         await appTestHarness.clearStorage();
@@ -613,7 +613,7 @@ describe('web5 api', () => {
             definition: protocol,
           },
         });
-        expect(protocolConfigReply.status.code).to.equal(202);
+        expect(protocolConfigReply.status.code).toBe(202);
         // create an identity for the app to use
         const app = await testHarness.agent.did.create({
           store  : false,
@@ -686,14 +686,14 @@ describe('web5 api', () => {
             }
           });
 
-          expect.fail('Should have thrown an error');
+          throw new Error('Should have thrown an error');
         } catch (error:any) {
-          expect(error.message).to.equal('Failed to connect to wallet: AgentDwnApi: Failed to process connected grant: Bad Request');
+          expect(error.message).toBe('Failed to connect to wallet: AgentDwnApi: Failed to process connected grant: Bad Request');
         }
 
         // check that the Identity was deleted
         const appIdentities = await appTestHarness.agent.identity.list();
-        expect(appIdentities).to.have.lengthOf(0);
+        expect(appIdentities).toHaveLength(0);
 
         // close the app test harness storage
         await appTestHarness.clearStorage();
@@ -718,7 +718,7 @@ describe('web5 api', () => {
         // call identityCleanup on a did that does not exist
         await Web5['cleanUpIdentity']({ userAgent: testHarness.agent as Web5UserAgent, identity });
 
-        expect(consoleSpy.calledTwice, 'console.error called twice').to.be.true;
+        expect(consoleSpy.calledTwice).toBe(true);
       });
 
       it('throws an error if walletConnectOptions are provided and sync is set to `off`', async () => {
@@ -747,9 +747,9 @@ describe('web5 api', () => {
             }
           });
 
-          expect.fail('Should have thrown an error');
+          throw new Error('Should have thrown an error');
         } catch (error: any) {
-          expect(error.message).to.equal('Sync must not be disabled when using WalletConnect');
+          expect(error.message).toBe('Sync must not be disabled when using WalletConnect');
         }
       });
 
@@ -792,7 +792,7 @@ describe('web5 api', () => {
           }
         });
 
-        expect(startSyncSpy.args[0][0].interval).to.equal('1m');
+        expect(startSyncSpy.args[0][0].interval).toBe('1m');
       });
 
       it('should request all permissions for a protocol if no specific permissions are provided', async () => {
@@ -836,19 +836,19 @@ describe('web5 api', () => {
             }
           });
 
-          expect.fail('Should have thrown an error');
+          throw new Error('Should have thrown an error');
         } catch (error: any) {
           // we expect an error because we stubbed the initClient method to throw it
-          expect(error.message).to.include('Sinon-provided Error');
+          expect(error.message).toContain('Sinon-provided Error');
 
           // The `createPermissionRequestForProtocol` method should have been called once for the provided protocol
-          expect(requestPermissionsSpy.callCount).to.equal(1);
+          expect(requestPermissionsSpy.callCount).toBe(1);
           const call = requestPermissionsSpy.getCall(0);
 
           // since no explicit permissions were provided, all permissions should be requested
-          expect(call.args[0].permissions).to.have.members([
+          expect(call.args[0].permissions).toEqual(expect.arrayContaining([
             'read', 'write', 'delete', 'query', 'subscribe'
-          ]);
+          ]));
         }
       });
 
@@ -911,26 +911,26 @@ describe('web5 api', () => {
             }
           });
 
-          expect.fail('Should have thrown an error');
+          throw new Error('Should have thrown an error');
         } catch (error: any) {
           // we expect an error because we stubbed the initClient method to throw it
-          expect(error.message).to.include('Sinon-provided Error');
+          expect(error.message).toContain('Sinon-provided Error');
 
           // The `createPermissionRequestForProtocol` method should have been called once for each provided request
-          expect(requestPermissionsSpy.callCount).to.equal(2);
+          expect(requestPermissionsSpy.callCount).toBe(2);
           const call1 = requestPermissionsSpy.getCall(0);
 
           // since no explicit permissions were provided for the first protocol, all permissions should be requested
-          expect(call1.args[0].permissions).to.have.members([
+          expect(call1.args[0].permissions).toEqual(expect.arrayContaining([
             'read', 'write', 'delete', 'query', 'subscribe'
-          ]);
+          ]));
 
           const call2 = requestPermissionsSpy.getCall(1);
 
           // only the provided permissions should be requested for the second protocol
-          expect(call2.args[0].permissions).to.have.members([
+          expect(call2.args[0].permissions).toEqual(expect.arrayContaining([
             'read', 'write'
-          ]);
+          ]));
         }
       });
     });
@@ -970,16 +970,16 @@ describe('web5 api', () => {
             ],
           },
         });
-        expect(web5).to.exist;
-        expect(did).to.exist;
+        expect(web5).toBeDefined();
+        expect(did).toBeDefined();
 
         // Success should be called, and failure should not
-        expect(registerFailureSpy.notCalled, 'onFailure not called').to.be.true;
-        expect(registerSuccessSpy.calledOnce, 'onSuccess called').to.be.true;
+        expect(registerFailureSpy.notCalled).toBe(true);
+        expect(registerSuccessSpy.calledOnce).toBe(true);
 
         // Expect getServerInfo and registerTenant to be called.
-        expect(serverInfoStub.calledTwice, 'getServerInfo called').to.be.true; // once per dwnEndpoint
-        expect(registerStub.callCount, 'registerTenant called').to.equal(4); // called twice for each dwnEndpoint
+        expect(serverInfoStub.calledTwice).toBe(true); // once per dwnEndpoint
+        expect(registerStub.callCount).toBe(4); // called twice for each dwnEndpoint
       });
 
       it('should call onFailure if the registration attempts fail', async () => {
@@ -1016,16 +1016,16 @@ describe('web5 api', () => {
             ],
           },
         });
-        expect(web5).to.exist;
-        expect(did).to.exist;
+        expect(web5).toBeDefined();
+        expect(did).toBeDefined();
 
         // failure should be called, and success should not
-        expect(registerSuccessSpy.notCalled, 'onSuccess not called').to.be.true;
-        expect(registerFailureSpy.calledOnce, 'onFailure called').to.be.true;
+        expect(registerSuccessSpy.notCalled).toBe(true);
+        expect(registerFailureSpy.calledOnce).toBe(true);
 
         // Expect getServerInfo and registerTenant to be called.
-        expect(serverInfoStub.calledOnce, 'getServerInfo called').to.be.true; // only called once before registration fails
-        expect(registerStub.callCount, 'registerTenant called').to.equal(1); // called once and fails
+        expect(serverInfoStub.calledOnce).toBe(true); // only called once before registration fails
+        expect(registerStub.callCount).toBe(1); // called once and fails
       });
 
       it('should not attempt registration if the server does not require it', async () => {
@@ -1062,16 +1062,16 @@ describe('web5 api', () => {
             ],
           },
         });
-        expect(web5).to.exist;
-        expect(did).to.exist;
+        expect(web5).toBeDefined();
+        expect(did).toBeDefined();
 
         // should call onSuccess and not onFailure
-        expect(registerSuccessSpy.calledOnce, 'onSuccess called').to.be.true;
-        expect(registerFailureSpy.notCalled, 'onFailure not called').to.be.true;
+        expect(registerSuccessSpy.calledOnce).toBe(true);
+        expect(registerFailureSpy.notCalled).toBe(true);
 
         // Expect getServerInfo to be called but not registerTenant
-        expect(serverInfoStub.calledTwice, 'getServerInfo called').to.be.true; // once per dwnEndpoint
-        expect(registerStub.notCalled, 'registerTenant not called').to.be.true; // not called
+        expect(serverInfoStub.calledTwice).toBe(true); // once per dwnEndpoint
+        expect(registerStub.notCalled).toBe(true); // not called
       });
 
       it('techPreview.dwnEndpoints should take precedence over didCreateOptions.dwnEndpoints', async () => {
@@ -1109,16 +1109,16 @@ describe('web5 api', () => {
           }, // two endpoints,
           techPreview: { dwnEndpoints: ['https://dwn.production.com/'] }, // one endpoint
         });
-        expect(web5).to.exist;
-        expect(did).to.exist;
+        expect(web5).toBeDefined();
+        expect(did).toBeDefined();
 
         // Success should be called, and failure should not
-        expect(registerFailureSpy.notCalled, 'onFailure not called').to.be.true;
-        expect(registerSuccessSpy.calledOnce, 'onSuccess called').to.be.true;
+        expect(registerFailureSpy.notCalled).toBe(true);
+        expect(registerSuccessSpy.calledOnce).toBe(true);
 
         // Expect getServerInfo and registerTenant to be called.
-        expect(serverInfoStub.calledOnce, 'getServerInfo called').to.be.true; // Should only be called once for `techPreview` endpoint
-        expect(registerStub.callCount, 'registerTenant called').to.equal(2); // called twice, once for Agent DID once for Identity DID
+        expect(serverInfoStub.calledOnce).toBe(true); // Should only be called once for `techPreview` endpoint
+        expect(registerStub.callCount).toBe(2); // called twice, once for Agent DID once for Identity DID
       });
     });
   });

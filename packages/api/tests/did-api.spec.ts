@@ -1,5 +1,5 @@
-import { expect } from 'chai';
 import sinon from 'sinon';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { DidDht } from '@enbox/dids';
 import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
@@ -10,7 +10,7 @@ describe('DidApi', () => {
   let did: DidApi;
   let testHarness: PlatformAgentTestHarness;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : Web5UserAgent,
       agentStores : 'memory'
@@ -32,7 +32,7 @@ describe('DidApi', () => {
     did = new DidApi({ agent: testHarness.agent, connectedDid: identity.did.uri });
   });
 
-  after(async () => {
+  afterAll(async () => {
     sinon.restore();
     await testHarness.clearStorage();
     await testHarness.closeStorage();
@@ -42,27 +42,27 @@ describe('DidApi', () => {
     it('creates a DID and returns a response', async () => {
       const didCreateResponse = await did.create({ method: 'jwk' });
 
-      expect(didCreateResponse).to.exist;
-      expect(didCreateResponse).to.have.property('ok', true);
-      expect(didCreateResponse).to.have.property('status');
-      expect(didCreateResponse.status).to.have.property('code', 201);
-      expect(didCreateResponse.status).to.have.property('message', 'Created');
-      expect(didCreateResponse).to.have.property('did');
-      expect(didCreateResponse.did).to.have.property('uri');
-      expect(didCreateResponse.did).to.have.property('document');
-      expect(didCreateResponse.did).to.have.property('metadata');
+      expect(didCreateResponse).toBeDefined();
+      expect(didCreateResponse).toHaveProperty('ok', true);
+      expect(didCreateResponse).toHaveProperty('status');
+      expect(didCreateResponse.status).toHaveProperty('code', 201);
+      expect(didCreateResponse.status).toHaveProperty('message', 'Created');
+      expect(didCreateResponse).toHaveProperty('did');
+      expect(didCreateResponse.did).toHaveProperty('uri');
+      expect(didCreateResponse.did).toHaveProperty('document');
+      expect(didCreateResponse.did).toHaveProperty('metadata');
     });
 
     it('supports DHT method', async () => {
       const didCreateResponse = await did.create({ method: 'dht' });
 
-      expect(didCreateResponse.did.uri).includes('did:dht:');
+      expect(didCreateResponse.did.uri).toContain('did:dht:');
     });
 
     it('supports JWK method', async () => {
       const didCreateResponse = await did.create({ method: 'jwk' });
 
-      expect(didCreateResponse.did.uri).includes('did:jwk:');
+      expect(didCreateResponse.did.uri).toContain('did:jwk:');
     });
   });
 
@@ -88,34 +88,34 @@ describe('DidApi', () => {
 
       const didResolutionResult = await did.resolve(testDid);
 
-      expect(didResolutionResult).to.exist;
-      expect(didResolutionResult).to.have.property('didDocument');
-      expect(didResolutionResult.didDocument).to.have.property('id', testDid);
-      expect(didResolutionResult).to.have.property('didDocument');
-      expect(didResolutionResult).to.have.property('didDocumentMetadata');
-      expect(didResolutionResult).to.have.property('didResolutionMetadata');
+      expect(didResolutionResult).toBeDefined();
+      expect(didResolutionResult).toHaveProperty('didDocument');
+      expect(didResolutionResult.didDocument).toHaveProperty('id', testDid);
+      expect(didResolutionResult).toHaveProperty('didDocument');
+      expect(didResolutionResult).toHaveProperty('didDocumentMetadata');
+      expect(didResolutionResult).toHaveProperty('didResolutionMetadata');
     });
 
     it('returns an invalidDid error if the DID cannot be parsed', async () => {
       const didResolutionResult = await did.resolve('unparseable:did');
 
-      expect(didResolutionResult).to.exist;
-      expect(didResolutionResult).to.have.property('@context');
-      expect(didResolutionResult).to.have.property('didDocument');
-      expect(didResolutionResult).to.have.property('didDocumentMetadata');
-      expect(didResolutionResult).to.have.property('didResolutionMetadata');
-      expect(didResolutionResult.didResolutionMetadata).to.have.property('error', 'invalidDid');
+      expect(didResolutionResult).toBeDefined();
+      expect(didResolutionResult).toHaveProperty('@context');
+      expect(didResolutionResult).toHaveProperty('didDocument');
+      expect(didResolutionResult).toHaveProperty('didDocumentMetadata');
+      expect(didResolutionResult).toHaveProperty('didResolutionMetadata');
+      expect(didResolutionResult.didResolutionMetadata).toHaveProperty('error', 'invalidDid');
     });
 
     it('returns a methodNotSupported error if the DID method is not supported', async () => {
       const didResolutionResult = await did.resolve('did:unknown:abc123');
 
-      expect(didResolutionResult).to.exist;
-      expect(didResolutionResult).to.have.property('@context');
-      expect(didResolutionResult).to.have.property('didDocument');
-      expect(didResolutionResult).to.have.property('didDocumentMetadata');
-      expect(didResolutionResult).to.have.property('didResolutionMetadata');
-      expect(didResolutionResult.didResolutionMetadata).to.have.property('error', 'methodNotSupported');
+      expect(didResolutionResult).toBeDefined();
+      expect(didResolutionResult).toHaveProperty('@context');
+      expect(didResolutionResult).toHaveProperty('didDocument');
+      expect(didResolutionResult).toHaveProperty('didDocumentMetadata');
+      expect(didResolutionResult).toHaveProperty('didResolutionMetadata');
+      expect(didResolutionResult.didResolutionMetadata).toHaveProperty('error', 'methodNotSupported');
     });
   });
 });

@@ -1,6 +1,6 @@
 import type { BearerDid } from '@enbox/dids';
 
-import { expect } from 'chai';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
 
@@ -17,7 +17,7 @@ describe('Protocol', () => {
   let dwnAlice: DwnApi;
   let testHarness: PlatformAgentTestHarness;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : Web5UserAgent,
       agentStores : 'memory'
@@ -44,7 +44,7 @@ describe('Protocol', () => {
     testHarness.dwnStores.clear();
   });
 
-  after(async () => {
+  afterAll(async () => {
     await testHarness.clearStorage();
     await testHarness.closeStorage();
   });
@@ -62,15 +62,15 @@ describe('Protocol', () => {
         }
       });
 
-      expect(aliceEmailStatus.code).to.equal(202);
-      expect(aliceEmailProtocol.definition).to.deep.equal({
+      expect(aliceEmailStatus.code).toBe(202);
+      expect(aliceEmailProtocol.definition).toEqual({
         ...emailProtocolDefinition,
         protocol: protocolUri
       });
 
       // Attempt to configure the protocol on Alice's remote DWN.
       const { status } = await aliceEmailProtocol.send(aliceDid.uri);
-      expect(status.code).to.equal(202);
+      expect(status.code).toBe(202);
 
       // Query Alices's remote DWN for `email` schema records.
       const aliceRemoteQueryResult = await dwnAlice.protocols.query({
@@ -82,11 +82,11 @@ describe('Protocol', () => {
         }
       });
 
-      expect(aliceRemoteQueryResult.status.code).to.equal(200);
-      expect(aliceRemoteQueryResult.protocols).to.exist;
-      expect(aliceRemoteQueryResult.protocols.length).to.equal(1);
+      expect(aliceRemoteQueryResult.status.code).toBe(200);
+      expect(aliceRemoteQueryResult.protocols).toBeDefined();
+      expect(aliceRemoteQueryResult.protocols.length).toBe(1);
       const [ aliceRemoteEmailProtocol ] = aliceRemoteQueryResult.protocols;
-      expect(aliceRemoteEmailProtocol.definition).to.deep.equal({
+      expect(aliceRemoteEmailProtocol.definition).toEqual({
         ...emailProtocolDefinition,
         protocol: protocolUri
       });
@@ -94,6 +94,6 @@ describe('Protocol', () => {
   });
 
   describe('toJSON()', () => {
-    xit('should return all defined properties');
+    it.skip('should return all defined properties');
   });
 });

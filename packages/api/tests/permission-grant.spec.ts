@@ -1,7 +1,7 @@
 import type { BearerDid } from '@enbox/dids';
 
-import { expect } from 'chai';
 import sinon from 'sinon';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { DwnInterfaceName, DwnMethodName, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
@@ -20,7 +20,7 @@ describe('PermissionGrant', () => {
   let testHarness: PlatformAgentTestHarness;
   let protocolUri: string;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : Web5UserAgent,
       agentStores : 'memory'
@@ -57,7 +57,7 @@ describe('PermissionGrant', () => {
   });
 
 
-  after(async () => {
+  afterAll(async () => {
     sinon.restore();
     await testHarness.clearStorage();
     await testHarness.closeStorage();
@@ -81,22 +81,22 @@ describe('PermissionGrant', () => {
         message,
       });
 
-      expect(parsedGrant.toJSON()).to.deep.equal(grant);
-      expect(parsedGrant.rawMessage).to.deep.equal(message);
-      expect(parsedGrant.id).to.equal(grant.id);
-      expect(parsedGrant.grantor).to.equal(grant.grantor);
-      expect(parsedGrant.grantee).to.equal(grant.grantee);
-      expect(parsedGrant.scope).to.deep.equal(grant.scope);
-      expect(parsedGrant.conditions).to.deep.equal(grant.conditions);
-      expect(parsedGrant.requestId).to.equal(grant.requestId);
-      expect(parsedGrant.dateGranted).to.equal(grant.dateGranted);
-      expect(parsedGrant.dateExpires).to.equal(grant.dateExpires);
-      expect(parsedGrant.description).to.equal(grant.description);
-      expect(parsedGrant.delegated).to.equal(grant.delegated);
+      expect(parsedGrant.toJSON()).toEqual(grant);
+      expect(parsedGrant.rawMessage).toEqual(message);
+      expect(parsedGrant.id).toBe(grant.id);
+      expect(parsedGrant.grantor).toBe(grant.grantor);
+      expect(parsedGrant.grantee).toBe(grant.grantee);
+      expect(parsedGrant.scope).toEqual(grant.scope);
+      expect(parsedGrant.conditions).toEqual(grant.conditions);
+      expect(parsedGrant.requestId).toBe(grant.requestId);
+      expect(parsedGrant.dateGranted).toBe(grant.dateGranted);
+      expect(parsedGrant.dateExpires).toBe(grant.dateExpires);
+      expect(parsedGrant.description).toBe(grant.description);
+      expect(parsedGrant.delegated).toBe(grant.delegated);
     });
 
     //TODO: this should happen in the `dwn-sdk-js` helper
-    xit('throws for an invalid grant');
+    it.skip('throws for an invalid grant');
   });
 
   describe('send()', () => {
@@ -114,18 +114,18 @@ describe('PermissionGrant', () => {
         from     : aliceDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedRemote.length).to.equal(0);
+      expect(fetchedRemote.length).toBe(0);
 
       // send the grant
       const sent = await grant.send();
-      expect(sent.status.code).to.equal(202);
+      expect(sent.status.code).toBe(202);
 
       // query the remote for the grant, should now exist
       fetchedRemote = await aliceDwn.permissions.queryGrants({
         from     : aliceDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedRemote.length).to.equal(1);
+      expect(fetchedRemote.length).toBe(1);
     });
 
     it('sends to a remote target', async () => {
@@ -138,40 +138,40 @@ describe('PermissionGrant', () => {
       });
       // alice sends it to her own DWN
       const aliceSent = await grant.send();
-      expect(aliceSent.status.code).to.equal(202);
+      expect(aliceSent.status.code).toBe(202);
 
       // bob queries alice's remote for a grant
       const fetchedFromAlice = await bobDwn.permissions.queryGrants({
         from     : aliceDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedFromAlice.length).to.equal(1);
+      expect(fetchedFromAlice.length).toBe(1);
 
       // fetch from bob's remote. should have no grants
       let fetchedRemote = await bobDwn.permissions.queryGrants({
         from     : bobDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedRemote.length).to.equal(0);
+      expect(fetchedRemote.length).toBe(0);
 
       // fetchedGrant
       const fetchedGrant = fetchedFromAlice[0];
 
       // import the grant (signing as owner), but do not store it
       const imported = await fetchedGrant.import(false);
-      expect(imported.status.code).to.equal(202);
+      expect(imported.status.code).toBe(202);
 
       // send the grant to bob's remote
       const sent = await fetchedGrant.send(bobDid.uri);
-      expect(sent.status.code).to.equal(202);
+      expect(sent.status.code).toBe(202);
       // // send the gran
       // the grant should now exist in bob's remote
       fetchedRemote = await bobDwn.permissions.queryGrants({
         from     : bobDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedRemote.length).to.equal(1);
-      expect(fetchedRemote[0].toJSON()).to.deep.equal(grant.toJSON());
+      expect(fetchedRemote.length).toBe(1);
+      expect(fetchedRemote[0].toJSON()).toEqual(grant.toJSON());
     });
   });
 
@@ -189,18 +189,18 @@ describe('PermissionGrant', () => {
       let fetchedGrants = await aliceDwn.permissions.queryGrants({
         protocol: protocolUri,
       });
-      expect(fetchedGrants.length).to.equal(0);
+      expect(fetchedGrants.length).toBe(0);
 
       // store the grant
       const stored = await grant.store();
-      expect(stored.status.code).to.equal(202);
+      expect(stored.status.code).toBe(202);
 
       // validate the grant now exists in the DWN
       fetchedGrants = await aliceDwn.permissions.queryGrants({
         protocol: protocolUri,
       });
-      expect(fetchedGrants.length).to.equal(1);
-      expect(fetchedGrants[0].toJSON()).to.deep.equal(grant.toJSON());
+      expect(fetchedGrants.length).toBe(1);
+      expect(fetchedGrants[0].toJSON()).toEqual(grant.toJSON());
     });
 
     it('stores the grant and imports it', async () => {
@@ -212,36 +212,36 @@ describe('PermissionGrant', () => {
         scope       : { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, protocol: protocolUri },
       });
       const sent = await grant.send();
-      expect(sent.status.code).to.equal(202);
+      expect(sent.status.code).toBe(202);
 
       // bob queries alice's remote for a grant
       const fetchedFromAlice = await bobDwn.permissions.queryGrants({
         from     : aliceDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedFromAlice.length).to.equal(1);
+      expect(fetchedFromAlice.length).toBe(1);
 
       // attempt to store it without importing, should fail
       const fetchedGrant = fetchedFromAlice[0];
       let stored = await fetchedGrant.store();
-      expect(stored.status.code).to.equal(401);
+      expect(stored.status.code).toBe(401);
 
       // attempt to fetch from local to ensure it was not imported
       let fetchedLocal = await bobDwn.permissions.queryGrants({
         protocol: protocolUri,
       });
-      expect(fetchedLocal.length).to.equal(0);
+      expect(fetchedLocal.length).toBe(0);
 
       // store the grant and import it
       stored = await fetchedGrant.store(true);
-      expect(stored.status.code).to.equal(202);
+      expect(stored.status.code).toBe(202);
 
       // fetch from local to ensure it was imported
       fetchedLocal = await bobDwn.permissions.queryGrants({
         protocol: protocolUri,
       });
-      expect(fetchedLocal.length).to.equal(1);
-      expect(fetchedLocal[0].toJSON()).to.deep.equal(fetchedGrant.toJSON());
+      expect(fetchedLocal.length).toBe(1);
+      expect(fetchedLocal[0].toJSON()).toEqual(fetchedGrant.toJSON());
     });
   });
 
@@ -255,14 +255,14 @@ describe('PermissionGrant', () => {
         scope       : { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, protocol: protocolUri },
       });
       const sent = await grant.send();
-      expect(sent.status.code).to.equal(202);
+      expect(sent.status.code).toBe(202);
 
       // bob queries alice's remote for a grant
       const fetchedFromAlice = await bobDwn.permissions.queryGrants({
         from     : aliceDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedFromAlice.length).to.equal(1);
+      expect(fetchedFromAlice.length).toBe(1);
       const fetchedGrant = fetchedFromAlice[0];
 
       // confirm the grant does not yet exist in bob's remote
@@ -270,33 +270,33 @@ describe('PermissionGrant', () => {
         from     : bobDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedRemote.length).to.equal(0);
+      expect(fetchedRemote.length).toBe(0);
 
       // attempt to send it to bob's remote without importing it first
       let sentToBob = await fetchedGrant.send(bobDid.uri);
-      expect(sentToBob.status.code).to.equal(401);
+      expect(sentToBob.status.code).toBe(401);
 
       // import the grant without storing it
       const imported = await fetchedGrant.import(false);
-      expect(imported.status.code).to.equal(202);
+      expect(imported.status.code).toBe(202);
 
       // fetch from local to ensure it was not stored
       const fetchedLocal = await bobDwn.permissions.queryGrants({
         protocol: protocolUri,
       });
-      expect(fetchedLocal.length).to.equal(0);
+      expect(fetchedLocal.length).toBe(0);
 
       // send the grant to bob's remote
       sentToBob = await fetchedGrant.send(bobDid.uri);
-      expect(sentToBob.status.code).to.equal(202);
+      expect(sentToBob.status.code).toBe(202);
 
       // fetch from bob's remote to ensure it was imported
       fetchedRemote = await bobDwn.permissions.queryGrants({
         from     : bobDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedRemote.length).to.equal(1);
-      expect(fetchedRemote[0].toJSON()).to.deep.equal(fetchedGrant.toJSON());
+      expect(fetchedRemote.length).toBe(1);
+      expect(fetchedRemote[0].toJSON()).toEqual(fetchedGrant.toJSON());
     });
 
     it('imports the grant and stores it', async () => {
@@ -308,14 +308,14 @@ describe('PermissionGrant', () => {
         scope       : { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, protocol: protocolUri },
       });
       const sent = await grant.send();
-      expect(sent.status.code).to.equal(202);
+      expect(sent.status.code).toBe(202);
 
       // bob queries alice's remote for a grant
       const fetchedFromAlice = await bobDwn.permissions.queryGrants({
         from     : aliceDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedFromAlice.length).to.equal(1);
+      expect(fetchedFromAlice.length).toBe(1);
       const fetchedGrant = fetchedFromAlice[0];
 
       // confirm the grant does not yet exist in bob's remote
@@ -323,18 +323,18 @@ describe('PermissionGrant', () => {
         from     : bobDid.uri,
         protocol : protocolUri,
       });
-      expect(fetchedRemote.length).to.equal(0);
+      expect(fetchedRemote.length).toBe(0);
 
       // import the grant and store it
       const imported = await fetchedGrant.import(true);
-      expect(imported.status.code).to.equal(202);
+      expect(imported.status.code).toBe(202);
 
       // fetch from local to ensure it was stored
       const fetchedLocal = await bobDwn.permissions.queryGrants({
         protocol: protocolUri,
       });
-      expect(fetchedLocal.length).to.equal(1);
-      expect(fetchedLocal[0].toJSON()).to.deep.equal(fetchedGrant.toJSON());
+      expect(fetchedLocal.length).toBe(1);
+      expect(fetchedLocal[0].toJSON()).toEqual(fetchedGrant.toJSON());
     });
   });
 
@@ -354,7 +354,7 @@ describe('PermissionGrant', () => {
         message,
       });
 
-      expect(parsedGrant.toJSON()).to.deep.equal(grant);
+      expect(parsedGrant.toJSON()).toEqual(grant);
     });
   });
 
@@ -369,14 +369,14 @@ describe('PermissionGrant', () => {
       });
 
       let isRevoked = await grant.isRevoked();
-      expect(isRevoked).to.equal(false);
+      expect(isRevoked).toBe(false);
 
       // revoke the grant, stores it by default
       const revocation = await grant.revoke();
-      expect(revocation.author).to.equal(aliceDid.uri);
+      expect(revocation.author).toBe(aliceDid.uri);
 
       isRevoked = await grant.isRevoked();
-      expect(isRevoked).to.equal(true);
+      expect(isRevoked).toBe(true);
     });
 
     it('revokes the grant, does not store it', async () => {
@@ -389,22 +389,22 @@ describe('PermissionGrant', () => {
       });
 
       let isRevoked = await grant.isRevoked();
-      expect(isRevoked).to.equal(false);
+      expect(isRevoked).toBe(false);
 
       // revoke the grant but do not store it
       const revocation = await grant.revoke(false);
-      expect(revocation.author).to.equal(aliceDid.uri);
+      expect(revocation.author).toBe(aliceDid.uri);
 
       // is still false
       isRevoked = await grant.isRevoked();
-      expect(isRevoked).to.equal(false);
+      expect(isRevoked).toBe(false);
 
       // store the revocation
       await revocation.store();
 
       // is now true
       isRevoked = await grant.isRevoked();
-      expect(isRevoked).to.equal(true);
+      expect(isRevoked).toBe(true);
     });
 
     it('sends the revocation to a remote target', async () => {
@@ -418,20 +418,20 @@ describe('PermissionGrant', () => {
 
       // send the grant to alice's remote
       const sentGrant = await grant.send();
-      expect(sentGrant.status.code).to.equal(202);
+      expect(sentGrant.status.code).toBe(202);
 
       // revoke the grant but do not store it
       const revocation = await grant.revoke(false);
       const sendToAliceRevoke = await revocation.send(aliceDid.uri);
-      expect(sendToAliceRevoke.status.code).to.equal(202);
+      expect(sendToAliceRevoke.status.code).toBe(202);
 
       // should not return revoked since it was not stored locally
       let isRevoked = await grant.isRevoked();
-      expect(isRevoked).to.equal(false);
+      expect(isRevoked).toBe(false);
 
       // check the revocation status of the grant on alice's remote node
       isRevoked = await grant.isRevoked(true);
-      expect(isRevoked).to.equal(true);
+      expect(isRevoked).toBe(true);
     });
   });
 
@@ -446,14 +446,14 @@ describe('PermissionGrant', () => {
       });
 
       let isRevoked = await grant.isRevoked();
-      expect(isRevoked).to.equal(false);
+      expect(isRevoked).toBe(false);
 
       // revoke the grant
       const revocation = await grant.revoke();
-      expect(revocation.author).to.equal(aliceDid.uri);
+      expect(revocation.author).toBe(aliceDid.uri);
 
       isRevoked = await grant.isRevoked();
-      expect(isRevoked).to.equal(true);
+      expect(isRevoked).toBe(true);
     });
 
     it('checks revocation status of remote DWN', async () => {
@@ -467,23 +467,23 @@ describe('PermissionGrant', () => {
 
       // send the grant to alice's remote
       const sentGrant = await grant.send();
-      expect(sentGrant.status.code).to.equal(202);
+      expect(sentGrant.status.code).toBe(202);
 
       // revoke the grant but do not store it locally
       const revocation = await grant.revoke(false);
-      expect(revocation.author).to.equal(aliceDid.uri);
+      expect(revocation.author).toBe(aliceDid.uri);
 
       // check the revocation status on alice's remote node first
       let isRevoked = await grant.isRevoked(true);
-      expect(isRevoked).to.equal(false);
+      expect(isRevoked).toBe(false);
 
       // send the revocation to alice's remote
       const sentRevocation = await revocation.send();
-      expect(sentRevocation.status.code).to.equal(202);
+      expect(sentRevocation.status.code).toBe(202);
 
       // check the revocation status of the grant on alice's remote node
       isRevoked = await grant.isRevoked(true);
-      expect(isRevoked).to.equal(true);
+      expect(isRevoked).toBe(true);
     });
   });
 });

@@ -1,4 +1,5 @@
-import { expect } from 'chai';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+
 import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
 
 import { VcApi } from '../src/vc-api.js';
@@ -7,7 +8,7 @@ describe('VcApi', () => {
   let vc: VcApi;
   let testHarness: PlatformAgentTestHarness;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : Web5UserAgent,
       agentStores : 'memory'
@@ -28,7 +29,7 @@ describe('VcApi', () => {
     vc = new VcApi({ agent: testHarness.agent, connectedDid: identity.did.uri });
   });
 
-  after(async () => {
+  afterAll(async () => {
     await testHarness.clearStorage();
     await testHarness.closeStorage();
   });
@@ -37,9 +38,9 @@ describe('VcApi', () => {
     it('is not implemented', async () => {
       try {
         await vc.create();
-        expect.fail('Expected method to throw, but it did not.');
-      } catch (e) {
-        expect(e.message).to.include('Not implemented.');
+        throw new Error('Expected method to throw, but it did not.');
+      } catch (e: any) {
+        expect(e.message).toContain('Not implemented.');
       }
     });
   });
