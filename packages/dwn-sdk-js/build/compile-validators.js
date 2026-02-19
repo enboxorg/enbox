@@ -41,6 +41,7 @@ import ProtocolRuleSet from '../json-schemas/interface-methods/protocol-rule-set
 import ProtocolsConfigure from '../json-schemas/interface-methods/protocols-configure.json' with { type: 'json' };
 import ProtocolsQuery from '../json-schemas/interface-methods/protocols-query.json' with { type: 'json' };
 import PublicJwk from '../json-schemas/jwk/public-jwk.json' with { type: 'json' };
+import RecordsCount from '../json-schemas/interface-methods/records-count.json' with { type: 'json' };
 import RecordsDelete from '../json-schemas/interface-methods/records-delete.json' with { type: 'json' };
 import RecordsFilter from '../json-schemas/interface-methods/records-filter.json' with { type: 'json' };
 import RecordsQuery from '../json-schemas/interface-methods/records-query.json' with { type: 'json' };
@@ -56,6 +57,7 @@ const schemas = {
   Authorization,
   AuthorizationDelegatedGrant,
   AuthorizationOwner,
+  RecordsCount,
   RecordsDelete,
   RecordsQuery,
   RecordsSubscribe,

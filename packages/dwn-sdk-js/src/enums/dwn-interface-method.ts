@@ -6,6 +6,7 @@ export enum DwnInterfaceName {
 
 export enum DwnMethodName {
   Configure = 'Configure',
+  Count = 'Count',
   Delete = 'Delete',
   Query = 'Query',
   Read = 'Read',

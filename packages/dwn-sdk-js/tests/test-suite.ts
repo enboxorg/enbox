@@ -21,6 +21,7 @@ import { testProtocolDeleteAction } from './features/protocol-delete-action.spec
 import { testProtocolsConfigureHandler } from './handlers/protocols-configure.spec.js';
 import { testProtocolsQueryHandler } from './handlers/protocols-query.spec.js';
 import { testProtocolUpdateAction } from './features/protocol-update-action.spec.js';
+import { testRecordsCountHandler } from './handlers/records-count.spec.js';
 import { testRecordsDeleteHandler } from './handlers/records-delete.spec.js';
 import { testRecordsPrune } from './features/records-prune.spec.js';
 import { testRecordsQueryHandler } from './handlers/records-query.spec.js';
@@ -64,6 +65,7 @@ export class TestSuite {
     testMessagesSyncHandler();
     testProtocolsConfigureHandler();
     testProtocolsQueryHandler();
+    testRecordsCountHandler();
     testRecordsDeleteHandler();
     testRecordsQueryHandler();
     testRecordsReadHandler();

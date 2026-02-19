@@ -2,7 +2,7 @@ import type { DerivedPrivateJwk } from './hd-key.js';
 import type { KeyDecrypter } from '../types/encryption-types.js';
 import type { Filter, KeyValues, StartsWithFilter } from '../types/query-types.js';
 import type { GenericMessage, GenericSignaturePayload, MessageSort } from '../types/message-types.js';
-import type { RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteDescriptor, RecordsWriteMessage, RecordsWriteTags, RecordsWriteTagsFilter } from '../types/records-types.js';
+import type { RecordsCountMessage, RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteDescriptor, RecordsWriteMessage, RecordsWriteTags, RecordsWriteTagsFilter } from '../types/records-types.js';
 
 import { DateSort } from '../types/records-types.js';
 import { Encoder } from './encoder.js';
@@ -439,7 +439,7 @@ export class Records {
    *                              Passed purely as a performance optimization so we don't have to decode the owner signature payload again.
    */
   public static async validateDelegatedGrantReferentialIntegrity(
-    message: RecordsReadMessage | RecordsQueryMessage | RecordsWriteMessage | RecordsDeleteMessage | RecordsSubscribeMessage,
+    message: RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsWriteMessage | RecordsDeleteMessage | RecordsSubscribeMessage,
     authorSignaturePayload: GenericSignaturePayload | undefined,
     ownerSignaturePayload?: GenericSignaturePayload | undefined
   ): Promise<void> {

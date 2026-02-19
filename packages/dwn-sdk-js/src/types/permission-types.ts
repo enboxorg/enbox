@@ -87,7 +87,7 @@ export type MessagesPermissionScope = {
  */
 export type RecordsPermissionScope = {
   interface: DwnInterfaceName.Records;
-  method: DwnMethodName.Read | DwnMethodName.Write | DwnMethodName.Query | DwnMethodName.Subscribe | DwnMethodName.Delete;
+  method: DwnMethodName.Count | DwnMethodName.Read | DwnMethodName.Write | DwnMethodName.Query | DwnMethodName.Subscribe | DwnMethodName.Delete;
   protocol: string;
   /** May only be present when `protocol` is defined and `protocolPath` is undefined */
   contextId?: string;

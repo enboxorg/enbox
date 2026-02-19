@@ -1,5 +1,6 @@
 import type { Filter } from '../types/query-types.js';
 import type { MessageStore } from '../types/message-store.js';
+import type { RecordsCount } from '../interfaces/records-count.js';
 import type { RecordsDelete } from '../interfaces/records-delete.js';
 import type { RecordsQuery } from '../interfaces/records-query.js';
 import type { RecordsRead } from '../interfaces/records-read.js';
@@ -197,7 +198,7 @@ export class ProtocolAuthorization {
 
   public static async authorizeQueryOrSubscribe(
     tenant: string,
-    incomingMessage: RecordsQuery | RecordsSubscribe,
+    incomingMessage: RecordsCount | RecordsQuery | RecordsSubscribe,
     messageStore: MessageStore,
   ): Promise<void> {
     const { protocol, protocolPath, contextId } = incomingMessage.message.descriptor.filter;
@@ -531,7 +532,7 @@ export class ProtocolAuthorization {
    */
   private static async verifyInvokedRole(
     tenant: string,
-    incomingMessage: RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
+    incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
     protocolUri: string,
     contextId: string | undefined,
     protocolDefinition: ProtocolDefinition,
@@ -605,7 +606,7 @@ export class ProtocolAuthorization {
    */
   private static async getActionsSeekingARuleMatch(
     tenant: string,
-    incomingMessage: RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
+    incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
     messageStore: MessageStore,
   ): Promise<ProtocolAction[]> {
 
@@ -641,6 +642,9 @@ export class ProtocolAuthorization {
       }
 
       return actionsThatWouldAuthorizeDelete;
+
+    case DwnMethodName.Count:
+      return [ProtocolAction.Read];
 
     case DwnMethodName.Query:
       return [ProtocolAction.Read];
@@ -688,7 +692,7 @@ export class ProtocolAuthorization {
    */
   private static async authorizeAgainstAllowedActions(
     tenant: string,
-    incomingMessage: RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
+    incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
     ruleSet: ProtocolRuleSet,
     recordChain: RecordsWriteMessage[],
     messageStore: MessageStore,

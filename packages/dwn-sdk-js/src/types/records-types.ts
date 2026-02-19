@@ -117,6 +117,21 @@ export type DataEncodedRecordsWriteMessage = RecordsWriteMessage & {
   encodedData: string;
 };
 
+export type RecordsCountDescriptor = {
+  interface: DwnInterfaceName.Records;
+  method: DwnMethodName.Count;
+  messageTimestamp: string;
+  filter: RecordsFilter;
+};
+
+export type RecordsCountMessage = GenericMessage & {
+  descriptor: RecordsCountDescriptor;
+};
+
+export type RecordsCountReply = GenericMessageReply & {
+  count?: number;
+};
+
 export type RecordsQueryDescriptor = {
   interface: DwnInterfaceName.Records;
   method: DwnMethodName.Query;
