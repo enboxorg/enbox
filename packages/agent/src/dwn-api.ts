@@ -3,10 +3,8 @@ import type {
   DwnConfig,
   EncryptionInput,
   EncryptionKeyDeriver,
-  EventStream,
   GenericMessage,
   KeyDecrypter,
-  MessageStore,
   ProtocolDefinition,
   ProtocolRuleSet,
   ProtocolsQueryReply,
@@ -14,8 +12,7 @@ import type {
   RecordsQueryReplyEntry,
   RecordsReadReply,
   RecordsWrite,
-  RecordsWriteMessage,
-  StateIndex } from '@enbox/dwn-sdk-js';
+  RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type { KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
 import { CryptoUtils } from '@enbox/crypto';
@@ -1505,18 +1502,22 @@ export class AgentDwnApi {
     // We must also update the state index and event stream to keep sync and
     // real-time subscribers consistent — without this, the upgraded record
     // would never propagate to remote DWNs or notify subscribers.
-    const dwnInternal = this._dwn as any;
-    const messageStore = dwnInternal.messageStore as MessageStore;
-    const stateIndex = dwnInternal.stateIndex as StateIndex;
-    const eventStream = dwnInternal.eventStream as EventStream | undefined;
+    const { messageStore, stateIndex, eventStream } = this._dwn.storage;
+
+    // Validate the upgrade only changed encryption and authorization fields.
+    // The descriptor, recordId, contextId, and data must remain identical.
+    // Note: parse() may produce a new descriptor object, so we compare by value.
+    const upgradedMessage = recordsWriteInstance.message as RecordsQueryReplyEntry;
+    if (JSON.stringify(upgradedMessage.descriptor) !== JSON.stringify(recordsWrite.descriptor)) {
+      throw new Error('AgentDwnApi: upgradeExternalRootRecord() must not modify the descriptor.');
+    }
+    if (upgradedMessage.recordId !== recordsWrite.recordId) {
+      throw new Error('AgentDwnApi: upgradeExternalRootRecord() must not modify the recordId.');
+    }
 
     // Fetch the stored original (which carries encodedData for small payloads)
     const originalCid = await Message.getCid(recordsWrite);
     const storedOriginal = await messageStore.get(tenantDid, originalCid) as RecordsQueryReplyEntry | undefined;
-
-    // Remove the original message and its state index entry
-    await messageStore.delete(tenantDid, originalCid);
-    await stateIndex.delete(tenantDid, [originalCid]);
 
     // Build indexes for the upgraded message (mark as latest base state)
     const isLatestBaseState = true;
@@ -1524,15 +1525,20 @@ export class AgentDwnApi {
 
     // Carry over the encoded data from the stored original (the handler
     // base64url-encodes small payloads into encodedData during processMessage)
-    const upgradedMessage = recordsWriteInstance.message as RecordsQueryReplyEntry;
     if (storedOriginal?.encodedData) {
       upgradedMessage.encodedData = storedOriginal.encodedData;
     }
 
-    // Store the upgraded message and insert into state index
-    await messageStore.put(tenantDid, upgradedMessage, upgradedIndexes);
+    // Use put-before-delete ordering: if a crash occurs after the put but
+    // before the delete, we end up with a duplicate (recoverable via the
+    // isLatestBaseState index) rather than data loss (unrecoverable).
     const upgradedCid = await Message.getCid(upgradedMessage);
+    await messageStore.put(tenantDid, upgradedMessage, upgradedIndexes);
     await stateIndex.insert(tenantDid, upgradedCid, upgradedIndexes);
+
+    // Now remove the original message and its state index entry.
+    await messageStore.delete(tenantDid, originalCid);
+    await stateIndex.delete(tenantDid, [originalCid]);
 
     // Notify real-time subscribers (mirrors handler behavior)
     if (eventStream !== undefined) {

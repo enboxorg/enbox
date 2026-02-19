@@ -9,9 +9,11 @@ import { authenticate } from '../core/auth.js';
 import { DwnInterfaceName } from '../enums/dwn-interface-method.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
+import { PermissionsProtocol } from '../protocols/permissions.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsDelete } from '../interfaces/records-delete.js';
+import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { ResumableTaskName } from '../core/resumable-task-manager.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
@@ -112,6 +114,16 @@ export class RecordsDeleteHandler implements MethodHandler {
 
     if (recordsDelete.author === tenant) {
       return;
+    } else if (recordsDelete.author !== undefined && recordsDelete.signaturePayload!.permissionGrantId !== undefined) {
+      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, recordsDelete.signaturePayload!.permissionGrantId);
+      await RecordsGrantAuthorization.authorizeDelete({
+        recordsDeleteMessage : recordsDelete.message,
+        recordsWriteToDelete : recordsWrite.message,
+        expectedGrantor      : tenant,
+        expectedGrantee      : recordsDelete.author,
+        permissionGrant,
+        messageStore,
+      });
     } else if (recordsWrite.message.descriptor.protocol !== undefined) {
       await ProtocolAuthorization.authorizeDelete(tenant, recordsDelete, recordsWrite, messageStore);
     } else {
