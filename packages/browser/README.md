@@ -45,8 +45,8 @@ To enable this functionality import and run `activatePolyfills()` at the entrypo
 [browser-downloads-badge]: https://img.shields.io/npm/dt/@enbox/browser?&color=blue
 [browser-build-badge]: https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/tests-ci.yml?branch=main&label=build
 [browser-build-link]: https://github.com/enboxorg/enbox/actions/workflows/tests-ci.yml
-[browser-coverage-badge]: https://img.shields.io/codecov/c/gh/enboxorg/enbox/main?style=flat&token=YI87CKF1LI
-[browser-coverage-link]: https://app.codecov.io/github/enboxorg/enbox/tree/main/packages%2Fbrowser
+[browser-coverage-badge]: https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/crypto.json
+[browser-coverage-link]: https://github.com/enboxorg/enbox/actions/workflows/ci.yml
 [browser-issues-badge]: https://img.shields.io/github/issues/enboxorg/enbox/package:%20browser?label=issues
 [browser-issues-link]: https://github.com/enboxorg/enbox/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+browser"
 [browser-repo-link]: https://github.com/enboxorg/enbox/tree/main/packages/browser

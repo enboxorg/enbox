@@ -3,8 +3,8 @@
 > **Research Preview** — Enbox is under active development. APIs may change without notice.
 
 [![NPM](https://img.shields.io/npm/v/@enbox/dwn-sql-store.svg?style=flat-square&logo=npm&logoColor=FFFFFF&color=FFEC19&santize=true)](https://www.npmjs.com/package/@enbox/dwn-sql-store)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/integrity-checks.yml?branch=main&logo=github&label=ci&logoColor=FFFFFF&style=flat-square)](https://github.com/enboxorg/enbox/actions/workflows/integrity-checks.yml)
-[![Coverage](https://img.shields.io/codecov/c/gh/enboxorg/enbox/main?logo=codecov&logoColor=FFFFFF&style=flat-square&token=YI87CKF1LI)](https://codecov.io/github/enboxorg/enbox)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/ci.yml?branch=main&logo=github&label=ci&logoColor=FFFFFF&style=flat-square)](https://github.com/enboxorg/enbox/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-sql-store.json&style=flat-square)](https://github.com/enboxorg/enbox/actions/workflows/ci.yml)
 [![License](https://img.shields.io/npm/l/@enbox/dwn-sql-store.svg?style=flat-square&color=24f2ff&logo=apache&logoColor=FFFFFF&santize=true)](https://github.com/enboxorg/enbox/blob/main/LICENSE)
 [![Chat](https://img.shields.io/badge/chat-on%20discord-7289da.svg?style=flat-square&color=9a1aff&logo=discord&logoColor=FFFFFF&sanitize=true)](https://discord.com/channels/937858703112155166/969272658501976117)
 

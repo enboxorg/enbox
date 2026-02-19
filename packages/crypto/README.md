@@ -621,8 +621,8 @@ const decryptedData = await XChaCha20Poly1305.decrypt({
 [crypto-downloads-badge]: https://img.shields.io/npm/dt/@enbox/crypto?&color=blue
 [crypto-build-badge]: https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/tests-ci.yml?branch=main&label=build
 [crypto-build-link]: https://github.com/enboxorg/enbox/actions/workflows/tests-ci.yml
-[crypto-coverage-badge]: https://img.shields.io/codecov/c/gh/enboxorg/enbox/main?style=flat&token=YI87CKF1LI
-[crypto-coverage-link]: https://app.codecov.io/github/enboxorg/enbox/tree/main/packages%2Fcrypto
+[crypto-coverage-badge]: https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/crypto.json
+[crypto-coverage-link]: https://github.com/enboxorg/enbox/actions/workflows/ci.yml
 [crypto-issues-badge]: https://img.shields.io/github/issues/enboxorg/enbox/package:%20crypto?label=issues
 [crypto-issues-link]: https://github.com/enboxorg/enbox/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+crypto"
 [crypto-aws-kms-repo-link]: https://github.com/enboxorg/enbox/tree/main/packages/crypto-aws-kms

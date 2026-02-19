@@ -2,6 +2,8 @@
 
 > **Research Preview** — Enbox is under active development. APIs may change without notice.
 
+[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/common.json)](https://github.com/enboxorg/enbox/actions/workflows/ci.yml)
+
 Shared utilities used across the Enbox monorepo — data conversion, key-value stores, caching, streams, and type helpers.
 
 ## Installation
