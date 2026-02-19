@@ -140,7 +140,7 @@
     "lint:fix": "eslint . --fix",
     "circular-dependency-check": "depcruise src",
     "test:node": "bun run compile-validators && bun test .spec.ts",
-    "test:node:coverage": "bun run compile-validators && bun test --coverage --coverage-reporter=lcov .spec.ts",
+    "test:node:coverage": "bun run compile-validators && bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .spec.ts",
     "test:node-grep": "bun run compile-validators && bun test .spec.ts -t $GREP",
     "test:browser": "bun run compile-validators && bunx karma start karma.conf.cjs",
     "test:browser-debug": "bun run compile-validators && bunx karma start karma.conf.debug.cjs",

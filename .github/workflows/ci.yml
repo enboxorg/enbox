@@ -131,7 +131,7 @@ jobs:
             packages/common/coverage/lcov.info
             packages/crypto/coverage/lcov.info
           retention-days: 1
-          if-no-files-found: ignore
+          if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
   # DWN SDK: large test suite, but no external services (LevelDB in-process)
@@ -167,8 +167,17 @@ jobs:
           name: workspace-build
           path: packages
 
-      - name: Run tests
-        run: bun run --filter @enbox/dwn-sdk-js test:node
+      - name: Run tests with coverage
+        run: bun run --filter @enbox/dwn-sdk-js test:node:coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-dwn-sdk
+          path: packages/dwn-sdk-js/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
   # dids + Agent + API: need a live Pkarr relay and dwn-server (backed by Postgres)
@@ -254,21 +263,24 @@ jobs:
             sleep 2
           done
 
-      - name: Run tests
+      - name: Run tests with coverage
         run: |
           export DID_DHT_GATEWAY_URI=http://localhost:7527
           bun run --filter @enbox/dids   test:node:coverage
-          bun run --filter @enbox/agent  test:node
-          bun run --filter @enbox/api    test:node
+          bun run --filter @enbox/agent  test:node:coverage
+          bun run --filter @enbox/api    test:node:coverage
 
-      - name: Upload dids coverage
+      - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-dids
-          path: packages/dids/coverage/lcov.info
+          name: coverage-agent-api
+          path: |
+            packages/dids/coverage/lcov.info
+            packages/agent/coverage/lcov.info
+            packages/api/coverage/lcov.info
           retention-days: 1
-          if-no-files-found: ignore
+          if-no-files-found: warn
 
       - name: Stop services
         if: always()
@@ -342,8 +354,17 @@ jobs:
           name: workspace-build
           path: packages
 
-      - name: Run tests
-        run: bun run --filter @enbox/dwn-sql-store test
+      - name: Run tests with coverage
+        run: bun run --filter @enbox/dwn-sql-store test:node:coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-sql-store
+          path: packages/dwn-sql-store/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
   # DWN Server: self-contained tests (SQLite in-memory, no external services)
@@ -379,8 +400,17 @@ jobs:
           name: workspace-build
           path: packages
 
-      - name: Run tests
-        run: bun run --filter @enbox/dwn-server test:node
+      - name: Run tests with coverage
+        run: bun run --filter @enbox/dwn-server test:node:coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-dwn-server
+          path: packages/dwn-server/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
   # Coverage: parse lcov reports, enforce 90% threshold, comment on PR
@@ -388,7 +418,7 @@ jobs:
   coverage:
     name: Coverage Check
     runs-on: ubuntu-latest
-    needs: [test-lightweight, test-agent-api]
+    needs: [test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server]
     if: always() && github.event_name == 'pull_request' && !cancelled()
 
     steps:
@@ -448,7 +478,9 @@ jobs:
 
           if [ "$found_any" = false ]; then
             echo "" >> coverage-report.md
-            echo ":warning: **No coverage artifacts found.** Ensure test jobs upload lcov reports." >> coverage-report.md
+            echo ":x: **No coverage artifacts found.** Ensure test jobs upload lcov reports." >> coverage-report.md
+            echo "::error::No coverage artifacts found"
+            failed=true
           else
             echo "" >> coverage-report.md
             if [ "$failed" = true ]; then
