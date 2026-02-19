@@ -78,7 +78,8 @@
   },
   "dependencies": {
     "@enbox/agent": "workspace:*",
-    "@enbox/common": "workspace:*"
+    "@enbox/common": "workspace:*",
+    "@enbox/dwn-clients": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "1.45.3",

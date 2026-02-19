@@ -7,7 +7,7 @@ import type { AgentKeyManager } from './key-manager.js';
 import type { AgentPermissionsApi } from '../permissions-api.js';
 import type { AgentSyncApi } from '../sync-api.js';
 import type { IdentityVault } from './identity-vault.js';
-import type { Web5Rpc } from '../rpc-client.js';
+import type { Web5Rpc } from '@enbox/dwn-clients';
 import type { AgentDidApi, DidInterface, DidRequest, DidResponse } from '../did-api.js';
 import type { DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './dwn.js';
 import type { ProcessVcRequest, SendVcRequest, VcResponse } from './vc.js';

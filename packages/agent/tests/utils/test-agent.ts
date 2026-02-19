@@ -8,7 +8,7 @@ import type { AgentPermissionsApi } from '../../src/permissions-api.js';
 import type { AgentSyncApi } from '../../src/sync-api.js';
 import type { IdentityVault } from '../../src/types/identity-vault.js';
 import type { Web5PlatformAgent } from '../../src/types/agent.js';
-import type { Web5Rpc } from '../../src/rpc-client.js';
+import type { Web5Rpc } from '@enbox/dwn-clients';
 import type { AgentDidApi, DidInterface } from '../../src/did-api.js';
 import type { DidRequest, DidResponse } from '../../src/did-api.js';
 import type {

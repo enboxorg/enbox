@@ -2,11 +2,11 @@ import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import type { DwnProtocolDefinition } from '@enbox/agent';
+import { DwnRegistrar } from '@enbox/dwn-clients';
 import {
   AgentIdentityApi,
   BearerIdentity,
   DwnInterface,
-  DwnRegistrar,
   PlatformAgentTestHarness,
   WalletConnect,
   Web5UserAgent,
