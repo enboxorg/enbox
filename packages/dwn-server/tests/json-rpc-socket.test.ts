@@ -263,28 +263,33 @@ describe('JsonRpcSocket', () => {
     expect(logMessage).toBe('JSON RPC Socket close ws://127.0.0.1:9003');
   });
 
-  // Skip under Bun: ws EventEmitter 'error' event handling is incompatible with Bun's runtime.
-  // The `socket.emit('error', ...)` call throws "Unhandled error" before the registered handler runs.
-  it.skip('calls onerror handler', async () => {
+  it('calls onerror handler', async () => {
+    // Trigger a real connection error by connecting to a port with no server.
+    // This exercises the onerror handler through the ws library's own internal
+    // error path rather than raw EventEmitter emit(), which is incompatible with Bun.
+    const badUrl = 'ws://127.0.0.1:19999';
+
     // test injected handler
     const onErrorHandler = { onerror: ():void => {} };
     const onErrorSpy = spyOn(onErrorHandler, 'onerror');
-    const client = await JsonRpcSocket.connect('ws://127.0.0.1:9003', { onerror: onErrorHandler.onerror });
-    client['socket'].emit('error', 'some error');
-
-    await new Promise((resolve) => setTimeout(resolve, 5)); // wait for close event to arrive
+    try {
+      await JsonRpcSocket.connect(badUrl, { onerror: onErrorHandler.onerror, connectTimeout: 2000 });
+    } catch {
+      // expected — connection refused
+    }
     expect(onErrorSpy).toHaveBeenCalledTimes(1);
 
     // test default logger
-    const logInfoSpy = spyOn(log, 'error');
-    const defaultClient = await JsonRpcSocket.connect('ws://127.0.0.1:9003');
-    defaultClient['socket'].emit('error', 'some error');
-
-    await new Promise((resolve) => setTimeout(resolve, 5)); // wait for close event to arrive
-    expect(logInfoSpy).toHaveBeenCalledTimes(1);
+    const logErrorSpy = spyOn(log, 'error');
+    try {
+      await JsonRpcSocket.connect(badUrl, { connectTimeout: 2000 });
+    } catch {
+      // expected — connection refused
+    }
+    expect(logErrorSpy).toHaveBeenCalledTimes(1);
 
     // extract log message from argument
-    const logMessage:string = logInfoSpy.mock.calls[0][0]!;
-    expect(logMessage).toBe('JSON RPC Socket error ws://127.0.0.1:9003');
+    const logMessage:string = logErrorSpy.mock.calls[0][0]!;
+    expect(logMessage).toBe(`JSON RPC Socket error ${badUrl}`);
   });
 });
