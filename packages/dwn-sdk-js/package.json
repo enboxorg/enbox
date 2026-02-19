@@ -99,7 +99,7 @@
     "@typescript-eslint/eslint-plugin": "8.32.1",
     "@typescript-eslint/parser": "8.32.1",
     "@vitest/browser-playwright": "4.0.18",
-
+    "@vitest/coverage-istanbul": "4.0.18",
     "bun-types": "^1.2.4",
     "dependency-cruiser": "^16.3.7",
     "eslint": "9.7.0",
@@ -131,6 +131,7 @@
     "test:node:coverage": "bun run compile-validators && bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .spec.ts",
     "test:node-grep": "bun run compile-validators && bun test .spec.ts -t $GREP",
     "test:browser": "bun run compile-validators && bunx --bun vitest --config vitest.browser.config.ts --run",
+    "test:browser:coverage": "bun run compile-validators && bunx --bun vitest --config vitest.browser.config.ts --run --coverage --coverage.provider=istanbul --coverage.reportsDirectory=./coverage-browser",
     "license-check": "license-report --only=prod > license-report.json && bun ./build/license-check.cjs",
     "publish:unstable": "./build/publish-unstable.sh"
   }

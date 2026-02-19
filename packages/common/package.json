@@ -14,7 +14,8 @@
     "lint:fix": "eslint . --fix",
     "test:node": "bun test .test.ts",
     "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .test.ts",
-    "test:browser": "bunx --bun vitest --config vitest.browser.config.ts --run"
+    "test:browser": "bunx --bun vitest --config vitest.browser.config.ts --run",
+    "test:browser:coverage": "bunx --bun vitest --config vitest.browser.config.ts --run --coverage --coverage.provider=istanbul --coverage.reportsDirectory=./coverage-browser"
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/common#readme",
   "bugs": "https://github.com/enboxorg/enbox/issues",
@@ -78,6 +79,7 @@
     "@typescript-eslint/eslint-plugin": "8.32.1",
     "@typescript-eslint/parser": "8.32.1",
     "@vitest/browser-playwright": "4.0.18",
+    "@vitest/coverage-istanbul": "4.0.18",
     "abstract-level": "1.0.4",
     "eslint": "9.7.0",
     "rimraf": "5.0.7",

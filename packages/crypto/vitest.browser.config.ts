@@ -15,6 +15,11 @@ export default defineConfig({
   test: {
     include     : ['tests/**/*.test.ts'],
     testTimeout : 15_000,
+    coverage: {
+      provider         : 'istanbul',
+      reporter         : ['text', 'lcov'],
+      reportsDirectory : './coverage-browser',
+    },
     browser     : {
       enabled  : true,
       headless : true,
