@@ -1,0 +1,185 @@
+import type { Persona } from '@enbox/dwn-sdk-js';
+
+import sinon from 'sinon';
+
+import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
+import { RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
+
+import { DwnServerInfoCacheMemory } from '../src/dwn-server-info-cache-memory.js';
+import { HttpDwnRpcClient } from '../src/http-dwn-rpc-client.js';
+
+const testDwnUrl = process.env.TEST_DWN_URL || 'http://localhost:3000';
+
+describe('HttpDwnRpcClient', () => {
+  const client = new HttpDwnRpcClient();
+  let alice: Persona;
+
+  beforeEach(async () => {
+    sinon.restore();
+    alice = await TestDataGenerator.generateDidKeyPersona();
+  });
+
+  afterAll(() => {
+    sinon.restore();
+  });
+
+  describe('sendDwnRequest', () => {
+    it('sends request', async () => {
+      // create a generic records query
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : {
+          schema: 'foo/bar'
+        }
+      });
+
+      const response = await client.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      });
+
+      // should return success but without any records as none exist yet
+      expect(response.status.code).toBe(200);
+      expect(response.entries).toBeDefined();
+      expect(response.entries?.length).toBe(0);
+    });
+
+    it('send RecordsWrite message', async () => {
+      // create a generic record with schema `foo/bar`
+      const { message: writeMessage, dataBytes } = await TestDataGenerator.generateRecordsWrite({
+        author : alice,
+        schema : 'foo/bar'
+      });
+
+      const writeResponse = await client.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message   : writeMessage,
+        data      : dataBytes,
+      });
+      expect(writeResponse.status.code).toBe(202);
+
+      // query for records matching the schema of the record we inserted
+      const { message: readMessage } = await RecordsRead.create({
+        signer : alice.signer,
+        filter : {
+          recordId: writeMessage.recordId,
+        }
+      });
+
+      const readResponse = await client.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message   : readMessage,
+      });
+
+      // should return success, and the record we inserted
+      expect(readResponse.status.code).toBe(200);
+      expect(readResponse.entry).toBeDefined();
+      expect(readResponse.entry?.recordsWrite?.recordId).toBe(writeMessage.recordId);
+    });
+
+    it('throws error if invalid response exists in the header', async () => {
+      const headers = sinon.createStubInstance(Headers, { has: true });
+      sinon.stub(globalThis, 'fetch').resolves({ headers } as any);
+
+      // create a generic record with schema `foo/bar`
+      const { message: writeMessage, dataBytes } = await TestDataGenerator.generateRecordsWrite({
+        author : alice,
+        schema : 'foo/bar'
+      });
+
+
+      try {
+        await client.sendDwnRequest({
+          dwnUrl    : testDwnUrl,
+          targetDid : alice.did,
+          message   : writeMessage,
+          data      : dataBytes,
+        });
+        throw new Error('Expected an error to be thrown');
+      } catch (error:any) {
+        expect(error.message).toContain('failed to parse json rpc response.');
+      }
+    });
+
+    it('throws error if rpc responds with an error', async () => {
+      const headers = sinon.createStubInstance(Headers, {
+        has : true,
+        get : '{ "error": { "message": "message", "code":"code" } }'
+      });
+      sinon.stub(globalThis, 'fetch').resolves({ headers } as any);
+
+      // create a generic record with schema `foo/bar`
+      const { message: writeMessage, dataBytes } = await TestDataGenerator.generateRecordsWrite({
+        author : alice,
+        schema : 'foo/bar'
+      });
+      try {
+        await client.sendDwnRequest({
+          dwnUrl    : testDwnUrl,
+          targetDid : alice.did,
+          message   : writeMessage,
+          data      : dataBytes,
+        });
+        throw new Error('Expected an error to be thrown');
+      } catch (error: any) {
+        expect(error.message).toContain('(code) - message');
+      }
+    });
+  });
+
+  describe('getServerInfo', () => {
+    it('fetches server info from a DWN server', async () => {
+      const serverInfo = await client.getServerInfo(testDwnUrl);
+      expect(serverInfo.maxFileSize).toBeDefined();
+      expect(typeof serverInfo.webSocketSupport).toBe('boolean');
+      expect(Array.isArray(serverInfo.registrationRequirements)).toBe(true);
+    });
+
+    it('returns cached server info on subsequent calls', async () => {
+      const serverInfo1 = await client.getServerInfo(testDwnUrl);
+      const serverInfo2 = await client.getServerInfo(testDwnUrl);
+      expect(serverInfo1).toEqual(serverInfo2);
+    });
+
+    it('throws when server returns a non-ok response', async () => {
+      sinon.stub(globalThis, 'fetch').resolves({
+        ok         : false,
+        status     : 404,
+        statusText : 'Not Found',
+      } as Response);
+
+      try {
+        await client.getServerInfo('http://localhost:9999');
+        throw new Error('Expected an error to be thrown');
+      } catch (error: any) {
+        expect(error.message).toContain('HTTP (404)');
+      }
+    });
+
+    it('throws when fetch fails', async () => {
+      sinon.stub(globalThis, 'fetch').rejects(new Error('network error'));
+
+      try {
+        await client.getServerInfo('http://localhost:9999');
+        throw new Error('Expected an error to be thrown');
+      } catch (error: any) {
+        expect(error.message).toContain('Error encountered while processing response');
+        expect(error.message).toContain('network error');
+      }
+    });
+
+    it('accepts a custom server info cache', async () => {
+      const customCache = new DwnServerInfoCacheMemory({ ttl: '1h' });
+      const customClient = new HttpDwnRpcClient(customCache);
+      const serverInfo = await customClient.getServerInfo(testDwnUrl);
+      expect(serverInfo.maxFileSize).toBeDefined();
+
+      // verify it was cached in the custom cache
+      const cached = await customCache.get(testDwnUrl);
+      expect(cached).toEqual(serverInfo);
+    });
+  });
+});

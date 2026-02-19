@@ -11,7 +11,8 @@
     "build": "bun run clean && bun run build:esm",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
-    "test:node": "bun test --timeout 10000 .spec.ts"
+    "test:node": "bun test --timeout 10000 .spec.ts",
+    "test:node:coverage": "bun test --timeout 10000 --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .spec.ts"
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/dwn-clients#readme",
   "bugs": "https://github.com/enboxorg/enbox/issues",
