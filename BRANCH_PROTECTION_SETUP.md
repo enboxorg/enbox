@@ -23,7 +23,7 @@ To ensure that all tests pass and coverage doesn't decrease before merging to ma
 
 #### Required Status Checks
 Add these checks (they must run at least once before appearing in the list):
-1. `CI / Test and Coverage (20.x)`
+1. `CI / Test and Coverage`
 2. `CI / CI Success`
 3. `Coverage Comparison / Compare Coverage` (for PRs only)
 
@@ -80,8 +80,8 @@ To modify coverage requirements:
 - Ensure workflow files are in `.github/workflows/`
 
 ### Coverage reports not generating
-- Verify `c8` is installed in package devDependencies
-- Check `.c8rc.json` configuration in each package
+- For packages using `bun test`: coverage is built-in (`bun test --coverage`)
+- For packages using Mocha (`agent`, `api`): verify `c8` is configured if coverage is needed
 - Ensure test commands include coverage generation
 
 ### False coverage decreases

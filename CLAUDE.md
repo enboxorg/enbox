@@ -46,30 +46,56 @@ Before any commits get pushed and PRs opened, ALL of the following MUST pass:
 
 1. **Lint** — `bun run lint` (use `bun run lint:fix` to auto-fix issues)
 2. **Build** — `bun run --filter @enbox/agent build` (rebuild `dwn-sdk-js` first if changed)
-3. **Tests** — `bun run build:tests:node && bunx c8 mocha` from `packages/agent/`
+3. **Tests** — `bun run test:node` from `packages/agent/`
 
 Do not push or open a PR until all three checks pass locally.
 
 ### Running Tests
 
-Agent tests use **Mocha + Chai**, NOT `bun test`. The test pipeline is:
+Most packages use **`bun test`** (Bun's native test runner). The **agent** and **api** packages still use **Mocha + Chai** and require a TypeScript compilation step before running tests.
+
+#### Test framework by package
+
+| Package | Runner | Command (from package dir) |
+|---|---|---|
+| `@enbox/agent` | Mocha + Chai + Sinon | `bun run test:node` |
+| `@enbox/api` | Mocha + Chai | `bun run test:node` |
+| `@enbox/dwn-sdk-js` | `bun test` | `bun run test:node` |
+| `@enbox/dwn-server` | `bun test` | `bun run test` |
+| `@enbox/dwn-sql-store` | `bun test` | `bun run test` |
+| `@enbox/common` | `bun test` | `bun run test:node` |
+| `@enbox/crypto` | `bun test` | `bun run test:node` |
+| `@enbox/dids` | `bun test` | `bun run test:node` |
+
+#### Agent / API tests (Mocha)
 
 ```bash
 # Full agent test suite (from packages/agent/):
 bun run test:node
-# Which runs: rimraf tests/compiled && bun tsc -p tests/tsconfig.json && bunx c8 mocha
+# Which runs: bun run build:tests:node && bunx --bun mocha
 
 # Single test file (from packages/agent/):
-bun run build:tests:node && bunx mocha --spec 'tests/compiled/tests/store-key.spec.js' --timeout 30000 --exit
+bun run build:tests:node && bunx --bun mocha --spec 'tests/compiled/tests/store-key.spec.js' --timeout 30000 --exit
+```
 
-# DWN SDK tests with grep (from packages/dwn-sdk-js/):
+Mocha config is at `packages/agent/.mocharc.json` (10s timeout, `tests/compiled/**/*.spec.js`).
+
+#### DWN SDK / other packages (bun test)
+
+```bash
+# Full DWN SDK test suite (from packages/dwn-sdk-js/):
+bun run test:node
+
+# DWN SDK tests with name filter:
 GREP="ProtocolsConfigure" bun run test:node-grep
+# Which runs: bun test .spec.ts -t $GREP
+
+# Run all tests across the monorepo (from repo root):
+bun run test:node
 
 # Lint all packages (from repo root):
 bun run lint
 ```
-
-Mocha config is at `packages/agent/.mocharc.json` (10s timeout, `tests/compiled/**/*.spec.js`).
 
 **Expect ~66 DHT failures locally** — tests requiring `did:dht` publishing fail without a local Pkarr gateway. CI has one; these pass there.
 
@@ -178,13 +204,18 @@ private async installProtocol(tenant: string, agent: Web5PlatformAgent): Promise
 - Object properties align colons when multiple keys
 - Max line length: 150 characters (strings exempted)
 - Semicolons required, single quotes, trailing commas in multi-line
-- `TODO` comments must reference a GitHub issue
+- `TODO` comments must reference a GitHub issue (enforced in `dwn-sdk-js` and `dwn-server` via `eslint-plugin-todo-plz`)
 
 ## Test Style
 
-### Framework
+### Frameworks
 
-Mocha (`describe`/`it`) + Chai (`expect`) + Sinon (mocks/stubs). Files use `.spec.ts` suffix.
+Two test frameworks are in use:
+
+- **`bun test`** — most packages (common, crypto, dids, dwn-sdk-js, dwn-server, dwn-sql-store). Uses `import { describe, expect, it } from 'bun:test'`. Assertions use `expect(...).toBe(...)`, `expect(...).toThrow(...)`, etc.
+- **Mocha + Chai + Sinon** — `agent` and `api` packages only. Uses `describe`/`it` from Mocha, `expect` from Chai, and Sinon for mocks/stubs.
+
+Files use `.spec.ts` suffix in all packages.
 
 ### Test Structure
 
@@ -202,7 +233,31 @@ describe('DwnKeyStore', () => {
 });
 ```
 
-### Test Harness Pattern
+### bun:test Patterns (dwn-sdk-js, common, crypto, dids, etc.)
+
+```typescript
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import sinon from 'sinon';
+
+describe('ComponentName', () => {
+  beforeEach(() => { /* setup */ });
+  afterAll(() => { /* cleanup */ });
+
+  it('should do something', async () => {
+    expect(result).toBe(expected);
+  });
+
+  it('should throw on invalid input', () => {
+    expect(() => doSomething()).toThrow(DwnErrorCode.SomeErrorCode);
+  });
+
+  it('should reject async errors', async () => {
+    await expect(asyncOperation()).rejects.toThrow('error message');
+  });
+});
+```
+
+### Agent Test Harness Pattern (Mocha — agent/api only)
 
 Agent tests use `PlatformAgentTestHarness` with `TestAgent`:
 
@@ -253,7 +308,13 @@ await harness.agent.start({ password: 'test' });
 
 ### Error Assertions
 
-For async errors, prefer `chai-as-promised`:
+**bun:test** (dwn-sdk-js and most packages):
+```typescript
+expect(() => syncOperation()).toThrow(DwnErrorCode.SomeErrorCode);
+await expect(asyncOperation()).rejects.toThrow('error message');
+```
+
+**Chai** (agent/api only) — prefer `chai-as-promised`:
 ```typescript
 await expect(promise).to.be.rejectedWith(DwnErrorCode.SomeErrorCode);
 ```
@@ -271,7 +332,7 @@ try {
 ### Test Isolation
 
 - Use unique `testDataLocation` per describe block to avoid LevelDB lock conflicts
-- Clean up in `afterEach`/`after` hooks — always close LevelDB handles
+- Clean up in `afterEach`/`after` (Mocha) or `afterAll` (bun:test) hooks — always close LevelDB handles
 - Test data via helper functions and inline construction, not fixture files
 
 ## Architecture Notes
