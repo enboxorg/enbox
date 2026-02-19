@@ -1,5 +1,19 @@
 # @enbox/api
 
+## 0.0.5
+
+### Patch Changes
+
+- [#135](https://github.com/enboxorg/enbox/pull/135) [`bd7399d`](https://github.com/enboxorg/enbox/commit/bd7399d850609fad8e01672378d3e8ac42d7f5a3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: republish with correct @enbox/agent dependency version
+
+  The previous @enbox/api@0.0.4 was published with a dependency on
+  @enbox/agent@0.1.0 (which has broken workspace:_ references) instead of
+  @enbox/agent@0.1.1. This happened because the lockfile was stale when
+  bun pm pack resolved the workspace:_ reference.
+
+  The release workflow now regenerates the lockfile after version bumps
+  to prevent this from recurring.
+
 ## 0.0.4
 
 ### Patch Changes
