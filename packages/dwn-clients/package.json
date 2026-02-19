@@ -1,0 +1,65 @@
+{
+  "name": "@enbox/dwn-clients",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./dist/esm/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/types/index.d.ts",
+  "scripts": {
+    "clean": "rimraf dist",
+    "build:esm": "rimraf dist/esm dist/types && bun tsc -p tsconfig.json",
+    "build": "bun run clean && bun run build:esm",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "test:node": "bun test --timeout 10000 .spec.ts"
+  },
+  "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/dwn-clients#readme",
+  "bugs": "https://github.com/enboxorg/enbox/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enboxorg/enbox.git",
+    "directory": "packages/dwn-clients"
+  },
+  "license": "Apache-2.0",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js"
+    }
+  },
+  "keywords": [
+    "decentralized",
+    "decentralized-web",
+    "dwn",
+    "json-rpc",
+    "web5"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "dependencies": {
+    "@enbox/common": "workspace:*",
+    "@enbox/crypto": "workspace:*",
+    "@enbox/dwn-sdk-js": "workspace:*",
+    "ms": "2.1.3"
+  },
+  "devDependencies": {
+    "@types/ms": "0.7.31",
+    "@types/node": "20.14.8",
+    "@types/sinon": "17.0.3",
+    "@typescript-eslint/eslint-plugin": "8.32.1",
+    "@typescript-eslint/parser": "8.32.1",
+    "bun-types": "latest",
+    "eslint": "9.7.0",
+    "rimraf": "4.4.0",
+    "sinon": "18.0.0",
+    "typescript": "5.5.4"
+  }
+}

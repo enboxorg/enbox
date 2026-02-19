@@ -5,16 +5,22 @@ export type JsonRpcVersion = '2.0';
 export interface JsonRpcRequest {
   jsonrpc: JsonRpcVersion;
   id?: JsonRpcId;
-  /** JSON RPC Subscription Extension Parameters */
-  subscription?: { id: JsonRpcId }
   method: string;
   params?: any;
+  /** JSON RPC Subscription Extension Parameters */
+  subscription?: { id: JsonRpcId };
 }
 
 export interface JsonRpcError {
   code: JsonRpcErrorCodes;
   message: string;
   data?: any;
+}
+
+export interface JsonRpcSubscription {
+  /** JSON RPC Id of the Subscription Request */
+  id: JsonRpcId;
+  close: () => Promise<void>;
 }
 
 export enum JsonRpcErrorCodes {
@@ -29,7 +35,7 @@ export enum JsonRpcErrorCodes {
   // App defined errors
   BadRequest = -50400, // equivalent to HTTP Status 400
   Unauthorized = -50401, // equivalent to HTTP Status 401
-  Forbidden = -50403, // equivalent to HTTP Status 403,
+  Forbidden = -50403, // equivalent to HTTP Status 403
   Conflict = -50409, // equivalent to HTTP Status 409
 }
 
@@ -55,11 +61,25 @@ export const createJsonRpcErrorResponse = (
   message: string,
   data?: any,
 ): JsonRpcErrorResponse => {
-  const error: JsonRpcError = { code, message, data };
+  const error: JsonRpcError = { code, message };
+  if (data != undefined) {
+    error.data = data;
+  }
   return {
     jsonrpc: '2.0',
     id,
     error,
+  };
+};
+
+export const createJsonRpcNotification = (
+  method: string,
+  params?: any,
+): JsonRpcRequest => {
+  return {
+    jsonrpc: '2.0',
+    method,
+    params,
   };
 };
 
@@ -76,34 +96,43 @@ export const createJsonRpcRequest = (
   };
 };
 
+/**
+ * Creates a JSON-RPC subscription request.
+ *
+ * The caller is responsible for providing the full method name including
+ * any `rpc.subscribe.` prefix.
+ */
 export const createJsonRpcSubscriptionRequest = (
   id: JsonRpcId,
   method: string,
-  subscriptionId: JsonRpcId,
-  params?: any
+  params?: any,
+  subscriptionId?: JsonRpcId,
 ): JsonRpcRequest => {
   return {
     jsonrpc      : '2.0',
     id,
-    method       : `rpc.subscribe.${method}`,
+    method,
     params,
     subscription : {
-      id: subscriptionId,
+      id: subscriptionId ?? null,
     }
   };
 };
 
 export const createJsonRpcSuccessResponse = (
   id: JsonRpcId,
-  result: any,
+  result?: any,
 ): JsonRpcSuccessResponse => {
   return {
-    jsonrpc: '2.0',
+    jsonrpc : '2.0',
     id,
-    result,
+    result  : result ?? null,
   };
 };
 
+/**
+ * Safely parses a JSON string, returning `null` on failure instead of throwing.
+ */
 export function parseJson(text: string): object | null {
   try {
     return JSON.parse(text);

@@ -1,11 +1,7 @@
-import type { JsonRpcResponse } from './prototyping/clients/json-rpc.js';
-import type { DwnRpc, DwnRpcRequest, DwnRpcResponse } from './prototyping/clients/dwn-rpc-types.js';
-import type { DwnServerInfoRpc, ServerInfo } from './prototyping/clients/server-info-types.js';
+import type { DwnRpc, DwnRpcRequest, DwnRpcResponse, DwnServerInfoRpc, JsonRpcResponse, ServerInfo } from '@enbox/dwn-clients';
 
-import { createJsonRpcRequest } from './prototyping/clients/json-rpc.js';
 import { CryptoUtils } from '@enbox/crypto';
-import { HttpDwnRpcClient } from './prototyping/clients/http-dwn-rpc-client.js';
-import { WebSocketDwnRpcClient } from './prototyping/clients/web-socket-clients.js';
+import { createJsonRpcRequest, HttpDwnRpcClient, WebSocketDwnRpcClient } from '@enbox/dwn-clients';
 
 /**
  * Interface that can be implemented to communicate with {@link Web5Agent | Web5 Agent}

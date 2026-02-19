@@ -6,7 +6,7 @@ import { config } from '../../src/config.js';
 import { getTestDwn } from '../test-dwn.js';
 import { HttpApi } from '../../src/http-api.js';
 import { InMemoryConnectionManager } from '../../src/connection/connection-manager.js';
-import { JsonRpcSocket } from '../../src/json-rpc-socket.js';
+import { JsonRpcSocket } from '@enbox/dwn-clients';
 import { WsApi } from '../../src/ws-api.js';
 
 describe('InMemoryConnectionManager', () => {

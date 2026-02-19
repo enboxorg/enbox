@@ -1,15 +1,14 @@
-import type { JsonRpcId, JsonRpcRequest, JsonRpcSuccessResponse } from '../src/lib/json-rpc.js';
+import type { JsonRpcId, JsonRpcRequest, JsonRpcSuccessResponse } from '@enbox/dwn-clients';
 
 import log from 'loglevel';
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocketServer } from 'ws';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
-import { JsonRpcSocket } from '../src/json-rpc-socket.js';
 import {
   createJsonRpcErrorResponse, createJsonRpcRequest, createJsonRpcSubscriptionRequest,
-  createJsonRpcSuccessResponse, JsonRpcErrorCodes,
-} from '../src/lib/json-rpc.js';
+  createJsonRpcSuccessResponse, JsonRpcErrorCodes, JsonRpcSocket,
+} from '@enbox/dwn-clients';
 
 describe('JsonRpcSocket', () => {
   let wsServer: WebSocketServer;

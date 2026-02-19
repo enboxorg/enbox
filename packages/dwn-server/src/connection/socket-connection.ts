@@ -1,21 +1,16 @@
-import { DwnMethodName } from '@enbox/dwn-sdk-js';
 import type { RequestContext } from '../lib/json-rpc-router.js';
 import type { ServerWebSocket } from 'bun';
-import type { Dwn, GenericMessage, MessageEvent } from '@enbox/dwn-sdk-js';
-import type { JsonRpcErrorResponse, JsonRpcId, JsonRpcRequest, JsonRpcResponse, JsonRpcSubscription } from '../lib/json-rpc.js';
-
 import type { WsData } from '../http-api.js';
+import type { Dwn, GenericMessage, MessageEvent } from '@enbox/dwn-sdk-js';
+import type { JsonRpcErrorResponse, JsonRpcId, JsonRpcRequest, JsonRpcResponse, JsonRpcSubscription } from '@enbox/dwn-clients';
 
 import log from 'loglevel';
-import { v4 as uuidv4 } from 'uuid';
 
+import { DwnMethodName } from '@enbox/dwn-sdk-js';
 import { jsonRpcRouter } from '../json-rpc-api.js';
 import { requestCounter } from '../metrics.js';
-import {
-  createJsonRpcErrorResponse,
-  createJsonRpcSuccessResponse,
-  JsonRpcErrorCodes,
-} from '../lib/json-rpc.js';
+import { v4 as uuidv4 } from 'uuid';
+import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { DwnServerError, DwnServerErrorCode } from '../dwn-error.js';
 
 const HEARTBEAT_INTERVAL = 30_000;

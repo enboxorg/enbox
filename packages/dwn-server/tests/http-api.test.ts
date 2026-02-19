@@ -1,8 +1,5 @@
 import type { Dwn, DwnError, Persona, ProtocolsConfigureMessage, RecordsQueryReply } from '@enbox/dwn-sdk-js';
-import type {
-  JsonRpcErrorResponse,
-  JsonRpcResponse,
-} from '../src/lib/json-rpc.js';
+import type { JsonRpcErrorResponse, JsonRpcResponse } from '@enbox/dwn-clients';
 
 import { Convert } from '@enbox/common';
 import log from 'loglevel';
@@ -24,10 +21,7 @@ import { config } from '../src/config.js';
 import { getTestDwn } from './test-dwn.js';
 import { HttpApi } from '../src/http-api.js';
 import { RegistrationManager } from '../src/registration/registration-manager.js';
-import {
-  createJsonRpcRequest,
-  JsonRpcErrorCodes,
-} from '../src/lib/json-rpc.js';
+import { createJsonRpcRequest, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import {
   createRecordsWriteMessage,
   getDwnResponse,

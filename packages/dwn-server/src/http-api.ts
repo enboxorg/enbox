@@ -12,7 +12,7 @@ import { DataStream, DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRe
 
 import type { DwnServerConfig } from './config.js';
 import type { DwnServerError } from './dwn-error.js';
-import type { JsonRpcRequest } from './lib/json-rpc.js';
+import type { JsonRpcRequest } from '@enbox/dwn-clients';
 import type { RegistrationManager } from './registration/registration-manager.js';
 import type { RequestContext } from './lib/json-rpc-router.js';
 import type { SocketConnection } from './connection/socket-connection.js';
@@ -20,7 +20,7 @@ import type { SocketConnection } from './connection/socket-connection.js';
 import { config } from './config.js';
 import { jsonRpcRouter } from './json-rpc-api.js';
 import { Web5ConnectServer } from './web5-connect/web5-connect-server.js';
-import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from './lib/json-rpc.js';
+import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { requestCounter, responseHistogram } from './metrics.js';
 
 /** Data attached to each Bun WebSocket via `ws.data`. */

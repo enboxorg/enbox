@@ -6,6 +6,7 @@
     "packages/common",
     "packages/crypto",
     "packages/dids",
+    "packages/dwn-clients",
     "packages/agent",
     "packages/api",
     "packages/browser",

@@ -7,7 +7,7 @@ import type { RequestContext } from '../src/lib/json-rpc-router.js';
 import { getTestDwn } from './test-dwn.js';
 import { handleSubscriptionsClose } from '../src/json-rpc-handlers/subscription/close.js';
 import { SocketConnection } from '../src/connection/socket-connection.js';
-import { createJsonRpcRequest, createJsonRpcSubscriptionRequest, JsonRpcErrorCodes } from '../src/lib/json-rpc.js';
+import { createJsonRpcRequest, createJsonRpcSubscriptionRequest, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { DwnServerError, DwnServerErrorCode } from '../src/dwn-error.js';
 
 describe('handleDwnProcessMessage', () => {

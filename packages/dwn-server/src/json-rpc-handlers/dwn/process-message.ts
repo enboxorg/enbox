@@ -4,7 +4,7 @@ import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 import log from 'loglevel';
 import { v4 as uuidv4 } from 'uuid';
 
-import type { JsonRpcSubscription } from '../../lib/json-rpc.js';
+import type { JsonRpcSubscription } from '@enbox/dwn-clients';
 import type {
   HandlerResponse,
   JsonRpcHandler,
@@ -14,7 +14,7 @@ import {
   createJsonRpcErrorResponse,
   createJsonRpcSuccessResponse,
   JsonRpcErrorCodes,
-} from '../../lib/json-rpc.js';
+} from '@enbox/dwn-clients';
 
 
 export const handleDwnProcessMessage: JsonRpcHandler = async (
