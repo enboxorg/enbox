@@ -100,10 +100,13 @@ export class HttpDwnRpcClient implements DwnRpc {
       if (response.ok) {
         const results = await response.json() as ServerInfo;
 
-        // explicitly return and cache only the desired properties.
-        const serverInfo = {
-          registrationRequirements : results.registrationRequirements,
+        const serverInfo: ServerInfo = {
           maxFileSize              : results.maxFileSize,
+          registrationRequirements : results.registrationRequirements,
+          server                   : results.server,
+          sdkVersion               : results.sdkVersion,
+          url                      : results.url,
+          version                  : results.version,
           webSocketSupport         : results.webSocketSupport,
         };
         this.serverInfoCache.set(dwnUrl, serverInfo);

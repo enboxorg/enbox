@@ -1,3 +1,5 @@
+import type { ProofOfWorkChallengeModel, RegistrationData, RegistrationRequest } from './registration-types.js';
+
 import { concatenateUrl } from './utils.js';
 import { Convert } from '@enbox/common';
 import { CryptoUtils, Sha256 } from '@enbox/crypto';
@@ -10,7 +12,6 @@ export class DwnRegistrar {
    * Registers a new tenant with the given DWN.
    * NOTE: Assumes the user has already accepted the terms of service.
    * NOTE: Currently the DWN Server from `dwn-server` does not require user signature.
-   * TODO: https://github.com/enboxorg/enbox/issues/162 — bring in types from `dwn-server`.
    */
   public static async registerTenant(dwnEndpoint: string, did: string): Promise<void> {
 
@@ -35,15 +36,16 @@ export class DwnRegistrar {
     const proofOfWorkChallengeGetResponse = await fetch(proofOfWorkEndpoint, {
       method: 'GET',
     });
-    const { challengeNonce, maximumAllowedHashValue } = await proofOfWorkChallengeGetResponse.json();
+    const { challengeNonce, maximumAllowedHashValue }: ProofOfWorkChallengeModel =
+      await proofOfWorkChallengeGetResponse.json();
 
     // create registration data based on the hash of the terms-of-service and the DID
-    const registrationData = {
+    const registrationData: RegistrationData = {
       did,
       termsOfServiceHash: await DwnRegistrar.hashAsHexString(termsOfServiceFetched),
     };
 
-    // compute the proof-of-work response nonce based on the the proof-of-work challenge and the registration data.
+    // compute the proof-of-work response nonce based on the proof-of-work challenge and the registration data.
     const responseNonce = await DwnRegistrar.findQualifiedResponseNonce({
       challengeNonce,
       maximumAllowedHashValue,
@@ -51,7 +53,7 @@ export class DwnRegistrar {
     });
 
     // send the registration request to the server
-    const registrationRequest = {
+    const registrationRequest: RegistrationRequest = {
       registrationData,
       proofOfWork: {
         challengeNonce,

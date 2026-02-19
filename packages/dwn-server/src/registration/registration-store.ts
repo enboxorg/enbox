@@ -1,5 +1,5 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
-import type { RegistrationData } from './registration-types.js';
+import type { RegistrationData } from '@enbox/dwn-clients';
 
 import { Kysely } from 'kysely';
 

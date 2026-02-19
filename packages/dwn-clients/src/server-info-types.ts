@@ -7,8 +7,16 @@ export type ServerInfo = {
    * an array of strings representing the server's registration requirements.
    *
    * ie. ['proof-of-work-sha256-v0', 'terms-of-service']
-   * */
+   */
   registrationRequirements: string[],
+  /** the DWN server's package name */
+  server: string,
+  /** the DWN SDK version used by the server */
+  sdkVersion: string,
+  /** the base URL of the DWN server */
+  url: string,
+  /** the DWN server version */
+  version: string,
   /** whether web socket support is enabled on this server */
   webSocketSupport: boolean,
 };

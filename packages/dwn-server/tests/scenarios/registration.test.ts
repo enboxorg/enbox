@@ -1,9 +1,7 @@
 import type { DwnServerConfig } from '../../src/config.js';
 import type { Persona } from '@enbox/dwn-sdk-js';
-import type { ProofOfWorkChallengeModel } from '../../src/registration/proof-of-work-types.js';
 import type { RegistrationManager } from '../../src/registration/registration-manager.js';
-import type { JsonRpcRequest, JsonRpcResponse } from '@enbox/dwn-clients';
-import type { RegistrationData, RegistrationRequest } from '../../src/registration/registration-types.js';
+import type { JsonRpcRequest, JsonRpcResponse, ProofOfWorkChallengeModel, RegistrationData, RegistrationRequest } from '@enbox/dwn-clients';
 
 import { config } from '../../src/config.js';
 import { createJsonRpcRequest } from '@enbox/dwn-clients';

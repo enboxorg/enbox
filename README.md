@@ -11,6 +11,7 @@
 | `@enbox/common` | [![common](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/common.json)](packages/common) |
 | `@enbox/crypto` | [![crypto](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/crypto.json)](packages/crypto) |
 | `@enbox/dids` | [![dids](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dids.json)](packages/dids) |
+| `@enbox/dwn-clients` | [![dwn-clients](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-clients.json)](packages/dwn-clients) |
 | `@enbox/dwn-sdk-js` | [![dwn-sdk-js](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-sdk-js.json)](packages/dwn-sdk-js) |
 | `@enbox/dwn-server` | [![dwn-server](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-server.json)](packages/dwn-server) |
 | `@enbox/dwn-sql-store` | [![dwn-sql-store](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-sql-store.json)](packages/dwn-sql-store) |
@@ -42,6 +43,9 @@ Enbox gives each user an **agent** — a local software component that manages t
 │  └──────────────────────┬────────────────────────────────┘  │
 │                         │                                   │
 │  ┌──────────────────────▼────────────────────────────────┐  │
+│  │  @enbox/dwn-clients  (shared types + transport)       │  │
+│  │  JSON-RPC · HTTP/WS clients · Registration · ServerInfo│  │
+│  ├──────────────────────┬────────────────────────────────┤  │
 │  │  @enbox/dwn-sdk-js  (local DWN instance)              │  │
 │  │  Protocol engine · Message handlers · Storage          │  │
 │  └───────────────────────────────────────────────────────┘  │
@@ -106,8 +110,10 @@ All sensitive data is encrypted at rest through two independent layers:
   └─ @enbox/crypto
        └─ @enbox/dids
             ├─ @enbox/dwn-sdk-js
-            │    ├─ @enbox/agent
-            │    │    └─ @enbox/api
+            │    ├─ @enbox/dwn-clients
+            │    │    ├─ @enbox/agent
+            │    │    │    └─ @enbox/api
+            │    │    └─ @enbox/dwn-server
             │    └─ @enbox/dwn-sql-store
             │         └─ @enbox/dwn-server
             └─ @enbox/browser
@@ -119,6 +125,7 @@ All sensitive data is encrypted at rest through two independent layers:
 | `@enbox/crypto` | Ed25519, secp256k1, AES, PBKDF2, JWE |
 | `@enbox/dids` | DID methods (`did:dht`, `did:jwk`), resolution |
 | `@enbox/dwn-sdk-js` | DWN protocol engine, message handlers, stores |
+| `@enbox/dwn-clients` | DWN client libraries, shared types, JSON-RPC transport |
 | `@enbox/agent` | Agent framework: identity vault, key management, DWN stores, sync |
 | `@enbox/api` | High-level SDK for applications (`Enbox.connect()`) |
 | `@enbox/dwn-sql-store` | SQL-backed DWN storage (PostgreSQL, SQLite, MySQL) |
