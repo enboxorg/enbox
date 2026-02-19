@@ -1,8 +1,8 @@
 import type { BearerDid, PortableDid } from '@enbox/dids';
 import type { DwnProtocolDefinition, ProcessDwnRequest } from '@enbox/agent';
 
-import { expect } from 'chai';
 import sinon from 'sinon';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { AgentPermissionsApi, DwnDateSort, DwnInterface, getRecordAuthor, Oidc, PlatformAgentTestHarness, WalletConnect, Web5UserAgent } from '@enbox/agent';
 import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, PermissionsProtocol, Poller, Time } from '@enbox/dwn-sdk-js';
@@ -28,7 +28,7 @@ describe('DwnApi', () => {
   let protocolUri: string;
   let protocolDefinition: DwnProtocolDefinition;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : Web5UserAgent,
       agentStores : 'memory'
@@ -74,7 +74,7 @@ describe('DwnApi', () => {
     };
   });
 
-  after(async () => {
+  afterAll(async () => {
     sinon.restore();
     await testHarness.clearStorage();
     await testHarness.closeStorage();
@@ -86,7 +86,7 @@ describe('DwnApi', () => {
     let delegateDwn: DwnApi;
     let notesProtocol: DwnProtocolDefinition;
 
-    before(async () => {
+    beforeAll(async () => {
       delegateHarness = await PlatformAgentTestHarness.setup({
         agentClass       : Web5UserAgent,
         agentStores      : 'memory',
@@ -97,7 +97,7 @@ describe('DwnApi', () => {
       await delegateHarness.createAgentDid();
     });
 
-    after(async () => {
+    afterAll(async () => {
       await delegateHarness.clearStorage();
       await delegateHarness.closeStorage();
     });
@@ -141,14 +141,14 @@ describe('DwnApi', () => {
       // alice and bob both configure the protocol
       const { status: aliceConfigStatus, protocol: aliceNotesProtocol } =
         await dwnAlice.protocols.configure({ message: { definition: notesProtocol } });
-      expect(aliceConfigStatus.code).to.equal(202);
+      expect(aliceConfigStatus.code).toBe(202);
       const { status: aliceNotesProtocolSend } = await aliceNotesProtocol.send(aliceDid.uri);
-      expect(aliceNotesProtocolSend.code).to.equal(202);
+      expect(aliceNotesProtocolSend.code).toBe(202);
 
       const { status: bobConfigStatus, protocol: bobNotesProtocol } = await dwnBob.protocols.configure({ message: { definition: notesProtocol } });
-      expect(bobConfigStatus.code).to.equal(202);
+      expect(bobConfigStatus.code).toBe(202);
       const { status: bobNotesProtocolSend } = await bobNotesProtocol!.send(bobDid.uri);
-      expect(bobNotesProtocolSend.code).to.equal(202);
+      expect(bobNotesProtocolSend.code).toBe(202);
 
       const grants = await Oidc.createPermissionGrants(aliceDid.uri, delegatedBearerDid, testHarness.agent, grantRequest.permissionScopes);
 
@@ -181,14 +181,14 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(status.code).to.equal(202);
-        expect(record).to.not.be.undefined;
+        expect(status.code).toBe(202);
+        expect(record).toBeDefined();
 
         // alice is the author, but the signer is the delegateDid
-        expect(record.author).to.equal(aliceDid.uri);
+        expect(record.author).toBe(aliceDid.uri);
         const signerDid = Jws.getSignerDid(record.rawMessage.authorization.signature.signatures[0]);
-        expect(signerDid).to.equal(delegateDid.uri);
-        expect(record.rawMessage.authorization.authorDelegatedGrant).to.not.be.undefined;
+        expect(signerDid).toBe(delegateDid.uri);
+        expect(record.rawMessage.authorization.authorDelegatedGrant).toBeDefined();
       });
 
       it('should read records with a delegated grant', async () => {
@@ -202,10 +202,10 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(writeStatus.code).to.equal(202);
-        expect(record).to.not.be.undefined;
+        expect(writeStatus.code).toBe(202);
+        expect(record).toBeDefined();
         const { status: sendStatus } = await record.send();
-        expect(sendStatus.code).to.equal(202);
+        expect(sendStatus.code).toBe(202);
 
         const { status: readStatus, record: readRecord } = await delegateDwn.records.read({
           from     : aliceDid.uri,
@@ -217,9 +217,9 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(readStatus.code).to.equal(200);
-        expect(readRecord).to.exist;
-        expect(readRecord.id).to.equal;
+        expect(readStatus.code).toBe(200);
+        expect(readRecord).toBeDefined();
+        expect(readRecord.id).toBeDefined();
       });
 
       it('should query records with a delegated grant', async () => {
@@ -233,8 +233,8 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(writeStatus.code).to.equal(202);
-        expect(record).to.not.be.undefined;
+        expect(writeStatus.code).toBe(202);
+        expect(record).toBeDefined();
 
         const { status: queryStatus, records } = await delegateDwn.records.query({
           protocol : notesProtocol.protocol,
@@ -246,18 +246,18 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(queryStatus.code).to.equal(200);
-        expect(records).to.exist;
-        expect(records).to.have.lengthOf(1);
+        expect(queryStatus.code).toBe(200);
+        expect(records).toBeDefined();
+        expect(records).toHaveLength(1);
 
         // alice is the author, but the signer is the delegateDid
-        expect(records![0].author).to.equal(aliceDid.uri);
+        expect(records![0].author).toBe(aliceDid.uri);
         const signerDid = Jws.getSignerDid(records![0].rawMessage.authorization.signature.signatures[0]);
-        expect(signerDid).to.equal(delegateDid.uri);
-        expect(records![0].rawMessage.authorization.authorDelegatedGrant).to.not.be.undefined;
+        expect(signerDid).toBe(delegateDid.uri);
+        expect(records![0].rawMessage.authorization.authorDelegatedGrant).toBeDefined();
 
         // the record should be the same
-        expect(records![0].id).to.equal(record!.id);
+        expect(records![0].id).toBe(record!.id);
       });
 
       it('should subscribe to records with a delegated grant', async () => {
@@ -276,7 +276,7 @@ describe('DwnApi', () => {
           },
           subscriptionHandler
         });
-        expect(subscribeResult.status.code).to.equal(200);
+        expect(subscribeResult.status.code).toBe(200);
 
         // write a record
         const writeResult = await delegateDwn.records.write({
@@ -289,25 +289,25 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain',
           }
         });
-        expect(writeResult.status.code).to.equal(202);
+        expect(writeResult.status.code).toBe(202);
 
         // wait for the record to be received
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(records.size).to.equal(1);
+          expect(records.size).toBe(1);
           const record = records.get(writeResult.record.id);
-          expect(record.toJSON()).to.deep.equal(writeResult.record.toJSON());
-          expect(record.deleted).to.be.false;
+          expect(record.toJSON()).toEqual(writeResult.record.toJSON());
+          expect(record.deleted).toBe(false);
         });
 
         // delete the record using the original writeResult instance of it
         const deleteResult = await writeResult.record.delete();
-        expect(deleteResult.status.code).to.equal(202);
+        expect(deleteResult.status.code).toBe(202);
 
         // wait for the record state to be reflected as deleted
         await Poller.pollUntilSuccessOrTimeout(async () => {
           const record = records.get(writeResult.record.id);
-          expect(record).to.exist;
-          expect(record.deleted).to.be.true;
+          expect(record).toBeDefined();
+          expect(record.deleted).toBe(true);
         });
 
         // write another record and delete the previous one, the state should be updated
@@ -321,19 +321,19 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain',
           }
         });
-        expect(writeResult2.status.code).to.equal(202);
+        expect(writeResult2.status.code).toBe(202);
 
         // wait for the record to be received
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(records.size).to.equal(2);
+          expect(records.size).toBe(2);
           const record = records.get(writeResult2.record.id);
-          expect(record.toJSON()).to.deep.equal(writeResult2.record.toJSON());
-          expect(record.deleted).to.be.false;
+          expect(record.toJSON()).toEqual(writeResult2.record.toJSON());
+          expect(record.deleted).toBe(false);
 
           //check the deleted record
           const deletedRecord = records.get(writeResult.record.id);
-          expect(deletedRecord).to.exist;
-          expect(deletedRecord.deleted).to.be.true;
+          expect(deletedRecord).toBeDefined();
+          expect(deletedRecord.deleted).toBe(true);
         });
       });
 
@@ -343,9 +343,9 @@ describe('DwnApi', () => {
           ...notesProtocol,
           protocol: `http://other-protocol.xyz/protocol/${TestDataGenerator.randomString(15)}`
         } } });
-        expect(aliceConfigStatus.code).to.equal(202);
+        expect(aliceConfigStatus.code).toBe(202);
         const { status: aliceOtherProtocolSend } = await aliceOtherProtocol.send(aliceDid.uri);
-        expect(aliceOtherProtocolSend.code).to.equal(202);
+        expect(aliceOtherProtocolSend.code).toBe(202);
 
         // alice writes a note record to the permissioned protocol
         const { status: writeStatus1, record: allowedRecord } = await dwnAlice.records.create({
@@ -357,10 +357,10 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain',
           }
         });
-        expect(writeStatus1.code).to.equal(202);
-        expect(allowedRecord).to.not.be.undefined;
+        expect(writeStatus1.code).toBe(202);
+        expect(allowedRecord).toBeDefined();
         const { status: allowedRecordSendStatus } = await allowedRecord.send();
-        expect(allowedRecordSendStatus.code).to.equal(202);
+        expect(allowedRecordSendStatus.code).toBe(202);
 
         // alice writes a public and private note to the other protocol
         const { status: writeStatus2, record: publicRecord } = await dwnAlice.records.create({
@@ -373,10 +373,10 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain',
           }
         });
-        expect(writeStatus2.code).to.equal(202);
-        expect(publicRecord).to.not.be.undefined;
+        expect(writeStatus2.code).toBe(202);
+        expect(publicRecord).toBeDefined();
         const { status: publicRecordSendStatus } = await publicRecord.send();
-        expect(publicRecordSendStatus.code).to.equal(202);
+        expect(publicRecordSendStatus.code).toBe(202);
 
         const { status: writeStatus3, record: privateRecord } = await dwnAlice.records.create({
           data    : 'Hello, world!',
@@ -387,10 +387,10 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain',
           }
         });
-        expect(writeStatus3.code).to.equal(202);
-        expect(privateRecord).to.not.be.undefined;
+        expect(writeStatus3.code).toBe(202);
+        expect(privateRecord).toBeDefined();
         const { status: privateRecordSendStatus } = await privateRecord.send();
-        expect(privateRecordSendStatus.code).to.equal(202);
+        expect(privateRecordSendStatus.code).toBe(202);
 
 
         // sanity: delegateDwn reads from the allowed record from alice's DWN
@@ -403,9 +403,9 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(readStatus1.code).to.equal(200);
-        expect(allowedRecordReturned).to.exist;
-        expect(allowedRecordReturned.id).to.equal(allowedRecord.id);
+        expect(readStatus1.code).toBe(200);
+        expect(allowedRecordReturned).toBeDefined();
+        expect(allowedRecordReturned.id).toBe(allowedRecord.id);
 
         // delegateDwn reads from the other protocol, which no permissions exist
         // only the public record is successfully returned
@@ -418,9 +418,9 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(readStatus2.code).to.equal(200);
-        expect(publicRecordReturned).to.exist;
-        expect(publicRecordReturned.id).to.equal(publicRecord.id);
+        expect(readStatus2.code).toBe(200);
+        expect(publicRecordReturned).toBeDefined();
+        expect(publicRecordReturned.id).toBe(publicRecord.id);
 
         // attempt to read the private record, which should fail
         const { status: readStatus3, record: privateRecordReturned } = await delegateDwn.records.read({
@@ -432,8 +432,8 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(readStatus3.code).to.equal(401);
-        expect(privateRecordReturned).to.be.undefined;
+        expect(readStatus3.code).toBe(401);
+        expect(privateRecordReturned).toBeUndefined();
 
         // sanity: query as alice to get both records
         const { status: readStatus4, record: privateRecordReturnedAlice } = await dwnAlice.records.read({
@@ -445,9 +445,9 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(readStatus4.code).to.equal(200);
-        expect(privateRecordReturnedAlice).to.exist;
-        expect(privateRecordReturnedAlice.id).to.equal(privateRecord.id);
+        expect(readStatus4.code).toBe(200);
+        expect(privateRecordReturnedAlice).toBeDefined();
+        expect(privateRecordReturnedAlice.id).toBe(privateRecord.id);
       });
 
       it('should query records as the delegate DID if no grant is found', async () => {
@@ -456,9 +456,9 @@ describe('DwnApi', () => {
           ...notesProtocol,
           protocol: `http://other-protocol.xyz/protocol/${TestDataGenerator.randomString(15)}`
         } } });
-        expect(aliceConfigStatus.code).to.equal(202);
+        expect(aliceConfigStatus.code).toBe(202);
         const { status: aliceOtherProtocolSend } = await aliceOtherProtocol.send(aliceDid.uri);
-        expect(aliceOtherProtocolSend.code).to.equal(202);
+        expect(aliceOtherProtocolSend.code).toBe(202);
 
         // alice writes a note record to the permissioned protocol
         const { status: writeStatus1, record: allowedRecord } = await dwnAlice.records.create({
@@ -470,10 +470,10 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain',
           }
         });
-        expect(writeStatus1.code).to.equal(202);
-        expect(allowedRecord).to.not.be.undefined;
+        expect(writeStatus1.code).toBe(202);
+        expect(allowedRecord).toBeDefined();
         const { status: allowedRecordSendStatus } = await allowedRecord.send();
-        expect(allowedRecordSendStatus.code).to.equal(202);
+        expect(allowedRecordSendStatus.code).toBe(202);
 
         // alice writes a public and private note to the other protocol
         const { status: writeStatus2, record: publicRecord } = await dwnAlice.records.create({
@@ -486,10 +486,10 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain',
           }
         });
-        expect(writeStatus2.code).to.equal(202);
-        expect(publicRecord).to.not.be.undefined;
+        expect(writeStatus2.code).toBe(202);
+        expect(publicRecord).toBeDefined();
         const { status: publicRecordSendStatus } = await publicRecord.send();
-        expect(publicRecordSendStatus.code).to.equal(202);
+        expect(publicRecordSendStatus.code).toBe(202);
 
         const { status: writeStatus3, record: privateRecord } = await dwnAlice.records.create({
           data    : 'Hello, world!',
@@ -500,10 +500,10 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain',
           }
         });
-        expect(writeStatus3.code).to.equal(202);
-        expect(privateRecord).to.not.be.undefined;
+        expect(writeStatus3.code).toBe(202);
+        expect(privateRecord).toBeDefined();
         const { status: privateRecordSendStatus } = await privateRecord.send();
-        expect(privateRecordSendStatus.code).to.equal(202);
+        expect(privateRecordSendStatus.code).toBe(202);
 
 
         // sanity: delegateDwn queries for the allowed record from alice's DWN
@@ -516,9 +516,9 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(queryStatus1.code).to.equal(200);
-        expect(allowedRecords).to.exist;
-        expect(allowedRecords).to.have.lengthOf(1);
+        expect(queryStatus1.code).toBe(200);
+        expect(allowedRecords).toBeDefined();
+        expect(allowedRecords).toHaveLength(1);
 
         // delegateDwn queries for the other protocol, which no permissions exist
         // only the public record is returned
@@ -531,10 +531,10 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(queryStatus2.code).to.equal(200);
-        expect(publicRecords).to.exist;
-        expect(publicRecords).to.have.lengthOf(1);
-        expect(publicRecords![0].id).to.equal(publicRecord.id);
+        expect(queryStatus2.code).toBe(200);
+        expect(publicRecords).toBeDefined();
+        expect(publicRecords).toHaveLength(1);
+        expect(publicRecords![0].id).toBe(publicRecord.id);
 
         // sanity: query as alice to get both records
         const { status: queryStatus3, records: allRecords } = await dwnAlice.records.query({
@@ -546,10 +546,10 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(queryStatus3.code).to.equal(200);
-        expect(allRecords).to.exist;
-        expect(allRecords).to.have.lengthOf(2);
-        expect(allRecords.map(r => r.id)).to.have.members([publicRecord.id, privateRecord.id]);
+        expect(queryStatus3.code).toBe(200);
+        expect(allRecords).toBeDefined();
+        expect(allRecords).toHaveLength(2);
+        expect(allRecords.map(r => r.id)).toEqual(expect.arrayContaining([publicRecord.id, privateRecord.id]));
       });
 
       it('should subscribe to records as the delegate DID if no grant is found', async () => {
@@ -558,9 +558,9 @@ describe('DwnApi', () => {
           ...notesProtocol,
           protocol: `http://other-protocol.xyz/protocol/${TestDataGenerator.randomString(15)}`
         } } });
-        expect(aliceConfigStatus.code).to.equal(202);
+        expect(aliceConfigStatus.code).toBe(202);
         const { status: aliceOtherProtocolSend } = await aliceOtherProtocol.send(aliceDid.uri);
-        expect(aliceOtherProtocolSend.code).to.equal(202);
+        expect(aliceOtherProtocolSend.code).toBe(202);
 
         // delegatedDwn subscribes to both protocols
         const permissionedNotesRecords: Map<string, Record> = new Map();
@@ -577,7 +577,7 @@ describe('DwnApi', () => {
           },
           subscriptionHandler: permissionedNotesSubscriptionHandler
         });
-        expect(permissionedNotesSubscribeResult.status.code).to.equal(200);
+        expect(permissionedNotesSubscribeResult.status.code).toBe(200);
 
         const otherProtocolRecords: Map<string, Record> = new Map();
         const otherProtocolSubscriptionHandler = async (record: Record): Promise<void> => {
@@ -593,7 +593,7 @@ describe('DwnApi', () => {
           },
           subscriptionHandler: otherProtocolSubscriptionHandler
         });
-        expect(otherProtocolSubscribeResult.status.code).to.equal(200);
+        expect(otherProtocolSubscribeResult.status.code).toBe(200);
 
         // alice subscribes to the other protocol as a sanity
         const aliceOtherProtocolRecords: Map<string, Record> = new Map();
@@ -610,7 +610,7 @@ describe('DwnApi', () => {
           },
           subscriptionHandler: aliceOtherProtocolSubscriptionHandler
         });
-        expect(aliceOtherProtocolSubscribeResult.status.code).to.equal(200);
+        expect(aliceOtherProtocolSubscribeResult.status.code).toBe(200);
 
         // NOTE: write the private record before the public so that it should be received first
         // alice writes a public and private note to the other protocol
@@ -624,10 +624,10 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain',
           }
         });
-        expect(writeStatus2.code).to.equal(202);
-        expect(publicRecord).to.not.be.undefined;
+        expect(writeStatus2.code).toBe(202);
+        expect(publicRecord).toBeDefined();
         const { status: publicRecordSendStatus } = await publicRecord.send();
-        expect(publicRecordSendStatus.code).to.equal(202);
+        expect(publicRecordSendStatus.code).toBe(202);
 
         // alice writes a note record to the permissioned protocol
         const { status: writeStatus1, record: allowedRecord } = await dwnAlice.records.create({
@@ -639,10 +639,10 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain',
           }
         });
-        expect(writeStatus1.code).to.equal(202);
-        expect(allowedRecord).to.not.be.undefined;
+        expect(writeStatus1.code).toBe(202);
+        expect(allowedRecord).toBeDefined();
         const { status: allowedRecordSendStatus } = await allowedRecord.send();
-        expect(allowedRecordSendStatus.code).to.equal(202);
+        expect(allowedRecordSendStatus.code).toBe(202);
 
         const { status: writeStatus3, record: privateRecord } = await dwnAlice.records.create({
           data    : 'Hello, world!',
@@ -653,28 +653,28 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain',
           }
         });
-        expect(writeStatus3.code).to.equal(202);
-        expect(privateRecord).to.not.be.undefined;
+        expect(writeStatus3.code).toBe(202);
+        expect(privateRecord).toBeDefined();
         const { status: privateRecordSendStatus } = await privateRecord.send();
-        expect(privateRecordSendStatus.code).to.equal(202);
+        expect(privateRecordSendStatus.code).toBe(202);
 
         // wait for the records to be received
         // alice receives both the public and private records on her subscription
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(aliceOtherProtocolRecords.size).to.equal(2);
-          expect(aliceOtherProtocolRecords.get(publicRecord.id)).to.exist;
-          expect(aliceOtherProtocolRecords.get(privateRecord.id)).to.exist;
+          expect(aliceOtherProtocolRecords.size).toBe(2);
+          expect(aliceOtherProtocolRecords.get(publicRecord.id)).toBeDefined();
+          expect(aliceOtherProtocolRecords.get(privateRecord.id)).toBeDefined();
         });
 
         // delegated agent only receives the public record from the other protocol
         await Poller.pollUntilSuccessOrTimeout(async () => {
           // permissionedNotesRecords should have the allowedRecord
-          expect(permissionedNotesRecords.size).to.equal(1);
-          expect(permissionedNotesRecords.get(allowedRecord.id)).to.exist;
+          expect(permissionedNotesRecords.size).toBe(1);
+          expect(permissionedNotesRecords.get(allowedRecord.id)).toBeDefined();
 
           // otherProtocolRecords should have only the publicRecord
-          expect(otherProtocolRecords.size).to.equal(1);
-          expect(otherProtocolRecords.get(publicRecord.id)).to.exist;
+          expect(otherProtocolRecords.size).toBe(1);
+          expect(otherProtocolRecords.get(publicRecord.id)).toBeDefined();
         });
       });
     });
@@ -693,9 +693,9 @@ describe('DwnApi', () => {
               }
             }
           });
-          expect.fail('Expected an error to be thrown.');
+          throw new Error('Expected an error to be thrown.');
         } catch (error: any) {
-          expect(error.message).to.equal(`CachedPermissions: No permissions found for ProtocolsConfigure: ${protocolUri}`);
+          expect(error.message).toBe(`CachedPermissions: No permissions found for ProtocolsConfigure: ${protocolUri}`);
         }
 
         // create a grant for the protocol
@@ -717,9 +717,9 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(status.code).to.equal(202);
-        expect(protocol).to.exist;
-        expect(protocol.definition.protocol).to.equal(protocolUri);
+        expect(status.code).toBe(202);
+        expect(protocol).toBeDefined();
+        expect(protocol.definition.protocol).toBe(protocolUri);
       });
 
       it('should query for a protocol with a permission grant', async () => {
@@ -735,10 +735,10 @@ describe('DwnApi', () => {
             definition: nonPublicProtocol
           }
         });
-        expect(nonPublicStatus.code).to.equal(202);
-        expect(nonPublicProtocolResponse).to.exist;
+        expect(nonPublicStatus.code).toBe(202);
+        expect(nonPublicProtocolResponse).toBeDefined();
         const nonPublicProtocolSend = await nonPublicProtocolResponse.send(aliceDid.uri);
-        expect(nonPublicProtocolSend.status.code).to.equal(202);
+        expect(nonPublicProtocolSend.status.code).toBe(202);
 
         // attempt to query the protocol, should not return any results as there are no grants for it
         const { status: nonPublicQueryStatus, protocols: nonPublicProtocols } = await delegateDwn.protocols.query({
@@ -749,9 +749,9 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(nonPublicQueryStatus.code).to.equal(200);
-        expect(nonPublicProtocols).to.exist;
-        expect(nonPublicProtocols).to.have.lengthOf(0);
+        expect(nonPublicQueryStatus.code).toBe(200);
+        expect(nonPublicProtocols).toBeDefined();
+        expect(nonPublicProtocols).toHaveLength(0);
 
         // grant the delegate DID access to query the non-public protocol
         const delegatedBearerDid = await delegateHarness.agent.did.get({ didUri: delegateDid.uri });
@@ -771,9 +771,9 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(nonPublicQueryStatus2.code).to.equal(200);
-        expect(nonPublicProtocols2).to.exist;
-        expect(nonPublicProtocols2).to.have.lengthOf(1);
+        expect(nonPublicQueryStatus2.code).toBe(200);
+        expect(nonPublicProtocols2).toBeDefined();
+        expect(nonPublicProtocols2).toHaveLength(1);
       });
 
       it('should query for a protocol as the delegate DID if no grant is found', async () => {
@@ -789,10 +789,10 @@ describe('DwnApi', () => {
             definition: publicProtocol
           }
         });
-        expect(publicStatus.code).to.equal(202);
-        expect(publicProtocolResponse).to.exist;
+        expect(publicStatus.code).toBe(202);
+        expect(publicProtocolResponse).toBeDefined();
         const publicProtocolSend = await publicProtocolResponse.send(aliceDid.uri);
-        expect(publicProtocolSend.status.code).to.equal(202);
+        expect(publicProtocolSend.status.code).toBe(202);
 
         const { status: publicQueryStatus, protocols: publicProtocols } = await delegateDwn.protocols.query({
           from    : aliceDid.uri,
@@ -802,10 +802,10 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(publicQueryStatus.code).to.equal(200);
-        expect(publicProtocols).to.exist;
-        expect(publicProtocols).to.have.lengthOf(1);
-        expect(publicProtocols[0].definition.protocol).to.equal(publicProtocol.protocol);
+        expect(publicQueryStatus.code).toBe(200);
+        expect(publicProtocols).toBeDefined();
+        expect(publicProtocols).toHaveLength(1);
+        expect(publicProtocols[0].definition.protocol).toBe(publicProtocol.protocol);
       });
     });
   });
@@ -819,8 +819,8 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(response.status.code).to.equal(202);
-        expect(response.status.detail).to.equal('Accepted');
+        expect(response.status.code).toBe(202);
+        expect(response.status.detail).toBe('Accepted');
       });
     });
   });
@@ -834,8 +834,8 @@ describe('DwnApi', () => {
             definition: protocolDefinition
           }
         });
-        expect(configureResponse.status.code).to.equal(202);
-        expect(configureResponse.status.detail).to.equal('Accepted');
+        expect(configureResponse.status.code).toBe(202);
+        expect(configureResponse.status.detail).toBe('Accepted');
 
         // Query for the protocol just configured.
         const queryResponse = await dwnAlice.protocols.query({
@@ -846,12 +846,12 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(queryResponse.status.code).to.equal(200);
-        expect(queryResponse.protocols.length).to.equal(1);
-        expect(queryResponse.protocols[0].definition).to.have.property('types');
-        expect(queryResponse.protocols[0].definition).to.have.property('protocol');
-        expect(queryResponse.protocols[0].definition.protocol).to.equal(protocolDefinition.protocol);
-        expect(queryResponse.protocols[0].definition).to.have.property('structure');
+        expect(queryResponse.status.code).toBe(200);
+        expect(queryResponse.protocols.length).toBe(1);
+        expect(queryResponse.protocols[0].definition).toHaveProperty('types');
+        expect(queryResponse.protocols[0].definition).toHaveProperty('protocol');
+        expect(queryResponse.protocols[0].definition.protocol).toBe(protocolDefinition.protocol);
+        expect(queryResponse.protocols[0].definition).toHaveProperty('structure');
       });
     });
 
@@ -863,8 +863,8 @@ describe('DwnApi', () => {
             definition: protocolDefinition
           }
         });
-        expect(configureResponse.status.code).to.equal(202);
-        expect(configureResponse.status.detail).to.equal('Accepted');
+        expect(configureResponse.status.code).toBe(202);
+        expect(configureResponse.status.detail).toBe('Accepted');
 
         // Write the protocol to the remote DWN.
         await configureResponse.protocol.send(aliceDid.uri);
@@ -879,12 +879,12 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(queryResponse.status.code).to.equal(200);
-        expect(queryResponse.protocols.length).to.equal(1);
-        expect(queryResponse.protocols[0].definition).to.have.property('types');
-        expect(queryResponse.protocols[0].definition).to.have.property('protocol');
-        expect(queryResponse.protocols[0].definition.protocol).to.equal(protocolDefinition.protocol);
-        expect(queryResponse.protocols[0].definition).to.have.property('structure');
+        expect(queryResponse.status.code).toBe(200);
+        expect(queryResponse.protocols.length).toBe(1);
+        expect(queryResponse.protocols[0].definition).toHaveProperty('types');
+        expect(queryResponse.protocols[0].definition).toHaveProperty('protocol');
+        expect(queryResponse.protocols[0].definition.protocol).toBe(protocolDefinition.protocol);
+        expect(queryResponse.protocols[0].definition).toHaveProperty('structure');
       });
 
       it('returns empty protocols array when no protocols match the filter provided', async () => {
@@ -898,9 +898,9 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(response.status.code).to.equal(200);
-        expect(response.protocols).to.exist;
-        expect(response.protocols.length).to.equal(0);
+        expect(response.status.code).toBe(200);
+        expect(response.protocols).toBeDefined();
+        expect(response.protocols.length).toBe(0);
       });
 
       it('returns published protocol definitions for requests from external DID', async () => {
@@ -910,11 +910,11 @@ describe('DwnApi', () => {
             definition: { ...protocolDefinition, protocol: 'http://proto-published', published: true }
           }
         });
-        expect(publicProtocol.status.code).to.equal(202);
+        expect(publicProtocol.status.code).toBe(202);
 
         // Configure the published protocol on Alice's remote DWN.
         const sendPublic = await publicProtocol.protocol.send(aliceDid.uri);
-        expect(sendPublic.status.code).to.equal(202);
+        expect(sendPublic.status.code).toBe(202);
 
         // Attempt to query for the published protocol on Alice's remote DWN authored by Bob.
         const publishedResponse = await dwnBob.protocols.query({
@@ -927,9 +927,9 @@ describe('DwnApi', () => {
         });
 
         // Verify that one query result is returned.
-        expect(publishedResponse.status.code).to.equal(200);
-        expect(publishedResponse.protocols.length).to.equal(1);
-        expect(publishedResponse.protocols[0].definition.protocol).to.equal('http://proto-published');
+        expect(publishedResponse.status.code).toBe(200);
+        expect(publishedResponse.protocols.length).toBe(1);
+        expect(publishedResponse.protocols[0].definition.protocol).toBe('http://proto-published');
       });
 
       it('does not return unpublished protocol definitions for requests from external DID', async () => {
@@ -939,11 +939,11 @@ describe('DwnApi', () => {
             definition: { ...protocolDefinition, protocol: 'http://proto-not-published', published: false }
           }
         });
-        expect(notPublicProtocol.status.code).to.equal(202);
+        expect(notPublicProtocol.status.code).toBe(202);
 
         // Configure the unpublished protocol on Alice's remote DWN.
         const sendNotPublic = await notPublicProtocol.protocol.send(aliceDid.uri);
-        expect(sendNotPublic.status.code).to.equal(202);
+        expect(sendNotPublic.status.code).toBe(202);
 
         // Attempt to query for the unpublished protocol on Alice's remote DWN authored by Bob.
         const nonPublishedResponse = await dwnBob.protocols.query({
@@ -956,8 +956,8 @@ describe('DwnApi', () => {
         });
 
         // Verify that no query results are returned.
-        expect(nonPublishedResponse.status.code).to.equal(200);
-        expect(nonPublishedResponse.protocols.length).to.equal(0);
+        expect(nonPublishedResponse.status.code).toBe(200);
+        expect(nonPublishedResponse.protocols.length).toBe(0);
       });
 
       it('returns a 401 with an invalid permissions grant', async () => {
@@ -972,10 +972,10 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(response.status.code).to.equal(401);
-        expect(response.status.detail).to.include('GrantAuthorizationGrantMissing');
-        expect(response.protocols).to.exist;
-        expect(response.protocols.length).to.equal(0);
+        expect(response.status.code).toBe(401);
+        expect(response.status.detail).toContain('GrantAuthorizationGrantMissing');
+        expect(response.protocols).toBeDefined();
+        expect(response.protocols.length).toBe(0);
       });
     });
   });
@@ -986,15 +986,15 @@ describe('DwnApi', () => {
       const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
         message: { definition: protocolDefinition }
       });
-      expect(aliceProtocolStatus.code).to.equal(202);
-      expect(aliceProtocol).to.exist;
+      expect(aliceProtocolStatus.code).toBe(202);
+      expect(aliceProtocol).toBeDefined();
       const { status: aliceProtocolSendStatus } = await aliceProtocol.send(aliceDid.uri);
-      expect(aliceProtocolSendStatus.code).to.equal(202);
+      expect(aliceProtocolSendStatus.code).toBe(202);
       const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({ message: { definition: protocolDefinition } });
-      expect(bobProtocolStatus.code).to.equal(202);
-      expect(bobProtocol).to.exist;
+      expect(bobProtocolStatus.code).toBe(202);
+      expect(bobProtocol).toBeDefined();
       const { status: bobProtocolSendStatus } = await bobProtocol!.send(bobDid.uri);
-      expect(bobProtocolSendStatus.code).to.equal(202);
+      expect(bobProtocolSendStatus.code).toBe(202);
     });
 
     describe('agent', () => {
@@ -1009,10 +1009,10 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(result.status.code).to.equal(202);
-        expect(result.status.detail).to.equal('Accepted');
-        expect(result.record).to.exist;
-        expect(await result.record?.data.text()).to.equal(dataString);
+        expect(result.status.code).toBe(202);
+        expect(result.status.detail).toBe('Accepted');
+        expect(result.record).toBeDefined();
+        expect(await result.record?.data.text()).toBe(dataString);
       });
 
       it('creates a record with tags', async () => {
@@ -1030,11 +1030,11 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(result.status.code).to.equal(202);
-        expect(result.status.detail).to.equal('Accepted');
-        expect(result.record).to.exist;
-        expect(result.record?.tags).to.exist;
-        expect(result.record?.tags).to.deep.equal({
+        expect(result.status.code).toBe(202);
+        expect(result.status.detail).toBe('Accepted');
+        expect(result.record).toBeDefined();
+        expect(result.record?.tags).toBeDefined();
+        expect(result.record?.tags).toEqual({
           foo   : 'bar',
           count : 2,
           bool  : true
@@ -1053,10 +1053,10 @@ describe('DwnApi', () => {
             dataFormat   : 'application/json'
           }
         });
-        expect(result.status.code).to.equal(202);
-        expect(result.status.detail).to.equal('Accepted');
-        expect(result.record).to.exist;
-        expect(await result.record?.data.json()).to.deep.equal(dataJson);
+        expect(result.status.code).toBe(202);
+        expect(result.status.detail).toBe('Accepted');
+        expect(result.record).toBeDefined();
+        expect(await result.record?.data.json()).toEqual(dataJson);
       });
 
       it('creates a role record for another user that they can use to create role-based records', async () => {
@@ -1084,18 +1084,18 @@ describe('DwnApi', () => {
             definition: photosProtocolDefinition
           }
         });
-        expect(bobProtocolStatus.code).to.equal(202);
+        expect(bobProtocolStatus.code).toBe(202);
         const { status: bobRemoteProtocolStatus } = await bobProtocol.send(bobDid.uri);
-        expect(bobRemoteProtocolStatus.code).to.equal(202);
+        expect(bobRemoteProtocolStatus.code).toBe(202);
 
         const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
           message: {
             definition: photosProtocolDefinition
           }
         });
-        expect(aliceProtocolStatus.code).to.equal(202);
+        expect(aliceProtocolStatus.code).toBe(202);
         const { status: aliceRemoteProtocolStatus } = await aliceProtocol.send(aliceDid.uri);
-        expect(aliceRemoteProtocolStatus.code).to.equal(202);
+        expect(aliceRemoteProtocolStatus.code).toBe(202);
 
         // Alice creates a role-based 'friend' record, updates it, then sends it to her remote DWN.
         const { status: friendCreateStatus, record: friendRecord } = await dwnAlice.records.create({
@@ -1108,11 +1108,11 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain'
           }
         });
-        expect(friendCreateStatus.code).to.equal(202);
+        expect(friendCreateStatus.code).toBe(202);
         const { status: friendRecordUpdateStatus } = await friendRecord.update({ data: 'update' });
-        expect(friendRecordUpdateStatus.code).to.equal(202);
+        expect(friendRecordUpdateStatus.code).toBe(202);
         const { status: aliceFriendSendStatus } = await friendRecord.send(aliceDid.uri);
-        expect(aliceFriendSendStatus.code).to.equal(202);
+        expect(aliceFriendSendStatus.code).toBe(202);
 
         // Bob creates an album record using the role 'friend' and sends it to Alice
         const { status: albumCreateStatus, record: albumRecord } = await dwnBob.records.create({
@@ -1126,11 +1126,11 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain'
           }
         });
-        expect(albumCreateStatus.code).to.equal(202);
+        expect(albumCreateStatus.code).toBe(202);
         const { status: bobAlbumSendStatus } = await albumRecord.send(bobDid.uri);
-        expect(bobAlbumSendStatus.code).to.equal(202);
+        expect(bobAlbumSendStatus.code).toBe(202);
         const { status: aliceAlbumSendStatus } = await albumRecord.send(aliceDid.uri);
-        expect(aliceAlbumSendStatus.code).to.equal(202);
+        expect(aliceAlbumSendStatus.code).toBe(202);
 
         // Bob makes Alice a `participant` and sends the record to her and his own remote node.
         const { status: participantCreateStatus, record: participantRecord } = await dwnBob.records.create({
@@ -1144,11 +1144,11 @@ describe('DwnApi', () => {
             dataFormat      : 'text/plain'
           }
         });
-        expect(participantCreateStatus.code).to.equal(202);
+        expect(participantCreateStatus.code).toBe(202);
         const { status: bobParticipantSendStatus } = await participantRecord.send(bobDid.uri);
-        expect(bobParticipantSendStatus.code).to.equal(202);
+        expect(bobParticipantSendStatus.code).toBe(202);
         const { status: aliceParticipantSendStatus } = await participantRecord.send(aliceDid.uri);
-        expect(aliceParticipantSendStatus.code).to.equal(202);
+        expect(aliceParticipantSendStatus.code).toBe(202);
 
         // Alice fetches the album record as well as the participant record that Bob created and stores it on her local node.
         const aliceAlbumReadResult = await dwnAlice.records.read({
@@ -1159,10 +1159,10 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(aliceAlbumReadResult.status.code).to.equal(200);
-        expect(aliceAlbumReadResult.record).to.exist;
+        expect(aliceAlbumReadResult.status.code).toBe(200);
+        expect(aliceAlbumReadResult.record).toBeDefined();
         const { status: aliceAlbumReadStoreStatus } = await aliceAlbumReadResult.record.store();
-        expect(aliceAlbumReadStoreStatus.code).to.equal(202);
+        expect(aliceAlbumReadStoreStatus.code).toBe(202);
 
         const aliceParticipantReadResult = await dwnAlice.records.read({
           from    : aliceDid.uri,
@@ -1172,10 +1172,10 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(aliceParticipantReadResult.status.code).to.equal(200);
-        expect(aliceParticipantReadResult.record).to.exist;
+        expect(aliceParticipantReadResult.status.code).toBe(200);
+        expect(aliceParticipantReadResult.record).toBeDefined();
         const { status: aliceParticipantReadStoreStatus } = await aliceParticipantReadResult.record.store();
-        expect(aliceParticipantReadStoreStatus.code).to.equal(202);
+        expect(aliceParticipantReadStoreStatus.code).toBe(202);
 
         // Using the participant role, Alice can make Bob an `updater` and send the record to him and her own remote node.
         // Only updater roles can update the photo record after it's been created.
@@ -1191,11 +1191,11 @@ describe('DwnApi', () => {
             dataFormat      : 'text/plain'
           }
         });
-        expect(updaterCreateStatus.code).to.equal(202);
+        expect(updaterCreateStatus.code).toBe(202);
         const { status: bobUpdaterSendStatus } = await updaterRecord.send(bobDid.uri);
-        expect(bobUpdaterSendStatus.code).to.equal(202);
+        expect(bobUpdaterSendStatus.code).toBe(202);
         const { status: aliceUpdaterSendStatus } = await updaterRecord.send(aliceDid.uri);
-        expect(aliceUpdaterSendStatus.code).to.equal(202);
+        expect(aliceUpdaterSendStatus.code).toBe(202);
 
         // Alice creates a photo using her participant role and sends it to her own DWN and Bob's DWN.
         const { status: photoCreateStatus, record: photoRecord } = await dwnAlice.records.create({
@@ -1209,11 +1209,11 @@ describe('DwnApi', () => {
             dataFormat      : 'text/plain'
           }
         });
-        expect(photoCreateStatus.code).to.equal(202);
+        expect(photoCreateStatus.code).toBe(202);
         const { status:alicePhotoSendStatus } = await photoRecord.send(aliceDid.uri);
-        expect(alicePhotoSendStatus.code).to.equal(202);
+        expect(alicePhotoSendStatus.code).toBe(202);
         const { status: bobPhotoSendStatus } = await photoRecord.send(bobDid.uri);
-        expect(bobPhotoSendStatus.code).to.equal(202);
+        expect(bobPhotoSendStatus.code).toBe(202);
 
         // Bob updates the photo using his updater role and sends it to Alice and his own DWN.
         const { status: photoUpdateStatus, record: photoUpdateRecord } = await dwnBob.records.write({
@@ -1230,11 +1230,11 @@ describe('DwnApi', () => {
             dataFormat      : 'text/plain'
           }
         });
-        expect(photoUpdateStatus.code).to.equal(202);
+        expect(photoUpdateStatus.code).toBe(202);
         const { status:alicePhotoUpdateSendStatus } = await photoUpdateRecord.send(aliceDid.uri);
-        expect(alicePhotoUpdateSendStatus.code).to.equal(202);
+        expect(alicePhotoUpdateSendStatus.code).toBe(202);
         const { status: bobPhotoUpdateSendStatus } = await photoUpdateRecord.send(bobDid.uri);
-        expect(bobPhotoUpdateSendStatus.code).to.equal(202);
+        expect(bobPhotoUpdateSendStatus.code).toBe(202);
 
         // Alice fetches the photo and stores it on her local DWN.
         const alicePhotoReadResult = await dwnAlice.records.read({
@@ -1245,10 +1245,10 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(alicePhotoReadResult.status.code).to.equal(200);
-        expect(alicePhotoReadResult.record).to.exist;
+        expect(alicePhotoReadResult.status.code).toBe(200);
+        expect(alicePhotoReadResult.record).toBeDefined();
         const { status: alicePhotoReadStoreStatus } = await alicePhotoReadResult.record.store();
-        expect(alicePhotoReadStoreStatus.code).to.equal(202);
+        expect(alicePhotoReadStoreStatus.code).toBe(202);
       });
     });
 
@@ -1264,10 +1264,10 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(createResult.status.code).to.equal(202);
-        expect(createResult.status.detail).to.equal('Accepted');
-        expect(createResult.record).to.exist;
-        expect(await createResult.record?.data.text()).to.equal(dataString);
+        expect(createResult.status.code).toBe(202);
+        expect(createResult.status.detail).toBe('Accepted');
+        expect(createResult.record).toBeDefined();
+        expect(await createResult.record?.data.text()).toBe(dataString);
 
         const queryResult = await dwnAlice.records.query({
           message: {
@@ -1277,9 +1277,9 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(queryResult.status.code).to.equal(200);
-        expect(queryResult.records).to.exist;
-        expect(queryResult.records!.length).to.equal(0);
+        expect(queryResult.status.code).toBe(200);
+        expect(queryResult.records).toBeDefined();
+        expect(queryResult.records!.length).toBe(0);
       });
 
       it('has no effect if `store: true`', async () => {
@@ -1293,10 +1293,10 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(createResult.status.code).to.equal(202);
-        expect(createResult.status.detail).to.equal('Accepted');
-        expect(createResult.record).to.exist;
-        expect(await createResult.record?.data.text()).to.equal(dataString);
+        expect(createResult.status.code).toBe(202);
+        expect(createResult.status.detail).toBe('Accepted');
+        expect(createResult.record).toBeDefined();
+        expect(await createResult.record?.data.text()).toBe(dataString);
 
         const queryResult = await dwnAlice.records.query({
           message: {
@@ -1306,11 +1306,11 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(queryResult.status.code).to.equal(200);
-        expect(queryResult.records).to.exist;
-        expect(queryResult.records!.length).to.equal(1);
-        expect(queryResult.records![0].id).to.equal(createResult.record!.id);
-        expect(await queryResult.records![0].data.text()).to.equal(dataString);
+        expect(queryResult.status.code).toBe(200);
+        expect(queryResult.records).toBeDefined();
+        expect(queryResult.records!.length).toBe(1);
+        expect(queryResult.records![0].id).toBe(createResult.record!.id);
+        expect(await queryResult.records![0].data.text()).toBe(dataString);
       });
     });
   });
@@ -1334,10 +1334,10 @@ describe('DwnApi', () => {
           record : baseRecord
         });
 
-        expect(writeResponse.status.code).to.equal(202);
-        expect(writeResponse.status.detail).to.equal('Accepted');
-        expect(writeResponse.record).to.exist;
-        expect(await writeResponse.record?.data.text()).to.equal('Foo bar!');
+        expect(writeResponse.status.code).toBe(202);
+        expect(writeResponse.status.detail).toBe('Accepted');
+        expect(writeResponse.record).toBeDefined();
+        expect(await writeResponse.record?.data.text()).toBe('Foo bar!');
       });
     });
   });
@@ -1348,15 +1348,15 @@ describe('DwnApi', () => {
       const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
         message: { definition: protocolDefinition }
       });
-      expect(aliceProtocolStatus.code).to.equal(202);
-      expect(aliceProtocol).to.exist;
+      expect(aliceProtocolStatus.code).toBe(202);
+      expect(aliceProtocol).toBeDefined();
       const { status: aliceProtocolSendStatus } = await aliceProtocol.send(aliceDid.uri);
-      expect(aliceProtocolSendStatus.code).to.equal(202);
+      expect(aliceProtocolSendStatus.code).toBe(202);
       const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({ message: { definition: protocolDefinition } });
-      expect(bobProtocolStatus.code).to.equal(202);
-      expect(bobProtocol).to.exist;
+      expect(bobProtocolStatus.code).toBe(202);
+      expect(bobProtocol).toBeDefined();
       const { status: bobProtocolSendStatus } = await bobProtocol!.send(bobDid.uri);
-      expect(bobProtocolSendStatus.code).to.equal(202);
+      expect(bobProtocolSendStatus.code).toBe(202);
     });
 
     describe('agent', () => {
@@ -1370,12 +1370,12 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(writeStatus.code).to.equal(202);
-        expect(record).to.not.be.undefined;
+        expect(writeStatus.code).toBe(202);
+        expect(record).toBeDefined();
 
         // Write the record to Alice's remote DWN.
         const { status } = await record!.send(aliceDid.uri);
-        expect(status.code).to.equal(202);
+        expect(status.code).toBe(202);
 
         const deleteResult = await dwnAlice.records.delete({
           protocol : protocolUri,
@@ -1384,7 +1384,7 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(deleteResult.status.code).to.equal(202);
+        expect(deleteResult.status.code).toBe(202);
       });
 
       it('deletes a record and prunes its children', async () => {
@@ -1410,7 +1410,7 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(protocolStatus.code).to.equal(202);
+        expect(protocolStatus.code).toBe(202);
 
         // Write a parent record.
         const { status: parentWriteStatus, record: parentRecord } = await dwnAlice.records.write({
@@ -1422,8 +1422,8 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain'
           }
         });
-        expect(parentWriteStatus.code).to.equal(202);
-        expect(parentRecord).to.exist;
+        expect(parentWriteStatus.code).toBe(202);
+        expect(parentRecord).toBeDefined();
 
         // Write a child record.
         const { status: childWriteStatus, record: childRecord } = await dwnAlice.records.write({
@@ -1436,8 +1436,8 @@ describe('DwnApi', () => {
             parentContextId : parentRecord.contextId
           }
         });
-        expect(childWriteStatus.code).to.equal(202);
-        expect(childRecord).to.exist;
+        expect(childWriteStatus.code).toBe(202);
+        expect(childRecord).toBeDefined();
 
         // query for child records to confirm it exists
         const { status: childrenStatus, records: childrenRecords } = await dwnAlice.records.query({
@@ -1448,10 +1448,10 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(childrenStatus.code).to.equal(200);
-        expect(childrenRecords).to.exist;
-        expect(childrenRecords).to.have.lengthOf(1);
-        expect(childrenRecords![0].id).to.equal(childRecord.id);
+        expect(childrenStatus.code).toBe(200);
+        expect(childrenRecords).toBeDefined();
+        expect(childrenRecords).toHaveLength(1);
+        expect(childrenRecords![0].id).toBe(childRecord.id);
 
         // Delete the parent record and its children.
         const { status: deleteStatus } = await dwnAlice.records.delete({
@@ -1460,7 +1460,7 @@ describe('DwnApi', () => {
             prune    : true
           }
         });
-        expect(deleteStatus.code).to.equal(202);
+        expect(deleteStatus.code).toBe(202);
 
         // query for child records to confirm it was deleted
         const { status: childrenStatusAfterDelete, records: childrenRecordsAfterDelete } = await dwnAlice.records.query({
@@ -1471,9 +1471,9 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(childrenStatusAfterDelete.code).to.equal(200);
-        expect(childrenRecordsAfterDelete).to.exist;
-        expect(childrenRecordsAfterDelete).to.have.lengthOf(0);
+        expect(childrenStatusAfterDelete.code).toBe(200);
+        expect(childrenRecordsAfterDelete).toBeDefined();
+        expect(childrenRecordsAfterDelete).toHaveLength(0);
       });
 
       it('returns a 404 when the specified record does not exist', async () => {
@@ -1483,7 +1483,7 @@ describe('DwnApi', () => {
             recordId: 'abcd1234'
           }
         });
-        expect(deleteResult.status.code).to.equal(404);
+        expect(deleteResult.status.code).toBe(404);
       });
 
       it('stores a deleted record along with its initialWrite', async () => {
@@ -1497,19 +1497,19 @@ describe('DwnApi', () => {
             schema       : protocolDefinition.types.thread.schema,
           }
         });
-        expect(initialWriteStatus.code).to.equal(202);
+        expect(initialWriteStatus.code).toBe(202);
 
         // Delete the record without storing it
         const { status: deleteStatus } = await initialWriteRecord.delete({ store: false });
-        expect(deleteStatus.code).to.equal(202);
+        expect(deleteStatus.code).toBe(202);
 
         // delete the record storing it
         const { status: deleteStoreStatus } = await initialWriteRecord.delete();
-        expect(deleteStoreStatus.code).to.equal(202);
+        expect(deleteStoreStatus.code).toBe(202);
 
         // try deleting it again
         const { status: deleteStatus2 } = await initialWriteRecord.delete();
-        expect(deleteStatus2.code).to.equal(404);
+        expect(deleteStatus2.code).toBe(404);
       });
     });
 
@@ -1523,12 +1523,12 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(writeStatus.code).to.equal(202);
-        expect(record).to.not.be.undefined;
+        expect(writeStatus.code).toBe(202);
+        expect(record).toBeDefined();
 
         // Write the record to the remote DWN.
         const { status } = await record!.send(aliceDid.uri);
-        expect(status.code).to.equal(202);
+        expect(status.code).toBe(202);
 
         // Attempt to delete a record from the remote DWN.
         const deleteResult = await dwnAlice.records.delete({
@@ -1538,8 +1538,8 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(deleteResult.status.code).to.equal(202);
-        expect(deleteResult.status.detail).to.equal('Accepted');
+        expect(deleteResult.status.code).toBe(202);
+        expect(deleteResult.status.detail).toBe('Accepted');
       });
 
       it('returns a 401 when authentication or authorization fails', async () => {
@@ -1550,11 +1550,11 @@ describe('DwnApi', () => {
             dataFormat: 'foo'
           }
         });
-        expect(writeResult.status.code).to.equal(202);
+        expect(writeResult.status.code).toBe(202);
 
         // Write the record to Bob's remote DWN.
         const sendResult = await writeResult.record.send(bobDid.uri);
-        expect(sendResult.status.code).to.equal(202);
+        expect(sendResult.status.code).toBe(202);
 
         // Alice attempts to delete a record from Bob's remote DWN specifying a recordId.
         const deleteResult = await dwnAlice.records.delete({
@@ -1566,8 +1566,8 @@ describe('DwnApi', () => {
 
         /** Confirm that authorization failed because the Alice identity does not have
          * permission to delete a record from Bob's DWN. */
-        expect(deleteResult.status.code).to.equal(401);
-        expect(deleteResult.status.detail).to.include('message failed authorization');
+        expect(deleteResult.status.code).toBe(401);
+        expect(deleteResult.status.detail).toContain('message failed authorization');
       });
 
       it('deletes records that were authored/signed by another DID', async () => {
@@ -1585,12 +1585,12 @@ describe('DwnApi', () => {
             definition: protocolDefinition,
           }
         });
-        expect(bobProtocolStatus.code).to.equal(202);
+        expect(bobProtocolStatus.code).toBe(202);
         /**
          *   2. Configure the email protocol on Bob's remote DWN.
          */
         const { status: bobRemoteProtocolStatus } = await bobProtocol.send(bobDid.uri);
-        expect(bobRemoteProtocolStatus.code).to.equal(202);
+        expect(bobRemoteProtocolStatus.code).toBe(202);
         /**
          *   3. Alice creates a record, but doesn't store it locally.
          */
@@ -1604,13 +1604,13 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain'
           }
         });
-        expect(createStatus.code).to.equal(202);
-        expect(testRecord.author).to.equal(aliceDid.uri);
+        expect(createStatus.code).toBe(202);
+        expect(testRecord.author).toBe(aliceDid.uri);
         /**
          *   4. Alice writes the record to Bob's remote DWN.
          */
         const { status: sendStatus } = await testRecord.send(bobDid.uri);
-        expect(sendStatus.code).to.equal(202);
+        expect(sendStatus.code).toBe(202);
         /**
          *   5. Bob deletes the record from his remote DWN.
          */
@@ -1620,7 +1620,7 @@ describe('DwnApi', () => {
             recordId: testRecord.id
           }
         });
-        expect(deleteResult.status.code).to.equal(202);
+        expect(deleteResult.status.code).toBe(202);
       });
     });
   });
@@ -1631,15 +1631,15 @@ describe('DwnApi', () => {
       const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
         message: { definition: protocolDefinition }
       });
-      expect(aliceProtocolStatus.code).to.equal(202);
-      expect(aliceProtocol).to.exist;
+      expect(aliceProtocolStatus.code).toBe(202);
+      expect(aliceProtocol).toBeDefined();
       const { status: aliceProtocolSendStatus } = await aliceProtocol.send(aliceDid.uri);
-      expect(aliceProtocolSendStatus.code).to.equal(202);
+      expect(aliceProtocolSendStatus.code).toBe(202);
       const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({ message: { definition: protocolDefinition } });
-      expect(bobProtocolStatus.code).to.equal(202);
-      expect(bobProtocol).to.exist;
+      expect(bobProtocolStatus.code).toBe(202);
+      expect(bobProtocol).toBeDefined();
       const { status: bobProtocolSendStatus } = await bobProtocol!.send(bobDid.uri);
-      expect(bobProtocolSendStatus.code).to.equal(202);
+      expect(bobProtocolSendStatus.code).toBe(202);
     });
 
     describe('agent', () => {
@@ -1653,9 +1653,9 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain'
           }
         });
-        expect(writeResult.status.code).to.equal(202);
-        expect(writeResult.status.detail).to.equal('Accepted');
-        expect(writeResult.record).to.exist;
+        expect(writeResult.status.code).toBe(202);
+        expect(writeResult.status.detail).toBe('Accepted');
+        expect(writeResult.record).toBeDefined();
 
         const result = await dwnAlice.records.query({
           message: {
@@ -1668,10 +1668,10 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(result.status.code).to.equal(200);
-        expect(result.records).to.exist;
-        expect(result.records!.length).to.equal(1);
-        expect(result.records![0].id).to.equal(writeResult.record!.id);
+        expect(result.status.code).toBe(200);
+        expect(result.records).toBeDefined();
+        expect(result.records!.length).toBe(1);
+        expect(result.records![0].id).toBe(writeResult.record!.id);
       });
 
       it('returns cursor when there are additional results', async () => {
@@ -1686,9 +1686,9 @@ describe('DwnApi', () => {
             }
           });
 
-          expect(writeResult.status.code).to.equal(202);
-          expect(writeResult.status.detail).to.equal('Accepted');
-          expect(writeResult.record).to.exist;
+          expect(writeResult.status.code).toBe(202);
+          expect(writeResult.status.detail).toBe('Accepted');
+          expect(writeResult.record).toBeDefined();
         }
 
         const results = await dwnAlice.records.query({
@@ -1703,10 +1703,10 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(results.status.code).to.equal(200);
-        expect(results.records).to.exist;
-        expect(results.records!.length).to.equal(2);
-        expect(results.cursor).to.exist;
+        expect(results.status.code).toBe(200);
+        expect(results.records).toBeDefined();
+        expect(results.records!.length).toBe(2);
+        expect(results.cursor).toBeDefined();
 
         const additionalResults = await dwnAlice.records.query({
           message: {
@@ -1719,10 +1719,10 @@ describe('DwnApi', () => {
             pagination: { limit: 2, cursor: results.cursor }
           }
         });
-        expect(additionalResults.status.code).to.equal(200);
-        expect(additionalResults.records).to.exist;
-        expect(additionalResults.records!.length).to.equal(1);
-        expect(additionalResults.cursor).to.not.exist;
+        expect(additionalResults.status.code).toBe(200);
+        expect(additionalResults.records).toBeDefined();
+        expect(additionalResults.records!.length).toBe(1);
+        expect(additionalResults.cursor).toBeUndefined();
       });
 
       it('sorts results based on provided query sort parameter', async () => {
@@ -1742,9 +1742,9 @@ describe('DwnApi', () => {
             }
           });
 
-          expect(writeResult.status.code).to.equal(202);
-          expect(writeResult.status.detail).to.equal('Accepted');
-          expect(writeResult.record).to.exist;
+          expect(writeResult.status.code).toBe(202);
+          expect(writeResult.status.detail).toBe('Accepted');
+          expect(writeResult.record).toBeDefined();
 
           items.push(writeResult.record.id); // add id to list in the order it was inserted
           if (writeResult.record.published === true) {
@@ -1767,10 +1767,10 @@ describe('DwnApi', () => {
             dateSort: DwnDateSort.CreatedAscending // same as default
           }
         });
-        expect(createdAscResults.status.code).to.equal(200);
-        expect(createdAscResults.records).to.exist;
-        expect(createdAscResults.records!.length).to.equal(6);
-        expect(createdAscResults.records.map(r => r.id)).to.eql(items);
+        expect(createdAscResults.status.code).toBe(200);
+        expect(createdAscResults.records).toBeDefined();
+        expect(createdAscResults.records!.length).toBe(6);
+        expect(createdAscResults.records.map(r => r.id)).toEqual(items);
 
         // query in descending order by the dateCreated field
         const createdDescResults = await dwnAlice.records.query({
@@ -1784,10 +1784,10 @@ describe('DwnApi', () => {
             dateSort: DwnDateSort.CreatedDescending
           }
         });
-        expect(createdDescResults.status.code).to.equal(200);
-        expect(createdDescResults.records).to.exist;
-        expect(createdDescResults.records!.length).to.equal(6);
-        expect(createdDescResults.records.map(r => r.id)).to.eql([...items].reverse());
+        expect(createdDescResults.status.code).toBe(200);
+        expect(createdDescResults.records).toBeDefined();
+        expect(createdDescResults.records!.length).toBe(6);
+        expect(createdDescResults.records.map(r => r.id)).toEqual([...items].reverse());
 
         // query in ascending order by the datePublished field, this will only return published records
         const publishedAscResults = await dwnAlice.records.query({
@@ -1801,10 +1801,10 @@ describe('DwnApi', () => {
             dateSort: DwnDateSort.PublishedAscending
           }
         });
-        expect(publishedAscResults.status.code).to.equal(200);
-        expect(publishedAscResults.records).to.exist;
-        expect(publishedAscResults.records!.length).to.equal(3);
-        expect(publishedAscResults.records.map(r => r.id)).to.eql(publishedItems);
+        expect(publishedAscResults.status.code).toBe(200);
+        expect(publishedAscResults.records).toBeDefined();
+        expect(publishedAscResults.records!.length).toBe(3);
+        expect(publishedAscResults.records.map(r => r.id)).toEqual(publishedItems);
 
         // query in desscending order by the datePublished field, this will only return published records
         const publishedDescResults = await dwnAlice.records.query({
@@ -1818,10 +1818,10 @@ describe('DwnApi', () => {
             dateSort: DwnDateSort.PublishedDescending
           }
         });
-        expect(publishedDescResults.status.code).to.equal(200);
-        expect(publishedDescResults.records).to.exist;
-        expect(publishedDescResults.records!.length).to.equal(3);
-        expect(publishedDescResults.records.map(r => r.id)).to.eql([...publishedItems].reverse());
+        expect(publishedDescResults.status.code).toBe(200);
+        expect(publishedDescResults.records).toBeDefined();
+        expect(publishedDescResults.records!.length).toBe(3);
+        expect(publishedDescResults.records.map(r => r.id)).toEqual([...publishedItems].reverse());
       });
 
       it('queries for records matching tags', async () => {
@@ -1839,7 +1839,7 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(status.code).to.equal(202);
+        expect(status.code).toBe(202);
 
         // Write a record to the agent's local DWN that includes a tag `foo` with value `baz`
         const { status: status2 } = await dwnAlice.records.write({
@@ -1854,7 +1854,7 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(status2.code).to.equal(202);
+        expect(status2.code).toBe(202);
 
         // Control: query the agent's local DWN for the record without any tag filters
         const result = await dwnAlice.records.query({
@@ -1869,9 +1869,9 @@ describe('DwnApi', () => {
         });
 
         // should return both records
-        expect(result.status.code).to.equal(200);
-        expect(result.records).to.exist;
-        expect(result.records!.length).to.equal(2);
+        expect(result.status.code).toBe(200);
+        expect(result.records).toBeDefined();
+        expect(result.records!.length).toBe(2);
 
 
         // Query the agent's local DWN for the record using the tags.
@@ -1890,11 +1890,11 @@ describe('DwnApi', () => {
         });
 
         // should only return the record with the tag `foo` and value `bar`
-        expect(fooBarResult.status.code).to.equal(200);
-        expect(fooBarResult.records).to.exist;
-        expect(fooBarResult.records!.length).to.equal(1);
-        expect(fooBarResult.records![0].id).to.equal(record.id);
-        expect(fooBarResult.records![0].tags).to.deep.equal({ foo: 'bar' });
+        expect(fooBarResult.status.code).toBe(200);
+        expect(fooBarResult.records).toBeDefined();
+        expect(fooBarResult.records!.length).toBe(1);
+        expect(fooBarResult.records![0].id).toBe(record.id);
+        expect(fooBarResult.records![0].tags).toEqual({ foo: 'bar' });
       });
     });
 
@@ -1928,10 +1928,10 @@ describe('DwnApi', () => {
         });
 
         // Verify the query returns a result.
-        expect(result.status.code).to.equal(200);
-        expect(result.records).to.exist;
-        expect(result.records!.length).to.equal(1);
-        expect(result.records![0].id).to.equal(record!.id);
+        expect(result.status.code).toBe(200);
+        expect(result.records).toBeDefined();
+        expect(result.records!.length).toBe(1);
+        expect(result.records![0].id).toBe(record!.id);
       });
 
       it('returns empty records array when no records match the filter provided', async () => {
@@ -1945,9 +1945,9 @@ describe('DwnApi', () => {
           }
         });
         // Confirm that the record does not currently exist on Bob's DWN.
-        expect(result.status.code).to.equal(200);
-        expect(result.records).to.exist;
-        expect(result.records!.length).to.equal(0);
+        expect(result.status.code).toBe(200);
+        expect(result.records).toBeDefined();
+        expect(result.records!.length).toBe(0);
       });
 
       it('returns the correct author for records signed by another DID', async () => {
@@ -1965,12 +1965,12 @@ describe('DwnApi', () => {
             definition: protocolDefinition
           }
         });
-        expect(bobProtocolStatus.code).to.equal(202);
+        expect(bobProtocolStatus.code).toBe(202);
         /**
          *   2. Configure the email protocol on Bob's remote DWN.
          */
         const { status: bobRemoteProtocolStatus } = await bobProtocol.send(bobDid.uri);
-        expect(bobRemoteProtocolStatus.code).to.equal(202);
+        expect(bobRemoteProtocolStatus.code).toBe(202);
         /**
          *   3. Alice creates a record, but doesn't store it locally.
          */
@@ -1984,13 +1984,13 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain'
           }
         });
-        expect(createStatus.code).to.equal(202);
-        expect(testRecord.author).to.equal(aliceDid.uri);
+        expect(createStatus.code).toBe(202);
+        expect(testRecord.author).toBe(aliceDid.uri);
         /**
          *   4. Alice writes the record to Bob's remote DWN.
          */
         const { status: sendStatus } = await testRecord.send(bobDid.uri);
-        expect(sendStatus.code).to.equal(202);
+        expect(sendStatus.code).toBe(202);
         /**
          *   5. Bob queries his remote DWN for the record.
          */
@@ -2005,7 +2005,7 @@ describe('DwnApi', () => {
 
         // The record's author should be Alice's DID since Alice was the signer.
         const [ recordOnBobsDwn ] = bobQueryResult.records;
-        expect(recordOnBobsDwn.author).to.equal(aliceDid.uri);
+        expect(recordOnBobsDwn.author).toBe(aliceDid.uri);
       });
 
       it('queries for records matching tags', async () => {
@@ -2024,9 +2024,9 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(status.code).to.equal(202);
+        expect(status.code).toBe(202);
         const { status: sendFooBarStatus } = await record.send(aliceDid.uri);
-        expect(sendFooBarStatus.code).to.equal(202);
+        expect(sendFooBarStatus.code).toBe(202);
 
         // Write a record to alice's remote DWN that includes a tag `foo` with value `baz`
         const { status: status2, record: record2 } = await dwnAlice.records.write({
@@ -2042,9 +2042,9 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(status2.code).to.equal(202);
+        expect(status2.code).toBe(202);
         const { status: sendFooBazStatus } = await record2.send(aliceDid.uri);
-        expect(sendFooBazStatus.code).to.equal(202);
+        expect(sendFooBazStatus.code).toBe(202);
 
         // Control: query the agent's local DWN for the record without any tag filters
         const result = await dwnAlice.records.query({
@@ -2060,9 +2060,9 @@ describe('DwnApi', () => {
         });
 
         // should return both records
-        expect(result.status.code).to.equal(200);
-        expect(result.records).to.exist;
-        expect(result.records!.length).to.equal(2);
+        expect(result.status.code).toBe(200);
+        expect(result.records).toBeDefined();
+        expect(result.records!.length).toBe(2);
 
 
         // Query the agent's local DWN for the record using the tags.
@@ -2082,11 +2082,11 @@ describe('DwnApi', () => {
         });
 
         // should only return the record with the tag `foo` and value `bar`
-        expect(fooBarResult.status.code).to.equal(200);
-        expect(fooBarResult.records).to.exist;
-        expect(fooBarResult.records!.length).to.equal(1);
-        expect(fooBarResult.records![0].id).to.equal(record.id);
-        expect(fooBarResult.records![0].tags).to.deep.equal({ foo: 'bar' });
+        expect(fooBarResult.status.code).toBe(200);
+        expect(fooBarResult.records).toBeDefined();
+        expect(fooBarResult.records!.length).toBe(1);
+        expect(fooBarResult.records![0].id).toBe(record.id);
+        expect(fooBarResult.records![0].tags).toEqual({ foo: 'bar' });
       });
 
       it('ensures that a protocolRole used to query is also used to read the data of the resulted records', async () => {
@@ -2105,9 +2105,9 @@ describe('DwnApi', () => {
             definition: protocol
           }
         });
-        expect(bobProtocolStatus.code).to.equal(202);
+        expect(bobProtocolStatus.code).toBe(202);
         const { status: bobRemoteProtocolStatus } = await bobProtocol.send(bobDid.uri);
-        expect(bobRemoteProtocolStatus.code).to.equal(202);
+        expect(bobRemoteProtocolStatus.code).toBe(202);
 
         // Bob creates a few notes ensuring that the data is larger than the max encoded size
         // that way the data will be requested with a separate `read` request
@@ -2123,9 +2123,9 @@ describe('DwnApi', () => {
               dataFormat   : 'text/plain',
             }
           });
-          expect(noteCreateStatus.code).to.equal(202);
+          expect(noteCreateStatus.code).toBe(202);
           const { status: noteSendStatus } = await noteRecord.send();
-          expect(noteSendStatus.code).to.equal(202);
+          expect(noteSendStatus.code).toBe(202);
           recordData.set(noteRecord.id, data);
         }
 
@@ -2140,9 +2140,9 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain'
           }
         });
-        expect(friendCreateStatus.code).to.equal(202);
+        expect(friendCreateStatus.code).toBe(202);
         const { status: bobFriendSendStatus } = await friendRecord.send(bobDid.uri);
-        expect(bobFriendSendStatus.code).to.equal(202);
+        expect(bobFriendSendStatus.code).toBe(202);
 
         // alice uses the role to query for the available notes
         const { status: notesQueryStatus, records: noteRecords } = await dwnAlice.records.query({
@@ -2155,30 +2155,30 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(notesQueryStatus.code).to.equal(200);
-        expect(noteRecords).to.exist;
-        expect(noteRecords).to.have.lengthOf(3);
+        expect(notesQueryStatus.code).toBe(200);
+        expect(noteRecords).toBeDefined();
+        expect(noteRecords).toHaveLength(3);
 
         // spy on sendDwnRequest to ensure that the protocolRole is used to read the data of the notes
         const sendDwnRequestSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
 
         // confirm that it starts with 0 calls
-        expect(sendDwnRequestSpy.callCount).to.equal(0);
+        expect(sendDwnRequestSpy.callCount).toBe(0);
         // Alice attempts to read the data of the notes, which should succeed
         for (const record of noteRecords) {
           const readResult = await record.data.text();
           const expectedData = recordData.get(record.id);
-          expect(readResult).to.equal(expectedData);
+          expect(readResult).toBe(expectedData);
         }
 
         // confirm that it was called 3 times
-        expect(sendDwnRequestSpy.callCount).to.equal(3);
+        expect(sendDwnRequestSpy.callCount).toBe(3);
 
         // confirm that the protocolRole was used to read the data of the notes
         expect(sendDwnRequestSpy.getCalls().every(call =>
           call.args[0].messageType === DwnInterface.RecordsRead &&
           (call.args[0] as ProcessDwnRequest<DwnInterface.RecordsRead>).messageParams.protocolRole === 'friend'
-        )).to.be.true;
+        )).toBe(true);
       });
     });
   });
@@ -2189,15 +2189,15 @@ describe('DwnApi', () => {
       const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
         message: { definition: protocolDefinition }
       });
-      expect(aliceProtocolStatus.code).to.equal(202);
-      expect(aliceProtocol).to.exist;
+      expect(aliceProtocolStatus.code).toBe(202);
+      expect(aliceProtocol).toBeDefined();
       const { status: aliceProtocolSendStatus } = await aliceProtocol.send(aliceDid.uri);
-      expect(aliceProtocolSendStatus.code).to.equal(202);
+      expect(aliceProtocolSendStatus.code).toBe(202);
       const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({ message: { definition: protocolDefinition } });
-      expect(bobProtocolStatus.code).to.equal(202);
-      expect(bobProtocol).to.exist;
+      expect(bobProtocolStatus.code).toBe(202);
+      expect(bobProtocol).toBeDefined();
       const { status: bobProtocolSendStatus } = await bobProtocol!.send(bobDid.uri);
-      expect(bobProtocolSendStatus.code).to.equal(202);
+      expect(bobProtocolSendStatus.code).toBe(202);
     });
 
     describe('agent', () => {
@@ -2212,9 +2212,9 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(writeResult.status.code).to.equal(202);
-        expect(writeResult.status.detail).to.equal('Accepted');
-        expect(writeResult.record).to.exist;
+        expect(writeResult.status.code).toBe(202);
+        expect(writeResult.status.detail).toBe('Accepted');
+        expect(writeResult.record).toBeDefined();
 
         const result = await dwnAlice.records.read({
           message: {
@@ -2224,8 +2224,8 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(result.status.code).to.equal(200);
-        expect(result.record.id).to.equal(writeResult.record!.id);
+        expect(result.status.code).toBe(200);
+        expect(result.record.id).toBe(writeResult.record!.id);
       });
 
       it('returns a 404 when a record cannot be found', async () => {
@@ -2239,9 +2239,9 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(writeResult.status.code).to.equal(202);
-        expect(writeResult.status.detail).to.equal('Accepted');
-        expect(writeResult.record).to.exist;
+        expect(writeResult.status.code).toBe(202);
+        expect(writeResult.status.detail).toBe('Accepted');
+        expect(writeResult.record).toBeDefined();
 
 
         // Delete the record
@@ -2255,8 +2255,8 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(result.status.code).to.equal(404);
-        expect(result.record).to.not.exist;
+        expect(result.status.code).toBe(404);
+        expect(result.record).toBeUndefined();
       });
     });
 
@@ -2273,9 +2273,9 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(writeResult.status.code).to.equal(202);
-        expect(writeResult.status.detail).to.equal('Accepted');
-        expect(writeResult.record).to.exist;
+        expect(writeResult.status.code).toBe(202);
+        expect(writeResult.status.detail).toBe('Accepted');
+        expect(writeResult.record).toBeDefined();
 
         // Write the record to the agent's remote DWN.
         await writeResult.record.send(aliceDid.uri);
@@ -2290,8 +2290,8 @@ describe('DwnApi', () => {
           }
         });
 
-        expect(result.status.code).to.equal(200);
-        expect(result.record.id).to.equal(writeResult.record!.id);
+        expect(result.status.code).toBe(200);
+        expect(result.record.id).toBe(writeResult.record!.id);
       });
 
       it('returns undefined record when requested record does not exit', async () => {
@@ -2306,8 +2306,8 @@ describe('DwnApi', () => {
         });
 
         // Confirm that the record does not currently exist on Bob's DWN.
-        expect(result.status.code).to.equal(404);
-        expect(result.record).to.be.undefined;
+        expect(result.status.code).toBe(404);
+        expect(result.record).toBeUndefined();
       });
 
       it('returns the correct author for records signed by another DID', async () => {
@@ -2325,12 +2325,12 @@ describe('DwnApi', () => {
             definition: protocolDefinition,
           }
         });
-        expect(bobProtocolStatus.code).to.equal(202);
+        expect(bobProtocolStatus.code).toBe(202);
         /**
          *   2. Configure the email protocol on Bob's remote DWN.
          */
         const { status: bobRemoteProtocolStatus } = await bobProtocol.send(bobDid.uri);
-        expect(bobRemoteProtocolStatus.code).to.equal(202);
+        expect(bobRemoteProtocolStatus.code).toBe(202);
         /**
          *   3. Alice creates a record, but doesn't store it locally.
          */
@@ -2344,13 +2344,13 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain'
           }
         });
-        expect(createStatus.code).to.equal(202);
-        expect(testRecord.author).to.equal(aliceDid.uri);
+        expect(createStatus.code).toBe(202);
+        expect(testRecord.author).toBe(aliceDid.uri);
         /**
          *   4. Alice writes the record to Bob's remote DWN.
          */
         const { status: sendStatus } = await testRecord.send(bobDid.uri);
-        expect(sendStatus.code).to.equal(202);
+        expect(sendStatus.code).toBe(202);
         /**
          *   5. Bob queries his remote DWN for the record.
          */
@@ -2365,7 +2365,7 @@ describe('DwnApi', () => {
 
         // The record's author should be Alice's DID since Alice was the signer.
         const recordOnBobsDwn = bobQueryResult.record;
-        expect(recordOnBobsDwn.author).to.equal(aliceDid.uri);
+        expect(recordOnBobsDwn.author).toBe(aliceDid.uri);
       });
     });
   });
@@ -2377,7 +2377,7 @@ describe('DwnApi', () => {
         const protocolConfigure = await dwnAlice.protocols.configure({
           message: { definition: { ...emailProtocolDefinition, published: true } }
         });
-        expect(protocolConfigure.status.code).to.equal(202);
+        expect(protocolConfigure.status.code).toBe(202);
 
         // subscribe to all messages from the protocol
         const records: Map<string, Record> = new Map();
@@ -2393,7 +2393,7 @@ describe('DwnApi', () => {
           },
           subscriptionHandler
         });
-        expect(subscribeResult.status.code).to.equal(200);
+        expect(subscribeResult.status.code).toBe(200);
 
         // write a record
         const writeResult = await dwnAlice.records.write({
@@ -2406,25 +2406,25 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain'
           }
         });
-        expect(writeResult.status.code).to.equal(202);
+        expect(writeResult.status.code).toBe(202);
 
         // wait for the record to be received
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(records.size).to.equal(1);
+          expect(records.size).toBe(1);
           const record = records.get(writeResult.record.id);
-          expect(record.toJSON()).to.deep.equal(writeResult.record.toJSON());
-          expect(record.deleted).to.be.false;
+          expect(record.toJSON()).toEqual(writeResult.record.toJSON());
+          expect(record.deleted).toBe(false);
         });
 
         // delete the record using the original writeResult instance of it
         const deleteResult = await writeResult.record.delete();
-        expect(deleteResult.status.code).to.equal(202);
+        expect(deleteResult.status.code).toBe(202);
 
         // wait for the record state to be reflected as deleted
         await Poller.pollUntilSuccessOrTimeout(async () => {
           const record = records.get(writeResult.record.id);
-          expect(record).to.exist;
-          expect(record.deleted).to.be.true;
+          expect(record).toBeDefined();
+          expect(record.deleted).toBe(true);
         });
 
         // write another record and delete the previous one, the state should be updated
@@ -2438,19 +2438,19 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain'
           }
         });
-        expect(writeResult2.status.code).to.equal(202);
+        expect(writeResult2.status.code).toBe(202);
 
         // wait for the record to be received
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(records.size).to.equal(2);
+          expect(records.size).toBe(2);
           const record = records.get(writeResult2.record.id);
-          expect(record.toJSON()).to.deep.equal(writeResult2.record.toJSON());
-          expect(record.deleted).to.be.false;
+          expect(record.toJSON()).toEqual(writeResult2.record.toJSON());
+          expect(record.deleted).toBe(false);
 
           //check the deleted record
           const deletedRecord = records.get(writeResult.record.id);
-          expect(deletedRecord).to.exist;
-          expect(deletedRecord.deleted).to.be.true;
+          expect(deletedRecord).toBeDefined();
+          expect(deletedRecord.deleted).toBe(true);
         });
       });
     });
@@ -2461,17 +2461,17 @@ describe('DwnApi', () => {
         const protocolConfigure = await dwnAlice.protocols.configure({
           message: { definition: { ...protocolDefinition, published: true } }
         });
-        expect(protocolConfigure.status.code).to.equal(202);
+        expect(protocolConfigure.status.code).toBe(202);
         const protocolSend = await protocolConfigure.protocol.send(aliceDid.uri);
-        expect(protocolSend.status.code).to.equal(202);
+        expect(protocolSend.status.code).toBe(202);
 
         //configure the protocol on bob's DWN
         const protocolConfigureBob = await dwnBob.protocols.configure({
           message: { definition: { ...protocolDefinition, published: true } }
         });
-        expect(protocolConfigureBob.status.code).to.equal(202);
+        expect(protocolConfigureBob.status.code).toBe(202);
         const protocolSendBob = await protocolConfigureBob.protocol.send(bobDid.uri);
-        expect(protocolSendBob.status.code).to.equal(202);
+        expect(protocolSendBob.status.code).toBe(202);
 
         // subscribe to all messages from the protocol
         const records: Map<string, Record> = new Map();
@@ -2488,7 +2488,7 @@ describe('DwnApi', () => {
           },
           subscriptionHandler
         });
-        expect(subscribeResult.status.code).to.equal(200);
+        expect(subscribeResult.status.code).toBe(200);
 
         // write a record
         const writeResult = await dwnAlice.records.write({
@@ -2501,29 +2501,29 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain'
           }
         });
-        expect(writeResult.status.code).to.equal(202);
+        expect(writeResult.status.code).toBe(202);
         const writeResultSend = await writeResult.record.send();
-        expect(writeResultSend.status.code).to.equal(202);
+        expect(writeResultSend.status.code).toBe(202);
 
         // wait for the record to be received
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(records.size).to.equal(1);
+          expect(records.size).toBe(1);
           const record = records.get(writeResult.record.id);
-          expect(record.toJSON()).to.deep.equal(writeResult.record.toJSON());
-          expect(record.deleted).to.be.false;
+          expect(record.toJSON()).toEqual(writeResult.record.toJSON());
+          expect(record.deleted).toBe(false);
         });
 
         // delete the record using the original writeResult instance of it
         const deleteResult = await writeResult.record.delete();
-        expect(deleteResult.status.code).to.equal(202);
+        expect(deleteResult.status.code).toBe(202);
         const deleteResultSend = await writeResult.record.send();
-        expect(deleteResultSend.status.code).to.equal(202);
+        expect(deleteResultSend.status.code).toBe(202);
 
         // wait for the record state to be reflected as deleted
         await Poller.pollUntilSuccessOrTimeout(async () => {
           const record = records.get(writeResult.record.id);
-          expect(record).to.exist;
-          expect(record.deleted).to.be.true;
+          expect(record).toBeDefined();
+          expect(record.deleted).toBe(true);
         });
 
         // write another record and delete the previous one, the state should be updated
@@ -2538,14 +2538,14 @@ describe('DwnApi', () => {
           }
         });
         const writeResult2Send = await writeResult2.record.send();
-        expect(writeResult2Send.status.code).to.equal(202);
+        expect(writeResult2Send.status.code).toBe(202);
 
         // wait for the record to be received
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(records.size).to.equal(2);
+          expect(records.size).toBe(2);
           const record = records.get(writeResult2.record.id);
-          expect(record.toJSON()).to.deep.equal(writeResult2.record.toJSON());
-          expect(record.deleted).to.be.false;
+          expect(record.toJSON()).toEqual(writeResult2.record.toJSON());
+          expect(record.deleted).toBe(false);
         });
       });
 
@@ -2564,9 +2564,9 @@ describe('DwnApi', () => {
             definition: protocol
           }
         });
-        expect(bobProtocolStatus.code).to.equal(202);
+        expect(bobProtocolStatus.code).toBe(202);
         const { status: bobRemoteProtocolStatus } = await bobProtocol.send(bobDid.uri);
-        expect(bobRemoteProtocolStatus.code).to.equal(202);
+        expect(bobRemoteProtocolStatus.code).toBe(202);
 
 
         // Bob makes Alice a `friend` to allow her to read and comment on his notes
@@ -2580,9 +2580,9 @@ describe('DwnApi', () => {
             dataFormat   : 'text/plain'
           }
         });
-        expect(friendCreateStatus.code).to.equal(202);
+        expect(friendCreateStatus.code).toBe(202);
         const { status: bobFriendSendStatus } = await friendRecord.send(bobDid.uri);
-        expect(bobFriendSendStatus.code).to.equal(202);
+        expect(bobFriendSendStatus.code).toBe(202);
 
         // Alice subscribes to the notes protocol using the role
         const notes: Map<string, Record> = new Map();
@@ -2600,8 +2600,8 @@ describe('DwnApi', () => {
             notes.set(record.id, record);
           }
         });
-        expect(notesSubscribeStatus.code).to.equal(200);
-        expect(subscription).to.exist;
+        expect(notesSubscribeStatus.code).toBe(200);
+        expect(subscription).toBeDefined();
 
         // Bob creates a few notes ensuring that the data is larger than the max encoded size
         // that way the data will be requested with a separate `read` request
@@ -2617,37 +2617,37 @@ describe('DwnApi', () => {
               dataFormat   : 'text/plain',
             }
           });
-          expect(noteCreateStatus.code).to.equal(202);
+          expect(noteCreateStatus.code).toBe(202);
           const { status: noteSendStatus } = await noteRecord.send();
-          expect(noteSendStatus.code).to.equal(202);
+          expect(noteSendStatus.code).toBe(202);
           recordData.set(noteRecord.id, data);
         }
 
         // poll for the note records to be received
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(notes.size).to.equal(3);
+          expect(notes.size).toBe(3);
         });
 
         // spy on sendDwnRequest to ensure that the protocolRole is used to read the data of the notes
         const sendDwnRequestSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
 
         // confirm that it starts with 0 calls
-        expect(sendDwnRequestSpy.callCount).to.equal(0);
+        expect(sendDwnRequestSpy.callCount).toBe(0);
         // Alice attempts to read the data of the notes, which should succeed
         for (const record of notes.values()) {
           const readResult = await record.data.text();
           const expectedData = recordData.get(record.id);
-          expect(readResult).to.equal(expectedData);
+          expect(readResult).toBe(expectedData);
         }
 
         // confirm that it was called 3 times
-        expect(sendDwnRequestSpy.callCount).to.equal(3);
+        expect(sendDwnRequestSpy.callCount).toBe(3);
 
         // confirm that the protocolRole was used to read the data of the notes
         expect(sendDwnRequestSpy.getCalls().every(call =>
           call.args[0].messageType === DwnInterface.RecordsRead &&
           (call.args[0] as ProcessDwnRequest<DwnInterface.RecordsRead>).messageParams.protocolRole === 'friend'
-        )).to.be.true;
+        )).toBe(true);
       });
     });
   });
@@ -2669,8 +2669,8 @@ describe('DwnApi', () => {
       });
 
       const author = getRecordAuthor(deviceXGrant.rawMessage);
-      expect(dwnAlice['connectedDid']).to.equal(aliceDid.uri); // connected DID should be alice
-      expect(author).to.equal(aliceDid.uri);
+      expect(dwnAlice['connectedDid']).toBe(aliceDid.uri); // connected DID should be alice
+      expect(author).toBe(aliceDid.uri);
     });
 
     it('uses the delegate DID to create a grant if set', async () => {
@@ -2699,9 +2699,9 @@ describe('DwnApi', () => {
       });
 
       const author = getRecordAuthor(deviceXGrant.rawMessage);
-      expect(dwnAlice['connectedDid']).to.equal(aliceDid.uri); // connected DID should be alice
-      expect(dwnAlice['delegateDid']).to.equal(aliceDeviceX.did.uri); // delegate DID should be deviceX
-      expect(author).to.equal(aliceDeviceX.did.uri);
+      expect(dwnAlice['connectedDid']).toBe(aliceDid.uri); // connected DID should be alice
+      expect(dwnAlice['delegateDid']).toBe(aliceDeviceX.did.uri); // delegate DID should be deviceX
+      expect(author).toBe(aliceDeviceX.did.uri);
     });
 
     it('creates and stores a grant', async () => {
@@ -2738,10 +2738,10 @@ describe('DwnApi', () => {
       });
 
       // expect to have the 1 grant created for deviceX
-      expect(fetchedGrants.status.code).to.equal(200);
-      expect(fetchedGrants.records).to.exist;
-      expect(fetchedGrants.records!.length).to.equal(1);
-      expect(fetchedGrants.records![0].id).to.equal(deviceXGrant.rawMessage.recordId);
+      expect(fetchedGrants.status.code).toBe(200);
+      expect(fetchedGrants.records).toBeDefined();
+      expect(fetchedGrants.records!.length).toBe(1);
+      expect(fetchedGrants.records![0].id).toBe(deviceXGrant.rawMessage.recordId);
     });
 
     it('creates a grant without storing it', async () => {
@@ -2776,13 +2776,13 @@ describe('DwnApi', () => {
       });
 
       // expect to have no grants
-      expect(fetchedGrants.status.code).to.equal(200);
-      expect(fetchedGrants.records).to.exist;
-      expect(fetchedGrants.records!.length).to.equal(0);
+      expect(fetchedGrants.status.code).toBe(200);
+      expect(fetchedGrants.records).toBeDefined();
+      expect(fetchedGrants.records!.length).toBe(0);
 
       // store the grant
       const processGrantReply = await deviceXGrant.store();
-      expect(processGrantReply.status.code).to.equal(202);
+      expect(processGrantReply.status.code).toBe(202);
 
       // query for the grants again
       fetchedGrants = await dwnAlice.records.query({
@@ -2795,10 +2795,10 @@ describe('DwnApi', () => {
       });
 
       // expect to have the 1 grant created for deviceX
-      expect(fetchedGrants.status.code).to.equal(200);
-      expect(fetchedGrants.records).to.exist;
-      expect(fetchedGrants.records!.length).to.equal(1);
-      expect(fetchedGrants.records![0].id).to.equal(deviceXGrant.rawMessage.recordId);
+      expect(fetchedGrants.status.code).toBe(200);
+      expect(fetchedGrants.records).toBeDefined();
+      expect(fetchedGrants.records!.length).toBe(1);
+      expect(fetchedGrants.records![0].id).toBe(deviceXGrant.rawMessage.recordId);
     });
   });
 
@@ -2817,8 +2817,8 @@ describe('DwnApi', () => {
       });
 
       const author = getRecordAuthor(deviceXRequest.rawMessage);
-      expect(dwnAlice['connectedDid']).to.equal(aliceDid.uri); // connected DID should be alice
-      expect(author).to.equal(aliceDid.uri);
+      expect(dwnAlice['connectedDid']).toBe(aliceDid.uri); // connected DID should be alice
+      expect(author).toBe(aliceDid.uri);
     });
 
     it('uses the delegate DID to create a request if set', async () => {
@@ -2845,9 +2845,9 @@ describe('DwnApi', () => {
       });
 
       const author = getRecordAuthor(deviceXRequest.rawMessage);
-      expect(dwnAlice['connectedDid']).to.equal(aliceDid.uri); // connected DID should be alice
-      expect(dwnAlice['delegateDid']).to.equal(aliceDeviceX.did.uri); // delegate DID should be deviceX
-      expect(author).to.equal(aliceDeviceX.did.uri);
+      expect(dwnAlice['connectedDid']).toBe(aliceDid.uri); // connected DID should be alice
+      expect(dwnAlice['delegateDid']).toBe(aliceDeviceX.did.uri); // delegate DID should be deviceX
+      expect(author).toBe(aliceDeviceX.did.uri);
     });
 
     it('creates a permission request and stores it', async () => {
@@ -2874,10 +2874,10 @@ describe('DwnApi', () => {
       });
 
       // expect to have the 1 request created
-      expect(fetchedRequests.status.code).to.equal(200);
-      expect(fetchedRequests.records).to.exist;
-      expect(fetchedRequests.records!.length).to.equal(1);
-      expect(fetchedRequests.records![0].id).to.equal(deviceXRequest.rawMessage.recordId);
+      expect(fetchedRequests.status.code).toBe(200);
+      expect(fetchedRequests.records).toBeDefined();
+      expect(fetchedRequests.records!.length).toBe(1);
+      expect(fetchedRequests.records![0].id).toBe(deviceXRequest.rawMessage.recordId);
     });
 
     it('creates a permission request without storing it', async () => {
@@ -2903,13 +2903,13 @@ describe('DwnApi', () => {
       });
 
       // expect to have no requests
-      expect(fetchedRequests.status.code).to.equal(200);
-      expect(fetchedRequests.records).to.exist;
-      expect(fetchedRequests.records!.length).to.equal(0);
+      expect(fetchedRequests.status.code).toBe(200);
+      expect(fetchedRequests.records).toBeDefined();
+      expect(fetchedRequests.records!.length).toBe(0);
 
       // store the request
       const storeDeviceXRequest = await deviceXRequest.store();
-      expect(storeDeviceXRequest.status.code).to.equal(202);
+      expect(storeDeviceXRequest.status.code).toBe(202);
 
       // query for the requests again
       fetchedRequests = await dwnAlice.records.query({
@@ -2922,10 +2922,10 @@ describe('DwnApi', () => {
       });
 
       // expect to have the 1 request created for deviceX
-      expect(fetchedRequests.status.code).to.equal(200);
-      expect(fetchedRequests.records).to.exist;
-      expect(fetchedRequests.records!.length).to.equal(1);
-      expect(fetchedRequests.records![0].id).to.equal(deviceXRequest.rawMessage.recordId);
+      expect(fetchedRequests.status.code).toBe(200);
+      expect(fetchedRequests.records).toBeDefined();
+      expect(fetchedRequests.records!.length).toBe(1);
+      expect(fetchedRequests.records![0].id).toBe(deviceXRequest.rawMessage.recordId);
     });
   });
 
@@ -2948,12 +2948,12 @@ describe('DwnApi', () => {
 
       // Query for requests
       const deviceXRequests = await dwnAlice.permissions.queryRequests();
-      expect(deviceXRequests.length).to.equal(1);
+      expect(deviceXRequests.length).toBe(1);
 
       // confirm alice is the connected DID
-      expect(dwnAlice['connectedDid']).to.equal(aliceDid.uri);
-      expect(fetchRequestsSpy.callCount).to.equal(1);
-      expect(fetchRequestsSpy.args[0][0].author).to.equal(aliceDid.uri);
+      expect(dwnAlice['connectedDid']).toBe(aliceDid.uri);
+      expect(fetchRequestsSpy.callCount).toBe(1);
+      expect(fetchRequestsSpy.args[0][0].author).toBe(aliceDid.uri);
     });
 
     it('uses the delegate DID to query for permission requests if set', async () => {
@@ -2984,15 +2984,15 @@ describe('DwnApi', () => {
 
       // Query for requests
       const deviceXRequests = await dwnAlice.permissions.queryRequests();
-      expect(deviceXRequests.length).to.equal(1);
+      expect(deviceXRequests.length).toBe(1);
 
       // confirm alice is the connected DID, and aliceDeviceX is the delegate DID
-      expect(dwnAlice['connectedDid']).to.equal(aliceDid.uri);
-      expect(dwnAlice['delegateDid']).to.equal(aliceDeviceX.did.uri);
+      expect(dwnAlice['connectedDid']).toBe(aliceDid.uri);
+      expect(dwnAlice['delegateDid']).toBe(aliceDeviceX.did.uri);
 
       // confirm the author is aliceDeviceX
-      expect(fetchRequestsSpy.callCount).to.equal(1);
-      expect(fetchRequestsSpy.args[0][0].author).to.equal(aliceDeviceX.did.uri);
+      expect(fetchRequestsSpy.callCount).toBe(1);
+      expect(fetchRequestsSpy.args[0][0].author).toBe(aliceDeviceX.did.uri);
     });
 
     it('should query for permission requests from the local DWN', async () => {
@@ -3008,8 +3008,8 @@ describe('DwnApi', () => {
 
       // query for the requests
       const fetchedRequests = await dwnBob.permissions.queryRequests();
-      expect(fetchedRequests.length).to.equal(1);
-      expect(fetchedRequests[0].id).to.equal(bobRequest.id);
+      expect(fetchedRequests.length).toBe(1);
+      expect(fetchedRequests[0].id).toBe(bobRequest.id);
     });
 
     it('should query for permission requests from the remote DWN', async () => {
@@ -3024,14 +3024,14 @@ describe('DwnApi', () => {
 
       // send the request to alice's DWN
       const sentToAlice = await bobRequest.send(aliceDid.uri);
-      expect(sentToAlice.status.code).to.equal(202);
+      expect(sentToAlice.status.code).toBe(202);
 
       // alice Queries the remote DWN for the requests
       const fetchedRequests = await dwnAlice.permissions.queryRequests({
         from: aliceDid.uri
       });
-      expect(fetchedRequests.length).to.equal(1);
-      expect(fetchedRequests[0].id).to.equal(bobRequest.id);
+      expect(fetchedRequests.length).toBe(1);
+      expect(fetchedRequests[0].id).toBe(bobRequest.id);
     });
 
     it('should filter by protocol', async () => {
@@ -3058,15 +3058,15 @@ describe('DwnApi', () => {
       const fetchedRequests = await dwnBob.permissions.queryRequests({
         protocol: 'http://example.com/protocol-1'
       });
-      expect(fetchedRequests.length).to.equal(1);
-      expect(fetchedRequests[0].id).to.equal(bobRequest1.id);
+      expect(fetchedRequests.length).toBe(1);
+      expect(fetchedRequests[0].id).toBe(bobRequest1.id);
 
       // query for the requests with protocol-2
       const fetchedRequests2 = await dwnBob.permissions.queryRequests({
         protocol: 'http://example.com/protocol-2'
       });
-      expect(fetchedRequests2.length).to.equal(1);
-      expect(fetchedRequests2[0].id).to.equal(bobRequest2.id);
+      expect(fetchedRequests2.length).toBe(1);
+      expect(fetchedRequests2[0].id).toBe(bobRequest2.id);
     });
   });
 
@@ -3079,12 +3079,12 @@ describe('DwnApi', () => {
 
       // Query for grants
       const deviceXGrants = await dwnAlice.permissions.queryGrants();
-      expect(deviceXGrants.length).to.equal(0);
+      expect(deviceXGrants.length).toBe(0);
 
       // confirm alice is the connected DID
-      expect(dwnAlice['connectedDid']).to.equal(aliceDid.uri);
-      expect(fetchGrantsSpy.callCount).to.equal(1);
-      expect(fetchGrantsSpy.args[0][0].author).to.equal(aliceDid.uri);
+      expect(dwnAlice['connectedDid']).toBe(aliceDid.uri);
+      expect(fetchGrantsSpy.callCount).toBe(1);
+      expect(fetchGrantsSpy.args[0][0].author).toBe(aliceDid.uri);
     });
 
     it('uses the delegate DID to query for grants if set', async () => {
@@ -3105,15 +3105,15 @@ describe('DwnApi', () => {
 
       // Query for grants
       const deviceXGrants = await dwnAlice.permissions.queryGrants();
-      expect(deviceXGrants.length).to.equal(0);
+      expect(deviceXGrants.length).toBe(0);
 
       // confirm alice is the connected DID, and aliceDeviceX is the delegate DID
-      expect(dwnAlice['connectedDid']).to.equal(aliceDid.uri);
-      expect(dwnAlice['delegateDid']).to.equal(aliceDeviceX.did.uri);
+      expect(dwnAlice['connectedDid']).toBe(aliceDid.uri);
+      expect(dwnAlice['delegateDid']).toBe(aliceDeviceX.did.uri);
 
       // confirm the author is aliceDeviceX
-      expect(fetchGrantsSpy.callCount).to.equal(1);
-      expect(fetchGrantsSpy.args[0][0].author).to.equal(aliceDeviceX.did.uri);
+      expect(fetchGrantsSpy.callCount).toBe(1);
+      expect(fetchGrantsSpy.args[0][0].author).toBe(aliceDeviceX.did.uri);
     });
 
     it('should query for permission grants from the local DWN', async () => {
@@ -3131,8 +3131,8 @@ describe('DwnApi', () => {
 
       // query for the grants
       const fetchedGrants = await dwnAlice.permissions.queryGrants();
-      expect(fetchedGrants.length).to.equal(1);
-      expect(fetchedGrants[0].id).to.equal(bobGrant.id);
+      expect(fetchedGrants.length).toBe(1);
+      expect(fetchedGrants[0].id).toBe(bobGrant.id);
     });
 
     it('should query for permission grants from the remote DWN', async () => {
@@ -3152,19 +3152,19 @@ describe('DwnApi', () => {
         from     : aliceDid.uri,
         protocol : protocolUri
       });
-      expect(fetchedGrants.length).to.equal(0);
+      expect(fetchedGrants.length).toBe(0);
 
       // send the grant to alice's remote DWN
       const sentToAlice = await bobGrant.send(aliceDid.uri);
-      expect(sentToAlice.status.code).to.equal(202);
+      expect(sentToAlice.status.code).toBe(202);
 
       // alice queries the remote DWN for the grants
       fetchedGrants = await dwnAlice.permissions.queryGrants({
         from     : aliceDid.uri,
         protocol : protocolUri
       });
-      expect(fetchedGrants.length).to.equal(1);
-      expect(fetchedGrants[0].id).to.equal(bobGrant.id);
+      expect(fetchedGrants.length).toBe(1);
+      expect(fetchedGrants[0].id).toBe(bobGrant.id);
     });
 
     it('should filter by protocol', async () => {
@@ -3195,15 +3195,15 @@ describe('DwnApi', () => {
       let fetchedGrants = await dwnAlice.permissions.queryGrants({
         protocol: protocolUri + '-1' // protocol 1
       });
-      expect(fetchedGrants.length).to.equal(1);
-      expect(fetchedGrants[0].id).to.equal(bobGrant1.id);
+      expect(fetchedGrants.length).toBe(1);
+      expect(fetchedGrants[0].id).toBe(bobGrant1.id);
 
       // query for the grants with protocol-2
       fetchedGrants = await dwnAlice.permissions.queryGrants({
         protocol: protocolUri + '-2' // protocol 2
       });
-      expect(fetchedGrants.length).to.equal(1);
-      expect(fetchedGrants[0].id).to.equal(bobGrant2.id);
+      expect(fetchedGrants.length).toBe(1);
+      expect(fetchedGrants[0].id).toBe(bobGrant2.id);
     });
 
     it('should filter by grantee', async () => {
@@ -3241,15 +3241,15 @@ describe('DwnApi', () => {
       let fetchedGrants = await dwnAlice.permissions.queryGrants({
         grantee: bobDid.uri
       });
-      expect(fetchedGrants.length).to.equal(1);
-      expect(fetchedGrants[0].id).to.equal(bobGrant.id);
+      expect(fetchedGrants.length).toBe(1);
+      expect(fetchedGrants[0].id).toBe(bobGrant.id);
 
       // query for the grants with carol as the grantee
       fetchedGrants = await dwnAlice.permissions.queryGrants({
         grantee: carolDid.uri
       });
-      expect(fetchedGrants.length).to.equal(1);
-      expect(fetchedGrants[0].id).to.equal(carolGrant.id);
+      expect(fetchedGrants.length).toBe(1);
+      expect(fetchedGrants[0].id).toBe(carolGrant.id);
     });
 
     it('should filter by grantor', async () => {
@@ -3280,7 +3280,7 @@ describe('DwnApi', () => {
 
       // bob imports the grant
       const importFromAlice = await grantFromAlice.import(true);
-      expect(importFromAlice.status.code).to.equal(202);
+      expect(importFromAlice.status.code).toBe(202);
 
       // carol creates a grant for bob
       const { message: messageGrantFromCarol } = await testHarness.agent.permissions.createGrant({
@@ -3302,21 +3302,21 @@ describe('DwnApi', () => {
       });
 
       const importGrantCarol = await grantFromCarol.import(true);
-      expect(importGrantCarol.status.code).to.equal(202);
+      expect(importGrantCarol.status.code).toBe(202);
 
       // query for the grants with alice as the grantor
       const fetchedGrantsAlice = await dwnBob.permissions.queryGrants({
         grantor: aliceDid.uri
       });
-      expect(fetchedGrantsAlice.length).to.equal(1, 'alice grantor');
-      expect(fetchedGrantsAlice[0].id).to.equal(grantFromAlice.id);
+      expect(fetchedGrantsAlice.length).toBe(1);
+      expect(fetchedGrantsAlice[0].id).toBe(grantFromAlice.id);
 
       // query for the grants with carol as the grantor
       const fetchedGrantsCarol = await dwnBob.permissions.queryGrants({
         grantor: carolDid.uri
       });
-      expect(fetchedGrantsCarol.length).to.equal(1, 'carol grantor');
-      expect(fetchedGrantsCarol[0].id).to.equal(grantFromCarol.id);
+      expect(fetchedGrantsCarol.length).toBe(1);
+      expect(fetchedGrantsCarol[0].id).toBe(grantFromCarol.id);
     });
 
     it('should check revocation status if option is set', async () => {
@@ -3338,8 +3338,8 @@ describe('DwnApi', () => {
       });
 
       // expect to have the 1 grant created
-      expect(fetchedGrants.length).to.equal(1);
-      expect(fetchedGrants[0].id).to.equal(bobGrant.id);
+      expect(fetchedGrants.length).toBe(1);
+      expect(fetchedGrants[0].id).toBe(bobGrant.id);
 
       // stub the isRevoked method to return true
       sinon.stub(AgentPermissionsApi.prototype, 'isGrantRevoked').resolves(true);
@@ -3348,12 +3348,12 @@ describe('DwnApi', () => {
       fetchedGrants = await dwnAlice.permissions.queryGrants({
         checkRevoked: true
       });
-      expect(fetchedGrants.length).to.equal(0);
+      expect(fetchedGrants.length).toBe(0);
 
       // return without checking revoked status
       fetchedGrants = await dwnAlice.permissions.queryGrants();
-      expect(fetchedGrants.length).to.equal(1);
-      expect(fetchedGrants[0].id).to.equal(bobGrant.id);
+      expect(fetchedGrants.length).toBe(1);
+      expect(fetchedGrants[0].id).toBe(bobGrant.id);
     });
   });
 });

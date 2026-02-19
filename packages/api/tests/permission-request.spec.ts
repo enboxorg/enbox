@@ -1,7 +1,8 @@
-import { expect } from 'chai';
-import sinon from 'sinon';
-
 import type { BearerDid } from '@enbox/dids';
+
+import sinon from 'sinon';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+
 import { DwnInterfaceName, DwnMethodName, Time } from '@enbox/dwn-sdk-js';
 import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
 
@@ -20,7 +21,7 @@ describe('PermissionRequest', () => {
   let testHarness: PlatformAgentTestHarness;
   let protocolUri: string;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : Web5UserAgent,
       agentStores : 'memory'
@@ -57,7 +58,7 @@ describe('PermissionRequest', () => {
   });
 
 
-  after(async () => {
+  afterAll(async () => {
     sinon.restore();
     await testHarness.clearStorage();
     await testHarness.closeStorage();
@@ -80,18 +81,18 @@ describe('PermissionRequest', () => {
         message
       });
 
-      expect(parsedRequest.toJSON()).to.deep.equal(request);
-      expect(parsedRequest.rawMessage).to.deep.equal(message);
-      expect(parsedRequest.id).to.equal(request.id);
-      expect(parsedRequest.requester).to.equal(request.requester);
-      expect(parsedRequest.description).to.equal(request.description);
-      expect(parsedRequest.delegated).to.equal(request.delegated);
-      expect(parsedRequest.scope).to.deep.equal(request.scope);
-      expect(parsedRequest.conditions).to.deep.equal(request.conditions);
+      expect(parsedRequest.toJSON()).toEqual(request);
+      expect(parsedRequest.rawMessage).toEqual(message);
+      expect(parsedRequest.id).toBe(request.id);
+      expect(parsedRequest.requester).toBe(request.requester);
+      expect(parsedRequest.description).toBe(request.description);
+      expect(parsedRequest.delegated).toBe(request.delegated);
+      expect(parsedRequest.scope).toEqual(request.scope);
+      expect(parsedRequest.conditions).toEqual(request.conditions);
     });
 
     //TODO: this should happen in the `dwn-sdk-js` helper
-    xit('throws for an invalid request');
+    it.skip('throws for an invalid request');
   });
 
   describe('send()', () => {
@@ -110,10 +111,10 @@ describe('PermissionRequest', () => {
         from     : aliceDid.uri,
         protocol : protocolUri
       });
-      expect(requests).to.have.length(0);
+      expect(requests).toHaveLength(0);
 
       const sendReply = await grantRequest.send();
-      expect(sendReply.status.code).to.equal(202);
+      expect(sendReply.status.code).toBe(202);
 
       // fetch the requests from the remote
       requests = await aliceDwn.permissions.queryRequests({
@@ -121,8 +122,8 @@ describe('PermissionRequest', () => {
         protocol : protocolUri
       });
 
-      expect(requests).to.have.length(1);
-      expect(requests[0].id).to.deep.equal(grantRequest.id);
+      expect(requests).toHaveLength(1);
+      expect(requests[0].id).toEqual(grantRequest.id);
     });
 
     it('sends a grant request to a remote target', async () => {
@@ -140,19 +141,19 @@ describe('PermissionRequest', () => {
         from     : bobDid.uri,
         protocol : protocolUri
       });
-      expect(remoteRequestsBob).to.have.length(0);
+      expect(remoteRequestsBob).toHaveLength(0);
 
       // send from alice to bob's remote DWN
       const sendReply = await grantRequest.send(bobDid.uri);
-      expect(sendReply.status.code).to.equal(202);
+      expect(sendReply.status.code).toBe(202);
 
       // fetch the requests from the remote
       remoteRequestsBob = await bobDwn.permissions.queryRequests({
         from     : bobDid.uri,
         protocol : protocolUri
       });
-      expect(remoteRequestsBob).to.have.length(1);
-      expect(remoteRequestsBob[0].id).to.deep.equal(grantRequest.id);
+      expect(remoteRequestsBob).toHaveLength(1);
+      expect(remoteRequestsBob[0].id).toEqual(grantRequest.id);
     });
   });
 
@@ -169,35 +170,35 @@ describe('PermissionRequest', () => {
         from     : bobDid.uri,
         protocol : protocolUri
       });
-      expect(fetchedRequests.length).to.equal(0);
+      expect(fetchedRequests.length).toBe(0);
 
       const sentToBob = await request.send(bobDid.uri);
-      expect(sentToBob.status.code).to.equal(202);
+      expect(sentToBob.status.code).toBe(202);
 
       // Bob fetches requests
       fetchedRequests = await bobDwn.permissions.queryRequests({
         from     : bobDid.uri,
         protocol : protocolUri
       });
-      expect(fetchedRequests.length).to.equal(1);
+      expect(fetchedRequests.length).toBe(1);
 
       let localRequests = await bobDwn.permissions.queryRequests({
         protocol: protocolUri
       });
-      expect(localRequests.length).to.equal(0);
+      expect(localRequests.length).toBe(0);
 
       const remoteGrant = fetchedRequests[0];
 
       // store the grant
       const stored = await remoteGrant.store();
-      expect(stored.status.code).to.equal(202);
+      expect(stored.status.code).toBe(202);
 
       // validate the grant now exists in the DWN
       localRequests = await bobDwn.permissions.queryRequests({
         protocol: protocolUri
       });
-      expect(localRequests.length).to.equal(1);
-      expect(localRequests[0].toJSON()).to.deep.equal(request.toJSON());
+      expect(localRequests.length).toBe(1);
+      expect(localRequests[0].toJSON()).toEqual(request.toJSON());
     });
   });
 
@@ -209,32 +210,32 @@ describe('PermissionRequest', () => {
       });
 
       const sentToAlice = await requestFromBob.send(aliceDid.uri);
-      expect(sentToAlice.status.code).to.equal(202);
+      expect(sentToAlice.status.code).toBe(202);
 
       // Alice fetches requests
       const requests = await aliceDwn.permissions.queryRequests({
         from     : aliceDid.uri,
         protocol : protocolUri
       });
-      expect(requests.length).to.equal(1);
+      expect(requests.length).toBe(1);
 
       // confirm no grants exist
       let grants = await aliceDwn.permissions.queryGrants({
         protocol: protocolUri
       });
-      expect(grants.length).to.equal(0);
+      expect(grants.length).toBe(0);
 
       // Alice grants the request and it will be stored by default
       const dateExpires = Time.createOffsetTimestamp({ seconds: 60 });
       const grant = await requests[0].grant(dateExpires);
-      expect(grant).to.exist;
+      expect(grant).toBeDefined();
 
       // confirm the grant exists
       grants = await aliceDwn.permissions.queryGrants({
         protocol: protocolUri
       });
-      expect(grants.length).to.equal(1);
-      expect(grants[0].id).to.equal(grant.id);
+      expect(grants.length).toBe(1);
+      expect(grants[0].id).toBe(grant.id);
     });
 
     it('does not store the grant if store is false', async () => {
@@ -244,31 +245,31 @@ describe('PermissionRequest', () => {
       });
 
       const sentToAlice = await requestFromBob.send(aliceDid.uri);
-      expect(sentToAlice.status.code).to.equal(202);
+      expect(sentToAlice.status.code).toBe(202);
 
       // Alice fetches requests
       const requests = await aliceDwn.permissions.queryRequests({
         from     : aliceDid.uri,
         protocol : protocolUri
       });
-      expect(requests.length).to.equal(1);
+      expect(requests.length).toBe(1);
 
       // confirm no grants exist
       let grants = await aliceDwn.permissions.queryGrants({
         protocol: protocolUri
       });
-      expect(grants.length).to.equal(0);
+      expect(grants.length).toBe(0);
 
       // Alice grants the request but does not store it
       const dateExpires = Time.createOffsetTimestamp({ seconds: 60 });
       const grant = await requests[0].grant(dateExpires, false);
-      expect(grant).to.exist;
+      expect(grant).toBeDefined();
 
       // confirm the grant does not exist
       grants = await aliceDwn.permissions.queryGrants({
         protocol: protocolUri
       });
-      expect(grants.length).to.equal(0);
+      expect(grants.length).toBe(0);
     });
   });
 
@@ -289,7 +290,7 @@ describe('PermissionRequest', () => {
         message
       });
 
-      expect(grantRequest.toJSON()).to.deep.equal(request);
+      expect(grantRequest.toJSON()).toEqual(request);
     });
   });
 });
