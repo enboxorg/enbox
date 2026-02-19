@@ -24,7 +24,7 @@
     "lint:fix": "bun run --filter '*' lint:fix",
     "changeset": "changeset",
     "version": "changeset version",
-    "release": "bun run build && changeset publish"
+    "release": "bun run build && ./scripts/publish.sh"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.5.2",
