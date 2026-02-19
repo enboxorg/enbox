@@ -3,7 +3,6 @@ import type { EventStream } from '../../src/types/subscriptions.js';
 import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
 import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
 
-import { expect } from 'chai';
 import sinon from 'sinon';
 
 import { Dwn } from '../../src/dwn.js';
@@ -11,6 +10,7 @@ import { Jws } from '../../src/utils/jws.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 import { DwnErrorCode, ProtocolsConfigure, RecordsRead } from '../../src/index.js';
@@ -28,7 +28,7 @@ export function testProtocolComposition(): void {
     let eventStream: EventStream;
     let dwn: Dwn;
 
-    before(async () => {
+    beforeAll(async () => {
       didResolver = new UniversalResolver({ didResolvers: [DidKey] });
 
       const stores = TestStores.get();
@@ -49,7 +49,7 @@ export function testProtocolComposition(): void {
       await stateIndex.clear();
     });
 
-    after(async () => {
+    afterAll(async () => {
       await dwn.close();
     });
 
@@ -127,7 +127,7 @@ export function testProtocolComposition(): void {
           signer     : Jws.createSigner(alice),
         });
 
-        expect(protocolsConfigure.message.descriptor.definition.uses).to.deep.equal({
+        expect(protocolsConfigure.message.descriptor.definition.uses).toEqual({
           threads: 'https://threads.example.com',
         });
       });
@@ -157,9 +157,9 @@ export function testProtocolComposition(): void {
             definition : badDefinition,
             signer     : Jws.createSigner(alice),
           });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.include(DwnErrorCode.ProtocolsConfigureInvalidRefAlias);
+          expect(error.message).toContain(DwnErrorCode.ProtocolsConfigureInvalidRefAlias);
         }
       });
 
@@ -187,9 +187,9 @@ export function testProtocolComposition(): void {
             definition : badDefinition,
             signer     : Jws.createSigner(alice),
           });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.include(DwnErrorCode.ProtocolsConfigureInvalidRefNodeHasDirectives);
+          expect(error.message).toContain(DwnErrorCode.ProtocolsConfigureInvalidRefNodeHasDirectives);
         }
       });
 
@@ -214,9 +214,9 @@ export function testProtocolComposition(): void {
             definition : badDefinition,
             signer     : Jws.createSigner(alice),
           });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.include(DwnErrorCode.ProtocolsConfigureInvalidRefNodeHasDirectives);
+          expect(error.message).toContain(DwnErrorCode.ProtocolsConfigureInvalidRefNodeHasDirectives);
         }
       });
 
@@ -245,9 +245,9 @@ export function testProtocolComposition(): void {
             definition : badDefinition,
             signer     : Jws.createSigner(alice),
           });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.include(DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolRole);
+          expect(error.message).toContain(DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolRole);
         }
       });
 
@@ -267,9 +267,9 @@ export function testProtocolComposition(): void {
             definition : badDefinition,
             signer     : Jws.createSigner(alice),
           });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.include(DwnErrorCode.ProtocolsConfigureInvalidUsesProtocolUrl);
+          expect(error.message).toContain(DwnErrorCode.ProtocolsConfigureInvalidUsesProtocolUrl);
         }
       });
 
@@ -297,7 +297,7 @@ export function testProtocolComposition(): void {
           definition,
           signer: Jws.createSigner(alice),
         });
-        expect(protocolsConfigure.message.descriptor.definition.uses).to.exist;
+        expect(protocolsConfigure.message.descriptor.definition.uses).toBeDefined();
       });
     });
 
@@ -316,8 +316,8 @@ export function testProtocolComposition(): void {
         });
 
         const reply = await dwn.processMessage(alice.did, commentsConfigure.message);
-        expect(reply.status.code).to.equal(400);
-        expect(reply.status.detail).to.include(DwnErrorCode.ProtocolsConfigureComposedProtocolNotInstalled);
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureComposedProtocolNotInstalled);
       });
 
       it('should accept composing protocol when `uses` protocol is already installed', async () => {
@@ -329,7 +329,7 @@ export function testProtocolComposition(): void {
           signer     : Jws.createSigner(alice),
         });
         const threadsReply = await dwn.processMessage(alice.did, threadsConfigure.message);
-        expect(threadsReply.status.code).to.equal(202);
+        expect(threadsReply.status.code).toBe(202);
 
         // Now install comments protocol — should succeed
         const commentsConfigure = await ProtocolsConfigure.create({
@@ -337,7 +337,7 @@ export function testProtocolComposition(): void {
           signer     : Jws.createSigner(alice),
         });
         const commentsReply = await dwn.processMessage(alice.did, commentsConfigure.message);
-        expect(commentsReply.status.code).to.equal(202);
+        expect(commentsReply.status.code).toBe(202);
       });
 
       it('should reject composing protocol if `$ref` path does not exist in referenced protocol', async () => {
@@ -371,8 +371,8 @@ export function testProtocolComposition(): void {
           signer     : Jws.createSigner(alice),
         });
         const reply = await dwn.processMessage(alice.did, badConfigure.message);
-        expect(reply.status.code).to.equal(400);
-        expect(reply.status.detail).to.include(DwnErrorCode.ProtocolsConfigureInvalidRefProtocolPath);
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureInvalidRefProtocolPath);
       });
 
       it('should reject composing protocol if cross-protocol role does not exist in referenced protocol', async () => {
@@ -409,8 +409,8 @@ export function testProtocolComposition(): void {
           signer     : Jws.createSigner(alice),
         });
         const reply = await dwn.processMessage(alice.did, badConfigure.message);
-        expect(reply.status.code).to.equal(400);
-        expect(reply.status.detail).to.include(DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolRole);
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolRole);
       });
     });
 
@@ -446,7 +446,7 @@ export function testProtocolComposition(): void {
         const threadReply = await dwn.processMessage(
           alice.did, threadWrite.message, { dataStream: threadWrite.dataStream }
         );
-        expect(threadReply.status.code).to.equal(202);
+        expect(threadReply.status.code).toBe(202);
 
         const threadContextId = threadWrite.message.contextId!;
 
@@ -462,10 +462,10 @@ export function testProtocolComposition(): void {
         const commentReply = await dwn.processMessage(
           alice.did, commentWrite.message, { dataStream: commentWrite.dataStream }
         );
-        expect(commentReply.status.code).to.equal(202);
+        expect(commentReply.status.code).toBe(202);
 
         // The comment's contextId should chain from the thread's contextId
-        expect(commentWrite.message.contextId).to.equal(`${threadContextId}/${commentWrite.message.recordId}`);
+        expect(commentWrite.message.contextId).toBe(`${threadContextId}/${commentWrite.message.recordId}`);
       });
 
       it('should allow creating a grandchild in the composing protocol under a cross-protocol child', async () => {
@@ -484,7 +484,7 @@ export function testProtocolComposition(): void {
         });
         await dwn.processMessage(alice.did, commentsConfigure.message);
 
-        // Create thread → comment → reaction chain
+        // Create thread -> comment -> reaction chain
         const threadWrite = await TestDataGenerator.generateRecordsWrite({
           author       : alice,
           protocol     : threadsProtocol.protocol,
@@ -520,7 +520,7 @@ export function testProtocolComposition(): void {
         const reactionReply = await dwn.processMessage(
           alice.did, reactionWrite.message, { dataStream: reactionWrite.dataStream }
         );
-        expect(reactionReply.status.code).to.equal(202);
+        expect(reactionReply.status.code).toBe(202);
       });
     });
 
@@ -539,7 +539,7 @@ export function testProtocolComposition(): void {
           signer     : Jws.createSigner(alice),
         });
         const threadsReply = await dwn.processMessage(alice.did, threadsConfigure.message);
-        expect(threadsReply.status.code).to.equal(202);
+        expect(threadsReply.status.code).toBe(202);
 
         // Install comments protocol on Alice's DWN
         const commentsConfigure = await ProtocolsConfigure.create({
@@ -547,7 +547,7 @@ export function testProtocolComposition(): void {
           signer     : Jws.createSigner(alice),
         });
         const commentsReply = await dwn.processMessage(alice.did, commentsConfigure.message);
-        expect(commentsReply.status.code).to.equal(202);
+        expect(commentsReply.status.code).toBe(202);
 
         // Alice creates a thread
         const threadWrite = await TestDataGenerator.generateRecordsWrite({
@@ -560,7 +560,7 @@ export function testProtocolComposition(): void {
         const threadReply = await dwn.processMessage(
           alice.did, threadWrite.message, { dataStream: threadWrite.dataStream }
         );
-        expect(threadReply.status.code).to.equal(202);
+        expect(threadReply.status.code).toBe(202);
 
         const threadContextId = threadWrite.message.contextId!;
 
@@ -577,10 +577,9 @@ export function testProtocolComposition(): void {
         const participantReply = await dwn.processMessage(
           alice.did, participantWrite.message, { dataStream: participantWrite.dataStream }
         );
-        expect(participantReply.status.code).to.equal(202);
+        expect(participantReply.status.code).toBe(202);
 
         // Bob invokes the cross-protocol role to read comments
-        // The role 'threads:thread/participant' grants 'read' and 'co-delete' on comments
         const commentWrite = await TestDataGenerator.generateRecordsWrite({
           author          : alice,
           protocol        : commentsProtocol.protocol,
@@ -592,7 +591,7 @@ export function testProtocolComposition(): void {
         const commentReply = await dwn.processMessage(
           alice.did, commentWrite.message, { dataStream: commentWrite.dataStream }
         );
-        expect(commentReply.status.code).to.equal(202);
+        expect(commentReply.status.code).toBe(202);
 
         // Bob reads the comment using the cross-protocol role
         const bobRead = await RecordsRead.create({
@@ -605,7 +604,7 @@ export function testProtocolComposition(): void {
           },
         });
         const bobReadReply = await dwn.processMessage(alice.did, bobRead.message);
-        expect(bobReadReply.status.code).to.equal(200);
+        expect(bobReadReply.status.code).toBe(200);
       });
 
       it('should reject a cross-protocol role invocation if the invoker lacks the role record', async () => {
@@ -659,8 +658,8 @@ export function testProtocolComposition(): void {
           },
         });
         const carolReadReply = await dwn.processMessage(alice.did, carolRead.message);
-        expect(carolReadReply.status.code).to.equal(401);
-        expect(carolReadReply.status.detail).to.include(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+        expect(carolReadReply.status.code).toBe(401);
+        expect(carolReadReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
       });
     });
 
@@ -697,7 +696,7 @@ export function testProtocolComposition(): void {
         const threadReply = await dwn.processMessage(
           alice.did, threadWrite.message, { dataStream: threadWrite.dataStream }
         );
-        expect(threadReply.status.code).to.equal(202);
+        expect(threadReply.status.code).toBe(202);
 
         const threadContextId = threadWrite.message.contextId!;
 
@@ -713,7 +712,7 @@ export function testProtocolComposition(): void {
         const commentReply = await dwn.processMessage(
           alice.did, commentWrite.message, { dataStream: commentWrite.dataStream }
         );
-        expect(commentReply.status.code).to.equal(202);
+        expect(commentReply.status.code).toBe(202);
 
         // Anyone can also read (via 'anyone' can 'read' rule)
         const readComment = await RecordsRead.create({
@@ -725,7 +724,7 @@ export function testProtocolComposition(): void {
           },
         });
         const readReply = await dwn.processMessage(alice.did, readComment.message);
-        expect(readReply.status.code).to.equal(200);
+        expect(readReply.status.code).toBe(200);
       });
     });
 
@@ -772,7 +771,7 @@ export function testProtocolComposition(): void {
           signer     : Jws.createSigner(alice),
         });
         const modReply = await dwn.processMessage(alice.did, moderationConfigure.message);
-        expect(modReply.status.code).to.equal(202);
+        expect(modReply.status.code).toBe(202);
 
         // Bob creates a thread (via 'anyone' can 'create' in threadsProtocol)
         const threadWrite = await TestDataGenerator.generateRecordsWrite({
@@ -785,7 +784,7 @@ export function testProtocolComposition(): void {
         const threadReply = await dwn.processMessage(
           alice.did, threadWrite.message, { dataStream: threadWrite.dataStream }
         );
-        expect(threadReply.status.code).to.equal(202);
+        expect(threadReply.status.code).toBe(202);
 
         const threadContextId = threadWrite.message.contextId!;
 
@@ -801,7 +800,7 @@ export function testProtocolComposition(): void {
         const actionReply = await dwn.processMessage(
           alice.did, actionWrite.message, { dataStream: actionWrite.dataStream }
         );
-        expect(actionReply.status.code).to.equal(202);
+        expect(actionReply.status.code).toBe(202);
 
         // Carol (NOT author of the thread, NOT the tenant) tries to create a moderation action — should fail
         const carolActionWrite = await TestDataGenerator.generateRecordsWrite({
@@ -815,8 +814,8 @@ export function testProtocolComposition(): void {
         const carolActionReply = await dwn.processMessage(
           alice.did, carolActionWrite.message, { dataStream: carolActionWrite.dataStream }
         );
-        expect(carolActionReply.status.code).to.equal(401);
-        expect(carolActionReply.status.detail).to.include(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+        expect(carolActionReply.status.code).toBe(401);
+        expect(carolActionReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
       });
     });
 
@@ -848,10 +847,10 @@ export function testProtocolComposition(): void {
             definition : badDefinition,
             signer     : Jws.createSigner(alice),
           });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
           // JSON schema enforces `$ref` must match pattern `^[a-zA-Z][a-zA-Z0-9_-]*:.+$`
-          expect(error.message).to.include('must match pattern');
+          expect(error.message).toContain('must match pattern');
         }
       });
 
@@ -878,9 +877,9 @@ export function testProtocolComposition(): void {
             definition : badDefinition,
             signer     : Jws.createSigner(alice),
           });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.include(DwnErrorCode.ProtocolsConfigureInvalidUsesSelfReference);
+          expect(error.message).toContain(DwnErrorCode.ProtocolsConfigureInvalidUsesSelfReference);
         }
       });
 
@@ -900,10 +899,10 @@ export function testProtocolComposition(): void {
             definition : badDefinition,
             signer     : Jws.createSigner(alice),
           });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
           // JSON schema enforces alias pattern `^[a-zA-Z][a-zA-Z0-9_-]*$` via additionalProperties: false
-          expect(error.message).to.include('must NOT have additional properties');
+          expect(error.message).toContain('must NOT have additional properties');
         }
       });
 
@@ -932,9 +931,9 @@ export function testProtocolComposition(): void {
             definition : badDefinition,
             signer     : Jws.createSigner(alice),
           });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.include(DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolOf);
+          expect(error.message).toContain(DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolOf);
         }
       });
 
@@ -967,8 +966,8 @@ export function testProtocolComposition(): void {
         const reply = await dwn.processMessage(
           alice.did, commentWrite.message, { dataStream: commentWrite.dataStream }
         );
-        expect(reply.status.code).to.equal(400);
-        expect(reply.status.detail).to.include(DwnErrorCode.ProtocolAuthorizationCrossProtocolParentNotFound);
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationCrossProtocolParentNotFound);
       });
 
       it('should reject `$ref` at non-root protocol path', async () => {
@@ -993,9 +992,9 @@ export function testProtocolComposition(): void {
             definition : badDefinition,
             signer     : Jws.createSigner(alice),
           });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.include(DwnErrorCode.ProtocolsConfigureInvalidRefNotAtRoot);
+          expect(error.message).toContain(DwnErrorCode.ProtocolsConfigureInvalidRefNotAtRoot);
         }
       });
 
@@ -1015,10 +1014,10 @@ export function testProtocolComposition(): void {
             definition : badDefinition,
             signer     : Jws.createSigner(alice),
           });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
           // JSON schema enforces minProperties: 1 on `uses`
-          expect(error.message).to.include('must NOT have fewer than 1 properties');
+          expect(error.message).toContain('must NOT have fewer than 1 properties');
         }
       });
     });
