@@ -12,7 +12,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      'bun:test': resolve(__dirname, '../../testing/bun-test-shim.ts'),
+      'bun:test' : resolve(__dirname, '../../testing/bun-test-shim.ts'),
+      'events'   : 'eventemitter3',
     },
   },
   test: {
