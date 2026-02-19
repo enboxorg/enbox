@@ -1,6 +1,6 @@
 import type {
   AsymmetricKeyConverter,
-  CryptoApi,
+  DsaApi,
   Jwk,
   KeyIdentifier,
   KeyImporterExporter,
@@ -506,7 +506,7 @@ export class DidDht extends DidMethod {
    * @param params.options - Optional parameters that can be specified when creating a new DID.
    * @returns A Promise resolving to a {@link BearerDid} object representing the new DID.
    */
-  public static async create<TKms extends CryptoApi | undefined = undefined>({
+  public static async create<TKms extends DsaApi | undefined = undefined>({
     keyManager = new LocalKeyManager(),
     options = {}
   }: {
@@ -648,7 +648,7 @@ export class DidDht extends DidMethod {
    *         manager.
    */
   public static async import({ portableDid, keyManager = new LocalKeyManager() }: {
-    keyManager?: CryptoApi & KeyImporterExporter<KmsImportKeyParams, KeyIdentifier, KmsExportKeyParams>;
+    keyManager?: DsaApi & KeyImporterExporter<KmsImportKeyParams, KeyIdentifier, KmsExportKeyParams>;
     portableDid: PortableDid;
   }): Promise<BearerDid> {
     // Verify the DID method is supported.

@@ -1,4 +1,4 @@
-import type { ExtendedCryptoApi, Jwk, KeyIdentifier, KeyManager } from '@enbox/crypto';
+import type { CryptoApi, Jwk, KeyIdentifier, KeyManager } from '@enbox/crypto';
 import type { JweDecryptOptions, JweEncryptOptions, JweHeaderParams } from './jwe.js';
 
 import { CryptoError, CryptoErrorCode, LocalKeyManager } from '@enbox/crypto';
@@ -135,7 +135,7 @@ export class CompactJwe {
    */
   public static async decrypt<
     TKeyManager extends KeyManager | undefined = KeyManager,
-    TCrypto extends ExtendedCryptoApi | undefined = ExtendedCryptoApi
+    TCrypto extends CryptoApi | undefined = CryptoApi
   >({
     jwe,
     key,
@@ -201,7 +201,7 @@ export class CompactJwe {
    */
   public static async encrypt<
     TKeyManager extends KeyManager | undefined = KeyManager,
-    TCrypto extends ExtendedCryptoApi | undefined = ExtendedCryptoApi
+    TCrypto extends CryptoApi | undefined = CryptoApi
   >({
     plaintext,
     protectedHeader,

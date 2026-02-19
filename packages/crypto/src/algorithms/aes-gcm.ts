@@ -64,7 +64,7 @@ export interface AesGcmParams {
  * key generation, encryption, and decryption features.
  *
  * This class is typically accessed through implementations that extend the
- * {@link CryptoApi | `CryptoApi`} interface.
+ * {@link DsaApi | `DsaApi`} interface.
  */
 export class AesGcmAlgorithm extends CryptoAlgorithm
   implements Cipher<AesGcmParams, AesGcmParams>,

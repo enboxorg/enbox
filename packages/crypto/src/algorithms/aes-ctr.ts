@@ -39,7 +39,7 @@ export interface AesCtrParams {
  * decryption features.
  *
  * This class is typically accessed through implementations that extend the
- * {@link CryptoApi | `CryptoApi`} interface.
+ * {@link DsaApi | `DsaApi`} interface.
  */
 export class AesCtrAlgorithm extends CryptoAlgorithm
   implements Cipher<EncryptParams & AesCtrParams, DecryptParams & AesCtrParams>,

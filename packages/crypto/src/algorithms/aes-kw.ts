@@ -29,7 +29,7 @@ export interface AesKwGenerateKeyParams extends GenerateKeyParams {
  * key generation, key wrapping, and key unwrapping features.
  *
  * This class is typically accessed through implementations that extend the
- * {@link CryptoApi | `CryptoApi`} interface.
+ * {@link DsaApi | `DsaApi`} interface.
  */
 export class AesKwAlgorithm extends CryptoAlgorithm
   implements KeyConverter,

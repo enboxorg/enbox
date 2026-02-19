@@ -39,7 +39,7 @@ export interface EdDsaGenerateKeyParams extends GenerateKeyParams {
  * of signatures.
  *
  * This class is typically accessed through implementations that extend the
- * {@link CryptoApi | `CryptoApi`} interface.
+ * {@link DsaApi | `DsaApi`} interface.
  */
 export class EdDsaAlgorithm extends CryptoAlgorithm
   implements AsymmetricKeyGenerator<EdDsaGenerateKeyParams, Jwk, GetPublicKeyParams>,

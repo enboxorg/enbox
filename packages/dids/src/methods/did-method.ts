@@ -1,5 +1,5 @@
 import type {
-  CryptoApi,
+  DsaApi,
   InferKeyGeneratorAlgorithm,
   LocalKeyManager,
 } from '@enbox/crypto';
@@ -47,7 +47,7 @@ export interface DidCreateVerificationMethod<TKms> extends Pick<Partial<DidVerif
    * };
    * ```
    */
-  algorithm: TKms extends CryptoApi
+  algorithm: TKms extends DsaApi
     ? InferKeyGeneratorAlgorithm<TKms>
     : InferKeyGeneratorAlgorithm<LocalKeyManager>;
 
@@ -82,7 +82,7 @@ export interface DidCreateVerificationMethod<TKms> extends Pick<Partial<DidVerif
  * @typeparam O - The type of the options used for creating the DID.
  */
 export interface DidMethodApi<
-    TKms extends CryptoApi | undefined = CryptoApi,
+    TKms extends DsaApi | undefined = DsaApi,
     TDid extends BearerDid = BearerDid,
     TOptions extends DidCreateOptions<TKms> = DidCreateOptions<TKms>
   > extends DidMethodResolver {

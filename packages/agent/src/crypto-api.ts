@@ -7,10 +7,10 @@ import type {
   Cipher,
   CipherParams,
   CryptoAlgorithm,
+  CryptoApi,
   DeriveKeyBytesParams,
   DeriveKeyFromBytesParams,
   DigestParams,
-  ExtendedCryptoApi,
   GenerateKeyParams,
   GetPublicKeyParams,
   Hasher,
@@ -233,7 +233,7 @@ type KeyGenerationAlgorithms = {
 
 type KeyGenerationAlgorithm = typeof supportedAlgorithms[KeyGenerationAlgorithms]['names'][number];
 
-export class AgentCryptoApi implements ExtendedCryptoApi<
+export class AgentCryptoApi implements CryptoApi<
   CryptoApiGenerateKeyParams, Jwk, GetPublicKeyParams,
   CryptoApiDigestParams,
   SignParams, VerifyParams,

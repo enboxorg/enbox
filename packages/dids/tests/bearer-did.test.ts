@@ -1,4 +1,4 @@
-import type { CryptoApi } from '@enbox/crypto';
+import type { DsaApi } from '@enbox/crypto';
 
 import { LocalKeyManager } from '@enbox/crypto';
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
@@ -86,7 +86,7 @@ describe('BearerDid', () => {
 
     it('exported PortableDid does not include private keys  if the key manager does not support exporting keys', async () => {
       // Create a key manager that does not support exporting keys.
-      const keyManagerWithoutExport: CryptoApi = {
+      const keyManagerWithoutExport: DsaApi = {
         digest       : mock(async () => undefined) as any,
         generateKey  : mock(async () => undefined) as any,
         getKeyUri    : mock(async () => undefined) as any,
@@ -136,7 +136,7 @@ describe('BearerDid', () => {
     let keyManagerMock: any;
 
     beforeEach(() => {
-      // Mock for CryptoApi
+      // Mock for DsaApi
       keyManagerMock = {
         digest       : mock(async () => undefined),
         generateKey  : mock(async () => undefined),
