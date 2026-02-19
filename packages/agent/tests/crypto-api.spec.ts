@@ -7,9 +7,16 @@ import { AgentCryptoApi } from '../src/crypto-api.js';
 import { CryptoUtils, isOctPrivateJwk } from '@enbox/crypto';
 
 // A192GCM / A192KW are not supported in Chrome or WebKit's WebCrypto.
-const isChrome = typeof navigator !== 'undefined' && /Chrome\//.test(navigator.userAgent) && !/Edg\//.test(navigator.userAgent);
-const isWebKit = typeof navigator !== 'undefined' && /AppleWebKit\//.test(navigator.userAgent) && !/Chrome\//.test(navigator.userAgent);
-const noA192 = isChrome || isWebKit;
+// Detect via feature probe rather than UA sniffing.
+const isBrowser = typeof globalThis.crypto?.subtle?.generateKey === 'function' && typeof navigator !== 'undefined';
+let noA192 = false;
+if (isBrowser) {
+  try {
+    await crypto.subtle.generateKey({ name: 'AES-GCM', length: 192 }, false, ['encrypt']);
+  } catch {
+    noA192 = true;
+  }
+}
 
 describe('AgentCryptoApi', () => {
   let cryptoApi: AgentCryptoApi;
