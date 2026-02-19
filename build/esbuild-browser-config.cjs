@@ -26,11 +26,15 @@ function browserConfig(options = {}) {
     define      : {
       'global': 'globalThis',
     },
+    // abstract-level (used by level/browser-level) requires the Node 'events'
+    // built-in. Alias it to eventemitter3 so the bundle works in browsers.
+    alias: {
+      'events': 'eventemitter3',
+    },
   };
 
   if (nodeShims) {
     config.define['process.env'] = '{}';
-    config.alias = { 'events': 'eventemitter3' };
     config.external = ['level'];
   }
 

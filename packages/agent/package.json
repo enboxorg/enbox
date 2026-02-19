@@ -92,7 +92,6 @@
     "abstract-level": "1.0.4",
     "bun-types": "latest",
     "eslint": "9.7.0",
-    "eventemitter3": "5.0.4",
     "rimraf": "4.4.0",
     "sinon": "18.0.0",
     "typescript": "5.5.4",
