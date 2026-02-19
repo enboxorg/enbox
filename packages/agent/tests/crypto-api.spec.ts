@@ -6,11 +6,13 @@ import { beforeAll, describe, expect, it } from 'bun:test';
 import { AgentCryptoApi } from '../src/crypto-api.js';
 import { CryptoUtils, isOctPrivateJwk } from '@enbox/crypto';
 
-// A192GCM / A192KW are not supported in Chrome or WebKit's WebCrypto (only Firefox supports them).
-// CI runs Chromium and WebKit, so skip A192 tests in any browser environment.
 // Note: Bun has `navigator` but not `document`, so use `document` to detect a real browser.
 const isBrowser = typeof document !== 'undefined';
+// A192GCM / A192KW are not supported in Chrome or WebKit's WebCrypto (only Firefox supports them).
 const noA192 = isBrowser;
+// WebKit does not support PBES2 (PBES2-HS256+A128KW, etc.) via WebCrypto at all.
+const isWebKit = isBrowser && /AppleWebKit\//.test(navigator.userAgent) && !/Chrome\//.test(navigator.userAgent);
+const noPBES = isWebKit;
 
 describe('AgentCryptoApi', () => {
   let cryptoApi: AgentCryptoApi;
@@ -224,7 +226,7 @@ describe('AgentCryptoApi', () => {
     });
 
     for (const algorithm of ['PBES2-HS256+A128KW', 'PBES2-HS384+A192KW', 'PBES2-HS512+A256KW'] as const) {
-      const skipThis = noA192 && algorithm.includes('A192');
+      const skipThis = noPBES || (noA192 && algorithm.includes('A192'));
       it.skipIf(skipThis)(`supports PBES with ${algorithm}`, async () => {
         // Setup.
         const privateKeyHex = '857fb5c80014e9a642c06a958987c084889a4f2bb53d444cb30a08e08426898e'; // 32-bytes / 256-bits
