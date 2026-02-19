@@ -730,6 +730,97 @@ export function testProtocolComposition(): void {
     });
 
     // =========================================================================
+    // Cross-protocol `of` actor check — happy path
+    // =========================================================================
+
+    describe('cross-protocol `of` actor check — happy path', () => {
+      it('should allow author of cross-protocol parent to create records via `who: author, of: alias:path` rule', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const carol = await TestDataGenerator.generateDidKeyPersona();
+
+        // A protocol that grants the author of a thread (from the threads protocol) the ability to create moderation actions
+        const moderationProtocol: ProtocolDefinition = {
+          protocol  : 'https://moderation.example.com',
+          published : true,
+          uses      : { threads: 'https://threads.example.com' },
+          types     : {
+            action: { schema: 'https://moderation.example.com/schemas/action', dataFormats: ['application/json'] },
+          },
+          structure: {
+            thread: {
+              $ref   : 'threads:thread',
+              action : {
+                $actions: [
+                  { who: 'author', of: 'threads:thread', can: ['create'] },
+                  { who: 'anyone', can: ['read'] },
+                ],
+              },
+            },
+          },
+        };
+
+        // Install both protocols on Alice's DWN
+        const threadsConfigure = await ProtocolsConfigure.create({
+          definition : threadsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        await dwn.processMessage(alice.did, threadsConfigure.message);
+
+        const moderationConfigure = await ProtocolsConfigure.create({
+          definition : moderationProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        const modReply = await dwn.processMessage(alice.did, moderationConfigure.message);
+        expect(modReply.status.code).to.equal(202);
+
+        // Bob creates a thread (via 'anyone' can 'create' in threadsProtocol)
+        const threadWrite = await TestDataGenerator.generateRecordsWrite({
+          author       : bob,
+          protocol     : threadsProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://threads.example.com/schemas/thread',
+          dataFormat   : 'application/json',
+        });
+        const threadReply = await dwn.processMessage(
+          alice.did, threadWrite.message, { dataStream: threadWrite.dataStream }
+        );
+        expect(threadReply.status.code).to.equal(202);
+
+        const threadContextId = threadWrite.message.contextId!;
+
+        // Bob (as author of the thread) creates a moderation action — should succeed
+        const actionWrite = await TestDataGenerator.generateRecordsWrite({
+          author          : bob,
+          protocol        : moderationProtocol.protocol,
+          protocolPath    : 'thread/action',
+          schema          : 'https://moderation.example.com/schemas/action',
+          dataFormat      : 'application/json',
+          parentContextId : threadContextId,
+        });
+        const actionReply = await dwn.processMessage(
+          alice.did, actionWrite.message, { dataStream: actionWrite.dataStream }
+        );
+        expect(actionReply.status.code).to.equal(202);
+
+        // Carol (NOT author of the thread, NOT the tenant) tries to create a moderation action — should fail
+        const carolActionWrite = await TestDataGenerator.generateRecordsWrite({
+          author          : carol,
+          protocol        : moderationProtocol.protocol,
+          protocolPath    : 'thread/action',
+          schema          : 'https://moderation.example.com/schemas/action',
+          dataFormat      : 'application/json',
+          parentContextId : threadContextId,
+        });
+        const carolActionReply = await dwn.processMessage(
+          alice.did, carolActionWrite.message, { dataStream: carolActionWrite.dataStream }
+        );
+        expect(carolActionReply.status.code).to.equal(401);
+        expect(carolActionReply.status.detail).to.include(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+      });
+    });
+
+    // =========================================================================
     // Edge case and error tests
     // =========================================================================
 
@@ -790,6 +881,121 @@ export function testProtocolComposition(): void {
           expect.fail('Expected an error to be thrown');
         } catch (error: any) {
           expect(error.message).to.include(DwnErrorCode.ProtocolsConfigureInvalidUsesSelfReference);
+        }
+      });
+
+      it('should reject `uses` with invalid alias name (starts with a number)', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const badDefinition: ProtocolDefinition = {
+          protocol  : 'https://bad.example.com',
+          published : true,
+          uses      : { '123invalid': 'https://foo.example.com' } as any,
+          types     : {},
+          structure : {},
+        };
+
+        try {
+          await ProtocolsConfigure.create({
+            definition : badDefinition,
+            signer     : Jws.createSigner(alice),
+          });
+          expect.fail('Expected an error to be thrown');
+        } catch (error: any) {
+          // JSON schema enforces alias pattern `^[a-zA-Z][a-zA-Z0-9_-]*$` via additionalProperties: false
+          expect(error.message).to.include('must NOT have additional properties');
+        }
+      });
+
+      it('should reject cross-protocol `of` with alias not in `uses`', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const badDefinition: ProtocolDefinition = {
+          protocol  : 'https://bad.example.com',
+          published : true,
+          uses      : { threads: 'https://threads.example.com' },
+          types     : { action: {} },
+          structure : {
+            thread: {
+              $ref   : 'threads:thread',
+              action : {
+                $actions: [
+                  { who: 'author', of: 'nonexistent:thread', can: ['create'] }, // alias 'nonexistent' not in uses
+                ],
+              },
+            },
+          },
+        };
+
+        try {
+          await ProtocolsConfigure.create({
+            definition : badDefinition,
+            signer     : Jws.createSigner(alice),
+          });
+          expect.fail('Expected an error to be thrown');
+        } catch (error: any) {
+          expect(error.message).to.include(DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolOf);
+        }
+      });
+
+      it('should return 400 when cross-protocol parent record does not exist at runtime', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // Install both protocols
+        const threadsConfigure = await ProtocolsConfigure.create({
+          definition : threadsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        await dwn.processMessage(alice.did, threadsConfigure.message);
+
+        const commentsConfigure = await ProtocolsConfigure.create({
+          definition : commentsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        await dwn.processMessage(alice.did, commentsConfigure.message);
+
+        // Try to create a comment under a non-existent thread (fabricate a contextId)
+        const fakeThreadContextId = 'bafybeifake1234567890';
+        const commentWrite = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          protocol        : commentsProtocol.protocol,
+          protocolPath    : 'thread/comment',
+          schema          : 'https://comments.example.com/schemas/comment',
+          dataFormat      : 'application/json',
+          parentContextId : fakeThreadContextId,
+        });
+        const reply = await dwn.processMessage(
+          alice.did, commentWrite.message, { dataStream: commentWrite.dataStream }
+        );
+        expect(reply.status.code).to.equal(400);
+        expect(reply.status.detail).to.include(DwnErrorCode.ProtocolAuthorizationCrossProtocolParentNotFound);
+      });
+
+      it('should reject `$ref` at non-root protocol path', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const badDefinition: ProtocolDefinition = {
+          protocol  : 'https://bad.example.com',
+          published : true,
+          uses      : { threads: 'https://threads.example.com' },
+          types     : { wrapper: {}, nested: {} },
+          structure : {
+            wrapper: {
+              nested: {
+                $ref: 'threads:thread', // $ref at depth > 1 — not allowed
+              },
+            },
+          },
+        };
+
+        try {
+          await ProtocolsConfigure.create({
+            definition : badDefinition,
+            signer     : Jws.createSigner(alice),
+          });
+          expect.fail('Expected an error to be thrown');
+        } catch (error: any) {
+          expect(error.message).to.include(DwnErrorCode.ProtocolsConfigureInvalidRefNotAtRoot);
         }
       });
 

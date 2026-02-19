@@ -1,7 +1,7 @@
 import type { DerivedPrivateJwk } from '../utils/hd-key.js';
 import type { EncryptionKeyDeriver } from '../types/encryption-types.js';
 import type { PrivateKeyJwk } from '../types/jose-types.js';
-import type { ProtocolDefinition, ProtocolRuleSet, ProtocolUses } from '../types/protocols-types.js';
+import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 
 import { Secp256k1 } from './secp256k1.js';
 import { HdKey, KeyDerivationScheme } from '../utils/hd-key.js';
@@ -42,17 +42,6 @@ export function parseCrossProtocolRef(ref: string): CrossProtocolRef | undefined
  */
 export function isCrossProtocolRef(ref: string): boolean {
   return ref.includes(':');
-}
-
-/**
- * Resolves a cross-protocol alias to its protocol URI using the `uses` map.
- * @returns The protocol URI for the alias, or `undefined` if the alias is not found.
- */
-export function resolveUsesAlias(alias: string, uses: ProtocolUses | undefined): string | undefined {
-  if (uses === undefined) {
-    return undefined;
-  }
-  return uses[alias];
 }
 
 /**

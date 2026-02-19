@@ -200,8 +200,16 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
   ): void {
     const { ruleSet, ruleSetProtocolPath, recordTypes, roles, uses } = input;
 
-    // Validate $ref constraints: a $ref node is a pure attachment point and must not have other directives
+    // Validate $ref constraints: $ref is only supported at root level (no `/` in protocol path),
+    // and a $ref node is a pure attachment point with no other directives.
     if (ruleSet.$ref !== undefined) {
+      if (ruleSetProtocolPath.includes('/')) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureInvalidRefNotAtRoot,
+          `'$ref' at protocol path '${ruleSetProtocolPath}' is not allowed: '$ref' nodes are only supported at the root level of the structure.`
+        );
+      }
+
       ProtocolsConfigure.validateRefNode(ruleSet, ruleSetProtocolPath, uses);
     }
 
@@ -448,7 +456,11 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
 
     if (parsed === undefined) {
       // should not happen if isCrossProtocolRef() returned true, but guard defensively
-      return;
+      throw new DwnError(
+        DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolRole,
+        `cross-protocol '${fieldName}' reference '${ref}' at protocol path '${ruleSetProtocolPath}' ` +
+        `could not be parsed as a valid 'alias:path' format.`
+      );
     }
 
     if (uses === undefined || uses[parsed.alias] === undefined) {
@@ -465,7 +477,11 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
   }
 
   private static normalizeDefinition(definition: ProtocolDefinition): ProtocolDefinition {
-    const typesCopy = { ...definition.types };
+    // Deep clone types to avoid mutating the caller's nested objects
+    const typesCopy: ProtocolDefinition['types'] = {};
+    for (const typeName in definition.types) {
+      typesCopy[typeName] = { ...definition.types[typeName] };
+    }
 
     // Normalize schema url
     for (const typeName in typesCopy) {

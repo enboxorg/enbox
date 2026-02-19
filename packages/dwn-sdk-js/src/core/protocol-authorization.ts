@@ -18,7 +18,7 @@ import { RecordsWrite } from '../interfaces/records-write.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
+import { getRuleSetAtPath, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
 
 export class ProtocolAuthorization {
@@ -422,7 +422,7 @@ export class ProtocolAuthorization {
     protocolPath: string,
     protocolDefinition: ProtocolDefinition,
   ): ProtocolRuleSet {
-    const ruleSet = ProtocolAuthorization.getRuleSetAtProtocolPath(protocolPath, protocolDefinition);
+    const ruleSet = getRuleSetAtPath(protocolPath, protocolDefinition.structure);
     if (ruleSet === undefined) {
       throw new DwnError(DwnErrorCode.ProtocolAuthorizationMissingRuleSet,
         `No rule set defined for protocolPath ${protocolPath}`);
@@ -693,30 +693,39 @@ export class ProtocolAuthorization {
     let roleProtocolUri = protocolUri;
     let roleProtocolPath = protocolRole;
 
-    if (isCrossProtocolRef(protocolRole) && protocolDefinition.uses !== undefined) {
+    if (isCrossProtocolRef(protocolRole)) {
       const parsed = parseCrossProtocolRef(protocolRole);
-      if (parsed !== undefined) {
-        const resolvedUri = protocolDefinition.uses[parsed.alias];
-        if (resolvedUri !== undefined) {
-          roleProtocolUri = resolvedUri;
-          roleProtocolPath = parsed.protocolPath;
+      if (parsed === undefined) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolAuthorizationNotARole,
+          `Cross-protocol role '${protocolRole}' could not be parsed as a valid 'alias:path' format.`
+        );
+      }
 
-          // Fetch the referenced protocol's definition to validate the role exists
-          const refDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
-            tenant, roleProtocolUri, messageStore
-          );
-          const roleRuleSet = ProtocolAuthorization.getRuleSetAtProtocolPath(roleProtocolPath, refDefinition);
-          if (roleRuleSet === undefined || !roleRuleSet.$role) {
-            throw new DwnError(
-              DwnErrorCode.ProtocolAuthorizationNotARole,
-              `Cross-protocol role path ${protocolRole} does not match role record type.`
-            );
-          }
-        }
+      if (protocolDefinition.uses === undefined || protocolDefinition.uses[parsed.alias] === undefined) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolAuthorizationNotARole,
+          `Cross-protocol role alias '${parsed.alias}' in '${protocolRole}' does not exist in the protocol's 'uses' map.`
+        );
+      }
+
+      roleProtocolUri = protocolDefinition.uses[parsed.alias];
+      roleProtocolPath = parsed.protocolPath;
+
+      // Fetch the referenced protocol's definition to validate the role exists
+      const refDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
+        tenant, roleProtocolUri, messageStore
+      );
+      const roleRuleSet = getRuleSetAtPath(roleProtocolPath, refDefinition.structure);
+      if (roleRuleSet === undefined || !roleRuleSet.$role) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolAuthorizationNotARole,
+          `Cross-protocol role path ${protocolRole} does not match role record type.`
+        );
       }
     } else {
       // Local role: validate in the composing protocol's definition
-      const roleRuleSet = ProtocolAuthorization.getRuleSetAtProtocolPath(protocolRole, protocolDefinition);
+      const roleRuleSet = getRuleSetAtPath(protocolRole, protocolDefinition.structure);
       if (roleRuleSet === undefined || !roleRuleSet.$role) {
         throw new DwnError(
           DwnErrorCode.ProtocolAuthorizationNotARole,
@@ -1075,25 +1084,6 @@ export class ProtocolAuthorization {
         `DID '${recipient}' is already recipient of a role record at protocol path '${protocolPath} under the parent context ${parentContextId}.`
       );
     }
-  }
-
-  private static getRuleSetAtProtocolPath(protocolPath: string, protocolDefinition: ProtocolDefinition): ProtocolRuleSet | undefined {
-    const protocolPathArray = protocolPath.split('/');
-    let currentRuleSet: ProtocolRuleSet = protocolDefinition.structure;
-    let i = 0;
-    while (i < protocolPathArray.length) {
-      const currentTypeName = protocolPathArray[i];
-      const nextRuleSet: ProtocolRuleSet | undefined = currentRuleSet[currentTypeName];
-
-      if (nextRuleSet === undefined) {
-        return undefined;
-      }
-
-      currentRuleSet = nextRuleSet;
-      i++;
-    }
-
-    return currentRuleSet;
   }
 
   /**

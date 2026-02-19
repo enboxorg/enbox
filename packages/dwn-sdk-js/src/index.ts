@@ -49,7 +49,7 @@ export { PermissionsProtocol } from './protocols/permissions.js';
 export type { PermissionGrantCreateOptions, PermissionRequestCreateOptions, PermissionRevocationCreateOptions } from './protocols/permissions.js';
 export { PrivateKeySigner } from './utils/private-key-signer.js';
 export type { PrivateKeySignerOptions } from './utils/private-key-signer.js';
-export { Protocols, parseCrossProtocolRef, isCrossProtocolRef, resolveUsesAlias, getRuleSetAtPath } from './utils/protocols.js';
+export { Protocols, parseCrossProtocolRef, isCrossProtocolRef, getRuleSetAtPath } from './utils/protocols.js';
 export type { CrossProtocolRef } from './utils/protocols.js';
 export { ProtocolsConfigure } from './interfaces/protocols-configure.js';
 export type { ProtocolsConfigureOptions } from './interfaces/protocols-configure.js';

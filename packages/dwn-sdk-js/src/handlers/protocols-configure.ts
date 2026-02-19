@@ -235,36 +235,74 @@ export class ProtocolsConfigureHandler implements MethodHandler {
         const parsed = parseCrossProtocolRef(childRuleSet.$ref);
         if (parsed !== undefined) {
           const refDefinition = referencedDefinitions.get(parsed.alias);
-          if (refDefinition !== undefined) {
-            const targetRuleSet = getRuleSetAtPath(parsed.protocolPath, refDefinition.structure);
-            if (targetRuleSet === undefined) {
-              throw new DwnError(
-                DwnErrorCode.ProtocolsConfigureInvalidRefProtocolPath,
-                `'$ref' at protocol path '${childProtocolPath}' references type path '${parsed.protocolPath}' ` +
-                `which does not exist in protocol '${refDefinition.protocol}'.`
-              );
-            }
+          if (refDefinition === undefined) {
+            // Defensive: alias was validated by validateRefNode() and definition was fetched by validateCompositionDependencies()
+            throw new DwnError(
+              DwnErrorCode.ProtocolsConfigureInvalidRefAlias,
+              `'$ref' alias '${parsed.alias}' at protocol path '${childProtocolPath}' ` +
+              `was not found in the referenced definitions map.`
+            );
+          }
+
+          const targetRuleSet = getRuleSetAtPath(parsed.protocolPath, refDefinition.structure);
+          if (targetRuleSet === undefined) {
+            throw new DwnError(
+              DwnErrorCode.ProtocolsConfigureInvalidRefProtocolPath,
+              `'$ref' at protocol path '${childProtocolPath}' references type path '${parsed.protocolPath}' ` +
+              `which does not exist in protocol '${refDefinition.protocol}'.`
+            );
           }
         }
       }
 
-      // Validate cross-protocol role references in $actions
+      // Validate cross-protocol references in $actions (roles and `of` paths)
       const actionRules = childRuleSet.$actions ?? [];
       for (const actionRule of actionRules) {
+        // Validate cross-protocol role references
         if (actionRule.role !== undefined) {
           const parsed = parseCrossProtocolRef(actionRule.role);
           if (parsed !== undefined) {
             const refDefinition = referencedDefinitions.get(parsed.alias);
-            if (refDefinition !== undefined) {
-              // Check that the role path exists and is marked $role: true in the referenced protocol
-              const roleRuleSet = getRuleSetAtPath(parsed.protocolPath, refDefinition.structure);
-              if (roleRuleSet === undefined || !roleRuleSet.$role) {
-                throw new DwnError(
-                  DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolRole,
-                  `cross-protocol role '${actionRule.role}' at protocol path '${childProtocolPath}' ` +
-                  `does not point to a valid role ($role: true) in protocol '${refDefinition.protocol}'.`
-                );
-              }
+            if (refDefinition === undefined) {
+              throw new DwnError(
+                DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolRole,
+                `cross-protocol role alias '${parsed.alias}' in '${actionRule.role}' at protocol path '${childProtocolPath}' ` +
+                `was not found in the referenced definitions map.`
+              );
+            }
+
+            // Check that the role path exists and is marked $role: true in the referenced protocol
+            const roleRuleSet = getRuleSetAtPath(parsed.protocolPath, refDefinition.structure);
+            if (roleRuleSet === undefined || !roleRuleSet.$role) {
+              throw new DwnError(
+                DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolRole,
+                `cross-protocol role '${actionRule.role}' at protocol path '${childProtocolPath}' ` +
+                `does not point to a valid role ($role: true) in protocol '${refDefinition.protocol}'.`
+              );
+            }
+          }
+        }
+
+        // Validate cross-protocol `of` references: the path must exist in the referenced protocol's structure
+        if (actionRule.of !== undefined) {
+          const parsed = parseCrossProtocolRef(actionRule.of);
+          if (parsed !== undefined) {
+            const refDefinition = referencedDefinitions.get(parsed.alias);
+            if (refDefinition === undefined) {
+              throw new DwnError(
+                DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolOf,
+                `cross-protocol 'of' alias '${parsed.alias}' in '${actionRule.of}' at protocol path '${childProtocolPath}' ` +
+                `was not found in the referenced definitions map.`
+              );
+            }
+
+            const ofRuleSet = getRuleSetAtPath(parsed.protocolPath, refDefinition.structure);
+            if (ofRuleSet === undefined) {
+              throw new DwnError(
+                DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolOf,
+                `cross-protocol 'of' reference '${actionRule.of}' at protocol path '${childProtocolPath}' ` +
+                `does not point to a valid type path in protocol '${refDefinition.protocol}'.`
+              );
             }
           }
         }
