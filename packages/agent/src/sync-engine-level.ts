@@ -493,6 +493,11 @@ export class SyncEngineLevel implements SyncEngine {
   /**
    * Fetches missing messages from the remote DWN and processes them on the local DWN
    * in dependency order (topological sort).
+   *
+   * Messages that fail processing are re-fetched from the remote before each retry
+   * pass rather than buffered in memory. ReadableStream is single-use, so a failed
+   * message's data stream is consumed on the first attempt. Re-fetching provides a
+   * fresh stream without holding all record data in memory simultaneously.
    */
   private async pullMessages({ did, dwnUrl, delegateDid, protocol, messageCids }: {
     did: string;
@@ -509,22 +514,30 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Step 3: Process messages in dependency order with multi-pass retry.
     // Retry up to MAX_RETRY_PASSES times for messages that fail due to
-    // dependency ordering issues (e.g., a dependency was already local
-    // but not yet committed when the dependent was first processed).
+    // dependency ordering issues (e.g., a RecordsWrite whose ProtocolsConfigure
+    // hasn't committed yet). Failed messages are re-fetched from the remote
+    // to obtain a fresh data stream, since ReadableStream is single-use.
     const MAX_RETRY_PASSES = 3;
     let pending = sorted;
 
     for (let pass = 0; pass <= MAX_RETRY_PASSES && pending.length > 0; pass++) {
-      const retryQueue: { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> }[] = [];
+      const failedCids: string[] = [];
 
       for (const entry of pending) {
         const pullReply = await this.agent.dwn.node.processMessage(did, entry.message, { dataStream: entry.dataStream });
         if (!SyncEngineLevel.syncMessageReplyIsSuccessful(pullReply)) {
-          retryQueue.push(entry);
+          const cid = await SyncEngineLevel.getMessageCid(entry.message);
+          failedCids.push(cid);
         }
       }
 
-      pending = retryQueue;
+      // Re-fetch failed messages from the remote to get fresh data streams.
+      if (failedCids.length > 0) {
+        const reFetched = await this.fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, messageCids: failedCids });
+        pending = SyncEngineLevel.topologicalSort(reFetched);
+      } else {
+        pending = [];
+      }
     }
   }
 
@@ -735,15 +748,15 @@ export class SyncEngineLevel implements SyncEngine {
    * - Initial write must come before update writes (same recordId, not initial)
    * - Permission grant must come before records using that permissionGrantId
    */
-  static topologicalSort(
-    messages: { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> }[]
-  ): { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> }[] {
+  static topologicalSort<T extends { message: GenericMessage }>(
+    messages: T[]
+  ): T[] {
     if (messages.length <= 1) {
       return messages;
     }
 
     // Index messages by various keys for dependency resolution.
-    const byIndex = new Map<number, { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> }>();
+    const byIndex = new Map<number, T>();
     const protocolConfigureIndex = new Map<string, number>(); // protocol URL -> index
     const initialWriteIndex = new Map<string, number>(); // recordId -> index of initial write
     const grantIndex = new Map<string, number>(); // grant recordId -> index
@@ -847,7 +860,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
-    const sorted: { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> }[] = [];
+    const sorted: T[] = [];
     while (queue.length > 0) {
       const node = queue.shift()!;
       sorted.push(byIndex.get(node)!);
