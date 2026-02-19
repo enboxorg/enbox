@@ -1,5 +1,19 @@
 # @enbox/api
 
+## 0.0.4
+
+### Patch Changes
+
+- [#128](https://github.com/enboxorg/enbox/pull/128) [`6e5401f`](https://github.com/enboxorg/enbox/commit/6e5401fbd72bf5dabccf71fa592bf14b2fe6eb8a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: republish with resolved workspace dependencies
+
+  The previous releases of @enbox/agent@0.1.0 and @enbox/api@0.0.3 contained
+  literal `workspace:*` strings in their published dependencies, making them
+  uninstallable outside the monorepo. This patch release uses `bun publish`
+  which correctly resolves workspace references to actual version numbers.
+
+- Updated dependencies [[`6e5401f`](https://github.com/enboxorg/enbox/commit/6e5401fbd72bf5dabccf71fa592bf14b2fe6eb8a)]:
+  - @enbox/agent@0.1.1
+
 ## 0.0.3
 
 ### Patch Changes
