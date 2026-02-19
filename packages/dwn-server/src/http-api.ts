@@ -151,7 +151,12 @@ export class HttpApi {
             connection.close();
           }
         },
-        // Bun automatically responds to pings with pongs
+        pong(ws: ServerWebSocket<WsData>): void {
+          const connection = ws.data?.connection;
+          if (connection) {
+            connection.pong();
+          }
+        },
       },
     });
   }

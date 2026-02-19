@@ -2,10 +2,11 @@ import type { Persona } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
-import { expect } from 'chai';
+import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
+import { RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
+
 import { HttpDwnRpcClient } from '../../../src/prototyping/clients/http-dwn-rpc-client.js';
 import { testDwnUrl } from '../../utils/test-config.js';
-import { RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 describe('HttpDwnRpcClient', () => {
   const client = new HttpDwnRpcClient();
@@ -16,7 +17,7 @@ describe('HttpDwnRpcClient', () => {
     alice = await TestDataGenerator.generateDidKeyPersona();
   });
 
-  after(() => {
+  afterAll(() => {
     sinon.restore();
   });
 
@@ -37,9 +38,9 @@ describe('HttpDwnRpcClient', () => {
       });
 
       // should return success but without any records as none exist yet
-      expect(response.status.code).to.equal(200);
-      expect(response.entries).to.exist;
-      expect(response.entries?.length).to.equal(0);
+      expect(response.status.code).toBe(200);
+      expect(response.entries).toBeDefined();
+      expect(response.entries?.length).toBe(0);
     });
 
     it('send RecordsWrite message', async () => {
@@ -55,7 +56,7 @@ describe('HttpDwnRpcClient', () => {
         message   : writeMessage,
         data      : dataBytes,
       });
-      expect(writeResponse.status.code).to.equal(202);
+      expect(writeResponse.status.code).toBe(202);
 
       // query for records matching the schema of the record we inserted
       const { message: readMessage } = await RecordsRead.create({
@@ -72,9 +73,9 @@ describe('HttpDwnRpcClient', () => {
       });
 
       // should return success, and the record we inserted
-      expect(readResponse.status.code).to.equal(200);
-      expect(readResponse.entry).to.exist;
-      expect(readResponse.entry?.recordsWrite?.recordId).to.equal(writeMessage.recordId);
+      expect(readResponse.status.code).toBe(200);
+      expect(readResponse.entry).toBeDefined();
+      expect(readResponse.entry?.recordsWrite?.recordId).toBe(writeMessage.recordId);
     });
 
     it('throws error if invalid response exists in the header', async () => {
@@ -95,9 +96,9 @@ describe('HttpDwnRpcClient', () => {
           message   : writeMessage,
           data      : dataBytes,
         });
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
       } catch (error:any) {
-        expect(error.message).to.include('failed to parse json rpc response.');
+        expect(error.message).toContain('failed to parse json rpc response.');
       }
     });
 
@@ -120,9 +121,9 @@ describe('HttpDwnRpcClient', () => {
           message   : writeMessage,
           data      : dataBytes,
         });
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).to.include('(code) - message');
+        expect(error.message).toContain('(code) - message');
       }
     });
   });

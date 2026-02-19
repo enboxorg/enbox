@@ -1,12 +1,13 @@
+import type { GenericMessage } from '@enbox/dwn-sdk-js';
+import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { SyncIdentityOptions } from '../src/index.js';
+
 import sinon from 'sinon';
 
 import { AbstractLevel } from 'abstract-level';
 import { Convert } from '@enbox/common';
 import { CryptoUtils } from '@enbox/crypto';
-import { expect } from 'chai';
-import type { GenericMessage } from '@enbox/dwn-sdk-js';
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { SyncIdentityOptions } from '../src/index.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 import type { BearerIdentity } from '../src/bearer-identity.js';
@@ -23,14 +24,14 @@ const testDwnUrls: string[] = [testDwnUrl];
 describe('SyncEngineLevel', () => {
   let testHarness: PlatformAgentTestHarness;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : TestAgent,
       agentStores : 'dwn'
     });
   });
 
-  after(async () => {
+  afterAll(async () => {
     sinon.restore();
     await testHarness.closeStorage();
   });
@@ -43,26 +44,24 @@ describe('SyncEngineLevel', () => {
       };
       const syncEngine = new SyncEngineLevel({ agent: mockAgent, db: {} as any });
       const agent = syncEngine.agent;
-      expect(agent).to.exist;
-      expect(agent.agentDid).to.equal('did:method:abc123');
+      expect(agent).toBeDefined();
+      expect(agent.agentDid).toBe('did:method:abc123');
     });
 
     it(`throws an error if the 'agent' instance property is undefined`, async () => {
       const syncEngine = new SyncEngineLevel({ db: {} as any });
       expect(() =>
         syncEngine.agent
-      ).to.throw(Error, 'Unable to determine agent execution context');
+      ).toThrow('Unable to determine agent execution context');
     });
   });
 
-  describe('with Web5 Platform Agent', function () {
-    this.timeout(30_000);
-
+  describe('with Web5 Platform Agent', () => {
     let alice: BearerIdentity;
     let randomSchema: string;
     let syncEngine: SyncEngineLevel;
 
-    before(async () => {
+    beforeAll(async () => {
       await testHarness.clearStorage();
       await testHarness.createAgentDid();
 
@@ -93,7 +92,7 @@ describe('SyncEngineLevel', () => {
       testHarness.dwnStores.clear();
     });
 
-    after(async () => {
+    afterAll(async () => {
       sinon.restore();
       await testHarness.clearStorage();
       await testHarness.closeStorage();
@@ -168,7 +167,7 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob([`Hello, ${i}`])
         });
-        expect(writeResponse.reply.status.code).to.equal(202);
+        expect(writeResponse.reply.status.code).toBe(202);
 
         // write an update message for one of the records
         if (i === 0) {
@@ -184,7 +183,7 @@ describe('SyncEngineLevel', () => {
             },
             dataStream: new Blob([`Hello, ${i} updated!`]),
           });
-          expect(updateResponse.reply.status.code).to.equal(202);
+          expect(updateResponse.reply.status.code).toBe(202);
         }
 
         localRecords.push((writeResponse.message!).recordId);
@@ -203,7 +202,7 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob([`Hello, ${i}`])
         });
-        expect(writeResponse.reply.status.code).to.equal(202);
+        expect(writeResponse.reply.status.code).toBe(202);
 
         // write an update message for one of the records
         if (i === 0) {
@@ -219,7 +218,7 @@ describe('SyncEngineLevel', () => {
             },
             dataStream: new Blob([`Hello, ${i} updated!`]),
           });
-          expect(updateResponse.reply.status.code).to.equal(202);
+          expect(updateResponse.reply.status.code).toBe(202);
         }
         remoteRecords.push((writeResponse.message!).recordId);
       }
@@ -232,9 +231,9 @@ describe('SyncEngineLevel', () => {
         messageParams : {}
       });
       let localProtocolsQueryReply = localProtocolsQueryResponse.reply;
-      expect(localProtocolsQueryReply.status.code).to.equal(200);
-      expect(localProtocolsQueryReply.entries?.length).to.equal(1);
-      expect(localProtocolsQueryReply.entries).to.have.deep.equal([ protocolsConfigure1.message ]);
+      expect(localProtocolsQueryReply.status.code).toBe(200);
+      expect(localProtocolsQueryReply.entries?.length).toBe(1);
+      expect(localProtocolsQueryReply.entries).toEqual([ protocolsConfigure1.message ]);
 
       // query local and check for only local records
       let localRecordsQueryResponse = await testHarness.agent.dwn.processRequest({
@@ -249,10 +248,10 @@ describe('SyncEngineLevel', () => {
         }
       });
       let localRecordsQueryReply = localRecordsQueryResponse.reply;
-      expect(localRecordsQueryReply.status.code).to.equal(200);
-      expect(localRecordsQueryReply.entries).to.have.length(3);
+      expect(localRecordsQueryReply.status.code).toBe(200);
+      expect(localRecordsQueryReply.entries).toHaveLength(3);
       let localRecordsFromQuery = localRecordsQueryReply.entries?.map(entry => entry.recordId);
-      expect(localRecordsFromQuery).to.have.members(localRecords);
+      expect(localRecordsFromQuery).toEqual(expect.arrayContaining(localRecords));
 
       // check that protocol2 exists remotely
       let remoteProtocolsQueryResponse = await testHarness.agent.dwn.sendRequest({
@@ -262,9 +261,9 @@ describe('SyncEngineLevel', () => {
         messageParams : {}
       });
       let remoteProtocolsQueryReply = remoteProtocolsQueryResponse.reply;
-      expect(remoteProtocolsQueryReply.status.code).to.equal(200);
-      expect(remoteProtocolsQueryReply.entries?.length).to.equal(1);
-      expect(remoteProtocolsQueryReply.entries).to.have.deep.equal([ protocolsConfigure2.message ]);
+      expect(remoteProtocolsQueryReply.status.code).toBe(200);
+      expect(remoteProtocolsQueryReply.entries?.length).toBe(1);
+      expect(remoteProtocolsQueryReply.entries).toEqual([ protocolsConfigure2.message ]);
 
       // query remote and check for only remote records
       let remoteRecordsQueryResponse = await testHarness.agent.dwn.sendRequest({
@@ -279,10 +278,10 @@ describe('SyncEngineLevel', () => {
         }
       });
       let remoteRecordsQueryReply = remoteRecordsQueryResponse.reply;
-      expect(remoteRecordsQueryReply.status.code).to.equal(200);
-      expect(remoteRecordsQueryReply.entries).to.have.length(3);
+      expect(remoteRecordsQueryReply.status.code).toBe(200);
+      expect(remoteRecordsQueryReply.entries).toHaveLength(3);
       let remoteRecordsFromQuery = remoteRecordsQueryReply.entries?.map(entry => entry.recordId);
-      expect(remoteRecordsFromQuery).to.have.members(remoteRecords);
+      expect(remoteRecordsFromQuery).toEqual(expect.arrayContaining(remoteRecords));
 
       // Register Alice's DID to be synchronized.
       await testHarness.agent.sync.registerIdentity({
@@ -300,9 +299,9 @@ describe('SyncEngineLevel', () => {
         messageParams : {}
       });
       localProtocolsQueryReply = localProtocolsQueryResponse.reply;
-      expect(localProtocolsQueryReply.status.code).to.equal(200);
-      expect(localProtocolsQueryReply.entries?.length).to.equal(2);
-      expect(localProtocolsQueryReply.entries).to.have.deep.equal([ protocolsConfigure1.message, protocolsConfigure2.message ]);
+      expect(localProtocolsQueryReply.status.code).toBe(200);
+      expect(localProtocolsQueryReply.entries?.length).toBe(2);
+      expect(localProtocolsQueryReply.entries).toEqual([ protocolsConfigure1.message, protocolsConfigure2.message ]);
 
       // query local node to see all records
       localRecordsQueryResponse = await testHarness.agent.dwn.processRequest({
@@ -317,10 +316,10 @@ describe('SyncEngineLevel', () => {
         }
       });
       localRecordsQueryReply = localRecordsQueryResponse.reply;
-      expect(localRecordsQueryReply.status.code).to.equal(200);
-      expect(localRecordsQueryReply.entries).to.have.length(6, 'local');
+      expect(localRecordsQueryReply.status.code).toBe(200);
+      expect(localRecordsQueryReply.entries).toHaveLength(6);
       localRecordsFromQuery = localRecordsQueryReply.entries?.map(entry => entry.recordId);
-      expect(localRecordsFromQuery).to.have.members([...localRecords, ...remoteRecords]);
+      expect(localRecordsFromQuery).toEqual(expect.arrayContaining([...localRecords, ...remoteRecords]));
 
       // query remote node to see all protocols
       remoteProtocolsQueryResponse = await testHarness.agent.dwn.sendRequest({
@@ -330,9 +329,9 @@ describe('SyncEngineLevel', () => {
         messageParams : {}
       });
       remoteProtocolsQueryReply = remoteProtocolsQueryResponse.reply;
-      expect(remoteProtocolsQueryReply.status.code).to.equal(200);
-      expect(remoteProtocolsQueryReply.entries?.length).to.equal(2);
-      expect(remoteProtocolsQueryReply.entries).to.have.deep.equal([ protocolsConfigure1.message, protocolsConfigure2.message ]);
+      expect(remoteProtocolsQueryReply.status.code).toBe(200);
+      expect(remoteProtocolsQueryReply.entries?.length).toBe(2);
+      expect(remoteProtocolsQueryReply.entries).toEqual([ protocolsConfigure1.message, protocolsConfigure2.message ]);
 
       // query remote node to see all records
       remoteRecordsQueryResponse = await testHarness.agent.dwn.sendRequest({
@@ -347,11 +346,11 @@ describe('SyncEngineLevel', () => {
         }
       });
       remoteRecordsQueryReply = remoteRecordsQueryResponse.reply;
-      expect(remoteRecordsQueryReply.status.code).to.equal(200);
-      expect(remoteRecordsQueryReply.entries).to.have.length(6, 'remote');
+      expect(remoteRecordsQueryReply.status.code).toBe(200);
+      expect(remoteRecordsQueryReply.entries).toHaveLength(6);
       remoteRecordsFromQuery = remoteRecordsQueryReply.entries?.map(entry => entry.recordId);
-      expect(remoteRecordsFromQuery).to.have.members([...localRecords, ...remoteRecords]);
-    }).slow(1000); // Yellow at 500ms, Red at 1000ms.
+      expect(remoteRecordsFromQuery).toEqual(expect.arrayContaining([...localRecords, ...remoteRecords]));
+    });
 
     describe('sync()', () => {
       it('throws an error if the sync is currently already running', async () => {
@@ -378,9 +377,9 @@ describe('SyncEngineLevel', () => {
         getSyncTargetsStub.returns(Promise.resolve([]));
         try {
           await syncEngine.sync();
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error:any) {
-          expect(error.message).to.equal('SyncEngineLevel: Sync operation is already in progress.');
+          expect(error.message).toBe('SyncEngineLevel: Sync operation is already in progress.');
         }
 
         await clock.tickAsync(50);
@@ -422,8 +421,8 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob(['Hello, world updated!'])
         });
-        expect(updateResponse.reply.status.code).to.equal(202);
-        expect(updateResponse.message!.recordId).to.equal(testRecordId);
+        expect(updateResponse.reply.status.code).toBe(202);
+        expect(updateResponse.message!.recordId).toBe(testRecordId);
 
         const updateMessageCid = updateResponse.messageCid;
 
@@ -440,8 +439,8 @@ describe('SyncEngineLevel', () => {
           }
         });
         let localDwnQueryReply = queryResponse.reply;
-        expect(localDwnQueryReply.status.code).to.equal(200); // Query was successfully executed.
-        expect(localDwnQueryReply.entries).to.have.length(0); // Record doesn't exist on local DWN.
+        expect(localDwnQueryReply.status.code).toBe(200); // Query was successfully executed.
+        expect(localDwnQueryReply.entries).toHaveLength(0); // Record doesn't exist on local DWN.
 
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.registerIdentity({
@@ -459,13 +458,13 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId: testRecordId } }
         });
         localDwnQueryReply = queryResponse.reply;
-        expect(localDwnQueryReply.status.code).to.equal(200); // Query was successfully executed.
-        expect(localDwnQueryReply.entries).to.have.length(1); // Record does exist on local DWN.
+        expect(localDwnQueryReply.status.code).toBe(200); // Query was successfully executed.
+        expect(localDwnQueryReply.entries).toHaveLength(1); // Record does exist on local DWN.
 
         // remove `initialWrite` from the response to generate an accurate messageCid
         const { initialWrite, ...rawMessage } = localDwnQueryReply.entries![0];
         const queriedMessageCid = await Message.getCid(rawMessage);
-        expect(queriedMessageCid).to.equal(updateMessageCid);
+        expect(queriedMessageCid).toBe(updateMessageCid);
       });
 
       it('takes no action if no identities are registered', async () => {
@@ -475,8 +474,8 @@ describe('SyncEngineLevel', () => {
         await syncEngine.sync('pull');
 
         // Verify DID resolution and DWN requests did not occur.
-        expect(didResolveSpy.notCalled).to.be.true;
-        expect(sendDwnRequestSpy.notCalled).to.be.true;
+        expect(didResolveSpy.notCalled).toBe(true);
+        expect(sendDwnRequestSpy.notCalled).toBe(true);
 
         didResolveSpy.restore();
         sendDwnRequestSpy.restore();
@@ -504,8 +503,8 @@ describe('SyncEngineLevel', () => {
         const consoleErrorSpy = sinon.stub(console, 'error').resolves();
 
         await syncEngine.sync('pull');
-        expect(consoleErrorSpy.called).to.be.true;
-        expect(consoleErrorSpy.args[0][0]).to.include('SyncEngineLevel: Error fetching MessagesSync permission grant for delegate DID');
+        expect(consoleErrorSpy.called).toBe(true);
+        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error fetching MessagesSync permission grant for delegate DID');
       });
 
       it('logs an error if could not fetch MessagesRead permission needed for a sync', async () => {
@@ -536,7 +535,7 @@ describe('SyncEngineLevel', () => {
             definition: protocolFoo
           }
         });
-        expect(protocolsFoo.reply.status.code).to.equal(202);
+        expect(protocolsFoo.reply.status.code).toBe(202);
 
 
         // create a record that will be read as a part of sync
@@ -552,7 +551,7 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob(['Hello, world!'])
         });
-        expect(record1.reply.status.code).to.equal(202);
+        expect(record1.reply.status.code).toBe(202);
 
 
         const delegateDid = await testHarness.agent.identity.create({
@@ -583,7 +582,7 @@ describe('SyncEngineLevel', () => {
           rawMessage  : messagesSyncGrantMessage,
           dataStream  : new Blob([ Convert.base64Url(messagesSyncGrantData).toUint8Array() ]),
         });
-        expect(sendGrant.reply.status.code).to.equal(202);
+        expect(sendGrant.reply.status.code).toBe(202);
 
         // store it as the delegate DID so that it can be fetched during sync
         const processGrant = await testHarness.agent.processDwnRequest({
@@ -594,7 +593,7 @@ describe('SyncEngineLevel', () => {
           dataStream  : new Blob([ Convert.base64Url(messagesSyncGrantData).toUint8Array() ]),
           signAsOwner : true
         });
-        expect(processGrant.reply.status.code).to.equal(202);
+        expect(processGrant.reply.status.code).toBe(202);
 
         await testHarness.agent.sync.registerIdentity({
           did     : aliceSync.did.uri,
@@ -608,8 +607,8 @@ describe('SyncEngineLevel', () => {
         const consoleErrorSpy = sinon.stub(console, 'error').resolves();
 
         await syncEngine.sync('pull');
-        expect(consoleErrorSpy.called).to.be.true;
-        expect(consoleErrorSpy.args[0][0]).to.include('SyncEngineLevel: pull - Error fetching MessagesRead permission grant for delegate DID');
+        expect(consoleErrorSpy.called).toBe(true);
+        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: pull - Error fetching MessagesRead permission grant for delegate DID');
       });
 
       it('synchronizes records for 1 identity from remote DWN to local DWN', async () => {
@@ -641,8 +640,8 @@ describe('SyncEngineLevel', () => {
           }
         });
         let localDwnQueryReply = queryResponse.reply;
-        expect(localDwnQueryReply.status.code).to.equal(200); // Query was successfully executed.
-        expect(localDwnQueryReply.entries).to.have.length(0); // Record doesn't exist on local DWN.
+        expect(localDwnQueryReply.status.code).toBe(200); // Query was successfully executed.
+        expect(localDwnQueryReply.entries).toHaveLength(0); // Record doesn't exist on local DWN.
 
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.registerIdentity({
@@ -660,8 +659,8 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId: testRecordId } }
         });
         localDwnQueryReply = queryResponse.reply;
-        expect(localDwnQueryReply.status.code).to.equal(200); // Query was successfully executed.
-        expect(localDwnQueryReply.entries).to.have.length(1); // Record does exist on local DWN.
+        expect(localDwnQueryReply.status.code).toBe(200); // Query was successfully executed.
+        expect(localDwnQueryReply.entries).toHaveLength(1); // Record does exist on local DWN.
 
 
         // Add another record for a subsequent sync.
@@ -685,8 +684,8 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId: testRecord2Id } } // New RecordId
         });
         localDwnQueryReply = queryResponse.reply;
-        expect(localDwnQueryReply.status.code).to.equal(200); // Query was successfully executed.
-        expect(localDwnQueryReply.entries).to.have.length(0); // New Record doesn't exist on local DWN.
+        expect(localDwnQueryReply.status.code).toBe(200); // Query was successfully executed.
+        expect(localDwnQueryReply.entries).toHaveLength(0); // New Record doesn't exist on local DWN.
 
         await syncEngine.sync('pull');
 
@@ -698,12 +697,11 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId: testRecord2Id } } // New RecordId
         });
         localDwnQueryReply = queryResponse.reply;
-        expect(localDwnQueryReply.status.code).to.equal(200); // Query was successfully executed.
-        expect(localDwnQueryReply.entries).to.have.length(1); // New Record does exist on local DWN.
-      }).slow(300); // Yellow at 150ms, Red at 300ms.
+        expect(localDwnQueryReply.status.code).toBe(200); // Query was successfully executed.
+        expect(localDwnQueryReply.entries).toHaveLength(1); // New Record does exist on local DWN.
+      });
 
-      it('synchronizes records with data larger than the `encodedData` limit within the `RecordsQuery` response', async function () {
-        this.timeout(10_000); // large data sync can be slow in CI
+      it('synchronizes records with data larger than the `encodedData` limit within the `RecordsQuery` response', async () => {
         // larger than the size of data returned in a RecordsQuery
         const LARGE_DATA_SIZE = 1_000 + DwnConstant.maxDataSizeAllowedToBeEncoded;
 
@@ -732,8 +730,8 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId: writeResponse.message!.recordId } }
         });
 
-        expect(localReply.status.code).to.equal(200);
-        expect(localReply.entries?.length).to.equal(0);
+        expect(localReply.status.code).toBe(200);
+        expect(localReply.entries?.length).toBe(0);
 
         // initiate sync
         await syncEngine.sync('pull');
@@ -746,10 +744,10 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId: writeResponse.message!.recordId } }
         });
 
-        expect(localReply2.status.code).to.equal(200);
-        expect(localReply2.entries?.length).to.equal(1);
+        expect(localReply2.status.code).toBe(200);
+        expect(localReply2.entries?.length).toBe(1);
         const [ entry ] = localReply2.entries!;
-        expect(entry.encodedData).to.be.undefined; // encodedData is undefined
+        expect(entry.encodedData).toBeUndefined(); // encodedData is undefined
 
         // Execute a RecordsRead to verify the data was synced.
         // check for response encodedData if it doesn't exist issue a RecordsRead
@@ -760,11 +758,11 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsRead,
           messageParams : { filter: { recordId: writeResponse.message!.recordId } }
         });
-        expect(readResponse.reply.status.code).to.equal(200);
-        expect(readResponse.reply.entry).to.exist;
-        expect(readResponse.reply.entry!.data).to.exist;
-        expect(readResponse.reply.entry!.recordsWrite!.descriptor.dataSize).to.equal(LARGE_DATA_SIZE);
-      }).slow(1200); // Yellow at 600ms, Red at 1200ms.
+        expect(readResponse.reply.status.code).toBe(200);
+        expect(readResponse.reply.entry).toBeDefined();
+        expect(readResponse.reply.entry!.data).toBeDefined();
+        expect(readResponse.reply.entry!.recordsWrite!.descriptor.dataSize).toBe(LARGE_DATA_SIZE);
+      });
 
       it('synchronizes records for multiple identities from remote DWN to local DWN', async () => {
         // Create a second Identity to author the DWN messages.
@@ -819,8 +817,8 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId: testRecordIdAlice } }
         });
         let localDwnQueryReply = queryResponse.reply;
-        expect(localDwnQueryReply.status.code).to.equal(200); // Query was successfully executed.
-        expect(localDwnQueryReply.entries).to.have.length(1); // Record does exist on local DWN.
+        expect(localDwnQueryReply.status.code).toBe(200); // Query was successfully executed.
+        expect(localDwnQueryReply.entries).toHaveLength(1); // Record does exist on local DWN.
 
         // Confirm the Bob test record exist on Bob's local DWN.
         queryResponse = await testHarness.agent.dwn.sendRequest({
@@ -830,9 +828,9 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId: testRecordIdBob } }
         });
         localDwnQueryReply = queryResponse.reply;
-        expect(localDwnQueryReply.status.code).to.equal(200); // Query was successfully executed.
-        expect(localDwnQueryReply.entries).to.have.length(1); // Record does exist on local DWN.
-      }).slow(1000); // Yellow at 500ms, Red at 1000ms.
+        expect(localDwnQueryReply.status.code).toBe(200); // Query was successfully executed.
+        expect(localDwnQueryReply.entries).toHaveLength(1); // Record does exist on local DWN.
+      });
     });
 
     describe('push()', () => {
@@ -865,8 +863,8 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob(['Hello, world updated!'])
         });
-        expect(updateResponse.reply.status.code).to.equal(202);
-        expect(updateResponse.message!.recordId).to.equal(testRecordId);
+        expect(updateResponse.reply.status.code).toBe(202);
+        expect(updateResponse.message!.recordId).toBe(testRecordId);
 
         const updateMessageCid = updateResponse.messageCid;
 
@@ -883,8 +881,8 @@ describe('SyncEngineLevel', () => {
           }
         });
         let remoteDwnQueryReply = queryResponse.reply;
-        expect(remoteDwnQueryReply.status.code).to.equal(200); // Query was successfully executed.
-        expect(remoteDwnQueryReply.entries).to.have.length(0); // Record doesn't exist on local DWN.
+        expect(remoteDwnQueryReply.status.code).toBe(200); // Query was successfully executed.
+        expect(remoteDwnQueryReply.entries).toHaveLength(0); // Record doesn't exist on local DWN.
 
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.registerIdentity({
@@ -902,13 +900,13 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId: testRecordId } }
         });
         remoteDwnQueryReply = queryResponse.reply;
-        expect(remoteDwnQueryReply.status.code).to.equal(200); // Query was successfully executed.
-        expect(remoteDwnQueryReply.entries).to.have.length(1); // Record does exist on local DWN.
+        expect(remoteDwnQueryReply.status.code).toBe(200); // Query was successfully executed.
+        expect(remoteDwnQueryReply.entries).toHaveLength(1); // Record does exist on local DWN.
 
         // remove `initialWrite` from the response to generate an accurate messageCid
         const { initialWrite, ...rawMessage } = remoteDwnQueryReply.entries![0];
         const queriedMessageCid = await Message.getCid(rawMessage);
-        expect(queriedMessageCid).to.equal(updateMessageCid);
+        expect(queriedMessageCid).toBe(updateMessageCid);
       });
 
       it('takes no action if no identities are registered', async () => {
@@ -918,8 +916,8 @@ describe('SyncEngineLevel', () => {
         await syncEngine.sync('push');
 
         // Verify DID resolution and DWN requests did not occur.
-        expect(didResolveSpy.notCalled).to.be.true;
-        expect(processRequestSpy.notCalled).to.be.true;
+        expect(didResolveSpy.notCalled).toBe(true);
+        expect(processRequestSpy.notCalled).toBe(true);
 
         didResolveSpy.restore();
         processRequestSpy.restore();
@@ -947,8 +945,8 @@ describe('SyncEngineLevel', () => {
         const consoleErrorSpy = sinon.stub(console, 'error').resolves();
 
         await syncEngine.sync('push');
-        expect(consoleErrorSpy.called).to.be.true;
-        expect(consoleErrorSpy.args[0][0]).to.include('SyncEngineLevel: Error fetching MessagesSync permission grant for delegate DID');
+        expect(consoleErrorSpy.called).toBe(true);
+        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error fetching MessagesSync permission grant for delegate DID');
       });
 
       it('logs an error if could not fetch MessagesRead permission needed for a sync', async () => {
@@ -979,7 +977,7 @@ describe('SyncEngineLevel', () => {
             definition: protocolFoo
           }
         });
-        expect(protocolsFoo.reply.status.code).to.equal(202);
+        expect(protocolsFoo.reply.status.code).toBe(202);
 
 
         // create a record that will be read as a part of sync
@@ -995,7 +993,7 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob(['Hello, world!'])
         });
-        expect(record1.reply.status.code).to.equal(202);
+        expect(record1.reply.status.code).toBe(202);
 
 
         const delegateDid = await testHarness.agent.identity.create({
@@ -1027,7 +1025,7 @@ describe('SyncEngineLevel', () => {
           dataStream  : new Blob([ Convert.base64Url(messagesSyncGrantData).toUint8Array() ]),
           signAsOwner : true
         });
-        expect(processGrant.reply.status.code).to.equal(202);
+        expect(processGrant.reply.status.code).toBe(202);
 
         await testHarness.agent.sync.registerIdentity({
           did     : aliceSync.did.uri,
@@ -1041,8 +1039,8 @@ describe('SyncEngineLevel', () => {
         const consoleErrorSpy = sinon.stub(console, 'error').resolves();
 
         await syncEngine.sync('push');
-        expect(consoleErrorSpy.called).to.be.true;
-        expect(consoleErrorSpy.args[0][0]).to.include('SyncEngineLevel: push - Error fetching MessagesRead permission grant for delegate DID');
+        expect(consoleErrorSpy.called).toBe(true);
+        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: push - Error fetching MessagesRead permission grant for delegate DID');
       });
 
       it('synchronizes records for 1 identity from local DWN to remote DWN', async () => {
@@ -1068,8 +1066,8 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId: testRecordId } }
         });
         let remoteDwnQueryReply = queryResponse.reply;
-        expect(remoteDwnQueryReply.status.code).to.equal(200); // Query was successfully executed.
-        expect(remoteDwnQueryReply.entries).to.have.length(0); // Record doesn't exist on remote DWN.
+        expect(remoteDwnQueryReply.status.code).toBe(200); // Query was successfully executed.
+        expect(remoteDwnQueryReply.entries).toHaveLength(0); // Record doesn't exist on remote DWN.
 
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.registerIdentity({
@@ -1087,8 +1085,8 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId: testRecordId } }
         });
         remoteDwnQueryReply = queryResponse.reply;
-        expect(remoteDwnQueryReply.status.code).to.equal(200); // Query was successfully executed.
-        expect(remoteDwnQueryReply.entries).to.have.length(1); // Record does exist on remote DWN.
+        expect(remoteDwnQueryReply.status.code).toBe(200); // Query was successfully executed.
+        expect(remoteDwnQueryReply.entries).toHaveLength(1); // Record does exist on remote DWN.
 
         // Add another record for a subsequent sync.
         const writeResponse2 = await testHarness.agent.dwn.processRequest({
@@ -1111,8 +1109,8 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId: testRecord2Id } } // New RecordId
         });
         remoteDwnQueryReply = queryResponse.reply;
-        expect(remoteDwnQueryReply.status.code).to.equal(200); // Query was successfully executed.
-        expect(remoteDwnQueryReply.entries).to.have.length(0); // New Record doesn't exist on local DWN.
+        expect(remoteDwnQueryReply.status.code).toBe(200); // Query was successfully executed.
+        expect(remoteDwnQueryReply.entries).toHaveLength(0); // New Record doesn't exist on local DWN.
 
         await syncEngine.sync('push');
 
@@ -1124,12 +1122,11 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId: testRecord2Id } } // New RecordId
         });
         remoteDwnQueryReply = queryResponse.reply;
-        expect(remoteDwnQueryReply.status.code).to.equal(200); // Query was successfully executed.
-        expect(remoteDwnQueryReply.entries).to.have.length(1); // New Record does exist on local DWN.
-      }).slow(600); // Yellow at 300ms, Red at 600ms.
+        expect(remoteDwnQueryReply.status.code).toBe(200); // Query was successfully executed.
+        expect(remoteDwnQueryReply.entries).toHaveLength(1); // New Record does exist on local DWN.
+      });
 
-      it('synchronizes records with data larger than the `encodedData` limit within the `RecordsQuery` response', async function () {
-        this.timeout(10_000); // large data sync can be slow in CI
+      it('synchronizes records with data larger than the `encodedData` limit within the `RecordsQuery` response', async () => {
         // larger than the size of data returned in a RecordsQuery
         const LARGE_DATA_SIZE = DwnConstant.maxDataSizeAllowedToBeEncoded + 1_000;
 
@@ -1157,8 +1154,8 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId: record.message!.recordId } }
         });
 
-        expect(remoteReply.status.code).to.equal(200);
-        expect(remoteReply.entries?.length).to.equal(0);
+        expect(remoteReply.status.code).toBe(200);
+        expect(remoteReply.entries?.length).toBe(0);
 
         // initiate sync
         await syncEngine.sync('push');
@@ -1171,10 +1168,10 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId: record.message!.recordId } }
         });
 
-        expect(remoteReply2.status.code).to.equal(200);
-        expect(remoteReply2.entries?.length).to.equal(1);
+        expect(remoteReply2.status.code).toBe(200);
+        expect(remoteReply2.entries?.length).toBe(1);
         const entry = remoteReply2.entries![0];
-        expect(entry.encodedData).to.be.undefined;
+        expect(entry.encodedData).toBeUndefined();
         // check for response encodedData if it doesn't exist issue a RecordsRead
         const recordId = entry.recordId;
         // get individual records without encodedData to check that data exists
@@ -1185,10 +1182,10 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId } }
         });
         const reply = readRecord.reply;
-        expect(reply.status.code).to.equal(200);
-        expect(reply.entry).to.exist;
-        expect(reply.entry!.data).to.exist;
-      }).slow(1200); // Yellow at 600ms, Red at 1200ms.
+        expect(reply.status.code).toBe(200);
+        expect(reply.entry).toBeDefined();
+        expect(reply.entry!.data).toBeDefined();
+      });
 
       it('synchronizes records for multiple identities from local DWN to remote DWN', async () => {
         // Create a second Identity to author the DWN messages.
@@ -1243,8 +1240,8 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId: testRecordIdAlice } }
         });
         let remoteDwnQueryReply = queryResponse.reply;
-        expect(remoteDwnQueryReply.status.code).to.equal(200); // Query was successfully executed.
-        expect(remoteDwnQueryReply.entries).to.have.length(1); // Record does exist on remote DWN.
+        expect(remoteDwnQueryReply.status.code).toBe(200); // Query was successfully executed.
+        expect(remoteDwnQueryReply.entries).toHaveLength(1); // Record does exist on remote DWN.
 
         // Confirm the Bob test record exist on Bob's remote DWN.
         queryResponse = await testHarness.agent.dwn.sendRequest({
@@ -1254,9 +1251,9 @@ describe('SyncEngineLevel', () => {
           messageParams : { filter: { recordId: testRecordIdBob } }
         });
         remoteDwnQueryReply = queryResponse.reply;
-        expect(remoteDwnQueryReply.status.code).to.equal(200); // Query was successfully executed.
-        expect(remoteDwnQueryReply.entries).to.have.length(1); // Record does exist on remote DWN.
-      }).slow(1200); // Yellow at 600ms, Red at 1200ms.
+        expect(remoteDwnQueryReply.status.code).toBe(200); // Query was successfully executed.
+        expect(remoteDwnQueryReply.entries).toHaveLength(1); // Record does exist on remote DWN.
+      });
     });
 
     describe('sync enhancements', () => {
@@ -1281,7 +1278,7 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob(['Record to be deleted'])
         });
-        expect(writeResponse.reply.status.code).to.equal(202);
+        expect(writeResponse.reply.status.code).toBe(202);
         const testRecordId = writeResponse.message!.recordId;
 
         // Pull the record to Alice's local DWN.
@@ -1294,8 +1291,8 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : { filter: { recordId: testRecordId } }
         });
-        expect(queryResponse.reply.status.code).to.equal(200);
-        expect(queryResponse.reply.entries).to.have.length(1);
+        expect(queryResponse.reply.status.code).toBe(200);
+        expect(queryResponse.reply.entries).toHaveLength(1);
 
         // Delete the record on Alice's remote DWN.
         const deleteResponse = await testHarness.agent.dwn.sendRequest({
@@ -1304,7 +1301,7 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsDelete,
           messageParams : { recordId: testRecordId }
         });
-        expect(deleteResponse.reply.status.code).to.equal(202);
+        expect(deleteResponse.reply.status.code).toBe(202);
 
         // Pull again to sync the delete.
         await syncEngine.sync('pull');
@@ -1316,8 +1313,8 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : { filter: { recordId: testRecordId } }
         });
-        expect(queryResponse.reply.status.code).to.equal(200);
-        expect(queryResponse.reply.entries).to.have.length(0);
+        expect(queryResponse.reply.status.code).toBe(200);
+        expect(queryResponse.reply.entries).toHaveLength(0);
       });
 
       it('syncs RecordsDelete messages from local to remote', async () => {
@@ -1340,7 +1337,7 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob(['Record to be deleted'])
         });
-        expect(writeResponse.reply.status.code).to.equal(202);
+        expect(writeResponse.reply.status.code).toBe(202);
         const testRecordId = writeResponse.message!.recordId;
 
         // Push to remote.
@@ -1353,8 +1350,8 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : { filter: { recordId: testRecordId } }
         });
-        expect(remoteQuery.reply.status.code).to.equal(200);
-        expect(remoteQuery.reply.entries).to.have.length(1);
+        expect(remoteQuery.reply.status.code).toBe(200);
+        expect(remoteQuery.reply.entries).toHaveLength(1);
 
         // Delete the record locally.
         const deleteResponse = await testHarness.agent.dwn.processRequest({
@@ -1363,7 +1360,7 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsDelete,
           messageParams : { recordId: testRecordId }
         });
-        expect(deleteResponse.reply.status.code).to.equal(202);
+        expect(deleteResponse.reply.status.code).toBe(202);
 
         // Push again to sync the delete.
         await syncEngine.sync('push');
@@ -1375,8 +1372,8 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : { filter: { recordId: testRecordId } }
         });
-        expect(remoteQuery.reply.status.code).to.equal(200);
-        expect(remoteQuery.reply.entries).to.have.length(0);
+        expect(remoteQuery.reply.status.code).toBe(200);
+        expect(remoteQuery.reply.entries).toHaveLength(0);
       });
 
       it('is idempotent — running sync twice after convergence is a no-op', async () => {
@@ -1400,7 +1397,7 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob(['Idempotent sync test'])
         });
-        expect(writeResponse.reply.status.code).to.equal(202);
+        expect(writeResponse.reply.status.code).toBe(202);
 
         // First sync to push the record to remote and converge.
         await syncEngine.sync();
@@ -1412,7 +1409,7 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : { filter: { recordId: writeResponse.message!.recordId } }
         });
-        expect(localQuery.reply.entries).to.have.length(1);
+        expect(localQuery.reply.entries).toHaveLength(1);
 
         const remoteQuery = await testHarness.agent.dwn.sendRequest({
           author        : alice.did.uri,
@@ -1420,7 +1417,7 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : { filter: { recordId: writeResponse.message!.recordId } }
         });
-        expect(remoteQuery.reply.entries).to.have.length(1);
+        expect(remoteQuery.reply.entries).toHaveLength(1);
 
         // Spy on sendDwnRequest to count RPC calls during the second sync.
         const sendDwnRequestSpy = sinon.spy(testHarness.agent.rpc, 'sendDwnRequest');
@@ -1436,8 +1433,7 @@ describe('SyncEngineLevel', () => {
         const rpcCalls = sendDwnRequestSpy.args;
         for (const call of rpcCalls) {
           const message = call[0]?.message as any;
-          expect(message?.descriptor?.action).to.equal('root',
-            'Second sync should only make root comparison calls');
+          expect(message?.descriptor?.action).toBe('root');
         }
 
         sendDwnRequestSpy.restore();
@@ -1465,7 +1461,7 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob(['Original data'])
         });
-        expect(writeResponse.reply.status.code).to.equal(202);
+        expect(writeResponse.reply.status.code).toBe(202);
         const testRecordId = writeResponse.message!.recordId;
         const dateCreated = writeResponse.message!.descriptor.dateCreated;
 
@@ -1479,7 +1475,7 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : { filter: { recordId: testRecordId } }
         });
-        expect(localQuery.reply.entries).to.have.length(1);
+        expect(localQuery.reply.entries).toHaveLength(1);
 
         let remoteQuery = await testHarness.agent.dwn.sendRequest({
           author        : alice.did.uri,
@@ -1487,7 +1483,7 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : { filter: { recordId: testRecordId } }
         });
-        expect(remoteQuery.reply.entries).to.have.length(1);
+        expect(remoteQuery.reply.entries).toHaveLength(1);
 
         // Update on the remote with an earlier timestamp.
         const remoteUpdate = await testHarness.agent.dwn.sendRequest({
@@ -1502,7 +1498,7 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob(['Remote update'])
         });
-        expect(remoteUpdate.reply.status.code).to.equal(202);
+        expect(remoteUpdate.reply.status.code).toBe(202);
 
         // Update on the local with a later timestamp (by using Time offset).
         const localUpdate = await testHarness.agent.dwn.processRequest({
@@ -1517,7 +1513,7 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob(['Local update — later'])
         });
-        expect(localUpdate.reply.status.code).to.equal(202);
+        expect(localUpdate.reply.status.code).toBe(202);
         const localUpdateCid = localUpdate.messageCid;
 
         // Sync both directions.
@@ -1533,7 +1529,7 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : { filter: { recordId: testRecordId } }
         });
-        expect(localQuery.reply.entries).to.have.length(1);
+        expect(localQuery.reply.entries).toHaveLength(1);
 
         remoteQuery = await testHarness.agent.dwn.sendRequest({
           author        : alice.did.uri,
@@ -1541,7 +1537,7 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : { filter: { recordId: testRecordId } }
         });
-        expect(remoteQuery.reply.entries).to.have.length(1);
+        expect(remoteQuery.reply.entries).toHaveLength(1);
 
         // Both should resolve to the same message CID.
         const { initialWrite: _localIW, ...localRawMessage } = localQuery.reply.entries![0];
@@ -1550,10 +1546,10 @@ describe('SyncEngineLevel', () => {
         const remoteCid = await Message.getCid(remoteRawMessage);
 
         // Both sides should agree on the winning message.
-        expect(localCid).to.equal(remoteCid);
+        expect(localCid).toBe(remoteCid);
 
         // The local update should be the winner (later timestamp).
-        expect(localCid).to.equal(localUpdateCid);
+        expect(localCid).toBe(localUpdateCid);
       });
     });
 
@@ -1575,7 +1571,7 @@ describe('SyncEngineLevel', () => {
         clock.restore();
 
         // one when starting the sync, and another for each interval
-        expect(syncSpy.callCount).to.equal(3, 'sync');
+        expect(syncSpy.callCount).toBe(3);
       });
 
       it('does not call sync() again until a sync round finishes', async () => {
@@ -1616,17 +1612,17 @@ describe('SyncEngineLevel', () => {
         await clock.tickAsync(1_400); // less time than the sync
 
         // only once for when starting the sync
-        expect(syncSpy.callCount).to.equal(1, 'sync');
+        expect(syncSpy.callCount).toBe(1);
 
         await clock.tickAsync(200); //remaining time and one interval
 
         // once when starting, and once for the interval
-        expect(syncSpy.callCount).to.equal(2, 'sync');
+        expect(syncSpy.callCount).toBe(2);
 
         await clock.tickAsync(500); // one more interval
 
         // one more for the interval
-        expect(syncSpy.callCount).to.equal(3, 'sync');
+        expect(syncSpy.callCount).toBe(3);
 
         syncSpy.restore();
         walkTreeDiffStub.restore();
@@ -1656,7 +1652,7 @@ describe('SyncEngineLevel', () => {
         await clock.tickAsync(1_400); // less than the initial interval + the sync time
 
         // once for the initial call and once for each interval call
-        expect(syncSpy.callCount).to.equal(2);
+        expect(syncSpy.callCount).toBe(2);
 
         // set to be a short sync time
         syncSpy.returns(new Promise<void>((resolve) => {
@@ -1670,12 +1666,12 @@ describe('SyncEngineLevel', () => {
         await clock.tickAsync(301); // exactly the new interval + 1
 
         // one for the initial 'startSync' call and one for each interval call
-        expect(syncSpy.callCount).to.equal(4);
+        expect(syncSpy.callCount).toBe(4);
 
 
         await clock.tickAsync(601); // two more intervals
 
-        expect(syncSpy.callCount).to.equal(6);
+        expect(syncSpy.callCount).toBe(6);
 
         syncSpy.restore();
         clock.restore();
@@ -1703,7 +1699,7 @@ describe('SyncEngineLevel', () => {
         await clock.tickAsync(1_001);
 
         // this should equal 3, once for the initial call and once for each interval call
-        expect(syncSpy.callCount).to.equal(3);
+        expect(syncSpy.callCount).toBe(3);
 
         syncSpy.resetHistory();
         testHarness.agent.sync.startSync({ interval: '200ms' });
@@ -1711,12 +1707,12 @@ describe('SyncEngineLevel', () => {
         await clock.tickAsync(401); // two intervals
 
         // one for the initial 'startSync' call and one for each interval call
-        expect(syncSpy.callCount).to.equal(3);
+        expect(syncSpy.callCount).toBe(3);
 
         await clock.tickAsync(401); // two more intervals
 
         // one additional calls for each interval
-        expect(syncSpy.callCount).to.equal(5);
+        expect(syncSpy.callCount).toBe(5);
 
         syncSpy.restore();
         clock.restore();
@@ -1749,11 +1745,11 @@ describe('SyncEngineLevel', () => {
         await clock.tickAsync(1_500);
 
         // this should equal 4, once for the initial call and once for each interval call
-        expect(syncSpy.callCount).to.equal(4);
+        expect(syncSpy.callCount).toBe(4);
 
         // check if the error message is logged
-        expect(consoleErrorSpy.callCount).to.equal(1);
-        expect(consoleErrorSpy.args[0][0]).to.include('SyncEngineLevel: Error during sync operation');
+        expect(consoleErrorSpy.callCount).toBe(1);
+        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error during sync operation');
 
         syncSpy.restore();
         consoleErrorSpy.restore();
@@ -1783,20 +1779,20 @@ describe('SyncEngineLevel', () => {
         testHarness.agent.sync.startSync({ interval: '500ms' });
 
         // expect the immediate sync call
-        expect(syncSpy.callCount).to.equal(1);
+        expect(syncSpy.callCount).toBe(1);
 
 
         await clock.tickAsync(1_300); // just under 3 intervals
 
         // expect 2 sync interval calls + initial sync
-        expect(syncSpy.callCount).to.equal(3);
+        expect(syncSpy.callCount).toBe(3);
 
         await testHarness.agent.sync.stopSync();
 
         await clock.tickAsync(1_000); // 2 intervals
 
         // sync calls remain unchanged
-        expect(syncSpy.callCount).to.equal(3);
+        expect(syncSpy.callCount).toBe(3);
 
         syncSpy.restore();
         getSyncTargetsStub.restore();
@@ -1823,12 +1819,12 @@ describe('SyncEngineLevel', () => {
         testHarness.agent.sync.startSync({ interval: '500ms' });
 
         // expect the immediate sync call
-        expect(syncSpy.callCount).to.equal(1);
+        expect(syncSpy.callCount).toBe(1);
 
         await clock.tickAsync(1_300); // just under 3 intervals
 
         // expect 2 sync interval calls + initial sync
-        expect(syncSpy.callCount).to.equal(3);
+        expect(syncSpy.callCount).toBe(3);
 
         // cause getSyncTargets to take longer
         getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
@@ -1840,7 +1836,7 @@ describe('SyncEngineLevel', () => {
         await clock.tickAsync(201); // Enough time for the next interval to start
 
         // next interval was called
-        expect(syncSpy.callCount).to.equal(4);
+        expect(syncSpy.callCount).toBe(4);
 
         // stop the sync
         await new Promise<void>((resolve) => {
@@ -1852,13 +1848,13 @@ describe('SyncEngineLevel', () => {
         });
 
         // sync calls remain unchanged
-        expect(syncSpy.callCount).to.equal(4);
+        expect(syncSpy.callCount).toBe(4);
 
         // wait for future intervals
         await clock.tickAsync(2_000);
 
         // sync calls remain unchanged
-        expect(syncSpy.callCount).to.equal(4);
+        expect(syncSpy.callCount).toBe(4);
 
         syncSpy.restore();
         getSyncTargetsStub.restore();
@@ -1885,12 +1881,12 @@ describe('SyncEngineLevel', () => {
         testHarness.agent.sync.startSync({ interval: '500ms' });
 
         // expect the immediate sync call
-        expect(syncSpy.callCount).to.equal(1);
+        expect(syncSpy.callCount).toBe(1);
 
         await clock.tickAsync(1_300); // just under 3 intervals
 
         // expect 2 sync interval calls + initial sync
-        expect(syncSpy.callCount).to.equal(3);
+        expect(syncSpy.callCount).toBe(3);
 
         // cause getSyncTargets to take longer than the 2 second timeout
         getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
@@ -1902,7 +1898,7 @@ describe('SyncEngineLevel', () => {
         await clock.tickAsync(201); // Enough time for the next interval to start
 
         // next interval was called
-        expect(syncSpy.callCount).to.equal(4);
+        expect(syncSpy.callCount).toBe(4);
 
         const stopPromise = testHarness.agent.sync.stopSync();
 
@@ -1920,9 +1916,9 @@ describe('SyncEngineLevel', () => {
             });
 
           });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error:any) {
-          expect(error.message).to.equal('SyncEngineLevel: Existing sync operation did not complete within 2000 milliseconds.');
+          expect(error.message).toBe('SyncEngineLevel: Existing sync operation did not complete within 2000 milliseconds.');
         }
 
         syncSpy.restore();
@@ -1950,7 +1946,7 @@ describe('SyncEngineLevel', () => {
         testHarness.agent.sync.startSync({ interval: '500ms' });
 
         // expect the immediate sync call
-        expect(syncSpy.callCount).to.equal(1);
+        expect(syncSpy.callCount).toBe(1);
 
         await clock.tickAsync(10); // enough time for the sync round trip to complete
 
@@ -1964,7 +1960,7 @@ describe('SyncEngineLevel', () => {
         await clock.tickAsync(501); // Enough time for the next interval to start
 
         // next interval was called
-        expect(syncSpy.callCount).to.equal(2);
+        expect(syncSpy.callCount).toBe(2);
 
         const stopPromise = testHarness.agent.sync.stopSync(10);
         try {
@@ -1981,9 +1977,9 @@ describe('SyncEngineLevel', () => {
             });
 
           });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error:any) {
-          expect(error.message).to.equal('SyncEngineLevel: Existing sync operation did not complete within 10 milliseconds.');
+          expect(error.message).toBe('SyncEngineLevel: Existing sync operation did not complete within 10 milliseconds.');
         }
 
         // call again with a longer timeout
@@ -2012,7 +2008,7 @@ describe('SyncEngineLevel', () => {
         await testHarness.agent.sync.registerIdentity({ did, options: syncOption });
 
         const identityOptions = await testHarness.agent.sync.getIdentityOptions(did);
-        expect(identityOptions).to.deep.equal(syncOption);
+        expect(identityOptions).toEqual(syncOption);
       });
 
       it('throws if attempting to register an identity that is already registered', async () => {
@@ -2024,9 +2020,9 @@ describe('SyncEngineLevel', () => {
 
         try {
           await testHarness.agent.sync.registerIdentity({ did, options: syncOption });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error:any) {
-          expect(error.message).to.equal(`SyncEngineLevel: Identity with DID ${did} is already registered.`);
+          expect(error.message).toBe(`SyncEngineLevel: Identity with DID ${did} is already registered.`);
         }
       });
 
@@ -2039,21 +2035,21 @@ describe('SyncEngineLevel', () => {
 
         // sanity confirm that the identity is registered
         let identityOptions = await testHarness.agent.sync.getIdentityOptions(did);
-        expect(identityOptions).to.deep.equal(syncOption);
+        expect(identityOptions).toEqual(syncOption);
 
         await testHarness.agent.sync.unregisterIdentity(did);
 
         identityOptions = await testHarness.agent.sync.getIdentityOptions(did);
-        expect(identityOptions).to.be.undefined;
+        expect(identityOptions).toBeUndefined();
       });
 
       it('throws when attempting to unregister an identity that is not registered', async () => {
         const did = alice.did.uri;
         try {
           await testHarness.agent.sync.unregisterIdentity(did);
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error:any) {
-          expect(error.message).to.equal(`SyncEngineLevel: Identity with DID ${did} is not registered.`);
+          expect(error.message).toBe(`SyncEngineLevel: Identity with DID ${did} is not registered.`);
         }
       });
 
@@ -2065,7 +2061,7 @@ describe('SyncEngineLevel', () => {
         await testHarness.agent.sync.registerIdentity({ did, options: syncOption });
 
         const identityOptions = await testHarness.agent.sync.getIdentityOptions(did);
-        expect(identityOptions).to.deep.equal(syncOption);
+        expect(identityOptions).toEqual(syncOption);
       });
 
       it('throws if underlying DB throws an error when getting identity options', async () => {
@@ -2077,9 +2073,9 @@ describe('SyncEngineLevel', () => {
 
         try {
           await testHarness.agent.sync.getIdentityOptions('did:example:123');
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error:any) {
-          expect(error.message).to.equal('SyncEngineLevel: Error reading level: DB_ERROR.');
+          expect(error.message).toBe('SyncEngineLevel: Error reading level: DB_ERROR.');
         }
       });
 
@@ -2092,7 +2088,7 @@ describe('SyncEngineLevel', () => {
 
         // sanity confirm that the identity is registered
         let identityOptions = await testHarness.agent.sync.getIdentityOptions(did);
-        expect(identityOptions).to.deep.equal(syncOption);
+        expect(identityOptions).toEqual(syncOption);
 
         const updatedSyncOption: SyncIdentityOptions = {
           protocols: ['https://protocol.xyz/foo', 'https://protocol.xyz/bar']
@@ -2100,7 +2096,7 @@ describe('SyncEngineLevel', () => {
         await testHarness.agent.sync.updateIdentityOptions({ did, options: updatedSyncOption });
 
         identityOptions = await testHarness.agent.sync.getIdentityOptions(did);
-        expect(identityOptions).to.deep.equal(updatedSyncOption);
+        expect(identityOptions).toEqual(updatedSyncOption);
       });
 
       it('throws if attempting to update an identity that is not registered', async () => {
@@ -2111,9 +2107,9 @@ describe('SyncEngineLevel', () => {
 
         try {
           await testHarness.agent.sync.updateIdentityOptions({ did, options: syncOption });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error:any) {
-          expect(error.message).to.equal(`SyncEngineLevel: Identity with DID ${did} is not registered.`);
+          expect(error.message).toBe(`SyncEngineLevel: Identity with DID ${did} is not registered.`);
         }
       });
 
@@ -2172,7 +2168,7 @@ describe('SyncEngineLevel', () => {
             definition: protocolFoo
           }
         });
-        expect(protocolsFoo.reply.status.code).to.equal(202);
+        expect(protocolsFoo.reply.status.code).toBe(202);
 
         const protocolsBar = await testHarness.agent.processDwnRequest({
           author        : aliceSync.did.uri,
@@ -2182,7 +2178,7 @@ describe('SyncEngineLevel', () => {
             definition: protocolBar
           }
         });
-        expect(protocolsBar.reply.status.code).to.equal(202);
+        expect(protocolsBar.reply.status.code).toBe(202);
 
         const protocolsBaz = await testHarness.agent.processDwnRequest({
           author        : aliceSync.did.uri,
@@ -2192,7 +2188,7 @@ describe('SyncEngineLevel', () => {
             definition: protocolBaz
           }
         });
-        expect(protocolsBaz.reply.status.code).to.equal(202);
+        expect(protocolsBaz.reply.status.code).toBe(202);
 
         // write a record for each protocol
         const recordFoo = await testHarness.agent.processDwnRequest({
@@ -2207,7 +2203,7 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob(['Hello, foo!'])
         });
-        expect(recordFoo.reply.status.code).to.equal(202);
+        expect(recordFoo.reply.status.code).toBe(202);
 
         const recordBar = await testHarness.agent.processDwnRequest({
           author        : aliceSync.did.uri,
@@ -2221,7 +2217,7 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob(['Hello, bar!'])
         });
-        expect(recordBar.reply.status.code).to.equal(202);
+        expect(recordBar.reply.status.code).toBe(202);
 
         const recordBaz = await testHarness.agent.processDwnRequest({
           author        : aliceSync.did.uri,
@@ -2235,7 +2231,7 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob(['Hello, baz!'])
         });
-        expect(recordBaz.reply.status.code).to.equal(202);
+        expect(recordBaz.reply.status.code).toBe(202);
 
         // Register Alice's DID to be synchronized with only foo and bar protocols
         await testHarness.agent.sync.registerIdentity({
@@ -2256,9 +2252,9 @@ describe('SyncEngineLevel', () => {
           messageParams : {}
         });
         const remoteProtocolsQueryReply = remoteProtocolsQueryResponse.reply;
-        expect(remoteProtocolsQueryReply.status.code).to.equal(200);
-        expect(remoteProtocolsQueryReply.entries?.length).to.equal(2);
-        expect(remoteProtocolsQueryReply.entries).to.have.deep.equal([ protocolsFoo.message, protocolsBar.message ]);
+        expect(remoteProtocolsQueryReply.status.code).toBe(200);
+        expect(remoteProtocolsQueryReply.entries?.length).toBe(2);
+        expect(remoteProtocolsQueryReply.entries).toEqual([ protocolsFoo.message, protocolsBar.message ]);
 
         // query remote to see foo record
         const remoteFooRecordsResponse = await testHarness.agent.dwn.sendRequest({
@@ -2272,10 +2268,10 @@ describe('SyncEngineLevel', () => {
           }
         });
         const remoteFooRecordsReply = remoteFooRecordsResponse.reply;
-        expect(remoteFooRecordsReply.status.code).to.equal(200);
-        expect(remoteFooRecordsReply.entries).to.have.length(1);
+        expect(remoteFooRecordsReply.status.code).toBe(200);
+        expect(remoteFooRecordsReply.entries).toHaveLength(1);
         const remoteFooRecordIds = remoteFooRecordsReply.entries?.map(entry => entry.recordId);
-        expect(remoteFooRecordIds).to.have.members([ recordFoo.message!.recordId ]);
+        expect(remoteFooRecordIds).toEqual(expect.arrayContaining([ recordFoo.message!.recordId ]));
 
         // query remote to see bar record
         let remoteBarRecordsResponse = await testHarness.agent.dwn.sendRequest({
@@ -2289,10 +2285,10 @@ describe('SyncEngineLevel', () => {
           }
         });
         let remoteBarRecordsReply = remoteBarRecordsResponse.reply;
-        expect(remoteBarRecordsReply.status.code).to.equal(200);
-        expect(remoteBarRecordsReply.entries).to.have.length(1);
+        expect(remoteBarRecordsReply.status.code).toBe(200);
+        expect(remoteBarRecordsReply.entries).toHaveLength(1);
         let remoteBarRecordIds = remoteBarRecordsReply.entries?.map(entry => entry.recordId);
-        expect(remoteBarRecordIds).to.have.members([ recordBar.message!.recordId ]);
+        expect(remoteBarRecordIds).toEqual(expect.arrayContaining([ recordBar.message!.recordId ]));
 
         // query remote to see baz record, none should be returned
         let remoteBazRecordsResponse = await testHarness.agent.dwn.sendRequest({
@@ -2306,8 +2302,8 @@ describe('SyncEngineLevel', () => {
           }
         });
         let remoteBazRecordsReply = remoteBazRecordsResponse.reply;
-        expect(remoteBazRecordsReply.status.code).to.equal(200);
-        expect(remoteBazRecordsReply.entries).to.have.length(0);
+        expect(remoteBazRecordsReply.status.code).toBe(200);
+        expect(remoteBazRecordsReply.entries).toHaveLength(0);
 
 
         // now write a foo record remotely, and a bar record locally
@@ -2326,7 +2322,7 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob(['Hello, foo 2!'])
         });
-        expect(recordFoo2.reply.status.code).to.equal(202);
+        expect(recordFoo2.reply.status.code).toBe(202);
 
         // write a local record to the bar protocol
         const recordBar2 = await testHarness.agent.processDwnRequest({
@@ -2341,7 +2337,7 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob(['Hello, bar 2!'])
         });
-        expect(recordBar2.reply.status.code).to.equal(202);
+        expect(recordBar2.reply.status.code).toBe(202);
 
         // confirm that the foo record is not yet in the local DWN
         let localFooRecordsResponse = await testHarness.agent.dwn.processRequest({
@@ -2355,10 +2351,10 @@ describe('SyncEngineLevel', () => {
           }
         });
         let localFooRecordsReply = localFooRecordsResponse.reply;
-        expect(localFooRecordsReply.status.code).to.equal(200);
-        expect(localFooRecordsReply.entries).to.have.length(1);
+        expect(localFooRecordsReply.status.code).toBe(200);
+        expect(localFooRecordsReply.entries).toHaveLength(1);
         let localFooRecordIds = localFooRecordsReply.entries?.map(entry => entry.recordId);
-        expect(localFooRecordIds).to.not.include(recordFoo2.message!.recordId);
+        expect(localFooRecordIds).not.toContain(recordFoo2.message!.recordId);
 
 
         // confirm that the bar record is not yet in the remote DWN
@@ -2373,10 +2369,10 @@ describe('SyncEngineLevel', () => {
           }
         });
         remoteBarRecordsReply = remoteBarRecordsResponse.reply;
-        expect(remoteBarRecordsReply.status.code).to.equal(200);
-        expect(remoteBarRecordsReply.entries).to.have.length(1);
+        expect(remoteBarRecordsReply.status.code).toBe(200);
+        expect(remoteBarRecordsReply.entries).toHaveLength(1);
         remoteBarRecordIds = remoteBarRecordsReply.entries?.map(entry => entry.recordId);
-        expect(remoteBarRecordIds).to.not.include(recordBar2.message!.recordId);
+        expect(remoteBarRecordIds).not.toContain(recordBar2.message!.recordId);
 
         // preform a pull and push sync
         await syncEngine.sync();
@@ -2393,10 +2389,10 @@ describe('SyncEngineLevel', () => {
           }
         });
         localFooRecordsReply = localFooRecordsResponse.reply;
-        expect(localFooRecordsReply.status.code).to.equal(200);
-        expect(localFooRecordsReply.entries).to.have.length(2);
+        expect(localFooRecordsReply.status.code).toBe(200);
+        expect(localFooRecordsReply.entries).toHaveLength(2);
         localFooRecordIds = localFooRecordsReply.entries?.map(entry => entry.recordId);
-        expect(localFooRecordIds).to.have.members([ recordFoo.message!.recordId, recordFoo2.message!.recordId ]);
+        expect(localFooRecordIds).toEqual(expect.arrayContaining([ recordFoo.message!.recordId, recordFoo2.message!.recordId ]));
 
         // query remote to see bar records with the new record
         remoteBarRecordsResponse = await testHarness.agent.dwn.sendRequest({
@@ -2410,10 +2406,10 @@ describe('SyncEngineLevel', () => {
           }
         });
         remoteBarRecordsReply = remoteBarRecordsResponse.reply;
-        expect(remoteBarRecordsReply.status.code).to.equal(200);
-        expect(remoteBarRecordsReply.entries).to.have.length(2);
+        expect(remoteBarRecordsReply.status.code).toBe(200);
+        expect(remoteBarRecordsReply.entries).toHaveLength(2);
         remoteBarRecordIds = remoteBarRecordsReply.entries?.map(entry => entry.recordId);
-        expect(remoteBarRecordIds).to.have.members([ recordBar.message!.recordId, recordBar2.message!.recordId ]);
+        expect(remoteBarRecordIds).toEqual(expect.arrayContaining([ recordBar.message!.recordId, recordBar2.message!.recordId ]));
 
         // confirm that still no baz records exist remotely
         remoteBazRecordsResponse = await testHarness.agent.dwn.sendRequest({
@@ -2427,8 +2423,8 @@ describe('SyncEngineLevel', () => {
           }
         });
         remoteBazRecordsReply = remoteBazRecordsResponse.reply;
-        expect(remoteBazRecordsReply.status.code).to.equal(200);
-        expect(remoteBazRecordsReply.entries).to.have.length(0);
+        expect(remoteBazRecordsReply.status.code).toBe(200);
+        expect(remoteBazRecordsReply.entries).toHaveLength(0);
       });
 
       it('syncs only specified protocols and delegates', async () => {
@@ -2487,7 +2483,7 @@ describe('SyncEngineLevel', () => {
             definition: protocolFoo
           }
         });
-        expect(protocolsFoo.reply.status.code).to.equal(202);
+        expect(protocolsFoo.reply.status.code).toBe(202);
 
         const protocolsBar = await testHarness.agent.sendDwnRequest({
           author        : alice.did.uri,
@@ -2497,7 +2493,7 @@ describe('SyncEngineLevel', () => {
             definition: protocolBar
           }
         });
-        expect(protocolsBar.reply.status.code).to.equal(202);
+        expect(protocolsBar.reply.status.code).toBe(202);
 
         // create grants for foo protocol, granted to aliceDeviceX
         const messagesReadGrant = await testHarness.agent.permissions.createGrant({
@@ -2534,7 +2530,7 @@ describe('SyncEngineLevel', () => {
           dataStream  : new Blob([ Convert.base64Url(readGrantData).toUint8Array() ]),
           signAsOwner : true
         });
-        expect(processMessagesReadGrantAsOwner.reply.status.code).to.equal(202);
+        expect(processMessagesReadGrantAsOwner.reply.status.code).toBe(202);
 
         const processMessagesReadGrant = await aliceDeviceXHarness.agent.processDwnRequest({
           author      : aliceDeviceX.did.uri,
@@ -2543,7 +2539,7 @@ describe('SyncEngineLevel', () => {
           rawMessage  : messagesReadGrantMessage,
           dataStream  : new Blob([ Convert.base64Url(readGrantData).toUint8Array() ])
         });
-        expect(processMessagesReadGrant.reply.status.code).to.equal(202);
+        expect(processMessagesReadGrant.reply.status.code).toBe(202);
 
         const { encodedData: syncGrantData, ... messagesSyncGrantMessage } = messagesSyncGrant.message;
         const processMessagesSyncGrantAsOwner = await aliceDeviceXHarness.agent.processDwnRequest({
@@ -2554,7 +2550,7 @@ describe('SyncEngineLevel', () => {
           dataStream  : new Blob([ Convert.base64Url(syncGrantData).toUint8Array() ]),
           signAsOwner : true
         });
-        expect(processMessagesSyncGrantAsOwner.reply.status.code).to.equal(202);
+        expect(processMessagesSyncGrantAsOwner.reply.status.code).toBe(202);
 
         const processMessagesSyncGrant = await aliceDeviceXHarness.agent.processDwnRequest({
           author      : aliceDeviceX.did.uri,
@@ -2563,7 +2559,7 @@ describe('SyncEngineLevel', () => {
           rawMessage  : messagesSyncGrantMessage,
           dataStream  : new Blob([ Convert.base64Url(syncGrantData).toUint8Array() ]),
         });
-        expect(processMessagesSyncGrant.reply.status.code).to.equal(202);
+        expect(processMessagesSyncGrant.reply.status.code).toBe(202);
 
         // send the grants to the remote DWN
         const remoteMessagesSyncGrant = await testHarness.agent.sendDwnRequest({
@@ -2573,7 +2569,7 @@ describe('SyncEngineLevel', () => {
           rawMessage  : messagesSyncGrantMessage,
           dataStream  : new Blob([ Convert.base64Url(syncGrantData).toUint8Array() ]),
         });
-        expect(remoteMessagesSyncGrant.reply.status.code).to.equal(202);
+        expect(remoteMessagesSyncGrant.reply.status.code).toBe(202);
 
         const remoteMessagesReadGrant = await testHarness.agent.sendDwnRequest({
           author      : alice.did.uri,
@@ -2582,7 +2578,7 @@ describe('SyncEngineLevel', () => {
           rawMessage  : messagesReadGrantMessage,
           dataStream  : new Blob([ Convert.base64Url(readGrantData).toUint8Array() ]),
         });
-        expect(remoteMessagesReadGrant.reply.status.code).to.equal(202);
+        expect(remoteMessagesReadGrant.reply.status.code).toBe(202);
 
         const { encodedData: recordsQueryGrantData, ... recordsQueryGrantMessage } = recordsQueryGrant.message;
         const processRecordsQueryGrant = await testHarness.agent.sendDwnRequest({
@@ -2592,7 +2588,7 @@ describe('SyncEngineLevel', () => {
           rawMessage  : recordsQueryGrantMessage,
           dataStream  : new Blob([ Convert.base64Url(recordsQueryGrantData).toUint8Array() ]),
         });
-        expect(processRecordsQueryGrant.reply.status.code).to.equal(202);
+        expect(processRecordsQueryGrant.reply.status.code).toBe(202);
 
 
         // create a record for each protocol
@@ -2608,7 +2604,7 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob(['Hello, foo!'])
         });
-        expect(recordFoo.reply.status.code).to.equal(202);
+        expect(recordFoo.reply.status.code).toBe(202);
 
         const recordBar = await testHarness.agent.sendDwnRequest({
           author        : alice.did.uri,
@@ -2622,7 +2618,7 @@ describe('SyncEngineLevel', () => {
           },
           dataStream: new Blob(['Hello, bar!'])
         });
-        expect(recordBar.reply.status.code).to.equal(202);
+        expect(recordBar.reply.status.code).toBe(202);
 
         // Register Alice's DID to be synchronized with only foo protocol
         await aliceDeviceXHarness.agent.sync.registerIdentity({
@@ -2650,10 +2646,10 @@ describe('SyncEngineLevel', () => {
           }
         });
         const didAuthor = Jws.getSignerDid(localFooRecords.message!.authorization?.signature.signatures[0]!);
-        expect(didAuthor).to.equal(aliceDeviceX.did.uri);
-        expect(localFooRecords.reply.status.code).to.equal(200);
-        expect(localFooRecords.reply.entries).to.have.length(1);
-        expect(localFooRecords.reply.entries?.map(entry => entry.recordId)).to.have.deep.equal([ recordFoo.message?.recordId ]);
+        expect(didAuthor).toBe(aliceDeviceX.did.uri);
+        expect(localFooRecords.reply.status.code).toBe(200);
+        expect(localFooRecords.reply.entries).toHaveLength(1);
+        expect(localFooRecords.reply.entries?.map(entry => entry.recordId)).toEqual([ recordFoo.message?.recordId ]);
 
         // sanity check that bar records do not exist on aliceDeviceX
         // since aliceDeviceX does not have a grant for the bar protocol, query the records using alice's signatures.
@@ -2668,8 +2664,8 @@ describe('SyncEngineLevel', () => {
             }
           }
         });
-        expect(localBarRecordsQuery.reply.status.code).to.equal(200);
-        expect(localBarRecordsQuery.reply.entries).to.have.length(1);
+        expect(localBarRecordsQuery.reply.status.code).toBe(200);
+        expect(localBarRecordsQuery.reply.entries).toHaveLength(1);
 
         // use the same message to query `aliceDeviceXHarness` DWN, should return zero results because they were not synced
         const localBarRecords = await aliceDeviceXHarness.agent.dwn.processRequest({
@@ -2678,8 +2674,8 @@ describe('SyncEngineLevel', () => {
           messageType : DwnInterface.RecordsQuery,
           rawMessage  : localBarRecordsQuery.message,
         });
-        expect(localBarRecords.reply.status.code).to.equal(200);
-        expect(localBarRecords.reply.entries).to.have.length(0);
+        expect(localBarRecords.reply.status.code).toBe(200);
+        expect(localBarRecords.reply.entries).toHaveLength(0);
       });
 
       it('defaults to all protocols and undefined delegate if no options are provided', async () => {
@@ -2694,7 +2690,7 @@ describe('SyncEngineLevel', () => {
         const registerIdentitiesPutCall = abstractLevelPut.args[0];
         const options = JSON.parse(registerIdentitiesPutCall[1] as string);
         // confirm that without options the options are set to an empty protocol array
-        expect(options).to.deep.equal({ protocols: [] });
+        expect(options).toEqual({ protocols: [] });
       });
     });
   });
@@ -2719,8 +2715,8 @@ describe('SyncEngineLevel', () => {
     it('returns messages unchanged when there is only one message', () => {
       const msg = mockMessage({});
       const result = SyncEngineLevel.topologicalSort([msg]);
-      expect(result).to.have.length(1);
-      expect(result[0]).to.equal(msg);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toBe(msg);
     });
 
     it('sorts ProtocolsConfigure before RecordsWrite that references the protocol', () => {
@@ -2736,8 +2732,8 @@ describe('SyncEngineLevel', () => {
       });
       // Pass in reverse order: records first, protocol second.
       const result = SyncEngineLevel.topologicalSort([recordsWrite, protocolsConfigure]);
-      expect(result[0]).to.equal(protocolsConfigure);
-      expect(result[1]).to.equal(recordsWrite);
+      expect(result[0]).toBe(protocolsConfigure);
+      expect(result[1]).toBe(recordsWrite);
     });
 
     it('sorts initial write before update write for the same recordId', () => {
@@ -2753,8 +2749,8 @@ describe('SyncEngineLevel', () => {
       );
       // Pass update first.
       const result = SyncEngineLevel.topologicalSort([update, initial]);
-      expect(result[0]).to.equal(initial);
-      expect(result[1]).to.equal(update);
+      expect(result[0]).toBe(initial);
+      expect(result[1]).toBe(update);
     });
 
     it('sorts permission grant before a message that references it via permissionGrantId', () => {
@@ -2774,8 +2770,8 @@ describe('SyncEngineLevel', () => {
       });
       // Pass dependent first, grant second.
       const result = SyncEngineLevel.topologicalSort([dependent, grant]);
-      expect(result[0]).to.equal(grant);
-      expect(result[1]).to.equal(dependent);
+      expect(result[0]).toBe(grant);
+      expect(result[1]).toBe(dependent);
     });
 
     it('does not crash when permissionGrantId references a grant not in the batch', () => {
@@ -2786,7 +2782,7 @@ describe('SyncEngineLevel', () => {
       });
       // Should not throw; no edge is added because the grant is not in the batch.
       const result = SyncEngineLevel.topologicalSort([msg1, msg2]);
-      expect(result).to.have.length(2);
+      expect(result).toHaveLength(2);
     });
 
     it('handles combined protocol, parent, and grant dependencies', () => {
@@ -2837,10 +2833,10 @@ describe('SyncEngineLevel', () => {
       const childIdx = result.indexOf(child);
       const grantIdx = result.indexOf(grant);
 
-      expect(configIdx).to.be.lessThan(parentIdx);
-      expect(configIdx).to.be.lessThan(childIdx);
-      expect(parentIdx).to.be.lessThan(childIdx);
-      expect(grantIdx).to.be.lessThan(childIdx);
+      expect(configIdx).toBeLessThan(parentIdx);
+      expect(configIdx).toBeLessThan(childIdx);
+      expect(parentIdx).toBeLessThan(childIdx);
+      expect(grantIdx).toBeLessThan(childIdx);
     });
   });
 });

@@ -1,4 +1,4 @@
-import { expect } from 'chai';
+import { describe, expect, it } from 'bun:test';
 
 import type { SyncEngine } from '../src/types/sync.js';
 
@@ -15,8 +15,8 @@ describe('AgentSyncApi', () => {
       const mockSyncEngine: SyncEngine = {} as SyncEngine;
       const syncApi = new AgentSyncApi({ agent: mockAgent, syncEngine: mockSyncEngine });
       const agent = syncApi.agent;
-      expect(agent).to.exist;
-      expect(agent.agentDid).to.equal('did:method:abc123');
+      expect(agent).toBeDefined();
+      expect(agent.agentDid).toBe('did:method:abc123');
     });
 
     it(`throws an error if the 'agent' instance property is undefined`, () => {
@@ -24,7 +24,7 @@ describe('AgentSyncApi', () => {
       const syncApi = new AgentSyncApi({ syncEngine: mockSyncEngine });
       expect(() =>
         syncApi.agent
-      ).to.throw(Error, 'Unable to determine agent execution context');
+      ).toThrow('Unable to determine agent execution context');
     });
   });
 });

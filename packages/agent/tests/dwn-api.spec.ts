@@ -7,7 +7,7 @@ import { DataStream, DwnInterfaceName, DwnMethodName, Message, Records, TestData
 
 import sinon from 'sinon';
 
-import { expect } from 'chai';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
 import type { PortableIdentity } from '../src/types/identity.js';
 
@@ -27,7 +27,7 @@ const testDwnUrls: string[] = [testDwnUrl];
 describe('AgentDwnApi', () => {
   let testHarness: PlatformAgentTestHarness;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : TestAgent,
       agentStores : 'dwn'
@@ -38,7 +38,7 @@ describe('AgentDwnApi', () => {
     sinon.restore();
   });
 
-  after(async () => {
+  afterAll(async () => {
     sinon.restore();
     await testHarness.clearStorage();
     await testHarness.closeStorage();
@@ -51,9 +51,9 @@ describe('AgentDwnApi', () => {
       // Instantiate DWN API with custom DWN instance.
       const dwnApi = new AgentDwnApi({ dwn: mockDwn });
 
-      expect(dwnApi).to.exist;
-      expect(dwnApi.node).to.exist;
-      expect(dwnApi.node).to.have.property('test', 'value');
+      expect(dwnApi).toBeDefined();
+      expect(dwnApi.node).toBeDefined();
+      expect(dwnApi.node).toHaveProperty('test', 'value');
     });
   });
 
@@ -66,8 +66,8 @@ describe('AgentDwnApi', () => {
       const mockDwn = ({} as unknown) as Dwn;
       const dwnApi = new AgentDwnApi({ agent: mockAgent, dwn: mockDwn });
       const agent = dwnApi.agent;
-      expect(agent).to.exist;
-      expect(agent.agentDid).to.equal('did:method:abc123');
+      expect(agent).toBeDefined();
+      expect(agent.agentDid).toBe('did:method:abc123');
     });
 
     it(`throws an error if the 'agent' instance property is undefined`, async () => {
@@ -75,7 +75,7 @@ describe('AgentDwnApi', () => {
       const dwnApi = new AgentDwnApi({ dwn: mockDwn });
       expect(() =>
         dwnApi.agent
-      ).to.throw(Error, 'Unable to determine agent execution context');
+      ).toThrow('Unable to determine agent execution context');
     });
   });
 
@@ -98,7 +98,7 @@ describe('AgentDwnApi', () => {
       });
     });
 
-    after(async () => {
+    afterAll(async () => {
       await testHarness.clearStorage();
     });
 
@@ -123,8 +123,8 @@ describe('AgentDwnApi', () => {
       });
 
       // Verify the response.
-      expect(subscribeStatus.code).to.equal(200);
-      expect(subscription).to.exist;
+      expect(subscribeStatus.code).toBe(200);
+      expect(subscription).toBeDefined();
 
       // install the protocol, this will match the subscription filter
       const protocolDefinition: ProtocolDefinition = {
@@ -149,7 +149,7 @@ describe('AgentDwnApi', () => {
           definition: protocolDefinition
         }
       });
-      expect(protocolStatus.code).to.equal(202);
+      expect(protocolStatus.code).toBe(202);
 
       // create a test record that matches the subscription filter
       const dataBytes = Convert.string('Write 1').toUint8Array();
@@ -165,7 +165,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes])
       });
-      expect(writeStatus.code).to.equal(202);
+      expect(writeStatus.code).toBe(202);
 
       // create another test record that matches the subscription filter
       const dataBytes2 = Convert.string('Write 2').toUint8Array();
@@ -181,7 +181,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes2])
       });
-      expect(writeStatus2.code).to.equal(202);
+      expect(writeStatus2.code).toBe(202);
 
       // create a message that does not match the subscription filter
       const dataBytes3 = Convert.string('Write 3').toUint8Array();
@@ -195,18 +195,18 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes3])
       });
-      expect(writeStatus3.code).to.equal(202);
+      expect(writeStatus3.code).toBe(202);
 
       // close subscription
       await subscription!.close();
 
       // check that the subscription handler received the expected messages
-      expect(receivedMessages).to.have.length(3);
-      expect(receivedMessages).to.have.members([
+      expect(receivedMessages).toHaveLength(3);
+      expect(receivedMessages).toEqual(expect.arrayContaining([
         protocolMessageCid,
         write1MessageCid,
         write2MessageCid
-      ]);
+      ]));
     });
 
     it('handles MessagesRead', async () => {
@@ -224,7 +224,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes])
       });
-      expect(writeResponse.reply.status.code).to.equal(202);
+      expect(writeResponse.reply.status.code).toBe(202);
       const writeMessage = writeResponse.message!;
 
       // Attempt to process the MessagesRead.
@@ -237,23 +237,23 @@ describe('AgentDwnApi', () => {
         }
       });
 
-      expect(messagesReadResponse).to.have.property('message');
-      expect(messagesReadResponse).to.have.property('messageCid');
-      expect(messagesReadResponse).to.have.property('reply');
+      expect(messagesReadResponse).toHaveProperty('message');
+      expect(messagesReadResponse).toHaveProperty('messageCid');
+      expect(messagesReadResponse).toHaveProperty('reply');
 
       const messagesReadMessage = messagesReadResponse.message!;
-      expect(messagesReadMessage.descriptor).to.have.property('messageCid');
-      expect(messagesReadMessage.descriptor.messageCid).to.equal(writeResponse.messageCid);
+      expect(messagesReadMessage.descriptor).toHaveProperty('messageCid');
+      expect(messagesReadMessage.descriptor.messageCid).toBe(writeResponse.messageCid);
 
       const messagesReadReply = messagesReadResponse.reply;
-      expect(messagesReadReply).to.have.property('status');
-      expect(messagesReadReply.status.code).to.equal(200);
+      expect(messagesReadReply).toHaveProperty('status');
+      expect(messagesReadReply.status.code).toBe(200);
 
       const retrievedRecordsWrite = messagesReadReply.entry!;
-      expect(retrievedRecordsWrite.message).to.have.property('recordId', writeMessage.recordId);
+      expect(retrievedRecordsWrite.message).toHaveProperty('recordId', writeMessage.recordId);
 
       const readDataBytes = await DataStream.toBytes(retrievedRecordsWrite.data!);
-      expect(readDataBytes).to.deep.equal(dataBytes);
+      expect(readDataBytes).toEqual(dataBytes);
     });
 
     it('handles ProtocolsConfigure', async () => {
@@ -266,17 +266,17 @@ describe('AgentDwnApi', () => {
         }
       });
 
-      expect(protocolsConfigureResponse).to.have.property('message');
-      expect(protocolsConfigureResponse).to.have.property('messageCid');
-      expect(protocolsConfigureResponse).to.have.property('reply');
+      expect(protocolsConfigureResponse).toHaveProperty('message');
+      expect(protocolsConfigureResponse).toHaveProperty('messageCid');
+      expect(protocolsConfigureResponse).toHaveProperty('reply');
 
       const configureMessage = protocolsConfigureResponse.message!;
-      expect(configureMessage.descriptor).to.have.property('definition');
-      expect(configureMessage.descriptor.definition).to.deep.equal(emailProtocolDefinition);
+      expect(configureMessage.descriptor).toHaveProperty('definition');
+      expect(configureMessage.descriptor.definition).toEqual(emailProtocolDefinition);
 
       const configureReply = protocolsConfigureResponse.reply;
-      expect(configureReply).to.have.property('status');
-      expect(configureReply.status.code).to.equal(202);
+      expect(configureReply).toHaveProperty('status');
+      expect(configureReply.status.code).toBe(202);
     });
 
     it('handles ProtocolsQuery', async () => {
@@ -289,7 +289,7 @@ describe('AgentDwnApi', () => {
           definition: emailProtocolDefinition
         }
       });
-      expect(protocolsConfigureResponse.reply.status.code).to.equal(202);
+      expect(protocolsConfigureResponse.reply.status.code).toBe(202);
 
       // Attempt to query for the protocol that was just configured.
       const protocolsQueryResponse = await testHarness.agent.dwn.processRequest({
@@ -301,20 +301,20 @@ describe('AgentDwnApi', () => {
         }
       });
 
-      expect(protocolsQueryResponse).to.have.property('message');
-      expect(protocolsQueryResponse).to.have.property('messageCid');
-      expect(protocolsQueryResponse).to.have.property('reply');
+      expect(protocolsQueryResponse).toHaveProperty('message');
+      expect(protocolsQueryResponse).toHaveProperty('messageCid');
+      expect(protocolsQueryResponse).toHaveProperty('reply');
 
       const queryReply = protocolsQueryResponse.reply;
-      expect(queryReply).to.have.property('status');
-      expect(queryReply.status.code).to.equal(200);
-      expect(queryReply).to.have.property('entries');
-      expect(queryReply.entries).to.have.length(1);
+      expect(queryReply).toHaveProperty('status');
+      expect(queryReply.status.code).toBe(200);
+      expect(queryReply).toHaveProperty('entries');
+      expect(queryReply.entries).toHaveLength(1);
 
       if (!Array.isArray(queryReply.entries)) {throw new Error('Type guard');}
       if (queryReply.entries.length !== 1) {throw new Error('Type guard');}
       const protocolsConfigure = queryReply.entries[0];
-      expect(protocolsConfigure.descriptor.definition).to.deep.equal(emailProtocolDefinition);
+      expect(protocolsConfigure.descriptor.definition).toEqual(emailProtocolDefinition);
     });
 
     it('handles RecordsDelete messages', async () => {
@@ -332,7 +332,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes])
       });
-      expect(writeStatus.code).to.equal(202);
+      expect(writeStatus.code).toBe(202);
       const writeMessage = message!;
 
       // Attempt to process the RecordsRead.
@@ -346,17 +346,17 @@ describe('AgentDwnApi', () => {
       });
 
       // Verify the response.
-      expect(deleteResponse).to.have.property('message');
-      expect(deleteResponse).to.have.property('messageCid');
-      expect(deleteResponse).to.have.property('reply');
+      expect(deleteResponse).toHaveProperty('message');
+      expect(deleteResponse).toHaveProperty('messageCid');
+      expect(deleteResponse).toHaveProperty('reply');
 
       const deleteMessage = deleteResponse.message;
-      expect(deleteMessage).to.have.property('authorization');
-      expect(deleteMessage).to.have.property('descriptor');
+      expect(deleteMessage).toHaveProperty('authorization');
+      expect(deleteMessage).toHaveProperty('descriptor');
 
       const deleteReply = deleteResponse.reply;
-      expect(deleteReply).to.have.property('status');
-      expect(deleteReply.status.code).to.equal(202);
+      expect(deleteReply).toHaveProperty('status');
+      expect(deleteReply.status.code).toBe(202);
     });
 
     it('handles RecordsQuery messages', async () => {
@@ -374,7 +374,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes])
       });
-      expect(writeStatus.code).to.equal(202);
+      expect(writeStatus.code).toBe(202);
       const writeMessage = message!;
 
       // Attempt to process the RecordsQuery.
@@ -390,22 +390,22 @@ describe('AgentDwnApi', () => {
       });
 
       // Verify the response.
-      expect(queryResponse).to.have.property('message');
-      expect(queryResponse).to.have.property('messageCid');
-      expect(queryResponse).to.have.property('reply');
+      expect(queryResponse).toHaveProperty('message');
+      expect(queryResponse).toHaveProperty('messageCid');
+      expect(queryResponse).toHaveProperty('reply');
 
       const queryMessage = queryResponse.message;
-      expect(queryMessage).to.have.property('authorization');
-      expect(queryMessage).to.have.property('descriptor');
+      expect(queryMessage).toHaveProperty('authorization');
+      expect(queryMessage).toHaveProperty('descriptor');
 
       const queryReply = queryResponse.reply;
-      expect(queryReply).to.have.property('status');
-      expect(queryReply.status.code).to.equal(200);
-      expect(queryReply.entries).to.exist;
-      expect(queryReply.entries).to.have.length(1);
-      expect(queryReply.entries?.[0]).to.have.property('descriptor');
-      expect(queryReply.entries?.[0]).to.have.property('encodedData');
-      expect(queryReply.entries?.[0]).to.have.property('recordId', writeMessage.recordId);
+      expect(queryReply).toHaveProperty('status');
+      expect(queryReply.status.code).toBe(200);
+      expect(queryReply.entries).toBeDefined();
+      expect(queryReply.entries).toHaveLength(1);
+      expect(queryReply.entries?.[0]).toHaveProperty('descriptor');
+      expect(queryReply.entries?.[0]).toHaveProperty('encodedData');
+      expect(queryReply.entries?.[0]).toHaveProperty('recordId', writeMessage.recordId);
     });
 
     it('handles RecordsRead messages', async () => {
@@ -423,7 +423,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes])
       });
-      expect(writeStatus.code).to.equal(202);
+      expect(writeStatus.code).toBe(202);
       const writeMessage = message!;
 
       // Attempt to process the RecordsRead.
@@ -439,24 +439,24 @@ describe('AgentDwnApi', () => {
       });
 
       // Verify the response.
-      expect(readResponse).to.have.property('message');
-      expect(readResponse).to.have.property('messageCid');
-      expect(readResponse).to.have.property('reply');
+      expect(readResponse).toHaveProperty('message');
+      expect(readResponse).toHaveProperty('messageCid');
+      expect(readResponse).toHaveProperty('reply');
 
       const readMessage = readResponse.message;
-      expect(readMessage).to.have.property('authorization');
-      expect(readMessage).to.have.property('descriptor');
+      expect(readMessage).toHaveProperty('authorization');
+      expect(readMessage).toHaveProperty('descriptor');
 
       const readReply = readResponse.reply;
-      expect(readReply).to.have.property('status');
-      expect(readReply.status.code).to.equal(200);
-      expect(readReply).to.have.property('entry');
-      expect(readReply.entry).to.have.property('data');
-      expect(readReply.entry!.recordsWrite).to.have.property('descriptor');
-      expect(readReply.entry!.recordsWrite).to.have.property('recordId', writeMessage.recordId);
+      expect(readReply).toHaveProperty('status');
+      expect(readReply.status.code).toBe(200);
+      expect(readReply).toHaveProperty('entry');
+      expect(readReply.entry).toHaveProperty('data');
+      expect(readReply.entry!.recordsWrite).toHaveProperty('descriptor');
+      expect(readReply.entry!.recordsWrite).toHaveProperty('recordId', writeMessage.recordId);
 
       const readDataBytes = await DataStream.toBytes(readReply.entry!.data!);
-      expect(readDataBytes).to.deep.equal(dataBytes);
+      expect(readDataBytes).toEqual(dataBytes);
     });
 
     it('handles RecordsSubscribe message', async () => {
@@ -464,7 +464,7 @@ describe('AgentDwnApi', () => {
       const subscriptionHandler = (event: MessageEvent): void => {
         const { message } = event;
         if (!isDwnMessage(DwnInterface.RecordsWrite, message)) {
-          expect.fail('Received message is not a RecordsWrite message');
+          throw new Error('Received message is not a RecordsWrite message');
         }
         receivedMessages.push(message);
       };
@@ -483,8 +483,8 @@ describe('AgentDwnApi', () => {
       });
 
       // Verify the response.
-      expect(subscribeStatus.code).to.equal(200);
-      expect(subscription).to.exist;
+      expect(subscribeStatus.code).toBe(200);
+      expect(subscription).toBeDefined();
 
 
       // create a test record that matches the subscription filter
@@ -499,7 +499,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes])
       });
-      expect(writeStatus.code).to.equal(202);
+      expect(writeStatus.code).toBe(202);
       const writeMessage1 = message!;
 
       // create another test record that matches the subscription filter
@@ -514,7 +514,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes2])
       });
-      expect(writeStatus2.code).to.equal(202);
+      expect(writeStatus2.code).toBe(202);
       const writeMessage2 = message2!;
 
       // create a message that does not match the subscription filter
@@ -529,15 +529,15 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes3])
       });
-      expect(writeStatus3.code).to.equal(202);
+      expect(writeStatus3.code).toBe(202);
 
       // close subscription
       await subscription!.close();
 
       // check that the subscription handler received the expected messages
-      expect(receivedMessages).to.have.length(2);
-      expect(receivedMessages[0].recordId).to.equal(writeMessage1.recordId);
-      expect(receivedMessages[1].recordId).to.equal(writeMessage2.recordId);
+      expect(receivedMessages).toHaveLength(2);
+      expect(receivedMessages[0].recordId).toBe(writeMessage1.recordId);
+      expect(receivedMessages[1].recordId).toBe(writeMessage2.recordId);
     });
 
     it('handles RecordsWrite messages', async () => {
@@ -556,23 +556,23 @@ describe('AgentDwnApi', () => {
       });
 
       // Verify the response.
-      expect(writeResponse).to.have.property('message');
-      expect(writeResponse).to.have.property('messageCid');
-      expect(writeResponse).to.have.property('reply');
+      expect(writeResponse).toHaveProperty('message');
+      expect(writeResponse).toHaveProperty('messageCid');
+      expect(writeResponse).toHaveProperty('reply');
 
       const writeMessage = writeResponse.message;
-      expect(writeMessage).to.have.property('authorization');
-      expect(writeMessage).to.have.property('descriptor');
-      expect(writeMessage).to.have.property('recordId');
+      expect(writeMessage).toHaveProperty('authorization');
+      expect(writeMessage).toHaveProperty('descriptor');
+      expect(writeMessage).toHaveProperty('recordId');
 
       const writeReply = writeResponse.reply;
-      expect(writeReply).to.have.property('status');
-      expect(writeReply.status.code).to.equal(202);
+      expect(writeReply).toHaveProperty('status');
+      expect(writeReply.status.code).toBe(202);
     });
 
     it('returns a 202 Accepted status when the request is not stored', async () => {
       // spy on dwn.processMessage
-      const processMessageSpy = sinon.spy(testHarness.agent.dwn.node, 'processMessage');
+      const processMessageSpy = spyOn(testHarness.agent.dwn.node, 'processMessage');
 
       // Attempt to process the RecordsWrite
       const dataBytes = Convert.string('Hello, world!').toUint8Array();
@@ -588,12 +588,12 @@ describe('AgentDwnApi', () => {
       });
 
       // Verify the response.
-      expect(writeResponse).to.have.property('message');
-      expect(writeResponse.reply.status.code).to.equal(202);
-      expect(writeResponse.reply.status.detail).to.equal('Accepted');
+      expect(writeResponse).toHaveProperty('message');
+      expect(writeResponse.reply.status.code).toBe(202);
+      expect(writeResponse.reply.status.detail).toBe('Accepted');
 
       // dwnProcessMessage should not have been called
-      expect(processMessageSpy.called).to.be.false;
+      expect(processMessageSpy).not.toHaveBeenCalled();
     });
 
     it('handles RecordsWrite messages to sign as owner', async () => {
@@ -611,7 +611,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream,
       });
-      expect(bobWrite.reply.status.code).to.equal(202);
+      expect(bobWrite.reply.status.code).toBe(202);
       const message = bobWrite.message!;
 
       // alice queries bob's DWN for the record
@@ -626,9 +626,9 @@ describe('AgentDwnApi', () => {
         }
       });
       const reply = queryBobResponse.reply;
-      expect(reply.status.code).to.equal(200);
-      expect(reply.entries!.length).to.equal(1);
-      expect(reply.entries![0].recordId).to.equal(message.recordId);
+      expect(reply.status.code).toBe(200);
+      expect(reply.entries!.length).toBe(1);
+      expect(reply.entries![0].recordId).toBe(message.recordId);
 
       // alice attempts to process the rawMessage as is without signing it, should fail
       let aliceWrite = await testHarness.agent.dwn.processRequest({
@@ -638,7 +638,7 @@ describe('AgentDwnApi', () => {
         rawMessage  : message,
         dataStream,
       });
-      expect(aliceWrite.reply.status.code).to.equal(401);
+      expect(aliceWrite.reply.status.code).toBe(401);
 
       // alice queries to make sure the record is not saved on her dwn
       let queryAliceResponse = await testHarness.agent.dwn.processRequest({
@@ -651,8 +651,8 @@ describe('AgentDwnApi', () => {
           }
         }
       });
-      expect(queryAliceResponse.reply.status.code).to.equal(200);
-      expect(queryAliceResponse.reply.entries!.length).to.equal(0);
+      expect(queryAliceResponse.reply.status.code).toBe(200);
+      expect(queryAliceResponse.reply.entries!.length).toBe(0);
 
       // alice attempts to process the rawMessage again this time marking it to be signed as owner
       aliceWrite = await testHarness.agent.dwn.processRequest({
@@ -663,7 +663,7 @@ describe('AgentDwnApi', () => {
         signAsOwner : true,
         dataStream,
       });
-      expect(aliceWrite.reply.status.code).to.equal(202);
+      expect(aliceWrite.reply.status.code).toBe(202);
 
       // alice now queries for the record, it should be there
       queryAliceResponse = await testHarness.agent.dwn.processRequest({
@@ -676,8 +676,8 @@ describe('AgentDwnApi', () => {
           }
         }
       });
-      expect(queryAliceResponse.reply.status.code).to.equal(200);
-      expect(queryAliceResponse.reply.entries!.length).to.equal(1);
+      expect(queryAliceResponse.reply.status.code).toBe(200);
+      expect(queryAliceResponse.reply.entries!.length).toBe(1);
     });
 
     it('handles RecordsWrite messages to sign as delegate owner', async () => {
@@ -702,7 +702,7 @@ describe('AgentDwnApi', () => {
           definition: protocolDefinition
         }
       });
-      expect(protocolStatus.code).to.equal(202);
+      expect(protocolStatus.code).toBe(202);
 
       // install for alice
       const { reply: { status: protocolStatus2 } } = await testHarness.agent.dwn.processRequest({
@@ -714,7 +714,7 @@ describe('AgentDwnApi', () => {
         }
       });
 
-      expect(protocolStatus2.code).to.equal(202);
+      expect(protocolStatus2.code).toBe(202);
 
       // create a DID for alice's Device X and grant it delegated write permissions to alice's DWN
       const aliceDeviceX = await testHarness.agent.identity.create({
@@ -746,7 +746,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream,
       });
-      expect(bobWrite.reply.status.code).to.equal(202);
+      expect(bobWrite.reply.status.code).toBe(202);
       const message = bobWrite.message!;
 
       // alice queries bob's DWN for the record
@@ -761,9 +761,9 @@ describe('AgentDwnApi', () => {
         }
       });
       const reply = queryBobResponse.reply;
-      expect(reply.status.code).to.equal(200);
-      expect(reply.entries!.length).to.equal(1);
-      expect(reply.entries![0].recordId).to.equal(message.recordId);
+      expect(reply.status.code).toBe(200);
+      expect(reply.entries!.length).toBe(1);
+      expect(reply.entries![0].recordId).toBe(message.recordId);
 
       // alice attempts to process the rawMessage as is without signing it, should fail
       let aliceWrite = await testHarness.agent.dwn.processRequest({
@@ -773,7 +773,7 @@ describe('AgentDwnApi', () => {
         rawMessage  : message,
         dataStream,
       });
-      expect(aliceWrite.reply.status.code).to.equal(401);
+      expect(aliceWrite.reply.status.code).toBe(401);
 
       // alice queries to make sure the record is not saved on her dwn
       let queryAliceResponse = await testHarness.agent.dwn.processRequest({
@@ -786,8 +786,8 @@ describe('AgentDwnApi', () => {
           }
         }
       });
-      expect(queryAliceResponse.reply.status.code).to.equal(200);
-      expect(queryAliceResponse.reply.entries!.length).to.equal(0);
+      expect(queryAliceResponse.reply.status.code).toBe(200);
+      expect(queryAliceResponse.reply.entries!.length).toBe(0);
 
       // alice attempts to process the rawMessage again this time marking it to be signed as owner
       aliceWrite = await testHarness.agent.dwn.processRequest({
@@ -803,7 +803,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream,
       });
-      expect(aliceWrite.reply.status.code).to.equal(202);
+      expect(aliceWrite.reply.status.code).toBe(202);
 
       // alice now queries for the record, it should be there
       queryAliceResponse = await testHarness.agent.dwn.processRequest({
@@ -816,8 +816,8 @@ describe('AgentDwnApi', () => {
           }
         }
       });
-      expect(queryAliceResponse.reply.status.code).to.equal(200);
-      expect(queryAliceResponse.reply.entries!.length).to.equal(1);
+      expect(queryAliceResponse.reply.status.code).toBe(200);
+      expect(queryAliceResponse.reply.entries!.length).toBe(1);
     });
 
     it('should throw if attempting to sign as owner delegate without providing a delegated grant in the messageParams', async () => {
@@ -848,7 +848,7 @@ describe('AgentDwnApi', () => {
           definition: protocolDefinition
         }
       });
-      expect(protocolStatus.code).to.equal(202);
+      expect(protocolStatus.code).toBe(202);
 
       // install for alice
       const { reply: { status: protocolStatus2 } } = await testHarness.agent.dwn.processRequest({
@@ -860,7 +860,7 @@ describe('AgentDwnApi', () => {
         }
       });
 
-      expect(protocolStatus2.code).to.equal(202);
+      expect(protocolStatus2.code).toBe(202);
 
       // bob authors a public record to his dwn
       const dataStream = new Blob([ Convert.string('Hello, world!').toUint8Array() ]);
@@ -877,7 +877,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream,
       });
-      expect(bobWrite.reply.status.code).to.equal(202);
+      expect(bobWrite.reply.status.code).toBe(202);
       const message = bobWrite.message!;
 
       // alice attempts to sign as owner delegate without providing a delegated grant in the messageParams
@@ -892,9 +892,9 @@ describe('AgentDwnApi', () => {
           dataStream,
         });
 
-        expect.fail('Should have thrown');
+        throw new Error('Should have thrown');
       } catch (error:any) {
-        expect(error.message).to.include('Requested to sign with a permission but no grant messageParams were provided in the request');
+        expect(error.message).toContain('Requested to sign with a permission but no grant messageParams were provided in the request');
       }
     });
 
@@ -922,9 +922,9 @@ describe('AgentDwnApi', () => {
           dataStream,
         });
 
-        expect.fail('Should have thrown');
+        throw new Error('Should have thrown');
       } catch (error:any) {
-        expect(error.message).to.include('AgentDwnApi: Requested to sign with a permission but no grant messageParams were provided in the request');
+        expect(error.message).toContain('AgentDwnApi: Requested to sign with a permission but no grant messageParams were provided in the request');
       }
     });
   });
@@ -932,7 +932,7 @@ describe('AgentDwnApi', () => {
   describe('sendRequest()', () => {
     let alice: BearerIdentity;
 
-    before(async () => {
+    beforeAll(async () => {
       await testHarness.clearStorage();
       await testHarness.createAgentDid();
 
@@ -1055,7 +1055,7 @@ describe('AgentDwnApi', () => {
       await DidDht.publish({ did: alice.did });
     });
 
-    after(async () => {
+    afterAll(async () => {
       await testHarness.clearStorage();
     });
 
@@ -1074,7 +1074,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes])
       });
-      expect(writeResponse.reply.status.code).to.equal(202);
+      expect(writeResponse.reply.status.code).toBe(202);
 
       // sendRequest using the message's `messageCid`
       const sendResponse = await testHarness.agent.dwn.sendRequest({
@@ -1085,9 +1085,9 @@ describe('AgentDwnApi', () => {
       });
 
       // Verify the response.
-      expect(sendResponse.message).to.deep.equal(writeResponse.message);
-      expect(sendResponse.messageCid).to.equal(writeResponse.messageCid);
-      expect(sendResponse.reply.status.code).to.equal(202);
+      expect(sendResponse.message).toEqual(writeResponse.message);
+      expect(sendResponse.messageCid).toBe(writeResponse.messageCid);
+      expect(sendResponse.reply.status.code).toBe(202);
     });
 
     it('should fail when sending a message with a `messageCid` that does not exist', async () => {
@@ -1101,9 +1101,9 @@ describe('AgentDwnApi', () => {
           messageType : DwnInterface.RecordsWrite,
           messageCid,
         });
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
       } catch (error:any) {
-        expect(error.message).to.contain('AgentDwnApi: Failed to read message');
+        expect(error.message).toContain('AgentDwnApi: Failed to read message');
       }
     });
 
@@ -1128,8 +1128,8 @@ describe('AgentDwnApi', () => {
       });
 
       // Verify the response.
-      expect(subscribeStatus.code).to.equal(200);
-      expect(subscription).to.exist;
+      expect(subscribeStatus.code).toBe(200);
+      expect(subscription).toBeDefined();
 
       // install the protocol, this will match the subscription filter
       const protocolDefinition: ProtocolDefinition = {
@@ -1154,7 +1154,7 @@ describe('AgentDwnApi', () => {
           definition: protocolDefinition
         }
       });
-      expect(protocolStatus.code).to.equal(202);
+      expect(protocolStatus.code).toBe(202);
 
       // create a test record that matches the subscription filter
       const dataBytes = Convert.string('Write 1').toUint8Array();
@@ -1170,7 +1170,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes])
       });
-      expect(writeStatus.code).to.equal(202);
+      expect(writeStatus.code).toBe(202);
 
       // create another test record that matches the subscription filter
       const dataBytes2 = Convert.string('Write 2').toUint8Array();
@@ -1186,7 +1186,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes2])
       });
-      expect(writeStatus2.code).to.equal(202);
+      expect(writeStatus2.code).toBe(202);
 
       // create a message that does not match the subscription filter
       const dataBytes3 = Convert.string('Write 3').toUint8Array();
@@ -1200,18 +1200,18 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes3])
       });
-      expect(writeStatus3.code).to.equal(202);
+      expect(writeStatus3.code).toBe(202);
 
       // close subscription
       await subscription!.close();
 
       // check that the subscription handler received the expected messages
-      expect(receivedMessages).to.have.length(3);
-      expect(receivedMessages).to.have.members([
+      expect(receivedMessages).toHaveLength(3);
+      expect(receivedMessages).toEqual(expect.arrayContaining([
         protocolMessageCid,
         write1MessageCid,
         write2MessageCid
-      ]);
+      ]));
     });
 
     it('handles MessagesRead', async () => {
@@ -1229,7 +1229,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes])
       });
-      expect(writeResponse.reply.status.code).to.equal(202);
+      expect(writeResponse.reply.status.code).toBe(202);
       const writeMessage = writeResponse.message!;
 
       // Attempt to process the MessagesRead.
@@ -1242,22 +1242,22 @@ describe('AgentDwnApi', () => {
         }
       });
 
-      expect(messagesReadResponse).to.have.property('message');
-      expect(messagesReadResponse).to.have.property('messageCid');
-      expect(messagesReadResponse).to.have.property('reply');
+      expect(messagesReadResponse).toHaveProperty('message');
+      expect(messagesReadResponse).toHaveProperty('messageCid');
+      expect(messagesReadResponse).toHaveProperty('reply');
 
       const messagesReadMessage = messagesReadResponse.message!;
-      expect(messagesReadMessage.descriptor).to.have.property('messageCid');
-      expect(messagesReadMessage.descriptor.messageCid).to.equal(writeResponse.messageCid);
+      expect(messagesReadMessage.descriptor).toHaveProperty('messageCid');
+      expect(messagesReadMessage.descriptor.messageCid).toBe(writeResponse.messageCid);
 
       const messagesReadReply = messagesReadResponse.reply;
-      expect(messagesReadReply).to.have.property('status');
-      expect(messagesReadReply.status.code).to.equal(200);
+      expect(messagesReadReply).toHaveProperty('status');
+      expect(messagesReadReply.status.code).toBe(200);
       const retrievedRecordsWrite = messagesReadReply.entry!;
-      expect(retrievedRecordsWrite.message).to.have.property('recordId', writeMessage.recordId);
+      expect(retrievedRecordsWrite.message).toHaveProperty('recordId', writeMessage.recordId);
 
       const readDataBytes = await DataStream.toBytes(retrievedRecordsWrite.data!);
-      expect(readDataBytes).to.deep.equal(dataBytes);
+      expect(readDataBytes).toEqual(dataBytes);
     });
 
     it('handles ProtocolsConfigure', async () => {
@@ -1270,17 +1270,17 @@ describe('AgentDwnApi', () => {
         }
       });
 
-      expect(protocolsConfigureResponse).to.have.property('message');
-      expect(protocolsConfigureResponse).to.have.property('messageCid');
-      expect(protocolsConfigureResponse).to.have.property('reply');
+      expect(protocolsConfigureResponse).toHaveProperty('message');
+      expect(protocolsConfigureResponse).toHaveProperty('messageCid');
+      expect(protocolsConfigureResponse).toHaveProperty('reply');
 
       const configureMessage = protocolsConfigureResponse.message!;
-      expect(configureMessage.descriptor).to.have.property('definition');
-      expect(configureMessage.descriptor.definition).to.deep.equal(emailProtocolDefinition);
+      expect(configureMessage.descriptor).toHaveProperty('definition');
+      expect(configureMessage.descriptor.definition).toEqual(emailProtocolDefinition);
 
       const configureReply = protocolsConfigureResponse.reply;
-      expect(configureReply).to.have.property('status');
-      expect(configureReply.status.code).to.equal(202);
+      expect(configureReply).toHaveProperty('status');
+      expect(configureReply.status.code).toBe(202);
     });
 
     it('handles ProtocolsQuery', async () => {
@@ -1293,7 +1293,7 @@ describe('AgentDwnApi', () => {
           definition: emailProtocolDefinition
         }
       });
-      expect(protocolsConfigureResponse.reply.status.code).to.equal(202);
+      expect(protocolsConfigureResponse.reply.status.code).toBe(202);
 
       // Attempt to query for the protocol that was just configured.
       const protocolsQueryResponse = await testHarness.agent.dwn.sendRequest({
@@ -1305,20 +1305,20 @@ describe('AgentDwnApi', () => {
         }
       });
 
-      expect(protocolsQueryResponse).to.have.property('message');
-      expect(protocolsQueryResponse).to.have.property('messageCid');
-      expect(protocolsQueryResponse).to.have.property('reply');
+      expect(protocolsQueryResponse).toHaveProperty('message');
+      expect(protocolsQueryResponse).toHaveProperty('messageCid');
+      expect(protocolsQueryResponse).toHaveProperty('reply');
 
       const queryReply = protocolsQueryResponse.reply;
-      expect(queryReply).to.have.property('status');
-      expect(queryReply.status.code).to.equal(200);
-      expect(queryReply).to.have.property('entries');
-      expect(queryReply.entries).to.have.length(1);
+      expect(queryReply).toHaveProperty('status');
+      expect(queryReply.status.code).toBe(200);
+      expect(queryReply).toHaveProperty('entries');
+      expect(queryReply.entries).toHaveLength(1);
 
       if (!Array.isArray(queryReply.entries)) {throw new Error('Type guard');}
       if (queryReply.entries.length !== 1) {throw new Error('Type guard');}
       const protocolsConfigure = queryReply.entries[0];
-      expect(protocolsConfigure.descriptor.definition).to.deep.equal(emailProtocolDefinition);
+      expect(protocolsConfigure.descriptor.definition).toEqual(emailProtocolDefinition);
     });
 
     it('handles RecordsDelete messages', async () => {
@@ -1336,7 +1336,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes])
       });
-      expect(writeStatus.code).to.equal(202);
+      expect(writeStatus.code).toBe(202);
       const writeMessage = message!;
 
       // Attempt to process the RecordsRead.
@@ -1350,17 +1350,17 @@ describe('AgentDwnApi', () => {
       });
 
       // Verify the response.
-      expect(deleteResponse).to.have.property('message');
-      expect(deleteResponse).to.have.property('messageCid');
-      expect(deleteResponse).to.have.property('reply');
+      expect(deleteResponse).toHaveProperty('message');
+      expect(deleteResponse).toHaveProperty('messageCid');
+      expect(deleteResponse).toHaveProperty('reply');
 
       const deleteMessage = deleteResponse.message;
-      expect(deleteMessage).to.have.property('authorization');
-      expect(deleteMessage).to.have.property('descriptor');
+      expect(deleteMessage).toHaveProperty('authorization');
+      expect(deleteMessage).toHaveProperty('descriptor');
 
       const deleteReply = deleteResponse.reply;
-      expect(deleteReply).to.have.property('status');
-      expect(deleteReply.status.code).to.equal(202);
+      expect(deleteReply).toHaveProperty('status');
+      expect(deleteReply.status.code).toBe(202);
     });
 
     it('handles RecordsQuery Messages', async () => {
@@ -1378,7 +1378,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes])
       });
-      expect(writeStatus.code).to.equal(202);
+      expect(writeStatus.code).toBe(202);
       const writeMessage = message!;
 
       // Attempt to process the RecordsQuery.
@@ -1394,22 +1394,22 @@ describe('AgentDwnApi', () => {
       });
 
       // Verify the response.
-      expect(queryResponse).to.have.property('message');
-      expect(queryResponse).to.have.property('messageCid');
-      expect(queryResponse).to.have.property('reply');
+      expect(queryResponse).toHaveProperty('message');
+      expect(queryResponse).toHaveProperty('messageCid');
+      expect(queryResponse).toHaveProperty('reply');
 
       const queryMessage = queryResponse.message;
-      expect(queryMessage).to.have.property('authorization');
-      expect(queryMessage).to.have.property('descriptor');
+      expect(queryMessage).toHaveProperty('authorization');
+      expect(queryMessage).toHaveProperty('descriptor');
 
       const queryReply = queryResponse.reply;
-      expect(queryReply).to.have.property('status');
-      expect(queryReply.status.code).to.equal(200);
-      expect(queryReply.entries).to.exist;
-      expect(queryReply.entries).to.have.length(1);
-      expect(queryReply.entries?.[0]).to.have.property('descriptor');
-      expect(queryReply.entries?.[0]).to.have.property('encodedData');
-      expect(queryReply.entries?.[0]).to.have.property('recordId', writeMessage.recordId);
+      expect(queryReply).toHaveProperty('status');
+      expect(queryReply.status.code).toBe(200);
+      expect(queryReply.entries).toBeDefined();
+      expect(queryReply.entries).toHaveLength(1);
+      expect(queryReply.entries?.[0]).toHaveProperty('descriptor');
+      expect(queryReply.entries?.[0]).toHaveProperty('encodedData');
+      expect(queryReply.entries?.[0]).toHaveProperty('recordId', writeMessage.recordId);
     });
 
     it('handles RecordsRead messages', async () => {
@@ -1427,7 +1427,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes])
       });
-      expect(writeStatus.code).to.equal(202);
+      expect(writeStatus.code).toBe(202);
       const writeMessage = message!;
 
       // Attempt to process the RecordsRead.
@@ -1443,24 +1443,24 @@ describe('AgentDwnApi', () => {
       });
 
       // Verify the response.
-      expect(readResponse).to.have.property('message');
-      expect(readResponse).to.have.property('messageCid');
-      expect(readResponse).to.have.property('reply');
+      expect(readResponse).toHaveProperty('message');
+      expect(readResponse).toHaveProperty('messageCid');
+      expect(readResponse).toHaveProperty('reply');
 
       const readMessage = readResponse.message;
-      expect(readMessage).to.have.property('authorization');
-      expect(readMessage).to.have.property('descriptor');
+      expect(readMessage).toHaveProperty('authorization');
+      expect(readMessage).toHaveProperty('descriptor');
 
       const readReply = readResponse.reply;
-      expect(readReply).to.have.property('status');
-      expect(readReply.status.code).to.equal(200);
-      expect(readReply).to.have.property('entry');
-      expect(readReply.entry).to.have.property('data');
-      expect(readReply.entry?.recordsWrite).to.have.property('descriptor');
-      expect(readReply.entry?.recordsWrite).to.have.property('recordId', writeMessage.recordId);
+      expect(readReply).toHaveProperty('status');
+      expect(readReply.status.code).toBe(200);
+      expect(readReply).toHaveProperty('entry');
+      expect(readReply.entry).toHaveProperty('data');
+      expect(readReply.entry?.recordsWrite).toHaveProperty('descriptor');
+      expect(readReply.entry?.recordsWrite).toHaveProperty('recordId', writeMessage.recordId);
 
       const readDataBytes = await DataStream.toBytes(readReply.entry!.data!);
-      expect(readDataBytes).to.deep.equal(dataBytes);
+      expect(readDataBytes).toEqual(dataBytes);
     });
 
     it('handles RecordsSubscribe message', async () => {
@@ -1468,7 +1468,7 @@ describe('AgentDwnApi', () => {
       const subscriptionHandler = (event: MessageEvent): void => {
         const { message } = event;
         if (!isDwnMessage(DwnInterface.RecordsWrite, message)) {
-          expect.fail('Received message is not a RecordsWrite message');
+          throw new Error('Received message is not a RecordsWrite message');
         }
         receivedMessages.push(message);
       };
@@ -1487,8 +1487,8 @@ describe('AgentDwnApi', () => {
       });
 
       // Verify the response.
-      expect(subscribeStatus.code).to.equal(200);
-      expect(subscription).to.exist;
+      expect(subscribeStatus.code).toBe(200);
+      expect(subscription).toBeDefined();
 
 
       // create a test record that matches the subscription filter
@@ -1503,7 +1503,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes])
       });
-      expect(writeStatus.code).to.equal(202);
+      expect(writeStatus.code).toBe(202);
       const writeMessage1 = message!;
 
       // create another test record that matches the subscription filter
@@ -1518,7 +1518,7 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes2])
       });
-      expect(writeStatus2.code).to.equal(202);
+      expect(writeStatus2.code).toBe(202);
       const writeMessage2 = message2!;
 
       // create a message that does not match the subscription filter
@@ -1533,15 +1533,15 @@ describe('AgentDwnApi', () => {
         },
         dataStream: new Blob([dataBytes3])
       });
-      expect(writeStatus3.code).to.equal(202);
+      expect(writeStatus3.code).toBe(202);
 
       // close subscription
       await subscription!.close();
 
       // check that the subscription handler received the expected messages
-      expect(receivedMessages).to.have.length(2);
-      expect(receivedMessages[0].recordId).to.equal(writeMessage1.recordId);
-      expect(receivedMessages[1].recordId).to.equal(writeMessage2.recordId);
+      expect(receivedMessages).toHaveLength(2);
+      expect(receivedMessages[0].recordId).toBe(writeMessage1.recordId);
+      expect(receivedMessages[1].recordId).toBe(writeMessage2.recordId);
     });
 
     it('handles RecordsWrite messages', async () => {
@@ -1560,18 +1560,18 @@ describe('AgentDwnApi', () => {
       });
 
       // Verify the response.
-      expect(writeResponse).to.have.property('message');
-      expect(writeResponse).to.have.property('messageCid');
-      expect(writeResponse).to.have.property('reply');
+      expect(writeResponse).toHaveProperty('message');
+      expect(writeResponse).toHaveProperty('messageCid');
+      expect(writeResponse).toHaveProperty('reply');
 
       const writeMessage = writeResponse.message;
-      expect(writeMessage).to.have.property('authorization');
-      expect(writeMessage).to.have.property('descriptor');
-      expect(writeMessage).to.have.property('recordId');
+      expect(writeMessage).toHaveProperty('authorization');
+      expect(writeMessage).toHaveProperty('descriptor');
+      expect(writeMessage).toHaveProperty('recordId');
 
       const writeReply = writeResponse.reply;
-      expect(writeReply).to.have.property('status');
-      expect(writeReply.status.code).to.equal(202);
+      expect(writeReply).toHaveProperty('status');
+      expect(writeReply.status.code).toBe(202);
     });
 
     it('should use a secure (wss) transport when the dwnUrl is also secure (https)', async () => {
@@ -1619,7 +1619,7 @@ describe('AgentDwnApi', () => {
 
       // the dwnUrl should be 'wss://localhost' as the server http(s) transport is secure
       const { dwnUrl } = sendDwnRequestStub.args[0][0];
-      expect(dwnUrl).to.equal('wss://localhost/');
+      expect(dwnUrl).toBe('wss://localhost/');
     });
 
     it('should use a non-secure (ws) transport when the dwnUrl is also non-secure (http)', async () => {
@@ -1667,7 +1667,7 @@ describe('AgentDwnApi', () => {
 
       // the dwnUrl should be 'ws://localhost/' as the server http transport is insecure
       const { dwnUrl } = sendDwnRequestStub.args[0][0];
-      expect(dwnUrl).to.equal('ws://localhost/');
+      expect(dwnUrl).toBe('ws://localhost/');
     });
 
     it('throws an error if target DID does not contain websocket support', async () => {
@@ -1691,11 +1691,11 @@ describe('AgentDwnApi', () => {
           dataStream          : new Blob([Convert.string('Hello, world!').toUint8Array()]),
           subscriptionHandler : () => {}
         });
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
 
       } catch (error: any) {
-        expect(error.message).to.include('Failed to send DWN RPC request');
-        expect(error.message).to.include('WebSocket support is not enabled on the server.');
+        expect(error.message).toContain('Failed to send DWN RPC request');
+        expect(error.message).toContain('WebSocket support is not enabled on the server.');
       }
     });
 
@@ -1714,11 +1714,11 @@ describe('AgentDwnApi', () => {
             }
           },
         });
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
 
       } catch (error: any) {
-        expect(error.message).to.include('Failed to send DWN RPC request');
-        expect(error.message).to.include('sendDwnRequest Error');
+        expect(error.message).toContain('Failed to send DWN RPC request');
+        expect(error.message).toContain('sendDwnRequest Error');
       }
     });
 
@@ -1734,10 +1734,10 @@ describe('AgentDwnApi', () => {
             }
           }
         });
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
 
       } catch (error: any) {
-        expect(error.message).to.include('methodNotSupported');
+        expect(error.message).toContain('methodNotSupported');
       }
     });
 
@@ -1761,10 +1761,10 @@ describe('AgentDwnApi', () => {
             }
           }
         });
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
 
       } catch (error: any) {
-        expect(error.message).to.include('Failed to dereference');
+        expect(error.message).toContain('Failed to dereference');
       }
     });
 
@@ -1782,10 +1782,10 @@ describe('AgentDwnApi', () => {
             }
           }
         });
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
 
       } catch (error: any) {
-        expect(error.message).to.include('AgentDwnApi: Subscription handler is required for subscription requests.');
+        expect(error.message).toContain('AgentDwnApi: Subscription handler is required for subscription requests.');
       }
 
       // MessagesSubscribe message without a subscriptionHandler
@@ -1796,10 +1796,10 @@ describe('AgentDwnApi', () => {
           messageType   : DwnInterface.MessagesSubscribe,
           messageParams : {}
         });
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
 
       } catch (error: any) {
-        expect(error.message).to.include('AgentDwnApi: Subscription handler is required for subscription requests.');
+        expect(error.message).toContain('AgentDwnApi: Subscription handler is required for subscription requests.');
       }
     });
 
@@ -1815,7 +1815,7 @@ describe('AgentDwnApi', () => {
           }
         });
       } catch (error: any) {
-        expect(error.message).to.include('/descriptor/filter: must NOT have fewer than 1 properties');
+        expect(error.message).toContain('/descriptor/filter: must NOT have fewer than 1 properties');
       }
     });
   });
@@ -1827,12 +1827,12 @@ describe('isDwnMessage', () => {
     const { message: recordsQueryMessage } = await TestDataGenerator.generateRecordsQuery();
 
     // positive tests
-    expect(isDwnMessage(DwnInterface.RecordsWrite, recordsWriteMessage)).to.be.true;
-    expect(isDwnMessage(DwnInterface.RecordsQuery, recordsQueryMessage)).to.be.true;
+    expect(isDwnMessage(DwnInterface.RecordsWrite, recordsWriteMessage)).toBe(true);
+    expect(isDwnMessage(DwnInterface.RecordsQuery, recordsQueryMessage)).toBe(true);
 
     // negative tests
-    expect(isDwnMessage(DwnInterface.RecordsQuery, recordsWriteMessage)).to.be.false;
-    expect(isDwnMessage(DwnInterface.RecordsWrite, recordsQueryMessage)).to.be.false;
+    expect(isDwnMessage(DwnInterface.RecordsQuery, recordsWriteMessage)).toBe(false);
+    expect(isDwnMessage(DwnInterface.RecordsWrite, recordsQueryMessage)).toBe(false);
   });
 });
 
@@ -1844,7 +1844,7 @@ describe('isRecordPermissionScope', () => {
       method    : DwnMethodName.Read
     };
 
-    expect(isRecordPermissionScope(messagesReadScope)).to.be.false;
+    expect(isRecordPermissionScope(messagesReadScope)).toBe(false);
 
     // records read scope to test positive case
     const recordsReadScope:DwnPermissionScope = {
@@ -1853,7 +1853,7 @@ describe('isRecordPermissionScope', () => {
       protocol  : 'https://schemas.xyz/example'
     };
 
-    expect(isRecordPermissionScope(recordsReadScope)).to.be.true;
+    expect(isRecordPermissionScope(recordsReadScope)).toBe(true);
   });
 });
 
@@ -1867,7 +1867,7 @@ describe('isMessagesPermissionScope', () => {
       protocol  : 'https://schemas.xyz/example'
     };
 
-    expect(isMessagesPermissionScope(recordsReadScope)).to.be.false;
+    expect(isMessagesPermissionScope(recordsReadScope)).toBe(false);
 
     // messages read scope to test positive case
     const messagesReadScope:DwnPermissionScope = {
@@ -1875,7 +1875,7 @@ describe('isMessagesPermissionScope', () => {
       method    : DwnMethodName.Read
     };
 
-    expect(isMessagesPermissionScope(messagesReadScope)).to.be.true;
+    expect(isMessagesPermissionScope(messagesReadScope)).toBe(true);
 
   });
 });
@@ -1884,7 +1884,7 @@ describe('Encryption Callback Factories', () => {
   let testHarness: PlatformAgentTestHarness;
   let alice: BearerIdentity;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : TestAgent,
       agentStores : 'dwn'
@@ -1899,7 +1899,7 @@ describe('Encryption Callback Factories', () => {
     alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
   });
 
-  after(async () => {
+  afterAll(async () => {
     await testHarness.clearStorage();
     await testHarness.closeStorage();
   });
@@ -1909,13 +1909,13 @@ describe('Encryption Callback Factories', () => {
       // Access private method via bracket notation for testing
       const keyInfo = await testHarness.agent.dwn['getEncryptionKeyInfo'](alice.did.uri);
 
-      expect(keyInfo).to.have.property('keyId');
-      expect(keyInfo.keyId).to.include('#enc');
-      expect(keyInfo).to.have.property('keyUri');
-      expect(keyInfo.keyUri).to.be.a('string');
-      expect(keyInfo).to.have.property('publicKeyJwk');
-      expect(keyInfo.publicKeyJwk).to.have.property('crv', 'secp256k1');
-      expect(keyInfo.publicKeyJwk).to.have.property('kty', 'EC');
+      expect(keyInfo).toHaveProperty('keyId');
+      expect(keyInfo.keyId).toContain('#enc');
+      expect(keyInfo).toHaveProperty('keyUri');
+      expect(typeof keyInfo.keyUri).toBe('string');
+      expect(keyInfo).toHaveProperty('publicKeyJwk');
+      expect(keyInfo.publicKeyJwk).toHaveProperty('crv', 'secp256k1');
+      expect(keyInfo.publicKeyJwk).toHaveProperty('kty', 'EC');
     });
 
     it('should throw if DID has no keyAgreement method', async () => {
@@ -1938,9 +1938,9 @@ describe('Encryption Callback Factories', () => {
 
       try {
         await testHarness.agent.dwn['getEncryptionKeyInfo'](fakeDid);
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).to.include('does not have a keyAgreement');
+        expect(error.message).toContain('does not have a keyAgreement');
       } finally {
         sinon.restore();
       }
@@ -1957,11 +1957,11 @@ describe('Encryption Callback Factories', () => {
     it('should return valid EncryptionKeyDeriver that delegates to KMS', async () => {
       const keyDeriver = await testHarness.agent.dwn['getEncryptionKeyDeriver'](alice.did.uri);
 
-      expect(keyDeriver).to.have.property('rootKeyId');
-      expect(keyDeriver.rootKeyId).to.include('#enc');
-      expect(keyDeriver).to.have.property('derivationScheme', 'protocolPath');
-      expect(keyDeriver).to.have.property('derivePublicKey');
-      expect(keyDeriver.derivePublicKey).to.be.a('function');
+      expect(keyDeriver).toHaveProperty('rootKeyId');
+      expect(keyDeriver.rootKeyId).toContain('#enc');
+      expect(keyDeriver).toHaveProperty('derivationScheme', 'protocolPath');
+      expect(keyDeriver).toHaveProperty('derivePublicKey');
+      expect(typeof keyDeriver.derivePublicKey).toBe('function');
     });
 
     it('should derive public key through KMS when callback is invoked', async () => {
@@ -1969,11 +1969,11 @@ describe('Encryption Callback Factories', () => {
 
       const derivedKey = await keyDeriver.derivePublicKey(['test', 'path']);
 
-      expect(derivedKey).to.have.property('kty', 'EC');
-      expect(derivedKey).to.have.property('crv', 'secp256k1');
-      expect(derivedKey).to.have.property('x');
-      expect(derivedKey).to.have.property('y');
-      expect(derivedKey).to.not.have.property('d'); // Should be public only
+      expect(derivedKey).toHaveProperty('kty', 'EC');
+      expect(derivedKey).toHaveProperty('crv', 'secp256k1');
+      expect(derivedKey).toHaveProperty('x');
+      expect(derivedKey).toHaveProperty('y');
+      expect(derivedKey).not.toHaveProperty('d'); // Should be public only
     });
 
     it('should derive different keys for different paths', async () => {
@@ -1982,8 +1982,8 @@ describe('Encryption Callback Factories', () => {
       const key1 = await keyDeriver.derivePublicKey(['path1']);
       const key2 = await keyDeriver.derivePublicKey(['path2']);
 
-      expect((key1 as JwkParamsEcPublic).x).to.not.equal((key2 as JwkParamsEcPublic).x);
-      expect((key1 as JwkParamsEcPublic).y).to.not.equal((key2 as JwkParamsEcPublic).y);
+      expect((key1 as JwkParamsEcPublic).x).not.toBe((key2 as JwkParamsEcPublic).x);
+      expect((key1 as JwkParamsEcPublic).y).not.toBe((key2 as JwkParamsEcPublic).y);
     });
 
     it('should derive same key for same path (deterministic)', async () => {
@@ -1992,8 +1992,8 @@ describe('Encryption Callback Factories', () => {
       const key1 = await keyDeriver.derivePublicKey(['consistent', 'path']);
       const key2 = await keyDeriver.derivePublicKey(['consistent', 'path']);
 
-      expect((key1 as JwkParamsEcPublic).x).to.equal((key2 as JwkParamsEcPublic).x);
-      expect((key1 as JwkParamsEcPublic).y).to.equal((key2 as JwkParamsEcPublic).y);
+      expect((key1 as JwkParamsEcPublic).x).toBe((key2 as JwkParamsEcPublic).x);
+      expect((key1 as JwkParamsEcPublic).y).toBe((key2 as JwkParamsEcPublic).y);
     });
   });
 
@@ -2001,11 +2001,11 @@ describe('Encryption Callback Factories', () => {
     it('should return valid KeyDecrypter that delegates to KMS', async () => {
       const keyDecrypter = await testHarness.agent.dwn['getKeyDecrypter'](alice.did.uri);
 
-      expect(keyDecrypter).to.have.property('rootKeyId');
-      expect(keyDecrypter.rootKeyId).to.include('#enc');
-      expect(keyDecrypter).to.have.property('derivationScheme', 'protocolPath');
-      expect(keyDecrypter).to.have.property('decrypt');
-      expect(keyDecrypter.decrypt).to.be.a('function');
+      expect(keyDecrypter).toHaveProperty('rootKeyId');
+      expect(keyDecrypter.rootKeyId).toContain('#enc');
+      expect(keyDecrypter).toHaveProperty('derivationScheme', 'protocolPath');
+      expect(keyDecrypter).toHaveProperty('decrypt');
+      expect(typeof keyDecrypter.decrypt).toBe('function');
     });
 
     it('should decrypt ECIES payload through KMS when callback is invoked', async () => {
@@ -2029,7 +2029,7 @@ describe('Encryption Callback Factories', () => {
       const keyDecrypter = await testHarness.agent.dwn['getKeyDecrypter'](alice.did.uri);
       const decrypted = await keyDecrypter.decrypt(derivationPath, encrypted);
 
-      expect(Convert.uint8Array(decrypted).toString()).to.equal('Test message');
+      expect(Convert.uint8Array(decrypted).toString()).toBe('Test message');
     });
   });
 
@@ -2044,7 +2044,7 @@ describe('Encryption Callback Factories', () => {
           definition: emailProtocolDefinition
         }
       });
-      expect(configureStatus.code).to.equal(202);
+      expect(configureStatus.code).toBe(202);
 
       // First call - cache miss
       const def1 = await testHarness.agent.dwn['getProtocolDefinition'](
@@ -2052,8 +2052,8 @@ describe('Encryption Callback Factories', () => {
         emailProtocolDefinition.protocol
       );
 
-      expect(def1).to.exist;
-      expect(def1?.protocol).to.equal(emailProtocolDefinition.protocol);
+      expect(def1).toBeDefined();
+      expect(def1?.protocol).toBe(emailProtocolDefinition.protocol);
 
       // Second call - should hit cache
       const def2 = await testHarness.agent.dwn['getProtocolDefinition'](
@@ -2061,8 +2061,8 @@ describe('Encryption Callback Factories', () => {
         emailProtocolDefinition.protocol
       );
 
-      expect(def2).to.exist;
-      expect(def2).to.deep.equal(def1);
+      expect(def2).toBeDefined();
+      expect(def2).toEqual(def1);
     });
 
     it('should return undefined for uninstalled protocol', async () => {
@@ -2071,7 +2071,7 @@ describe('Encryption Callback Factories', () => {
         'https://uninstalled-protocol.example'
       );
 
-      expect(def).to.be.undefined;
+      expect(def).toBeUndefined();
     });
   });
 
@@ -2101,7 +2101,7 @@ describe('Encryption Callback Factories', () => {
         },
         encryption: true
       });
-      expect(status.code).to.equal(202);
+      expect(status.code).toBe(202);
 
       // Query to verify $encryption was injected
       const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
@@ -2113,16 +2113,16 @@ describe('Encryption Callback Factories', () => {
         }
       });
 
-      expect(queryReply.status.code).to.equal(200);
-      expect(queryReply.entries).to.have.length(1);
+      expect(queryReply.status.code).toBe(200);
+      expect(queryReply.entries).toHaveLength(1);
 
       const storedDefinition = queryReply.entries![0].descriptor.definition;
       // Verify $encryption was injected at the 'note' level
-      expect(storedDefinition.structure.note).to.have.property('$encryption');
-      expect(storedDefinition.structure.note.$encryption).to.have.property('rootKeyId');
-      expect(storedDefinition.structure.note.$encryption!.rootKeyId).to.include('#enc');
-      expect(storedDefinition.structure.note.$encryption).to.have.property('publicKeyJwk');
-      expect(storedDefinition.structure.note.$encryption!.publicKeyJwk).to.have.property('crv', 'secp256k1');
+      expect(storedDefinition.structure.note).toHaveProperty('$encryption');
+      expect(storedDefinition.structure.note.$encryption).toHaveProperty('rootKeyId');
+      expect(storedDefinition.structure.note.$encryption!.rootKeyId).toContain('#enc');
+      expect(storedDefinition.structure.note.$encryption).toHaveProperty('publicKeyJwk');
+      expect(storedDefinition.structure.note.$encryption!.publicKeyJwk).toHaveProperty('crv', 'secp256k1');
     });
 
     it('should auto-encrypt data on RecordsWrite', async () => {
@@ -2155,18 +2155,18 @@ describe('Encryption Callback Factories', () => {
         encryption : true
       });
 
-      expect(writeStatus.code).to.equal(202);
+      expect(writeStatus.code).toBe(202);
 
       // Verify the message has encryption metadata
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
-      expect(recordsWriteMessage).to.have.property('encryption');
-      expect(recordsWriteMessage.encryption).to.have.property('algorithm');
-      expect(recordsWriteMessage.encryption).to.have.property('initializationVector');
-      expect(recordsWriteMessage.encryption).to.have.property('keyEncryption');
-      expect(recordsWriteMessage.encryption!.keyEncryption).to.have.length(1);
-      expect(recordsWriteMessage.encryption!.keyEncryption[0]).to.have.property('rootKeyId');
-      expect(recordsWriteMessage.encryption!.keyEncryption[0].rootKeyId).to.include('#enc');
-      expect(recordsWriteMessage.encryption!.keyEncryption[0]).to.have.property('derivationScheme', 'protocolPath');
+      expect(recordsWriteMessage).toHaveProperty('encryption');
+      expect(recordsWriteMessage.encryption).toHaveProperty('algorithm');
+      expect(recordsWriteMessage.encryption).toHaveProperty('initializationVector');
+      expect(recordsWriteMessage.encryption).toHaveProperty('keyEncryption');
+      expect(recordsWriteMessage.encryption!.keyEncryption).toHaveLength(1);
+      expect(recordsWriteMessage.encryption!.keyEncryption[0]).toHaveProperty('rootKeyId');
+      expect(recordsWriteMessage.encryption!.keyEncryption[0].rootKeyId).toContain('#enc');
+      expect(recordsWriteMessage.encryption!.keyEncryption[0]).toHaveProperty('derivationScheme', 'protocolPath');
 
       // Read the raw data without decryption to verify it's encrypted
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
@@ -2178,10 +2178,10 @@ describe('Encryption Callback Factories', () => {
         }
       });
 
-      expect(readReply.status.code).to.equal(200);
+      expect(readReply.status.code).toBe(200);
       const rawDataBytes = await DataStream.toBytes(readReply.entry!.data!);
       // Raw data should NOT be the original plaintext (it's encrypted)
-      expect(Convert.uint8Array(rawDataBytes).toString()).to.not.equal(plaintextString);
+      expect(Convert.uint8Array(rawDataBytes).toString()).not.toBe(plaintextString);
     });
 
     it('should auto-decrypt data on RecordsRead', async () => {
@@ -2226,9 +2226,9 @@ describe('Encryption Callback Factories', () => {
         encryption: true
       });
 
-      expect(readReply.status.code).to.equal(200);
+      expect(readReply.status.code).toBe(200);
       const decryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
-      expect(Convert.uint8Array(decryptedBytes).toString()).to.equal(plaintextString);
+      expect(Convert.uint8Array(decryptedBytes).toString()).toBe(plaintextString);
     });
 
     it('should auto-decrypt encodedData on RecordsQuery', async () => {
@@ -2274,15 +2274,15 @@ describe('Encryption Callback Factories', () => {
         encryption: true
       });
 
-      expect(queryReply.status.code).to.equal(200);
-      expect(queryReply.entries).to.have.length(1);
+      expect(queryReply.status.code).toBe(200);
+      expect(queryReply.entries).toHaveLength(1);
 
       const entry = queryReply.entries![0];
       // The encodedData should be decrypted plaintext (base64url encoded)
       if (entry.encodedData) {
         const { Encoder } = await import('@enbox/dwn-sdk-js');
         const decodedBytes = Encoder.base64UrlToBytes(entry.encodedData);
-        expect(Convert.uint8Array(decodedBytes).toString()).to.equal(plaintextString);
+        expect(Convert.uint8Array(decodedBytes).toString()).toBe(plaintextString);
       }
     });
 
@@ -2302,9 +2302,9 @@ describe('Encryption Callback Factories', () => {
           dataStream : new Blob([dataBytes]),
           encryption : true
         });
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).to.include('not installed');
+        expect(error.message).toContain('not installed');
       }
     });
 
@@ -2336,9 +2336,9 @@ describe('Encryption Callback Factories', () => {
           dataStream : new Blob([dataBytes]),
           encryption : true
         });
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).to.include('does not have encryption configured');
+        expect(error.message).toContain('does not have encryption configured');
       }
     });
 
@@ -2372,12 +2372,12 @@ describe('Encryption Callback Factories', () => {
         encryption: true
       });
 
-      expect(writeStatus.code).to.equal(202);
+      expect(writeStatus.code).toBe(202);
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
 
       // Verify encryption metadata present
-      expect(recordsWriteMessage).to.have.property('encryption');
+      expect(recordsWriteMessage).toHaveProperty('encryption');
 
       // Read with decryption
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
@@ -2390,9 +2390,9 @@ describe('Encryption Callback Factories', () => {
         encryption: true
       });
 
-      expect(readReply.status.code).to.equal(200);
+      expect(readReply.status.code).toBe(200);
       const decryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
-      expect(Convert.uint8Array(decryptedBytes).toString()).to.equal(plaintextString);
+      expect(Convert.uint8Array(decryptedBytes).toString()).toBe(plaintextString);
     });
 
     it('should invalidate protocol definition cache on ProtocolsConfigure', async () => {
@@ -2412,8 +2412,8 @@ describe('Encryption Callback Factories', () => {
         alice.did.uri,
         encryptedProtocolDefinition.protocol
       );
-      expect(def1).to.exist;
-      expect(def1!.structure.note).to.have.property('$encryption');
+      expect(def1).toBeDefined();
+      expect(def1!.structure.note).toHaveProperty('$encryption');
 
       // Reconfigure (should invalidate cache)
       await testHarness.agent.dwn.processRequest({
@@ -2431,8 +2431,8 @@ describe('Encryption Callback Factories', () => {
         alice.did.uri,
         encryptedProtocolDefinition.protocol
       );
-      expect(def2).to.exist;
-      expect(def2!.structure.note).to.have.property('$encryption');
+      expect(def2).toBeDefined();
+      expect(def2!.structure.note).toHaveProperty('$encryption');
     });
 
     it('should handle nested protocol paths', async () => {
@@ -2466,7 +2466,7 @@ describe('Encryption Callback Factories', () => {
         },
         encryption: true
       });
-      expect(status.code).to.equal(202);
+      expect(status.code).toBe(202);
 
       // Query to verify $encryption was injected at all levels
       const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
@@ -2480,11 +2480,11 @@ describe('Encryption Callback Factories', () => {
 
       const storedDef = queryReply.entries![0].descriptor.definition;
       // Verify $encryption exists at 'thread' level
-      expect(storedDef.structure.thread).to.have.property('$encryption');
-      expect(storedDef.structure.thread.$encryption!.publicKeyJwk).to.have.property('crv', 'secp256k1');
+      expect(storedDef.structure.thread).toHaveProperty('$encryption');
+      expect(storedDef.structure.thread.$encryption!.publicKeyJwk).toHaveProperty('crv', 'secp256k1');
       // Verify $encryption exists at 'thread/message' level
-      expect(storedDef.structure.thread.message).to.have.property('$encryption');
-      expect(storedDef.structure.thread.message.$encryption!.publicKeyJwk).to.have.property('crv', 'secp256k1');
+      expect(storedDef.structure.thread.message).toHaveProperty('$encryption');
+      expect(storedDef.structure.thread.message.$encryption!.publicKeyJwk).toHaveProperty('crv', 'secp256k1');
     });
 
     it('should full round-trip: configure, write, read, query with encryption', async () => {
@@ -2530,9 +2530,9 @@ describe('Encryption Callback Factories', () => {
         encryption: true
       });
 
-      expect(readReply.status.code).to.equal(200);
+      expect(readReply.status.code).toBe(200);
       const readDecryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
-      expect(Convert.uint8Array(readDecryptedBytes).toString()).to.equal(plaintextString);
+      expect(Convert.uint8Array(readDecryptedBytes).toString()).toBe(plaintextString);
 
       // 4. Query with auto-decrypt
       const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
@@ -2548,14 +2548,14 @@ describe('Encryption Callback Factories', () => {
         encryption: true
       });
 
-      expect(queryReply.status.code).to.equal(200);
-      expect(queryReply.entries).to.have.length(1);
+      expect(queryReply.status.code).toBe(200);
+      expect(queryReply.entries).toHaveLength(1);
 
       const entry = queryReply.entries![0];
       if (entry.encodedData) {
         const { Encoder } = await import('@enbox/dwn-sdk-js');
         const queryDecryptedBytes = Encoder.base64UrlToBytes(entry.encodedData);
-        expect(Convert.uint8Array(queryDecryptedBytes).toString()).to.equal(plaintextString);
+        expect(Convert.uint8Array(queryDecryptedBytes).toString()).toBe(plaintextString);
       }
     });
 
@@ -2591,7 +2591,7 @@ describe('Encryption Callback Factories', () => {
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
       const initialEncryption = recordsWriteMessage.encryption;
-      expect(initialEncryption).to.exist;
+      expect(initialEncryption).toBeDefined();
 
       // Update the record with new data and encryption: true
       const updatedPlaintext = 'Updated secret note content';
@@ -2613,18 +2613,16 @@ describe('Encryption Callback Factories', () => {
         encryption : true
       });
 
-      expect(updateStatus.code).to.equal(202);
+      expect(updateStatus.code).toBe(202);
 
       const updateWriteMessage = updateMessage as RecordsWriteMessage;
-      expect(updateWriteMessage).to.have.property('encryption');
-      expect(updateWriteMessage.encryption!.keyEncryption).to.have.length(1);
-      expect(updateWriteMessage.encryption!.keyEncryption[0]).to.have.property(
-        'derivationScheme', 'protocolPath'
-      );
+      expect(updateWriteMessage).toHaveProperty('encryption');
+      expect(updateWriteMessage.encryption!.keyEncryption).toHaveLength(1);
+      expect(updateWriteMessage.encryption!.keyEncryption[0]).toHaveProperty('derivationScheme', 'protocolPath');
 
       // The update should have a different initialization vector (fresh DEK)
       expect(updateWriteMessage.encryption!.initializationVector)
-        .to.not.equal(initialEncryption!.initializationVector);
+        .not.toBe(initialEncryption!.initializationVector);
 
       // Read back with decryption — should get the UPDATED plaintext
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
@@ -2637,9 +2635,9 @@ describe('Encryption Callback Factories', () => {
         encryption: true
       });
 
-      expect(readReply.status.code).to.equal(200);
+      expect(readReply.status.code).toBe(200);
       const decryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
-      expect(Convert.uint8Array(decryptedBytes).toString()).to.equal(updatedPlaintext);
+      expect(Convert.uint8Array(decryptedBytes).toString()).toBe(updatedPlaintext);
     });
 
     it('should auto-encrypt record updates for multi-party context', async () => {
@@ -2706,10 +2704,8 @@ describe('Encryption Callback Factories', () => {
       const chatWriteMessage = chatMessage as RecordsWriteMessage;
       const chatRecordId = chatWriteMessage.recordId;
       const chatEncryption = chatWriteMessage.encryption;
-      expect(chatEncryption).to.exist;
-      expect(chatEncryption!.keyEncryption[0]).to.have.property(
-        'derivationScheme', 'protocolContext'
-      );
+      expect(chatEncryption).toBeDefined();
+      expect(chatEncryption!.keyEncryption[0]).toHaveProperty('derivationScheme', 'protocolContext');
 
       // Update the chat message
       const updatedChat = 'Updated chat message';
@@ -2730,14 +2726,12 @@ describe('Encryption Callback Factories', () => {
         encryption : true
       });
 
-      expect(status.code).to.equal(202);
+      expect(status.code).toBe(202);
 
       // Updated message should still use ProtocolContext scheme
       const updatedEncryption = (updatedChatMessage as RecordsWriteMessage).encryption;
-      expect(updatedEncryption).to.exist;
-      expect(updatedEncryption!.keyEncryption[0]).to.have.property(
-        'derivationScheme', 'protocolContext'
-      );
+      expect(updatedEncryption).toBeDefined();
+      expect(updatedEncryption!.keyEncryption[0]).toHaveProperty('derivationScheme', 'protocolContext');
 
       // Read back with decryption
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
@@ -2750,9 +2744,9 @@ describe('Encryption Callback Factories', () => {
         encryption: true
       });
 
-      expect(readReply.status.code).to.equal(200);
+      expect(readReply.status.code).toBe(200);
       const decryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
-      expect(Convert.uint8Array(decryptedBytes).toString()).to.equal(updatedChat);
+      expect(Convert.uint8Array(decryptedBytes).toString()).toBe(updatedChat);
     });
   });
 
@@ -2805,10 +2799,10 @@ describe('Encryption Callback Factories', () => {
       );
 
       // Multi-party: thread has participant with $role: true
-      expect(isMultiParty(multiPartyProtocolDefinition, 'thread')).to.be.true;
+      expect(isMultiParty(multiPartyProtocolDefinition, 'thread')).toBe(true);
 
       // Single-party: note has no $role children
-      expect(isMultiParty(singlePartyProtocolDefinition, 'note')).to.be.false;
+      expect(isMultiParty(singlePartyProtocolDefinition, 'note')).toBe(false);
     });
 
     it('should encrypt root record with ProtocolContext for multi-party protocol', async () => {
@@ -2841,17 +2835,15 @@ describe('Encryption Callback Factories', () => {
         encryption : true
       });
 
-      expect(writeStatus.code).to.equal(202);
+      expect(writeStatus.code).toBe(202);
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
-      expect(recordsWriteMessage).to.have.property('encryption');
-      expect(recordsWriteMessage.encryption!.keyEncryption).to.have.length(1);
-      expect(recordsWriteMessage.encryption!.keyEncryption[0]).to.have.property(
-        'derivationScheme', 'protocolContext'
-      );
+      expect(recordsWriteMessage).toHaveProperty('encryption');
+      expect(recordsWriteMessage.encryption!.keyEncryption).toHaveLength(1);
+      expect(recordsWriteMessage.encryption!.keyEncryption[0]).toHaveProperty('derivationScheme', 'protocolContext');
 
       // contextId should equal recordId for root records
-      expect(recordsWriteMessage.contextId).to.equal(recordsWriteMessage.recordId);
+      expect(recordsWriteMessage.contextId).toBe(recordsWriteMessage.recordId);
     });
 
     it('should encrypt non-root record with ProtocolContext for multi-party protocol', async () => {
@@ -2902,14 +2894,12 @@ describe('Encryption Callback Factories', () => {
         encryption : true
       });
 
-      expect(chatStatus.code).to.equal(202);
+      expect(chatStatus.code).toBe(202);
 
       const chatWriteMessage = chatMessage as RecordsWriteMessage;
-      expect(chatWriteMessage).to.have.property('encryption');
-      expect(chatWriteMessage.encryption!.keyEncryption).to.have.length(1);
-      expect(chatWriteMessage.encryption!.keyEncryption[0]).to.have.property(
-        'derivationScheme', 'protocolContext'
-      );
+      expect(chatWriteMessage).toHaveProperty('encryption');
+      expect(chatWriteMessage.encryption!.keyEncryption).toHaveLength(1);
+      expect(chatWriteMessage.encryption!.keyEncryption[0]).toHaveProperty('derivationScheme', 'protocolContext');
     });
 
     it('should still use ProtocolPath for single-party protocols', async () => {
@@ -2940,13 +2930,11 @@ describe('Encryption Callback Factories', () => {
         encryption : true
       });
 
-      expect(status.code).to.equal(202);
+      expect(status.code).toBe(202);
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
-      expect(recordsWriteMessage).to.have.property('encryption');
-      expect(recordsWriteMessage.encryption!.keyEncryption[0]).to.have.property(
-        'derivationScheme', 'protocolPath'
-      );
+      expect(recordsWriteMessage).toHaveProperty('encryption');
+      expect(recordsWriteMessage.encryption!.keyEncryption[0]).toHaveProperty('derivationScheme', 'protocolPath');
     });
 
     it('context creator should decrypt root record via RecordsRead', async () => {
@@ -2992,9 +2980,9 @@ describe('Encryption Callback Factories', () => {
         encryption: true
       });
 
-      expect(readReply.status.code).to.equal(200);
+      expect(readReply.status.code).toBe(200);
       const decryptedBytes = await DataStream.toBytes(readReply.entry!.data!);
-      expect(Convert.uint8Array(decryptedBytes).toString()).to.equal(plaintextString);
+      expect(Convert.uint8Array(decryptedBytes).toString()).toBe(plaintextString);
     });
 
     it('full round-trip: root + child with context encryption', async () => {
@@ -3058,9 +3046,9 @@ describe('Encryption Callback Factories', () => {
         encryption: true
       });
 
-      expect(threadReadReply.status.code).to.equal(200);
+      expect(threadReadReply.status.code).toBe(200);
       const threadDecrypted = await DataStream.toBytes(threadReadReply.entry!.data!);
-      expect(Convert.uint8Array(threadDecrypted).toString()).to.equal(threadPlaintext);
+      expect(Convert.uint8Array(threadDecrypted).toString()).toBe(threadPlaintext);
 
       // 4. Read child record — should decrypt
       const { reply: chatReadReply } = await testHarness.agent.dwn.processRequest({
@@ -3073,9 +3061,9 @@ describe('Encryption Callback Factories', () => {
         encryption: true
       });
 
-      expect(chatReadReply.status.code).to.equal(200);
+      expect(chatReadReply.status.code).toBe(200);
       const chatDecrypted = await DataStream.toBytes(chatReadReply.entry!.data!);
-      expect(Convert.uint8Array(chatDecrypted).toString()).to.equal(chatPlaintext);
+      expect(Convert.uint8Array(chatDecrypted).toString()).toBe(chatPlaintext);
 
       // 5. Query child records — should auto-decrypt encodedData
       const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
@@ -3092,14 +3080,14 @@ describe('Encryption Callback Factories', () => {
         encryption: true
       });
 
-      expect(queryReply.status.code).to.equal(200);
-      expect(queryReply.entries).to.have.length(1);
+      expect(queryReply.status.code).toBe(200);
+      expect(queryReply.entries).toHaveLength(1);
 
       const entry = queryReply.entries![0];
       if (entry.encodedData) {
         const { Encoder } = await import('@enbox/dwn-sdk-js');
         const decodedBytes = Encoder.base64UrlToBytes(entry.encodedData);
-        expect(Convert.uint8Array(decodedBytes).toString()).to.equal(chatPlaintext);
+        expect(Convert.uint8Array(decodedBytes).toString()).toBe(chatPlaintext);
       }
     });
 
@@ -3144,9 +3132,9 @@ describe('Encryption Callback Factories', () => {
         }
       });
 
-      expect(readReply.status.code).to.equal(200);
+      expect(readReply.status.code).toBe(200);
       const rawBytes = await DataStream.toBytes(readReply.entry!.data!);
-      expect(Convert.uint8Array(rawBytes).toString()).to.not.equal(plaintextString);
+      expect(Convert.uint8Array(rawBytes).toString()).not.toBe(plaintextString);
     });
   });
 });
@@ -3155,7 +3143,7 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
   let testHarness: PlatformAgentTestHarness;
   let alice: BearerIdentity;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : TestAgent,
       agentStores : 'dwn'
@@ -3175,7 +3163,7 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
     alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
   });
 
-  after(async () => {
+  afterAll(async () => {
     await testHarness.clearStorage();
     await testHarness.closeStorage();
   });
@@ -3191,7 +3179,7 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
           filter: { protocol: KeyDeliveryProtocolDefinition.protocol }
         }
       });
-      expect(beforeReply.entries).to.have.length(0);
+      expect(beforeReply.entries).toHaveLength(0);
 
       // Act: install key delivery protocol
       await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
@@ -3205,17 +3193,17 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
           filter: { protocol: KeyDeliveryProtocolDefinition.protocol }
         }
       });
-      expect(afterReply.entries).to.have.length(1);
+      expect(afterReply.entries).toHaveLength(1);
 
       const definition = afterReply.entries![0].descriptor.definition;
-      expect(definition.protocol).to.equal('https://enbox.org/protocols/key-delivery');
+      expect(definition.protocol).toBe('https://enbox.org/protocols/key-delivery');
 
       // Verify $encryption keys were injected at the contextKey path
       const contextKeyRuleSet = definition.structure.contextKey as any;
-      expect(contextKeyRuleSet).to.have.property('$encryption');
-      expect(contextKeyRuleSet.$encryption).to.have.property('rootKeyId');
-      expect(contextKeyRuleSet.$encryption).to.have.property('publicKeyJwk');
-      expect(contextKeyRuleSet.$encryption.rootKeyId).to.include('#enc');
+      expect(contextKeyRuleSet).toHaveProperty('$encryption');
+      expect(contextKeyRuleSet.$encryption).toHaveProperty('rootKeyId');
+      expect(contextKeyRuleSet.$encryption).toHaveProperty('publicKeyJwk');
+      expect(contextKeyRuleSet.$encryption.rootKeyId).toContain('#enc');
     });
 
     it('should skip installation on subsequent calls (cache hit)', async () => {
@@ -3223,15 +3211,15 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
       await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
 
       // Spy on processRequest to detect further calls
-      const processRequestSpy = sinon.spy(testHarness.agent.dwn, 'processRequest');
+      const processRequestSpy = spyOn(testHarness.agent.dwn, 'processRequest');
 
       // Second call — should be cached, no processRequest for ProtocolsConfigure
       await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
 
       // processRequest should not have been called at all (cache returns early)
-      expect(processRequestSpy.callCount).to.equal(0);
+      expect(processRequestSpy.mock.calls.length).toBe(0);
 
-      processRequestSpy.restore();
+      processRequestSpy.mockRestore();
     });
   });
 
@@ -3259,8 +3247,8 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
         sourceContextId : 'mock-context-id-123',
       });
 
-      expect(recordId).to.be.a('string');
-      expect(recordId).to.not.be.empty;
+      expect(typeof recordId).toBe('string');
+      expect(recordId).not.toHaveLength(0);
 
       // Verify the record was written — query as Alice (the owner)
       const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
@@ -3275,22 +3263,22 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
         }
       });
 
-      expect(queryReply.entries).to.have.length(1);
+      expect(queryReply.entries).toHaveLength(1);
 
       const entry = queryReply.entries![0] as RecordsWriteMessage;
-      expect(entry.recordId).to.equal(recordId);
+      expect(entry.recordId).toBe(recordId);
 
       // Verify the record is encrypted
-      expect(entry).to.have.property('encryption');
-      expect(entry.encryption).to.have.property('keyEncryption');
-      expect(entry.encryption!.keyEncryption).to.have.length(1);
+      expect(entry).toHaveProperty('encryption');
+      expect(entry.encryption).toHaveProperty('keyEncryption');
+      expect(entry.encryption!.keyEncryption).toHaveLength(1);
 
       // Fallback path encrypts to the owner's ProtocolPath key
-      expect(entry.encryption!.keyEncryption[0].derivationScheme).to.equal('protocolPath');
+      expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe('protocolPath');
 
       // Verify recipient
-      expect(entry.descriptor).to.have.property('recipient', bob.did.uri);
-    }).timeout(10000);
+      expect(entry.descriptor).toHaveProperty('recipient', bob.did.uri);
+    }, 10000);
 
     it('should encrypt contextKey to the recipient\'s key when recipientKeyDeliveryPublicKey is provided', async () => {
       const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
@@ -3325,7 +3313,7 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
         },
       });
 
-      expect(recordId).to.be.a('string');
+      expect(typeof recordId).toBe('string');
 
       // Verify encryption uses ProtocolPath with Bob's rootKeyId
       const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
@@ -3341,8 +3329,8 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
       });
 
       const entry = queryReply.entries![0] as RecordsWriteMessage;
-      expect(entry.encryption!.keyEncryption[0].derivationScheme).to.equal('protocolPath');
-      expect(entry.encryption!.keyEncryption[0].rootKeyId).to.equal(bobKeyInfo.keyId);
+      expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe('protocolPath');
+      expect(entry.encryption!.keyEncryption[0].rootKeyId).toBe(bobKeyInfo.keyId);
 
       // Verify Bob can decrypt it
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
@@ -3362,9 +3350,9 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
       );
       const decryptedBytes = await DataStream.toBytes(decryptedStream);
       const payload = JSON.parse(new TextDecoder().decode(decryptedBytes));
-      expect(payload.rootKeyId).to.equal(mockContextKey.rootKeyId);
-      expect(payload.derivationScheme).to.equal(mockContextKey.derivationScheme);
-    }).timeout(10000);
+      expect(payload.rootKeyId).toBe(mockContextKey.rootKeyId);
+      expect(payload.derivationScheme).toBe(mockContextKey.derivationScheme);
+    }, 10000);
 
     it('should eagerly send the contextKey record to the tenant\'s remote DWN', async () => {
       const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
@@ -3403,20 +3391,20 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
         sourceContextId : 'eager-send-context-id',
       });
 
-      expect(recordId).to.be.a('string');
+      expect(typeof recordId).toBe('string');
 
       // The eager send is fire-and-forget — wait a tick for the async call to complete
       await new Promise((resolve: (value: void) => void) => setTimeout(resolve, 100));
 
       // Verify the RPC send was called with the contextKey message
-      expect(sendDwnRequestStub.called).to.be.true;
+      expect(sendDwnRequestStub.called).toBe(true);
       const rpcCallArgs = sendDwnRequestStub.firstCall.args[0];
-      expect(rpcCallArgs.targetDid).to.equal(alice.did.uri);
-      expect(rpcCallArgs.dwnUrl).to.equal('https://dwn.example.com');
-      expect(rpcCallArgs.message).to.have.property('recordId', recordId);
+      expect(rpcCallArgs.targetDid).toBe(alice.did.uri);
+      expect(rpcCallArgs.dwnUrl).toBe('https://dwn.example.com');
+      expect(rpcCallArgs.message).toHaveProperty('recordId', recordId);
       // Verify data blob is included (the encrypted contextKey payload)
-      expect(rpcCallArgs.data).to.be.instanceOf(Blob);
-    }).timeout(10000);
+      expect(rpcCallArgs.data).toBeInstanceOf(Blob);
+    }, 10000);
 
     it('should not fail when eager send encounters an error', async () => {
       const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
@@ -3459,20 +3447,20 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
         sourceContextId : 'error-context-id',
       });
 
-      expect(recordId).to.be.a('string');
+      expect(typeof recordId).toBe('string');
 
       // Wait for the fire-and-forget to complete
       await new Promise((resolve: (value: void) => void) => setTimeout(resolve, 100));
 
       // Verify a warning was logged about the failed eager send
-      expect(warnStub.called).to.be.true;
+      expect(warnStub.called).toBe(true);
       const warnMessage = warnStub.args.find(
         (args: any[]) => typeof args[0] === 'string' && args[0].includes('Eager send')
       );
-      expect(warnMessage).to.not.be.undefined;
+      expect(warnMessage).toBeDefined();
 
       warnStub.restore();
-    }).timeout(10000);
+    }, 10000);
   });
 
   describe('fetchContextKeyRecord()', () => {
@@ -3508,11 +3496,11 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
         sourceContextId : 'test-context-id-456',
       });
 
-      expect(result).to.not.be.undefined;
-      expect(result!.rootKeyId).to.equal(mockContextKey.rootKeyId);
-      expect(result!.derivationScheme).to.equal(mockContextKey.derivationScheme);
-      expect(result!.derivationPath).to.deep.equal(mockContextKey.derivationPath);
-      expect(result!.derivedPrivateKey).to.deep.equal(mockContextKey.derivedPrivateKey);
+      expect(result).toBeDefined();
+      expect(result!.rootKeyId).toBe(mockContextKey.rootKeyId);
+      expect(result!.derivationScheme).toBe(mockContextKey.derivationScheme);
+      expect(result!.derivationPath).toEqual(mockContextKey.derivationPath);
+      expect(result!.derivedPrivateKey).toEqual(mockContextKey.derivedPrivateKey);
     });
 
     it('should return undefined when no matching contextKey record exists', async () => {
@@ -3523,7 +3511,7 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
         sourceContextId : 'nonexistent-context-id',
       });
 
-      expect(result).to.be.undefined;
+      expect(result).toBeUndefined();
     });
 
     it('should find contextKey by specific tag filters (protocol + contextId)', async () => {
@@ -3569,16 +3557,16 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
         sourceContextId : 'context-bbb',
       });
 
-      expect(result).to.not.be.undefined;
-      expect(result!.derivationPath).to.deep.equal(['protocolContext', 'context-bbb']);
-      expect(result!.derivedPrivateKey).to.deep.equal(contextKey2.derivedPrivateKey);
+      expect(result).toBeDefined();
+      expect(result!.derivationPath).toEqual(['protocolContext', 'context-bbb']);
+      expect(result!.derivedPrivateKey).toEqual(contextKey2.derivedPrivateKey);
     });
   });
 });
 describe('Participant Detection (PR B)', () => {
   let testHarness: PlatformAgentTestHarness;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : TestAgent,
       agentStores : 'dwn'
@@ -3590,7 +3578,7 @@ describe('Participant Detection (PR B)', () => {
     await testHarness.createAgentDid();
   });
 
-  after(async () => {
+  afterAll(async () => {
     await testHarness.clearStorage();
     await testHarness.closeStorage();
   });
@@ -3704,35 +3692,35 @@ describe('Participant Detection (PR B)', () => {
       const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
         testHarness.agent.dwn
       );
-      expect(isMultiParty(roleProtocol, 'thread')).to.be.true;
+      expect(isMultiParty(roleProtocol, 'thread')).toBe(true);
     });
 
     it('should return true for relational-only protocols with read rules', () => {
       const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
         testHarness.agent.dwn
       );
-      expect(isMultiParty(relationalProtocol, 'email')).to.be.true;
+      expect(isMultiParty(relationalProtocol, 'email')).toBe(true);
     });
 
     it('should return true for mixed role + relational protocols', () => {
       const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
         testHarness.agent.dwn
       );
-      expect(isMultiParty(mixedProtocol, 'community')).to.be.true;
+      expect(isMultiParty(mixedProtocol, 'community')).toBe(true);
     });
 
     it('should return false for single-party protocols', () => {
       const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
         testHarness.agent.dwn
       );
-      expect(isMultiParty(singlePartyProtocol, 'note')).to.be.false;
+      expect(isMultiParty(singlePartyProtocol, 'note')).toBe(false);
     });
 
     it('should return false when relational rules only grant create, not read', () => {
       const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
         testHarness.agent.dwn
       );
-      expect(isMultiParty(createOnlyProtocol, 'form')).to.be.false;
+      expect(isMultiParty(createOnlyProtocol, 'form')).toBe(false);
     });
   });
 
@@ -3741,35 +3729,35 @@ describe('Participant Detection (PR B)', () => {
       const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
         testHarness.agent.dwn
       );
-      expect(hasAccess('recipient', 'email', relationalProtocol)).to.be.true;
+      expect(hasAccess('recipient', 'email', relationalProtocol)).toBe(true);
     });
 
     it('should find author-of read rules', () => {
       const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
         testHarness.agent.dwn
       );
-      expect(hasAccess('author', 'email', relationalProtocol)).to.be.true;
+      expect(hasAccess('author', 'email', relationalProtocol)).toBe(true);
     });
 
     it('should return false when no matching rule exists', () => {
       const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
         testHarness.agent.dwn
       );
-      expect(hasAccess('recipient', 'note', singlePartyProtocol)).to.be.false;
+      expect(hasAccess('recipient', 'note', singlePartyProtocol)).toBe(false);
     });
 
     it('should return false when rules exist but do not grant read', () => {
       const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
         testHarness.agent.dwn
       );
-      expect(hasAccess('recipient', 'form/submission', createOnlyProtocol)).to.be.false;
+      expect(hasAccess('recipient', 'form/submission', createOnlyProtocol)).toBe(false);
     });
 
     it('should find rules with undefined actorType (any who)', () => {
       const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
         testHarness.agent.dwn
       );
-      expect(hasAccess(undefined, 'email', relationalProtocol)).to.be.true;
+      expect(hasAccess(undefined, 'email', relationalProtocol)).toBe(true);
     });
 
     it('should find deeply nested relational rules', () => {
@@ -3777,7 +3765,7 @@ describe('Participant Detection (PR B)', () => {
         testHarness.agent.dwn
       );
       // The mixed protocol has { who: 'recipient', of: 'community/channel/message', can: ['read'...] }
-      expect(hasAccess('recipient', 'community/channel/message', mixedProtocol)).to.be.true;
+      expect(hasAccess('recipient', 'community/channel/message', mixedProtocol)).toBe(true);
     });
   });
 
@@ -3789,8 +3777,8 @@ describe('Participant Detection (PR B)', () => {
         recipient          : 'did:example:bob',
         tenantDid          : 'did:example:alice',
       });
-      expect(result.size).to.equal(1);
-      expect(result.has('did:example:bob')).to.be.true;
+      expect(result.size).toBe(1);
+      expect(result.has('did:example:bob')).toBe(true);
     });
 
     it('should detect relational recipient as participant', () => {
@@ -3800,8 +3788,8 @@ describe('Participant Detection (PR B)', () => {
         recipient          : 'did:example:bob',
         tenantDid          : 'did:example:alice',
       });
-      expect(result.size).to.equal(1);
-      expect(result.has('did:example:bob')).to.be.true;
+      expect(result.size).toBe(1);
+      expect(result.has('did:example:bob')).toBe(true);
     });
 
     it('should exclude the DWN owner from participants', () => {
@@ -3811,7 +3799,7 @@ describe('Participant Detection (PR B)', () => {
         recipient          : 'did:example:alice',
         tenantDid          : 'did:example:alice',
       });
-      expect(result.size).to.equal(0);
+      expect(result.size).toBe(0);
     });
 
     it('should return empty set when no recipient and no role', () => {
@@ -3820,7 +3808,7 @@ describe('Participant Detection (PR B)', () => {
         protocolPath       : 'note',
         tenantDid          : 'did:example:alice',
       });
-      expect(result.size).to.equal(0);
+      expect(result.size).toBe(0);
     });
 
     it('should not detect recipients when no relational read rule exists', () => {
@@ -3830,7 +3818,7 @@ describe('Participant Detection (PR B)', () => {
         recipient          : 'did:example:bob',
         tenantDid          : 'did:example:alice',
       });
-      expect(result.size).to.equal(0);
+      expect(result.size).toBe(0);
     });
 
     it('should detect role recipient even when recipient equals tenant (role overrides)', () => {
@@ -3844,8 +3832,8 @@ describe('Participant Detection (PR B)', () => {
         recipient          : 'did:example:carol',
         tenantDid          : 'did:example:alice',
       });
-      expect(result.size).to.equal(1);
-      expect(result.has('did:example:carol')).to.be.true;
+      expect(result.size).toBe(1);
+      expect(result.has('did:example:carol')).toBe(true);
     });
   });
 });
@@ -3854,7 +3842,7 @@ describe('Unified Key Delivery - Write Side (PR C)', () => {
   let testHarness: PlatformAgentTestHarness;
   let alice: BearerIdentity;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : TestAgent,
       agentStores : 'dwn'
@@ -3867,7 +3855,7 @@ describe('Unified Key Delivery - Write Side (PR C)', () => {
     alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
   });
 
-  after(async () => {
+  afterAll(async () => {
     await testHarness.clearStorage();
     await testHarness.closeStorage();
   });
@@ -3956,9 +3944,9 @@ describe('Unified Key Delivery - Write Side (PR C)', () => {
       }
     });
 
-    expect(queryReply.entries).to.have.length(1);
-    expect(queryReply.entries![0].descriptor).to.have.property('recipient', bob.did.uri);
-  }).timeout(10000);
+    expect(queryReply.entries).toHaveLength(1);
+    expect(queryReply.entries![0].descriptor).toHaveProperty('recipient', bob.did.uri);
+  }, 10000);
 
   it('should preserve user data in $role records (no longer replaces with key payload)', async () => {
     const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
@@ -4028,23 +4016,23 @@ describe('Unified Key Delivery - Write Side (PR C)', () => {
       encryption: true,
     });
 
-    expect(queryReply.entries).to.have.length(1);
+    expect(queryReply.entries).toHaveLength(1);
     // With auto-decrypt, encodedData should contain the original user data
     const entry = queryReply.entries![0];
     if (entry.encodedData) {
       const { Encoder } = await import('@enbox/dwn-sdk-js');
       const decodedBytes = Encoder.base64UrlToBytes(entry.encodedData);
       const decodedString = new TextDecoder().decode(decodedBytes);
-      expect(decodedString).to.equal(participantData);
+      expect(decodedString).toBe(participantData);
     }
-  }).timeout(10000);
+  }, 10000);
 });
 
 describe('Unified Key Retrieval - Read Side (PR D)', () => {
   let testHarness: PlatformAgentTestHarness;
   let alice: BearerIdentity;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : TestAgent,
       agentStores : 'dwn'
@@ -4057,7 +4045,7 @@ describe('Unified Key Retrieval - Read Side (PR D)', () => {
     alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
   });
 
-  after(async () => {
+  afterAll(async () => {
     await testHarness.clearStorage();
     await testHarness.closeStorage();
   });
@@ -4137,18 +4125,18 @@ describe('Unified Key Retrieval - Read Side (PR D)', () => {
       encryption: true,
     });
 
-    expect(readReply.entries).to.have.length(1);
+    expect(readReply.entries).toHaveLength(1);
     const entry = readReply.entries![0];
-    expect(entry.encryption).to.exist;
-    expect(entry.encryption!.keyEncryption[0].derivationScheme).to.equal('protocolContext');
+    expect(entry.encryption).toBeDefined();
+    expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe('protocolContext');
 
     // Verify auto-decryption produced the original plaintext
     if (entry.encodedData) {
       const { Encoder } = await import('@enbox/dwn-sdk-js');
       const decoded = new TextDecoder().decode(Encoder.base64UrlToBytes(entry.encodedData));
-      expect(decoded).to.equal(chatText);
+      expect(decoded).toBe(chatText);
     }
-  }).timeout(10000);
+  }, 10000);
 
   it('should use fetchContextKeyRecord in resolveKeyDecrypter Case 2 (participant path)', async () => {
     const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
@@ -4209,7 +4197,7 @@ describe('Unified Key Retrieval - Read Side (PR D)', () => {
         }
       }
     });
-    expect(ckQuery.entries).to.have.length(1);
+    expect(ckQuery.entries).toHaveLength(1);
 
     // Read the contextKey with decryption to verify it contains a valid DerivedPrivateJwk
     const ckRecordId = ckQuery.entries![0].recordId;
@@ -4225,17 +4213,17 @@ describe('Unified Key Retrieval - Read Side (PR D)', () => {
     const contextKeyPayload = JSON.parse(new TextDecoder().decode(ckDataBytes));
 
     // Verify the contextKey payload has the expected DerivedPrivateJwk shape
-    expect(contextKeyPayload).to.have.property('rootKeyId');
-    expect(contextKeyPayload).to.have.property('derivationScheme', 'protocolContext');
-    expect(contextKeyPayload).to.have.property('derivationPath').that.is.an('array');
-    expect(contextKeyPayload).to.have.property('derivedPrivateKey');
-    expect(contextKeyPayload.derivedPrivateKey).to.have.property('kty', 'EC');
-    expect(contextKeyPayload.derivedPrivateKey).to.have.property('crv', 'secp256k1');
-    expect(contextKeyPayload.derivedPrivateKey).to.have.property('d'); // private key component
+    expect(contextKeyPayload).toHaveProperty('rootKeyId');
+    expect(contextKeyPayload).toHaveProperty('derivationScheme', 'protocolContext');
+    expect(contextKeyPayload).toHaveProperty('derivationPath');
+    expect(contextKeyPayload).toHaveProperty('derivedPrivateKey');
+    expect(contextKeyPayload.derivedPrivateKey).toHaveProperty('kty', 'EC');
+    expect(contextKeyPayload.derivedPrivateKey).toHaveProperty('crv', 'secp256k1');
+    expect(contextKeyPayload.derivedPrivateKey).toHaveProperty('d'); // private key component
 
     // Verify the derivation path is correct for this context
     const rootContextId = threadContextId.split('/')[0];
-    expect(contextKeyPayload.derivationPath).to.deep.equal([
+    expect(contextKeyPayload.derivationPath).toEqual([
       'protocolContext', rootContextId,
     ]);
 
@@ -4258,11 +4246,11 @@ describe('Unified Key Retrieval - Read Side (PR D)', () => {
       sourceProtocol  : chatProtocol.protocol,
       sourceContextId : rootContextId,
     });
-    expect(bobKey).to.not.be.undefined;
-    expect(bobKey!.rootKeyId).to.equal(contextKeyPayload.rootKeyId);
-    expect(bobKey!.derivationScheme).to.equal('protocolContext');
-    expect(bobKey!.derivedPrivateKey).to.deep.equal(contextKeyPayload.derivedPrivateKey);
-  }).timeout(30000);
+    expect(bobKey).toBeDefined();
+    expect(bobKey!.rootKeyId).toBe(contextKeyPayload.rootKeyId);
+    expect(bobKey!.derivationScheme).toBe('protocolContext');
+    expect(bobKey!.derivedPrivateKey).toEqual(contextKeyPayload.derivedPrivateKey);
+  }, 30000);
 });
 
 describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
@@ -4270,7 +4258,7 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
   let alice: BearerIdentity;
   let bob: BearerIdentity;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : TestAgent,
       agentStores : 'dwn'
@@ -4342,7 +4330,7 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     sinon.restore();
   });
 
-  after(async () => {
+  afterAll(async () => {
     await testHarness.clearStorage();
     await testHarness.closeStorage();
   });
@@ -4406,7 +4394,7 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
 
     // Bob (the author) should be detected as a participant due to
     // { who: 'author', of: 'thread', can: ['read'] }
-    expect(participants.has(bob.did.uri)).to.be.true;
+    expect(participants.has(bob.did.uri)).toBe(true);
   });
 
   it('detectNewParticipants should not detect external author when no author-read rules exist', () => {
@@ -4418,7 +4406,7 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       authorDid          : bob.did.uri,
     });
 
-    expect(participants.has(bob.did.uri)).to.be.false;
+    expect(participants.has(bob.did.uri)).toBe(false);
   });
 
   it('detectNewParticipants should not include the DWN owner even as an author', () => {
@@ -4429,7 +4417,7 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       authorDid          : alice.did.uri, // owner is the author
     });
 
-    expect(participants.has(alice.did.uri)).to.be.false;
+    expect(participants.has(alice.did.uri)).toBe(false);
   });
 
   it('cross-DWN root record should use ProtocolPath encryption with target key', async () => {
@@ -4465,17 +4453,17 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       encryption : true,
     });
 
-    expect(writeReply.status.code).to.equal(202);
+    expect(writeReply.status.code).toBe(202);
 
     const recordsWriteMessage = threadMessage as RecordsWriteMessage;
-    expect(recordsWriteMessage.encryption).to.exist;
+    expect(recordsWriteMessage.encryption).toBeDefined();
 
     // For cross-DWN root records, the encryption should use ProtocolPath
     // (the external author cannot derive the target's context key)
     const keyEncryption = recordsWriteMessage.encryption!.keyEncryption;
-    expect(keyEncryption).to.have.length(1);
-    expect(keyEncryption[0].derivationScheme).to.equal('protocolPath');
-  }).timeout(15000);
+    expect(keyEncryption).toHaveLength(1);
+    expect(keyEncryption[0].derivationScheme).toBe('protocolPath');
+  }, 15000);
 
   it('reactive root-record upgrade should append ProtocolContext keyEncryption entry', async () => {
     // Configure protocol for Alice with encryption
@@ -4516,14 +4504,14 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     });
 
     const readResult = readReply as any;
-    expect(readResult.status.code).to.equal(200);
-    expect(readResult.entry).to.exist;
-    expect(readResult.entry.recordsWrite.encryption).to.exist;
+    expect(readResult.status.code).toBe(200);
+    expect(readResult.entry).toBeDefined();
+    expect(readResult.entry.recordsWrite.encryption).toBeDefined();
 
     const keyEncryption = readResult.entry.recordsWrite.encryption.keyEncryption;
 
     // After upgrade: should have BOTH ProtocolPath AND ProtocolContext entries
-    expect(keyEncryption.length).to.be.greaterThanOrEqual(2);
+    expect(keyEncryption.length).toBeGreaterThanOrEqual(2);
 
     const hasProtocolPath = keyEncryption.some(
       (k: { derivationScheme: string }) => k.derivationScheme === 'protocolPath'
@@ -4531,15 +4519,15 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     const hasProtocolContext = keyEncryption.some(
       (k: { derivationScheme: string }) => k.derivationScheme === 'protocolContext'
     );
-    expect(hasProtocolPath).to.be.true;
-    expect(hasProtocolContext).to.be.true;
+    expect(hasProtocolPath).toBe(true);
+    expect(hasProtocolContext).toBe(true);
 
     // The ProtocolContext entry should include derivedPublicKey
     const contextEntry = keyEncryption.find(
       (k: { derivationScheme: string }) => k.derivationScheme === 'protocolContext'
     );
-    expect(contextEntry.derivedPublicKey).to.exist;
-  }).timeout(15000);
+    expect(contextEntry.derivedPublicKey).toBeDefined();
+  }, 15000);
 
   it('Alice should decrypt cross-DWN root record via ProtocolPath after upgrade', async () => {
     // Configure protocol for Alice with encryption
@@ -4580,12 +4568,12 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     });
 
     const readResult = readReply as any;
-    expect(readResult.entry.data).to.exist;
+    expect(readResult.entry.data).toBeDefined();
 
     const decryptedBytes = await DataStream.toBytes(readResult.entry.data);
     const decryptedText = new TextDecoder().decode(decryptedBytes);
-    expect(decryptedText).to.equal(threadText);
-  }).timeout(15000);
+    expect(decryptedText).toBe(threadText);
+  }, 15000);
 
   it('should auto-deliver contextKey to external author on cross-DWN root record write', async () => {
     // Configure protocol for Alice with encryption
@@ -4631,8 +4619,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     });
 
     // Bob should have received a contextKey (author-based detection)
-    expect(ckQuery.entries).to.have.length.greaterThanOrEqual(1);
-  }).timeout(15000);
+    expect(ckQuery.entries).not.toHaveLength(0);
+  }, 15000);
 
   it('should also auto-deliver contextKey to recipient on cross-DWN write', async () => {
     // Configure protocol for Alice with encryption
@@ -4676,7 +4664,7 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
         }
       }
     });
-    expect(ckQueryBob.entries).to.have.length.greaterThanOrEqual(1);
+    expect(ckQueryBob.entries).not.toHaveLength(0);
 
     const { reply: ckQueryCarol } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4690,8 +4678,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
         }
       }
     });
-    expect(ckQueryCarol.entries).to.have.length.greaterThanOrEqual(1);
-  }).timeout(15000);
+    expect(ckQueryCarol.entries).not.toHaveLength(0);
+  }, 15000);
 
   // ──────────────────────────────────────────────────────────────────────────
   // E2E Gap Tests: verify that participants can actually DECRYPT records,
@@ -4774,7 +4762,7 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
         }
       }
     });
-    expect(ckQuery.entries).to.have.length(1);
+    expect(ckQuery.entries).toHaveLength(1);
 
     // Decrypt the contextKey record to get the DerivedPrivateJwk
     const ckRecordId = ckQuery.entries![0].recordId;
@@ -4812,11 +4800,11 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     });
 
     const bobReadResult = bobReadReply as any;
-    expect(bobReadResult.status.code).to.equal(200);
+    expect(bobReadResult.status.code).toBe(200);
     const decryptedBytes = await DataStream.toBytes(bobReadResult.entry.data);
     const decryptedText = new TextDecoder().decode(decryptedBytes);
-    expect(decryptedText).to.equal(chatText);
-  }).timeout(30000);
+    expect(decryptedText).toBe(chatText);
+  }, 30000);
 
   it('E2E: cross-DWN full round-trip — Bob writes, Alice upgrades, Bob decrypts via contextKey', async () => {
     // Configure email protocol for Alice with encryption
@@ -4854,11 +4842,11 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       messageParams : { filter: { recordId: threadRecordId } },
     });
     const aliceReadResult = aliceRead as any;
-    expect(aliceReadResult.status.code).to.equal(200);
+    expect(aliceReadResult.status.code).toBe(200);
     const keyEncryption = aliceReadResult.entry.recordsWrite.encryption.keyEncryption;
     expect(keyEncryption.some(
       (k: { derivationScheme: string }) => k.derivationScheme === 'protocolContext'
-    )).to.be.true;
+    )).toBe(true);
 
     // Verify contextKey was delivered for Bob and is encrypted to Bob's key
     const { reply: ckQuery } = await testHarness.agent.dwn.processRequest({
@@ -4873,9 +4861,9 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
         }
       }
     });
-    expect(ckQuery.entries).to.have.length.greaterThanOrEqual(1);
+    expect(ckQuery.entries).not.toHaveLength(0);
     const ckEntry = ckQuery.entries![0] as RecordsWriteMessage;
-    expect(ckEntry.encryption!.keyEncryption[0].derivationScheme).to.equal('protocolPath');
+    expect(ckEntry.encryption!.keyEncryption[0].derivationScheme).toBe('protocolPath');
 
     // Bob decrypts the contextKey directly from Alice's DWN using his own key.
     // This simulates the remote fetchContextKeyRecord path: Bob reads the
@@ -4898,8 +4886,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     const contextKeyPayload = JSON.parse(new TextDecoder().decode(ckDataBytes));
 
     // Use the contextKey to decrypt the thread record
-    expect(contextKeyPayload).to.have.property('derivationScheme', 'protocolContext');
-    expect(contextKeyPayload).to.have.property('derivedPrivateKey');
+    expect(contextKeyPayload).toHaveProperty('derivationScheme', 'protocolContext');
+    expect(contextKeyPayload).toHaveProperty('derivedPrivateKey');
 
     // Bob reads the thread from Alice's DWN and decrypts using the contextKey
     const { reply: bobThreadRead } = await testHarness.agent.dwn.processRequest({
@@ -4916,8 +4904,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     );
     const decryptedBytes = await DataStream.toBytes(decryptedStream);
     const decryptedText = new TextDecoder().decode(decryptedBytes);
-    expect(decryptedText).to.equal(threadText);
-  }).timeout(30000);
+    expect(decryptedText).toBe(threadText);
+  }, 30000);
 
   it('E2E: cross-DWN non-root child record via extractDerivedPublicKey', async () => {
     // Configure email protocol for Alice with encryption
@@ -4994,11 +4982,11 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       messageParams : { filter: { recordId: bobReplyRecordId } },
     });
     const childReadResult = childRead as any;
-    expect(childReadResult.status.code).to.equal(200);
+    expect(childReadResult.status.code).toBe(200);
     const childKeyEncryption = childReadResult.entry.recordsWrite.encryption.keyEncryption;
     expect(childKeyEncryption.some(
       (k: { derivationScheme: string }) => k.derivationScheme === 'protocolContext'
-    )).to.be.true;
+    )).toBe(true);
 
     // Alice should be able to decrypt the child record
     const { reply: aliceDecrypt } = await testHarness.agent.dwn.processRequest({
@@ -5009,10 +4997,10 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       encryption    : true,
     });
     const aliceDecryptResult = aliceDecrypt as any;
-    expect(aliceDecryptResult.status.code).to.equal(200);
+    expect(aliceDecryptResult.status.code).toBe(200);
     const aliceDecryptedBytes = await DataStream.toBytes(aliceDecryptResult.entry.data);
-    expect(new TextDecoder().decode(aliceDecryptedBytes)).to.equal(bobReplyText);
-  }).timeout(30000);
+    expect(new TextDecoder().decode(aliceDecryptedBytes)).toBe(bobReplyText);
+  }, 30000);
 
   it('E2E: large payload (>30KB) through reactive upgrade path', async () => {
     // Configure email protocol for Alice with encryption
@@ -5052,10 +5040,10 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       messageParams : { filter: { recordId: threadRecordId } },
     });
     const rawReadResult = rawRead as any;
-    expect(rawReadResult.status.code).to.equal(200);
+    expect(rawReadResult.status.code).toBe(200);
     expect(rawReadResult.entry.recordsWrite.encryption.keyEncryption.some(
       (k: { derivationScheme: string }) => k.derivationScheme === 'protocolContext'
-    )).to.be.true;
+    )).toBe(true);
 
     // Alice should be able to decrypt the large record
     const { reply: decryptRead } = await testHarness.agent.dwn.processRequest({
@@ -5066,9 +5054,9 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       encryption    : true,
     });
     const decryptResult = decryptRead as any;
-    expect(decryptResult.status.code).to.equal(200);
+    expect(decryptResult.status.code).toBe(200);
     const decryptedBytes = await DataStream.toBytes(decryptResult.entry.data);
     const decryptedText = new TextDecoder().decode(decryptedBytes);
-    expect(decryptedText).to.equal(largePayload);
-  }).timeout(30000);
+    expect(decryptedText).toBe(largePayload);
+  }, 30000);
 });

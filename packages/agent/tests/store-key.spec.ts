@@ -3,8 +3,7 @@ import type { Jwk } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
 import { DidJwk } from '@enbox/dids';
-import { expect } from 'chai';
-import sinon from 'sinon';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
 import type { AgentDataStore, DwnDataStore } from '../src/store-data.js';
 
@@ -20,7 +19,7 @@ describe('KeyStore', () => {
     let testHarness: PlatformAgentTestHarness;
     let keyStore: AgentDataStore<Jwk>;
 
-    before(async () => {
+    beforeAll(async () => {
       testHarness = await PlatformAgentTestHarness.setup({
         agentClass  : TestAgent,
         agentStores : 'memory'
@@ -35,7 +34,7 @@ describe('KeyStore', () => {
       testHarness.agent.keyManager = keyManager;
     });
 
-    after(async () => {
+    afterAll(async () => {
       await testHarness.clearStorage();
       await testHarness.closeStorage();
     });
@@ -43,7 +42,7 @@ describe('KeyStore', () => {
     describe('constructor', () => {
       it('creates a InMemoryKeyStore', () => {
         const store = new InMemoryKeyStore();
-        expect(store).to.be.instanceOf(InMemoryKeyStore);
+        expect(store).toBeInstanceOf(InMemoryKeyStore);
       });
     });
 
@@ -57,18 +56,18 @@ describe('KeyStore', () => {
           id    : keyUri,
           agent : testHarness.agent
         });
-        expect(deleteResult).to.be.true;
+        expect(deleteResult).toBe(true);
 
         const storedKey = await keyStore.get({
           id    : keyUri,
           agent : testHarness.agent
         });
-        expect(storedKey).to.be.undefined;
+        expect(storedKey).toBeUndefined();
       });
 
       it('should return false if Private Key does not exist', async () => {
         const deleteResult = await keyStore.delete({ id: 'non-existent', agent: testHarness.agent });
-        expect(deleteResult).to.be.false;
+        expect(deleteResult).toBe(false);
       });
     });
 
@@ -79,13 +78,13 @@ describe('KeyStore', () => {
         });
 
         const storedKey = await keyStore.get({ id: keyUri, agent: testHarness.agent });
-        expect(storedKey).to.exist;
-        expect(keyUri).to.include(storedKey!.kid);
+        expect(storedKey).toBeDefined();
+        expect(keyUri).toContain(storedKey!.kid);
       });
 
       it('should return undefined when attempting to get a non-existent DID', async () => {
         const storedKey = await keyStore.get({ id: 'non-existent', agent: testHarness.agent });
-        expect(storedKey).to.be.undefined;
+        expect(storedKey).toBeUndefined();
       });
     });
 
@@ -96,16 +95,16 @@ describe('KeyStore', () => {
         const keyUri3 = await testHarness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
 
         const storedKeys = await keyStore.list({ agent: testHarness.agent });
-        expect(storedKeys).to.have.length(3);
+        expect(storedKeys).toHaveLength(3);
         const importedKeys = [keyUri1, keyUri2, keyUri3];
         for (const storedKey of storedKeys) {
-          expect(importedKeys).to.include(`urn:jwk:${storedKey.kid}`);
+          expect(importedKeys).toContain(`urn:jwk:${storedKey.kid}`);
         }
       });
 
       it('returns an empty array if there are no Private Keys in the store', async () => {
         const storedKeys = await keyStore.list({ agent: testHarness.agent });
-        expect(storedKeys).to.have.length(0);
+        expect(storedKeys).toHaveLength(0);
       });
     });
 
@@ -124,8 +123,8 @@ describe('KeyStore', () => {
         });
 
         const storedKey = await keyStore.get({ id: 'urn:jwk:test-key', agent: testHarness.agent });
-        expect(storedKey).to.exist;
-        expect(storedKey!.kid).to.equal('test-key');
+        expect(storedKey).toBeDefined();
+        expect(storedKey!.kid).toBe('test-key');
       });
     });
   });
@@ -137,7 +136,7 @@ describe('KeyStore', () => {
     // on every beforeEach. The DID object is self-contained and can be reused.
     let secp256k1Did: BearerDid;
 
-    before(async () => {
+    beforeAll(async () => {
       testHarness = await PlatformAgentTestHarness.setup({
         agentClass       : TestAgent,
         agentStores      : 'memory',
@@ -158,7 +157,7 @@ describe('KeyStore', () => {
       testHarness.agent.keyManager = keyManager;
     });
 
-    after(async () => {
+    afterAll(async () => {
       await testHarness.clearStorage();
       await testHarness.closeStorage();
     });
@@ -166,7 +165,7 @@ describe('KeyStore', () => {
     describe('constructor', () => {
       it('creates a DwnKeyStore', () => {
         const store = new DwnKeyStore();
-        expect(store).to.be.instanceOf(DwnKeyStore);
+        expect(store).toBeInstanceOf(DwnKeyStore);
       });
     });
 
@@ -180,18 +179,18 @@ describe('KeyStore', () => {
           id    : keyUri,
           agent : testHarness.agent
         });
-        expect(deleteResult).to.be.true;
+        expect(deleteResult).toBe(true);
 
         const storedKey = await keyStore.get({
           id    : keyUri,
           agent : testHarness.agent
         });
-        expect(storedKey).to.be.undefined;
+        expect(storedKey).toBeUndefined();
       });
 
       it('should return false if Private Key does not exist', async () => {
         const deleteResult = await keyStore.delete({ id: 'non-existent', agent: testHarness.agent });
-        expect(deleteResult).to.be.false;
+        expect(deleteResult).toBe(false);
       });
     });
 
@@ -202,13 +201,13 @@ describe('KeyStore', () => {
         });
 
         const storedKey = await keyStore.get({ id: keyUri, agent: testHarness.agent });
-        expect(storedKey).to.exist;
-        expect(keyUri).to.include(storedKey!.kid);
+        expect(storedKey).toBeDefined();
+        expect(keyUri).toContain(storedKey!.kid);
       });
 
       it('should return undefined when attempting to get a non-existent DID', async () => {
         const storedKey = await keyStore.get({ id: 'non-existent', agent: testHarness.agent });
-        expect(storedKey).to.be.undefined;
+        expect(storedKey).toBeUndefined();
       });
     });
 
@@ -219,16 +218,16 @@ describe('KeyStore', () => {
         const keyUri3 = await testHarness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
 
         const storedKeys = await keyStore.list({ agent: testHarness.agent });
-        expect(storedKeys).to.have.length(3);
+        expect(storedKeys).toHaveLength(3);
         const importedKeys = [keyUri1, keyUri2, keyUri3];
         for (const storedKey of storedKeys) {
-          expect(importedKeys).to.include(`urn:jwk:${storedKey.kid}`);
+          expect(importedKeys).toContain(`urn:jwk:${storedKey.kid}`);
         }
       });
 
       it('returns an empty array if there are no Private Keys in the store', async () => {
         const storedKeys = await keyStore.list({ agent: testHarness.agent });
-        expect(storedKeys).to.have.length(0);
+        expect(storedKeys).toHaveLength(0);
       });
 
       it('throws an error if legacy unencrypted records exceed DWN max data size for query results', async () => {
@@ -254,14 +253,14 @@ describe('KeyStore', () => {
           dataStream: new Blob([keyBytes], { type: 'application/json' })
         });
 
-        expect(response.reply.status.code).to.equal(202);
+        expect(response.reply.status.code).toBe(202);
 
         try {
           await keyStore.list({ agent: testHarness.agent });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
 
         } catch (error: any) {
-          expect(error.message).to.include(`Expected 'encodedData' to be present in the DWN query result entry`);
+          expect(error.message).toContain(`Expected 'encodedData' to be present in the DWN query result entry`);
         }
       });
     });
@@ -281,8 +280,8 @@ describe('KeyStore', () => {
         });
 
         const storedKey = await keyStore.get({ id: 'urn:jwk:test-key', agent: testHarness.agent });
-        expect(storedKey).to.exist;
-        expect(storedKey!.kid).to.equal('test-key');
+        expect(storedKey).toBeDefined();
+        expect(storedKey!.kid).toBe('test-key');
       });
     });
 
@@ -301,15 +300,15 @@ describe('KeyStore', () => {
           }
         });
 
-        expect(reply.status.code).to.equal(200);
-        expect(reply.entries).to.have.length(1);
+        expect(reply.status.code).toBe(200);
+        expect(reply.entries).toHaveLength(1);
 
         // Verify $encryption was injected into the protocol definition.
         const installedDefinition = reply.entries![0].descriptor.definition;
         const privateJwkRuleSet = installedDefinition.structure.privateJwk;
-        expect(privateJwkRuleSet).to.have.property('$encryption');
-        expect(privateJwkRuleSet.$encryption).to.have.property('rootKeyId');
-        expect(privateJwkRuleSet.$encryption).to.have.property('publicKeyJwk');
+        expect(privateJwkRuleSet).toHaveProperty('$encryption');
+        expect(privateJwkRuleSet.$encryption).toHaveProperty('rootKeyId');
+        expect(privateJwkRuleSet.$encryption).toHaveProperty('publicKeyJwk');
       });
 
       it('encrypts key records in the DWN and decrypts them on read', async () => {
@@ -333,22 +332,22 @@ describe('KeyStore', () => {
           },
         });
 
-        expect(queryReply.entries).to.have.length(1);
+        expect(queryReply.entries).toHaveLength(1);
 
         // The raw query entry should have encryption metadata, indicating the
         // record is encrypted at the DWN level.
         const rawRecord = queryReply.entries![0];
-        expect(rawRecord.encryption).to.exist;
-        expect(rawRecord.encryption!.algorithm).to.equal('A256CTR');
+        expect(rawRecord.encryption).toBeDefined();
+        expect(rawRecord.encryption!.algorithm).toBe('A256CTR');
 
         // Read back through the store API — should be decrypted transparently.
         const storedKey = await keyStore.get({ id: keyUri, agent: testHarness.agent });
-        expect(storedKey).to.exist;
-        expect(keyUri).to.include(storedKey!.kid);
+        expect(storedKey).toBeDefined();
+        expect(keyUri).toContain(storedKey!.kid);
         // Verify key properties survive the encrypt/decrypt round-trip.
-        expect(storedKey!.kty).to.equal('OKP');
-        expect(storedKey!.crv).to.equal('Ed25519');
-        expect(storedKey).to.have.property('d'); // private key material present
+        expect(storedKey!.kty).toBe('OKP');
+        expect(storedKey!.crv).toBe('Ed25519');
+        expect(storedKey).toHaveProperty('d'); // private key material present
       });
 
       it('list() decrypts all encrypted key records', async () => {
@@ -359,16 +358,16 @@ describe('KeyStore', () => {
 
         // List all keys — should return all three, decrypted.
         const storedKeys = await keyStore.list({ agent: testHarness.agent });
-        expect(storedKeys).to.have.length(3);
+        expect(storedKeys).toHaveLength(3);
 
         const storedKids = storedKeys.map((k: Jwk): string => `urn:jwk:${k.kid}`);
-        expect(storedKids).to.include(keyUri1);
-        expect(storedKids).to.include(keyUri2);
-        expect(storedKids).to.include(keyUri3);
+        expect(storedKids).toContain(keyUri1);
+        expect(storedKids).toContain(keyUri2);
+        expect(storedKids).toContain(keyUri3);
 
         // Every returned key should have private key material.
         for (const key of storedKeys) {
-          expect(key).to.have.property('d');
+          expect(key).toHaveProperty('d');
         }
       });
 
@@ -380,15 +379,15 @@ describe('KeyStore', () => {
 
         // Verify it exists.
         let storedKey = await keyStore.get({ id: keyUri, agent: testHarness.agent });
-        expect(storedKey).to.exist;
+        expect(storedKey).toBeDefined();
 
         // Delete it.
         const deleted = await keyStore.delete({ id: keyUri, agent: testHarness.agent });
-        expect(deleted).to.be.true;
+        expect(deleted).toBe(true);
 
         // Verify it's gone.
         storedKey = await keyStore.get({ id: keyUri, agent: testHarness.agent });
-        expect(storedKey).to.be.undefined;
+        expect(storedKey).toBeUndefined();
 
         // Create a new key with the same algorithm.
         const keyUri2 = await testHarness.agent.keyManager.generateKey({
@@ -397,8 +396,8 @@ describe('KeyStore', () => {
 
         // Verify the new key exists and is different.
         const storedKey2 = await keyStore.get({ id: keyUri2, agent: testHarness.agent });
-        expect(storedKey2).to.exist;
-        expect(keyUri2).to.not.equal(keyUri);
+        expect(storedKey2).toBeDefined();
+        expect(keyUri2).not.toBe(keyUri);
       });
     });
 
@@ -409,7 +408,7 @@ describe('KeyStore', () => {
       let ed25519Harness: PlatformAgentTestHarness;
       let ed25519KeyStore: AgentDataStore<Jwk>;
 
-      before(async () => {
+      beforeAll(async () => {
         ed25519Harness = await PlatformAgentTestHarness.setup({
           agentClass       : TestAgent,
           agentStores      : 'memory',
@@ -428,7 +427,7 @@ describe('KeyStore', () => {
         ed25519Harness.agent.keyManager = keyManager;
       });
 
-      after(async () => {
+      afterAll(async () => {
         await ed25519Harness.clearStorage();
         await ed25519Harness.closeStorage();
       });
@@ -441,9 +440,9 @@ describe('KeyStore', () => {
           await ed25519Harness.agent.keyManager.generateKey({
             algorithm: 'Ed25519'
           });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.include('DWN encryption requires \'secp256k1\'');
+          expect(error.message).toContain('DWN encryption requires \'secp256k1\'');
         }
       });
 
@@ -452,9 +451,9 @@ describe('KeyStore', () => {
         // no longer catches encryption key derivation failures.
         try {
           await (ed25519KeyStore as DwnDataStore<Jwk>)['initialize']({ agent: ed25519Harness.agent });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.include('DWN encryption requires \'secp256k1\'');
+          expect(error.message).toContain('DWN encryption requires \'secp256k1\'');
         }
       });
     });
@@ -466,7 +465,7 @@ describe('KeyStore', () => {
 
         // Verify encryption is active.
         const tenantDid = testHarness.agent.agentDid.uri;
-        expect((keyStore as any).isEncryptionActive(tenantDid)).to.be.true;
+        expect((keyStore as any).isEncryptionActive(tenantDid)).toBe(true);
 
         // Clear the protocol initialization cache (simulating agent restart).
         (keyStore as DwnDataStore<Jwk>)['_protocolInitializedCache']?.clear();
@@ -477,7 +476,7 @@ describe('KeyStore', () => {
         await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
 
         // Encryption should still be detected as active.
-        expect((keyStore as any).isEncryptionActive(tenantDid)).to.be.true;
+        expect((keyStore as any).isEncryptionActive(tenantDid)).toBe(true);
       });
 
       it('should detect no encryption from a legacy protocol without $encryption', async () => {
@@ -497,13 +496,13 @@ describe('KeyStore', () => {
         // Initialize — should find the existing protocol and detect no $encryption.
         await (freshKeyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
 
-        expect((freshKeyStore as any).isEncryptionActive(tenantDid)).to.be.false;
+        expect((freshKeyStore as any).isEncryptionActive(tenantDid)).toBe(false);
       });
     });
 
     describe('getAllRecords() error handling', () => {
       afterEach(() => {
-        sinon.restore();
+        mock.restore();
       });
 
       it('should throw when an encrypted record read returns no data', async () => {
@@ -514,7 +513,7 @@ describe('KeyStore', () => {
         // metadata) followed by a RecordsRead that returns no data.
         const originalProcessRequest = testHarness.agent.dwn.processRequest.bind(testHarness.agent.dwn);
         let queryCallCount = 0;
-        sinon.stub(testHarness.agent.dwn, 'processRequest').callsFake(async (request: any): Promise<any> => {
+        spyOn(testHarness.agent.dwn, 'processRequest').mockImplementation(async (request: any): Promise<any> => {
           // Let the RecordsQuery pass through normally.
           if (request.messageType === DwnInterface.RecordsQuery) {
             queryCallCount++;
@@ -542,12 +541,12 @@ describe('KeyStore', () => {
 
         try {
           await keyStore.list({ agent: testHarness.agent });
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.include('Failed to read encrypted key record');
+          expect(error.message).toContain('Failed to read encrypted key record');
         }
 
-        expect(queryCallCount).to.be.greaterThan(0);
+        expect(queryCallCount).toBeGreaterThan(0);
       });
 
       it('should handle mixed encrypted and unencrypted records', async () => {
@@ -583,17 +582,17 @@ describe('KeyStore', () => {
         // Step 3: List all records — should include both legacy (unencrypted)
         // and new (encrypted) records.
         const storedKeys = await keyStore.list({ agent: testHarness.agent });
-        expect(storedKeys.length).to.be.at.least(2);
+        expect(storedKeys.length).toBeGreaterThanOrEqual(2);
 
         const kids = storedKeys.map((k: Jwk): string | undefined => k.kid);
-        expect(kids).to.include('legacy-key-1');
+        expect(kids).toContain('legacy-key-1');
 
         // Verify the encrypted key is also present.
         const encryptedKey = storedKeys.find(
           (k: Jwk): boolean => `urn:jwk:${k.kid}` === encryptedKeyUri
         );
-        expect(encryptedKey).to.exist;
-        expect(encryptedKey).to.have.property('d');
+        expect(encryptedKey).toBeDefined();
+        expect(encryptedKey).toHaveProperty('d');
       });
     });
   });

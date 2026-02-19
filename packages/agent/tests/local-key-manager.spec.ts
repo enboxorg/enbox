@@ -3,7 +3,7 @@ import type { PrivateKeyJwk } from '@enbox/dwn-sdk-js';
 import type { Jwk, JwkParamsEcPublic } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
-import { expect } from 'chai';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { CryptoUtils, Ed25519 } from '@enbox/crypto';
 import { Encryption, HdKey, Secp256k1 } from '@enbox/dwn-sdk-js';
 
@@ -24,15 +24,15 @@ describe('LocalKeyManager', () => {
       };
       const keyManager = new LocalKeyManager({ agent: mockAgent });
       const agent = keyManager.agent;
-      expect(agent).to.exist;
-      expect(agent.agentDid.uri).to.equal('did:method:abc123');
+      expect(agent).toBeDefined();
+      expect(agent.agentDid.uri).toBe('did:method:abc123');
     });
 
     it(`throws an error if the 'agent' instance property is undefined`, () => {
       const keyManager = new LocalKeyManager({});
       expect(() =>
         keyManager.agent
-      ).to.throw(Error, 'Unable to determine agent execution context');
+      ).toThrow('Unable to determine agent execution context');
     });
   });
 
@@ -43,7 +43,7 @@ describe('LocalKeyManager', () => {
     describe(`with ${agentStoreType} key store`, () => {
       let testHarness: PlatformAgentTestHarness;
 
-      before(async () => {
+      beforeAll(async () => {
         testHarness = await PlatformAgentTestHarness.setup({
           agentClass  : TestAgent,
           agentStores : agentStoreType
@@ -55,7 +55,7 @@ describe('LocalKeyManager', () => {
         await testHarness.createAgentDid();
       });
 
-      after(async () => {
+      afterAll(async () => {
         await testHarness.clearStorage();
         await testHarness.closeStorage();
       });
@@ -80,9 +80,9 @@ describe('LocalKeyManager', () => {
           });
 
           // Validate the results.
-          expect(plaintext).to.be.instanceOf(Uint8Array);
+          expect(plaintext).toBeInstanceOf(Uint8Array);
           const expectedPlaintext = Convert.hex('01').toUint8Array();
-          expect(plaintext).to.deep.equal(expectedPlaintext);
+          expect(plaintext).toEqual(expectedPlaintext);
         });
       });
 
@@ -103,8 +103,8 @@ describe('LocalKeyManager', () => {
           });
 
           // Validate the results.
-          expect(ciphertext).to.be.instanceOf(Uint8Array);
-          expect(ciphertext.byteLength).to.equal(plaintext.byteLength + tagLength / 8);
+          expect(ciphertext).toBeInstanceOf(Uint8Array);
+          expect(ciphertext.byteLength).toBe(plaintext.byteLength + tagLength / 8);
         });
       });
 
@@ -118,8 +118,8 @@ describe('LocalKeyManager', () => {
           const importedKey = await testHarness.agent.keyManager.exportKey({ keyUri });
 
           // validate the key
-          expect(importedKey).to.exist;
-          expect(importedKey).to.deep.equal(key);
+          expect(importedKey).toBeDefined();
+          expect(importedKey).toEqual(key);
         });
       });
 
@@ -129,10 +129,10 @@ describe('LocalKeyManager', () => {
 
           const jwk = await testHarness.agent.keyManager.exportKey({ keyUri });
 
-          expect(jwk).to.exist;
-          expect(jwk).to.be.an('object');
-          expect(jwk).to.have.property('kty');
-          expect(jwk).to.have.property('d');
+          expect(jwk).toBeDefined();
+          expect(typeof jwk).toBe('object');
+          expect(jwk).toHaveProperty('kty');
+          expect(jwk).toHaveProperty('d');
         });
 
         it('throws an error if the key does not exist', async () => {
@@ -140,12 +140,12 @@ describe('LocalKeyManager', () => {
 
           try {
             await testHarness.agent.keyManager.exportKey({ keyUri });
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
 
           } catch (error: any) {
-            expect(error).to.exist;
-            expect(error).to.be.an.instanceOf(Error);
-            expect(error.message).to.include('Key not found');
+            expect(error).toBeDefined();
+            expect(error).toBeInstanceOf(Error);
+            expect(error.message).toContain('Key not found');
           }
         });
       });
@@ -154,50 +154,50 @@ describe('LocalKeyManager', () => {
         it('generates a key and returns a key URI', async () => {
           const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
 
-          expect(keyUri).to.exist;
-          expect(keyUri).to.be.a.string;
-          expect(keyUri.indexOf('urn:jwk:')).to.equal(0);
+          expect(keyUri).toBeDefined();
+          expect(typeof keyUri).toBe('string');
+          expect(keyUri.indexOf('urn:jwk:')).toBe(0);
         });
 
         it(`supports generating 'secp256k1' keys`, async () => {
           const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
-          expect(keyUri).to.be.a.string;
+          expect(typeof keyUri).toBe('string');
         });
 
         it(`supports generating 'Ed25519' keys`, async () => {
           const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
 
-          expect(keyUri).to.exist;
-          expect(keyUri).to.be.a.string;
-          expect(keyUri.indexOf('urn:jwk:')).to.equal(0);
+          expect(keyUri).toBeDefined();
+          expect(typeof keyUri).toBe('string');
+          expect(keyUri.indexOf('urn:jwk:')).toBe(0);
         });
 
         it(`supports generating 'AES-KW' keys`, async () => {
           let keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'A128KW' });
-          expect(keyUri).to.be.a.string;
+          expect(typeof keyUri).toBe('string');
 
           // Skip this test in Chrome browser because it does not support AES with 192-bit keys.
           if (!isChrome) {
             keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'A192KW' });
-            expect(keyUri).to.be.a.string;
+            expect(typeof keyUri).toBe('string');
           }
 
           keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'A256KW' });
-          expect(keyUri).to.be.a.string;
+          expect(typeof keyUri).toBe('string');
         });
 
         it(`supports generating 'AES-GCM' keys`, async () => {
           let keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'A128GCM' });
-          expect(keyUri).to.be.a.string;
+          expect(typeof keyUri).toBe('string');
 
           // Skip this test in Chrome browser because it does not support AES with 192-bit keys.
           if (!isChrome) {
             keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'A192GCM' });
-            expect(keyUri).to.be.a.string;
+            expect(typeof keyUri).toBe('string');
           }
 
           keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'A256GCM' });
-          expect(keyUri).to.be.a.string;
+          expect(typeof keyUri).toBe('string');
         });
 
         it('throws an error if the algorithm is not supported', async () => {
@@ -208,14 +208,14 @@ describe('LocalKeyManager', () => {
           try {
             // @ts-expect-error because an unsupported algorithm is being tested.
             await testHarness.agent.keyManager.generateKey({ algorithm });
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
 
           } catch (error: any) {
             // Validate the result.
-            expect(error).to.exist;
-            expect(error).to.be.an.instanceOf(Error);
-            expect(error.message).to.include(`Algorithm not supported`);
-            expect(error.code).to.equal(CryptoErrorCode.AlgorithmNotSupported);
+            expect(error).toBeDefined();
+            expect(error).toBeInstanceOf(Error);
+            expect(error.message).toContain(`Algorithm not supported`);
+            expect(error.code).toBe(CryptoErrorCode.AlgorithmNotSupported);
           }
         });
       });
@@ -234,9 +234,9 @@ describe('LocalKeyManager', () => {
           const keyUri = await testHarness.agent.keyManager.getKeyUri({ key });
 
           // Validate the result.
-          expect(keyUri).to.exist;
-          expect(keyUri).to.be.a.string;
-          expect(keyUri.indexOf('urn:jwk:')).to.equal(0);
+          expect(keyUri).toBeDefined();
+          expect(typeof keyUri).toBe('string');
+          expect(keyUri.indexOf('urn:jwk:')).toBe(0);
         });
 
         it('computes the key URI correctly for a valid JWK', async () => {
@@ -253,7 +253,7 @@ describe('LocalKeyManager', () => {
           // Test the method.
           const keyUri = await testHarness.agent.keyManager.getKeyUri({ key });
 
-          expect(keyUri).to.equal(expectedKeyUri);
+          expect(keyUri).toBe(expectedKeyUri);
         });
       });
 
@@ -272,10 +272,10 @@ describe('LocalKeyManager', () => {
 
           const unwrappedKey = await testHarness.agent.keyManager.unwrapKey({ wrappedKeyBytes, wrappedKeyAlgorithm: 'A256GCM', decryptionKeyUri: encryptionKeyUri });
 
-          expect(unwrappedKey).to.have.property('k');
-          expect(unwrappedKey).to.have.property('kty', 'oct');
-          expect(unwrappedKey).to.have.property('kid');
-          expect(unwrappedKey).to.have.property('alg', 'A256GCM');
+          expect(unwrappedKey).toHaveProperty('k');
+          expect(unwrappedKey).toHaveProperty('kty', 'oct');
+          expect(unwrappedKey).toHaveProperty('kid');
+          expect(unwrappedKey).toHaveProperty('alg', 'A256GCM');
         });
 
         it('returns the expected wrapped key for given input', async () => {
@@ -299,7 +299,7 @@ describe('LocalKeyManager', () => {
             kid : '-TssSnJNgh10-YTwuBtyZTnv0LY6sdT-TQl9WFTSetI',
           };
 
-          expect(unwrappedKey).to.deep.equal(expectedPrivateKey);
+          expect(unwrappedKey).toEqual(expectedPrivateKey);
         });
       });
 
@@ -315,7 +315,7 @@ describe('LocalKeyManager', () => {
           const isValid = await testHarness.agent.keyManager.verify({ key: publicKey, signature, data });
 
           // Validate the result.
-          expect(isValid).to.be.true;
+          expect(isValid).toBe(true);
         });
 
         it('returns false for an invalid signature', async () => {
@@ -329,7 +329,7 @@ describe('LocalKeyManager', () => {
           const isValid = await testHarness.agent.keyManager.verify({ key: publicKey, signature, data });
 
           // Validate the result.
-          expect(isValid).to.be.false;
+          expect(isValid).toBe(false);
         });
 
 
@@ -342,13 +342,13 @@ describe('LocalKeyManager', () => {
           // Test the method.
           try {
             await testHarness.agent.keyManager.verify({ key, signature, data });
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
 
           } catch (error: any) {
             // Validate the result.
-            expect(error).to.exist;
-            expect(error).to.be.an.instanceOf(Error);
-            expect(error.message).to.include('Algorithm not supported');
+            expect(error).toBeDefined();
+            expect(error).toBeInstanceOf(Error);
+            expect(error.message).toContain('Algorithm not supported');
           }
         });
       });
@@ -365,8 +365,8 @@ describe('LocalKeyManager', () => {
 
           const wrappedKeyBytes = await testHarness.agent.keyManager.wrapKey({ unwrappedKey, encryptionKeyUri });
 
-          expect(wrappedKeyBytes).to.be.an.instanceOf(Uint8Array);
-          expect(wrappedKeyBytes.byteLength).to.equal(32 + 8); // 32 bytes for the wrapped private key, 8 bytes for the initialization vector
+          expect(wrappedKeyBytes).toBeInstanceOf(Uint8Array);
+          expect(wrappedKeyBytes.byteLength).toBe(32 + 8); // 32 bytes for the wrapped private key, 8 bytes for the initialization vector
         });
 
         it('returns the expected wrapped key for given input', async () => {
@@ -389,7 +389,7 @@ describe('LocalKeyManager', () => {
           const wrappedKeyBytes = await testHarness.agent.keyManager.wrapKey({ encryptionKeyUri, unwrappedKey });
 
           const expectedOutput = Convert.hex('8c55fb6fc4c7bb0b6b483df65ba52bee7ed6e0f861ac8097b2394f61067d1157901295aba72c514b').toUint8Array(); // raw format
-          expect(wrappedKeyBytes).to.deep.equal(expectedOutput);
+          expect(wrappedKeyBytes).toEqual(expectedOutput);
         });
       });
 
@@ -401,7 +401,7 @@ describe('LocalKeyManager', () => {
           // verify that you can get the key
           let key = await testHarness.agent.keyManager.getPublicKey({ keyUri });
           const computedKeyUri = await testHarness.agent.keyManager.getKeyUri({ key });
-          expect(computedKeyUri).to.equal(keyUri);
+          expect(computedKeyUri).toBe(keyUri);
 
           // delete the key
           await testHarness.agent.keyManager.deleteKey({ keyUri });
@@ -409,9 +409,9 @@ describe('LocalKeyManager', () => {
           try {
             // verify that the key is no longer in the keyStore
             key = await testHarness.agent.keyManager.getPublicKey({ keyUri });
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
           } catch (error: any) {
-            expect(error.message).to.include('Key not found');
+            expect(error.message).toContain('Key not found');
           }
         });
 
@@ -420,9 +420,9 @@ describe('LocalKeyManager', () => {
 
           try {
             await testHarness.agent.keyManager.deleteKey({ keyUri });
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
           } catch (error: any) {
-            expect(error.message).to.include('Key not found');
+            expect(error.message).toContain('Key not found');
           }
         });
       });
@@ -439,11 +439,11 @@ describe('LocalKeyManager', () => {
           });
 
           // Verify the derived public key
-          expect(derivedPublicKey).to.have.property('kty', 'EC');
-          expect(derivedPublicKey).to.have.property('crv', 'secp256k1');
-          expect(derivedPublicKey).to.have.property('x');
-          expect(derivedPublicKey).to.have.property('y');
-          expect(derivedPublicKey).to.not.have.property('d'); // Should be public only
+          expect(derivedPublicKey).toHaveProperty('kty', 'EC');
+          expect(derivedPublicKey).toHaveProperty('crv', 'secp256k1');
+          expect(derivedPublicKey).toHaveProperty('x');
+          expect(derivedPublicKey).toHaveProperty('y');
+          expect(derivedPublicKey).not.toHaveProperty('d'); // Should be public only
         });
 
         it('should derive different keys for different derivation paths', async () => {
@@ -462,8 +462,8 @@ describe('LocalKeyManager', () => {
           }) as JwkParamsEcPublic;
 
           // Verify they are different
-          expect(derivedKey1.x).to.not.equal(derivedKey2.x);
-          expect(derivedKey1.y).to.not.equal(derivedKey2.y);
+          expect(derivedKey1.x).not.toBe(derivedKey2.x);
+          expect(derivedKey1.y).not.toBe(derivedKey2.y);
         });
 
         it('should derive the same key for the same derivation path', async () => {
@@ -482,8 +482,8 @@ describe('LocalKeyManager', () => {
           }) as JwkParamsEcPublic;
 
           // Verify they are identical
-          expect(derivedKey1.x).to.equal(derivedKey2.x);
-          expect(derivedKey1.y).to.equal(derivedKey2.y);
+          expect(derivedKey1.x).toBe(derivedKey2.x);
+          expect(derivedKey1.y).toBe(derivedKey2.y);
         });
 
         it('should throw an error when keyUri does not exist', async () => {
@@ -494,10 +494,10 @@ describe('LocalKeyManager', () => {
               keyUri         : nonExistentKeyUri,
               derivationPath : ['test']
             });
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
           } catch (error: any) {
-            expect(error).to.exist;
-            expect(error.message).to.include('Key not found');
+            expect(error).toBeDefined();
+            expect(error.message).toContain('Key not found');
           }
         });
 
@@ -510,8 +510,8 @@ describe('LocalKeyManager', () => {
             derivationPath: []
           });
 
-          expect(derivedKey).to.have.property('kty', 'EC');
-          expect(derivedKey).to.have.property('crv', 'secp256k1');
+          expect(derivedKey).toHaveProperty('kty', 'EC');
+          expect(derivedKey).toHaveProperty('crv', 'secp256k1');
         });
       });
 
@@ -544,7 +544,7 @@ describe('LocalKeyManager', () => {
           });
 
           // Verify decryption succeeded
-          expect(Convert.uint8Array(decrypted).toString()).to.equal('Hello, ECIES!');
+          expect(Convert.uint8Array(decrypted).toString()).toBe('Hello, ECIES!');
         });
 
         it('should fail to decrypt with wrong derivation path', async () => {
@@ -576,9 +576,9 @@ describe('LocalKeyManager', () => {
               initializationVector      : encryptedData.initializationVector,
               messageAuthenticationCode : encryptedData.messageAuthenticationCode
             });
-            expect.fail('Expected decryption to fail with wrong derivation path');
+            throw new Error('Expected decryption to fail with wrong derivation path');
           } catch (error: any) {
-            expect(error).to.exist;
+            expect(error).toBeDefined();
           }
         });
       });
@@ -595,8 +595,8 @@ describe('LocalKeyManager', () => {
           });
 
           // Verify the result
-          expect(derivedKeyBytes).to.be.instanceOf(Uint8Array);
-          expect(derivedKeyBytes.length).to.equal(32); // secp256k1 private keys are 32 bytes
+          expect(derivedKeyBytes).toBeInstanceOf(Uint8Array);
+          expect(derivedKeyBytes.length).toBe(32); // secp256k1 private keys are 32 bytes
         });
 
         it('should derive different keys for different derivation paths', async () => {
@@ -615,7 +615,7 @@ describe('LocalKeyManager', () => {
           });
 
           // Verify they are different
-          expect(Convert.uint8Array(derivedKey1).toHex()).to.not.equal(
+          expect(Convert.uint8Array(derivedKey1).toHex()).not.toBe(
             Convert.uint8Array(derivedKey2).toHex()
           );
         });
@@ -636,7 +636,7 @@ describe('LocalKeyManager', () => {
           });
 
           // Verify they are identical
-          expect(Convert.uint8Array(derivedKey1).toHex()).to.equal(
+          expect(Convert.uint8Array(derivedKey1).toHex()).toBe(
             Convert.uint8Array(derivedKey2).toHex()
           );
         });
@@ -663,8 +663,8 @@ describe('LocalKeyManager', () => {
           const publicKeyBytesFromPrivate = await Secp256k1.getPublicKey(privateKeyBytes);
           const publicKeyFromBytes = await Secp256k1.publicKeyToJwk(publicKeyBytesFromPrivate) as JwkParamsEcPublic;
 
-          expect(publicKeyFromBytes.x).to.equal(publicKey.x);
-          expect(publicKeyFromBytes.y).to.equal(publicKey.y);
+          expect(publicKeyFromBytes.x).toBe(publicKey.x);
+          expect(publicKeyFromBytes.y).toBe(publicKey.y);
         });
       });
     });
@@ -673,7 +673,7 @@ describe('LocalKeyManager', () => {
   describe('getPrivateKey() agent DID keyManager fallback', () => {
     let testHarness: PlatformAgentTestHarness;
 
-    before(async () => {
+    beforeAll(async () => {
       testHarness = await PlatformAgentTestHarness.setup({
         agentClass  : TestAgent,
         agentStores : 'memory'
@@ -685,7 +685,7 @@ describe('LocalKeyManager', () => {
       await testHarness.createAgentDid();
     });
 
-    after(async () => {
+    afterAll(async () => {
       await testHarness.clearStorage();
       await testHarness.closeStorage();
     });
@@ -697,7 +697,7 @@ describe('LocalKeyManager', () => {
       // DwnKeyStore is encrypted.
       const agentDid = testHarness.agent.agentDid;
       const vm = agentDid.document.verificationMethod?.[0];
-      expect(vm?.publicKeyJwk).to.exist;
+      expect(vm?.publicKeyJwk).toBeDefined();
 
       // Compute the keyUri for the agent DID's key.
       const keyUri = await testHarness.agent.keyManager.getKeyUri({
@@ -707,9 +707,9 @@ describe('LocalKeyManager', () => {
       // getPrivateKey() should succeed via the agent DID keyManager fallback,
       // even though the key was never explicitly stored in the key store.
       const privateKey = await testHarness.agent.keyManager['getPrivateKey']({ keyUri });
-      expect(privateKey).to.exist;
-      expect(privateKey).to.have.property('d');
-      expect(privateKey.kid).to.exist;
+      expect(privateKey).toBeDefined();
+      expect(privateKey).toHaveProperty('d');
+      expect(privateKey.kid).toBeDefined();
     });
 
     it('should fall through to the key store when agent DID keyManager throws', async () => {
@@ -722,8 +722,8 @@ describe('LocalKeyManager', () => {
       // since it only holds the agent DID's own key. getPrivateKey() should
       // catch the error and fall through to the key store where it will find it.
       const privateKey = await testHarness.agent.keyManager['getPrivateKey']({ keyUri });
-      expect(privateKey).to.exist;
-      expect(privateKey).to.have.property('d');
+      expect(privateKey).toBeDefined();
+      expect(privateKey).toHaveProperty('d');
     });
 
     it('should skip the fallback when agent DID keyManager lacks exportKey', async () => {
@@ -746,8 +746,8 @@ describe('LocalKeyManager', () => {
       try {
         // getPrivateKey() should skip the fallback (no exportKey) and use the store.
         const privateKey = await testHarness.agent.keyManager['getPrivateKey']({ keyUri });
-        expect(privateKey).to.exist;
-        expect(privateKey).to.have.property('d');
+        expect(privateKey).toBeDefined();
+        expect(privateKey).toHaveProperty('d');
       } finally {
         testHarness.agent.agentDid.keyManager = savedKeyManager;
       }
@@ -758,9 +758,9 @@ describe('LocalKeyManager', () => {
         await testHarness.agent.keyManager['getPrivateKey']({
           keyUri: 'urn:jwk:nonexistent-key'
         });
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).to.include('Key not found');
+        expect(error.message).toContain('Key not found');
       }
     });
   });

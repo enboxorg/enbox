@@ -1,10 +1,10 @@
+import type { Persona } from '@enbox/dwn-sdk-js';
+
 import sinon from 'sinon';
 
 import { CryptoUtils } from '@enbox/crypto';
-import { expect } from 'chai';
 import { testDwnUrl } from './utils/test-config.js';
-
-import type { Persona } from '@enbox/dwn-sdk-js';
+import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { DwnServerInfoCacheMemory } from '../src/prototyping/clients/dwn-server-info-cache-memory.js';
 import { HttpDwnRpcClient } from '../src/prototyping/clients/http-dwn-rpc-client.js';
@@ -21,7 +21,7 @@ describe('RPC Clients', () => {
       client = new HttpDwnRpcClient();
     });
 
-    after(() => {
+    afterAll(() => {
       sinon.restore();
     });
 
@@ -31,27 +31,27 @@ describe('RPC Clients', () => {
 
       // fetch info first, currently not in cache should call fetch
       const serverInfo = await client.getServerInfo(testDwnUrl);
-      expect(fetchSpy.callCount).to.equal(1);
+      expect(fetchSpy.callCount).toBe(1);
 
       // confirm it exists in cache
       const cachedResult = await client['serverInfoCache'].get(testDwnUrl);
-      expect(cachedResult).to.equal(serverInfo);
+      expect(cachedResult).toBe(serverInfo);
 
       // make another call and confirm that fetch ahs not been called again
       const serverInfo2 = await client.getServerInfo(testDwnUrl);
-      expect(fetchSpy.callCount).to.equal(1); // should still equal only 1
-      expect(cachedResult).to.equal(serverInfo2);
+      expect(fetchSpy.callCount).toBe(1); // should still equal only 1
+      expect(cachedResult).toBe(serverInfo2);
 
       // delete the cache entry to force a fetch call
       await client['serverInfoCache'].delete(testDwnUrl);
       const noResult = await client['serverInfoCache'].get(testDwnUrl);
-      expect(noResult).to.equal(undefined);
+      expect(noResult).toBe(undefined);
 
       // make a third call and confirm that a new fetch request was made and data is in the cache
       const serverInfo3 = await client.getServerInfo(testDwnUrl);
-      expect(fetchSpy.callCount).to.equal(2); // another fetch call was made
+      expect(fetchSpy.callCount).toBe(2); // another fetch call was made
       const cachedResult2 = await client['serverInfoCache'].get(testDwnUrl);
-      expect(cachedResult2).to.equal(serverInfo3);
+      expect(cachedResult2).toBe(serverInfo3);
     });
 
     it('should accept an override server info cache', async () => {
@@ -59,7 +59,7 @@ describe('RPC Clients', () => {
       const client = new HttpDwnRpcClient(serverInfoCacheStub);
       await client.getServerInfo(testDwnUrl);
 
-      expect(serverInfoCacheStub.get.callCount).to.equal(1);
+      expect(serverInfoCacheStub.get.callCount).toBe(1);
     });
   });
 
@@ -72,19 +72,19 @@ describe('RPC Clients', () => {
       alice = await TestDataGenerator.generateDidKeyPersona();
     });
 
-    after(() => {
+    afterAll(() => {
       sinon.restore();
     });
 
     it('returns available transports', async () => {
       const httpOnlyClient = new Web5RpcClient();
 
-      expect(httpOnlyClient.transportProtocols).to.have.members([
+      expect(httpOnlyClient.transportProtocols).toEqual(expect.arrayContaining([
         'http:',
         'https:',
         'ws:',
         'wss:'
-      ]);
+      ]));
     });
 
     describe('sendDidRequest', () => {
@@ -96,7 +96,7 @@ describe('RPC Clients', () => {
         const request = { method: DidRpcMethod.Resolve, url: 'http://127.0.0.1', data: 'some-data' };
         httpOnlyClient.sendDidRequest(request);
 
-        expect(stubHttpClient.sendDidRequest.callCount).to.equal(1);
+        expect(stubHttpClient.sendDidRequest.callCount).toBe(1);
       });
 
       it('should throw if transport client is not found', async () => {
@@ -106,9 +106,9 @@ describe('RPC Clients', () => {
         const request = { method: DidRpcMethod.Resolve, url: 'foo://127.0.0.1', data: 'some-data' };
         try {
           await client.sendDidRequest(request);
-          expect.fail('Expected error to be thrown');
+          throw new Error('Expected error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.equal('no foo: transport client available');
+          expect(error.message).toBe('no foo: transport client available');
         }
       });
 
@@ -121,14 +121,14 @@ describe('RPC Clients', () => {
           try {
             const request = { method: DidRpcMethod.Resolve, url: `${transport}//127.0.0.1`, data: 'some-data' };
             await client.sendDidRequest(request);
-            expect.fail('Expected error to be thrown');
+            throw new Error('Expected error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.equal('not implemented for transports [ws:, wss:]');
+            expect(error.message).toBe('not implemented for transports [ws:, wss:]');
           }
         }
 
         // confirm it was called once per each transport
-        expect(socketClientSpy.callCount).to.equal(2);
+        expect(socketClientSpy.callCount).toBe(2);
       });
     });
 
@@ -151,7 +151,7 @@ describe('RPC Clients', () => {
         });
 
         // confirm http transport was called
-        expect(stubHttpClient.sendDwnRequest.callCount).to.equal(1);
+        expect(stubHttpClient.sendDwnRequest.callCount).toBe(1);
       });
 
       it('should throw if transport client is not found', async () => {
@@ -170,9 +170,9 @@ describe('RPC Clients', () => {
             targetDid : alice.did,
             message,
           });
-          expect.fail('Expected error to be thrown');
+          throw new Error('Expected error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.equal('no foo: transport client available');
+          expect(error.message).toBe('no foo: transport client available');
         }
       });
     });
@@ -180,7 +180,7 @@ describe('RPC Clients', () => {
     describe('getServerInfo',() => {
       let client: Web5RpcClient;
 
-      after(() => {
+      afterAll(() => {
         sinon.restore();
       });
 
@@ -191,9 +191,9 @@ describe('RPC Clients', () => {
 
       it('is able to get server info', async () => {
         const serverInfo = await client.getServerInfo(testDwnUrl);
-        expect(serverInfo.registrationRequirements).to.not.be.undefined;
-        expect(serverInfo.maxFileSize).to.not.be.undefined;
-        expect(serverInfo.webSocketSupport).to.not.be.undefined;
+        expect(serverInfo.registrationRequirements).toBeDefined();
+        expect(serverInfo.maxFileSize).toBeDefined();
+        expect(serverInfo.webSocketSupport).toBeDefined();
       });
 
       it('throws for an invalid response', async () => {
@@ -202,9 +202,9 @@ describe('RPC Clients', () => {
 
         try {
           await client.getServerInfo(testDwnUrl);
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.contain('HTTP (500)');
+          expect(error.message).toContain('HTTP (500)');
         }
       });
 
@@ -217,7 +217,7 @@ describe('RPC Clients', () => {
 
         await client.getServerInfo('http://some-domain.com/dwn'); // without trailing slash
         let fetchUrl = fetchStub.args[0][0];
-        expect(fetchUrl).to.equal('http://some-domain.com/dwn/info');
+        expect(fetchUrl).toBe('http://some-domain.com/dwn/info');
 
         // we reset the fetch stub and initiate a new response
         // this wa the response body stream won't be attempt to be read twice and fail on the 2nd attempt.
@@ -230,7 +230,7 @@ describe('RPC Clients', () => {
 
         await client.getServerInfo('http://some-other-domain.com/dwn/'); // with trailing slash
         fetchUrl = fetchStub.args[0][0];
-        expect(fetchUrl).to.equal('http://some-other-domain.com/dwn/info');
+        expect(fetchUrl).toBe('http://some-other-domain.com/dwn/info');
       });
 
       it('should throw if transport client is not found', async () => {
@@ -239,9 +239,9 @@ describe('RPC Clients', () => {
         // request with foo transport
         try {
           await client.getServerInfo('foo://127.0.0.1');
-          expect.fail('Expected error to be thrown');
+          throw new Error('Expected error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.equal('no foo: transport client available');
+          expect(error.message).toBe('no foo: transport client available');
         }
       });
 
@@ -253,14 +253,14 @@ describe('RPC Clients', () => {
         // request with ws transport
           try {
             await client.getServerInfo(`${transport}//127.0.0.1`);
-            expect.fail('Expected error to be thrown');
+            throw new Error('Expected error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.equal('not implemented for transports [ws:, wss:]');
+            expect(error.message).toBe('not implemented for transports [ws:, wss:]');
           }
         }
 
         // confirm it was called once per each transport
-        expect(socketClientSpy.callCount).to.equal(2);
+        expect(socketClientSpy.callCount).toBe(2);
       });
     });
   });
@@ -269,7 +269,7 @@ describe('RPC Clients', () => {
     let alice: Persona;
     let client: HttpWeb5RpcClient;
 
-    after(() => {
+    afterAll(() => {
       sinon.restore();
     });
 
@@ -297,9 +297,9 @@ describe('RPC Clients', () => {
         });
 
         // should return success but without any records as none exist yet
-        expect(response.status.code).to.equal(200);
-        expect(response.entries).to.exist;
-        expect(response.entries?.length).to.equal(0);
+        expect(response.status.code).toBe(200);
+        expect(response.entries).toBeDefined();
+        expect(response.entries?.length).toBe(0);
       });
     });
 
@@ -318,9 +318,9 @@ describe('RPC Clients', () => {
 
         try {
           await client.sendDidRequest(request);
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.contain(`Error encountered while processing response from ${testDwnUrl}`);
+          expect(error.message).toContain(`Error encountered while processing response from ${testDwnUrl}`);
         }
       });
 
@@ -332,9 +332,9 @@ describe('RPC Clients', () => {
 
         try {
           await client.sendDidRequest(request);
-          expect.fail('Expected an error to be thrown');
+          throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.contain(`Error encountered while processing response from ${testDwnUrl}`);
+          expect(error.message).toContain(`Error encountered while processing response from ${testDwnUrl}`);
         }
       });
 
@@ -350,8 +350,8 @@ describe('RPC Clients', () => {
         sinon.stub(globalThis, 'fetch').resolves(mockResponse);
 
         const response = await client.sendDidRequest(request);
-        expect(response.status.code).to.equal(200);
-        expect(response.data).to.equal('data');
+        expect(response.status.code).toBe(200);
+        expect(response.data).toBe('data');
       });
     });
   });
@@ -364,7 +364,7 @@ describe('RPC Clients', () => {
     dwnUrl.protocol = dwnUrl.protocol === 'http:' ? 'ws:' : 'wss:';
     const socketDwnUrl = dwnUrl.toString();
 
-    after(() => {
+    afterAll(() => {
       sinon.restore();
     });
 
@@ -391,9 +391,9 @@ describe('RPC Clients', () => {
         });
 
         // should return success but without any records as none exist yet
-        expect(response.status.code).to.equal(200);
-        expect(response.entries).to.exist;
-        expect(response.entries?.length).to.equal(0);
+        expect(response.status.code).toBe(200);
+        expect(response.entries).toBeDefined();
+        expect(response.entries?.length).toBe(0);
       });
     });
 
@@ -402,9 +402,9 @@ describe('RPC Clients', () => {
         const request = { method: DidRpcMethod.Resolve, url: socketDwnUrl, data: 'some-data' };
         try {
           await client.sendDidRequest(request);
-          expect.fail('Expected error to be thrown');
+          throw new Error('Expected error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.equal('not implemented for transports [ws:, wss:]');
+          expect(error.message).toBe('not implemented for transports [ws:, wss:]');
         }
       });
     });
@@ -413,9 +413,9 @@ describe('RPC Clients', () => {
       it('server info requests are not supported over sockets', async () => {
         try {
           await client.getServerInfo(socketDwnUrl);
-          expect.fail('Expected error to be thrown');
+          throw new Error('Expected error to be thrown');
         } catch (error: any) {
-          expect(error.message).to.equal('not implemented for transports [ws:, wss:]');
+          expect(error.message).toBe('not implemented for transports [ws:, wss:]');
         }
       });
     });

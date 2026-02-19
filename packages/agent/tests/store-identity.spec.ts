@@ -1,6 +1,6 @@
 import { Convert } from '@enbox/common';
 import { DidJwk } from '@enbox/dids';
-import { expect } from 'chai';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import type { IdentityMetadata } from '../src/types/identity.js';
 import type { AgentDataStore, DwnDataStore } from '../src/store-data.js';
@@ -15,7 +15,7 @@ import { DwnIdentityStore, InMemoryIdentityStore } from '../src/store-identity.j
 describe('IdentityStore', () => {
   let testHarness: PlatformAgentTestHarness;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : TestAgent,
       agentStores : 'memory'
@@ -27,7 +27,7 @@ describe('IdentityStore', () => {
     await testHarness.createAgentDid();
   });
 
-  after(async () => {
+  afterAll(async () => {
     await testHarness.clearStorage();
     await testHarness.closeStorage();
   });
@@ -50,7 +50,7 @@ describe('IdentityStore', () => {
       describe('constructor', () => {
         it(`creates a ${IdentityStore.name}`, () => {
           const store = new IdentityStore();
-          expect(store).to.be.instanceOf(IdentityStore);
+          expect(store).toBeInstanceOf(IdentityStore);
         });
       });
 
@@ -67,14 +67,14 @@ describe('IdentityStore', () => {
             id    : identity.did.uri,
             agent : testHarness.agent
           });
-          expect(deleteResult).to.be.true;
+          expect(deleteResult).toBe(true);
 
           // Verify the Identity is no longer in the store.
           const storedIdentity = await identityStore.get({
             id    : identity.did.uri,
             agent : testHarness.agent
           });
-          expect(storedIdentity).to.be.undefined;
+          expect(storedIdentity).toBeUndefined();
         });
 
         it('should return false if Identity does not exist', async () => {
@@ -82,13 +82,13 @@ describe('IdentityStore', () => {
           const deleteResult = await identityStore.delete({ id: 'non-existent', agent: testHarness.agent });
 
           // Validate that a delete could not be carried out.
-          expect(deleteResult).to.be.false;
+          expect(deleteResult).toBe(false);
         });
 
-        it('throws an error if no keys exist for specified DID', async function() {
+        it('throws an error if no keys exist for specified DID', async () => {
           // Skip this test for InMemoryIdentityStore, as checking for keys to sign DWN messages is not
           // relevant given that the store is in-memory.
-          if (IdentityStore.name === 'InMemoryIdentityStore') {this.skip();}
+          if (IdentityStore.name === 'InMemoryIdentityStore') { return; }
 
           try {
             await identityStore.delete({
@@ -96,11 +96,11 @@ describe('IdentityStore', () => {
               tenant : 'did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IjNFQmFfRUxvczJhbHZMb2pxSVZjcmJLcGlyVlhqNmNqVkQ1djJWaHdMejgifQ',
               agent  : testHarness.agent
             });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
 
           } catch (error: any) {
-            expect(error.message).to.include('Unable to get signer for author');
-            expect(error.message).to.include('Key not found');
+            expect(error.message).toContain('Unable to get signer for author');
+            expect(error.message).toContain('Key not found');
           }
         });
       });
@@ -117,9 +117,9 @@ describe('IdentityStore', () => {
           const storedIdentity = await identityStore.get({ id: identity.did.uri, agent: testHarness.agent });
 
           // Verify the Identity is in the store.
-          expect(storedIdentity).to.exist;
-          expect(storedIdentity!.uri).to.equal(identity.did.uri);
-          expect(storedIdentity!).to.deep.equal(identity.metadata);
+          expect(storedIdentity).toBeDefined();
+          expect(storedIdentity!.uri).toBe(identity.did.uri);
+          expect(storedIdentity!).toEqual(identity.metadata);
         });
 
         it('should return undefined when attempting to get a non-existent DID', async () => {
@@ -127,13 +127,13 @@ describe('IdentityStore', () => {
           const storedIdentity = await identityStore.get({ id: 'non-existent', agent: testHarness.agent });
 
           // Verify the result is undefined.
-          expect(storedIdentity).to.be.undefined;
+          expect(storedIdentity).toBeUndefined();
         });
 
-        it('throws an error if no keys exist for specified DID', async function() {
+        it('throws an error if no keys exist for specified DID', async () => {
           // Skip this test for InMemoryIdentityStore, as checking for keys to sign DWN messages is not
           // relevant given that the store is in-memory.
-          if (IdentityStore.name === 'InMemoryIdentityStore') {this.skip();}
+          if (IdentityStore.name === 'InMemoryIdentityStore') { return; }
 
           try {
             await identityStore.get({
@@ -141,11 +141,11 @@ describe('IdentityStore', () => {
               tenant : 'did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IjNFQmFfRUxvczJhbHZMb2pxSVZjcmJLcGlyVlhqNmNqVkQ1djJWaHdMejgifQ',
               agent  : testHarness.agent
             });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
 
           } catch (error: any) {
-            expect(error.message).to.include('Unable to get signer for author');
-            expect(error.message).to.include('Key not found');
+            expect(error.message).toContain('Unable to get signer for author');
+            expect(error.message).toContain('Key not found');
           }
         });
       });
@@ -159,17 +159,17 @@ describe('IdentityStore', () => {
 
           // List Identities and verify the result.
           const storedDids = await identityStore.list({ agent: testHarness.agent });
-          expect(storedDids).to.have.length(3);
+          expect(storedDids).toHaveLength(3);
           const importedDids = [bearerIdentity1.did.uri, bearerIdentity2.did.uri, bearerIdentity3.did.uri];
           for (const storedIdentity of storedDids) {
-            expect(importedDids).to.include(storedIdentity.uri);
+            expect(importedDids).toContain(storedIdentity.uri);
           }
         });
 
         it('returns an empty array if there are no Identities in the store', async () => {
           // List Identities and verify there are no results.
           const storedDids = await identityStore.list({ agent: testHarness.agent });
-          expect(storedDids).to.have.length(0);
+          expect(storedDids).toHaveLength(0);
         });
 
         it('uses the context, if specified', async () => {
@@ -187,17 +187,17 @@ describe('IdentityStore', () => {
 
           // List Identities and verify the result.
           const storedDids = await identityStore.list({ agent: testHarness.agent });
-          expect(storedDids).to.have.length(3);
+          expect(storedDids).toHaveLength(3);
           const importedDids = [bearerIdentity1.did.uri, bearerIdentity2.did.uri, bearerIdentity3.did.uri];
           for (const storedIdentity of storedDids) {
-            expect(importedDids).to.include(storedIdentity.uri);
+            expect(importedDids).toContain(storedIdentity.uri);
           }
         });
 
-        it('throws an error if the Identity records exceed the DWN maximum data size for query results', async function() {
+        it('throws an error if the Identity records exceed the DWN maximum data size for query results', async () => {
           // Skip this test for InMemoryIdentityStore, as the in-memory store returns all records
           // regardless of the size of the data.
-          if (IdentityStore.name === 'InMemoryIdentityStore') {this.skip();}
+          if (IdentityStore.name === 'InMemoryIdentityStore') { return; }
 
           // since we are writing directly to the dwn we first initialize the storage protocol
           await (identityStore as DwnDataStore<IdentityMetadata>)['initialize']({ agent: testHarness.agent });
@@ -218,14 +218,14 @@ describe('IdentityStore', () => {
             dataStream: new Blob([identityBytes], { type: 'application/json' })
           });
 
-          expect(response.reply.status.code).to.equal(202);
+          expect(response.reply.status.code).toBe(202);
 
           try {
             await identityStore.list({ agent: testHarness.agent });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
 
           } catch (error: any) {
-            expect(error.message).to.include(`Expected 'encodedData' to be present in the DWN query result entry`);
+            expect(error.message).toContain(`Expected 'encodedData' to be present in the DWN query result entry`);
           }
         });
       });

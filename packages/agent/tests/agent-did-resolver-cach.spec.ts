@@ -1,18 +1,18 @@
+import sinon from 'sinon';
+
 import { AgentDidResolverCache } from '../src/agent-did-resolver-cache.js';
+import { logger } from '@enbox/common';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 
-import sinon from 'sinon';
-
-import { expect } from 'chai';
-import { logger } from '@enbox/common';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { BearerDid, DidJwk } from '@enbox/dids';
 
 describe('AgentDidResolverCache', () => {
   let resolverCache: AgentDidResolverCache;
   let testHarness: PlatformAgentTestHarness;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : TestAgent,
       agentStores : 'dwn'
@@ -21,7 +21,7 @@ describe('AgentDidResolverCache', () => {
     resolverCache = new AgentDidResolverCache({ agent: testHarness.agent, location: '__TESTDATA__/did_cache' });
   });
 
-  after(async () => {
+  afterAll(async () => {
     sinon.restore();
     await testHarness.clearStorage();
     await testHarness.closeStorage();
@@ -45,8 +45,8 @@ describe('AgentDidResolverCache', () => {
 
     // get should be called twice, but resolve should only be called once
     // because the second call should be blocked by the _resolving Map
-    expect(getStub.callCount).to.equal(2);
-    expect(resolveSpy.callCount).to.equal(1);
+    expect(getStub.callCount).toBe(2);
+    expect(resolveSpy.callCount).toBe(1);
   });
 
   it('should not resolve a DID if the ttl has not elapsed', async () => {
@@ -57,8 +57,8 @@ describe('AgentDidResolverCache', () => {
     await resolverCache.get(did);
 
     // get should be called once, but resolve should not be called
-    expect(getStub.callCount).to.equal(1);
-    expect(resolveSpy.callCount).to.equal(0);
+    expect(getStub.callCount).toBe(1);
+    expect(resolveSpy.callCount).toBe(0);
   });
 
   it('should not call resolve if the DID is not the agent DID or exists as an identity in the agent', async () => {
@@ -70,11 +70,11 @@ describe('AgentDidResolverCache', () => {
     await resolverCache.get(did.uri),
 
     // get should be called once, but we do not resolve even though the TTL is expired
-    expect(getStub.callCount).to.equal(1);
-    expect(resolveSpy.callCount).to.equal(0);
+    expect(getStub.callCount).toBe(1);
+    expect(resolveSpy.callCount).toBe(0);
 
     // we expect the nextTick of the cache to be called to trigger a delete of the cache item after returning as it's expired
-    expect(nextTickSpy.callCount).to.equal(1);
+    expect(nextTickSpy.callCount).toBe(1);
   });
 
   it('should resolve and update if the DID is managed by the agent', async () => {
@@ -95,9 +95,9 @@ describe('AgentDidResolverCache', () => {
     await resolverCache.get(did.uri),
 
     // get should be called once, and we also resolve the DId as it's returned by the identity.get method
-    expect(getStub.callCount).to.equal(1, 'get');
-    expect(resolveSpy.callCount).to.equal(1, 'resolve');
-    expect(updateSpy.callCount).to.equal(1, 'update');
+    expect(getStub.callCount).toBe(1);
+    expect(resolveSpy.callCount).toBe(1);
+    expect(updateSpy.callCount).toBe(1);
   });
 
   it('should log an error if an update is attempted and fails', async () => {
@@ -119,10 +119,10 @@ describe('AgentDidResolverCache', () => {
     await resolverCache.get(did.uri),
 
     // get should be called once, and we also resolve the DId as it's returned by the identity.get method
-    expect(getStub.callCount).to.equal(1, 'get');
-    expect(resolveSpy.callCount).to.equal(1, 'resolve');
-    expect(updateSpy.callCount).to.equal(1, 'update');
-    expect(consoleErrorSpy.callCount).to.equal(1, 'console.error');
+    expect(getStub.callCount).toBe(1);
+    expect(resolveSpy.callCount).toBe(1);
+    expect(updateSpy.callCount).toBe(1);
+    expect(consoleErrorSpy.callCount).toBe(1);
   });
 
   it('does not cache notFound records', async () => {
@@ -132,8 +132,8 @@ describe('AgentDidResolverCache', () => {
     const result = await resolverCache.get(did);
 
     // get should be called once, and resolve should be called once
-    expect(getStub.callCount).to.equal(1);
-    expect(result).to.equal(undefined);
+    expect(getStub.callCount).toBe(1);
+    expect(result).toBe(undefined);
   });
 
   it('throws if the error is anything other than a notFound error', async () => {
@@ -142,9 +142,9 @@ describe('AgentDidResolverCache', () => {
 
     try {
       await resolverCache.get(did);
-      expect.fail('Should have thrown');
+      throw new Error('Should have thrown');
     } catch (error: any) {
-      expect(error.message).to.equal('Some Error');
+      expect(error.message).toBe('Some Error');
     }
   });
 
@@ -159,9 +159,9 @@ describe('AgentDidResolverCache', () => {
       // attempt to access the agent property
       resolverCache.agent;
 
-      expect.fail('Should have thrown');
+      throw new Error('Should have thrown');
     } catch (error: any) {
-      expect(error.message).to.equal('Agent not initialized');
+      expect(error.message).toBe('Agent not initialized');
     }
 
     // set the agent property

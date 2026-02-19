@@ -1,7 +1,5 @@
-import sinon from 'sinon';
-
 import type { BearerDid } from '@enbox/dids';
-import { expect } from 'chai';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
 import type { DwnPermissionScope, Web5PlatformAgent } from '../src/index.js';
 
@@ -18,21 +16,21 @@ describe('AgentPermissionsApi', () => {
   let aliceDid: BearerDid;
   let bobDid: BearerDid;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : TestAgent,
       agentStores : 'dwn'
     });
   });
 
-  after(async () => {
-    sinon.restore();
+  afterAll(async () => {
+    mock.restore();
     await testHarness.clearStorage();
     await testHarness.closeStorage();
   });
 
   beforeEach(async () => {
-    sinon.restore();
+    mock.restore();
     await testHarness.clearStorage();
     await testHarness.createAgentDid();
 
@@ -49,15 +47,15 @@ describe('AgentPermissionsApi', () => {
       // we are only mocking
       const permissionsApi = new AgentPermissionsApi({ agent: testHarness.agent });
       const agent = permissionsApi.agent;
-      expect(agent).to.exist;
-      expect(agent.agentDid).to.equal(testHarness.agent.agentDid);
+      expect(agent).toBeDefined();
+      expect(agent.agentDid).toBe(testHarness.agent.agentDid);
     });
 
     it(`throws an error if the 'agent' instance property is undefined`, () => {
       const permissionsApi = new AgentPermissionsApi();
       expect(() =>
         permissionsApi.agent
-      ).to.throw(Error, 'AgentPermissionsApi: Agent is not set');
+      ).toThrow('AgentPermissionsApi: Agent is not set');
     });
   });
 
@@ -69,9 +67,9 @@ describe('AgentPermissionsApi', () => {
           delegateDid  : bobDid.uri,
           messageType  : DwnInterface.MessagesSync,
         });
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).to.equal('CachedPermissions: No permissions found for MessagesSync: undefined');
+        expect(error.message).toBe('CachedPermissions: No permissions found for MessagesSync: undefined');
       }
 
       // create a permission grant to fetch
@@ -96,7 +94,7 @@ describe('AgentPermissionsApi', () => {
         rawMessage  : messagesSyncGrantMessage,
         dataStream  : new Blob([ Convert.base64Url(encodedData).toUint8Array() ])
       });
-      expect(grantReply.reply.status.code).to.equal(202);
+      expect(grantReply.reply.status.code).toBe(202);
 
       // fetch the grant
       const fetchedMessagesSyncGrant = await testHarness.agent.permissions.getPermissionForRequest({
@@ -104,7 +102,7 @@ describe('AgentPermissionsApi', () => {
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.MessagesSync,
       });
-      expect(fetchedMessagesSyncGrant.message.recordId).to.equal(messagesSyncGrant.message.recordId);
+      expect(fetchedMessagesSyncGrant.message.recordId).toBe(messagesSyncGrant.message.recordId);
     });
 
     it('caches and returns the permission grant', async () => {
@@ -121,7 +119,7 @@ describe('AgentPermissionsApi', () => {
           protocol  : protocolUri
         }
       });
-      expect(recordsWriteGrant).to.exist;
+      expect(recordsWriteGrant).toBeDefined();
 
       // store as bob
       const { encodedData, ...recordsWriteGrantMessage } = recordsWriteGrant.message;
@@ -133,10 +131,10 @@ describe('AgentPermissionsApi', () => {
         rawMessage  : recordsWriteGrantMessage,
         dataStream  : new Blob([ Convert.base64Url(encodedData).toUint8Array() ])
       });
-      expect(grantReply.reply.status.code).to.equal(202);
+      expect(grantReply.reply.status.code).toBe(202);
 
       // spy on fetchGrant to ensure it's only called once
-      const fetchGrantSpy = sinon.spy(testHarness.agent.permissions, 'fetchGrants');
+      const fetchGrantSpy = spyOn(testHarness.agent.permissions, 'fetchGrants');
 
       // get the grant
       const fetchedGrant = await testHarness.agent.permissions.getPermissionForRequest({
@@ -146,9 +144,9 @@ describe('AgentPermissionsApi', () => {
         protocol     : protocolUri,
         cached       : true
       });
-      expect(fetchedGrant.message.recordId).to.equal(recordsWriteGrant.message.recordId);
+      expect(fetchedGrant.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
-      expect(fetchGrantSpy.callCount).to.equal(1, 'fetched');
+      expect(fetchGrantSpy.mock.calls.length).toBe(1);
 
       // get the grant again
       const fetchedGrant2 = await testHarness.agent.permissions.getPermissionForRequest({
@@ -158,10 +156,10 @@ describe('AgentPermissionsApi', () => {
         protocol     : protocolUri,
         cached       : true
       });
-      expect(fetchedGrant2.message.recordId).to.equal(recordsWriteGrant.message.recordId);
+      expect(fetchedGrant2.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
       // expect the fetchGrant method to not have been called again
-      expect(fetchGrantSpy.callCount).to.equal(1, 'got from cache');
+      expect(fetchGrantSpy.mock.calls.length).toBe(1);
     });
 
     it('should cache the results of a fetch even if cache is set to false', async () => {
@@ -178,7 +176,7 @@ describe('AgentPermissionsApi', () => {
           protocol  : protocolUri
         }
       });
-      expect(recordsWriteGrant).to.exist;
+      expect(recordsWriteGrant).toBeDefined();
 
       // store as bob
       const { encodedData, ...recordsWriteGrantMessage } = recordsWriteGrant.message;
@@ -190,10 +188,10 @@ describe('AgentPermissionsApi', () => {
         rawMessage  : recordsWriteGrantMessage,
         dataStream  : new Blob([ Convert.base64Url(encodedData).toUint8Array() ])
       });
-      expect(grantReply.reply.status.code).to.equal(202);
+      expect(grantReply.reply.status.code).toBe(202);
 
       // spy on fetchGrant to ensure it's only called once
-      const fetchGrantSpy = sinon.spy(testHarness.agent.permissions, 'fetchGrants');
+      const fetchGrantSpy = spyOn(testHarness.agent.permissions, 'fetchGrants');
 
       // get the grant with cache set to false (default)
       // this will refresh the cache with the result anyway, but will always call fetchGrant when set to false
@@ -204,9 +202,9 @@ describe('AgentPermissionsApi', () => {
         protocol     : protocolUri,
         cached       : false
       });
-      expect(fetchedGrant.message.recordId).to.equal(recordsWriteGrant.message.recordId);
+      expect(fetchedGrant.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
-      expect(fetchGrantSpy.callCount).to.equal(1, 'fetched');
+      expect(fetchGrantSpy.mock.calls.length).toBe(1);
 
       // get the grant again (with cache set to true)
       const fetchedGrant2 = await testHarness.agent.permissions.getPermissionForRequest({
@@ -216,10 +214,10 @@ describe('AgentPermissionsApi', () => {
         protocol     : protocolUri,
         cached       : true
       });
-      expect(fetchedGrant2.message.recordId).to.equal(recordsWriteGrant.message.recordId);
+      expect(fetchedGrant2.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
       // expect the fetchGrant method to not have been called again
-      expect(fetchGrantSpy.callCount).to.equal(1, 'got from cache');
+      expect(fetchGrantSpy.mock.calls.length).toBe(1);
 
       // call again with cache set to false
       const fetchedGrant3 = await testHarness.agent.permissions.getPermissionForRequest({
@@ -229,19 +227,19 @@ describe('AgentPermissionsApi', () => {
         protocol     : protocolUri,
         cached       : false
       });
-      expect(fetchedGrant3.message.recordId).to.equal(recordsWriteGrant.message.recordId);
+      expect(fetchedGrant3.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
       // now cache was not set to true, so expect the fetchGrant method to have been called again
-      expect(fetchGrantSpy.callCount).to.equal(2, 'fetched again');
+      expect(fetchGrantSpy.mock.calls.length).toBe(2);
     });
   });
 
   describe('fetchGrants', () => {
     it('from remote', async () => {
       // spy on the processDwnRequest method
-      const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+      const processDwnRequestSpy = spyOn(testHarness.agent, 'processDwnRequest');
       // mock the sendDwnRequest method to return a 200 response
-      const sendDwnRequestStub = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({ messageCid: '', reply: { entries: [], status: { code: 200, detail: 'OK' } } });
+      const sendDwnRequestStub = spyOn(testHarness.agent, 'sendDwnRequest').mockResolvedValue({ messageCid: '', reply: { entries: [], status: { code: 200, detail: 'OK' } } });
 
       // fetch permission grants
       await testHarness.agent.permissions.fetchGrants({
@@ -251,10 +249,10 @@ describe('AgentPermissionsApi', () => {
       });
 
       // expect the processDwnRequest method to not have been called
-      expect(processDwnRequestSpy.called).to.be.false;
+      expect(processDwnRequestSpy).not.toHaveBeenCalled();
 
       // expect the sendDwnRequest method to have been called
-      expect(sendDwnRequestStub.called).to.be.true;
+      expect(sendDwnRequestStub).toHaveBeenCalled();
     });
 
     it('filter by protocol', async () => {
@@ -290,21 +288,21 @@ describe('AgentPermissionsApi', () => {
         target   : aliceDid.uri,
         protocol : 'http://example.com/protocol-1'
       });
-      expect(protocol1Grants.length).to.equal(1);
-      expect(protocol1Grants[0].grant.id).to.equal(protocol1Grant.grant.id);
+      expect(protocol1Grants.length).toBe(1);
+      expect(protocol1Grants[0].grant.id).toBe(protocol1Grant.grant.id);
 
       const protocol2Grants = await testHarness.agent.permissions.fetchGrants({
         author   : aliceDid.uri,
         target   : aliceDid.uri,
         protocol : 'http://example.com/protocol-2'
       });
-      expect(protocol2Grants.length).to.equal(1);
-      expect(protocol2Grants[0].grant.id).to.equal(protocol2Grant.grant.id);
+      expect(protocol2Grants.length).toBe(1);
+      expect(protocol2Grants[0].grant.id).toBe(protocol2Grant.grant.id);
     });
 
     it('throws if the query returns anything other than 200', async () => {
       // stub the processDwnRequest method to return a 400 error
-      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
+      spyOn(testHarness.agent, 'processDwnRequest').mockResolvedValue({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
 
       // fetch permission requests
       try {
@@ -313,7 +311,7 @@ describe('AgentPermissionsApi', () => {
           target : aliceDid.uri,
         });
       } catch (error: any) {
-        expect(error.message).to.equal('PermissionsApi: Failed to fetch grants: Bad Request');
+        expect(error.message).toBe('PermissionsApi: Failed to fetch grants: Bad Request');
       }
     });
   });
@@ -321,9 +319,9 @@ describe('AgentPermissionsApi', () => {
   describe('fetchRequests', () => {
     it('from remote', async () => {
       // spy on the processDwnRequest method
-      const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+      const processDwnRequestSpy = spyOn(testHarness.agent, 'processDwnRequest');
       // mock the sendDwnRequest method to return a 200 response
-      const sendDwnRequestStub = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({ messageCid: '', reply: { entries: [], status: { code: 200, detail: 'OK' } } });
+      const sendDwnRequestStub = spyOn(testHarness.agent, 'sendDwnRequest').mockResolvedValue({ messageCid: '', reply: { entries: [], status: { code: 200, detail: 'OK' } } });
 
       // fetch permission grants
       await testHarness.agent.permissions.fetchRequests({
@@ -333,10 +331,10 @@ describe('AgentPermissionsApi', () => {
       });
 
       // expect the processDwnRequest method to not have been called
-      expect(processDwnRequestSpy.called).to.be.false;
+      expect(processDwnRequestSpy).not.toHaveBeenCalled();
 
       // expect the sendDwnRequest method to have been called
-      expect(sendDwnRequestStub.called).to.be.true;
+      expect(sendDwnRequestStub).toHaveBeenCalled();
     });
 
     it('filter by protocol', async () => {
@@ -368,21 +366,21 @@ describe('AgentPermissionsApi', () => {
         target   : aliceDid.uri,
         protocol : 'http://example.com/protocol-1'
       });
-      expect(protocol1Requests.length).to.equal(1);
-      expect(protocol1Requests[0].request.id).to.equal(protocol1Request.request.id);
+      expect(protocol1Requests.length).toBe(1);
+      expect(protocol1Requests[0].request.id).toBe(protocol1Request.request.id);
 
       const protocol2Requests = await testHarness.agent.permissions.fetchRequests({
         author   : aliceDid.uri,
         target   : aliceDid.uri,
         protocol : 'http://example.com/protocol-2'
       });
-      expect(protocol2Requests.length).to.equal(1);
-      expect(protocol2Requests[0].request.id).to.equal(protocol2Request.request.id);
+      expect(protocol2Requests.length).toBe(1);
+      expect(protocol2Requests[0].request.id).toBe(protocol2Request.request.id);
     });
 
     it('throws if the query returns anything other than 200', async () => {
       // stub the processDwnRequest method to return a 400 error
-      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
+      spyOn(testHarness.agent, 'processDwnRequest').mockResolvedValue({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
 
       // fetch permission requests
       try {
@@ -391,7 +389,7 @@ describe('AgentPermissionsApi', () => {
           target : aliceDid.uri,
         });
       } catch (error: any) {
-        expect(error.message).to.equal('PermissionsApi: Failed to fetch requests: Bad Request');
+        expect(error.message).toBe('PermissionsApi: Failed to fetch requests: Bad Request');
       }
     });
   });
@@ -399,9 +397,9 @@ describe('AgentPermissionsApi', () => {
   describe('isGrantRevoked', () => {
     it('from remote', async () => {
       // spy on the processDwnRequest method
-      const processDwnRequestSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+      const processDwnRequestSpy = spyOn(testHarness.agent, 'processDwnRequest');
       // mock the sendDwnRequest method to return a 200 response
-      const sendDwnRequestStub = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' } } });
+      const sendDwnRequestStub = spyOn(testHarness.agent, 'sendDwnRequest').mockResolvedValue({ messageCid: '', reply: { status: { code: 200, detail: 'OK' } } });
 
       // fetch permission grants
       await testHarness.agent.permissions.isGrantRevoked({
@@ -412,15 +410,15 @@ describe('AgentPermissionsApi', () => {
       });
 
       // expect the processDwnRequest method to not have been called
-      expect(processDwnRequestSpy.called).to.be.false;
+      expect(processDwnRequestSpy).not.toHaveBeenCalled();
 
       // expect the sendDwnRequest method to have been called
-      expect(sendDwnRequestStub.called).to.be.true;
+      expect(sendDwnRequestStub).toHaveBeenCalled();
     });
 
     it('throws if the request was bad', async () => {
       // stub the processDwnRequest method to return a 400 error
-      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
+      spyOn(testHarness.agent, 'processDwnRequest').mockResolvedValue({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
 
       // create a permission request
       try {
@@ -430,7 +428,7 @@ describe('AgentPermissionsApi', () => {
           grantRecordId : 'grant-record-id'
         });
       } catch (error: any) {
-        expect(error.message).to.equal('PermissionsApi: Failed to check if grant is revoked: Bad Request');
+        expect(error.message).toBe('PermissionsApi: Failed to check if grant is revoked: Bad Request');
       }
     });
 
@@ -463,7 +461,7 @@ describe('AgentPermissionsApi', () => {
         target        : aliceDid.uri,
         grantRecordId : deviceXGrant.grant.id
       });
-      expect(isRevoked).to.equal(false);
+      expect(isRevoked).toBe(false);
 
       // create a revocation for the grant
       await testHarness.agent.permissions.createRevocation({
@@ -478,14 +476,14 @@ describe('AgentPermissionsApi', () => {
         target        : aliceDid.uri,
         grantRecordId : deviceXGrant.grant.id
       });
-      expect(isRevoked).to.equal(true);
+      expect(isRevoked).toBe(true);
     });
   });
 
   describe('createGrant', () => {
     it('throws if the grant was not created', async () => {
       // stub the processDwnRequest method to return a 400 error
-      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
+      spyOn(testHarness.agent, 'processDwnRequest').mockResolvedValue({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
 
       // create a permission request
       try {
@@ -497,7 +495,7 @@ describe('AgentPermissionsApi', () => {
           scope       : {} as DwnPermissionScope,
         });
       } catch (error: any) {
-        expect(error.message).to.equal('PermissionsApi: Failed to create grant: Bad Request');
+        expect(error.message).toBe('PermissionsApi: Failed to create grant: Bad Request');
       }
     });
 
@@ -531,8 +529,8 @@ describe('AgentPermissionsApi', () => {
       });
 
       // expect to have the 1 grant created for deviceX
-      expect(grants.length).to.equal(1);
-      expect(grants[0].message.recordId).to.equal(deviceXGrant.message.recordId);
+      expect(grants.length).toBe(1);
+      expect(grants[0].message.recordId).toBe(deviceXGrant.message.recordId);
     });
 
     it('creates a grant without storing it', async () => {
@@ -560,14 +558,14 @@ describe('AgentPermissionsApi', () => {
       const grantDataObject = { ...deviceXGrant.grant };
       const parsedGrant = await DwnPermissionGrant.parse(deviceXGrant.message);
 
-      expect(grantDataObject).to.deep.equal(parsedGrant);
+      expect(grantDataObject).toEqual(parsedGrant);
     });
   });
 
   describe('createRevocation', () => {
     it('throws if the revocation was not created', async () => {
       // stub the processDwnRequest method to return a 400 error
-      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
+      spyOn(testHarness.agent, 'processDwnRequest').mockResolvedValue({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
 
       // create a permission request
       try {
@@ -579,7 +577,7 @@ describe('AgentPermissionsApi', () => {
           } as DwnPermissionGrant,
         });
       } catch (error: any) {
-        expect(error.message).to.equal('PermissionsApi: Failed to create revocation: Bad Request');
+        expect(error.message).toBe('PermissionsApi: Failed to create revocation: Bad Request');
       }
 
     });
@@ -616,7 +614,7 @@ describe('AgentPermissionsApi', () => {
         target        : aliceDid.uri,
         grantRecordId : deviceXGrant.grant.id
       });
-      expect(isRevoked).to.equal(false);
+      expect(isRevoked).toBe(false);
 
       // create a revocation for the grant
       await testHarness.agent.permissions.createRevocation({
@@ -631,7 +629,7 @@ describe('AgentPermissionsApi', () => {
         target        : aliceDid.uri,
         grantRecordId : deviceXGrant.grant.id
       });
-      expect(isRevoked).to.equal(true);
+      expect(isRevoked).toBe(true);
     });
 
     it('creates a grant revocation without storing it', async () => {
@@ -666,7 +664,7 @@ describe('AgentPermissionsApi', () => {
         target        : aliceDid.uri,
         grantRecordId : deviceXGrant.grant.id
       });
-      expect(isRevoked).to.equal(false);
+      expect(isRevoked).toBe(false);
 
       // create a revocation for the grant without storing it
       await testHarness.agent.permissions.createRevocation({
@@ -680,14 +678,14 @@ describe('AgentPermissionsApi', () => {
         target        : aliceDid.uri,
         grantRecordId : deviceXGrant.grant.id
       });
-      expect(isRevoked).to.equal(false);
+      expect(isRevoked).toBe(false);
     });
   });
 
   describe('createRequest', () => {
     it('throws if the request was not created', async () => {
       // stub the processDwnRequest method to return a 400 error
-      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
+      spyOn(testHarness.agent, 'processDwnRequest').mockResolvedValue({ messageCid: '', reply: { status: { code: 400, detail: 'Bad Request' } } });
 
       // create a permission request
       try {
@@ -700,7 +698,7 @@ describe('AgentPermissionsApi', () => {
           }
         });
       } catch (error: any) {
-        expect(error.message).to.equal('PermissionsApi: Failed to create request: Bad Request');
+        expect(error.message).toBe('PermissionsApi: Failed to create request: Bad Request');
       }
 
     });
@@ -726,8 +724,8 @@ describe('AgentPermissionsApi', () => {
       });
 
       // expect to have the 1 request created
-      expect(fetchedRequests.length).to.equal(1);
-      expect(fetchedRequests[0].request.id).to.equal(deviceXRequest.message.recordId);
+      expect(fetchedRequests.length).toBe(1);
+      expect(fetchedRequests[0].request.id).toBe(deviceXRequest.message.recordId);
     });
 
     it('creates a permission request without storing it', async () => {
@@ -750,7 +748,7 @@ describe('AgentPermissionsApi', () => {
       });
 
       // expect to have no requests
-      expect(fetchedRequests.length).to.equal(0);
+      expect(fetchedRequests.length).toBe(0);
     });
   });
 
@@ -938,7 +936,7 @@ describe('AgentPermissionsApi', () => {
         protocol
       }, deviceXRecordGrantsFromAliceArray);
 
-      expect(notFoundGrantee).to.be.undefined;
+      expect(notFoundGrantee).toBeUndefined();
 
       const deviceYRecordGrantsFromDeviceX = await createRecordGrants({
         grantorAgent : testHarness.agent as Web5PlatformAgent,
@@ -961,7 +959,7 @@ describe('AgentPermissionsApi', () => {
         protocol
       }, deviceYRecordGrantsFromDeviceXArray);
 
-      expect(notFoundGrantor).to.be.undefined;
+      expect(notFoundGrantor).toBeUndefined();
     });
 
     it('matches delegated grants if specified', async () => {
@@ -989,14 +987,14 @@ describe('AgentPermissionsApi', () => {
         messageType: DwnInterface.MessagesSync,
       }, aliceDeviceXMessageGrants);
 
-      expect(syncGrant?.message.recordId).to.equal(messagesGrants.sync.message.recordId);
+      expect(syncGrant?.message.recordId).toBe(messagesGrants.sync.message.recordId);
 
       // attempt to match non-delegated grant with delegated set to true
       const notFoundDelegated = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType: DwnInterface.MessagesSync,
       }, aliceDeviceXMessageGrants, true);
 
-      expect(notFoundDelegated).to.be.undefined;
+      expect(notFoundDelegated).toBeUndefined();
 
       // create delegated record grants
       const protocol = 'http://example.com/protocol';
@@ -1022,7 +1020,7 @@ describe('AgentPermissionsApi', () => {
         protocol
       }, deviceXRecordGrants, true);
 
-      expect(writeGrant?.message.recordId).to.equal(recordsGrants.write.message.recordId);
+      expect(writeGrant?.message.recordId).toBe(recordsGrants.write.message.recordId);
     });
 
     it('Messages', async () => {
@@ -1049,25 +1047,25 @@ describe('AgentPermissionsApi', () => {
         messageType: DwnInterface.MessagesSync,
       }, deviceXMessageGrants);
 
-      expect(syncGrant?.message.recordId).to.equal(messageGrants.sync.message.recordId);
+      expect(syncGrant?.message.recordId).toBe(messageGrants.sync.message.recordId);
 
       const readGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType: DwnInterface.MessagesRead,
       }, deviceXMessageGrants);
 
-      expect(readGrant?.message.recordId).to.equal(messageGrants.read.message.recordId);
+      expect(readGrant?.message.recordId).toBe(messageGrants.read.message.recordId);
 
       const subscribeGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType: DwnInterface.MessagesSubscribe,
       }, deviceXMessageGrants);
 
-      expect(subscribeGrant?.message.recordId).to.equal(messageGrants.subscribe.message.recordId);
+      expect(subscribeGrant?.message.recordId).toBe(messageGrants.subscribe.message.recordId);
 
       const invalidGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType: DwnInterface.RecordsQuery,
       }, deviceXMessageGrants);
 
-      expect(invalidGrant).to.be.undefined;
+      expect(invalidGrant).toBeUndefined();
     });
 
     it('Messages with protocol', async () => {
@@ -1110,35 +1108,35 @@ describe('AgentPermissionsApi', () => {
         protocol
       }, deviceXMessageGrants);
 
-      expect(syncGrant?.message.recordId).to.equal(protocolMessageGrants.sync.message.recordId);
+      expect(syncGrant?.message.recordId).toBe(protocolMessageGrants.sync.message.recordId);
 
       const readGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType: DwnInterface.MessagesRead,
         protocol
       }, deviceXMessageGrants);
 
-      expect(readGrant?.message.recordId).to.equal(protocolMessageGrants.read.message.recordId);
+      expect(readGrant?.message.recordId).toBe(protocolMessageGrants.read.message.recordId);
 
       const subscribeGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType: DwnInterface.MessagesSubscribe,
         protocol
       }, deviceXMessageGrants);
 
-      expect(subscribeGrant?.message.recordId).to.equal(protocolMessageGrants.subscribe.message.recordId);
+      expect(subscribeGrant?.message.recordId).toBe(protocolMessageGrants.subscribe.message.recordId);
 
       const invalidGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.MessagesSync,
         protocol    : 'http://example.com/unknown-protocol'
       }, deviceXMessageGrants);
 
-      expect(invalidGrant).to.be.undefined;
+      expect(invalidGrant).toBeUndefined();
 
       const otherProtocolSyncGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.MessagesSync,
         protocol    : otherProtocol
       }, deviceXMessageGrants);
 
-      expect(otherProtocolSyncGrant?.message.recordId).to.equal(otherProtocolMessageGrants.sync.message.recordId);
+      expect(otherProtocolSyncGrant?.message.recordId).toBe(otherProtocolMessageGrants.sync.message.recordId);
     });
 
     it('Records', async () => {
@@ -1185,42 +1183,42 @@ describe('AgentPermissionsApi', () => {
         protocol    : protocol1
       }, deviceXRecordGrants);
 
-      expect(writeGrant?.message.recordId).to.equal(protocol1Grants.write.message.recordId);
+      expect(writeGrant?.message.recordId).toBe(protocol1Grants.write.message.recordId);
 
       const readGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsRead,
         protocol    : protocol1
       }, deviceXRecordGrants);
 
-      expect(readGrant?.message.recordId).to.equal(protocol1Grants.read.message.recordId);
+      expect(readGrant?.message.recordId).toBe(protocol1Grants.read.message.recordId);
 
       const deleteGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsDelete,
         protocol    : protocol1
       }, deviceXRecordGrants);
 
-      expect(deleteGrant?.message.recordId).to.equal(protocol1Grants.delete.message.recordId);
+      expect(deleteGrant?.message.recordId).toBe(protocol1Grants.delete.message.recordId);
 
       const queryGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsQuery,
         protocol    : protocol1
       }, deviceXRecordGrants);
 
-      expect(queryGrant?.message.recordId).to.equal(protocol1Grants.query.message.recordId);
+      expect(queryGrant?.message.recordId).toBe(protocol1Grants.query.message.recordId);
 
       const subscribeGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsSubscribe,
         protocol    : protocol1
       }, deviceXRecordGrants);
 
-      expect(subscribeGrant?.message.recordId).to.equal(protocol1Grants.subscribe.message.recordId);
+      expect(subscribeGrant?.message.recordId).toBe(protocol1Grants.subscribe.message.recordId);
 
       const queryGrantOtherProtocol = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsQuery,
         protocol    : protocol2
       }, deviceXRecordGrants);
 
-      expect(queryGrantOtherProtocol?.message.recordId).to.equal(otherProtocolGrants.query.message.recordId);
+      expect(queryGrantOtherProtocol?.message.recordId).toBe(otherProtocolGrants.query.message.recordId);
 
       // unknown protocol
       const invalidGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
@@ -1228,7 +1226,7 @@ describe('AgentPermissionsApi', () => {
         protocol    : 'http://example.com/unknown-protocol'
       }, deviceXRecordGrants);
 
-      expect(invalidGrant).to.be.undefined;
+      expect(invalidGrant).toBeUndefined();
     });
 
     it('Records with protocolPath', async () => {
@@ -1277,7 +1275,7 @@ describe('AgentPermissionsApi', () => {
         protocolPath : 'foo'
       }, protocolGrants);
 
-      expect(writeFooGrant?.message.recordId).to.equal(fooGrants.write.message.recordId);
+      expect(writeFooGrant?.message.recordId).toBe(fooGrants.write.message.recordId);
 
       const readFooGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType  : DwnInterface.RecordsRead,
@@ -1285,7 +1283,7 @@ describe('AgentPermissionsApi', () => {
         protocolPath : 'foo'
       }, protocolGrants);
 
-      expect(readFooGrant?.message.recordId).to.equal(fooGrants.read.message.recordId);
+      expect(readFooGrant?.message.recordId).toBe(fooGrants.read.message.recordId);
 
       const deleteFooGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType  : DwnInterface.RecordsDelete,
@@ -1293,7 +1291,7 @@ describe('AgentPermissionsApi', () => {
         protocolPath : 'foo'
       }, protocolGrants);
 
-      expect(deleteFooGrant?.message.recordId).to.equal(fooGrants.delete.message.recordId);
+      expect(deleteFooGrant?.message.recordId).toBe(fooGrants.delete.message.recordId);
 
       const queryGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType  : DwnInterface.RecordsQuery,
@@ -1301,7 +1299,7 @@ describe('AgentPermissionsApi', () => {
         protocolPath : 'foo'
       }, protocolGrants);
 
-      expect(queryGrant?.message.recordId).to.equal(fooGrants.query.message.recordId);
+      expect(queryGrant?.message.recordId).toBe(fooGrants.query.message.recordId);
 
       const subscribeGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType  : DwnInterface.RecordsSubscribe,
@@ -1309,7 +1307,7 @@ describe('AgentPermissionsApi', () => {
         protocolPath : 'foo'
       }, protocolGrants);
 
-      expect(subscribeGrant?.message.recordId).to.equal(fooGrants.subscribe.message.recordId);
+      expect(subscribeGrant?.message.recordId).toBe(fooGrants.subscribe.message.recordId);
 
       const writeBarGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType  : DwnInterface.RecordsWrite,
@@ -1317,7 +1315,7 @@ describe('AgentPermissionsApi', () => {
         protocolPath : 'foo/bar'
       }, protocolGrants);
 
-      expect(writeBarGrant?.message.recordId).to.equal(barGrants.write.message.recordId);
+      expect(writeBarGrant?.message.recordId).toBe(barGrants.write.message.recordId);
 
       const noMatchGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType  : DwnInterface.RecordsWrite,
@@ -1325,7 +1323,7 @@ describe('AgentPermissionsApi', () => {
         protocolPath : 'bar'
       }, protocolGrants);
 
-      expect(noMatchGrant).to.be.undefined;
+      expect(noMatchGrant).toBeUndefined();
     });
 
     it('Records with contextId', async () => {
@@ -1374,7 +1372,7 @@ describe('AgentPermissionsApi', () => {
         contextId   : 'abc'
       }, contextGrants);
 
-      expect(writeFooGrant?.message.recordId).to.equal(abcGrants.write.message.recordId);
+      expect(writeFooGrant?.message.recordId).toBe(abcGrants.write.message.recordId);
 
       const writeBarGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsWrite,
@@ -1382,7 +1380,7 @@ describe('AgentPermissionsApi', () => {
         contextId   : 'def/ghi'
       }, contextGrants);
 
-      expect(writeBarGrant?.message.recordId).to.equal(defGrants.write.message.recordId);
+      expect(writeBarGrant?.message.recordId).toBe(defGrants.write.message.recordId);
 
       const invalidGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsWrite,
@@ -1390,14 +1388,14 @@ describe('AgentPermissionsApi', () => {
         contextId   : 'def'
       }, contextGrants);
 
-      expect(invalidGrant).to.be.undefined;
+      expect(invalidGrant).toBeUndefined();
 
       const withoutContextGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsWrite,
         protocol    : protocol
       }, contextGrants);
 
-      expect(withoutContextGrant).to.be.undefined;
+      expect(withoutContextGrant).toBeUndefined();
     });
   });
 });

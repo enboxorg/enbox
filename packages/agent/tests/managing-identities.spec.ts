@@ -1,6 +1,6 @@
-import { expect } from 'chai';
-import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
+import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { Web5UserAgent } from '../src/web5-user-agent.js';
 
 describe('Managing Identities', () => {
@@ -11,7 +11,7 @@ describe('Managing Identities', () => {
     describe(`with ${agentStoreType} data stores`, () => {
       let testHarness: PlatformAgentTestHarness;
 
-      before(async () => {
+      beforeAll(async () => {
         testHarness = await PlatformAgentTestHarness.setup({
           agentClass  : Web5UserAgent,
           agentStores : agentStoreType
@@ -23,7 +23,7 @@ describe('Managing Identities', () => {
         await testHarness.createAgentDid();
       });
 
-      after(async () => {
+      afterAll(async () => {
         await testHarness.clearStorage();
         await testHarness.closeStorage();
       });
@@ -56,10 +56,10 @@ describe('Managing Identities', () => {
           const storedCareerIdentity = await testHarness.agent.identity.get({ didUri: careerIdentity.did.uri });
           const storedFamilyIdentity = await testHarness.agent.identity.get({ didUri: familyIdentity.did.uri });
           const storedSocialIdentity = await testHarness.agent.identity.get({ didUri: socialIdentity.did.uri });
-          expect(storedCareerIdentity!.did).to.have.property('uri', careerIdentity.did.uri);
-          expect(storedFamilyIdentity!.did).to.have.property('uri', familyIdentity.did.uri);
-          expect(storedSocialIdentity!.did).to.have.property('uri', socialIdentity.did.uri);
-        }).timeout(30000);
+          expect(storedCareerIdentity!.did).toHaveProperty('uri', careerIdentity.did.uri);
+          expect(storedFamilyIdentity!.did).toHaveProperty('uri', familyIdentity.did.uri);
+          expect(storedSocialIdentity!.did).toHaveProperty('uri', socialIdentity.did.uri);
+        }, 30000);
       });
     });
   });

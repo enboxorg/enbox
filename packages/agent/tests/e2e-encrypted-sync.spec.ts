@@ -2,7 +2,7 @@ import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { DataStream } from '@enbox/dwn-sdk-js';
-import { expect } from 'chai';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { AgentSyncApi } from '../src/sync-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
@@ -30,8 +30,7 @@ const testDwnUrls: string[] = [testDwnUrl];
 // -------------------------------------------------------------------
 // Test 1: Encrypted data survives sync round-trip
 // -------------------------------------------------------------------
-describe('e2e: encrypted data survives sync round-trip', function () {
-  this.timeout(30_000);
+describe('e2e: encrypted data survives sync round-trip', () => {
 
   let testHarness: PlatformAgentTestHarness;
   let syncEngine: SyncEngineLevel;
@@ -53,7 +52,7 @@ describe('e2e: encrypted data survives sync round-trip', function () {
     },
   };
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass       : TestAgent,
       agentStores      : 'dwn',
@@ -72,7 +71,7 @@ describe('e2e: encrypted data survives sync round-trip', function () {
     alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
   });
 
-  after(async () => {
+  afterAll(async () => {
     await testHarness.clearStorage();
     await testHarness.closeStorage();
   });
@@ -86,7 +85,7 @@ describe('e2e: encrypted data survives sync round-trip', function () {
       messageParams : { definition: encryptedNoteProtocol },
       encryption    : true,
     });
-    expect(reply.status.code).to.equal(202);
+    expect(reply.status.code).toBe(202);
 
     // Verify $encryption was injected.
     const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
@@ -95,10 +94,10 @@ describe('e2e: encrypted data survives sync round-trip', function () {
       messageType   : DwnInterface.ProtocolsQuery,
       messageParams : { filter: { protocol: encryptedNoteProtocol.protocol } },
     });
-    expect(queryReply.entries).to.have.length(1);
+    expect(queryReply.entries).toHaveLength(1);
     const noteRuleSet = queryReply.entries![0].descriptor.definition.structure.note;
-    expect(noteRuleSet).to.have.property('$encryption');
-  });
+    expect(noteRuleSet).toHaveProperty('$encryption');
+  }, 30_000);
 
   it('should write encrypted records locally', async () => {
     const notes = ['Secret note 1', 'Secret note 2', 'Secret note 3'];
@@ -117,7 +116,7 @@ describe('e2e: encrypted data survives sync round-trip', function () {
         dataStream : new Blob([new TextEncoder().encode(text)]),
         encryption : true,
       });
-      expect(reply.status.code).to.equal(202);
+      expect(reply.status.code).toBe(202);
     }
 
     // Verify records exist locally with encryption metadata.
@@ -132,12 +131,12 @@ describe('e2e: encrypted data survives sync round-trip', function () {
         }
       },
     });
-    expect(queryReply.entries).to.have.length(3);
+    expect(queryReply.entries).toHaveLength(3);
     for (const entry of queryReply.entries!) {
-      expect(entry.encryption).to.exist;
-      expect(entry.encryption!.algorithm).to.equal('A256CTR');
+      expect(entry.encryption).toBeDefined();
+      expect(entry.encryption!.algorithm).toBe('A256CTR');
     }
-  });
+  }, 30_000);
 
   it('should push encrypted records to the remote DWN', async () => {
     // Register identity and push to remote.
@@ -156,15 +155,15 @@ describe('e2e: encrypted data survives sync round-trip', function () {
         }
       },
     });
-    expect(remoteQueryReply.status.code).to.equal(200);
-    expect(remoteQueryReply.entries).to.have.length(3);
+    expect(remoteQueryReply.status.code).toBe(200);
+    expect(remoteQueryReply.entries).toHaveLength(3);
 
     // Remote records should also have encryption metadata.
     for (const entry of remoteQueryReply.entries!) {
-      expect(entry.encryption).to.exist;
-      expect(entry.encryption!.algorithm).to.equal('A256CTR');
+      expect(entry.encryption).toBeDefined();
+      expect(entry.encryption!.algorithm).toBe('A256CTR');
     }
-  });
+  }, 30_000);
 
   it('should clear local DWN data and pull back encrypted records', async () => {
     // Clear local DWN stores (simulating a fresh device), but keep the agent
@@ -187,7 +186,7 @@ describe('e2e: encrypted data survives sync round-trip', function () {
         }
       },
     });
-    expect(localBefore.entries).to.have.length(0);
+    expect(localBefore.entries).toHaveLength(0);
 
     // Pull from remote.
     await syncEngine.sync('pull');
@@ -204,11 +203,11 @@ describe('e2e: encrypted data survives sync round-trip', function () {
         }
       },
     });
-    expect(localAfter.entries).to.have.length(3);
+    expect(localAfter.entries).toHaveLength(3);
     for (const entry of localAfter.entries!) {
-      expect(entry.encryption).to.exist;
+      expect(entry.encryption).toBeDefined();
     }
-  });
+  }, 30_000);
 
   it('should decrypt pulled records with the original encryption key', async () => {
     // Read each record individually with auto-decryption.
@@ -237,19 +236,18 @@ describe('e2e: encrypted data survives sync round-trip', function () {
       decryptedTexts.push(new TextDecoder().decode(bytes));
     }
 
-    expect(decryptedTexts).to.have.members([
+    expect(decryptedTexts).toEqual(expect.arrayContaining([
       'Secret note 1',
       'Secret note 2',
       'Secret note 3',
-    ]);
-  });
+    ]));
+  }, 30_000);
 });
 
 // -------------------------------------------------------------------
 // Test 2: Agent lifecycle with encrypted stores
 // -------------------------------------------------------------------
-describe('e2e: agent lifecycle with encrypted stores', function () {
-  this.timeout(30_000);
+describe('e2e: agent lifecycle with encrypted stores', () => {
 
   const testDataLocation = '__TESTDATA__/e2e-agent-lifecycle';
   const password = 'lifecycle-test-password';
@@ -259,7 +257,7 @@ describe('e2e: agent lifecycle with encrypted stores', function () {
   let generatedKeyUri: string;
   let identityDidUri: string;
 
-  after(async function () {
+  afterAll(async () => {
     try {
       const cleanup = await PlatformAgentTestHarness.setup({
         agentClass  : TestAgent,
@@ -284,17 +282,17 @@ describe('e2e: agent lifecycle with encrypted stores', function () {
       });
 
       recoveryPhrase = await (harness.agent as Web5UserAgent).initialize({ password });
-      expect(recoveryPhrase.split(' ')).to.have.length(12);
+      expect(recoveryPhrase.split(' ')).toHaveLength(12);
 
       await (harness.agent as Web5UserAgent).start({ password });
       agentDidUri = harness.agent.agentDid.uri;
-      expect(agentDidUri).to.match(/^did:dht:/);
-    });
+      expect(agentDidUri).toMatch(/^did:dht:/);
+    }, 30_000);
 
     it('should generate an encrypted private key', async () => {
       generatedKeyUri = await harness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
       const key = await harness.agent.keyManager.exportKey({ keyUri: generatedKeyUri });
-      expect(key).to.have.property('d');
+      expect(key).toHaveProperty('d');
 
       // Verify the key record is encrypted in the DWN.
       const { reply } = await harness.agent.dwn.processRequest({
@@ -308,9 +306,9 @@ describe('e2e: agent lifecycle with encrypted stores', function () {
           }
         },
       });
-      expect(reply.entries).to.have.length(1);
-      expect(reply.entries![0].encryption).to.exist;
-    });
+      expect(reply.entries).toHaveLength(1);
+      expect(reply.entries![0].encryption).toBeDefined();
+    }, 30_000);
 
     it('should create an identity', async () => {
       const identity = await harness.agent.identity.create({
@@ -318,17 +316,17 @@ describe('e2e: agent lifecycle with encrypted stores', function () {
         metadata  : { name: 'Lifecycle Test Identity' },
       });
       identityDidUri = identity.did.uri;
-      expect(identityDidUri).to.match(/^did:jwk:/);
+      expect(identityDidUri).toMatch(/^did:jwk:/);
 
       // Verify identity is listed.
       const identities = await harness.agent.identity.list();
-      expect(identities).to.have.length(1);
-      expect(identities[0].did.uri).to.equal(identityDidUri);
-    });
+      expect(identities).toHaveLength(1);
+      expect(identities[0].did.uri).toBe(identityDidUri);
+    }, 30_000);
 
     it('should close the agent', async () => {
       await harness.closeStorage();
-    });
+    }, 30_000);
   });
 
   describe('Phase 2: restart and verify all data intact', () => {
@@ -343,42 +341,41 @@ describe('e2e: agent lifecycle with encrypted stores', function () {
 
       // The vault is already initialized — just start with the password.
       await (harness.agent as Web5UserAgent).start({ password });
-      expect(harness.agent.agentDid.uri).to.equal(agentDidUri);
-    });
+      expect(harness.agent.agentDid.uri).toBe(agentDidUri);
+    }, 30_000);
 
     it('should read back the encrypted private key', async () => {
       const key = await harness.agent.keyManager.exportKey({ keyUri: generatedKeyUri });
-      expect(key).to.exist;
-      expect(key).to.have.property('d');
-      expect(key.crv).to.equal('Ed25519');
-    });
+      expect(key).toBeDefined();
+      expect(key).toHaveProperty('d');
+      expect(key.crv).toBe('Ed25519');
+    }, 30_000);
 
     it('should list the identity created in Phase 1', async () => {
       const identities = await harness.agent.identity.list();
-      expect(identities).to.have.length(1);
-      expect(identities[0].did.uri).to.equal(identityDidUri);
-      expect(identities[0].metadata.name).to.equal('Lifecycle Test Identity');
-    });
+      expect(identities).toHaveLength(1);
+      expect(identities[0].did.uri).toBe(identityDidUri);
+      expect(identities[0].metadata.name).toBe('Lifecycle Test Identity');
+    }, 30_000);
 
     it('should generate new keys proving the agent is fully operational', async () => {
       const newKeyUri = await harness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
       const newKey = await harness.agent.keyManager.exportKey({ keyUri: newKeyUri });
-      expect(newKey).to.have.property('d');
-      expect(newKey.crv).to.equal('secp256k1');
-    });
+      expect(newKey).toHaveProperty('d');
+      expect(newKey.crv).toBe('secp256k1');
+    }, 30_000);
 
     it('should clean up', async () => {
       await harness.clearStorage();
       await harness.closeStorage();
-    });
+    }, 30_000);
   });
 });
 
 // -------------------------------------------------------------------
 // Test 3: Multi-party encrypted thread with key delivery
 // -------------------------------------------------------------------
-describe('e2e: multi-party encrypted thread with key delivery', function () {
-  this.timeout(30_000);
+describe('e2e: multi-party encrypted thread with key delivery', () => {
 
   let testHarness: PlatformAgentTestHarness;
   let alice: BearerIdentity;
@@ -405,7 +402,7 @@ describe('e2e: multi-party encrypted thread with key delivery', function () {
     },
   };
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass       : TestAgent,
       agentStores      : 'dwn',
@@ -420,7 +417,7 @@ describe('e2e: multi-party encrypted thread with key delivery', function () {
     bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
   });
 
-  after(async () => {
+  afterAll(async () => {
     await testHarness.clearStorage();
     await testHarness.closeStorage();
   });
@@ -433,8 +430,8 @@ describe('e2e: multi-party encrypted thread with key delivery', function () {
       messageParams : { definition: chatProtocol },
       encryption    : true,
     });
-    expect(reply.status.code).to.equal(202);
-  });
+    expect(reply.status.code).toBe(202);
+  }, 30_000);
 
   it('should let Alice create an encrypted thread and chat message', async () => {
     // Install protocol first.
@@ -460,7 +457,7 @@ describe('e2e: multi-party encrypted thread with key delivery', function () {
       dataStream : new Blob([new TextEncoder().encode('{"title":"Secret Chat"}')]),
       encryption : true,
     });
-    expect(threadMsg).to.exist;
+    expect(threadMsg).toBeDefined();
     const threadContextId = (threadMsg as RecordsWriteMessage).contextId!;
 
     // Alice writes an encrypted chat message in the thread.
@@ -479,7 +476,7 @@ describe('e2e: multi-party encrypted thread with key delivery', function () {
       dataStream : new Blob([new TextEncoder().encode(chatText)]),
       encryption : true,
     });
-    expect(chatReply.status.code).to.equal(202);
+    expect(chatReply.status.code).toBe(202);
 
     // Alice can read her own encrypted message back.
     const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
@@ -493,9 +490,9 @@ describe('e2e: multi-party encrypted thread with key delivery', function () {
         }
       },
     });
-    expect(queryReply.entries).to.have.length(1);
-    expect(queryReply.entries![0].encryption).to.exist;
-  });
+    expect(queryReply.entries).toHaveLength(1);
+    expect(queryReply.entries![0].encryption).toBeDefined();
+  }, 30_000);
 
   it('should auto-deliver context key to Bob when added as participant', async () => {
     // Full setup: install protocol, create thread, write chat, add Bob.
@@ -555,7 +552,7 @@ describe('e2e: multi-party encrypted thread with key delivery', function () {
       dataStream : new Blob([new TextEncoder().encode('{"name":"Bob"}')]),
       encryption : true,
     });
-    expect(participantReply.status.code).to.equal(202);
+    expect(participantReply.status.code).toBe(202);
 
     // Verify a contextKey record was written for Bob on Alice's DWN.
     const { reply: ckQuery } = await testHarness.agent.dwn.processRequest({
@@ -570,8 +567,8 @@ describe('e2e: multi-party encrypted thread with key delivery', function () {
         }
       },
     });
-    expect(ckQuery.entries).to.have.length(1);
-    expect(ckQuery.entries![0].encryption).to.exist;
+    expect(ckQuery.entries).toHaveLength(1);
+    expect(ckQuery.entries![0].encryption).toBeDefined();
 
     // Decrypt the context key to get the DerivedPrivateJwk.
     const ckRecordId = ckQuery.entries![0].recordId;
@@ -584,9 +581,9 @@ describe('e2e: multi-party encrypted thread with key delivery', function () {
     });
     const ckBytes = await DataStream.toBytes(ckRead.entry!.data!);
     const contextKeyPayload = JSON.parse(new TextDecoder().decode(ckBytes));
-    expect(contextKeyPayload).to.have.property('rootKeyId');
-    expect(contextKeyPayload).to.have.property('derivationScheme');
-    expect(contextKeyPayload).to.have.property('derivedPrivateKey');
+    expect(contextKeyPayload).toHaveProperty('rootKeyId');
+    expect(contextKeyPayload).toHaveProperty('derivationScheme');
+    expect(contextKeyPayload).toHaveProperty('derivedPrivateKey');
 
     // Simulate sync: write the context key to Bob's local DWN.
     await testHarness.agent.dwn.ensureKeyDeliveryProtocol(bob.did.uri);
@@ -609,10 +606,10 @@ describe('e2e: multi-party encrypted thread with key delivery', function () {
       },
       encryption: true,
     });
-    expect(bobReadReply.status.code).to.equal(200);
+    expect(bobReadReply.status.code).toBe(200);
 
     const decryptedBytes = await DataStream.toBytes(bobReadReply.entry!.data!);
     const decryptedText = new TextDecoder().decode(decryptedBytes);
-    expect(decryptedText).to.equal(chatText);
-  });
+    expect(decryptedText).toBe(chatText);
+  }, 30_000);
 });

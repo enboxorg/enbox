@@ -1,6 +1,6 @@
 import type { KeyValueStore } from '@enbox/common';
 
-import { expect } from 'chai';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { LevelStore, MemoryStore } from '@enbox/common';
 
 import type { IdentityVaultBackup } from '../src/types/identity-vault.js';
@@ -13,7 +13,7 @@ describe('HdIdentityVault', () => {
       let identityVault: HdIdentityVault;
       let vaultStore: KeyValueStore<string, string>;
 
-      before(() => {
+      beforeAll(() => {
         vaultStore = (vaultStoreType === 'MemoryStore')
           ? new MemoryStore<string, string>()
           : new LevelStore<string, string>({ location: '__TESTDATA__/VAULT_STORE' });
@@ -31,7 +31,7 @@ describe('HdIdentityVault', () => {
         await vaultStore.clear();
       });
 
-      after(async () => {
+      afterAll(async () => {
         await vaultStore.close();
       });
 
@@ -42,26 +42,26 @@ describe('HdIdentityVault', () => {
 
           // The vault should not have been backed up yet.
           let vaultStatus = await identityVault.getStatus();
-          expect(vaultStatus.lastBackup).to.be.null;
+          expect(vaultStatus.lastBackup).toBeNull();
 
           // Backup the vault.
           const encryptedBackup = await identityVault.backup();
 
           // Verify the results.
-          expect(encryptedBackup).to.exist;
-          expect(encryptedBackup).to.have.property('data').is.a.string;
-          expect(encryptedBackup).to.have.property('dateCreated').is.a.string;
-          expect(encryptedBackup).to.have.property('size').greaterThan(100);
+          expect(encryptedBackup).toBeDefined();
+          expect(typeof encryptedBackup.data).toBe('string');
+          expect(typeof encryptedBackup.dateCreated).toBe('string');
+          expect(encryptedBackup.size).toBeGreaterThan(100);
           vaultStatus = await identityVault.getStatus();
-          expect(vaultStatus.lastBackup).to.be.string;
+          expect(typeof vaultStatus.lastBackup).toBe('string');
         });
 
         it('throws an error if the vault is not initialized', async () => {
           try {
             await identityVault.backup();
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
           } catch (error: any) {
-            expect(error.message).to.include('vault has not been initialized');
+            expect(error.message).toContain('vault has not been initialized');
           }
         });
       });
@@ -77,16 +77,16 @@ describe('HdIdentityVault', () => {
 
           // Verify that the vault is initialized and is unlocked.
           const vaultStatus = await identityVault.getStatus();
-          expect(vaultStatus.initialized).to.be.true;
-          expect(identityVault.isLocked()).to.be.false;
+          expect(vaultStatus.initialized).toBe(true);
+          expect(identityVault.isLocked()).toBe(false);
         });
 
         it('throws an error if the vault is not initialized', async () => {
           try {
             await identityVault.changePassword({ oldPassword: 'dumbbell-krakatoa-ditty', newPassword: 'brick-shield-anchor' });
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
           } catch (error: any) {
-            expect(error.message).to.include('vault has not been initialized');
+            expect(error.message).toContain('vault has not been initialized');
           }
         });
 
@@ -105,12 +105,12 @@ describe('HdIdentityVault', () => {
               newPassword : newPassword
             });
             // If no error is thrown, the test should fail.
-            expect.fail('Expected an error to be thrown due to incorrect old password.');
+            throw new Error('Expected an error to be thrown due to incorrect old password.');
           } catch (error: any) {
-            expect(error.message).to.include('incorrectly entered old password');
+            expect(error.message).toContain('incorrectly entered old password');
 
             // Verify that the vault is locked after the failed decryption attempt.
-            expect(identityVault.isLocked()).to.be.true;
+            expect(identityVault.isLocked()).toBe(true);
           }
         });
       });
@@ -118,7 +118,7 @@ describe('HdIdentityVault', () => {
       describe('getStatus()', () => {
         it('returns initialized=false when first instantiated', async () => {
           const vaultStatus = await identityVault.getStatus();
-          expect(vaultStatus.initialized).to.be.false;
+          expect(vaultStatus.initialized).toBe(false);
         });
 
         it('returns initialized=true after initialization', async () => {
@@ -133,7 +133,7 @@ describe('HdIdentityVault', () => {
           );
 
           const vaultStatus = await identityVault.getStatus();
-          expect(vaultStatus.initialized).to.be.true;
+          expect(vaultStatus.initialized).toBe(true);
         });
       });
 
@@ -144,11 +144,11 @@ describe('HdIdentityVault', () => {
 
           const did = await identityVault.getDid();
 
-          expect(did).to.exist;
-          expect(did).to.have.property('uri');
-          expect(did).to.have.property('document');
-          expect(did).to.have.property('metadata');
-          expect(did).to.have.property('keyManager');
+          expect(did).toBeDefined();
+          expect(did).toHaveProperty('uri');
+          expect(did).toHaveProperty('document');
+          expect(did).toHaveProperty('metadata');
+          expect(did).toHaveProperty('keyManager');
         });
 
         it('deterministically returns a DID given a recovery phrase', async () => {
@@ -161,15 +161,15 @@ describe('HdIdentityVault', () => {
           const did = await identityVault.getDid();
 
           // Verify that the expected DID URI is returned given the recovery phrase.
-          expect(did).to.have.property('uri', 'did:dht:qftx7z968xcpfy1a1diu75pg5meap3gdtg6ezagaw849wdh6oubo');
+          expect(did).toHaveProperty('uri', 'did:dht:qftx7z968xcpfy1a1diu75pg5meap3gdtg6ezagaw849wdh6oubo');
         });
 
         it('throws an error if the vault is not initialized and unlocked', async () => {
           try {
             await identityVault.getDid();
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
           } catch (error: any) {
-            expect(error.message).to.include('has not been initialized and unlocked');
+            expect(error.message).toContain('has not been initialized and unlocked');
           }
         });
       });
@@ -178,8 +178,8 @@ describe('HdIdentityVault', () => {
         it('initializes and unlocks the vault', async () => {
           // Verify that the vault is not initialized and is locked.
           let vaultStatus = await identityVault.getStatus();
-          expect(vaultStatus.initialized).to.be.false;
-          expect(identityVault.isLocked()).to.be.true;
+          expect(vaultStatus.initialized).toBe(false);
+          expect(identityVault.isLocked()).toBe(true);
 
           // Initialize the vault.
           const password = 'dumbbell-krakatoa-ditty';
@@ -187,8 +187,8 @@ describe('HdIdentityVault', () => {
 
           // Verify that the vault is initialized and is unlocked.
           vaultStatus = await identityVault.getStatus();
-          expect(vaultStatus.initialized).to.be.true;
-          expect(identityVault.isLocked()).to.be.false;
+          expect(vaultStatus.initialized).toBe(true);
+          expect(identityVault.isLocked()).toBe(false);
         });
 
         it('generates and returns a 12-word mnenomic if one is not provided', async () => {
@@ -198,8 +198,8 @@ describe('HdIdentityVault', () => {
           });
 
           // Verify that the vault is initialized and is unlocked.
-          expect(generatedRecoveryPhrase).to.be.a('string');
-          expect(generatedRecoveryPhrase.split(' ')).to.have.lengthOf(12);
+          expect(typeof generatedRecoveryPhrase).toBe('string');
+          expect(generatedRecoveryPhrase.split(' ')).toHaveLength(12);
         });
 
         it('accepts a recovery phrase', async () => {
@@ -212,7 +212,7 @@ describe('HdIdentityVault', () => {
           });
 
           // Verify that the vault is initialized and is unlocked.
-          expect(returnedRecoveryPhrase).to.equal(predefinedRecoveryPhrase);
+          expect(returnedRecoveryPhrase).toBe(predefinedRecoveryPhrase);
         });
 
         it('throws an error if the vault is already initialized', async () => {
@@ -221,18 +221,18 @@ describe('HdIdentityVault', () => {
 
           try {
             await identityVault.initialize({ password: 'dumbbell-krakatoa-ditty' });
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
           } catch (error: any) {
-            expect(error.message).to.include('Vault has already been initialized');
+            expect(error.message).toContain('Vault has already been initialized');
           }
         });
 
         it('throws an error if the password is empty', async () => {
           try {
             await identityVault.initialize({ password: '' });
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
           } catch (error: any) {
-            expect(error.message).to.include('password is required and cannot be blank');
+            expect(error.message).toContain('password is required and cannot be blank');
           }
         });
       });
@@ -240,20 +240,20 @@ describe('HdIdentityVault', () => {
       describe('isInitialized()', () => {
         it('returns false for a newly instantiated vault', async () => {
           const isInitialized = await identityVault.isInitialized();
-          expect(isInitialized).to.be.false;
+          expect(isInitialized).toBe(false);
         });
 
         it('returns true after the vault has been initialized', async () => {
           await identityVault.initialize({ password: 'secure-password' });
           const isInitialized = await identityVault.isInitialized();
-          expect(isInitialized).to.be.true;
+          expect(isInitialized).toBe(true);
         });
 
         it('returns false after the vault has been cleared', async () => {
           await identityVault.initialize({ password: 'secure-password' });
           await vaultStore.clear();
           const isInitialized = await identityVault.isInitialized();
-          expect(isInitialized).to.be.false;
+          expect(isInitialized).toBe(false);
         });
       });
 
@@ -262,18 +262,18 @@ describe('HdIdentityVault', () => {
           await identityVault.initialize({ password: 'secure-password' });
           await identityVault.lock();
           const isLocked = identityVault.isLocked();
-          expect(isLocked).to.be.true;
+          expect(isLocked).toBe(true);
         });
 
         it('returns false if the vault is unlocked', async () => {
           await identityVault.initialize({ password: 'secure-password' });
           const isLocked = identityVault.isLocked();
-          expect(isLocked).to.be.false;
+          expect(isLocked).toBe(false);
         });
 
         it('returns true for a newly instantiated vault', async () => {
           const isLocked = identityVault.isLocked();
-          expect(isLocked).to.be.true;
+          expect(isLocked).toBe(true);
         });
       });
 
@@ -289,16 +289,16 @@ describe('HdIdentityVault', () => {
 
           // The vault should not have been restored.
           let vaultStatus = await identityVault.getStatus();
-          expect(vaultStatus.lastRestore).to.be.null;
+          expect(vaultStatus.lastRestore).toBeNull();
 
           // Restore the vault from the backup.
           await identityVault.restore({ password, backup: encryptedBackup });
 
           // Verify the results.
           vaultStatus = await identityVault.getStatus();
-          expect(vaultStatus.lastRestore).to.be.string;
-          expect(vaultStatus.initialized).to.be.true;
-          expect(identityVault.isLocked()).to.be.false;
+          expect(typeof vaultStatus.lastRestore).toBe('string');
+          expect(vaultStatus.initialized).toBe(true);
+          expect(identityVault.isLocked()).toBe(false);
         });
 
         it('reverts to the previous vault contents if conversion of backup data fails', async () => {
@@ -320,27 +320,27 @@ describe('HdIdentityVault', () => {
 
           try {
             await identityVault.restore({ backup, password });
-            expect.fail('Expected an error to be thrown due to backup data conversion failure.');
+            throw new Error('Expected an error to be thrown due to backup data conversion failure.');
           } catch (error: any) {
-            expect(error.message).to.include('invalid backup data or an incorrect password');
+            expect(error.message).toContain('invalid backup data or an incorrect password');
 
             // Verify that the vault contents are unchanged
             const currentStatus = await vaultStore.get('vaultStatus');
             const currentContentEncryptionKey = await vaultStore.get('contentEncryptionKey');
             const currentDid = await vaultStore.get('did');
 
-            expect(currentStatus).to.deep.equal(previousStatus);
-            expect(currentContentEncryptionKey).to.equal(previousContentEncryptionKey);
-            expect(currentDid).to.equal(previousDid);
+            expect(currentStatus).toEqual(previousStatus);
+            expect(currentContentEncryptionKey).toBe(previousContentEncryptionKey);
+            expect(currentDid).toBe(previousDid);
           }
         });
 
         it('throws an error if the vault is not initialized', async () => {
           try {
             await identityVault.backup();
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
           } catch (error: any) {
-            expect(error.message).to.include('vault has not been initialized');
+            expect(error.message).toContain('vault has not been initialized');
           }
         });
 
@@ -355,28 +355,28 @@ describe('HdIdentityVault', () => {
           try {
             vaultStore.delete('vaultStatus');
             await identityVault.restore({ backup, password });
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
           } catch (error: any) {
-            expect(error.message).to.include('restore operation cannot proceed');
-            expect(error.message).to.include('vault contents are missing or inaccessible');
+            expect(error.message).toContain('restore operation cannot proceed');
+            expect(error.message).toContain('vault contents are missing or inaccessible');
           }
 
           try {
             vaultStore.delete('did');
             await identityVault.restore({ backup, password });
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
           } catch (error: any) {
-            expect(error.message).to.include('restore operation cannot proceed');
-            expect(error.message).to.include('vault contents are missing or inaccessible');
+            expect(error.message).toContain('restore operation cannot proceed');
+            expect(error.message).toContain('vault contents are missing or inaccessible');
           }
 
           try {
             vaultStore.delete('contentEncryptionKey');
             await identityVault.restore({ backup, password });
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
           } catch (error: any) {
-            expect(error.message).to.include('restore operation cannot proceed');
-            expect(error.message).to.include('vault contents are missing or inaccessible');
+            expect(error.message).toContain('restore operation cannot proceed');
+            expect(error.message).toContain('vault contents are missing or inaccessible');
           }
         });
       });
@@ -385,55 +385,55 @@ describe('HdIdentityVault', () => {
         it('unlocks a locked vault', async () => {
           // Validate that the vault is not initialized and is locked.
           let vaultStatus = await identityVault.getStatus();
-          expect(vaultStatus.initialized).to.be.false;
-          expect(identityVault.isLocked()).to.be.true;
+          expect(vaultStatus.initialized).toBe(false);
+          expect(identityVault.isLocked()).toBe(true);
 
           // Initialize the vault.
           await identityVault.initialize({ password: 'dumbbell-krakatoa-ditty' });
 
           // Validate that the vault is now initialized and unlocked.
           vaultStatus = await identityVault.getStatus();
-          expect(vaultStatus.initialized).to.be.true;
-          expect(identityVault.isLocked()).to.be.false;
+          expect(vaultStatus.initialized).toBe(true);
+          expect(identityVault.isLocked()).toBe(false);
 
           // Lock the vault.
           await identityVault.lock();
 
           // Validate that the vault is now initialized and unlocked.
           vaultStatus = await identityVault.getStatus();
-          expect(vaultStatus.initialized).to.be.true;
-          expect(identityVault.isLocked()).to.be.true;
+          expect(vaultStatus.initialized).toBe(true);
+          expect(identityVault.isLocked()).toBe(true);
 
           // Unock the vault.
           await identityVault.unlock({ password: 'dumbbell-krakatoa-ditty' });
 
           // Validate that the vault is now initialized and unlocked.
           vaultStatus = await identityVault.getStatus();
-          expect(vaultStatus.initialized).to.be.true;
-          expect(identityVault.isLocked()).to.be.false;
+          expect(vaultStatus.initialized).toBe(true);
+          expect(identityVault.isLocked()).toBe(false);
         });
 
         it('unlocks an unlocked vault', async () => {
           // Validate that the vault is not initialized and is locked.
           let vaultStatus = await identityVault.getStatus();
-          expect(vaultStatus.initialized).to.be.false;
-          expect(identityVault.isLocked()).to.be.true;
+          expect(vaultStatus.initialized).toBe(false);
+          expect(identityVault.isLocked()).toBe(true);
 
           // Initialize the vault.
           await identityVault.initialize({ password: 'dumbbell-krakatoa-ditty' });
 
           // Validate that the vault is now initialized and unlocked.
           vaultStatus = await identityVault.getStatus();
-          expect(vaultStatus.initialized).to.be.true;
-          expect(identityVault.isLocked()).to.be.false;
+          expect(vaultStatus.initialized).toBe(true);
+          expect(identityVault.isLocked()).toBe(false);
 
           // Unock the vault (which is already unlocked).
           await identityVault.unlock({ password: 'dumbbell-krakatoa-ditty' });
 
           // Validate that the vault is initialized and unlocked.
           vaultStatus = await identityVault.getStatus();
-          expect(vaultStatus.initialized).to.be.true;
-          expect(identityVault.isLocked()).to.be.false;
+          expect(vaultStatus.initialized).toBe(true);
+          expect(identityVault.isLocked()).toBe(false);
         });
 
         it('throws an error if the password is incorrect', async () => {
@@ -442,18 +442,18 @@ describe('HdIdentityVault', () => {
 
           try {
             await identityVault.unlock({ password: 'incorrect-password' });
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
           } catch (error: any) {
-            expect(error.message).to.include('incorrect password');
+            expect(error.message).toContain('incorrect password');
           }
         });
 
         it('throws an error if the vault is not initialized', async () => {
           try {
             await identityVault.unlock({ password: 'dumbbell-krakatoa-ditty' });
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
           } catch (error: any) {
-            expect(error.message).to.include('Vault has not been initialized');
+            expect(error.message).toContain('Vault has not been initialized');
           }
         });
 
@@ -466,9 +466,9 @@ describe('HdIdentityVault', () => {
 
           try {
             await identityVault.unlock({ password: 'dumbbell-krakatoa-ditty' });
-            expect.fail('Expected an error to be thrown.');
+            throw new Error('Expected an error to be thrown.');
           } catch (error: any) {
-            expect(error.message).to.include('Unable to retrieve the Content Encryption Key');
+            expect(error.message).toContain('Unable to retrieve the Content Encryption Key');
           }
         });
       });
@@ -481,13 +481,13 @@ describe('HdIdentityVault', () => {
 
           // Verify #enc verification method exists with secp256k1 curve.
           const encKey = did.document.verificationMethod?.find((vm: any) => vm.id.endsWith('#enc'));
-          expect(encKey).to.exist;
-          expect(encKey?.type).to.equal('JsonWebKey');
-          expect(encKey?.publicKeyJwk).to.have.property('kty', 'EC');
-          expect(encKey?.publicKeyJwk).to.have.property('crv', 'secp256k1');
-          expect(encKey?.publicKeyJwk).to.have.property('x');
-          expect(encKey?.publicKeyJwk).to.have.property('y');
-          expect(encKey?.publicKeyJwk).to.not.have.property('d'); // Should be public only
+          expect(encKey).toBeDefined();
+          expect(encKey?.type).toBe('JsonWebKey');
+          expect(encKey?.publicKeyJwk).toHaveProperty('kty', 'EC');
+          expect(encKey?.publicKeyJwk).toHaveProperty('crv', 'secp256k1');
+          expect(encKey?.publicKeyJwk).toHaveProperty('x');
+          expect(encKey?.publicKeyJwk).toHaveProperty('y');
+          expect(encKey?.publicKeyJwk).not.toHaveProperty('d'); // Should be public only
         });
 
         it('should include #enc in keyAgreement and exclude from authentication', async () => {
@@ -497,16 +497,16 @@ describe('HdIdentityVault', () => {
           const doc = did.document;
 
           // Verify keyAgreement includes #enc.
-          expect(doc.keyAgreement).to.be.an('array');
+          expect(Array.isArray(doc.keyAgreement)).toBe(true);
           const encReference = doc.keyAgreement?.find((ref: any) =>
             typeof ref === 'string' && ref.endsWith('#enc')
           );
-          expect(encReference).to.exist;
+          expect(encReference).toBeDefined();
 
           // Verify #enc is NOT in authentication or assertionMethod.
           const encId = doc.verificationMethod?.find((vm: any) => vm.id.endsWith('#enc'))?.id;
-          expect(doc.authentication ?? []).to.not.include(encId);
-          expect(doc.assertionMethod ?? []).to.not.include(encId);
+          expect(doc.authentication ?? []).not.toContain(encId);
+          expect(doc.assertionMethod ?? []).not.toContain(encId);
         });
 
         it('should deterministically derive the #enc key from a recovery phrase', async () => {
@@ -534,8 +534,8 @@ describe('HdIdentityVault', () => {
           const encKey2 = did2.document.verificationMethod?.find((vm: any) => vm.id.endsWith('#enc'));
 
           // Both should produce the same encryption public key.
-          expect(encKey1?.publicKeyJwk?.x).to.equal(encKey2?.publicKeyJwk?.x);
-          expect(encKey1?.publicKeyJwk?.y).to.equal(encKey2?.publicKeyJwk?.y);
+          expect(encKey1?.publicKeyJwk?.x).toBe(encKey2?.publicKeyJwk?.x);
+          expect(encKey1?.publicKeyJwk?.y).toBe(encKey2?.publicKeyJwk?.y);
         });
 
         it('should use different key indices for identity, signing, and encryption keys', async () => {
@@ -545,13 +545,13 @@ describe('HdIdentityVault', () => {
           const vms = did.document.verificationMethod || [];
 
           // Verify we have at least 3 keys (identity #0, signing #sig, encryption #enc).
-          expect(vms.length).to.be.at.least(3);
+          expect(vms.length).toBeGreaterThanOrEqual(3);
 
           // Verify each key has different public key material.
           // Use JSON.stringify to handle Ed25519 keys (which have only x, no y).
           const publicKeys = vms.map((vm: any) => JSON.stringify(vm.publicKeyJwk));
           const uniqueKeys = new Set(publicKeys);
-          expect(uniqueKeys.size).to.equal(vms.length);
+          expect(uniqueKeys.size).toBe(vms.length);
         });
 
         it('should reference encryption key in DWN service', async () => {
@@ -561,8 +561,8 @@ describe('HdIdentityVault', () => {
 
           // Verify DWN service references #enc.
           const dwnService = did.document.service?.find((svc: any) => svc.type === 'DecentralizedWebNode');
-          expect(dwnService).to.exist;
-          expect(dwnService).to.have.property('enc', '#enc');
+          expect(dwnService).toBeDefined();
+          expect(dwnService).toHaveProperty('enc', '#enc');
         });
       });
     });

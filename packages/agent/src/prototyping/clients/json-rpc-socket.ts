@@ -3,6 +3,25 @@ import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from './json-rpc.js';
 import { CryptoUtils } from '@enbox/crypto';
 import { createJsonRpcSubscriptionRequest, parseJson } from './json-rpc.js';
 
+/**
+ * Converts WebSocket message data to a string.
+ * Bun's native WebSocket delivers `event.data` as an `ArrayBuffer`,
+ * whereas Node.js `ws` delivers it as a `string`.
+ */
+function toText(data: unknown): string {
+  if (typeof data === 'string') {
+    return data;
+  }
+  if (data instanceof ArrayBuffer) {
+    return new TextDecoder().decode(data);
+  }
+  // Buffer / Uint8Array fallback
+  if (data instanceof Uint8Array) {
+    return new TextDecoder().decode(data);
+  }
+  return String(data);
+}
+
 // These were arbitrarily chosen, but can be modified via connect options
 const CONNECT_TIMEOUT = 3_000;
 const RESPONSE_TIMEOUT = 30_000;
@@ -55,7 +74,7 @@ export class JsonRpcSocket {
         const jsonRpcSocket = new JsonRpcSocket(socket, responseTimeout);
 
         socket.addEventListener('message', (event: { data: any }) => {
-          const jsonRpcResponse = parseJson(event.data) as JsonRpcResponse;
+          const jsonRpcResponse = parseJson(toText(event.data)) as JsonRpcResponse;
           const handler = jsonRpcSocket.messageHandlers.get(jsonRpcResponse.id);
           if (handler) {
             handler(event);
@@ -69,7 +88,7 @@ export class JsonRpcSocket {
         reject(error);
       });
 
-      setTimeout(() => reject, connectTimeout);
+      setTimeout(() => reject(new Error('connect timed out')), connectTimeout);
     });
   }
 
@@ -85,7 +104,7 @@ export class JsonRpcSocket {
       request.id ??= CryptoUtils.randomUuid();
 
       const handleResponse = (event: { data: any }):void => {
-        const jsonRpsResponse = parseJson(event.data) as JsonRpcResponse;
+        const jsonRpsResponse = parseJson(toText(event.data)) as JsonRpcResponse;
         if (jsonRpsResponse.id === request.id) {
           // if the incoming response id matches the request id, we will remove the listener and resolve the response
           this.messageHandlers.delete(request.id);
@@ -124,7 +143,7 @@ export class JsonRpcSocket {
 
     const subscriptionId = request.subscription.id;
     const socketEventListener = (event: { data: any }):void => {
-      const jsonRpcResponse = parseJson(event.data.toString()) as JsonRpcResponse;
+      const jsonRpcResponse = parseJson(toText(event.data)) as JsonRpcResponse;
       if (jsonRpcResponse.id === subscriptionId) {
         if (jsonRpcResponse.error !== undefined) {
           // remove the event listener upon receipt of a JSON RPC Error.

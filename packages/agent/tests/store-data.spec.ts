@@ -1,8 +1,7 @@
-import sinon from 'sinon';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
 import { Convert } from '@enbox/common';
 import { DidJwk } from '@enbox/dids';
-import { expect } from 'chai';
 import type { PortableDid } from '@enbox/dids';
 
 import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreListParams, DataStoreSetParams } from '../src/store-data.js';
@@ -126,7 +125,7 @@ class InMemoryTestStore extends InMemoryDataStore<PortableDid> implements AgentD
 describe('AgentDataStore', () => {
   let testHarness: PlatformAgentTestHarness;
 
-  before(async () => {
+  beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : TestAgent,
       agentStores : 'memory'
@@ -134,19 +133,19 @@ describe('AgentDataStore', () => {
   });
 
   beforeEach(async () => {
-    sinon.restore();
+    mock.restore();
     await testHarness.clearStorage();
     await testHarness.createAgentDid();
   });
 
-  after(async () => {
-    sinon.restore();
+  afterAll(async () => {
+    mock.restore();
     await testHarness.clearStorage();
     await testHarness.closeStorage();
   });
 
   describe('Concrete implementations', () => {
-    it('must implement the getAllRecords() method', async function() {
+    it('must implement the getAllRecords() method', async () => {
       class InvalidStore extends DwnDataStore<PortableDid> implements AgentDataStore<PortableDid> {
         protected name = 'InvalidStore';
         protected _recordProtocolDefinition = {
@@ -161,11 +160,11 @@ describe('AgentDataStore', () => {
         const invalidStore = new InvalidStore();
         await invalidStore.set({ id: 'test', data: {} as PortableDid, agent: testHarness.agent });
 
-        expect.fail('Expected an error to be thrown');
+        throw new Error('Expected an error to be thrown');
 
       } catch (error: any) {
-        expect(error.message).to.include('Not implemented');
-        expect(error.message).to.include('must implement getAllRecords()');
+        expect(error.message).toContain('Not implemented');
+        expect(error.message).toContain('must implement getAllRecords()');
       }
     });
   });
@@ -190,7 +189,7 @@ describe('AgentDataStore', () => {
       describe('constructor', () => {
         it(`creates a ${TestStore.name}`, () => {
           const store = new TestStore();
-          expect(store).to.be.instanceOf(TestStore);
+          expect(store).toBeInstanceOf(TestStore);
         });
       });
 
@@ -202,11 +201,11 @@ describe('AgentDataStore', () => {
 
           // Test deleting the DID and validate the result.
           const deleteResult = await testStore.delete({ id: bearerDid.uri, tenant: bearerDid.uri, agent: testHarness.agent });
-          expect(deleteResult).to.be.true;
+          expect(deleteResult).toBe(true);
 
           // Verify the DID is no longer in the store.
           const storedDid = await testStore.get({ id: bearerDid.uri, tenant: bearerDid.uri, agent: testHarness.agent });
-          expect(storedDid).to.be.undefined;
+          expect(storedDid).toBeUndefined();
         });
 
         it('should return false if DID does not exist', async () => {
@@ -214,13 +213,13 @@ describe('AgentDataStore', () => {
           const deleteResult = await testStore.delete({ id: 'non-existent', agent: testHarness.agent });
 
           // Validate that a delete could not be carried out.
-          expect(deleteResult).to.be.false;
+          expect(deleteResult).toBe(false);
         });
 
-        it('throws an error if no keys exist for specified DID', async function() {
+        it('throws an error if no keys exist for specified DID', async () => {
           // Skip this test for InMemoryTestStore, as checking for keys to sign DWN messages is not
           // relevant given that the store is in-memory.
-          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
+          if (TestStore.name === 'InMemoryTestStore') { return; }
 
           try {
             await testStore.delete({
@@ -228,17 +227,17 @@ describe('AgentDataStore', () => {
               agent  : testHarness.agent,
               tenant : 'did:jwk:eyJrdHkiOiJFQyIsInVzZSI6InNpZyIsImNydiI6InNlY3AyNTZrMSIsImtpZCI6ImkzU1BSQnRKS292SEZzQmFxTTkydGk2eFFDSkxYM0U3WUNld2lIVjJDU2ciLCJ4IjoidmRyYnoyRU96dmJMRFZfLWtMNGVKdDdWSS04VEZaTm1BOVlnV3p2aGg3VSIsInkiOiJWTEZxUU1aUF9Bc3B1Y1hvV1gyLWJHWHBBTzFmUTVMbjE5VjVSQXhyZ3ZVIiwiYWxnIjoiRVMyNTZLIn0'
             });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
 
           } catch (error: any) {
-            expect(error.message).to.include('Unable to get signer for author');
-            expect(error.message).to.include('Key not found');
+            expect(error.message).toContain('Unable to get signer for author');
+            expect(error.message).toContain('Key not found');
           }
         });
 
-        it('throws an error if the DWN delete request fails', async function() {
+        it('throws an error if the DWN delete request fails', async () => {
           // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
-          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
+          if (TestStore.name === 'InMemoryTestStore') { return; }
 
           // Store test data in the store that will be deleted.
           await testStore.set({
@@ -248,7 +247,7 @@ describe('AgentDataStore', () => {
           });
 
           // Stub the DWN API to return a failed response.
-          const dwnApiStub = sinon.stub(testHarness.agent.dwn, 'processRequest').resolves({
+          const dwnApiStub = spyOn(testHarness.agent.dwn, 'processRequest').mockResolvedValue({
             messageCid : 'test-cid',
             message    : {} as RecordsDeleteMessage,
             reply      : {
@@ -264,12 +263,12 @@ describe('AgentDataStore', () => {
               id    : 'test-1',
               agent : testHarness.agent
             });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
 
           } catch (error: any) {
-            expect(error.message).to.include(`Failed to delete 'test-1'`);
+            expect(error.message).toContain(`Failed to delete 'test-1'`);
           } finally {
-            dwnApiStub.restore();
+            dwnApiStub.mockRestore();
           }
         });
       });
@@ -284,9 +283,9 @@ describe('AgentDataStore', () => {
           const storedDid = await testStore.get({ id: bearerDid.uri, tenant: bearerDid.uri, agent: testHarness.agent });
 
           // Verify the DID is in the store.
-          expect(storedDid).to.exist;
-          expect(storedDid!.uri).to.equal(importedDid.uri);
-          expect(storedDid!.document).to.deep.equal(importedDid.document);
+          expect(storedDid).toBeDefined();
+          expect(storedDid!.uri).toBe(importedDid.uri);
+          expect(storedDid!.document).toEqual(importedDid.document);
         });
 
         it('should return undefined when attempting to get a non-existent DID', async () => {
@@ -294,13 +293,13 @@ describe('AgentDataStore', () => {
           const storedDid = await testStore.get({ id: 'non-existent', agent: testHarness.agent });
 
           // Verify the result is undefined.
-          expect(storedDid).to.be.undefined;
+          expect(storedDid).toBeUndefined();
         });
 
-        it('throws an error if no keys exist for specified DID', async function() {
+        it('throws an error if no keys exist for specified DID', async () => {
           // Skip this test for InMemoryTestStore, as checking for keys to sign DWN messages is not
           // relevant given that the store is in-memory.
-          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
+          if (TestStore.name === 'InMemoryTestStore') { return; }
 
           try {
             await testStore.get({
@@ -308,17 +307,17 @@ describe('AgentDataStore', () => {
               tenant : 'did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IjNFQmFfRUxvczJhbHZMb2pxSVZjcmJLcGlyVlhqNmNqVkQ1djJWaHdMejgifQ',
               agent  : testHarness.agent
             });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
 
           } catch (error: any) {
-            expect(error.message).to.include('Unable to get signer for author');
-            expect(error.message).to.include('Key not found');
+            expect(error.message).toContain('Unable to get signer for author');
+            expect(error.message).toContain('Key not found');
           }
         });
 
-        it('throws an error if DWN unexpectedly is missing a record that is present in the index', async function() {
+        it('throws an error if DWN unexpectedly is missing a record that is present in the index', async () => {
           // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
-          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
+          if (TestStore.name === 'InMemoryTestStore') { return; }
 
           // Store test data in the store that will be retrieved.
           await testStore.set({
@@ -341,17 +340,17 @@ describe('AgentDataStore', () => {
             messageType   : DwnInterface.RecordsDelete,
             messageParams : { recordId }
           });
-          expect(status.code).to.equal(202);
+          expect(status.code).toBe(202);
 
           try {
             await testStore.get({
               id    : 'test-1',
               agent : testHarness.agent
             });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
 
           } catch (error: any) {
-            expect(error.message).to.include('Failed to read data from DWN for');
+            expect(error.message).toContain('Failed to read data from DWN for');
           }
         });
       });
@@ -375,10 +374,10 @@ describe('AgentDataStore', () => {
 
           // List DIDs and verify the result.
           const storedDids = await testStore.list({ agent: testHarness.agent });
-          expect(storedDids).to.have.length(3);
+          expect(storedDids).toHaveLength(3);
           const importedDids = [portableDid1.uri, portableDid2.uri, portableDid3.uri];
           for (const storedDid of storedDids) {
-            expect(importedDids).to.include(storedDid.uri);
+            expect(importedDids).toContain(storedDid.uri);
           }
         });
 
@@ -407,22 +406,22 @@ describe('AgentDataStore', () => {
 
           // List DIDs and verify the result.
           const storedDids = await testStore.list({ tenant: authorDid.uri, agent: testHarness.agent });
-          expect(storedDids).to.have.length(3);
+          expect(storedDids).toHaveLength(3);
           const importedDids = [portableDid1.uri, portableDid2.uri, portableDid3.uri];
           for (const storedDid of storedDids) {
-            expect(importedDids).to.include(storedDid.uri);
+            expect(importedDids).toContain(storedDid.uri);
           }
         });
 
-        it('returns empty array if no DIDs are present in the store', async function() {
+        it('returns empty array if no DIDs are present in the store', async () => {
           const storedDids = await testStore.list({ agent: testHarness.agent });
-          expect(storedDids).to.have.length(0);
+          expect(storedDids).toHaveLength(0);
         });
 
-        it('throws an error if the DID records exceed the DWN maximum data size for query results', async function() {
+        it('throws an error if the DID records exceed the DWN maximum data size for query results', async () => {
           // Skip this test for InMemoryTestStore, as the in-memory store returns all records
           // regardless of the size of the data.
-          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
+          if (TestStore.name === 'InMemoryTestStore') { return; }
 
           const didBytes = Convert.string(new Array(102400 + 1).join('0')).toUint8Array();
 
@@ -442,14 +441,14 @@ describe('AgentDataStore', () => {
             },
             dataStream: new Blob([didBytes], { type: 'application/json' })
           });
-          expect(response.reply.status.code).to.equal(202);
+          expect(response.reply.status.code).toBe(202);
 
           try {
             await testStore.list({ agent: testHarness.agent });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
 
           } catch (error: any) {
-            expect(error.message).to.include(`Expected 'encodedData' to be present in the DWN query result entry`);
+            expect(error.message).toContain(`Expected 'encodedData' to be present in the DWN query result entry`);
           }
         });
       });
@@ -475,8 +474,8 @@ describe('AgentDataStore', () => {
           const storedDid = await testStore.get({ id: portableDidWithoutKeys.uri, agent: testHarness.agent });
 
           // Verify the DID in the store matches the DID that was imported.
-          expect(storedDid!.uri).to.equal(bearerDid.uri);
-          expect(storedDid!.document).to.deep.equal(bearerDid.document);
+          expect(storedDid!.uri).toBe(bearerDid.uri);
+          expect(storedDid!.document).toEqual(bearerDid.document);
         });
 
         it('authors multiple entries in the store with the Agent DID', async () => {
@@ -496,8 +495,8 @@ describe('AgentDataStore', () => {
           const storedDid2 = await testStore.get({ id: portableDid1.uri, agent: testHarness.agent });
           const storedDid3 = await testStore.get({ id: portableDid2.uri, agent: testHarness.agent });
 
-          expect(storedDid2!.uri).to.equal(bearerDid1.uri);
-          expect(storedDid3!.uri).to.equal(bearerDid2.uri);
+          expect(storedDid2!.uri).toBe(bearerDid1.uri);
+          expect(storedDid3!.uri).toBe(bearerDid2.uri);
         });
 
         it('uses the tenant, if specified', async () => {
@@ -515,11 +514,11 @@ describe('AgentDataStore', () => {
 
           // Verify the DID was written under the custom author tenant.
           let storedDid = await testStore.get({ id: portableDid.uri, tenant: authorDid.uri, agent: testHarness.agent });
-          expect(storedDid!.uri).to.equal(bearerDid.uri);
+          expect(storedDid!.uri).toBe(bearerDid.uri);
 
           // Verify the DID was not written under the Agent's DID tenant.
           storedDid = await testStore.get({ id: portableDid.uri, agent: testHarness.agent });
-          expect(storedDid).to.be.undefined;
+          expect(storedDid).toBeUndefined();
         });
 
         it('throws an error on duplicate DID entry when preventDuplicates=true', async () => {
@@ -548,17 +547,17 @@ describe('AgentDataStore', () => {
               agent             : testHarness.agent,
               preventDuplicates : true
             });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
 
           } catch (error: any) {
-            expect(error.message).to.include('Import failed due to duplicate entry');
+            expect(error.message).toContain('Import failed due to duplicate entry');
           }
         });
 
-        it('throws an error if no keys exist for specified DID', async function() {
+        it('throws an error if no keys exist for specified DID', async () => {
           // Skip this test for InMemoryTestStore, as checking for keys to sign DWN messages is not
           // relevant given that the store is in-memory.
-          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
+          if (TestStore.name === 'InMemoryTestStore') { return; }
 
           // Generate a new DID.
           const bearerDid = await DidJwk.create();
@@ -572,23 +571,23 @@ describe('AgentDataStore', () => {
               data   : portableDid,
               tenant : portableDid.uri,
               agent  : testHarness.agent });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
 
           } catch (error: any) {
-            expect(error.message).to.include('Unable to get signer for author');
-            expect(error.message).to.include('Key not found');
+            expect(error.message).toContain('Unable to get signer for author');
+            expect(error.message).toContain('Key not found');
           }
         });
 
-        it('throws an error if the DWN write request fails', async function() {
+        it('throws an error if the DWN write request fails', async () => {
           // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
-          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
+          if (TestStore.name === 'InMemoryTestStore') { return; }
 
           // since we are writing directly to the dwn we first initialize the storage protocol
           await (testStore as DwnDataStore<PortableDid>)['initialize']({ agent: testHarness.agent });
 
           // Stub the DWN API to return a failed response.
-          const dwnApiStub = sinon.stub(testHarness.agent.dwn, 'processRequest').resolves({
+          const dwnApiStub = spyOn(testHarness.agent.dwn, 'processRequest').mockResolvedValue({
             messageCid : 'test-cid',
             message    : {} as RecordsWriteMessage,
             reply      : {
@@ -605,37 +604,37 @@ describe('AgentDataStore', () => {
               data  : { document: { id: 'test-1' }, metadata: {}, uri: 'test-1' },
               agent : testHarness.agent,
             });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
 
           } catch (error: any) {
-            expect(error.message).to.include(`Failed to write data to store for test-1`);
+            expect(error.message).toContain(`Failed to write data to store for test-1`);
           } finally {
-            dwnApiStub.restore();
+            dwnApiStub.mockRestore();
           }
         });
 
-        it('checks that protocol is installed only once', async function() {
+        it('checks that protocol is installed only once', async () => {
           // Scenario: The storage protocol should only need to be installed once
           // any operations after the first should not attempt to re-install the protocol.
 
           // Skip this test for InMemoryTestStore, as checking for protocol installation is not
           // relevant given that the store is in-memory.
-          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
+          if (TestStore.name === 'InMemoryTestStore') { return; }
 
           // spy on the installProtocol method
-          const installProtocolSpy = sinon.spy(testStore as any, 'installProtocol');
+          const installProtocolSpy = spyOn(testStore as any, 'installProtocol');
 
           // create and set did1
           const bearerDid1 = await DidJwk.create();
           const portableDid1 = { uri: bearerDid1.uri, document: bearerDid1.document, metadata: bearerDid1.metadata };
           await testStore.set({ id: portableDid1.uri, data: portableDid1, agent: testHarness.agent });
-          expect(installProtocolSpy.calledOnce).to.be.true;
+          expect(installProtocolSpy).toHaveBeenCalledTimes(1);
 
           // create and set did2
           const bearerDid2 = await DidJwk.create();
           const portableDid2 = { uri: bearerDid2.uri, document: bearerDid2.document, metadata: bearerDid2.metadata };
           await testStore.set({ id: portableDid2.uri, data: portableDid2, agent: testHarness.agent });
-          expect(installProtocolSpy.calledOnce).to.be.true; // still only called once
+          expect(installProtocolSpy).toHaveBeenCalledTimes(1); // still only called once
 
           // even after clearing cache
           (testStore as DwnDataStore<PortableDid>)['_protocolInitializedCache']?.clear();
@@ -644,20 +643,20 @@ describe('AgentDataStore', () => {
           const bearerDid3 = await DidJwk.create();
           const portableDid3 = { uri: bearerDid3.uri, document: bearerDid3.document, metadata: bearerDid3.metadata };
           await testStore.set({ id: portableDid3.uri, data: portableDid3, agent: testHarness.agent });
-          expect(installProtocolSpy.calledOnce).to.be.true; // still only called once
+          expect(installProtocolSpy).toHaveBeenCalledTimes(1); // still only called once
 
           // all 3 dids should be in the store
           const storedDids = await testStore.list({ agent: testHarness.agent });
-          expect(storedDids).to.have.length(3);
-          expect(storedDids.map(d => d.uri)).has.members([portableDid1.uri, portableDid2.uri, portableDid3.uri]);
+          expect(storedDids).toHaveLength(3);
+          expect(storedDids.map(d => d.uri)).toEqual(expect.arrayContaining([portableDid1.uri, portableDid2.uri, portableDid3.uri]));
         });
 
-        it('throws an error if dwn failed during query for protocol installation', async function () {
+        it('throws an error if dwn failed during query for protocol installation', async () => {
           // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
-          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
+          if (TestStore.name === 'InMemoryTestStore') { return; }
 
           // stub `processRequest` to return a code other than 200
-          sinon.stub(testHarness.agent.dwn, 'processRequest').resolves({
+          spyOn(testHarness.agent.dwn, 'processRequest').mockResolvedValue({
             messageCid : 'test-cid',
             message    : {} as RecordsWriteMessage,
             reply      : {
@@ -673,18 +672,18 @@ describe('AgentDataStore', () => {
             const bearerDid = await DidJwk.create();
             const portableDid = { uri: bearerDid.uri, document: bearerDid.document, metadata: bearerDid.metadata };
             await testStore.set({ id: portableDid.uri, data: portableDid, agent: testHarness.agent });
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.include('Failed to query for protocols');
+            expect(error.message).toContain('Failed to query for protocols');
           }
         });
 
-        it('throws an error if dwn failed during protocol installation', async function () {
+        it('throws an error if dwn failed during protocol installation', async () => {
           // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
-          if (TestStore.name === 'InMemoryTestStore') {this.skip();}
+          if (TestStore.name === 'InMemoryTestStore') { return; }
 
           // stub `processRequest` to return a code other than 200
-          sinon.stub(testHarness.agent.dwn, 'processRequest').resolves({
+          spyOn(testHarness.agent.dwn, 'processRequest').mockResolvedValue({
             messageCid : 'test-cid',
             message    : {} as RecordsWriteMessage,
             reply      : {
@@ -700,9 +699,9 @@ describe('AgentDataStore', () => {
 
             // The DWN will return a 500 error when attempting to install the protocol
             await (testStore as DwnDataStore<PortableDid>)['installProtocol'](tenantDid, testHarness.agent);
-            expect.fail('Expected an error to be thrown');
+            throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).to.include('Failed to install protocol: 500 - Internal Server Error');
+            expect(error.message).toContain('Failed to install protocol: 500 - Internal Server Error');
           }
         });
 
@@ -741,12 +740,12 @@ describe('AgentDataStore', () => {
 
             // Verify the DID is in the store.
             const storedDid = await testStore.get({ id: importedDid.uri, agent: testHarness.agent, tenant: testHarness.agent.agentDid.uri });
-            expect(storedDid!.uri).to.equal(updatedDid.uri);
-            expect(storedDid!.document).to.deep.equal(updatedDid.document);
+            expect(storedDid!.uri).toBe(updatedDid.uri);
+            expect(storedDid!.document).toEqual(updatedDid.document);
 
             // verify that no additional records were added
             const updatedListLength = (await testStore.list({ agent: testHarness.agent })).length;
-            expect(updatedListLength).to.equal(listLength);
+            expect(updatedListLength).toBe(listLength);
           });
 
           it('throws an error if the record does not exist', async () => {
@@ -759,9 +758,9 @@ describe('AgentDataStore', () => {
                 agent          : testHarness.agent,
                 updateExisting : true
               });
-              expect.fail('Expected an error to be thrown');
+              throw new Error('Expected an error to be thrown');
             } catch (error: any) {
-              expect(error.message).to.include(`${TestStore.name}: Update failed due to missing entry for: ${portableDid.uri}`);
+              expect(error.message).toContain(`${TestStore.name}: Update failed due to missing entry for: ${portableDid.uri}`);
             }
           });
         });

@@ -1,8 +1,9 @@
-import sinon from 'sinon';
-
-import { expect } from 'chai';
 import type { PortableDid } from '@enbox/dids';
 import type { RecordsPermissionScope } from '@enbox/dwn-sdk-js';
+
+import sinon from 'sinon';
+
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { Convert } from '@enbox/common';
 import { CryptoUtils } from '@enbox/crypto';
@@ -20,8 +21,7 @@ import {
 import type { BearerIdentity, DwnMessage, DwnProtocolDefinition } from '../src/index.js';
 import { DwnInterface, WalletConnect } from '../src/index.js';
 
-describe('web5 connect', function () {
-  this.timeout(20000);
+describe('web5 connect', () => {
 
   /** The temporary DID that web5 connect created on behalf of the client */
   let clientEphemeralBearerDid: BearerDid;
@@ -177,7 +177,7 @@ describe('web5 connect', function () {
   const encryptionNonce = CryptoUtils.randomBytes(24);
   const randomPin = '9999';
 
-  before(async () => {
+  beforeAll(async () => {
     providerIdentityBearerDid = await DidDht.import({
       portableDid: providerIdentityPortableDid,
     });
@@ -201,7 +201,7 @@ describe('web5 connect', function () {
     delegatePortableDid = await delegateBearerDid.export();
   });
 
-  after(async () => {
+  afterAll(async () => {
     sinon.restore();
     await testHarness.clearStorage();
     await testHarness.closeStorage();
@@ -211,11 +211,11 @@ describe('web5 connect', function () {
     sinon.restore();
   });
 
-  describe('client authrequest phase', function () {
+  describe('client authrequest phase', () => {
     // it('should create a code challenge', async () => {
     //   const result = await Oidc.generateCodeChallenge();
-    //   expect(result.codeChallengeBytes).to.be.instanceOf(Uint8Array);
-    //   expect(result.codeChallengeBase64Url).to.be.a('string');
+    //   expect(result.codeChallengeBytes).toBeInstanceOf(Uint8Array);
+    //   expect(typeof result.codeChallengeBase64Url).toBe('string');
     // });
 
     it('should create an authrequest with the code challenge and client did', async () => {
@@ -238,10 +238,10 @@ describe('web5 connect', function () {
         redirect_uri       : callbackUrl,
       };
       authRequest = await Oidc.createAuthRequest(options);
-      expect(authRequest).to.include(options);
-      expect(authRequest.nonce).to.be.a('string');
-      expect(authRequest.state).to.be.a('string');
-      expect(authRequest.redirect_uri).to.equal(
+      expect(authRequest).toEqual(expect.objectContaining(options));
+      expect(typeof authRequest.nonce).toBe('string');
+      expect(typeof authRequest.state).toBe('string');
+      expect(authRequest.redirect_uri).toBe(
         'http://localhost:3000/callback'
       );
     });
@@ -251,7 +251,7 @@ describe('web5 connect', function () {
         did  : clientEphemeralBearerDid,
         data : authRequest,
       });
-      expect(authRequestJwt).to.be.a('string');
+      expect(typeof authRequestJwt).toBe('string');
     });
 
     it('should encrypt an authrequest using the code challenge', async () => {
@@ -259,12 +259,12 @@ describe('web5 connect', function () {
         jwt           : authRequestJwt,
         encryptionKey : authRequestEncryptionKey
       });
-      expect(authRequestJwe).to.be.a('string');
-      expect(authRequestJwe.split('.')).to.have.lengthOf(5);
+      expect(typeof authRequestJwe).toBe('string');
+      expect(authRequestJwe.split('.')).toHaveLength(5);
     });
   });
 
-  describe('provider authresponse phase', function () {
+  describe('provider authresponse phase', () => {
     it('should get authrequest from server, decrypt and verify the jwt', async () => {
       const fetchStub = sinon
         .stub(globalThis, 'fetch')
@@ -279,7 +279,7 @@ describe('web5 connect', function () {
         endpoint  : 'authorize',
         authParam : '12345',
       });
-      expect(authorizeUrl).to.equal(
+      expect(authorizeUrl).toBe(
         'http://localhost:3000/authorize/12345.jwt'
       );
 
@@ -287,7 +287,7 @@ describe('web5 connect', function () {
         authorizeUrl,
         Convert.uint8Array(authRequestEncryptionKey).toBase64Url()
       );
-      expect(result).to.deep.equal(authRequest);
+      expect(result).toEqual(authRequest);
     });
 
     // TODO: waiting for DWN feature complete
@@ -299,8 +299,8 @@ describe('web5 connect', function () {
         permissionScopes
       );
       const scopesRequested = permissionScopes.length;
-      expect(results).to.have.lengthOf(scopesRequested);
-      expect(results[0]).to.be.a('object');
+      expect(results).toHaveLength(scopesRequested);
+      expect(typeof results[0]).toBe('object');
     });
 
     it('should create the authresponse which includes the permissionGrants, nonce, private key material', async () => {
@@ -314,10 +314,10 @@ describe('web5 connect', function () {
       };
       authResponse = await Oidc.createResponseObject(options);
 
-      expect(authResponse).to.include(options);
-      expect(authResponse.iat).to.be.a('number');
-      expect(authResponse.exp).to.be.a('number');
-      expect(authResponse.exp - authResponse.iat).to.equal(600);
+      expect(authResponse).toEqual(expect.objectContaining(options));
+      expect(typeof authResponse.iat).toBe('number');
+      expect(typeof authResponse.exp).toBe('number');
+      expect(authResponse.exp - authResponse.iat).toBe(600);
     });
 
     it('should sign the authresponse with its provider did', async () => {
@@ -325,7 +325,7 @@ describe('web5 connect', function () {
         did  : delegateBearerDid,
         data : authResponse,
       });
-      expect(authResponseJwt).to.be.a('string');
+      expect(typeof authResponseJwt).toBe('string');
     });
 
     it('should derive a valid ECDH private key for both provider and client which is identical', async () => {
@@ -338,14 +338,14 @@ describe('web5 connect', function () {
         delegateBearerDid.document
       );
 
-      expect(providerECDHDerivedPrivateKey).to.be.instanceOf(Uint8Array);
-      expect(providerECDHDerivedPrivateKey.length).to.be.greaterThan(0);
+      expect(providerECDHDerivedPrivateKey).toBeInstanceOf(Uint8Array);
+      expect(providerECDHDerivedPrivateKey.length).toBeGreaterThan(0);
 
-      expect(clientECDHDerivedPrivateKey).to.be.instanceOf(Uint8Array);
-      expect(clientECDHDerivedPrivateKey.length).to.be.greaterThan(0);
+      expect(clientECDHDerivedPrivateKey).toBeInstanceOf(Uint8Array);
+      expect(clientECDHDerivedPrivateKey.length).toBeGreaterThan(0);
       expect(
         Convert.uint8Array(providerECDHDerivedPrivateKey).toHex()
-      ).to.equal(Convert.uint8Array(clientECDHDerivedPrivateKey).toHex());
+      ).toBe(Convert.uint8Array(clientECDHDerivedPrivateKey).toHex());
 
       // doesnt matter client and provider are the same
       sharedECDHPrivateKey = clientECDHDerivedPrivateKey;
@@ -361,8 +361,8 @@ describe('web5 connect', function () {
         randomPin,
         delegateDidKeyId : delegateBearerDid.document.verificationMethod![0].id,
       });
-      expect(authResponseJwe).to.be.a('string');
-      expect(randomBytesStub.calledOnce).to.be.true;
+      expect(typeof authResponseJwe).toBe('string');
+      expect(randomBytesStub.calledOnce).toBe(true);
     });
 
     it('should send the encrypted jwe authresponse to the server', async () => {
@@ -374,7 +374,7 @@ describe('web5 connect', function () {
         baseURL  : 'http://localhost:3000',
         endpoint : 'callback',
       });
-      expect(callbackUrl).to.equal('http://localhost:3000/callback');
+      expect(callbackUrl).toBe('http://localhost:3000/callback');
 
       // Stub agent DWN methods so prepareProtocol (called inside submitAuthResponse)
       // succeeds without needing a real DWN server or network access.
@@ -404,28 +404,30 @@ describe('web5 connect', function () {
       const callbackCall = fetchStub.getCalls().find(
         call => call.args[0] === callbackUrl
       );
-      expect(callbackCall).to.not.be.undefined;
+      expect(callbackCall).toBeDefined();
       const options = callbackCall!.args[1] as RequestInit;
-      expect(options.method).to.equal('POST');
-      expect(options.headers).to.deep.equal({
+      expect(options.method).toBe('POST');
+      expect(options.headers).toEqual({
         'Content-Type': 'application/x-www-form-urlencoded',
       });
       // Verify the body contains the expected state and an id_token
       const body = new URLSearchParams(options.body as string);
-      expect(body.get('state')).to.equal(authRequest.state);
-      expect(body.get('id_token')).to.be.a('string').and.have.length.greaterThan(0);
+      expect(body.get('state')).toBe(authRequest.state);
+      const idToken = body.get('id_token');
+      expect(typeof idToken).toBe('string');
+      expect(idToken!.length).toBeGreaterThan(0);
     });
   });
 
-  describe('client pin entry final phase', function () {
+  describe('client pin entry final phase', () => {
     it('should get the authresponse from server and decrypt the jwe using the pin', async () => {
       const result = await Oidc.decryptAuthResponse(
         clientEphemeralBearerDid,
         authResponseJwe,
         randomPin
       );
-      expect(result).to.be.a('string');
-      expect(result).to.equal(authResponseJwt);
+      expect(typeof result).toBe('string');
+      expect(result).toBe(authResponseJwt);
     });
 
     it('should fail decrypting the jwe if the wrong pin is entered', async () => {
@@ -436,8 +438,8 @@ describe('web5 connect', function () {
           '87383837583757835737537734783'
         );
       } catch (e: any) {
-        expect(e).to.be.instanceOf(Error);
-        expect(e.message).to.include('invalid tag');
+        expect(e).toBeInstanceOf(Error);
+        expect(e.message).toContain('invalid tag');
       }
     });
 
@@ -445,13 +447,13 @@ describe('web5 connect', function () {
       const result = (await Oidc.verifyJwt({
         jwt: authResponseJwt,
       })) as Web5ConnectAuthResponse;
-      expect(result).to.be.a('object');
-      expect(result.delegateGrants).to.have.length.above(0);
+      expect(typeof result).toBe('object');
+      expect(result.delegateGrants.length).toBeGreaterThan(0);
     });
   });
 
-  describe('end to end client test', function () {
-    it('should complete the whole connect flow with the correct pin', async function () {
+  describe('end to end client test', () => {
+    it('should complete the whole connect flow with the correct pin', async () => {
       const fetchStub = sinon.stub(globalThis, 'fetch');
       const onWalletUriReadySpy = sinon.spy();
       sinon.stub(DidJwk, 'create').resolves(clientEphemeralBearerDid);
@@ -490,23 +492,23 @@ describe('web5 connect', function () {
         validatePin      : async () => randomPin,
       });
 
-      expect(fetchStub.firstCall.args[0]).to.equal(
+      expect(fetchStub.firstCall.args[0]).toBe(
         'http://localhost:3000/connect/par'
       );
-      expect(onWalletUriReadySpy.calledOnce).to.be.true;
-      expect(onWalletUriReadySpy.firstCall.args[0]).to.match(
+      expect(onWalletUriReadySpy.calledOnce).toBe(true);
+      expect(onWalletUriReadySpy.firstCall.args[0]).toMatch(
         new RegExp(
           'http:\\/\\/[\\w.-]+:\\d+\\/\\?request_uri=http%3A%2F%2F[\\w.-]+%3A(\\d+|%24%7Bport%7D)%2Fconnect%2Fauthorize%2F[\\w.-]+\\.jwt&encryption_key=.+',
           'i'
         )
       );
-      expect(fetchStub.thirdCall.args[0]).to.match(
+      expect(fetchStub.thirdCall.args[0]).toMatch(
         new RegExp('^http:\\/\\/localhost:3000\\/connect\\/token\\/.+\\.jwt$')
       );
 
-      expect(results).to.be.an('object');
-      expect(results?.delegateGrants).to.be.an('array');
-      expect(results?.delegatePortableDid).to.be.an('object');
+      expect(typeof results).toBe('object');
+      expect(results?.delegateGrants).toBeInstanceOf(Array);
+      expect(typeof results?.delegatePortableDid).toBe('object');
     });
   });
 
@@ -558,12 +560,12 @@ describe('web5 connect', function () {
       );
 
       // expect the process request to only be called once for ProtocolsQuery
-      expect(processDwnRequestStub.callCount).to.equal(1);
-      expect(processDwnRequestStub.firstCall.args[0].messageType).to.equal(DwnInterface.ProtocolsQuery);
+      expect(processDwnRequestStub.callCount).toBe(1);
+      expect(processDwnRequestStub.firstCall.args[0].messageType).toBe(DwnInterface.ProtocolsQuery);
 
       // send request should be called once as a ProtocolsConfigure
-      expect(sendRequestSpy.callCount).to.equal(1);
-      expect(sendRequestSpy.firstCall.args[0].messageType).to.equal(DwnInterface.ProtocolsConfigure);
+      expect(sendRequestSpy.callCount).toBe(1);
+      expect(sendRequestSpy.firstCall.args[0].messageType).toBe(DwnInterface.ProtocolsConfigure);
     });
 
     it('should configure the protocol if it does not exist', async () => {
@@ -611,13 +613,13 @@ describe('web5 connect', function () {
       );
 
       // expect the process request to be called for query and configure
-      expect(processDwnRequestStub.callCount).to.equal(2);
-      expect(processDwnRequestStub.firstCall.args[0].messageType).to.equal(DwnInterface.ProtocolsQuery);
-      expect(processDwnRequestStub.secondCall.args[0].messageType).to.equal(DwnInterface.ProtocolsConfigure);
+      expect(processDwnRequestStub.callCount).toBe(2);
+      expect(processDwnRequestStub.firstCall.args[0].messageType).toBe(DwnInterface.ProtocolsQuery);
+      expect(processDwnRequestStub.secondCall.args[0].messageType).toBe(DwnInterface.ProtocolsConfigure);
 
       // send request should be called once as a ProtocolsConfigure
-      expect(sendRequestSpy.callCount).to.equal(1);
-      expect(sendRequestSpy.firstCall.args[0].messageType).to.equal(DwnInterface.ProtocolsConfigure);
+      expect(sendRequestSpy.callCount).toBe(1);
+      expect(sendRequestSpy.firstCall.args[0].messageType).toBe(DwnInterface.ProtocolsConfigure);
 
       // reset the spys
       processDwnRequestStub.resetHistory();
@@ -635,13 +637,13 @@ describe('web5 connect', function () {
       );
 
       // expect the process request to be called for query and configure
-      expect(processDwnRequestStub.callCount).to.equal(2);
-      expect(processDwnRequestStub.firstCall.args[0].messageType).to.equal(DwnInterface.ProtocolsQuery);
-      expect(processDwnRequestStub.secondCall.args[0].messageType).to.equal(DwnInterface.ProtocolsConfigure);
+      expect(processDwnRequestStub.callCount).toBe(2);
+      expect(processDwnRequestStub.firstCall.args[0].messageType).toBe(DwnInterface.ProtocolsQuery);
+      expect(processDwnRequestStub.secondCall.args[0].messageType).toBe(DwnInterface.ProtocolsConfigure);
 
       // send request should be called once as a ProtocolsConfigure
-      expect(sendRequestSpy.callCount).to.equal(1);
-      expect(sendRequestSpy.firstCall.args[0].messageType).to.equal(DwnInterface.ProtocolsConfigure);
+      expect(sendRequestSpy.callCount).toBe(1);
+      expect(sendRequestSpy.firstCall.args[0].messageType).toBe(DwnInterface.ProtocolsConfigure);
     });
 
     it('should fail if the send request fails for newly configured protocol', async () => {
@@ -685,10 +687,10 @@ describe('web5 connect', function () {
           testHarness.agent
         );
 
-        expect.fail('should have thrown an error');
+        throw new Error('should have thrown an error');
       } catch (error: any) {
-        expect(error.message).to.equal('Could not send protocol: Internal Server Error');
-        expect(sendRequestSpy.callCount).to.equal(1);
+        expect(error.message).toBe('Could not send protocol: Internal Server Error');
+        expect(sendRequestSpy.callCount).toBe(1);
       }
     });
 
@@ -736,11 +738,11 @@ describe('web5 connect', function () {
           testHarness.agent
         );
 
-        expect.fail('should have thrown an error');
+        throw new Error('should have thrown an error');
       } catch (error: any) {
-        expect(error.message).to.equal('Could not send protocol: Internal Server Error');
-        expect(processDwnRequestStub.callCount).to.equal(1);
-        expect(sendRequestSpy.callCount).to.equal(1);
+        expect(error.message).toBe('Could not send protocol: Internal Server Error');
+        expect(processDwnRequestStub.callCount).toBe(1);
+        expect(sendRequestSpy.callCount).toBe(1);
       }
     });
 
@@ -785,11 +787,11 @@ describe('web5 connect', function () {
           testHarness.agent
         );
 
-        expect.fail('should have thrown an error');
+        throw new Error('should have thrown an error');
       } catch (error: any) {
-        expect(error.message).to.equal('Could not fetch protocol: Some Error');
-        expect(processDwnRequestStub.callCount).to.equal(1);
-        expect(sendRequestSpy.callCount).to.equal(0);
+        expect(error.message).toBe('Could not fetch protocol: Some Error');
+        expect(processDwnRequestStub.callCount).toBe(1);
+        expect(sendRequestSpy.callCount).toBe(0);
       }
     });
 
@@ -826,9 +828,9 @@ describe('web5 connect', function () {
           testHarness.agent
         );
 
-        expect.fail('should have thrown an error');
+        throw new Error('should have thrown an error');
       } catch (error: any) {
-        expect(error.message).to.equal('All permission scopes must match the protocol uri they are provided with.');
+        expect(error.message).toBe('All permission scopes must match the protocol uri they are provided with.');
       }
     });
   });
@@ -853,22 +855,22 @@ describe('web5 connect', function () {
         definition: protocol, permissions: []
       });
 
-      expect(permissionRequests.protocolDefinition).to.deep.equal(protocol);
+      expect(permissionRequests.protocolDefinition).toEqual(protocol);
       // only includes the sync permissions + protocol query permission
-      expect(permissionRequests.permissionScopes.length).to.equal(4);
+      expect(permissionRequests.permissionScopes.length).toBe(4);
       const scopes = permissionRequests.permissionScopes;
       expect(scopes.find(
         scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Read
-      )).to.not.be.undefined;
+      )).toBeDefined();
       expect(scopes.find(
         scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Sync
-      )).to.not.be.undefined;
+      )).toBeDefined();
       expect(scopes.find(
         scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Subscribe
-      )).to.not.be.undefined;
+      )).toBeDefined();
       expect(scopes.find(
         scope => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Query
-      )).to.not.be.undefined;
+      )).toBeDefined();
     });
 
     it('should add requested permissions to the request', async () => {
@@ -890,16 +892,16 @@ describe('web5 connect', function () {
         definition: protocol, permissions: ['write', 'read']
       });
 
-      expect(permissionRequests.protocolDefinition).to.deep.equal(protocol);
+      expect(permissionRequests.protocolDefinition).toEqual(protocol);
 
       // the 3 sync permissions plus the 2 requested permissions, and a protocol query permission
-      expect(permissionRequests.permissionScopes.length).to.equal(6);
+      expect(permissionRequests.permissionScopes.length).toBe(6);
       expect(permissionRequests.permissionScopes.find(
         scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read
-      )).to.not.be.undefined;
+      )).toBeDefined();
       expect(permissionRequests.permissionScopes.find(
         scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Write
-      )).to.not.be.undefined;
+      )).toBeDefined();
     });
 
     it('supports requesting `read`, `write`, `delete`, `query`, `subscribe` and `configure` permissions', async () => {
@@ -921,32 +923,32 @@ describe('web5 connect', function () {
         definition: protocol, permissions: ['write', 'read', 'delete', 'query', 'subscribe', 'configure']
       });
 
-      expect(permissionRequests.protocolDefinition).to.deep.equal(protocol);
+      expect(permissionRequests.protocolDefinition).toEqual(protocol);
 
       // the 3 sync permissions plus the 5 requested permissions
-      expect(permissionRequests.permissionScopes.length).to.equal(10);
+      expect(permissionRequests.permissionScopes.length).toBe(10);
       const ps = permissionRequests.permissionScopes;
       expect(ps.find(
         scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read
-      )).to.not.be.undefined;
+      )).toBeDefined();
       expect(ps.find(
         scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Write
-      )).to.not.be.undefined;
+      )).toBeDefined();
       expect(ps.find(
         scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Delete
-      )).to.not.be.undefined;
+      )).toBeDefined();
       expect(ps.find(
         scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Query
-      )).to.not.be.undefined;
+      )).toBeDefined();
       expect(ps.find(
         scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Subscribe
-      )).to.not.be.undefined;
+      )).toBeDefined();
       expect(ps.find(
         scope => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Query
-      )).to.not.be.undefined;
+      )).toBeDefined();
       expect(ps.find(
         scope => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Configure
-      )).to.not.be.undefined;
+      )).toBeDefined();
     });
   });
 });

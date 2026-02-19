@@ -1,4 +1,4 @@
-import { expect } from 'chai';
+import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { DeterministicKeyGenerator } from '../src/utils-internal.js';
 import { EdDsaAlgorithm } from '@enbox/crypto';
@@ -27,10 +27,10 @@ describe('Internal Utils', () => {
       });
 
       const firstKeyUri = await keyGenerator.generateKey({ algorithm: 'Ed25519' });
-      expect(firstKeyUri).to.include(identityPrivateKey.kid);
+      expect(firstKeyUri).toContain(identityPrivateKey.kid);
 
       const secondKeyUri = await keyGenerator.generateKey({ algorithm: 'Ed25519' });
-      expect(secondKeyUri).to.include(signingPrivateKey.kid);
+      expect(secondKeyUri).toContain(signingPrivateKey.kid);
     });
   });
 });

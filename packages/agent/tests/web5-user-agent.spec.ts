@@ -3,11 +3,11 @@ import type { PortableIdentity } from '../src/types/identity.js';
 
 import { Convert } from '@enbox/common';
 import { DidDht } from '@enbox/dids';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+
 import { DidInterface } from '../src/did-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
-import { expect } from 'chai';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
-
 import { testDwnUrl } from './utils/test-config.js';
 import { Web5UserAgent } from '../src/web5-user-agent.js';
 
@@ -23,7 +23,7 @@ describe('Web5UserAgent', () => {
         userAgent.agentDid;
         throw new Error('Expected an error');
       } catch (error: any) {
-        expect(error.message).to.include('"agentDid" property is not set');
+        expect(error.message).toContain('"agentDid" property is not set');
       }
     });
   });
@@ -32,15 +32,15 @@ describe('Web5UserAgent', () => {
     it('should create an instance with default parameters when none are provided', async () => {
       const userAgent = await Web5UserAgent.create({ dataPath: '__TESTDATA__/USERAGENT' });
 
-      expect(userAgent).to.be.an.instanceof(Web5UserAgent);
-      expect(userAgent.crypto).to.exist;
-      expect(userAgent.did).to.exist;
-      expect(userAgent.dwn).to.exist;
-      expect(userAgent.identity).to.exist;
-      expect(userAgent.keyManager).to.exist;
-      expect(userAgent.rpc).to.exist;
-      expect(userAgent.sync).to.exist;
-      expect(userAgent.vault).to.exist;
+      expect(userAgent).toBeInstanceOf(Web5UserAgent);
+      expect(userAgent.crypto).toBeDefined();
+      expect(userAgent.did).toBeDefined();
+      expect(userAgent.dwn).toBeDefined();
+      expect(userAgent.identity).toBeDefined();
+      expect(userAgent.keyManager).toBeDefined();
+      expect(userAgent.rpc).toBeDefined();
+      expect(userAgent.sync).toBeDefined();
+      expect(userAgent.vault).toBeDefined();
     });
   });
 
@@ -50,7 +50,7 @@ describe('Web5UserAgent', () => {
     describe(`with ${agentStoreType} data stores`, () => {
       let testHarness: PlatformAgentTestHarness;
 
-      before(async () => {
+      beforeAll(async () => {
         testHarness = await PlatformAgentTestHarness.setup({
           agentClass  : Web5UserAgent,
           agentStores : agentStoreType
@@ -62,7 +62,7 @@ describe('Web5UserAgent', () => {
         await testHarness.createAgentDid();
       });
 
-      after(async () => {
+      afterAll(async () => {
         await testHarness.clearStorage();
         await testHarness.closeStorage();
       });
@@ -70,17 +70,17 @@ describe('Web5UserAgent', () => {
       describe('firstLaunch()', () => {
         it('returns true the first time the Identity Agent runs', async () => {
           const result = await testHarness.agent.firstLaunch();
-          expect(result).to.be.true;
+          expect(result).toBe(true);
         });
 
         it('returns false after Identity Agent initialization', async () => {
           let result = await testHarness.agent.firstLaunch();
-          expect(result).to.be.true;
+          expect(result).toBe(true);
 
           await testHarness.agent.initialize({ password: 'test' });
 
           result = await testHarness.agent.firstLaunch();
-          expect(result).to.be.false;
+          expect(result).toBe(false);
         });
       });
 
@@ -92,9 +92,9 @@ describe('Web5UserAgent', () => {
           });
 
           // Verify that the vault is initialized and is unlocked.
-          expect(generatedRecoveryPhrase).to.be.a('string');
+          expect(typeof generatedRecoveryPhrase).toBe('string');
           if (typeof generatedRecoveryPhrase !== 'string') {throw new Error('type guard');}
-          expect(generatedRecoveryPhrase.split(' ')).to.have.lengthOf(12);
+          expect(generatedRecoveryPhrase.split(' ')).toHaveLength(12);
         });
 
         it('accepts a recovery phrase', async () => {
@@ -107,7 +107,7 @@ describe('Web5UserAgent', () => {
           });
 
           // Verify that the vault is initialized and is unlocked.
-          expect(returnedRecoveryPhrase).to.equal(predefinedRecoveryPhrase);
+          expect(returnedRecoveryPhrase).toBe(predefinedRecoveryPhrase);
         });
       });
 
@@ -118,15 +118,15 @@ describe('Web5UserAgent', () => {
             messageParams : { method: 'jwk' }
           });
 
-          expect(didCreateResponse).to.exist;
-          expect(didCreateResponse).to.have.property('ok', true);
-          expect(didCreateResponse).to.have.property('status');
-          expect(didCreateResponse.status).to.have.property('code', 201);
-          expect(didCreateResponse.status).to.have.property('message', 'Created');
-          expect(didCreateResponse).to.have.property('result');
-          expect(didCreateResponse.result).to.have.property('uri');
-          expect(didCreateResponse.result).to.have.property('document');
-          expect(didCreateResponse.result).to.have.property('metadata');
+          expect(didCreateResponse).toBeDefined();
+          expect(didCreateResponse).toHaveProperty('ok', true);
+          expect(didCreateResponse).toHaveProperty('status');
+          expect(didCreateResponse.status).toHaveProperty('code', 201);
+          expect(didCreateResponse.status).toHaveProperty('message', 'Created');
+          expect(didCreateResponse).toHaveProperty('result');
+          expect(didCreateResponse.result).toHaveProperty('uri');
+          expect(didCreateResponse.result).toHaveProperty('document');
+          expect(didCreateResponse.result).toHaveProperty('metadata');
         });
 
         it('processes a DID Resolve request', async () => {
@@ -135,15 +135,15 @@ describe('Web5UserAgent', () => {
             messageParams : { didUri: testHarness.agent.agentDid.uri }
           });
 
-          expect(didResolveResponse).to.exist;
-          expect(didResolveResponse).to.have.property('ok', true);
-          expect(didResolveResponse).to.have.property('status');
-          expect(didResolveResponse.status).to.have.property('code', 200);
-          expect(didResolveResponse.status).to.have.property('message', 'OK');
-          expect(didResolveResponse).to.have.property('result');
-          expect(didResolveResponse.result).to.have.property('didDocument');
-          expect(didResolveResponse.result).to.have.property('didDocumentMetadata');
-          expect(didResolveResponse.result).to.have.property('didResolutionMetadata');
+          expect(didResolveResponse).toBeDefined();
+          expect(didResolveResponse).toHaveProperty('ok', true);
+          expect(didResolveResponse).toHaveProperty('status');
+          expect(didResolveResponse.status).toHaveProperty('code', 200);
+          expect(didResolveResponse.status).toHaveProperty('message', 'OK');
+          expect(didResolveResponse).toHaveProperty('result');
+          expect(didResolveResponse.result).toHaveProperty('didDocument');
+          expect(didResolveResponse.result).toHaveProperty('didDocumentMetadata');
+          expect(didResolveResponse.result).toHaveProperty('didResolutionMetadata');
         });
       });
 
@@ -174,18 +174,18 @@ describe('Web5UserAgent', () => {
             });
 
             // Verify the response.
-            expect(writeResponse).to.have.property('message');
-            expect(writeResponse).to.have.property('messageCid');
-            expect(writeResponse).to.have.property('reply');
+            expect(writeResponse).toHaveProperty('message');
+            expect(writeResponse).toHaveProperty('messageCid');
+            expect(writeResponse).toHaveProperty('reply');
 
             const writeMessage = writeResponse.message;
-            expect(writeMessage).to.have.property('authorization');
-            expect(writeMessage).to.have.property('descriptor');
-            expect(writeMessage).to.have.property('recordId');
+            expect(writeMessage).toHaveProperty('authorization');
+            expect(writeMessage).toHaveProperty('descriptor');
+            expect(writeMessage).toHaveProperty('recordId');
 
             const writeReply = writeResponse.reply;
-            expect(writeReply).to.have.property('status');
-            expect(writeReply.status.code).to.equal(202);
+            expect(writeReply).toHaveProperty('status');
+            expect(writeReply.status.code).toBe(202);
           });
         });
 
@@ -195,7 +195,7 @@ describe('Web5UserAgent', () => {
               await testHarness.agent.processVcRequest({});
               throw new Error('Expected an error');
             } catch (error) {
-              expect(error).to.have.property('message', 'Not implemented');
+              expect(error).toHaveProperty('message', 'Not implemented');
             }
           });
         });
@@ -209,7 +209,7 @@ describe('Web5UserAgent', () => {
               });
               throw new Error('Expected an error');
             } catch (error) {
-              expect(error).to.have.property('message', 'Not implemented');
+              expect(error).toHaveProperty('message', 'Not implemented');
             }
           });
         });
@@ -351,18 +351,18 @@ describe('Web5UserAgent', () => {
             });
 
             // Verify the response.
-            expect(writeResponse).to.have.property('message');
-            expect(writeResponse).to.have.property('messageCid');
-            expect(writeResponse).to.have.property('reply');
+            expect(writeResponse).toHaveProperty('message');
+            expect(writeResponse).toHaveProperty('messageCid');
+            expect(writeResponse).toHaveProperty('reply');
 
             const writeMessage = writeResponse.message;
-            expect(writeMessage).to.have.property('authorization');
-            expect(writeMessage).to.have.property('descriptor');
-            expect(writeMessage).to.have.property('recordId');
+            expect(writeMessage).toHaveProperty('authorization');
+            expect(writeMessage).toHaveProperty('descriptor');
+            expect(writeMessage).toHaveProperty('recordId');
 
             const writeReply = writeResponse.reply;
-            expect(writeReply).to.have.property('status');
-            expect(writeReply.status.code).to.equal(202);
+            expect(writeReply).toHaveProperty('status');
+            expect(writeReply.status.code).toBe(202);
           });
         });
 
@@ -372,7 +372,7 @@ describe('Web5UserAgent', () => {
               await testHarness.agent.sendVcRequest({});
               throw new Error('Expected an error');
             } catch (error) {
-              expect(error).to.have.property('message', 'Not implemented');
+              expect(error).toHaveProperty('message', 'Not implemented');
             }
           });
         });
@@ -404,8 +404,8 @@ describe('Web5UserAgent', () => {
               didUri: socialIdentity.did.uri,
             });
 
-            expect(storedIdentity).to.exist;
-            expect(storedIdentity!.did).to.have.property('uri', socialIdentity.did.uri);
+            expect(storedIdentity).toBeDefined();
+            expect(storedIdentity!.did).toHaveProperty('uri', socialIdentity.did.uri);
           });
         });
       }
