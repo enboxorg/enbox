@@ -1,6 +1,6 @@
 {
   "name": "@enbox/dwn-sql-store",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "SQL backed implementations of DWN MessageStore, DataStore, and StateIndex",
   "type": "module",
   "license": "Apache-2.0",
@@ -37,7 +37,6 @@
     "@types/supertest": "2.0.12",
     "@typescript-eslint/eslint-plugin": "8.32.1",
     "@typescript-eslint/parser": "8.32.1",
-
     "bun-types": "latest",
     "esbuild": "^0.19.3",
     "eslint": "9.7.0",
