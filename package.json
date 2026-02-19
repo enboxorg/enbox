@@ -23,7 +23,7 @@
     "lint": "bun run --filter '*' lint",
     "lint:fix": "bun run --filter '*' lint:fix",
     "changeset": "changeset",
-    "version": "changeset version",
+    "version": "changeset version && bun install",
     "release": "bun run build && ./scripts/publish.sh"
   },
   "devDependencies": {

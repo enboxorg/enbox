@@ -59,9 +59,9 @@ jobs:
           # raw package dir, which does NOT resolve Bun's workspace:* protocol.
           # See: https://github.com/oven-sh/bun/issues/24124
           publish: bun run release
-          # After changeset version bumps package.json files, regenerate the
-          # lockfile so bun pm pack resolves workspace:* to the new versions.
-          version: bun run version && bun install
+          # The version script runs changeset version then bun install to
+          # regenerate the lockfile so workspace:* resolves to new versions.
+          version: bun run version
           commit: "chore: version packages"
           title: "chore: version packages"
         env:
