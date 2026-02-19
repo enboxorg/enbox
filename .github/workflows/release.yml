@@ -54,11 +54,14 @@ jobs:
         id: changesets
         uses: changesets/action@v1
         with:
-          # Uses bun publish (via scripts/publish.sh) instead of changeset publish
-          # because changeset publish calls npm publish, which does NOT resolve
-          # Bun's workspace:* protocol — resulting in broken packages on npm.
+          # Uses bun pack + npm publish (via scripts/publish.sh) instead of
+          # changeset publish because changeset publish calls npm publish on the
+          # raw package dir, which does NOT resolve Bun's workspace:* protocol.
+          # See: https://github.com/oven-sh/bun/issues/24124
           publish: bun run release
-          version: bun run version
+          # After changeset version bumps package.json files, regenerate the
+          # lockfile so bun pm pack resolves workspace:* to the new versions.
+          version: bun run version && bun install
           commit: "chore: version packages"
           title: "chore: version packages"
         env:
