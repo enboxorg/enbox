@@ -1,10 +1,79 @@
 import type { DerivedPrivateJwk } from '../utils/hd-key.js';
 import type { EncryptionKeyDeriver } from '../types/encryption-types.js';
 import type { PrivateKeyJwk } from '../types/jose-types.js';
-import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
+import type { ProtocolDefinition, ProtocolRuleSet, ProtocolUses } from '../types/protocols-types.js';
 
 import { Secp256k1 } from './secp256k1.js';
 import { HdKey, KeyDerivationScheme } from '../utils/hd-key.js';
+
+/**
+ * Result of parsing a cross-protocol reference in `alias:path` format.
+ */
+export type CrossProtocolRef = {
+  /** The alias key from the `uses` map. */
+  alias: string;
+  /** The protocol path within the referenced protocol. */
+  protocolPath: string;
+};
+
+/**
+ * Parses a string that may be a cross-protocol reference in `alias:path` format.
+ * Returns `undefined` if the string is a local (non-cross-protocol) reference.
+ *
+ * Examples:
+ * - `"threads:thread"` → `{ alias: "threads", protocolPath: "thread" }`
+ * - `"threads:thread/participant"` → `{ alias: "threads", protocolPath: "thread/participant" }`
+ * - `"thread/comment"` → `undefined` (local reference, no alias)
+ */
+export function parseCrossProtocolRef(ref: string): CrossProtocolRef | undefined {
+  const colonIndex = ref.indexOf(':');
+  if (colonIndex === -1) {
+    return undefined;
+  }
+
+  const alias = ref.substring(0, colonIndex);
+  const protocolPath = ref.substring(colonIndex + 1);
+
+  return { alias, protocolPath };
+}
+
+/**
+ * Returns `true` if the given string contains a `:` indicating a cross-protocol reference.
+ */
+export function isCrossProtocolRef(ref: string): boolean {
+  return ref.includes(':');
+}
+
+/**
+ * Resolves a cross-protocol alias to its protocol URI using the `uses` map.
+ * @returns The protocol URI for the alias, or `undefined` if the alias is not found.
+ */
+export function resolveUsesAlias(alias: string, uses: ProtocolUses | undefined): string | undefined {
+  if (uses === undefined) {
+    return undefined;
+  }
+  return uses[alias];
+}
+
+/**
+ * Gets the rule set at a given protocol path within a protocol definition's structure tree.
+ * Returns `undefined` if the path does not exist.
+ */
+export function getRuleSetAtPath(protocolPath: string, structure: { [key: string]: ProtocolRuleSet }): ProtocolRuleSet | undefined {
+  const segments = protocolPath.split('/');
+  let current: ProtocolRuleSet | undefined;
+  let currentLevel: { [key: string]: ProtocolRuleSet } = structure;
+
+  for (const segment of segments) {
+    current = currentLevel[segment];
+    if (current === undefined) {
+      return undefined;
+    }
+    currentLevel = current as { [key: string]: ProtocolRuleSet };
+  }
+
+  return current;
+}
 
 /**
  * Class containing Protocol related utility methods.

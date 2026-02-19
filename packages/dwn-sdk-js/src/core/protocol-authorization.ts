@@ -6,7 +6,9 @@ import type { RecordsQuery } from '../interfaces/records-query.js';
 import type { RecordsRead } from '../interfaces/records-read.js';
 import type { RecordsSubscribe } from '../interfaces/records-subscribe.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
-import type { ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage, ProtocolType, ProtocolTypes } from '../types/protocols-types.js';
+import type {
+  ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage, ProtocolType, ProtocolTypes
+} from '../types/protocols-types.js';
 
 import Ajv from 'ajv/dist/2020.js';
 import { FilterUtility } from '../utils/filter.js';
@@ -16,6 +18,7 @@ import { RecordsWrite } from '../interfaces/records-write.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
+import { isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
 
 export class ProtocolAuthorization {
@@ -44,10 +47,10 @@ export class ProtocolAuthorization {
       governingTimestamp,
     );
 
-    // verify declared protocol type exists in protocol and that it conforms to type specification
-    ProtocolAuthorization.verifyType(
-      incomingMessage.message,
-      protocolDefinition.types
+    // verify declared protocol type exists in protocol and that it conforms to type specification.
+    // For cross-protocol composition, the type may be defined in a referenced protocol.
+    await ProtocolAuthorization.verifyTypeWithComposition(
+      tenant, incomingMessage.message, protocolDefinition, messageStore
     );
 
     // validate `protocolPath`
@@ -135,6 +138,7 @@ export class ProtocolAuthorization {
       ruleSet,
       recordChain,
       messageStore,
+      protocolDefinition,
     );
   }
 
@@ -193,6 +197,7 @@ export class ProtocolAuthorization {
       ruleSet,
       recordChain,
       messageStore,
+      protocolDefinition,
     );
   }
 
@@ -233,6 +238,7 @@ export class ProtocolAuthorization {
       ruleSet,
       [], // record chain is not relevant to queries or subscriptions
       messageStore,
+      protocolDefinition,
     );
   }
 
@@ -290,6 +296,7 @@ export class ProtocolAuthorization {
       ruleSet,
       recordChain,
       messageStore,
+      protocolDefinition,
     );
   }
 
@@ -425,6 +432,7 @@ export class ProtocolAuthorization {
 
   /**
    * Verifies the `protocolPath` declared in the given message (if it is a RecordsWrite) matches the path of actual record chain.
+   * For cross-protocol composition, the parent record may belong to a different protocol (resolved via `$ref` in the composing protocol).
    * @throws {DwnError} if fails verification.
    */
   private static async verifyProtocolPathAndContextId(
@@ -449,20 +457,42 @@ export class ProtocolAuthorization {
 
     // Else `parentId` is defined, so we need to verify both protocolPath and contextId
 
+    // Determine the protocol URI for the parent query.
+    // If the parent path segment has a `$ref` in the composing protocol, the parent lives in a different protocol.
+    const childProtocol = inboundMessage.message.descriptor.protocol!;
+    const parentProtocolUri = await ProtocolAuthorization.resolveParentProtocolUri(
+      tenant, childProtocol, declaredProtocolPath, messageStore
+    );
+
     // fetch the parent message
-    const protocol = inboundMessage.message.descriptor.protocol!;
     const query: Filter = {
       isLatestBaseState : true, // NOTE: this filter is critical, to ensure are are not returning a deleted parent
       interface         : DwnInterfaceName.Records,
       method            : DwnMethodName.Write,
-      protocol,
+      protocol          : parentProtocolUri,
       recordId          : parentId
     };
     const { messages: parentMessages } = await messageStore.query(tenant, [query]);
     const parentMessage = (parentMessages as RecordsWriteMessage[])[0];
 
+    if (parentMessage === undefined) {
+      // if this is a cross-protocol composition lookup, use a more descriptive error
+      if (parentProtocolUri !== childProtocol) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolAuthorizationCrossProtocolParentNotFound,
+          `Could not find parent record '${parentId}' in protocol '${parentProtocolUri}' ` +
+          `for cross-protocol child at path '${declaredProtocolPath}'.`
+        );
+      }
+
+      throw new DwnError(
+        DwnErrorCode.ProtocolAuthorizationIncorrectProtocolPath,
+        `Could not find matching parent record to verify declared protocol path '${declaredProtocolPath}'.`
+      );
+    }
+
     // verifying protocolPath of incoming message is a child of the parent message's protocolPath
-    const parentProtocolPath = parentMessage?.descriptor?.protocolPath;
+    const parentProtocolPath = parentMessage.descriptor.protocolPath;
     const expectedProtocolPath = `${parentProtocolPath}/${declaredTypeName}`;
     if (expectedProtocolPath !== declaredProtocolPath) {
       throw new DwnError(
@@ -484,6 +514,120 @@ export class ProtocolAuthorization {
   }
 
   /**
+   * Resolves the protocol URI that should be used when querying for the parent record.
+   * For standard (non-composed) records, this is the same as the child's protocol.
+   * For cross-protocol composition, the parent may live in a different protocol
+   * (resolved via `$ref` in the composing protocol's definition).
+   *
+   * Logic: Given a child at protocolPath `a/b/c`, the parent is at `a/b`.
+   * Walk up the composing protocol's structure from root to `a/b`.
+   * If any segment along the way has a `$ref`, the parent (and its ancestors up to the `$ref` boundary)
+   * live in the referenced protocol. Specifically, the `$ref` at the topmost ancestor tells us
+   * the parent's protocol URI.
+   */
+  private static async resolveParentProtocolUri(
+    tenant: string,
+    childProtocolUri: string,
+    childProtocolPath: string,
+    messageStore: MessageStore,
+  ): Promise<string> {
+    const segments = childProtocolPath.split('/');
+
+    // A root-level record (no `/` in path) has no parent or uses the same protocol
+    if (segments.length <= 1) {
+      return childProtocolUri;
+    }
+
+    // Fetch the composing protocol's definition
+    const composingDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
+      tenant, childProtocolUri, messageStore
+    );
+
+    // Walk the structure to find the parent's path segment
+    // The parent's position in the structure is at segments[0..n-2]
+    // We check if the first segment has a `$ref`, which means the parent is in a different protocol
+    const firstSegmentRuleSet = composingDefinition.structure[segments[0]];
+    if (firstSegmentRuleSet?.$ref !== undefined) {
+      const parsed = parseCrossProtocolRef(firstSegmentRuleSet.$ref);
+      if (parsed !== undefined && composingDefinition.uses !== undefined) {
+        const resolvedUri = composingDefinition.uses[parsed.alias];
+        if (resolvedUri !== undefined) {
+          // The parent path is within the `$ref` boundary — check if the parent IS the `$ref` node
+          // or is a descendant of it (which would still be in the composing protocol).
+          // If segments.length === 2, parent is at segments[0] which IS the $ref node → parent's protocol is the referenced one.
+          // If segments.length > 2, parent is at segments[0..n-2]. If segments[0] is $ref, the parent could be:
+          //   - Still the $ref node itself (segments.length === 2) → referenced protocol
+          //   - A child of the $ref node defined in the composing protocol (segments.length > 2) → composing protocol
+          if (segments.length === 2) {
+            // Parent is the $ref node itself (e.g., child is "thread/comment", parent is "thread")
+            return resolvedUri;
+          }
+          // else: parent is a deeper child defined in the composing protocol
+          return childProtocolUri;
+        }
+      }
+    }
+
+    return childProtocolUri;
+  }
+
+  /**
+   * Verifies the `dataFormat` and `schema` declared in the given message matches the type in the protocol.
+   * For cross-protocol composition, if the type is at a `$ref` position in the structure,
+   * the type definition is looked up in the referenced protocol's `types` map instead.
+   */
+  private static async verifyTypeWithComposition(
+    tenant: string,
+    inboundMessage: RecordsWriteMessage,
+    protocolDefinition: ProtocolDefinition,
+    messageStore: MessageStore,
+  ): Promise<void> {
+    const declaredProtocolPath = inboundMessage.descriptor.protocolPath!;
+    const declaredTypeName = ProtocolAuthorization.getTypeName(declaredProtocolPath);
+
+    // Resolve which protocol types map to use.
+    // If the first path segment has `$ref`, this record's type might be defined in a referenced protocol.
+    const protocolTypes = await ProtocolAuthorization.resolveProtocolTypesForPath(
+      tenant, declaredProtocolPath, protocolDefinition, messageStore
+    );
+
+    ProtocolAuthorization.verifyType(inboundMessage, protocolTypes, declaredTypeName);
+  }
+
+  /**
+   * Resolves the `ProtocolTypes` map that contains the type definition for the given protocol path.
+   * For non-composed records, this is the protocol definition's own `types` map.
+   * For records at a `$ref` position, this is the referenced protocol's `types` map.
+   */
+  private static async resolveProtocolTypesForPath(
+    tenant: string,
+    protocolPath: string,
+    protocolDefinition: ProtocolDefinition,
+    messageStore: MessageStore,
+  ): Promise<ProtocolTypes> {
+    const segments = protocolPath.split('/');
+
+    // Check if the first segment has a `$ref`
+    const firstSegmentRuleSet = protocolDefinition.structure[segments[0]];
+    if (firstSegmentRuleSet?.$ref !== undefined && segments.length === 1) {
+      // This record IS the $ref node itself — its type is defined in the referenced protocol
+      const parsed = parseCrossProtocolRef(firstSegmentRuleSet.$ref);
+      if (parsed !== undefined && protocolDefinition.uses !== undefined) {
+        const refProtocolUri = protocolDefinition.uses[parsed.alias];
+        if (refProtocolUri !== undefined) {
+          const refDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
+            tenant, refProtocolUri, messageStore
+          );
+          return refDefinition.types;
+        }
+      }
+    }
+
+    // Default: use the composing protocol's own types
+    return protocolDefinition.types;
+  }
+
+  /**
    * Verifies the `dataFormat` and `schema` declared in the given message (if it is a RecordsWrite) matches dataFormat
    * and schema of the type in the given protocol.
    * @throws {DwnError} if fails verification.
@@ -491,27 +635,24 @@ export class ProtocolAuthorization {
   private static verifyType(
     inboundMessage: RecordsWriteMessage,
     protocolTypes: ProtocolTypes,
+    typeName?: string,
   ): void {
-
+    const declaredTypeName = typeName ?? ProtocolAuthorization.getTypeName(inboundMessage.descriptor.protocolPath!);
     const typeNames = Object.keys(protocolTypes);
-    const declaredProtocolPath = inboundMessage.descriptor.protocolPath!;
-    const declaredTypeName = ProtocolAuthorization.getTypeName(declaredProtocolPath);
+
     if (!typeNames.includes(declaredTypeName)) {
       throw new DwnError(DwnErrorCode.ProtocolAuthorizationInvalidType,
         `record with type ${declaredTypeName} not allowed in protocol`);
     }
 
-    const protocolPath = inboundMessage.descriptor.protocolPath!;
-    // existence of `protocolType` has already been verified
-    const typeName = ProtocolAuthorization.getTypeName(protocolPath);
-    const protocolType: ProtocolType = protocolTypes[typeName];
+    const protocolType: ProtocolType = protocolTypes[declaredTypeName];
 
     // no `schema` specified in protocol definition means that any schema is allowed
     const { schema } = inboundMessage.descriptor;
     if (protocolType.schema !== undefined && protocolType.schema !== schema) {
       throw new DwnError(
         DwnErrorCode.ProtocolAuthorizationInvalidSchema,
-        `type '${typeName}' must have schema '${protocolType.schema}', \
+        `type '${declaredTypeName}' must have schema '${protocolType.schema}', \
         instead has '${schema}'`
       );
     }
@@ -521,7 +662,7 @@ export class ProtocolAuthorization {
     if (protocolType.dataFormats !== undefined && !protocolType.dataFormats.includes(dataFormat)) {
       throw new DwnError(
         DwnErrorCode.ProtocolAuthorizationIncorrectDataFormat,
-        `type '${typeName}' must have data format in (${protocolType.dataFormats}), \
+        `type '${declaredTypeName}' must have data format in (${protocolType.dataFormats}), \
         instead has '${dataFormat}'`
       );
     }
@@ -529,6 +670,8 @@ export class ProtocolAuthorization {
 
   /**
    * Check if the incoming message is invoking a role. If so, validate the invoked role.
+   * For cross-protocol role invocation, the role record may live in a different protocol
+   * (resolved via the composing protocol's `uses` map).
    */
   private static async verifyInvokedRole(
     tenant: string,
@@ -545,25 +688,54 @@ export class ProtocolAuthorization {
       return;
     }
 
-    const roleRuleSet = ProtocolAuthorization.getRuleSetAtProtocolPath(protocolRole, protocolDefinition);
-    if (roleRuleSet === undefined || !roleRuleSet.$role) {
-      throw new DwnError(
-        DwnErrorCode.ProtocolAuthorizationNotARole,
-        `Protocol path ${protocolRole} does not match role record type.`
-      );
+    // Determine the protocol URI and protocol path for the role record.
+    // For cross-protocol roles (e.g., "threads:thread/participant"), resolve the alias.
+    let roleProtocolUri = protocolUri;
+    let roleProtocolPath = protocolRole;
+
+    if (isCrossProtocolRef(protocolRole) && protocolDefinition.uses !== undefined) {
+      const parsed = parseCrossProtocolRef(protocolRole);
+      if (parsed !== undefined) {
+        const resolvedUri = protocolDefinition.uses[parsed.alias];
+        if (resolvedUri !== undefined) {
+          roleProtocolUri = resolvedUri;
+          roleProtocolPath = parsed.protocolPath;
+
+          // Fetch the referenced protocol's definition to validate the role exists
+          const refDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
+            tenant, roleProtocolUri, messageStore
+          );
+          const roleRuleSet = ProtocolAuthorization.getRuleSetAtProtocolPath(roleProtocolPath, refDefinition);
+          if (roleRuleSet === undefined || !roleRuleSet.$role) {
+            throw new DwnError(
+              DwnErrorCode.ProtocolAuthorizationNotARole,
+              `Cross-protocol role path ${protocolRole} does not match role record type.`
+            );
+          }
+        }
+      }
+    } else {
+      // Local role: validate in the composing protocol's definition
+      const roleRuleSet = ProtocolAuthorization.getRuleSetAtProtocolPath(protocolRole, protocolDefinition);
+      if (roleRuleSet === undefined || !roleRuleSet.$role) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolAuthorizationNotARole,
+          `Protocol path ${protocolRole} does not match role record type.`
+        );
+      }
     }
 
     // Construct a filter to fetch the invoked role record
     const roleRecordFilter: Filter = {
       interface         : DwnInterfaceName.Records,
       method            : DwnMethodName.Write,
-      protocol          : protocolUri,
-      protocolPath      : protocolRole,
+      protocol          : roleProtocolUri,
+      protocolPath      : roleProtocolPath,
       recipient         : incomingMessage.author!,
       isLatestBaseState : true,
     };
 
-    const ancestorSegmentCountOfRolePath = protocolRole.split('/').length - 1;
+    const ancestorSegmentCountOfRolePath = roleProtocolPath.split('/').length - 1;
     if (contextId === undefined && ancestorSegmentCountOfRolePath > 0) {
       throw new DwnError(
         DwnErrorCode.ProtocolAuthorizationMissingContextId,
@@ -589,7 +761,7 @@ export class ProtocolAuthorization {
     if (matchingMessages.length === 0) {
       throw new DwnError(
         DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound,
-        `No matching role record found for protocol path ${protocolRole}`
+        `No matching role record found for protocol path ${roleProtocolPath}`
       );
     }
   }
@@ -688,6 +860,7 @@ export class ProtocolAuthorization {
 
   /**
    * Verifies the given message is authorized by one of the action rules in the given protocol rule set.
+   * @param protocolDefinition Optional protocol definition for resolving cross-protocol `of` and `role` references.
    * @throws {Error} if action not allowed.
    */
   private static async authorizeAgainstAllowedActions(
@@ -696,6 +869,7 @@ export class ProtocolAuthorization {
     ruleSet: ProtocolRuleSet,
     recordChain: RecordsWriteMessage[],
     messageStore: MessageStore,
+    protocolDefinition?: ProtocolDefinition,
   ): Promise<void> {
     const incomingMessageMethod = incomingMessage.message.descriptor.method;
     const actionsSeekingARuleMatch = await ProtocolAuthorization.getActionsSeekingARuleMatch(tenant, incomingMessage, messageStore);
@@ -772,7 +946,7 @@ export class ProtocolAuthorization {
       }
 
       // validate the actor is allowed by the current action rule
-      const ancestorRuleSuccess: boolean = await ProtocolAuthorization.checkActor(author, actionRule, recordChain);
+      const ancestorRuleSuccess: boolean = await ProtocolAuthorization.checkActor(author, actionRule, recordChain, protocolDefinition);
       if (ancestorRuleSuccess) {
         return;
       }
@@ -924,24 +1098,49 @@ export class ProtocolAuthorization {
 
   /**
    * Checks if the `who: 'author' | 'recipient'` action rule has a matching record in the record chain.
+   * For cross-protocol `of` references (e.g., `"threads:thread"`), matches against both the protocol URI
+   * and the protocol path of the ancestor record.
    * @returns `true` if the action rule is satisfied; `false` otherwise.
    */
   private static async checkActor(
     author: string,
     actionRule: ProtocolActionRule,
     recordChain: RecordsWriteMessage[],
+    composingDefinition?: ProtocolDefinition,
   ): Promise<boolean> {
-    // find a message with matching protocolPath
-    const ancestorRecordsWrite = recordChain.find((recordsWriteMessage) =>
-      recordsWriteMessage.descriptor.protocolPath === actionRule.of!
-    );
+    const ofValue = actionRule.of;
+
+    // `of` should always be defined when `checkActor` is called, but guard defensively
+    if (ofValue === undefined) {
+      return false;
+    }
+
+    let ancestorRecordsWrite: RecordsWriteMessage | undefined;
+
+    if (isCrossProtocolRef(ofValue) && composingDefinition?.uses !== undefined) {
+      // Cross-protocol `of`: resolve alias to protocol URI and match by both protocol + protocolPath
+      const parsed = parseCrossProtocolRef(ofValue);
+      if (parsed !== undefined) {
+        const refProtocolUri = composingDefinition.uses[parsed.alias];
+        if (refProtocolUri !== undefined) {
+          ancestorRecordsWrite = recordChain.find((msg) =>
+            msg.descriptor.protocol === refProtocolUri && msg.descriptor.protocolPath === parsed.protocolPath
+          );
+        }
+      }
+    } else {
+      // Local `of`: match by protocolPath only (same protocol assumed)
+      ancestorRecordsWrite = recordChain.find((msg) =>
+        msg.descriptor.protocolPath === ofValue
+      );
+    }
 
     if (ancestorRecordsWrite === undefined) {
       // This should be unreachable for valid protocol definitions because `ProtocolsConfigure.validateRuleSetRecursively()`
       // now validates that `actionRule.of` is an ancestor of the current protocol path at definition time.
       throw new DwnError(
         DwnErrorCode.ProtocolAuthorizationActionNotAllowed,
-        `No ancestor record found with protocol path '${actionRule.of!}' in the record chain. ` +
+        `No ancestor record found with protocol path '${ofValue}' in the record chain. ` +
         `This indicates an invalid protocol definition that should have been rejected at configuration time.`
       );
     }

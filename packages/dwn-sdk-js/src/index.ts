@@ -4,7 +4,7 @@ export type { EventListener, EventStream, EventSubscription, MessageEvent, Subsc
 export type { AuthorizationModel, Descriptor, DelegatedGrantRecordsWriteMessage, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSort, MessageSubscription, Pagination, QueryResultEntry, Status } from './types/message-types.js';
 export type { MessagesFilter, MessagesReadMessage as MessagesReadMessage, MessagesReadReply as MessagesReadReply, MessagesReadReplyEntry as MessagesReadReplyEntry, MessagesReadDescriptor, MessagesSubscribeDescriptor, MessagesSubscribeMessage, MessagesSubscribeReply, MessageSubscriptionHandler, MessagesSubscribeMessageOptions, MessagesSyncAction, MessagesSyncDescriptor, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
 export type { GT, LT, Filter, FilterValue, KeyValues, EqualFilter, OneOfFilter, RangeFilter, RangeCriterion, PaginationCursor, QueryOptions, RangeValue, StartsWithFilter } from './types/query-types.js';
-export type { ProtocolsConfigureDescriptor, ProtocolDefinition, ProtocolTypes, ProtocolRuleSet, ProtocolsQueryFilter, ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply, ProtocolActionRule, ProtocolPathEncryption, ProtocolsQueryDescriptor, ProtocolType } from './types/protocols-types.js';
+export type { ProtocolsConfigureDescriptor, ProtocolDefinition, ProtocolTypes, ProtocolRuleSet, ProtocolsQueryFilter, ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply, ProtocolActionRule, ProtocolPathEncryption, ProtocolsQueryDescriptor, ProtocolType, ProtocolUses } from './types/protocols-types.js';
 export type { DataEncodedRecordsWriteMessage, EncryptedKey, EncryptionProperty, RecordsCountDescriptor, RecordsCountMessage, RecordsCountReply, RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsQueryReply, RecordsQueryReplyEntry, RecordsReadMessage, RecordsReadReply, RecordsSubscribeDescriptor, RecordsSubscribeMessage, RecordsSubscribeReply, RecordSubscriptionHandler, RecordsWriteDescriptor, RecordsWriteTags, RecordsWriteTagValue, RecordsWriteMessage, RecordsWriteSignaturePayload, RecordsDeleteDescriptor, RecordsQueryDescriptor, RecordsReadDescriptor, RecordsSubscribeMessageOptions, RecordsWriteMessageOptions, InternalRecordsWriteMessage, RecordEvent, RecordsWriteTagsFilter } from './types/records-types.js';
 export type { GeneralJws, SignatureEntry } from './types/jws-types.js';
 export { authenticate } from './core/auth.js';
@@ -49,7 +49,8 @@ export { PermissionsProtocol } from './protocols/permissions.js';
 export type { PermissionGrantCreateOptions, PermissionRequestCreateOptions, PermissionRevocationCreateOptions } from './protocols/permissions.js';
 export { PrivateKeySigner } from './utils/private-key-signer.js';
 export type { PrivateKeySignerOptions } from './utils/private-key-signer.js';
-export { Protocols } from './utils/protocols.js';
+export { Protocols, parseCrossProtocolRef, isCrossProtocolRef, resolveUsesAlias, getRuleSetAtPath } from './utils/protocols.js';
+export type { CrossProtocolRef } from './utils/protocols.js';
 export { ProtocolsConfigure } from './interfaces/protocols-configure.js';
 export type { ProtocolsConfigureOptions } from './interfaces/protocols-configure.js';
 export { ProtocolsQuery } from './interfaces/protocols-query.js';

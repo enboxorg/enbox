@@ -3,8 +3,8 @@ import type { EventStream } from '../types/subscriptions.js';
 import type { GenericMessageReply } from '../types/message-types.js';
 import type { MessageStore } from '../types//message-store.js';
 import type { MethodHandler } from '../types/method-handler.js';
-import type { ProtocolsConfigureMessage } from '../types/protocols-types.js';
 import type { StateIndex } from '../types/state-index.js';
+import type { ProtocolDefinition, ProtocolsConfigureMessage } from '../types/protocols-types.js';
 
 import { authenticate } from '../core/auth.js';
 import { Message } from '../core/message.js';
@@ -14,6 +14,7 @@ import { ProtocolsConfigure } from '../interfaces/protocols-configure.js';
 import { ProtocolsGrantAuthorization } from '../core/protocols-grant-authorization.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
+import { getRuleSetAtPath, parseCrossProtocolRef } from '../utils/protocols.js';
 
 export class ProtocolsConfigureHandler implements MethodHandler {
 
@@ -41,6 +42,16 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       await ProtocolsConfigureHandler.authorizeProtocolsConfigure(tenant, protocolsConfigure, this.messageStore);
     } catch (e) {
       return messageReplyFromError(e, 401);
+    }
+
+    // validate composition dependencies: all `uses` protocols must already be installed,
+    // `$ref` paths must exist in the referenced protocols, and cross-protocol roles must exist.
+    try {
+      await ProtocolsConfigureHandler.validateCompositionDependencies(
+        tenant, message.descriptor.definition, this.messageStore
+      );
+    } catch (e) {
+      return messageReplyFromError(e, 400);
     }
 
     // attempt to get existing protocol
@@ -140,6 +151,127 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       });
     } else {
       throw new DwnError(DwnErrorCode.ProtocolsConfigureAuthorizationFailed, 'message failed authorization');
+    }
+  }
+
+  /**
+   * Validates composition dependencies at install time:
+   * 1. All `uses` protocols must already be installed for the tenant.
+   * 2. Each `$ref` path must exist in the referenced protocol's structure.
+   * 3. Cross-protocol role references must point to valid role paths in the referenced protocol.
+   *
+   * This is a no-op if the protocol definition has no `uses` map.
+   */
+  private static async validateCompositionDependencies(
+    tenant: string, definition: ProtocolDefinition, messageStore: MessageStore
+  ): Promise<void> {
+    const { uses } = definition;
+    if (uses === undefined) {
+      return;
+    }
+
+    // Fetch all referenced protocol definitions
+    const referencedDefinitions = new Map<string, ProtocolDefinition>();
+    for (const alias in uses) {
+      const protocolUri = uses[alias];
+      const refDefinition = await ProtocolsConfigureHandler.fetchInstalledProtocolDefinition(tenant, protocolUri, messageStore);
+
+      if (refDefinition === undefined) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureComposedProtocolNotInstalled,
+          `composed protocol '${protocolUri}' (alias '${alias}') is not installed for tenant '${tenant}'.`
+        );
+      }
+
+      referencedDefinitions.set(alias, refDefinition);
+    }
+
+    // Walk the structure and validate all $ref paths and cross-protocol role references
+    ProtocolsConfigureHandler.validateRefsAndRolesRecursively(definition.structure, '', referencedDefinitions);
+  }
+
+  /**
+   * Fetches the latest installed protocol definition for the given protocol URI.
+   * @returns The protocol definition, or `undefined` if not installed.
+   */
+  private static async fetchInstalledProtocolDefinition(
+    tenant: string, protocolUri: string, messageStore: MessageStore
+  ): Promise<ProtocolDefinition | undefined> {
+    const query = {
+      interface         : DwnInterfaceName.Protocols,
+      method            : DwnMethodName.Configure,
+      protocol          : protocolUri,
+      isLatestBaseState : true
+    };
+    const { messages } = await messageStore.query(tenant, [query]);
+
+    if (messages.length === 0) {
+      return undefined;
+    }
+
+    return (messages[0] as ProtocolsConfigureMessage).descriptor.definition;
+  }
+
+  /**
+   * Recursively walks the structure tree to validate:
+   * - `$ref` type paths exist in the referenced protocol's structure
+   * - Cross-protocol `role` references point to valid `$role: true` paths in the referenced protocol
+   */
+  private static validateRefsAndRolesRecursively(
+    ruleSet: { [key: string]: any },
+    protocolPath: string,
+    referencedDefinitions: Map<string, ProtocolDefinition>
+  ): void {
+    for (const key in ruleSet) {
+      if (key.startsWith('$')) {
+        continue;
+      }
+
+      const childRuleSet = ruleSet[key];
+      const childProtocolPath = protocolPath === '' ? key : `${protocolPath}/${key}`;
+
+      // Validate $ref path exists in the referenced protocol
+      if (childRuleSet.$ref !== undefined) {
+        const parsed = parseCrossProtocolRef(childRuleSet.$ref);
+        if (parsed !== undefined) {
+          const refDefinition = referencedDefinitions.get(parsed.alias);
+          if (refDefinition !== undefined) {
+            const targetRuleSet = getRuleSetAtPath(parsed.protocolPath, refDefinition.structure);
+            if (targetRuleSet === undefined) {
+              throw new DwnError(
+                DwnErrorCode.ProtocolsConfigureInvalidRefProtocolPath,
+                `'$ref' at protocol path '${childProtocolPath}' references type path '${parsed.protocolPath}' ` +
+                `which does not exist in protocol '${refDefinition.protocol}'.`
+              );
+            }
+          }
+        }
+      }
+
+      // Validate cross-protocol role references in $actions
+      const actionRules = childRuleSet.$actions ?? [];
+      for (const actionRule of actionRules) {
+        if (actionRule.role !== undefined) {
+          const parsed = parseCrossProtocolRef(actionRule.role);
+          if (parsed !== undefined) {
+            const refDefinition = referencedDefinitions.get(parsed.alias);
+            if (refDefinition !== undefined) {
+              // Check that the role path exists and is marked $role: true in the referenced protocol
+              const roleRuleSet = getRuleSetAtPath(parsed.protocolPath, refDefinition.structure);
+              if (roleRuleSet === undefined || !roleRuleSet.$role) {
+                throw new DwnError(
+                  DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolRole,
+                  `cross-protocol role '${actionRule.role}' at protocol path '${childProtocolPath}' ` +
+                  `does not point to a valid role ($role: true) in protocol '${refDefinition.protocol}'.`
+                );
+              }
+            }
+          }
+        }
+      }
+
+      // Recurse into children
+      ProtocolsConfigureHandler.validateRefsAndRolesRecursively(childRuleSet, childProtocolPath, referencedDefinitions);
     }
   }
 }
