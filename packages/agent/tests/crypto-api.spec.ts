@@ -62,9 +62,7 @@ describe('AgentCryptoApi', () => {
       }
     });
 
-    it.skip('supports A192GCM in all supported runtimes except Chrome browser', async () => {
-      // Google Chrome does not support AES with 192-bit keys.
-
+    it('supports A192GCM in all supported runtimes except Chrome browser', async () => {
       for (const algorithm of ['A192GCM'] as const) {
         // Setup.
         const privateKeyInput = await cryptoApi.generateKey({ algorithm });
@@ -96,9 +94,7 @@ describe('AgentCryptoApi', () => {
       }
     });
 
-    it.skip('supports A192KW in all supported runtimes except Chrome browser', async () => {
-      // Google Chrome does not support AES with 192-bit keys.
-
+    it('supports A192KW in all supported runtimes except Chrome browser', async () => {
       for (const algorithm of ['A192KW'] as const) {
         // Setup.
         const privateKeyInput = await cryptoApi.generateKey({ algorithm });
