@@ -64,11 +64,11 @@ export default defineConfig({
     holdUntilCrawlEnd: true,
   },
   test: {
-    // Browser-safe tests that do not depend on TestStores / TestEventStream.
-    // Tests using TestStores are excluded because they instantiate Level-backed
-    // stores requiring IndexedDB transactions that are complex in Vitest browser
-    // mode. See https://github.com/enboxorg/enbox/issues/236 for the plan to
-    // unlock those tests.
+    // Browser-compatible tests. Most are pure-logic; a few use TestStores which
+    // resolve to IndexedDB-backed stores in browser mode (via level's browser
+    // field). The 29 function-wrapped handler/feature/scenario tests are excluded
+    // because they require the TestSuite orchestrator and would add ~978 tests.
+    // See https://github.com/enboxorg/enbox/issues/236 for the full plan.
     include: [
       'tests/utils/cid.spec.ts',
       // data-stream.spec.ts excluded: its 500KB×3 stream duplication test exceeds
@@ -92,6 +92,7 @@ export default defineConfig({
       'tests/core/auth.spec.ts',
       'tests/core/message-reply.spec.ts',
       'tests/core/message.spec.ts',
+      'tests/core/protocol-authorization.spec.ts',
       'tests/jose/jws/general.spec.ts',
       'tests/smt/sparse-merkle-tree.spec.ts',
       'tests/store/blockstore-mock.spec.ts',
@@ -103,8 +104,14 @@ export default defineConfig({
       'tests/interfaces/records-query.spec.ts',
       'tests/interfaces/records-read.spec.ts',
       'tests/interfaces/records-subscribe.spec.ts',
+      'tests/interfaces/records-write.spec.ts',
       'tests/protocols/permission-grant.spec.ts',
       'tests/protocols/permission-request.spec.ts',
+      'tests/protocols/permissions.spec.ts',
+      // event-emitter-stream.spec.ts and scenarios/aggregator.spec.ts excluded:
+      // both use EventEmitterStream which calls setMaxListeners() — a method
+      // not provided by eventemitter3 (the browser polyfill for Node's events).
+      // See https://github.com/enboxorg/enbox/issues/236 for the plan to fix.
     ],
     testTimeout : 15_000,
     coverage: {
