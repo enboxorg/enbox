@@ -237,7 +237,7 @@ export class AgentDwnApi {
     ) {
       const writeParams = request.messageParams as DwnMessageParams[DwnInterface.RecordsWrite];
       // Skip key-delivery protocol writes to avoid infinite recursion (contextKey records are themselves encrypted)
-      if (writeParams?.protocol && writeParams.protocolPath && writeParams.protocol !== KeyDeliveryProtocolDefinition.protocol) {
+      if (writeParams.protocol !== KeyDeliveryProtocolDefinition.protocol) {
         try {
           const protocolDefinition = await this.getProtocolDefinition(
             request.target, writeParams.protocol,
