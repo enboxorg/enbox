@@ -942,7 +942,7 @@ export class DwnApi {
         }
 
         const reply = agentResponse.reply;
-        const { status, subscription, entries = [] } = reply;
+        const { status, subscription, entries = [], cursor } = reply;
 
         if (subscription) {
           liveQuery = new LiveQuery({
@@ -953,6 +953,7 @@ export class DwnApi {
             remoteOrigin,
             permissionsApi : this.permissionsApi,
             initialEntries : entries,
+            cursor,
             subscription,
           });
         }

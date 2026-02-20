@@ -1,5 +1,5 @@
-import type { RecordsQueryReplyEntry } from '@enbox/dwn-sdk-js';
 import type { DwnMessageSubscription, PermissionsApi, Web5Agent } from '@enbox/agent';
+import type { PaginationCursor, RecordsQueryReplyEntry } from '@enbox/dwn-sdk-js';
 
 import { getRecordAuthor } from '@enbox/agent';
 
@@ -60,6 +60,9 @@ export type LiveQueryOptions = {
   /** The initial snapshot entries from the subscribe reply. */
   initialEntries: RecordsQueryReplyEntry[];
 
+  /** Pagination cursor for fetching the next page of initial results. */
+  cursor?: PaginationCursor;
+
   /** The underlying DWN subscription handle. */
   subscription: DwnMessageSubscription;
 };
@@ -116,6 +119,17 @@ export class LiveQuery extends EventTarget {
   /** The initial snapshot of matching records. */
   readonly records: Record[];
 
+  /**
+   * Pagination cursor for fetching the next page of initial results.
+   *
+   * When the initial snapshot was limited (via `pagination.limit`), this
+   * cursor can be passed in a subsequent `records.subscribe()` call to
+   * continue from where the previous snapshot left off.
+   *
+   * `undefined` when there are no more results.
+   */
+  readonly cursor?: PaginationCursor;
+
   /** The underlying DWN subscription handle. */
   private _subscription: DwnMessageSubscription;
 
@@ -131,6 +145,7 @@ export class LiveQuery extends EventTarget {
     const {
       agent,
       connectedDid,
+      cursor,
       delegateDid,
       protocolRole,
       remoteOrigin,
@@ -140,6 +155,7 @@ export class LiveQuery extends EventTarget {
     } = options;
 
     this._subscription = subscription;
+    this.cursor = cursor;
 
     // Build Record objects from the initial snapshot entries (same logic as records.query()).
     this.records = initialEntries.map((entry) => new Record(agent, {
