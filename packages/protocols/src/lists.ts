@@ -137,16 +137,12 @@ export const ListsDefinition = {
       },
     },
     folder: {
-      $actions : [],
-      $tags    : {
+      $tags: {
         $allowUndefinedTags : true,
         sortOrder           : { type: 'number' },
       },
       folder: {
-        $actions : [],
-        folder   : {
-          $actions: [],
-        },
+        folder: {},
       },
     },
   },
