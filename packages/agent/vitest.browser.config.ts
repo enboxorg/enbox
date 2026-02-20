@@ -35,7 +35,10 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    // Pre-bundle CJS deps to avoid mid-run optimizeDeps restarts that crash Firefox.
+    // Disable automatic dependency discovery so that Vite NEVER restarts the
+    // optimizer mid-test-run (Firefox crashes on optimizer restarts).
+    // See packages/dwn-sdk-js/vitest.browser.config.ts for full explanation.
+    noDiscovery: true,
     include: [
       'ms',
     ],

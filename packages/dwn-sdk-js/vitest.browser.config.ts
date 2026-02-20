@@ -37,17 +37,46 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    // Pre-bundle CJS dependencies so Vite converts them to ESM upfront.
-    // Without explicit inclusion, Vite may discover these mid-test-run and
-    // trigger an optimizeDeps restart. Chromium and WebKit handle restarts
-    // gracefully, but Firefox's strict ESM loader crashes with
-    // "error loading dynamically imported module" — causing flaky CI failures.
+    // Disable automatic dependency discovery so Vite NEVER restarts the
+    // optimizer mid-test-run. When Vite discovers an un-pre-bundled CJS dep
+    // at runtime it restarts the optimizer; Chromium/WebKit handle restarts
+    // gracefully but Firefox's strict ESM loader crashes with
+    // "error loading dynamically imported module". This was the #1 source
+    // of flaky Firefox CI failures (~14% of runs, random test file each time).
     //
-    // Only list packages that are (a) CJS or mixed-format AND (b) resolvable
-    // from this package's node_modules. Entries that can't be resolved produce
-    // "Failed to resolve dependency" warnings and are silently skipped.
+    // With noDiscovery the optimizer only processes the explicit list below.
+    // If a CJS dep is missing, the failure is immediate and deterministic
+    // (not flaky), making it trivial to add the missing entry.
+    noDiscovery: true,
     include: [
-      // noble — CJS/dual-format, direct deps of @enbox/dwn-sdk-js
+      // --- CJS packages imported directly from src/ or tests/ ---
+      'abstract-level',
+      'ajv',
+      'ajv/dist/2020.js',
+      'ajv/dist/runtime/ucs2length.js',
+      'eventemitter3',
+      'interface-store',
+      'level',
+      'lodash',
+      'lodash/isPlainObject.js',
+      'mockdate',
+      'ms',
+      'sinon',
+      'uuid',
+
+      // --- CJS transitive deps discovered via noDiscovery testing ---
+      // ipfs / blockstore packages pull in CJS deps (err-code, etc.)
+      'blockstore-core',
+      'ipfs-unixfs-importer',
+      'ipfs-unixfs-exporter',
+
+      // @isaacs/ttlcache — CJS; via @enbox/crypto -> @enbox/common.
+      // Use Vite's nested-dep `>` syntax to resolve through workspace symlinks.
+      '@enbox/crypto > @enbox/common > @isaacs/ttlcache',
+
+      // --- Dual-format packages (CJS default, ESM via exports) ---
+      // Pre-bundling these avoids edge cases where Vite picks the CJS entry.
+      '@js-temporal/polyfill',
       '@noble/ciphers/aes',
       '@noble/ciphers/chacha',
       '@noble/ciphers/crypto',
@@ -59,31 +88,9 @@ export default defineConfig({
       '@noble/curves/secp256k1',
       '@noble/ed25519',
       '@noble/secp256k1',
-      // @js-temporal/polyfill — mixed CJS/ESM; its ESM entry imports jsbi (CJS).
-      // Pre-bundling lets Vite convert both to ESM before Firefox loads them.
-      '@js-temporal/polyfill',
-      // ajv — CJS; the precompiled validators import a deep runtime subpath
-      // that must also be pre-bundled (discovered mid-run otherwise).
-      'ajv',
-      'ajv/dist/2020.js',
-      'ajv/dist/runtime/ucs2length.js',
-      // @isaacs/ttlcache — CJS; transitive dep via @enbox/crypto -> @enbox/common.
-      // Use Vite's nested-dep `>` syntax so Vite resolves it through the
-      // workspace symlink chain rather than from this package's node_modules.
-      '@enbox/crypto > @enbox/common > @isaacs/ttlcache',
-      // CJS / mixed-format packages
-      'eventemitter3',
-      'level',
-      'lodash',
-      'lodash/isPlainObject.js',
       'lru-cache',
-      'ms',
-      'sinon',
       'ulidx',
     ],
-    // Force Vite to hold the first optimization pass until ALL static imports
-    // from test entry points have been crawled. This prevents the mid-run
-    // discovery restarts that crash Firefox.
     holdUntilCrawlEnd: true,
   },
   test: {
