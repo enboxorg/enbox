@@ -48,6 +48,10 @@ export default defineConfig({
       'ajv',
       'ajv/dist/2020.js',
       'ajv/dist/runtime/ucs2length.js',
+      // @isaacs/ttlcache — CJS; transitive dep via @enbox/crypto -> @enbox/common.
+      // Use Vite's nested-dep `>` syntax so Vite resolves it through the
+      // workspace symlink chain rather than from this package's node_modules.
+      '@enbox/crypto > @enbox/common > @isaacs/ttlcache',
       // CJS / mixed-format packages
       'eventemitter3',
       'level',
