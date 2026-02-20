@@ -140,7 +140,7 @@ export class Records {
 
     let fullDerivationPath;
     if (keyDerivationScheme === KeyDerivationScheme.DataFormats) {
-      fullDerivationPath = Records.constructKeyDerivationPathUsingDataFormatsScheme(descriptor.schema, descriptor.dataFormat);
+      fullDerivationPath = Records.constructKeyDerivationPathUsingDataFormatsScheme(descriptor.dataFormat);
     } else if (keyDerivationScheme === KeyDerivationScheme.ProtocolPath) {
       fullDerivationPath = Records.constructKeyDerivationPathUsingProtocolPathScheme(descriptor);
     } else if (keyDerivationScheme === KeyDerivationScheme.ProtocolContext) {
@@ -155,20 +155,14 @@ export class Records {
 
   /**
    * Constructs the full key derivation path using `dataFormats` scheme.
+   * The derivation path is always `["dataFormats", "<mime-type>"]` regardless of whether
+   * a schema is present. This matches the spec: keys are derived purely from the MIME type.
    */
-  public static constructKeyDerivationPathUsingDataFormatsScheme(schema: string | undefined, dataFormat: string ): string[] {
-    if (schema !== undefined) {
-      return [
-        KeyDerivationScheme.DataFormats,
-        schema, // this is as spec-ed on TP27, the intent is to support sharing the key for just a specific data type under a schema
-        dataFormat
-      ];
-    } else {
-      return [
-        KeyDerivationScheme.DataFormats,
-        dataFormat
-      ];
-    }
+  public static constructKeyDerivationPathUsingDataFormatsScheme(dataFormat: string): string[] {
+    return [
+      KeyDerivationScheme.DataFormats,
+      dataFormat
+    ];
   }
 
   /**
