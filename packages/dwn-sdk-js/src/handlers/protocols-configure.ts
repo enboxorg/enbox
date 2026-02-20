@@ -4,7 +4,7 @@ import type { GenericMessageReply } from '../types/message-types.js';
 import type { MessageStore } from '../types//message-store.js';
 import type { MethodHandler } from '../types/method-handler.js';
 import type { StateIndex } from '../types/state-index.js';
-import type { ProtocolDefinition, ProtocolsConfigureMessage } from '../types/protocols-types.js';
+import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage } from '../types/protocols-types.js';
 
 import { authenticate } from '../core/auth.js';
 import { Message } from '../core/message.js';
@@ -187,7 +187,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     }
 
     // Walk the structure and validate all $ref paths and cross-protocol role references
-    ProtocolsConfigureHandler.validateRefsAndRolesRecursively(definition.structure, '', referencedDefinitions);
+    ProtocolsConfigureHandler.validateRefsAndRolesRecursively(definition.structure as ProtocolRuleSet, '', referencedDefinitions);
   }
 
   /**
@@ -218,7 +218,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
    * - Cross-protocol `role` references point to valid `$role: true` paths in the referenced protocol
    */
   private static validateRefsAndRolesRecursively(
-    ruleSet: { [key: string]: any },
+    ruleSet: ProtocolRuleSet,
     protocolPath: string,
     referencedDefinitions: Map<string, ProtocolDefinition>
   ): void {
@@ -227,7 +227,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
         continue;
       }
 
-      const childRuleSet = ruleSet[key];
+      const childRuleSet = ruleSet[key] as ProtocolRuleSet;
       const childProtocolPath = protocolPath === '' ? key : `${protocolPath}/${key}`;
 
       // Validate $ref path exists in the referenced protocol

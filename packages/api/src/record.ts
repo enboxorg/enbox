@@ -445,7 +445,7 @@ export class Record implements RecordModel {
   get data(): {
       blob: () => Promise<Blob>;
       bytes: () => Promise<Uint8Array>;
-      json: () => Promise<any>;
+      json: <T = unknown>() => Promise<T>;
       text: () => Promise<string>;
       stream: () => Promise<ReadableStream>;
       then: (
@@ -489,8 +489,8 @@ export class Record implements RecordModel {
        *
        * @beta
        */
-      async json(): Promise<any> {
-        return await Stream.consumeToJson({ readableStream: await this.stream() });
+      async json<T = unknown>(): Promise<T> {
+        return await Stream.consumeToJson({ readableStream: await this.stream() }) as T;
       },
 
       /**

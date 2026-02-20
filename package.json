@@ -9,6 +9,7 @@
     "packages/dwn-clients",
     "packages/agent",
     "packages/api",
+    "packages/protocols",
     "packages/browser",
     "packages/dwn-sdk-js",
     "packages/dwn-sql-store",

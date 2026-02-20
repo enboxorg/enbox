@@ -1,9 +1,9 @@
 import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { DidResolver } from '@enbox/dids';
 import type { EventStream } from '../../src/types/subscriptions.js';
-import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
 import type { DataStore, MessageStore, RecordsReadReply, ResumableTaskStore, StateIndex } from '../../src/index.js';
 import type { PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js';
+import type { ProtocolDefinition, ProtocolRuleSet } from '../../src/types/protocols-types.js';
 
 import sinon from 'sinon';
 
@@ -1637,13 +1637,15 @@ export function testProtocolComposition(): void {
         expect(result.structure.thread.$encryption).toBeUndefined();
 
         // Children of $ref node MUST have $encryption
-        expect(result.structure.thread.comment.$encryption).toBeDefined();
-        expect(result.structure.thread.comment.$encryption!.rootKeyId).toBe(encryptionRootKeyId);
-        expect(result.structure.thread.comment.$encryption!.publicKeyJwk).toBeDefined();
+        const commentRuleSet = result.structure.thread.comment as ProtocolRuleSet;
+        expect(commentRuleSet.$encryption).toBeDefined();
+        expect(commentRuleSet.$encryption!.rootKeyId).toBe(encryptionRootKeyId);
+        expect(commentRuleSet.$encryption!.publicKeyJwk).toBeDefined();
 
         // Grandchild of $ref node
-        expect(result.structure.thread.comment.reaction.$encryption).toBeDefined();
-        expect(result.structure.thread.comment.reaction.$encryption!.rootKeyId).toBe(encryptionRootKeyId);
+        const reactionRuleSet = commentRuleSet.reaction as ProtocolRuleSet;
+        expect(reactionRuleSet.$encryption).toBeDefined();
+        expect(reactionRuleSet.$encryption!.rootKeyId).toBe(encryptionRootKeyId);
       });
 
       it('should skip `$encryption` injection on `$ref` nodes but inject on their children (callback path)', async () => {
@@ -1689,8 +1691,9 @@ export function testProtocolComposition(): void {
         expect(result.structure.thread.$encryption).toBeUndefined();
 
         // Children of $ref node MUST have $encryption
-        expect(result.structure.thread.comment.$encryption).toBeDefined();
-        expect(result.structure.thread.comment.reaction.$encryption).toBeDefined();
+        const commentRuleSet = result.structure.thread.comment as ProtocolRuleSet;
+        expect(commentRuleSet.$encryption).toBeDefined();
+        expect((commentRuleSet.reaction as ProtocolRuleSet).$encryption).toBeDefined();
 
         // derivePublicKey should NOT have been called for the $ref node itself
         const threadPath = [KeyDerivationScheme.ProtocolPath, 'https://comments.example.com', 'thread'];
@@ -1745,11 +1748,13 @@ export function testProtocolComposition(): void {
         expect(resultB.structure.thread.$encryption).toBeUndefined();
 
         // Both paths must produce identical $encryption on children
-        expect(resultA.structure.thread.comment.$encryption!.publicKeyJwk).toEqual(
-          resultB.structure.thread.comment.$encryption!.publicKeyJwk,
+        const commentA = resultA.structure.thread.comment as ProtocolRuleSet;
+        const commentB = resultB.structure.thread.comment as ProtocolRuleSet;
+        expect(commentA.$encryption!.publicKeyJwk).toEqual(
+          commentB.$encryption!.publicKeyJwk,
         );
-        expect(resultA.structure.thread.comment.$encryption!.rootKeyId).toBe(
-          resultB.structure.thread.comment.$encryption!.rootKeyId,
+        expect(commentA.$encryption!.rootKeyId).toBe(
+          commentB.$encryption!.rootKeyId,
         );
       });
 
@@ -1775,7 +1780,7 @@ export function testProtocolComposition(): void {
         // $ref node should not have $encryption
         expect(encryptedComments.structure.thread.$encryption).toBeUndefined();
         // Children should have $encryption
-        expect(encryptedComments.structure.thread.comment.$encryption).toBeDefined();
+        expect((encryptedComments.structure.thread.comment as ProtocolRuleSet).$encryption).toBeDefined();
 
         // ProtocolsConfigure.create() should NOT throw — validateRefNode() will pass
         // because $ref node has no forbidden directives
@@ -1893,7 +1898,7 @@ export function testProtocolComposition(): void {
 
         // Original must be unmodified
         expect(composingProtocol.structure.thread.$encryption).toBeUndefined();
-        expect(composingProtocol.structure.thread.comment.$encryption).toBeUndefined();
+        expect((composingProtocol.structure.thread.comment as ProtocolRuleSet).$encryption).toBeUndefined();
       });
     });
   });

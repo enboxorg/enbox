@@ -141,7 +141,7 @@ export function testRecordsTags(): void {
                         type    : 'number',
                         minimum : 'ten', // should be a number
                       }
-                    },
+                    } as any, // intentionally invalid to test validation
                   }
                 }
               },
@@ -177,7 +177,7 @@ export function testRecordsTags(): void {
                         type    : 'number',
                         minimum : 'ten', // should be a number
                       }
-                    },
+                    } as any, // intentionally invalid to test validation
                   }
                 }
               },
@@ -219,7 +219,7 @@ export function testRecordsTags(): void {
                     $tags: {
                       objectTag: {
                         type: 'object',
-                      },
+                      } as any, // intentionally invalid to test validation
                     }
                   }
                 },
@@ -261,7 +261,7 @@ export function testRecordsTags(): void {
                         items : {
                           type: 'object',
                         }
-                      },
+                      } as any, // intentionally invalid to test validation
                     }
                   }
                 },
@@ -302,7 +302,7 @@ export function testRecordsTags(): void {
                         items : {
                           type: 'boolean',
                         }
-                      },
+                      } as any, // intentionally invalid to test validation
                     }
                   }
                 },
@@ -331,7 +331,7 @@ export function testRecordsTags(): void {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
           // has a `knownTag` tag in the protocol definition
-          const protocolDefinition = {
+          const protocolDefinition: ProtocolDefinition = {
             protocol  : 'http://example.com/protocol/withTags',
             published : true,
             types     : {
@@ -395,7 +395,7 @@ export function testRecordsTags(): void {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
           // protocol with a boolean type for a tag
-          const protocolDefinition = {
+          const protocolDefinition: ProtocolDefinition = {
             protocol  : 'http://example.com/protocol/withTags',
             published : true,
             types     : {
@@ -456,7 +456,7 @@ export function testRecordsTags(): void {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
           // protocol with a number type for a tag
-          const protocolDefinition = {
+          const protocolDefinition: ProtocolDefinition = {
             protocol  : 'http://example.com/protocol/withTags',
             published : true,
             types     : {
@@ -531,7 +531,7 @@ export function testRecordsTags(): void {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
           // protocol with an integer type for a tag
-          const protocolDefinition = {
+          const protocolDefinition: ProtocolDefinition = {
             protocol  : 'http://example.com/protocol/withTags',
             published : true,
             types     : {
@@ -591,7 +591,7 @@ export function testRecordsTags(): void {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
           // protocol with an enum for a tag
-          const protocolDefinition = {
+          const protocolDefinition: ProtocolDefinition = {
             protocol  : 'http://example.com/protocol/withTags',
             published : true,
             types     : {
@@ -1172,7 +1172,7 @@ export function testRecordsTags(): void {
                     },
                     minContains : 2,
                     maxContains : 4
-                  },
+                  } as any,
                 }
               }
             },
@@ -1437,7 +1437,7 @@ export function testRecordsTags(): void {
                         type : 'string',
                         enum : [ 'complete', 'in-progress', 'backlog' ]
                       }
-                    },
+                    } as any,
                   }
                 }
               },
@@ -1509,7 +1509,7 @@ export function testRecordsTags(): void {
                         minimum : 80,
                         maximum : 100
                       }
-                    },
+                    } as any,
                   }
                 }
               },
@@ -1582,7 +1582,7 @@ export function testRecordsTags(): void {
                         exclusiveMinimum : 80,
                         exclusiveMaximum : 100
                       }
-                    },
+                    } as any,
                   }
                 }
               },
@@ -1655,7 +1655,7 @@ export function testRecordsTags(): void {
                         maxLength : 10,
                         minLength : 2,
                       }
-                    },
+                    } as any,
                   }
                 }
               },
@@ -1726,7 +1726,7 @@ export function testRecordsTags(): void {
                         type : 'string',
                         enum : [ 'complete', 'in-progress', 'backlog', 'approved' ]
                       },
-                    },
+                    } as any,
                   }
                 }
               },
@@ -1795,7 +1795,7 @@ export function testRecordsTags(): void {
                         minimum : 80,
                         maximum : 100
                       },
-                    },
+                    } as any,
                   }
                 }
               },
@@ -1883,7 +1883,7 @@ export function testRecordsTags(): void {
                         exclusiveMinimum : 80,
                         exclusiveMaximum : 100
                       },
-                    },
+                    } as any,
                   }
                 }
               },
@@ -1971,7 +1971,7 @@ export function testRecordsTags(): void {
                         maxLength : 10,
                         minLength : 2,
                       },
-                    },
+                    } as any,
                   }
                 }
               },

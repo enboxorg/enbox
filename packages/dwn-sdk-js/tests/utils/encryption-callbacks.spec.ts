@@ -1,3 +1,4 @@
+import type { ProtocolRuleSet } from '../../src/types/protocols-types.js';
 import type { EncryptionKeyDeriver, KeyDecrypter } from '../../src/types/encryption-types.js';
 import type { PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js';
 
@@ -80,13 +81,15 @@ describe('Encryption Callback Interfaces', () => {
         resultB.structure.thread.$encryption!.publicKeyJwk
       );
 
-      expect(resultA.structure.thread.message.$encryption).toBeDefined();
-      expect(resultB.structure.thread.message.$encryption).toBeDefined();
-      expect(resultA.structure.thread.message.$encryption!.rootKeyId).toBe(
-        resultB.structure.thread.message.$encryption!.rootKeyId
+      const messageRuleSetA = resultA.structure.thread.message as ProtocolRuleSet;
+      const messageRuleSetB = resultB.structure.thread.message as ProtocolRuleSet;
+      expect(messageRuleSetA.$encryption).toBeDefined();
+      expect(messageRuleSetB.$encryption).toBeDefined();
+      expect(messageRuleSetA.$encryption!.rootKeyId).toBe(
+        messageRuleSetB.$encryption!.rootKeyId
       );
-      expect(resultA.structure.thread.message.$encryption!.publicKeyJwk).toEqual(
-        resultB.structure.thread.message.$encryption!.publicKeyJwk
+      expect(messageRuleSetA.$encryption!.publicKeyJwk).toEqual(
+        messageRuleSetB.$encryption!.publicKeyJwk
       );
     });
 

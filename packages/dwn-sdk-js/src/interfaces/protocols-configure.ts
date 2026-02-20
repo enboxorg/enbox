@@ -143,11 +143,11 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
     const recordTypes = Object.keys(definition.types);
 
     // gather all roles (local roles only — cross-protocol roles are validated by alias existence)
-    const roles = ProtocolsConfigure.fetchAllRolePathsRecursively('', definition.structure, []);
+    const roles = ProtocolsConfigure.fetchAllRolePathsRecursively('', definition.structure as ProtocolRuleSet, []);
 
     // validate the entire rule set structure recursively
     ProtocolsConfigure.validateRuleSetRecursively({
-      ruleSet             : definition.structure,
+      ruleSet             : definition.structure as ProtocolRuleSet,
       ruleSetProtocolPath : '',
       recordTypes,
       roles,
@@ -172,7 +172,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         continue;
       }
 
-      const childRuleSet = ruleSet[recordType];
+      const childRuleSet = ruleSet[recordType] as ProtocolRuleSet;
 
       let childRuleSetProtocolPath;
       if (ruleSetProtocolPath === '') {
@@ -233,7 +233,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       for (const tag in tagProperties) {
         const tagSchemaDefinition = tagProperties[tag];
 
-        if (!ajv.validateSchema(tagSchemaDefinition)) {
+        if (!ajv.validateSchema(tagSchemaDefinition as Record<string, unknown>)) {
           const schemaError = ajv.errorsText(ajv.errors, { dataVar: `${ruleSetProtocolPath}/$tags/${tag}` });
           throw new DwnError(DwnErrorCode.ProtocolsConfigureInvalidTagSchema, `tags schema validation error: ${schemaError}`);
         }
@@ -376,7 +376,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         continue;
       }
 
-      const childRuleSet = ruleSet[recordType];
+      const childRuleSet = ruleSet[recordType] as ProtocolRuleSet;
 
       // A structure key whose rule set has `$ref` does not need to be in the local `types` map —
       // the type comes from the referenced protocol. All other keys must be in `types`.
