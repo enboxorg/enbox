@@ -53,7 +53,7 @@ export class RecordsWriteHandler implements MethodHandler {
 
     // authentication & authorization
     try {
-      await authenticate(message.authorization, this.didResolver);
+      await authenticate(message.authorization, this.didResolver, message.attestation);
       await RecordsWriteHandler.authorizeRecordsWrite(tenant, recordsWrite, this.messageStore);
     } catch (e) {
       return messageReplyFromError(e, 401);

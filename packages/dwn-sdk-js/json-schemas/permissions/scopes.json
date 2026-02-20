@@ -103,7 +103,8 @@
       "additionalProperties": false,
       "required": [
         "interface",
-        "method"
+        "method",
+        "protocol"
       ],
       "properties": {
         "interface": {
@@ -129,7 +130,8 @@
       "additionalProperties": false,
       "required": [
         "interface",
-        "method"
+        "method",
+        "protocol"
       ],
       "properties": {
         "interface": {
@@ -155,7 +157,8 @@
       "additionalProperties": false,
       "required": [
         "interface",
-        "method"
+        "method",
+        "protocol"
       ],
       "properties": {
         "interface": {
@@ -181,7 +184,8 @@
       "additionalProperties": false,
       "required": [
         "interface",
-        "method"
+        "method",
+        "protocol"
       ],
       "properties": {
         "interface": {
@@ -207,7 +211,8 @@
       "additionalProperties": false,
       "required": [
         "interface",
-        "method"
+        "method",
+        "protocol"
       ],
       "properties": {
         "interface": {
@@ -233,7 +238,8 @@
       "additionalProperties": false,
       "required": [
         "interface",
-        "method"
+        "method",
+        "protocol"
       ],
       "properties": {
         "interface": {

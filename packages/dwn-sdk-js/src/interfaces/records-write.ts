@@ -759,7 +759,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
 
   /**
    * Validates the structural integrity of the `attestation` property.
-   * NOTE: signature is not verified.
+   * NOTE: Cryptographic verification of attestation signatures is performed in `authenticate()`.
    */
   private static async validateAttestationIntegrity(message: RecordsWriteMessage): Promise<void> {
     if (message.attestation === undefined) {

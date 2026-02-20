@@ -1,5 +1,6 @@
 import type { AuthorizationModel } from '../types/message-types.js';
 import type { DidResolver } from '@enbox/dids';
+import type { GeneralJws } from '../types/jws-types.js';
 
 import { GeneralJwsVerifier } from '../jose/jws/general/verifier.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
@@ -7,10 +8,15 @@ import { DwnError, DwnErrorCode } from './dwn-error.js';
 
 /**
  * Verifies all the signature(s) within the authorization property.
+ * If an attestation JWS is provided, its signatures are also cryptographically verified.
  *
  * @throws {Error} if fails authentication
  */
-export async function authenticate(authorizationModel: AuthorizationModel | undefined, didResolver: DidResolver): Promise<void> {
+export async function authenticate(
+  authorizationModel: AuthorizationModel | undefined,
+  didResolver: DidResolver,
+  attestation?: GeneralJws
+): Promise<void> {
 
   if (authorizationModel === undefined) {
     throw new DwnError(DwnErrorCode.AuthenticateJwsMissing, 'Missing JWS.');
@@ -32,5 +38,10 @@ export async function authenticate(authorizationModel: AuthorizationModel | unde
     // verify the signature of the grantor of the owner-delegated grant
     const ownerDelegatedGrant = await RecordsWrite.parse(authorizationModel.ownerDelegatedGrant);
     await GeneralJwsVerifier.verifySignatures(ownerDelegatedGrant.message.authorization.signature, didResolver);
+  }
+
+  // cryptographically verify attestation signature(s) if present
+  if (attestation !== undefined) {
+    await GeneralJwsVerifier.verifySignatures(attestation, didResolver);
   }
 }
