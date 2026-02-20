@@ -215,31 +215,47 @@ export class RecordsWriteHandler implements MethodHandler {
 
   /**
    * Performs additional necessary tasks if the RecordsWrite handled is a core DWN RecordsWrite that need additional processing.
-   * For instance: a Permission revocation RecordsWrite.
+   * For instance: when a Permission revocation is written, all messages authorized by the revoked grant
+   * that were created after the revocation timestamp are deleted from all stores.
    */
   private async postProcessingForCoreRecordsWrite(tenant: string, recordsWrite: RecordsWrite): Promise<void> {
-    // If this message is a Permission revocation, we need to delete all grant-authorized messages with timestamp after revocation
-    // TODO: https://github.com/enboxorg/enbox/issues/221
-    // This code is a direct copy and paste from the original PermissionsRevokeHandler (no longer exists),
-    // but it appears that there was no test for it and it does not look like the code worked:
-    // - not seeing `permissionGrantId` being an index
-    // - not seeing `this.dataStore` being called to delete actual data
-    // - test coverage is missing for the main delete logic
-    if (recordsWrite.message.descriptor.protocol === PermissionsProtocol.uri &&
-      recordsWrite.message.descriptor.protocolPath === PermissionsProtocol.revocationPath) {
-      const permissionGrantId = recordsWrite.message.descriptor.parentId!;
-      const grantAuthorizedMessagesQuery = {
-        permissionGrantId,
-        dateCreated: { gte: recordsWrite.message.descriptor.messageTimestamp },
-      };
-      const { messages: grantAuthorizedMessagesAfterRevoke } = await this.messageStore.query(tenant, [ grantAuthorizedMessagesQuery ]);
-      const grantAuthorizedMessageCidsAfterRevoke: string[] = [];
-      for (const grantAuthorizedMessage of grantAuthorizedMessagesAfterRevoke) {
-        const messageCid = await Message.getCid(grantAuthorizedMessage);
-        await this.messageStore.delete(tenant, messageCid);
-      }
-      this.stateIndex.delete(tenant, grantAuthorizedMessageCidsAfterRevoke);
+    if (recordsWrite.message.descriptor.protocol !== PermissionsProtocol.uri ||
+      recordsWrite.message.descriptor.protocolPath !== PermissionsProtocol.revocationPath) {
+      return;
     }
+
+    // Delete all messages authorized by the revoked grant that were created after the revocation.
+    // `permissionGrantId` is indexed via the RecordsWriteDescriptor spread in constructIndexes().
+    const permissionGrantId = recordsWrite.message.descriptor.parentId!;
+    const grantAuthorizedMessagesQuery = {
+      permissionGrantId,
+      dateCreated: { gte: recordsWrite.message.descriptor.messageTimestamp },
+    };
+    const { messages: grantAuthorizedMessages } = await this.messageStore.query(tenant, [grantAuthorizedMessagesQuery]);
+
+    if (grantAuthorizedMessages.length === 0) {
+      return;
+    }
+
+    // Delete data from the data store first to avoid orphaned data blobs in case of crash.
+    // Only RecordsWrite messages with data larger than maxDataSizeAllowedToBeEncoded have data in the data store.
+    for (const message of grantAuthorizedMessages) {
+      if (message.descriptor.method === DwnMethodName.Write) {
+        const recordsWriteMessage = message as RecordsWriteMessage;
+        if (recordsWriteMessage.descriptor.dataSize > DwnConstant.maxDataSizeAllowedToBeEncoded) {
+          await this.dataStore.delete(tenant, recordsWriteMessage.recordId, recordsWriteMessage.descriptor.dataCid);
+        }
+      }
+    }
+
+    // Compute CIDs for all messages to delete.
+    const messageCids = await Promise.all(grantAuthorizedMessages.map((message): Promise<string> => Message.getCid(message)));
+
+    // Delete from state index before message store so we don't have orphaned state entries.
+    await this.stateIndex.delete(tenant, messageCids);
+
+    // Finally delete all messages from the message store.
+    await Promise.all(messageCids.map((cid): Promise<void> => this.messageStore.delete(tenant, cid)));
   }
 
   /**

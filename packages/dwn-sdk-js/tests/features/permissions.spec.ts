@@ -3,6 +3,7 @@ import type { EventStream } from '../../src/types/subscriptions.js';
 import type { PermissionScope } from '../../src/index.js';
 import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
 
+import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
 import sinon from 'sinon';
 
 import { DataStream } from '../../src/utils/data-stream.js';
@@ -958,6 +959,351 @@ export function testPermissions(): void {
         expect(
           () => PermissionsProtocol['validateScopeAndTags'](permissionScope, grantRecordsWrite.message)
         ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeContextIdProhibitedProperties);
+      });
+    });
+
+    describe('revocation cleanup', () => {
+      it('should delete grant-authorized messages created at or after the revocation timestamp', async () => {
+        // scenario:
+        // 1. Alice installs a protocol and grants Bob write access
+        // 2. Bob writes a record using the grant with a future timestamp
+        // 3. Alice revokes the grant (the revocation's messageTimestamp is auto-set to "now")
+        // 4. The record Bob wrote with a future dateCreated (>= revocation messageTimestamp) should be deleted
+
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition = minimalProtocolDefinition;
+
+        // Alice installs the protocol
+        const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author: alice,
+          protocolDefinition,
+        });
+        const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+        expect(protocolsConfigureReply.status.code).toBe(202);
+
+        // Alice grants Bob write permission
+        const permissionGrant = await PermissionsProtocol.createGrant({
+          signer      : Jws.createSigner(alice),
+          grantedTo   : bob.did,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
+          scope       : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Write,
+            protocol  : protocolDefinition.protocol,
+          }
+        });
+        const grantWriteReply = await dwn.processMessage(
+          alice.did,
+          permissionGrant.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(permissionGrant.permissionGrantBytes) }
+        );
+        expect(grantWriteReply.status.code).toBe(202);
+
+        // Bob writes a record using the grant with a future timestamp (guaranteed >= any revocation messageTimestamp)
+        const futureTimestamp = Time.createOffsetTimestamp({ seconds: 60 });
+        const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
+          author            : bob,
+          protocol          : protocolDefinition.protocol,
+          protocolPath      : 'foo',
+          permissionGrantId : permissionGrant.recordsWrite.message.recordId,
+          dateCreated       : futureTimestamp,
+          messageTimestamp  : futureTimestamp,
+        });
+        const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
+        expect(writeReply.status.code).toBe(202);
+
+        // Verify the record exists before revocation
+        const queryBefore = await RecordsQuery.create({
+          signer : Jws.createSigner(alice),
+          filter : { protocol: protocolDefinition.protocol },
+        });
+        const queryBeforeReply = await dwn.processMessage(alice.did, queryBefore.message);
+        expect(queryBeforeReply.status.code).toBe(200);
+        expect(queryBeforeReply.entries!.length).toBe(1);
+
+        // Alice revokes the grant (messageTimestamp is auto-set to current time, which is before futureTimestamp)
+        const revokeWrite = await PermissionsProtocol.createRevocation({
+          signer : Jws.createSigner(alice),
+          grant  : await PermissionGrant.parse(permissionGrant.dataEncodedMessage),
+        });
+        const revokeReply = await dwn.processMessage(
+          alice.did,
+          revokeWrite.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(revokeWrite.permissionRevocationBytes) }
+        );
+        expect(revokeReply.status.code).toBe(202);
+
+        // The grant-authorized record should have been deleted by revocation cleanup
+        const queryAfter = await RecordsQuery.create({
+          signer : Jws.createSigner(alice),
+          filter : { protocol: protocolDefinition.protocol },
+        });
+        const queryAfterReply = await dwn.processMessage(alice.did, queryAfter.message);
+        expect(queryAfterReply.status.code).toBe(200);
+        expect(queryAfterReply.entries!.length).toBe(0);
+      });
+
+      it('should not delete grant-authorized messages created before the revocation timestamp', async () => {
+        // scenario:
+        // 1. Alice installs a protocol and grants Bob write access
+        // 2. Bob writes a record using the grant (dateCreated is "now")
+        // 3. Alice revokes the grant (messageTimestamp is auto-set to a slightly later "now")
+        // 4. The record Bob wrote before the revocation should NOT be deleted
+
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition = minimalProtocolDefinition;
+
+        // Alice installs the protocol
+        const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author: alice,
+          protocolDefinition,
+        });
+        const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+        expect(protocolsConfigureReply.status.code).toBe(202);
+
+        // Alice grants Bob write permission
+        const permissionGrant = await PermissionsProtocol.createGrant({
+          signer      : Jws.createSigner(alice),
+          grantedTo   : bob.did,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
+          scope       : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Write,
+            protocol  : protocolDefinition.protocol,
+          }
+        });
+        const grantWriteReply = await dwn.processMessage(
+          alice.did,
+          permissionGrant.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(permissionGrant.permissionGrantBytes) }
+        );
+        expect(grantWriteReply.status.code).toBe(202);
+
+        // Bob writes a record using the grant (dateCreated defaults to current time)
+        const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
+          author            : bob,
+          protocol          : protocolDefinition.protocol,
+          protocolPath      : 'foo',
+          permissionGrantId : permissionGrant.recordsWrite.message.recordId,
+        });
+        const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
+        expect(writeReply.status.code).toBe(202);
+
+        // Alice revokes the grant (messageTimestamp is auto-set slightly after the record's dateCreated)
+        const revokeWrite = await PermissionsProtocol.createRevocation({
+          signer : Jws.createSigner(alice),
+          grant  : await PermissionGrant.parse(permissionGrant.dataEncodedMessage),
+        });
+        const revokeReply = await dwn.processMessage(
+          alice.did,
+          revokeWrite.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(revokeWrite.permissionRevocationBytes) }
+        );
+        expect(revokeReply.status.code).toBe(202);
+
+        // The record Bob wrote before the revocation should still exist
+        const queryAfter = await RecordsQuery.create({
+          signer : Jws.createSigner(alice),
+          filter : { protocol: protocolDefinition.protocol },
+        });
+        const queryAfterReply = await dwn.processMessage(alice.did, queryAfter.message);
+        expect(queryAfterReply.status.code).toBe(200);
+        expect(queryAfterReply.entries!.length).toBe(1);
+      });
+
+      it('should delete data from the data store for large records when revoking a grant', async () => {
+        // scenario:
+        // 1. Alice installs a protocol and grants Bob write access
+        // 2. Bob writes a record with data larger than maxDataSizeAllowedToBeEncoded (30KB)
+        // 3. Alice revokes the grant
+        // 4. Both the message and the data blob should be deleted
+
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition = minimalProtocolDefinition;
+
+        // Alice installs the protocol
+        const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author: alice,
+          protocolDefinition,
+        });
+        const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+        expect(protocolsConfigureReply.status.code).toBe(202);
+
+        // Alice grants Bob write permission
+        const permissionGrant = await PermissionsProtocol.createGrant({
+          signer      : Jws.createSigner(alice),
+          grantedTo   : bob.did,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
+          scope       : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Write,
+            protocol  : protocolDefinition.protocol,
+          }
+        });
+        const grantWriteReply = await dwn.processMessage(
+          alice.did,
+          permissionGrant.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(permissionGrant.permissionGrantBytes) }
+        );
+        expect(grantWriteReply.status.code).toBe(202);
+
+        // Bob writes a record with large data (> 30KB) using the grant, with a future timestamp
+        const futureTimestamp = Time.createOffsetTimestamp({ seconds: 60 });
+        const largeData = TestDataGenerator.randomBytes(40_000);
+        const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
+          author            : bob,
+          protocol          : protocolDefinition.protocol,
+          protocolPath      : 'foo',
+          data              : largeData,
+          permissionGrantId : permissionGrant.recordsWrite.message.recordId,
+          dateCreated       : futureTimestamp,
+          messageTimestamp  : futureTimestamp,
+        });
+        const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
+        expect(writeReply.status.code).toBe(202);
+
+        // Verify the data exists in the data store before revocation
+        const dataResult = await dataStore.get(alice.did, recordsWrite.message.recordId, recordsWrite.message.descriptor.dataCid);
+        expect(dataResult).toBeDefined();
+
+        // Alice revokes the grant
+        const revokeWrite = await PermissionsProtocol.createRevocation({
+          signer : Jws.createSigner(alice),
+          grant  : await PermissionGrant.parse(permissionGrant.dataEncodedMessage),
+        });
+        const revokeReply = await dwn.processMessage(
+          alice.did,
+          revokeWrite.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(revokeWrite.permissionRevocationBytes) }
+        );
+        expect(revokeReply.status.code).toBe(202);
+
+        // The record should be deleted from the message store
+        const queryAfter = await RecordsQuery.create({
+          signer : Jws.createSigner(alice),
+          filter : { protocol: protocolDefinition.protocol },
+        });
+        const queryAfterReply = await dwn.processMessage(alice.did, queryAfter.message);
+        expect(queryAfterReply.status.code).toBe(200);
+        expect(queryAfterReply.entries!.length).toBe(0);
+
+        // The data blob should also be deleted from the data store
+        const dataResultAfter = await dataStore.get(alice.did, recordsWrite.message.recordId, recordsWrite.message.descriptor.dataCid);
+        expect(dataResultAfter).toBeUndefined();
+      });
+
+      it('should delete multiple grant-authorized messages when revoking a grant', async () => {
+        // scenario:
+        // 1. Alice installs a protocol and grants Bob write access
+        // 2. Bob writes three records: one at current time, two with future timestamps
+        // 3. Alice revokes the grant (at current time, between the first and future records)
+        // 4. The current-time record survives; the two future records are deleted
+
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition = minimalProtocolDefinition;
+
+        // Alice installs the protocol
+        const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author: alice,
+          protocolDefinition,
+        });
+        const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+        expect(protocolsConfigureReply.status.code).toBe(202);
+
+        // Alice grants Bob write permission
+        const permissionGrant = await PermissionsProtocol.createGrant({
+          signer      : Jws.createSigner(alice),
+          grantedTo   : bob.did,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
+          scope       : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Write,
+            protocol  : protocolDefinition.protocol,
+          }
+        });
+        const grantWriteReply = await dwn.processMessage(
+          alice.did,
+          permissionGrant.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(permissionGrant.permissionGrantBytes) }
+        );
+        expect(grantWriteReply.status.code).toBe(202);
+
+        // Timestamps: future records will be deleted, current-time record will survive
+        const futureTimestamp = Time.createOffsetTimestamp({ seconds: 60 });
+        const farFutureTimestamp = Time.createOffsetTimestamp({ seconds: 120 });
+
+        // Bob writes record 1 (current time — should survive)
+        const write1 = await TestDataGenerator.generateRecordsWrite({
+          author            : bob,
+          protocol          : protocolDefinition.protocol,
+          protocolPath      : 'foo',
+          permissionGrantId : permissionGrant.recordsWrite.message.recordId,
+        });
+        const write1Reply = await dwn.processMessage(alice.did, write1.recordsWrite.message, { dataStream: write1.dataStream });
+        expect(write1Reply.status.code).toBe(202);
+
+        // Bob writes record 2 (future — should be deleted)
+        const write2 = await TestDataGenerator.generateRecordsWrite({
+          author            : bob,
+          protocol          : protocolDefinition.protocol,
+          protocolPath      : 'foo',
+          permissionGrantId : permissionGrant.recordsWrite.message.recordId,
+          dateCreated       : futureTimestamp,
+          messageTimestamp  : futureTimestamp,
+        });
+        const write2Reply = await dwn.processMessage(alice.did, write2.recordsWrite.message, { dataStream: write2.dataStream });
+        expect(write2Reply.status.code).toBe(202);
+
+        // Bob writes record 3 (far future — should be deleted)
+        const write3 = await TestDataGenerator.generateRecordsWrite({
+          author            : bob,
+          protocol          : protocolDefinition.protocol,
+          protocolPath      : 'foo',
+          permissionGrantId : permissionGrant.recordsWrite.message.recordId,
+          dateCreated       : farFutureTimestamp,
+          messageTimestamp  : farFutureTimestamp,
+        });
+        const write3Reply = await dwn.processMessage(alice.did, write3.recordsWrite.message, { dataStream: write3.dataStream });
+        expect(write3Reply.status.code).toBe(202);
+
+        // Verify all 3 records exist before revocation
+        const queryBefore = await RecordsQuery.create({
+          signer : Jws.createSigner(alice),
+          filter : { protocol: protocolDefinition.protocol },
+        });
+        const queryBeforeReply = await dwn.processMessage(alice.did, queryBefore.message);
+        expect(queryBeforeReply.status.code).toBe(200);
+        expect(queryBeforeReply.entries!.length).toBe(3);
+
+        // Alice revokes the grant (messageTimestamp is "now", between record 1 and records 2/3)
+        const revokeWrite = await PermissionsProtocol.createRevocation({
+          signer : Jws.createSigner(alice),
+          grant  : await PermissionGrant.parse(permissionGrant.dataEncodedMessage),
+        });
+        const revokeReply = await dwn.processMessage(
+          alice.did,
+          revokeWrite.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(revokeWrite.permissionRevocationBytes) }
+        );
+        expect(revokeReply.status.code).toBe(202);
+
+        // Only the record written at current time should remain
+        const queryAfter = await RecordsQuery.create({
+          signer : Jws.createSigner(alice),
+          filter : { protocol: protocolDefinition.protocol },
+        });
+        const queryAfterReply = await dwn.processMessage(alice.did, queryAfter.message);
+        expect(queryAfterReply.status.code).toBe(200);
+        expect(queryAfterReply.entries!.length).toBe(1);
+        expect(queryAfterReply.entries![0].recordId).toBe(write1.recordsWrite.message.recordId);
       });
     });
   });
