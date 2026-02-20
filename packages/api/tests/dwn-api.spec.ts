@@ -1101,9 +1101,9 @@ describe('DwnApi', () => {
           }
         });
         expect(friendCreateStatus.code).toBe(202);
-        const { status: friendRecordUpdateStatus } = await friendRecord.update({ data: 'update' });
+        const { status: friendRecordUpdateStatus, record: updatedFriendRecord } = await friendRecord.update({ data: 'update' });
         expect(friendRecordUpdateStatus.code).toBe(202);
-        const { status: aliceFriendSendStatus } = await friendRecord.send(aliceDid.uri);
+        const { status: aliceFriendSendStatus } = await updatedFriendRecord.send(aliceDid.uri);
         expect(aliceFriendSendStatus.code).toBe(202);
 
         // Bob creates an album record using the role 'friend' and sends it to Alice
@@ -2750,9 +2750,9 @@ describe('DwnApi', () => {
         });
 
         // delete the record using the original writeResult instance of it
-        const deleteResult = await writeResult.record.delete();
-        expect(deleteResult.status.code).toBe(202);
-        const deleteResultSend = await writeResult.record.send();
+        const { status: deleteStatus, record: deletedRecord } = await writeResult.record.delete();
+        expect(deleteStatus.code).toBe(202);
+        const deleteResultSend = await deletedRecord.send();
         expect(deleteResultSend.status.code).toBe(202);
 
         // wait for the delete event
