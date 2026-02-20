@@ -16,6 +16,7 @@ import type { DwnPermissionScope } from '../src/types/dwn.js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
+import freeForAllProtocolDefinition from './fixtures/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { KeyDeliveryProtocolDefinition } from '../src/store-data-protocols.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
@@ -23,6 +24,27 @@ import { testDwnUrl } from './utils/test-config.js';
 import { AgentDwnApi, isDwnMessage, isMessagesPermissionScope, isRecordPermissionScope } from '../src/dwn-api.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
+
+/**
+ * Installs the free-for-all protocol on the given DWN for the given DID.
+ * Use `processRequest` for local DWN and `sendRequest` for remote DWN.
+ */
+async function installFreeForAll(
+  harness: PlatformAgentTestHarness,
+  did: string,
+  send?: boolean,
+): Promise<void> {
+  const fn = send ? 'sendRequest' : 'processRequest';
+  const { reply } = await harness.agent.dwn[fn]({
+    author        : did,
+    target        : did,
+    messageType   : DwnInterface.ProtocolsConfigure,
+    messageParams : { definition: freeForAllProtocolDefinition }
+  });
+  if (reply.status.code !== 202) {
+    throw new Error(`Failed to install free-for-all protocol: ${reply.status.code} ${reply.status.detail}`);
+  }
+}
 
 describe('AgentDwnApi', () => {
   let testHarness: PlatformAgentTestHarness;
@@ -100,6 +122,8 @@ describe('AgentDwnApi', () => {
 
     beforeEach(async () => {
       await testHarness.clearDwnStores();
+      await installFreeForAll(testHarness, alice.did.uri);
+      await installFreeForAll(testHarness, bob.did.uri);
     });
 
     afterAll(async () => {
@@ -194,8 +218,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/foo' // no protocol
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/foo' // no protocol
         },
         dataStream: new Blob([dataBytes3])
       });
@@ -223,8 +249,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -331,8 +359,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -373,8 +403,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -422,8 +454,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -498,8 +532,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -513,8 +549,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes2])
       });
@@ -528,8 +566,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/other' // different schema
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/other' // different schema
         },
         dataStream: new Blob([dataBytes3])
       });
@@ -554,7 +594,9 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat: 'text/plain'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -586,7 +628,9 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat: 'text/plain'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -609,9 +653,11 @@ describe('AgentDwnApi', () => {
         target        : bob.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          published  : true,
-          schema     : 'foo/bar',
-          dataFormat : 'text/plain'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          published    : true,
+          schema       : 'foo/bar',
+          dataFormat   : 'text/plain'
         },
         dataStream,
       });
@@ -1053,6 +1099,10 @@ describe('AgentDwnApi', () => {
       // Ensure the DID is published to the DHT. This step is necessary while the DHT Gateways
       // operated by TBD are regularly restarted and DIDs are no longer persisted.
       await DidDht.publish({ did: alice.did });
+
+      // Install free-for-all protocol locally and on remote DWN.
+      await installFreeForAll(testHarness, alice.did.uri);
+      await installFreeForAll(testHarness, alice.did.uri, true);
     });
 
     afterAll(async () => {
@@ -1069,8 +1119,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1195,8 +1247,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/foo' // no protocol
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/foo' // no protocol
         },
         dataStream: new Blob([dataBytes3])
       });
@@ -1224,8 +1278,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1331,8 +1387,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1373,8 +1431,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1422,8 +1482,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1498,8 +1560,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1513,8 +1577,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes2])
       });
@@ -1528,8 +1594,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/other' // different schema
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/other' // different schema
         },
         dataStream: new Blob([dataBytes3])
       });
@@ -1554,7 +1622,9 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat: 'text/plain'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain'
         },
         dataStream: new Blob([dataBytes])
       });
