@@ -211,7 +211,7 @@ export class Records {
       );
     }
 
-    // TODO: issue #683 -Extend key derivation support to include the full contextId (https://github.com/enboxorg/enbox/issues/683)
+    // TODO: Extend key derivation support to include the full contextId (https://github.com/enboxorg/enbox/issues/99)
     const firstContextSegment = contextId.split('/')[0];
 
     const fullDerivationPath = [

@@ -713,7 +713,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       return;
     }
 
-    // TODO: multi-attesters to be unblocked by #205 - Revisit database interfaces (https://github.com/enboxorg/enbox/issues/205)
+    // TODO: support multiple attesters (https://github.com/enboxorg/enbox/issues/223)
     if (message.attestation.signatures.length !== 1) {
       throw new DwnError(
         DwnErrorCode.RecordsWriteAttestationIntegrityMoreThanOneSignature,
@@ -799,7 +799,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     }
 
     // add additional indexes to optional values if given
-    // TODO: index multi-attesters to be unblocked by #205 - Revisit database interfaces (https://github.com/enboxorg/enbox/issues/205)
+    // TODO: index multiple attesters (https://github.com/enboxorg/enbox/issues/223)
     if (this.attesters.length > 0) { indexes.attester = this.attesters[0]; }
     if (message.contextId !== undefined) { indexes.contextId = message.contextId; }
 

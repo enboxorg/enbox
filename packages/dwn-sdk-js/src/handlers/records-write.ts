@@ -219,7 +219,7 @@ export class RecordsWriteHandler implements MethodHandler {
    */
   private async postProcessingForCoreRecordsWrite(tenant: string, recordsWrite: RecordsWrite): Promise<void> {
     // If this message is a Permission revocation, we need to delete all grant-authorized messages with timestamp after revocation
-    // TODO: https://github.com/enboxorg/enbox/issues/716
+    // TODO: https://github.com/enboxorg/enbox/issues/221
     // This code is a direct copy and paste from the original PermissionsRevokeHandler (no longer exists),
     // but it appears that there was no test for it and it does not look like the code worked:
     // - not seeing `permissionGrantId` being an index
