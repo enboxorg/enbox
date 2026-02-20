@@ -2,8 +2,8 @@ import type { BearerDid } from '@enbox/dids';
 import type { Jwk } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
-import { DidJwk } from '@enbox/dids';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { DidDht, DidJwk } from '@enbox/dids';
 import { Encoder, Message, PrivateKeySigner, RecordsWrite } from '@enbox/dwn-sdk-js';
 
 import type { AgentDataStore, DwnDataStore } from '../src/store-data.js';
@@ -133,9 +133,9 @@ describe('KeyStore', () => {
   describe('DwnKeyStore', () => {
     let testHarness: PlatformAgentTestHarness;
     let keyStore: AgentDataStore<Jwk>;
-    // Cache the secp256k1 DID across tests to avoid expensive key generation
+    // Cache the X25519 DID across tests to avoid expensive key generation
     // on every beforeEach. The DID object is self-contained and can be reused.
-    let secp256k1Did: BearerDid;
+    let x25519Did: BearerDid;
 
     beforeAll(async () => {
       testHarness = await PlatformAgentTestHarness.setup({
@@ -143,16 +143,31 @@ describe('KeyStore', () => {
         agentStores      : 'memory',
         testDataLocation : '__TESTDATA__/dwn-key-store'
       });
-      secp256k1Did = await DidJwk.create({
-        options: { algorithm: 'secp256k1' }
+      x25519Did = await DidDht.create({
+        options: {
+          publish             : true,
+          gatewayUri          : process.env.DID_DHT_GATEWAY_URI ?? 'http://localhost:7527',
+          verificationMethods : [
+            {
+              algorithm : 'Ed25519',
+              id        : 'sig',
+              purposes  : ['assertionMethod', 'authentication']
+            },
+            {
+              algorithm : 'X25519',
+              id        : 'enc',
+              purposes  : ['keyAgreement']
+            }
+          ]
+        }
       });
     });
 
     beforeEach(async () => {
       await testHarness.clearStorage();
-      // Use secp256k1 for the agent DID so that DWN record-level encryption
-      // (which requires a secp256k1 keyAgreement key) works correctly.
-      testHarness.agent.agentDid = secp256k1Did;
+      // Use X25519 for the agent DID so that DWN record-level encryption
+      // (which requires an X25519 keyAgreement key) works correctly.
+      testHarness.agent.agentDid = x25519Did;
       keyStore = new DwnKeyStore();
       const keyManager = new LocalKeyManager({ agent: testHarness.agent, keyStore });
       testHarness.agent.keyManager = keyManager;
@@ -342,10 +357,16 @@ describe('KeyStore', () => {
         expect(queryReply.entries).toHaveLength(1);
 
         // The raw query entry should have encryption metadata, indicating the
-        // record is encrypted at the DWN level.
+        // record is encrypted at the DWN level (JWE format with protected header).
         const rawRecord = queryReply.entries![0];
         expect(rawRecord.encryption).toBeDefined();
-        expect(rawRecord.encryption!.algorithm).toBe('A256CTR');
+        expect(rawRecord.encryption!.protected).toBeDefined();
+        // Decode the protected header and verify algorithm fields.
+        const protectedHeader = JSON.parse(
+          Buffer.from(rawRecord.encryption!.protected, 'base64url').toString()
+        );
+        expect(protectedHeader.alg).toBe('ECDH-ES+A256KW');
+        expect(protectedHeader.enc).toBe('A256GCM');
 
         // Read back through the store API — should be decrypted transparently.
         const storedKey = await keyStore.get({ id: keyUri, agent: testHarness.agent });
@@ -410,8 +431,8 @@ describe('KeyStore', () => {
 
     describe('encryption required — Ed25519-only agent DID rejection', () => {
       // These tests verify that DwnKeyStore (whose protocol definition has
-      // encryptionRequired: true) refuses to operate when the agent DID lacks a
-      // secp256k1 keyAgreement key. No plaintext fallback is allowed.
+      // encryptionRequired: true) refuses to operate when the agent DID lacks an
+      // X25519 keyAgreement key. No plaintext fallback is allowed.
       let ed25519Harness: PlatformAgentTestHarness;
       let ed25519KeyStore: AgentDataStore<Jwk>;
 
@@ -449,7 +470,7 @@ describe('KeyStore', () => {
           });
           throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).toContain('DWN encryption requires \'secp256k1\'');
+          expect(error.message).toContain('DWN encryption requires \'X25519\'');
         }
       });
 
@@ -460,7 +481,7 @@ describe('KeyStore', () => {
           await (ed25519KeyStore as DwnDataStore<Jwk>)['initialize']({ agent: ed25519Harness.agent });
           throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).toContain('DWN encryption requires \'secp256k1\'');
+          expect(error.message).toContain('DWN encryption requires \'X25519\'');
         }
       });
     });

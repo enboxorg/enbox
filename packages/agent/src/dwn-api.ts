@@ -893,7 +893,7 @@ export class AgentDwnApi {
    * @param didUri - The DID URI to resolve encryption key info for
    * @returns keyId (fully qualified verification method ID), keyUri (KMS reference),
    *          and publicKeyJwk. No private key material is returned.
-   * @throws If the DID has no keyAgreement verification method or it's not secp256k1.
+   * @throws If the DID has no keyAgreement verification method or it's not X25519.
    */
   private async getEncryptionKeyInfo(didUri: string): Promise<{
     keyId: string;
@@ -914,7 +914,7 @@ export class AgentDwnApi {
     if (!keyAgreementRefs || keyAgreementRefs.length === 0) {
       throw new Error(
         `AgentDwnApi: DID '${didUri}' does not have a keyAgreement ` +
-        `verification method. Create the identity with a secp256k1 key ` +
+        `verification method. Create the identity with an X25519 key ` +
         `with keyAgreement purpose to use protocol encryption.`
       );
     }
@@ -940,12 +940,12 @@ export class AgentDwnApi {
       );
     }
 
-    // 4. Verify it's a secp256k1 key
+    // 4. Verify it's an X25519 key
     const publicKeyJwk = verificationMethod.publicKeyJwk;
-    if (publicKeyJwk.crv !== 'secp256k1') {
+    if (publicKeyJwk.crv !== 'X25519') {
       throw new Error(
         `AgentDwnApi: keyAgreement key for '${didUri}' uses curve ` +
-        `'${publicKeyJwk.crv}', but DWN encryption requires 'secp256k1'.`
+        `'${publicKeyJwk.crv}', but DWN encryption requires 'X25519'.`
       );
     }
 

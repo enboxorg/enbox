@@ -139,10 +139,26 @@ export class PlatformAgentTestHarness {
   }
 
   public async createAgentDid(): Promise<void> {
-    // Create a DID for the Agent using secp256k1, which supports both signing
-    // and keyAgreement (required by DwnKeyStore for record-level encryption).
-    this.agent.agentDid = await DidJwk.create({
-      options: { algorithm: 'secp256k1' }
+    // Create a DID for the Agent with Ed25519 (signing) and X25519 (keyAgreement).
+    // X25519 is required by DwnKeyStore for JWE record-level encryption.
+    // Must be published so the DWN can resolve it for JWS signature verification.
+    this.agent.agentDid = await DidDht.create({
+      options: {
+        publish             : true,
+        gatewayUri          : process.env.DID_DHT_GATEWAY_URI ?? 'http://localhost:7527',
+        verificationMethods : [
+          {
+            algorithm : 'Ed25519',
+            id        : 'sig',
+            purposes  : ['assertionMethod', 'authentication']
+          },
+          {
+            algorithm : 'X25519',
+            id        : 'enc',
+            purposes  : ['keyAgreement']
+          }
+        ]
+      }
     });
   }
 
@@ -169,7 +185,7 @@ export class PlatformAgentTestHarness {
             purposes  : ['assertionMethod', 'authentication']
           },
           {
-            algorithm : 'secp256k1',
+            algorithm : 'X25519',
             id        : 'enc',
             purposes  : ['keyAgreement']
           }

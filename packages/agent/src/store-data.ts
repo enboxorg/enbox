@@ -80,7 +80,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
 
   /**
    * Per-tenant encryption resolution cache. Populated during `initialize()`:
-   * `true` if the tenant supports encryption (has secp256k1 keyAgreement).
+   * `true` if the tenant supports encryption (has X25519 keyAgreement).
    * When any type in `_recordProtocolDefinition` has `encryptionRequired: true`,
    * this will always be `true` after successful initialization (since
    * installation fails if encryption is not possible).
@@ -316,7 +316,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    * Install the protocol for the given tenant using a `ProtocolsConfigure` message.
    * When any type in the protocol definition has `encryptionRequired: true`,
    * `$encryption` keys are derived and injected into the protocol definition.
-   * If the tenant DID lacks a secp256k1 keyAgreement key, the error propagates
+   * If the tenant DID lacks an X25519 keyAgreement key, the error propagates
    * — plaintext fallback is not allowed.
    */
   private async installProtocol(tenant: string, agent: Web5PlatformAgent): Promise<void> {
@@ -324,7 +324,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     let encryptionActive = false;
 
     if (this.encryptionRequired) {
-      // Derive encryption keys — requires the tenant DID to have a secp256k1
+      // Derive encryption keys — requires the tenant DID to have an X25519
       // keyAgreement key. If it does not, the error propagates to the caller.
       const keyDeriver = await agent.dwn.getEncryptionKeyDeriver(tenant);
       definition = await Protocols.deriveAndInjectPublicEncryptionKeys(

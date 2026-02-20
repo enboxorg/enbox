@@ -474,19 +474,18 @@ describe('HdIdentityVault', () => {
       });
 
       describe('encryption key derivation', () => {
-        it('should create DID with secp256k1 encryption key in verification methods', async () => {
+        it('should create DID with X25519 encryption key in verification methods', async () => {
           await identityVault.initialize({ password: 'test-password', dwnEndpoints: ['https://dwn.example.com'] });
 
           const did = await identityVault.getDid();
 
-          // Verify #enc verification method exists with secp256k1 curve.
+          // Verify #enc verification method exists with X25519 curve.
           const encKey = did.document.verificationMethod?.find((vm: any) => vm.id.endsWith('#enc'));
           expect(encKey).toBeDefined();
           expect(encKey?.type).toBe('JsonWebKey');
-          expect(encKey?.publicKeyJwk).toHaveProperty('kty', 'EC');
-          expect(encKey?.publicKeyJwk).toHaveProperty('crv', 'secp256k1');
+          expect(encKey?.publicKeyJwk).toHaveProperty('kty', 'OKP');
+          expect(encKey?.publicKeyJwk).toHaveProperty('crv', 'X25519');
           expect(encKey?.publicKeyJwk).toHaveProperty('x');
-          expect(encKey?.publicKeyJwk).toHaveProperty('y');
           expect(encKey?.publicKeyJwk).not.toHaveProperty('d'); // Should be public only
         });
 

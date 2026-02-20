@@ -203,7 +203,7 @@ export type ProcessDwnRequest<T extends DwnInterface> = DwnRequest<T> & {
   subscriptionHandler?: MessageHandler[T];
   /**
    * If true, automatically encrypt protocol records and inject $encryption keys.
-   * Requires the identity to have a secp256k1 keyAgreement key.
+    * Requires the identity to have an X25519 keyAgreement key.
    */
   encryption?: boolean;
 };

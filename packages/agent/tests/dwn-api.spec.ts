@@ -1,5 +1,5 @@
 import type { Dwn, MessageEvent, ProtocolDefinition, RecordsReadReply, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
-import type { JwkParamsEcPublic, PrivateKeyJwk } from '@enbox/crypto';
+import type { JwkParamsOkpPublic, PrivateKeyJwk } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
 import { DidDht } from '@enbox/dids';
@@ -971,12 +971,10 @@ describe('AgentDwnApi', () => {
                 type         : 'JsonWebKey',
                 controller   : 'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy',
                 publicKeyJwk : {
-                  kty : 'EC',
-                  crv : 'secp256k1',
+                  kty : 'OKP',
+                  crv : 'X25519',
                   x   : 'P5FoqXk9W11i8FWyTpIvltAjV09FL9Q5o76wEHcxMtI',
-                  y   : 'DgoLVlLKbjlaUja4RTjdxzqAy0ITOEFlCXGKSpu8XQs',
                   kid : 'hXXhIgfXRVIYqnKiX0DIL7ZGy0CBJrFQFIYxmRkAB-A',
-                  alg : 'ES256K',
                 },
               },
             ],
@@ -1029,13 +1027,11 @@ describe('AgentDwnApi', () => {
               alg : 'EdDSA',
             },
             {
-              kty : 'EC',
-              crv : 'secp256k1',
+              kty : 'OKP',
+              crv : 'X25519',
               d   : 'b2gb-OfB5X4G3xd16u19MXNkamDP5lsT6bVsDN4aeuY',
               x   : 'P5FoqXk9W11i8FWyTpIvltAjV09FL9Q5o76wEHcxMtI',
-              y   : 'DgoLVlLKbjlaUja4RTjdxzqAy0ITOEFlCXGKSpu8XQs',
               kid : 'hXXhIgfXRVIYqnKiX0DIL7ZGy0CBJrFQFIYxmRkAB-A',
-              alg : 'ES256K',
             },
           ],
         },
@@ -1914,8 +1910,8 @@ describe('Encryption Callback Factories', () => {
       expect(keyInfo).toHaveProperty('keyUri');
       expect(typeof keyInfo.keyUri).toBe('string');
       expect(keyInfo).toHaveProperty('publicKeyJwk');
-      expect(keyInfo.publicKeyJwk).toHaveProperty('crv', 'secp256k1');
-      expect(keyInfo.publicKeyJwk).toHaveProperty('kty', 'EC');
+      expect(keyInfo.publicKeyJwk).toHaveProperty('crv', 'X25519');
+      expect(keyInfo.publicKeyJwk).toHaveProperty('kty', 'OKP');
     });
 
     it('should throw if DID has no keyAgreement method', async () => {
@@ -1946,10 +1942,10 @@ describe('Encryption Callback Factories', () => {
       }
     });
 
-    it('should throw if keyAgreement key is not secp256k1', async () => {
-      // This test would require creating a DID with a non-secp256k1 keyAgreement key
+    it('should throw if keyAgreement key is not X25519', async () => {
+      // This test would require creating a DID with a non-X25519 keyAgreement key
       // which is uncommon, so we'll skip implementation details for now
-      // In practice, secp256k1 is required for DWN encryption
+      // In practice, X25519 is required for DWN encryption
     });
   });
 
@@ -1969,10 +1965,9 @@ describe('Encryption Callback Factories', () => {
 
       const derivedKey = await keyDeriver.derivePublicKey(['test', 'path']);
 
-      expect(derivedKey).toHaveProperty('kty', 'EC');
-      expect(derivedKey).toHaveProperty('crv', 'secp256k1');
+      expect(derivedKey).toHaveProperty('kty', 'OKP');
+      expect(derivedKey).toHaveProperty('crv', 'X25519');
       expect(derivedKey).toHaveProperty('x');
-      expect(derivedKey).toHaveProperty('y');
       expect(derivedKey).not.toHaveProperty('d'); // Should be public only
     });
 
@@ -1982,8 +1977,7 @@ describe('Encryption Callback Factories', () => {
       const key1 = await keyDeriver.derivePublicKey(['path1']);
       const key2 = await keyDeriver.derivePublicKey(['path2']);
 
-      expect((key1 as JwkParamsEcPublic).x).not.toBe((key2 as JwkParamsEcPublic).x);
-      expect((key1 as JwkParamsEcPublic).y).not.toBe((key2 as JwkParamsEcPublic).y);
+      expect((key1 as JwkParamsOkpPublic).x).not.toBe((key2 as JwkParamsOkpPublic).x);
     });
 
     it('should derive same key for same path (deterministic)', async () => {
@@ -1992,8 +1986,7 @@ describe('Encryption Callback Factories', () => {
       const key1 = await keyDeriver.derivePublicKey(['consistent', 'path']);
       const key2 = await keyDeriver.derivePublicKey(['consistent', 'path']);
 
-      expect((key1 as JwkParamsEcPublic).x).toBe((key2 as JwkParamsEcPublic).x);
-      expect((key1 as JwkParamsEcPublic).y).toBe((key2 as JwkParamsEcPublic).y);
+      expect((key1 as JwkParamsOkpPublic).x).toBe((key2 as JwkParamsOkpPublic).x);
     });
   });
 
@@ -2008,28 +2001,33 @@ describe('Encryption Callback Factories', () => {
       expect(typeof keyDecrypter.decrypt).toBe('function');
     });
 
-    it('should decrypt ECIES payload through KMS when callback is invoked', async () => {
-      const { Encryption, HdKey, Secp256k1 } = await import('@enbox/dwn-sdk-js');
+    it('should decrypt ECDH-ES payload through KMS when callback is invoked', async () => {
+      const { Encryption, HdKey } = await import('@enbox/dwn-sdk-js');
+      const { X25519 } = await import('@enbox/crypto');
 
       // Get the encryption key info
       const keyInfo = await testHarness.agent.dwn['getEncryptionKeyInfo'](alice.did.uri);
 
       // Derive a test key for encryption
       const privateKeyJwk = await testHarness.agent.keyManager['getPrivateKey']({ keyUri: keyInfo.keyUri }) as PrivateKeyJwk;
-      const privateKeyBytes = Secp256k1.privateJwkToBytes(privateKeyJwk);
+      const privateKeyBytes = await X25519.privateKeyToBytes({ privateKey: privateKeyJwk });
       const derivationPath = ['test', 'decrypt'];
       const leafPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(privateKeyBytes, derivationPath);
-      const leafPublicKeyBytes = await Secp256k1.getPublicKey(leafPrivateKeyBytes);
+      const leafPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
+      const leafPublicKeyJwk = await X25519.getPublicKey({ key: leafPrivateKeyJwk });
 
-      // Encrypt a test message
-      const plaintext = Convert.string('Test message').toUint8Array();
-      const encrypted = await Encryption.eciesSecp256k1Encrypt(leafPublicKeyBytes, plaintext);
+      // Wrap a random 32-byte CEK using ECDH-ES key agreement (AES Key Wrap requires ≥16-byte key)
+      const { CryptoUtils } = await import('@enbox/crypto');
+      const cek = CryptoUtils.randomBytes(32);
+      const ephemeralPrivateKey = await X25519.generateKey();
+      const ephemeralPublicKey = await X25519.getPublicKey({ key: ephemeralPrivateKey }) as PublicKeyJwk;
+      const wrappedKey = await Encryption.ecdhEsWrapKey(ephemeralPrivateKey, leafPublicKeyJwk, cek);
 
       // Get key decrypter and decrypt
       const keyDecrypter = await testHarness.agent.dwn['getKeyDecrypter'](alice.did.uri);
-      const decrypted = await keyDecrypter.decrypt(derivationPath, encrypted);
+      const decrypted = await keyDecrypter.decrypt(derivationPath, { encryptedKey: wrappedKey, ephemeralPublicKey });
 
-      expect(Convert.uint8Array(decrypted).toString()).toBe('Test message');
+      expect(Convert.uint8Array(decrypted).toHex()).toBe(Convert.uint8Array(cek).toHex());
     });
   });
 
@@ -2122,7 +2120,7 @@ describe('Encryption Callback Factories', () => {
       expect(storedDefinition.structure.note.$encryption).toHaveProperty('rootKeyId');
       expect(storedDefinition.structure.note.$encryption!.rootKeyId).toContain('#enc');
       expect(storedDefinition.structure.note.$encryption).toHaveProperty('publicKeyJwk');
-      expect(storedDefinition.structure.note.$encryption!.publicKeyJwk).toHaveProperty('crv', 'secp256k1');
+      expect(storedDefinition.structure.note.$encryption!.publicKeyJwk).toHaveProperty('crv', 'X25519');
     });
 
     it('should auto-encrypt data on RecordsWrite', async () => {
@@ -2160,13 +2158,14 @@ describe('Encryption Callback Factories', () => {
       // Verify the message has encryption metadata
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
       expect(recordsWriteMessage).toHaveProperty('encryption');
-      expect(recordsWriteMessage.encryption).toHaveProperty('algorithm');
-      expect(recordsWriteMessage.encryption).toHaveProperty('initializationVector');
-      expect(recordsWriteMessage.encryption).toHaveProperty('keyEncryption');
-      expect(recordsWriteMessage.encryption!.keyEncryption).toHaveLength(1);
-      expect(recordsWriteMessage.encryption!.keyEncryption[0]).toHaveProperty('rootKeyId');
-      expect(recordsWriteMessage.encryption!.keyEncryption[0].rootKeyId).toContain('#enc');
-      expect(recordsWriteMessage.encryption!.keyEncryption[0]).toHaveProperty('derivationScheme', 'protocolPath');
+      expect(recordsWriteMessage.encryption).toHaveProperty('protected');
+      expect(recordsWriteMessage.encryption).toHaveProperty('iv');
+      expect(recordsWriteMessage.encryption).toHaveProperty('tag');
+      expect(recordsWriteMessage.encryption).toHaveProperty('recipients');
+      expect(recordsWriteMessage.encryption!.recipients).toHaveLength(1);
+      expect(recordsWriteMessage.encryption!.recipients[0].header).toHaveProperty('kid');
+      expect(recordsWriteMessage.encryption!.recipients[0].header.kid).toContain('#enc');
+      expect(recordsWriteMessage.encryption!.recipients[0]).toHaveProperty(['header', 'derivationScheme'], 'protocolPath');
 
       // Read the raw data without decryption to verify it's encrypted
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
@@ -2481,10 +2480,10 @@ describe('Encryption Callback Factories', () => {
       const storedDef = queryReply.entries![0].descriptor.definition;
       // Verify $encryption exists at 'thread' level
       expect(storedDef.structure.thread).toHaveProperty('$encryption');
-      expect(storedDef.structure.thread.$encryption!.publicKeyJwk).toHaveProperty('crv', 'secp256k1');
+      expect(storedDef.structure.thread.$encryption!.publicKeyJwk).toHaveProperty('crv', 'X25519');
       // Verify $encryption exists at 'thread/message' level
       expect(storedDef.structure.thread.message).toHaveProperty('$encryption');
-      expect(storedDef.structure.thread.message.$encryption!.publicKeyJwk).toHaveProperty('crv', 'secp256k1');
+      expect(storedDef.structure.thread.message.$encryption!.publicKeyJwk).toHaveProperty('crv', 'X25519');
     });
 
     it('should full round-trip: configure, write, read, query with encryption', async () => {
@@ -2617,12 +2616,12 @@ describe('Encryption Callback Factories', () => {
 
       const updateWriteMessage = updateMessage as RecordsWriteMessage;
       expect(updateWriteMessage).toHaveProperty('encryption');
-      expect(updateWriteMessage.encryption!.keyEncryption).toHaveLength(1);
-      expect(updateWriteMessage.encryption!.keyEncryption[0]).toHaveProperty('derivationScheme', 'protocolPath');
+      expect(updateWriteMessage.encryption!.recipients).toHaveLength(1);
+      expect(updateWriteMessage.encryption!.recipients[0]).toHaveProperty(['header', 'derivationScheme'], 'protocolPath');
 
       // The update should have a different initialization vector (fresh DEK)
-      expect(updateWriteMessage.encryption!.initializationVector)
-        .not.toBe(initialEncryption!.initializationVector);
+      expect(updateWriteMessage.encryption!.iv)
+        .not.toBe(initialEncryption!.iv);
 
       // Read back with decryption — should get the UPDATED plaintext
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
@@ -2705,7 +2704,7 @@ describe('Encryption Callback Factories', () => {
       const chatRecordId = chatWriteMessage.recordId;
       const chatEncryption = chatWriteMessage.encryption;
       expect(chatEncryption).toBeDefined();
-      expect(chatEncryption!.keyEncryption[0]).toHaveProperty('derivationScheme', 'protocolContext');
+      expect(chatEncryption!.recipients[0]).toHaveProperty(['header', 'derivationScheme'], 'protocolContext');
 
       // Update the chat message
       const updatedChat = 'Updated chat message';
@@ -2731,7 +2730,7 @@ describe('Encryption Callback Factories', () => {
       // Updated message should still use ProtocolContext scheme
       const updatedEncryption = (updatedChatMessage as RecordsWriteMessage).encryption;
       expect(updatedEncryption).toBeDefined();
-      expect(updatedEncryption!.keyEncryption[0]).toHaveProperty('derivationScheme', 'protocolContext');
+      expect(updatedEncryption!.recipients[0]).toHaveProperty(['header', 'derivationScheme'], 'protocolContext');
 
       // Read back with decryption
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
@@ -2839,8 +2838,8 @@ describe('Encryption Callback Factories', () => {
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
       expect(recordsWriteMessage).toHaveProperty('encryption');
-      expect(recordsWriteMessage.encryption!.keyEncryption).toHaveLength(1);
-      expect(recordsWriteMessage.encryption!.keyEncryption[0]).toHaveProperty('derivationScheme', 'protocolContext');
+      expect(recordsWriteMessage.encryption!.recipients).toHaveLength(1);
+      expect(recordsWriteMessage.encryption!.recipients[0]).toHaveProperty(['header', 'derivationScheme'], 'protocolContext');
 
       // contextId should equal recordId for root records
       expect(recordsWriteMessage.contextId).toBe(recordsWriteMessage.recordId);
@@ -2898,8 +2897,8 @@ describe('Encryption Callback Factories', () => {
 
       const chatWriteMessage = chatMessage as RecordsWriteMessage;
       expect(chatWriteMessage).toHaveProperty('encryption');
-      expect(chatWriteMessage.encryption!.keyEncryption).toHaveLength(1);
-      expect(chatWriteMessage.encryption!.keyEncryption[0]).toHaveProperty('derivationScheme', 'protocolContext');
+      expect(chatWriteMessage.encryption!.recipients).toHaveLength(1);
+      expect(chatWriteMessage.encryption!.recipients[0]).toHaveProperty(['header', 'derivationScheme'], 'protocolContext');
     });
 
     it('should still use ProtocolPath for single-party protocols', async () => {
@@ -2934,7 +2933,7 @@ describe('Encryption Callback Factories', () => {
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
       expect(recordsWriteMessage).toHaveProperty('encryption');
-      expect(recordsWriteMessage.encryption!.keyEncryption[0]).toHaveProperty('derivationScheme', 'protocolPath');
+      expect(recordsWriteMessage.encryption!.recipients[0]).toHaveProperty(['header', 'derivationScheme'], 'protocolPath');
     });
 
     it('context creator should decrypt root record via RecordsRead', async () => {
@@ -3152,12 +3151,6 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
 
   beforeEach(async () => {
     sinon.restore();
-    // Stub DidDht.publish so tests work without a DHT gateway
-    sinon.stub(DidDht, 'publish').resolves({
-      didDocumentMetadata   : { published: true },
-      didDocument           : {} as any,
-      didResolutionMetadata : {},
-    } as any);
     await testHarness.clearStorage();
     await testHarness.createAgentDid();
     alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
@@ -3235,7 +3228,7 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
         rootKeyId         : `${alice.did.uri}#enc`,
         derivationScheme  : 'protocolContext',
         derivationPath    : ['protocolContext', 'mock-context-id-123'],
-        derivedPrivateKey : { kty: 'EC', crv: 'secp256k1', x: 'test', d: 'test' },
+        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'test', d: 'test' },
       };
 
       // No recipientKeyDeliveryPublicKey → fallback to owner's ProtocolPath key
@@ -3270,11 +3263,11 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
 
       // Verify the record is encrypted
       expect(entry).toHaveProperty('encryption');
-      expect(entry.encryption).toHaveProperty('keyEncryption');
-      expect(entry.encryption!.keyEncryption).toHaveLength(1);
+      expect(entry.encryption).toHaveProperty('recipients');
+      expect(entry.encryption!.recipients).toHaveLength(1);
 
       // Fallback path encrypts to the owner's ProtocolPath key
-      expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe('protocolPath');
+      expect(entry.encryption!.recipients[0].header.derivationScheme).toBe('protocolPath');
 
       // Verify recipient
       expect(entry.descriptor).toHaveProperty('recipient', bob.did.uri);
@@ -3298,7 +3291,7 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
         rootKeyId         : `${alice.did.uri}#enc`,
         derivationScheme  : 'protocolContext',
         derivationPath    : ['protocolContext', 'test-context-id-789'],
-        derivedPrivateKey : { kty: 'EC', crv: 'secp256k1', x: 'test', d: 'test' },
+        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'test', d: 'test' },
       };
 
       const recordId = await testHarness.agent.dwn.writeContextKeyRecord({
@@ -3329,8 +3322,8 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
       });
 
       const entry = queryReply.entries![0] as RecordsWriteMessage;
-      expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe('protocolPath');
-      expect(entry.encryption!.keyEncryption[0].rootKeyId).toBe(bobKeyInfo.keyId);
+      expect(entry.encryption!.recipients[0].header.derivationScheme).toBe('protocolPath');
+      expect(entry.encryption!.recipients[0].header.kid).toBe(bobKeyInfo.keyId);
 
       // Verify Bob can decrypt it
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
@@ -3380,7 +3373,7 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
         rootKeyId         : `${alice.did.uri}#enc`,
         derivationScheme  : 'protocolContext',
         derivationPath    : ['protocolContext', 'eager-send-context-id'],
-        derivedPrivateKey : { kty: 'EC', crv: 'secp256k1', x: 'test', d: 'test' },
+        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'test', d: 'test' },
       };
 
       const recordId = await testHarness.agent.dwn.writeContextKeyRecord({
@@ -3435,7 +3428,7 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
         rootKeyId         : `${alice.did.uri}#enc`,
         derivationScheme  : 'protocolContext',
         derivationPath    : ['protocolContext', 'error-context-id'],
-        derivedPrivateKey : { kty: 'EC', crv: 'secp256k1', x: 'test', d: 'test' },
+        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'test', d: 'test' },
       };
 
       // Should NOT throw despite the RPC error — the local write succeeds
@@ -3476,7 +3469,7 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
         rootKeyId         : `${alice.did.uri}#enc`,
         derivationScheme  : 'protocolContext',
         derivationPath    : ['protocolContext', 'test-context-id-456'],
-        derivedPrivateKey : { kty: 'EC', crv: 'secp256k1', x: 'AAAA', d: 'BBBB' },
+        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'AAAA', d: 'BBBB' },
       };
 
       // Write the contextKey record (encrypted)
@@ -3524,13 +3517,13 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
         rootKeyId         : `${alice.did.uri}#enc`,
         derivationScheme  : 'protocolContext',
         derivationPath    : ['protocolContext', 'context-aaa'],
-        derivedPrivateKey : { kty: 'EC', crv: 'secp256k1', x: 'key1x', d: 'key1d' },
+        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'key1x', d: 'key1d' },
       };
       const contextKey2 = {
         rootKeyId         : `${alice.did.uri}#enc`,
         derivationScheme  : 'protocolContext',
         derivationPath    : ['protocolContext', 'context-bbb'],
-        derivedPrivateKey : { kty: 'EC', crv: 'secp256k1', x: 'key2x', d: 'key2d' },
+        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'key2x', d: 'key2d' },
       };
 
       await testHarness.agent.dwn.writeContextKeyRecord({
@@ -4128,7 +4121,7 @@ describe('Unified Key Retrieval - Read Side (PR D)', () => {
     expect(readReply.entries).toHaveLength(1);
     const entry = readReply.entries![0];
     expect(entry.encryption).toBeDefined();
-    expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe('protocolContext');
+    expect(entry.encryption!.recipients[0].header.derivationScheme).toBe('protocolContext');
 
     // Verify auto-decryption produced the original plaintext
     if (entry.encodedData) {
@@ -4217,8 +4210,8 @@ describe('Unified Key Retrieval - Read Side (PR D)', () => {
     expect(contextKeyPayload).toHaveProperty('derivationScheme', 'protocolContext');
     expect(contextKeyPayload).toHaveProperty('derivationPath');
     expect(contextKeyPayload).toHaveProperty('derivedPrivateKey');
-    expect(contextKeyPayload.derivedPrivateKey).toHaveProperty('kty', 'EC');
-    expect(contextKeyPayload.derivedPrivateKey).toHaveProperty('crv', 'secp256k1');
+    expect(contextKeyPayload.derivedPrivateKey).toHaveProperty('kty', 'OKP');
+    expect(contextKeyPayload.derivedPrivateKey).toHaveProperty('crv', 'X25519');
     expect(contextKeyPayload.derivedPrivateKey).toHaveProperty('d'); // private key component
 
     // Verify the derivation path is correct for this context
@@ -4267,12 +4260,6 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
 
   beforeEach(async () => {
     sinon.restore();
-    // Stub DidDht.publish so tests work without a DHT gateway
-    sinon.stub(DidDht, 'publish').resolves({
-      didDocumentMetadata   : { published: true },
-      didDocument           : {} as any,
-      didResolutionMetadata : {},
-    } as any);
 
     await testHarness.clearStorage();
     await testHarness.createAgentDid();
@@ -4310,14 +4297,14 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
         const entries = (reply as any).entries ?? [];
         for (const entry of entries) {
           const encryption = entry.encryption ?? entry.recordsWrite?.encryption;
-          if (encryption?.keyEncryption) {
-            const contextEntry = encryption.keyEncryption.find(
-              (k: any) => k.derivationScheme === 'protocolContext' && k.derivedPublicKey
+          if (encryption?.recipients) {
+            const contextEntry = encryption.recipients.find(
+              (k: any) => k.header.derivationScheme === 'protocolContext' && k.header.derivedPublicKey
             );
-            if (contextEntry?.derivedPublicKey) {
+            if (contextEntry?.header.derivedPublicKey) {
               return {
-                rootKeyId        : contextEntry.rootKeyId,
-                derivedPublicKey : contextEntry.derivedPublicKey,
+                rootKeyId        : contextEntry.header.kid,
+                derivedPublicKey : contextEntry.header.derivedPublicKey,
               };
             }
           }
@@ -4460,12 +4447,12 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
 
     // For cross-DWN root records, the encryption should use ProtocolPath
     // (the external author cannot derive the target's context key)
-    const keyEncryption = recordsWriteMessage.encryption!.keyEncryption;
-    expect(keyEncryption).toHaveLength(1);
-    expect(keyEncryption[0].derivationScheme).toBe('protocolPath');
+    const recipients = recordsWriteMessage.encryption!.recipients;
+    expect(recipients).toHaveLength(1);
+    expect(recipients[0].header.derivationScheme).toBe('protocolPath');
   }, 15000);
 
-  it('reactive root-record upgrade should append ProtocolContext keyEncryption entry', async () => {
+  it('reactive root-record upgrade should append ProtocolContext recipients entry', async () => {
     // Configure protocol for Alice with encryption
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4508,25 +4495,25 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     expect(readResult.entry).toBeDefined();
     expect(readResult.entry.recordsWrite.encryption).toBeDefined();
 
-    const keyEncryption = readResult.entry.recordsWrite.encryption.keyEncryption;
+    const recipients = readResult.entry.recordsWrite.encryption.recipients;
 
     // After upgrade: should have BOTH ProtocolPath AND ProtocolContext entries
-    expect(keyEncryption.length).toBeGreaterThanOrEqual(2);
+    expect(recipients.length).toBeGreaterThanOrEqual(2);
 
-    const hasProtocolPath = keyEncryption.some(
-      (k: { derivationScheme: string }) => k.derivationScheme === 'protocolPath'
+    const hasProtocolPath = recipients.some(
+      (k: { header: { derivationScheme: string } }) => k.header.derivationScheme === 'protocolPath'
     );
-    const hasProtocolContext = keyEncryption.some(
-      (k: { derivationScheme: string }) => k.derivationScheme === 'protocolContext'
+    const hasProtocolContext = recipients.some(
+      (k: { header: { derivationScheme: string } }) => k.header.derivationScheme === 'protocolContext'
     );
     expect(hasProtocolPath).toBe(true);
     expect(hasProtocolContext).toBe(true);
 
     // The ProtocolContext entry should include derivedPublicKey
-    const contextEntry = keyEncryption.find(
-      (k: { derivationScheme: string }) => k.derivationScheme === 'protocolContext'
+    const contextEntry = recipients.find(
+      (k: { header: { derivationScheme: string } }) => k.header.derivationScheme === 'protocolContext'
     );
-    expect(contextEntry.derivedPublicKey).toBeDefined();
+    expect(contextEntry.header.derivedPublicKey).toBeDefined();
   }, 15000);
 
   it('Alice should decrypt cross-DWN root record via ProtocolPath after upgrade', async () => {
@@ -4843,9 +4830,9 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     });
     const aliceReadResult = aliceRead as any;
     expect(aliceReadResult.status.code).toBe(200);
-    const keyEncryption = aliceReadResult.entry.recordsWrite.encryption.keyEncryption;
-    expect(keyEncryption.some(
-      (k: { derivationScheme: string }) => k.derivationScheme === 'protocolContext'
+    const recipients = aliceReadResult.entry.recordsWrite.encryption.recipients;
+    expect(recipients.some(
+      (k: { header: { derivationScheme: string } }) => k.header.derivationScheme === 'protocolContext'
     )).toBe(true);
 
     // Verify contextKey was delivered for Bob and is encrypted to Bob's key
@@ -4863,7 +4850,7 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     });
     expect(ckQuery.entries).not.toHaveLength(0);
     const ckEntry = ckQuery.entries![0] as RecordsWriteMessage;
-    expect(ckEntry.encryption!.keyEncryption[0].derivationScheme).toBe('protocolPath');
+    expect(ckEntry.encryption!.recipients[0].header.derivationScheme).toBe('protocolPath');
 
     // Bob decrypts the contextKey directly from Alice's DWN using his own key.
     // This simulates the remote fetchContextKeyRecord path: Bob reads the
@@ -4983,9 +4970,9 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     });
     const childReadResult = childRead as any;
     expect(childReadResult.status.code).toBe(200);
-    const childKeyEncryption = childReadResult.entry.recordsWrite.encryption.keyEncryption;
-    expect(childKeyEncryption.some(
-      (k: { derivationScheme: string }) => k.derivationScheme === 'protocolContext'
+    const childRecipients = childReadResult.entry.recordsWrite.encryption.recipients;
+    expect(childRecipients.some(
+      (k: { header: { derivationScheme: string } }) => k.header.derivationScheme === 'protocolContext'
     )).toBe(true);
 
     // Alice should be able to decrypt the child record
@@ -5041,8 +5028,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     });
     const rawReadResult = rawRead as any;
     expect(rawReadResult.status.code).toBe(200);
-    expect(rawReadResult.entry.recordsWrite.encryption.keyEncryption.some(
-      (k: { derivationScheme: string }) => k.derivationScheme === 'protocolContext'
+    expect(rawReadResult.entry.recordsWrite.encryption.recipients.some(
+      (k: { header: { derivationScheme: string } }) => k.header.derivationScheme === 'protocolContext'
     )).toBe(true);
 
     // Alice should be able to decrypt the large record

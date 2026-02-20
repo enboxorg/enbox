@@ -24,6 +24,7 @@ import type {
 import { EcdsaAlgorithm } from './algorithms/ecdsa.js';
 import { EdDsaAlgorithm } from './algorithms/eddsa.js';
 import { Sha2Algorithm } from './algorithms/sha-2.js';
+import { X25519Algorithm } from './algorithms/x25519.js';
 import { computeJwkThumbprint, isPrivateJwk, KEY_URI_PREFIX_JWK } from './jose/jwk.js';
 
 /**
@@ -50,6 +51,10 @@ const supportedAlgorithms = {
   'SHA-256': {
     implementation : Sha2Algorithm,
     names          : ['SHA-256']
+  },
+  'X25519': {
+    implementation : X25519Algorithm,
+    names          : ['X25519']
   }
 } satisfies {
   [key: string]: {
@@ -104,7 +109,7 @@ export interface LocalKeyManagerGenerateKeyParams extends KmsGenerateKeyParams {
    * - `"Ed25519"`
    * - `"secp256k1"`
    */
-  algorithm: 'Ed25519' | 'secp256k1' | 'secp256r1';
+  algorithm: 'Ed25519' | 'secp256k1' | 'secp256r1' | 'X25519';
 }
 
 export class LocalKeyManager implements

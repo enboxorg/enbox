@@ -11,6 +11,7 @@ export * from './algorithms/eddsa.js';
 export * from './algorithms/hkdf.js';
 export * from './algorithms/pbkdf2.js';
 export * from './algorithms/sha-2.js';
+export * from './algorithms/x25519.js';
 
 export * from './jose/jwe.js';
 export * from './jose/jwk.js';

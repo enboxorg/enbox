@@ -40,6 +40,7 @@ import {
   HkdfAlgorithm,
   Pbkdf2Algorithm,
   Sha2Algorithm,
+  X25519Algorithm,
 } from '@enbox/crypto';
 
 export interface CryptoApiBytesToPrivateKeyParams extends BytesToPrivateKeyParams {
@@ -175,6 +176,11 @@ const supportedAlgorithms = {
     implementation : Sha2Algorithm,
     names          : ['SHA-256'],
     operations     : ['digest'],
+  },
+  'X25519': {
+    implementation : X25519Algorithm,
+    names          : ['X25519'],
+    operations     : ['bytesToPrivateKey', 'generateKey'],
   }
 } as const;
 

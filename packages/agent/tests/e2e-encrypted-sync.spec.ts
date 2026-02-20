@@ -134,7 +134,7 @@ describe('e2e: encrypted data survives sync round-trip', () => {
     expect(queryReply.entries).toHaveLength(3);
     for (const entry of queryReply.entries!) {
       expect(entry.encryption).toBeDefined();
-      expect(entry.encryption!.algorithm).toBe('A256CTR');
+      expect(entry.encryption!.protected).toBeDefined();
     }
   }, 30_000);
 
@@ -158,10 +158,10 @@ describe('e2e: encrypted data survives sync round-trip', () => {
     expect(remoteQueryReply.status.code).toBe(200);
     expect(remoteQueryReply.entries).toHaveLength(3);
 
-    // Remote records should also have encryption metadata.
+    // Remote records should also have encryption metadata (JWE format).
     for (const entry of remoteQueryReply.entries!) {
       expect(entry.encryption).toBeDefined();
-      expect(entry.encryption!.algorithm).toBe('A256CTR');
+      expect(entry.encryption!.protected).toBeDefined();
     }
   }, 30_000);
 

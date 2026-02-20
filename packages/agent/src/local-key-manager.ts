@@ -38,6 +38,7 @@ import {
   isPrivateJwk,
   KEY_URI_PREFIX_JWK,
   Sha2Algorithm,
+  X25519Algorithm,
 } from '@enbox/crypto';
 
 import type { PrivateKeyJwk } from '@enbox/dwn-sdk-js';
@@ -82,7 +83,11 @@ const supportedAlgorithms = {
   },
   'SHA-256': {
     implementation : Sha2Algorithm,
-    names          : ['SHA-256'] as const
+    names          : ['SHA-256']
+  },
+  'X25519': {
+    implementation : X25519Algorithm,
+    names          : ['X25519']
   }
 } satisfies {
   [key: string]: {
@@ -104,6 +109,7 @@ type AlgorithmConstructor = typeof supportedAlgorithms[SupportedAlgorithm]['impl
 type SupportedKeyGeneratorAlgorithm =
   | 'Ed25519' // Edwards Curve Digital Signature Algorithm (EdDSA)
   | 'secp256k1' | 'ES256K' | 'secp256r1' | 'ES256' // Elliptic Curve Digital Signature Algorithm (ECDSA)
+  | 'X25519' // Elliptic Curve Diffie-Hellman key agreement (ECDH)
   | 'A128GCM' | 'A192GCM' | 'A256GCM' // AES GCM with a 128-bit, 192-bit, or 256-bit key
   | 'A128KW' | 'A192KW' | 'A256KW'; // AES Key Wrap with a 128-bit, 192-bit, or 256-bit key
 
@@ -725,10 +731,10 @@ export class LocalKeyManager implements AgentKeyManager {
   }
 
   /**
-   * Helper method to retrieve a secp256k1 private key and convert it to bytes.
+   * Helper method to retrieve an X25519 private key and convert it to bytes.
    * Used by HD key derivation methods to avoid code duplication.
    *
-   * @param keyUri - The key URI identifying the secp256k1 private key
+   * @param keyUri - The key URI identifying the X25519 private key
    * @returns The private key as raw bytes
    * @throws Error if the key is not found or is not an X25519 key
    */
@@ -761,7 +767,7 @@ export class LocalKeyManager implements AgentKeyManager {
     // (from the vault) are held in-memory by BearerDid.keyManager and are NOT
     // stored in the DwnKeyStore. Checking here FIRST is critical when the
     // DwnKeyStore is encrypted: the encryption/decryption key is derived from the
-    // agent DID's secp256k1 key, so looking up that key via the DwnKeyStore would
+    // agent DID's X25519 key, so looking up that key via the DwnKeyStore would
     // cause infinite recursion (decrypt → getPrivateKey → DwnKeyStore.get → decrypt…).
     try {
       const agentKeyManager = this.agent?.agentDid?.keyManager;
