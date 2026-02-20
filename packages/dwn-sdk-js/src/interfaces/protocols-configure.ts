@@ -1,7 +1,10 @@
 import type { DataEncodedRecordsWriteMessage } from '../types/records-types.js';
 import type { MessageSigner } from '../types/signer.js';
 import type { MessageStore } from '../types/message-store.js';
-import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureDescriptor, ProtocolsConfigureMessage, ProtocolUses } from '../types/protocols-types.js';
+import type {
+  ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureDescriptor,
+  ProtocolsConfigureMessage, ProtocolTypes, ProtocolUses
+} from '../types/protocols-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
 import Ajv from 'ajv/dist/2020.js';
@@ -151,7 +154,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       ruleSetProtocolPath : '',
       recordTypes,
       roles,
-      uses
+      uses,
+      types               : definition.types,
     });
   }
 
@@ -196,9 +200,12 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
    * Validates the given rule set structure then recursively validates its nested child rule sets.
    */
   private static validateRuleSetRecursively(
-    input: { ruleSet: ProtocolRuleSet, ruleSetProtocolPath: string, recordTypes: string[], roles: string[], uses?: ProtocolUses }
+    input: {
+      ruleSet: ProtocolRuleSet, ruleSetProtocolPath: string, recordTypes: string[],
+      roles: string[], uses?: ProtocolUses, types: ProtocolTypes
+    }
   ): void {
-    const { ruleSet, ruleSetProtocolPath, recordTypes, roles, uses } = input;
+    const { ruleSet, ruleSetProtocolPath, recordTypes, roles, uses, types } = input;
 
     // Validate $ref constraints: $ref is only supported at root level (no `/` in protocol path),
     // and a $ref node is a pure attachment point with no other directives.
@@ -370,6 +377,26 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       }
     }
 
+    // Warn when `encryptionRequired: true` is combined with `{ who: 'anyone', can: ['read'] }`.
+    // Authorization allows anyone to read the record, but encryption prevents them from
+    // decrypting the data — almost certainly unintentional. (issue #115)
+    if (ruleSetProtocolPath !== '') {
+      const typeName = ruleSetProtocolPath.split('/').pop()!;
+      const protocolType = types[typeName];
+      if (protocolType?.encryptionRequired === true) {
+        const anyoneCanRead = actionRules.some(
+          (rule: ProtocolActionRule): boolean => rule.who === ProtocolActor.Anyone && rule.can.includes(ProtocolAction.Read)
+        );
+        if (anyoneCanRead) {
+          console.warn(
+            `ProtocolsConfigure: type '${typeName}' at path '${ruleSetProtocolPath}' has ` +
+            `encryptionRequired: true but allows { who: 'anyone', can: ['read'] }. ` +
+            `Anyone can read the record but no one outside the key holders can decrypt it.`
+          );
+        }
+      }
+    }
+
     // Validate nested rule sets
     for (const recordType in ruleSet) {
       if (recordType.startsWith('$')) {
@@ -399,7 +426,8 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         ruleSetProtocolPath : childRuleSetProtocolPath,
         recordTypes,
         roles,
-        uses
+        uses,
+        types,
       });
     }
   }

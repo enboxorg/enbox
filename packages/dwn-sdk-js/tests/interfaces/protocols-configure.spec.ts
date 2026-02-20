@@ -6,7 +6,7 @@ import { ProtocolAction } from '../../src/types/protocols-types.js';
 import { ProtocolsConfigure } from '../../src/interfaces/protocols-configure.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { Time } from '../../src/utils/time.js';
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Message } from '../../src/index.js';
 
 describe('ProtocolsConfigure', () => {
@@ -475,6 +475,158 @@ describe('ProtocolsConfigure', () => {
         });
 
         await expect(createProtocolsConfigurePromise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidSize);
+      });
+
+      describe('encryptionRequired + anyone-can-read warning', () => {
+        const capturedWarnings: string[] = [];
+        let originalWarn: typeof console.warn;
+
+        afterEach(() => {
+          console.warn = originalWarn;
+          capturedWarnings.length = 0;
+        });
+
+        it('should warn when encryptionRequired: true and anyone can read at the same path', async () => {
+          originalWarn = console.warn;
+          console.warn = (...args: unknown[]): void => { capturedWarnings.push(String(args[0])); };
+
+          const definition = {
+            published : true,
+            protocol  : 'http://example.com/encryption-warning',
+            types     : {
+              secret: {
+                dataFormats        : ['application/json'],
+                encryptionRequired : true,
+              },
+            },
+            structure: {
+              secret: {
+                $actions: [
+                  { who: 'anyone', can: ['read'] },
+                ],
+              },
+            },
+          };
+
+          const alice = await TestDataGenerator.generatePersona();
+          const result = await ProtocolsConfigure.create({
+            signer: Jws.createSigner(alice),
+            definition,
+          });
+
+          // The protocol is still valid — the warning is non-fatal
+          expect(result).toBeDefined();
+
+          // A warning should have been emitted
+          expect(capturedWarnings.length).toBe(1);
+          expect(capturedWarnings[0]).toContain('encryptionRequired: true');
+          expect(capturedWarnings[0]).toContain('anyone');
+          expect(capturedWarnings[0]).toContain('secret');
+        });
+
+        it('should warn for nested types with encryptionRequired + anyone-can-read', async () => {
+          originalWarn = console.warn;
+          console.warn = (...args: unknown[]): void => { capturedWarnings.push(String(args[0])); };
+
+          const definition = {
+            published : true,
+            protocol  : 'http://example.com/nested-warning',
+            types     : {
+              thread  : { dataFormats: ['application/json'] },
+              message : {
+                dataFormats        : ['application/json'],
+                encryptionRequired : true,
+              },
+            },
+            structure: {
+              thread: {
+                $actions : [{ who: 'anyone', can: ['create'] }],
+                message  : {
+                  $actions: [{ who: 'anyone', can: ['create', 'read'] }],
+                },
+              },
+            },
+          };
+
+          const alice = await TestDataGenerator.generatePersona();
+          const result = await ProtocolsConfigure.create({
+            signer: Jws.createSigner(alice),
+            definition,
+          });
+
+          expect(result).toBeDefined();
+          expect(capturedWarnings.length).toBe(1);
+          expect(capturedWarnings[0]).toContain('message');
+          expect(capturedWarnings[0]).toContain('thread/message');
+        });
+
+        it('should not warn when encryptionRequired is absent', async () => {
+          originalWarn = console.warn;
+          console.warn = (...args: unknown[]): void => { capturedWarnings.push(String(args[0])); };
+
+          const definition = {
+            published : true,
+            protocol  : 'http://example.com/no-encryption',
+            types     : {
+              post: { dataFormats: ['application/json'] },
+            },
+            structure: {
+              post: {
+                $actions: [{ who: 'anyone', can: ['create', 'read'] }],
+              },
+            },
+          };
+
+          const alice = await TestDataGenerator.generatePersona();
+          const result = await ProtocolsConfigure.create({
+            signer: Jws.createSigner(alice),
+            definition,
+          });
+
+          expect(result).toBeDefined();
+          expect(capturedWarnings.length).toBe(0);
+        });
+
+        it('should not warn when encryptionRequired is true but no anyone-can-read rule', async () => {
+          originalWarn = console.warn;
+          console.warn = (...args: unknown[]): void => { capturedWarnings.push(String(args[0])); };
+
+          const definition = {
+            published : true,
+            protocol  : 'http://example.com/encryption-no-anyone',
+            types     : {
+              secret: {
+                dataFormats        : ['application/json'],
+                encryptionRequired : true,
+              },
+              participant: {
+                dataFormats: ['application/json'],
+              },
+            },
+            structure: {
+              secret: {
+                $actions: [
+                  { who: 'author', of: 'secret', can: ['create', 'read'] },
+                ],
+                participant: {
+                  $role    : true,
+                  $actions : [
+                    { who: 'author', of: 'secret', can: ['create', 'delete'] },
+                  ],
+                },
+              },
+            },
+          };
+
+          const alice = await TestDataGenerator.generatePersona();
+          const result = await ProtocolsConfigure.create({
+            signer: Jws.createSigner(alice),
+            definition,
+          });
+
+          expect(result).toBeDefined();
+          expect(capturedWarnings.length).toBe(0);
+        });
       });
     });
   });
