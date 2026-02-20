@@ -59,23 +59,23 @@ export type SocialGraphSchemaMap = {
 // ---------------------------------------------------------------------------
 
 export const SocialGraphDefinition = {
-  protocol  : 'https://enbox.org/protocols/social-graph',
+  protocol  : 'https://identity.foundation/protocols/social-graph',
   published : true,
   types     : {
     friend: {
-      schema      : 'https://enbox.org/schemas/social-graph/friend',
+      schema      : 'https://identity.foundation/schemas/social-graph/friend',
       dataFormats : ['application/json'],
     },
     block: {
-      schema      : 'https://enbox.org/schemas/social-graph/block',
+      schema      : 'https://identity.foundation/schemas/social-graph/block',
       dataFormats : ['application/json'],
     },
     group: {
-      schema      : 'https://enbox.org/schemas/social-graph/group',
+      schema      : 'https://identity.foundation/schemas/social-graph/group',
       dataFormats : ['application/json'],
     },
     member: {
-      schema      : 'https://enbox.org/schemas/social-graph/member',
+      schema      : 'https://identity.foundation/schemas/social-graph/member',
       dataFormats : ['application/json'],
     },
   },

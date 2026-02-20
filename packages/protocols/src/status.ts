@@ -44,18 +44,18 @@ export type StatusSchemaMap = {
 // ---------------------------------------------------------------------------
 
 export const StatusDefinition = {
-  protocol  : 'https://enbox.org/protocols/status',
+  protocol  : 'https://identity.foundation/protocols/status',
   published : true,
   uses      : {
-    social: 'https://enbox.org/protocols/social-graph',
+    social: 'https://identity.foundation/protocols/social-graph',
   },
   types: {
     status: {
-      schema      : 'https://enbox.org/schemas/status/status',
+      schema      : 'https://identity.foundation/schemas/status/status',
       dataFormats : ['application/json'],
     },
     reaction: {
-      schema      : 'https://enbox.org/schemas/status/reaction',
+      schema      : 'https://identity.foundation/schemas/status/reaction',
       dataFormats : ['application/json'],
     },
   },

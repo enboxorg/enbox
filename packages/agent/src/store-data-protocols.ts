@@ -24,7 +24,7 @@ export const IdentityProtocolDefinition: ProtocolDefinition = {
 };
 
 export const KeyDeliveryProtocolDefinition: ProtocolDefinition = {
-  protocol  : 'https://enbox.org/protocols/key-delivery',
+  protocol  : 'https://identity.foundation/protocols/key-delivery',
   published : false,
   types     : {
     contextKey: {
