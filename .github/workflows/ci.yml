@@ -33,6 +33,15 @@ jobs:
         uses: dorny/paths-filter@v3
         id: filter
         with:
+          # With the default predicate-quantifier ('some'), a file only needs
+          # to match ONE pattern to be considered changed.  Since '**' matches
+          # everything, the negation patterns were silently ignored and the
+          # filter always returned true.
+          #
+          # With 'every', a file must match ALL patterns.  A .md file matches
+          # '**' but fails '!**/*.md', so it's excluded — which is the
+          # intended behavior.
+          predicate-quantifier: 'every'
           filters: |
             src:
               - '**'
