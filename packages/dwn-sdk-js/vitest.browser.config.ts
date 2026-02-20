@@ -18,46 +18,44 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
+    // Pre-bundle CJS dependencies so Vite converts them to ESM upfront.
+    // Without explicit inclusion, Vite may discover these mid-test-run and
+    // trigger an optimizeDeps restart. Chromium and WebKit handle restarts
+    // gracefully, but Firefox's strict ESM loader crashes with
+    // "error loading dynamically imported module" — causing flaky CI failures.
+    //
+    // Only list packages that are (a) CJS or mixed-format AND (b) resolvable
+    // from this package's node_modules. Entries that can't be resolved produce
+    // "Failed to resolve dependency" warnings and are silently skipped.
     include: [
-      '@noble/hashes/crypto',
-      '@noble/hashes/utils',
-      '@noble/hashes/sha256',
-      '@noble/hashes/hkdf',
+      // noble — CJS format, direct deps of @enbox/dwn-sdk-js
       '@noble/ciphers/aes',
+      '@noble/ciphers/chacha',
+      '@noble/ciphers/crypto',
       '@noble/ciphers/utils',
       '@noble/ciphers/webcrypto',
-      '@noble/ciphers/crypto',
-      '@noble/ciphers/chacha',
       '@noble/curves/abstract/utils',
-      '@noble/curves/p256',
       '@noble/curves/ed25519',
+      '@noble/curves/p256',
       '@noble/curves/secp256k1',
-      '@noble/secp256k1',
       '@noble/ed25519',
-      'multiformats',
-      'multiformats/block',
-      'multiformats/cid',
-      'multiformats/codecs/raw',
-      'multiformats/bases/base32',
-      'multiformats/bases/base58',
-      'multiformats/bases/base64',
-      'multiformats/hashes/sha2',
-      '@ipld/dag-cbor',
-      'sinon',
-      'eventemitter3',
-      'lodash',
-      'lru-cache',
-      'ulidx',
+      '@noble/secp256k1',
+      // CJS / mixed-format packages
       'ajv',
       'ajv/dist/2020.js',
-      'ipfs-unixfs-importer',
-      'ipfs-unixfs',
-      '@ipld/dag-pb',
-      // level ecosystem: pre-bundle to prevent mid-run CJS discovery restarts
-      // that crash Firefox. Vite resolves level -> browser.js (via the "browser"
-      // field in level/package.json) -> browser-level (IndexedDB-based).
+      'eventemitter3',
       'level',
+      'lodash',
+      'lodash/isPlainObject.js',
+      'lru-cache',
+      'ms',
+      'sinon',
+      'ulidx',
     ],
+    // Force Vite to hold the first optimization pass until ALL static imports
+    // from test entry points have been crawled. This prevents the mid-run
+    // discovery restarts that crash Firefox.
+    holdUntilCrawlEnd: true,
   },
   test: {
     // Pure-logic and utility tests that do not depend on LevelDB stores.

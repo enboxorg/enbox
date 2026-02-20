@@ -18,24 +18,11 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
+    // Pre-bundle CJS deps to avoid mid-run optimizeDeps restarts that crash Firefox.
     include: [
-      '@noble/hashes/crypto',
-      '@noble/hashes/utils',
-      '@noble/hashes/sha256',
-      '@noble/ciphers/webcrypto',
-      '@noble/ciphers/crypto',
-      '@noble/ciphers/chacha',
-      '@noble/curves/abstract/utils',
-      '@noble/curves/p256',
-      '@noble/curves/ed25519',
-      '@noble/curves/secp256k1',
-      'multiformats',
-      'multiformats/bases/base32',
-      'multiformats/bases/base58',
-      'multiformats/bases/base64',
-      '@isaacs/ttlcache',
       'ms',
     ],
+    holdUntilCrawlEnd: true,
   },
   test: {
     // Only include browser-safe tests (no LevelDB, no PlatformAgentTestHarness).
