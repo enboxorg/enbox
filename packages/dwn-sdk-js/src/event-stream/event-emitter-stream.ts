@@ -1,62 +1,69 @@
 import type { KeyValues } from '../types/query-types.js';
 import type { EventListener, EventStream, EventSubscription, MessageEvent } from '../types/subscriptions.js';
 
-import { EventEmitter } from 'events';
+import mitt from 'mitt';
+
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 const EVENTS_LISTENER_CHANNEL = 'events';
 
+/**
+ * Payload shape used internally by mitt. We bundle the three EventListener
+ * arguments into a single object because mitt emits one value per event.
+ */
+type EmitterPayload = { tenant: string; event: MessageEvent; indexes: KeyValues };
+
+/**
+ * mitt event map — every channel name maps to an `EmitterPayload`.
+ * Using `Record<string, EmitterPayload>` lets us create channels dynamically.
+ */
+type EmitterEvents = Record<string, EmitterPayload>;
+
 export interface EventEmitterStreamConfig {
   /**
-   * An optional error handler in order to be able to react to any errors or warnings triggers by `EventEmitter`.
+   * An optional error handler in order to be able to react to any errors or warnings.
    * By default we log errors with `console.error`.
    */
   errorHandler?: (error: any) => void;
 };
 
 export class EventEmitterStream implements EventStream {
-  private eventEmitter: EventEmitter;
+  private emitter = mitt<EmitterEvents>();
   private isOpen: boolean = false;
+  private errorHandler: (error: any) => void = (error): void => { console.error('event emitter error', error); };
 
   constructor(config: EventEmitterStreamConfig = {}) {
-    // we capture the rejections and currently just log the errors that are produced
-    this.eventEmitter = new EventEmitter({ captureRejections: true });
-
-    // number of listeners per particular eventName before a warning is emitted
-    // we set to 0 which represents infinity.
-    // https://nodejs.org/api/events.html#emittersetmaxlistenersn
-    this.eventEmitter.setMaxListeners(0);
-
     if (config.errorHandler) {
       this.errorHandler = config.errorHandler;
     }
-
-    this.eventEmitter.on('error', this.errorHandler);
   }
 
-  /**
-   * we subscribe to the `EventEmitter` error handler with a provided handler or set one which logs the errors.
-   */
-  private errorHandler: (error:any) => void = (error) => { console.error('event emitter error', error); };
+  public async subscribe(tenant: string, id: string, listener: EventListener): Promise<EventSubscription> {
+    const channel = `${tenant}_${EVENTS_LISTENER_CHANNEL}`;
 
-  async subscribe(tenant: string, id: string, listener: EventListener): Promise<EventSubscription> {
-    this.eventEmitter.on(`${tenant}_${EVENTS_LISTENER_CHANNEL}`, listener);
+    // Wrap the three-arg EventListener into a single-arg mitt handler.
+    const handler = (payload: EmitterPayload): void => {
+      listener(payload.tenant, payload.event, payload.indexes);
+    };
+
+    this.emitter.on(channel, handler);
+
     return {
       id,
-      close: async (): Promise<void> => { this.eventEmitter.off(`${tenant}_${EVENTS_LISTENER_CHANNEL}`, listener); }
+      close: async (): Promise<void> => { this.emitter.off(channel, handler); }
     };
   }
 
-  async open(): Promise<void> {
+  public async open(): Promise<void> {
     this.isOpen = true;
   }
 
-  async close(): Promise<void> {
+  public async close(): Promise<void> {
     this.isOpen = false;
-    this.eventEmitter.removeAllListeners();
+    this.emitter.all.clear();
   }
 
-  emit(tenant: string, event: MessageEvent, indexes: KeyValues): void {
+  public emit(tenant: string, event: MessageEvent, indexes: KeyValues): void {
     if (!this.isOpen) {
       this.errorHandler(new DwnError(
         DwnErrorCode.EventEmitterStreamNotOpenError,
@@ -64,6 +71,6 @@ export class EventEmitterStream implements EventStream {
       ));
       return;
     }
-    this.eventEmitter.emit(`${tenant}_${EVENTS_LISTENER_CHANNEL}`, tenant, event, indexes);
+    this.emitter.emit(`${tenant}_${EVENTS_LISTENER_CHANNEL}`, { tenant, event, indexes });
   }
 }
