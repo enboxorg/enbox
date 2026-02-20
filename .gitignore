@@ -12,6 +12,7 @@ dist/
 
 # Coverage
 coverage/
+coverage-browser/
 *.lcov
 
 # Environment variables
