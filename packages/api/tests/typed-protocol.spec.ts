@@ -180,8 +180,8 @@ describe('TypedProtocol API', () => {
 
         // Write a task nested under the list
         const { status, record: taskRecord } = await typed.write('list/task', {
-          data: { title: 'Review PR', completed: false },
-          message: {
+          data    : { title: 'Review PR', completed: false },
+          message : {
             parentContextId: listRecord!.contextId,
           },
         });
@@ -224,12 +224,12 @@ describe('TypedProtocol API', () => {
 
         // Write tasks under the list
         await typed.write('list/task', {
-          data: { title: 'Task 1', completed: false },
-          message: { parentContextId: listRecord!.contextId },
+          data    : { title: 'Task 1', completed: false },
+          message : { parentContextId: listRecord!.contextId },
         });
         await typed.write('list/task', {
-          data: { title: 'Task 2', completed: true },
-          message: { parentContextId: listRecord!.contextId },
+          data    : { title: 'Task 2', completed: true },
+          message : { parentContextId: listRecord!.contextId },
         });
 
         // Query tasks under this specific list context
