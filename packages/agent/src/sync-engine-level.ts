@@ -1,20 +1,9 @@
 import type { AbstractLevel } from 'abstract-level';
-import type {
-  GenericMessage,
-  MessagesReadReply,
-  MessagesSyncReply,
-  UnionMessageReply,
-} from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessagesSyncReply } from '@enbox/dwn-sdk-js';
 
 import ms from 'ms';
 
 import { Level } from 'level';
-import {
-  DwnInterfaceName,
-  DwnMethodName,
-  Message,
-  PermissionsProtocol,
-} from '@enbox/dwn-sdk-js';
 import { hashToHex, initDefaultHashes } from '@enbox/dwn-sdk-js';
 
 import type { PermissionsApi } from './types/permissions.js';
@@ -23,7 +12,9 @@ import type { Web5Agent, Web5PlatformAgent } from './types/agent.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnInterface } from './types/dwn.js';
-import { getDwnServiceEndpointUrls, isRecordsWrite } from './utils.js';
+import { getDwnServiceEndpointUrls } from './utils.js';
+import { topologicalSort } from './sync-topological-sort.js';
+import { pullMessages, pushMessages } from './sync-messages.js';
 
 export type SyncEngineLevelParams = {
   agent?: Web5PlatformAgent;
@@ -520,14 +511,13 @@ export class SyncEngineLevel implements SyncEngine {
   // Pull — fetch messages from remote, process locally in dependency order
   // ---------------------------------------------------------------------------
 
+  // ---------------------------------------------------------------------------
+  // Pull / Push — delegates to standalone functions in sync-messages.ts
+  // ---------------------------------------------------------------------------
+
   /**
-   * Fetches missing messages from the remote DWN and processes them on the local DWN
+   * Fetches missing messages from the remote DWN and processes them locally
    * in dependency order (topological sort).
-   *
-   * Messages that fail processing are re-fetched from the remote before each retry
-   * pass rather than buffered in memory. ReadableStream is single-use, so a failed
-   * message's data stream is consumed on the first attempt. Re-fetching provides a
-   * fresh stream without holding all record data in memory simultaneously.
    */
   private async pullMessages({ did, dwnUrl, delegateDid, protocol, messageCids }: {
     did: string;
@@ -536,132 +526,16 @@ export class SyncEngineLevel implements SyncEngine {
     protocol?: string;
     messageCids: string[];
   }): Promise<void> {
-    // Step 1: Fetch all missing messages from the remote in parallel.
-    const fetched = await this.fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, messageCids });
-
-    // Step 2: Build dependency graph and topological sort.
-    const sorted = SyncEngineLevel.topologicalSort(fetched);
-
-    // Step 3: Process messages in dependency order with multi-pass retry.
-    // Retry up to MAX_RETRY_PASSES times for messages that fail due to
-    // dependency ordering issues (e.g., a RecordsWrite whose ProtocolsConfigure
-    // hasn't committed yet). Failed messages are re-fetched from the remote
-    // to obtain a fresh data stream, since ReadableStream is single-use.
-    const MAX_RETRY_PASSES = 3;
-    let pending = sorted;
-
-    for (let pass = 0; pass <= MAX_RETRY_PASSES && pending.length > 0; pass++) {
-      const failedCids: string[] = [];
-
-      for (const entry of pending) {
-        const pullReply = await this.agent.dwn.node.processMessage(did, entry.message, { dataStream: entry.dataStream });
-        if (!SyncEngineLevel.syncMessageReplyIsSuccessful(pullReply)) {
-          const cid = await SyncEngineLevel.getMessageCid(entry.message);
-          failedCids.push(cid);
-        }
-      }
-
-      // Re-fetch failed messages from the remote to get fresh data streams.
-      if (failedCids.length > 0) {
-        const reFetched = await this.fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, messageCids: failedCids });
-        pending = SyncEngineLevel.topologicalSort(reFetched);
-      } else {
-        pending = [];
-      }
-    }
+    return pullMessages({
+      did, dwnUrl, delegateDid, protocol, messageCids,
+      agent          : this.agent,
+      permissionsApi : this._permissionsApi,
+    });
   }
 
   /**
-   * Fetches messages from a remote DWN by their CIDs using MessagesRead.
-   */
-  private async fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, messageCids }: {
-    did: string;
-    dwnUrl: string;
-    delegateDid?: string;
-    protocol?: string;
-    messageCids: string[];
-  }): Promise<{ message: GenericMessage; dataStream?: ReadableStream<Uint8Array> }[]> {
-    const results: { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> }[] = [];
-
-    let permissionGrantId: string | undefined;
-    if (delegateDid) {
-      try {
-        const messagesReadGrant = await this._permissionsApi.getPermissionForRequest({
-          connectedDid : did,
-          messageType  : DwnInterface.MessagesRead,
-          delegateDid,
-          protocol,
-          cached       : true
-        });
-        permissionGrantId = messagesReadGrant.grant.id;
-      } catch (error: any) {
-        console.error('SyncEngineLevel: pull - Error fetching MessagesRead permission grant for delegate DID', error);
-        return results;
-      }
-    }
-
-    // Fetch messages in parallel with bounded concurrency.
-    const CONCURRENCY = 10;
-    let cursor = 0;
-
-    while (cursor < messageCids.length) {
-      const batch = messageCids.slice(cursor, cursor + CONCURRENCY);
-      cursor += CONCURRENCY;
-
-      type FetchResult = { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> } | undefined;
-      const batchResults = await Promise.all(batch.map(async (messageCid): Promise<FetchResult> => {
-        const messagesRead = await this.agent.processDwnRequest({
-          store         : false,
-          author        : did,
-          target        : did,
-          messageType   : DwnInterface.MessagesRead,
-          granteeDid    : delegateDid,
-          messageParams : { messageCid, permissionGrantId }
-        });
-
-        let reply: MessagesReadReply;
-        try {
-          reply = await this.agent.rpc.sendDwnRequest({
-            dwnUrl,
-            targetDid : did,
-            message   : messagesRead.message,
-          }) as MessagesReadReply;
-        } catch {
-          return undefined;
-        }
-
-        if (reply.status.code !== 200 || !reply.entry?.message) {
-          return undefined;
-        }
-
-        const replyEntry = reply.entry;
-        let dataStream: ReadableStream<Uint8Array> | undefined;
-        if (isRecordsWrite(replyEntry) && replyEntry.data) {
-          dataStream = replyEntry.data;
-        }
-
-        return { message: replyEntry.message, dataStream };
-      }));
-
-      for (const result of batchResults) {
-        if (result) {
-          results.push(result);
-        }
-      }
-    }
-
-    return results;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Push — read local messages, send to remote
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Reads missing messages from the local DWN and pushes them to the remote DWN.
-   * Messages are fetched first, then sorted in dependency order (topological sort)
-   * so that initial writes come before updates, and ProtocolsConfigures come before
-   * records that reference those protocols.
+   * Reads missing messages from the local DWN and pushes them to the remote DWN
+   * in dependency order (topological sort).
    */
   private async pushMessages({ did, dwnUrl, delegateDid, protocol, messageCids }: {
     did: string;
@@ -670,288 +544,25 @@ export class SyncEngineLevel implements SyncEngine {
     protocol?: string;
     messageCids: string[];
   }): Promise<void> {
-    // Step 1: Fetch all local messages (streams are pull-based, not yet consumed).
-    const fetched: { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> }[] = [];
-    for (const messageCid of messageCids) {
-      const dwnMessage = await this.getLocalMessage({ author: did, messageCid, delegateDid, protocol });
-      if (dwnMessage) {
-        fetched.push(dwnMessage);
-      }
-    }
-
-    // Step 2: Sort in dependency order using topological sort.
-    const sorted = SyncEngineLevel.topologicalSort(fetched);
-
-    // Step 3: Push messages in dependency order, consuming each stream as we go.
-    for (const entry of sorted) {
-      try {
-        const reply = await this.agent.rpc.sendDwnRequest({
-          dwnUrl,
-          targetDid : did,
-          data      : entry.dataStream,
-          message   : entry.message
-        });
-
-        if (!SyncEngineLevel.syncMessageReplyIsSuccessful(reply)) {
-          const cid = await SyncEngineLevel.getMessageCid(entry.message);
-          console.error(`SyncEngineLevel: push failed for ${cid}: ${reply.status.code} ${reply.status.detail}`);
-        }
-      } catch {
-        // Remote unreachable — stop pushing to this endpoint.
-        throw new Error(`SyncEngineLevel: Remote DWN at ${dwnUrl} is unreachable.`);
-      }
-    }
-  }
-
-  /**
-   * Helper to get the CID of a message for logging purposes.
-   */
-  private static async getMessageCid(message: GenericMessage): Promise<string> {
-    try {
-      return await Message.getCid(message);
-    } catch {
-      return 'unknown';
-    }
-  }
-
-  /**
-   * Reads a message from the local DWN by its CID using MessagesRead.
-   */
-  private async getLocalMessage({ author, delegateDid, protocol, messageCid }: {
-    author: string;
-    delegateDid?: string;
-    protocol?: string;
-    messageCid: string;
-  }): Promise<{ message: GenericMessage; dataStream?: ReadableStream<Uint8Array> } | undefined> {
-    let permissionGrantId: string | undefined;
-    if (delegateDid) {
-      try {
-        const messagesReadGrant = await this._permissionsApi.getPermissionForRequest({
-          connectedDid : author,
-          messageType  : DwnInterface.MessagesRead,
-          delegateDid,
-          protocol,
-          cached       : true
-        });
-        permissionGrantId = messagesReadGrant.grant.id;
-      } catch (error: any) {
-        console.error('SyncEngineLevel: push - Error fetching MessagesRead permission grant for delegate DID', error);
-        return;
-      }
-    }
-
-    const { reply } = await this.agent.dwn.processRequest({
-      author,
-      target        : author,
-      messageType   : DwnInterface.MessagesRead,
-      granteeDid    : delegateDid,
-      messageParams : { messageCid, permissionGrantId }
+    return pushMessages({
+      did, dwnUrl, delegateDid, protocol, messageCids,
+      agent          : this.agent,
+      permissionsApi : this._permissionsApi,
     });
-
-    if (reply.status.code !== 200 || !reply.entry) {
-      return undefined;
-    }
-    const messageEntry = reply.entry!;
-
-    const result: { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> } = {
-      message: messageEntry.message
-    };
-
-    if (isRecordsWrite(messageEntry) && messageEntry.data) {
-      result.dataStream = messageEntry.data;
-    }
-
-    return result;
   }
 
   // ---------------------------------------------------------------------------
-  // Dependency-aware topological sort for pulled messages
+  // Dependency-aware topological sort — delegates to sync-topological-sort.ts
   // ---------------------------------------------------------------------------
 
   /**
-   * Builds a dependency graph from the fetched messages and returns them in
-   * topological order so that dependencies are processed before dependents.
-   *
-   * Dependencies:
-   * - ProtocolsConfigure must come before any RecordsWrite using that protocol
-   * - Parent record must come before child record (via parentId)
-   * - Initial write must come before update writes (same recordId, not initial)
-   * - Permission grant must come before records using that permissionGrantId
+   * Delegate to the standalone `topologicalSort` function.
+   * Tests call `SyncEngineLevel.topologicalSort(...)` so this static method must remain.
    */
   static topologicalSort<T extends { message: GenericMessage }>(
     messages: T[]
   ): T[] {
-    if (messages.length <= 1) {
-      return messages;
-    }
-
-    // Index messages by various keys for dependency resolution.
-    const byIndex = new Map<number, T>();
-    const protocolConfigureIndex = new Map<string, number>(); // protocol URL -> index
-    const initialWriteIndex = new Map<string, number>(); // recordId -> index of initial write
-    const grantIndex = new Map<string, number>(); // grant recordId -> index
-
-    for (let i = 0; i < messages.length; i++) {
-      const entry = messages[i];
-      byIndex.set(i, entry);
-      const desc = entry.message.descriptor;
-
-      if (desc.interface === DwnInterfaceName.Protocols && desc.method === DwnMethodName.Configure) {
-        const protocolUrl = (desc as any).definition?.protocol;
-        if (protocolUrl) {
-          protocolConfigureIndex.set(protocolUrl, i);
-        }
-      }
-
-      if (desc.interface === DwnInterfaceName.Records && desc.method === DwnMethodName.Write) {
-        const recordId = (entry.message as any).recordId;
-        const isInitial = SyncEngineLevel.isInitialWrite(entry.message);
-        if (isInitial && recordId) {
-          initialWriteIndex.set(recordId, i);
-        }
-
-        // Index permission grants by recordId so dependents can reference them.
-        if (
-          (desc as any).protocol === PermissionsProtocol.uri &&
-          (desc as any).protocolPath === PermissionsProtocol.grantPath &&
-          recordId
-        ) {
-          grantIndex.set(recordId, i);
-        }
-      }
-    }
-
-    // Build adjacency list (edges: dependency -> dependent).
-    const edges = new Map<number, Set<number>>();
-    const inDegree = new Array(messages.length).fill(0) as number[];
-
-    const addEdge = (from: number, to: number): void => {
-      if (from === to) {
-        return;
-      }
-      if (!edges.has(from)) {
-        edges.set(from, new Set());
-      }
-      const edgeSet = edges.get(from)!;
-      if (!edgeSet.has(to)) {
-        edgeSet.add(to);
-        inDegree[to]++;
-      }
-    };
-
-    for (let i = 0; i < messages.length; i++) {
-      const desc = messages[i].message.descriptor;
-      const msg = messages[i].message as any;
-
-      // Protocol dependency: RecordsWrite depends on ProtocolsConfigure for its protocol.
-      if (desc.interface === DwnInterfaceName.Records) {
-        const protocol = (desc as any).protocol;
-        if (protocol && protocolConfigureIndex.has(protocol)) {
-          addEdge(protocolConfigureIndex.get(protocol)!, i);
-        }
-      }
-
-      // Parent dependency: child record depends on parent record.
-      if (desc.interface === DwnInterfaceName.Records && (desc as any).parentId) {
-        const parentId = (desc as any).parentId;
-        if (initialWriteIndex.has(parentId)) {
-          addEdge(initialWriteIndex.get(parentId)!, i);
-        }
-      }
-
-      // Initial write dependency: update depends on initial write.
-      if (desc.interface === DwnInterfaceName.Records && desc.method === DwnMethodName.Write) {
-        const recordId = msg.recordId;
-        if (recordId && !SyncEngineLevel.isInitialWrite(messages[i].message) && initialWriteIndex.has(recordId)) {
-          addEdge(initialWriteIndex.get(recordId)!, i);
-        }
-      }
-
-      // Delete depends on initial write.
-      if (desc.interface === DwnInterfaceName.Records && desc.method === DwnMethodName.Delete) {
-        const recordId = msg.descriptor?.recordId;
-        if (recordId && initialWriteIndex.has(recordId)) {
-          addEdge(initialWriteIndex.get(recordId)!, i);
-        }
-      }
-
-      // Permission grant dependency: message depends on the grant it references.
-      const permissionGrantId = (desc as any).permissionGrantId;
-      if (permissionGrantId && grantIndex.has(permissionGrantId)) {
-        addEdge(grantIndex.get(permissionGrantId)!, i);
-      }
-    }
-
-    // Kahn's algorithm for topological sort.
-    const queue: number[] = [];
-    for (let i = 0; i < messages.length; i++) {
-      if (inDegree[i] === 0) {
-        queue.push(i);
-      }
-    }
-
-    const sorted: T[] = [];
-    while (queue.length > 0) {
-      const node = queue.shift()!;
-      sorted.push(byIndex.get(node)!);
-
-      const neighbors = edges.get(node);
-      if (neighbors) {
-        for (const neighbor of neighbors) {
-          inDegree[neighbor]--;
-          if (inDegree[neighbor] === 0) {
-            queue.push(neighbor);
-          }
-        }
-      }
-    }
-
-    // If there are nodes not in sorted (cycle), append them at the end.
-    if (sorted.length < messages.length) {
-      const sortedSet = new Set(sorted);
-      for (let i = 0; i < messages.length; i++) {
-        const entry = byIndex.get(i)!;
-        if (!sortedSet.has(entry)) {
-          sorted.push(entry);
-        }
-      }
-    }
-
-    return sorted;
-  }
-
-  /**
-   * Checks whether a message is an initial RecordsWrite (not an update).
-   * An initial write has recordId === message CID context or has no `dateModified` != `dateCreated`.
-   */
-  private static isInitialWrite(message: GenericMessage): boolean {
-    const desc = message.descriptor as any;
-    if (desc.interface !== DwnInterfaceName.Records || desc.method !== DwnMethodName.Write) {
-      return false;
-    }
-    // A RecordsWrite is initial if dateCreated === messageTimestamp (first write for this recordId).
-    return desc.dateCreated === desc.messageTimestamp;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Helpers
-  // ---------------------------------------------------------------------------
-
-  /**
-   * 202: message was successfully written to the remote DWN
-   * 204: an initial write message was written without any data
-   * 409: message was already present on the remote DWN
-   * RecordsDelete + 404: the initial write was not found or already deleted
-   */
-  private static syncMessageReplyIsSuccessful(reply: UnionMessageReply): boolean {
-    return reply.status.code === 202 ||
-      reply.status.code === 204 ||
-      reply.status.code === 409 ||
-      (
-        reply.entry?.message.descriptor.interface === DwnInterfaceName.Records &&
-        reply.entry?.message.descriptor.method === DwnMethodName.Delete &&
-        reply.status.code === 404
-      );
+    return topologicalSort(messages);
   }
 
   /**
