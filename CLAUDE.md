@@ -8,7 +8,7 @@ Bun workspace monorepo for decentralized web infrastructure. Runtime is **Bun** 
 
 ```
 @enbox/common          (shared utilities, TtlCache, LevelStore)
-  @enbox/crypto        (Ed25519, secp256k1, AES, JWE)
+  @enbox/crypto        (Ed25519, X25519, secp256k1, AES, JWE)
     @enbox/dids        (did:dht, did:jwk, resolution)
       @enbox/dwn-sdk-js  (DWN protocol engine, message handlers, stores)
         @enbox/agent     (agent framework: identity, key management, DWN stores, sync)
@@ -361,7 +361,7 @@ describe('ComponentName', () => {
 
   beforeEach(async () => {
     await testHarness.clearStorage();
-    await testHarness.createAgentDid();  // creates secp256k1 did:jwk
+    await testHarness.createAgentDid();  // creates did:jwk with Ed25519 + X25519
   });
 
   afterAll(async () => {
@@ -409,7 +409,7 @@ await expect(asyncOperation()).rejects.toThrow('error message');
 
 1. **Layer 1 — Vault** (`HdIdentityVault`): 12-word BIP-39 seed phrase derives HD keys. Password encrypts the agent's `PortableDid` as CompactJWE (AES-256-GCM via PBKDF2). Stored in `VAULT_STORE` LevelDB.
 
-2. **Layer 2 — DWN record-level** (`DwnKeyStore`): Records with `encryptionRequired: true` in their protocol type definition are encrypted using ECIES-ES256K with the tenant's secp256k1 `#enc` key. The `$encryption` block is derived and injected into the protocol definition at install time.
+2. **Layer 2 — DWN record-level** (`DwnKeyStore`): Records with `encryptionRequired: true` in their protocol type definition are encrypted using JWE (ECDH-ES+A256KW key agreement with the tenant's X25519 `#enc` key, AES-256-GCM or XChaCha20-Poly1305 content encryption). The `$encryption` block is derived and injected into the protocol definition at install time.
 
 Recovery path: seed phrase -> agent DID (deterministic) -> `#enc` key -> decrypt DWN key records.
 
@@ -435,6 +435,6 @@ The **agent DID** (`agent.agentDid`) is the agent's own identity. The **tenant D
 
 ### DWN Encryption
 
-Strictly secp256k1. The entire pipeline (ECIES, HdKey derivation, protocol key injection) is hardcoded to secp256k1. In production, `HdIdentityVault.initialize()` always creates the agent DID as `did:dht` with both Ed25519 (`#sig`) and secp256k1 (`#enc`).
+Uses X25519 for key agreement (ECDH-ES+A256KW) with AEAD content encryption (AES-256-GCM or XChaCha20-Poly1305). The JWE General JSON Serialization format stores recipients, IV, and authentication tag alongside the encrypted data. In production, `HdIdentityVault.initialize()` always creates the agent DID as `did:dht` with both Ed25519 (`#sig`) and X25519 (`#enc`).
 
-Encryption is declared in the protocol definition via `ProtocolType.encryptionRequired: true`. When set, `DwnDataStore.installProtocol()` derives and injects `$encryption` keys. If the tenant DID lacks a secp256k1 keyAgreement key, installation fails — no plaintext fallback.
+Encryption is declared in the protocol definition via `ProtocolType.encryptionRequired: true`. When set, `DwnDataStore.installProtocol()` derives and injects `$encryption` keys. If the tenant DID lacks an X25519 keyAgreement key, installation fails — no plaintext fallback.
