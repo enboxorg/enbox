@@ -580,7 +580,10 @@ jobs:
                 chromium_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="chromium" {print $3}' "$browser_tsv")
                 firefox_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="firefox" {print $3}' "$browser_tsv")
                 webkit_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="webkit" {print $3}' "$browser_tsv")
-                echo "| $pkg | ${chromium_cov:+${chromium_cov}%}${chromium_cov:-—} | ${firefox_cov:+${firefox_cov}%}${firefox_cov:-—} | ${webkit_cov:+${webkit_cov}%}${webkit_cov:-—} |"
+                cr_cell="${chromium_cov:+${chromium_cov}%}" ; cr_cell="${cr_cell:-—}"
+                ff_cell="${firefox_cov:+${firefox_cov}%}" ; ff_cell="${ff_cell:-—}"
+                wk_cell="${webkit_cov:+${webkit_cov}%}"   ; wk_cell="${wk_cell:-—}"
+                echo "| $pkg | $cr_cell | $ff_cell | $wk_cell |"
               done
 
               echo ""
