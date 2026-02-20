@@ -685,8 +685,13 @@ jobs:
         run: bunx playwright install --with-deps chromium firefox webkit
 
       - name: Run browser tests with coverage
+        id: browser-tests
         env:
           CI: true
+        # Coverage is collected even when some tests fail. Use continue-on-error
+        # so the staging/upload steps always run, then re-check the exit code in
+        # the final step to fail the job if tests actually broke.
+        continue-on-error: true
         run: |
           bun run --filter @enbox/common      test:browser:coverage
           bun run --filter @enbox/crypto      test:browser:coverage
@@ -714,6 +719,12 @@ jobs:
         with:
           name: coverage-browser
           path: coverage-staging/
+
+      - name: Fail if browser tests failed
+        if: always() && steps.browser-tests.outcome == 'failure'
+        run: |
+          echo "::error::Browser tests failed (coverage was still collected)"
+          exit 1
 
   # ---------------------------------------------------------------------------
   # Gate job for branch protection — always runs so required checks pass even
