@@ -53,6 +53,10 @@ export default defineConfig({
       'ipfs-unixfs-importer',
       'ipfs-unixfs',
       '@ipld/dag-pb',
+      // level ecosystem: pre-bundle to prevent mid-run CJS discovery restarts
+      // that crash Firefox. Vite resolves level -> browser.js (via the "browser"
+      // field in level/package.json) -> browser-level (IndexedDB-based).
+      'level',
     ],
   },
   test: {
