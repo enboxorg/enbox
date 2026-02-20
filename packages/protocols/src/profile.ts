@@ -1,8 +1,9 @@
 /**
  * Profile Protocol — public and semi-private identity information.
  *
- * Supports a published profile record, avatar (binary), links, and
- * private notes visible only to friends (via Social Graph composition).
+ * Supports a published profile record, avatar and hero images (binary),
+ * links, and private notes visible only to friends (via Social Graph
+ * composition).
  *
  * @module
  */
@@ -19,6 +20,7 @@ import { defineProtocol } from '@enbox/api';
 export type ProfileData = {
   displayName: string;
   bio?: string;
+  tagline?: string;
   location?: string;
   website?: string;
   pronouns?: string;
@@ -26,6 +28,9 @@ export type ProfileData = {
 
 /** Avatar is stored as binary data (Blob). */
 export type AvatarData = Blob;
+
+/** Hero banner is stored as binary data (Blob). */
+export type HeroData = Blob;
 
 /** Data shape for a link record (e.g. social links). */
 export type LinkData = {
@@ -48,6 +53,7 @@ export type PrivateNoteData = {
 export type ProfileSchemaMap = {
   profile: ProfileData;
   avatar: AvatarData;
+  hero: HeroData;
   link: LinkData;
   privateNote: PrivateNoteData;
 };
@@ -70,6 +76,9 @@ export const ProfileDefinition = {
     avatar: {
       dataFormats: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
     },
+    hero: {
+      dataFormats: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
+    },
     link: {
       schema      : 'https://enbox.org/schemas/profile/link',
       dataFormats : ['application/json'],
@@ -87,6 +96,12 @@ export const ProfileDefinition = {
       ],
       avatar: {
         $size    : { max: 1048576 },
+        $actions : [
+          { who: 'anyone', can: ['read'] },
+        ],
+      },
+      hero: {
+        $size    : { max: 2097152 },
         $actions : [
           { who: 'anyone', can: ['read'] },
         ],

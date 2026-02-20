@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 
 import {
+  ConnectDefinition,
+  ConnectProtocol,
   ListsDefinition,
   ListsProtocol,
   PreferencesDefinition,
@@ -58,21 +60,30 @@ describe('@enbox/protocols', () => {
       expect(ProfileDefinition.uses!.social).toBe('https://enbox.org/protocols/social-graph');
     });
 
-    it('should define profile, avatar, link, and privateNote types', () => {
+    it('should define profile, avatar, hero, link, and privateNote types', () => {
       expect(ProfileDefinition.types.profile).toBeDefined();
       expect(ProfileDefinition.types.avatar).toBeDefined();
+      expect(ProfileDefinition.types.hero).toBeDefined();
       expect(ProfileDefinition.types.link).toBeDefined();
       expect(ProfileDefinition.types.privateNote).toBeDefined();
     });
 
-    it('should allow binary formats for avatar', () => {
+    it('should allow binary formats for avatar and hero', () => {
       expect(ProfileDefinition.types.avatar.dataFormats).toContain('image/png');
       expect(ProfileDefinition.types.avatar.dataFormats).toContain('image/jpeg');
+      expect(ProfileDefinition.types.hero.dataFormats).toContain('image/png');
+      expect(ProfileDefinition.types.hero.dataFormats).toContain('image/jpeg');
     });
 
-    it('should nest avatar and link under profile', () => {
+    it('should nest avatar, hero, and link under profile', () => {
       expect(ProfileDefinition.structure.profile.avatar).toBeDefined();
+      expect(ProfileDefinition.structure.profile.hero).toBeDefined();
       expect(ProfileDefinition.structure.profile.link).toBeDefined();
+    });
+
+    it('should enforce size limits on avatar and hero', () => {
+      expect(ProfileDefinition.structure.profile.avatar.$size?.max).toBe(1048576);
+      expect(ProfileDefinition.structure.profile.hero.$size?.max).toBe(2097152);
     });
 
     it('should use cross-protocol friend role for privateNote', () => {
@@ -206,6 +217,32 @@ describe('@enbox/protocols', () => {
 
     it('should wrap definition via defineProtocol()', () => {
       expect(ListsProtocol.definition).toBe(ListsDefinition);
+    });
+  });
+
+  describe('ConnectProtocol', () => {
+    it('should have the correct protocol URI', () => {
+      expect(ConnectDefinition.protocol).toBe('https://enbox.org/protocols/connect');
+    });
+
+    it('should be a published protocol', () => {
+      expect(ConnectDefinition.published).toBe(true);
+    });
+
+    it('should define wallet type', () => {
+      expect(ConnectDefinition.types.wallet).toBeDefined();
+    });
+
+    it('should allow anyone to read wallet records', () => {
+      const actions = ConnectDefinition.structure.wallet.$actions;
+      expect(actions).toBeDefined();
+      const anyoneAction = actions!.find((a) => a.who === 'anyone');
+      expect(anyoneAction).toBeDefined();
+      expect(anyoneAction!.can).toContain('read');
+    });
+
+    it('should wrap definition via defineProtocol()', () => {
+      expect(ConnectProtocol.definition).toBe(ConnectDefinition);
     });
   });
 });
