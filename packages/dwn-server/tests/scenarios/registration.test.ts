@@ -15,7 +15,7 @@ import { readFileSync } from 'fs';
 import { useFakeTimers } from 'sinon';
 import { v4 as uuidv4 } from 'uuid';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { DataStream, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DataStream, Jws, ProtocolsConfigure, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { DidDht, DidKey, UniversalResolver } from '@enbox/dids';
 
 describe('Registration scenarios', () => {
@@ -131,6 +131,9 @@ describe('Registration scenarios', () => {
     expect(registrationResponse.status).toBe(200);
 
     // 6. Alice can now write to the DWN.
+    // Install the default test protocol first so RecordsWrite messages are accepted.
+    await installDefaultTestProtocolViaHttp(dwnMessageEndpoint, alice);
+
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
     const writeResponse = await fetch(dwnMessageEndpoint, {
       method  : 'POST',
@@ -437,6 +440,9 @@ describe('Registration scenarios', () => {
       termsOfServiceHash : ProofOfWork.hashAsHexString([registrationManager.getTermsOfService()])
     });
 
+    // Install the default test protocol so RecordsWrite messages are accepted.
+    await installDefaultTestProtocolViaHttp(dwnMessageEndpoint, alice);
+
     // Sanity test that Alice can write to the DWN after registration.
     const write1 = await generateRecordsWriteJsonRpcRequest(alice);
     const write1Response = await fetch(dwnMessageEndpoint, {
@@ -564,6 +570,10 @@ describe('Registration scenarios', () => {
     dwnServer = new DwnServer({ config: configClone, didResolver });
     await dwnServer.start();
 
+    // Install the default test protocol so RecordsWrite messages are accepted.
+    const noRegEndpoint = `http://localhost:${dwnServer.httpServer.port}`;
+    await installDefaultTestProtocolViaHttp(noRegEndpoint, alice);
+
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
 
     const writeResponse = await fetch(`http://localhost:${dwnServer.httpServer.port}`, {
@@ -579,6 +589,40 @@ describe('Registration scenarios', () => {
     expect(writeResponseBody.result.reply.status.code).toBe(202);
   });
 });
+
+/**
+ * Installs the default test protocol (`http://test-protocol.xyz`) for the given persona
+ * by sending a ProtocolsConfigure message via HTTP.
+ */
+async function installDefaultTestProtocolViaHttp(endpoint: string, persona: Persona): Promise<void> {
+  const protocolsConfigure = await ProtocolsConfigure.create({
+    definition: {
+      protocol  : 'http://test-protocol.xyz',
+      published : false,
+      types     : { testRecord: {} },
+      structure : { testRecord: {} }
+    },
+    signer: Jws.createSigner(persona),
+  });
+
+  const requestId = uuidv4();
+  const jsonRpcRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
+    message : protocolsConfigure.toJSON(),
+    target  : persona.did,
+  });
+
+  const response = await fetch(endpoint, {
+    method  : 'POST',
+    headers : {
+      'dwn-request': JSON.stringify(jsonRpcRequest),
+    },
+  });
+  const responseBody = await response.json() as JsonRpcResponse;
+  const { code, detail } = responseBody.result.reply.status;
+  if (code !== 202) {
+    throw new Error(`Failed to install default test protocol via HTTP: ${code} ${detail}`);
+  }
+}
 
 async function generateRecordsWriteJsonRpcRequest(persona: Persona): Promise<{ jsonRpcRequest: JsonRpcRequest, dataBytes: Uint8Array }> {
   const { recordsWrite, dataStream } = await createRecordsWriteMessage(persona);

@@ -1,14 +1,44 @@
-import type { Persona } from '@enbox/dwn-sdk-js';
+import type { Persona, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
-import { RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { Jws, ProtocolsConfigure, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { DwnServerInfoCacheMemory } from '../src/dwn-server-info-cache-memory.js';
 import { HttpDwnRpcClient } from '../src/http-dwn-rpc-client.js';
 
+/**
+ * Matches the defaults used by `TestDataGenerator.generateRecordsWrite()`.
+ */
+const defaultTestProtocolDefinition: ProtocolDefinition = {
+  protocol  : 'http://test-protocol.xyz',
+  published : false,
+  types     : {
+    testRecord: {}
+  },
+  structure: {
+    testRecord: {}
+  }
+};
+
 const testDwnUrl = process.env.TEST_DWN_URL || 'http://localhost:3000';
+
+/** Installs the default test protocol on the remote DWN for the given persona. */
+async function installDefaultTestProtocolViaHttp(httpClient: HttpDwnRpcClient, dwnUrl: string, persona: Persona): Promise<void> {
+  const protocolsConfigure = await ProtocolsConfigure.create({
+    definition : defaultTestProtocolDefinition,
+    signer     : Jws.createSigner(persona),
+  });
+  const reply = await httpClient.sendDwnRequest({
+    dwnUrl,
+    targetDid : persona.did,
+    message   : protocolsConfigure.message,
+  });
+  if (reply.status.code !== 202) {
+    throw new Error(`Failed to install default test protocol: ${reply.status.code} ${reply.status.detail}`);
+  }
+}
 
 describe('HttpDwnRpcClient', () => {
   const client = new HttpDwnRpcClient();
@@ -46,6 +76,9 @@ describe('HttpDwnRpcClient', () => {
     });
 
     it('send RecordsWrite message', async () => {
+      // install the default test protocol so the DWN accepts the record
+      await installDefaultTestProtocolViaHttp(client, testDwnUrl, alice);
+
       // create a generic record with schema `foo/bar`
       const { message: writeMessage, dataBytes } = await TestDataGenerator.generateRecordsWrite({
         author : alice,

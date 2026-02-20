@@ -1,13 +1,43 @@
-import type { Persona, RecordSubscriptionHandler, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { Persona, ProtocolDefinition, RecordSubscriptionHandler, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { HttpDwnRpcClient } from '../src/http-dwn-rpc-client.js';
 import { JsonRpcSocket } from '../src/json-rpc-socket.js';
 import { WebSocketDwnRpcClient } from '../src/web-socket-clients.js';
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '../src/json-rpc.js';
-import { DwnInterfaceName, DwnMethodName, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Jws, ProtocolsConfigure, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
+
+/**
+ * Matches the defaults used by `TestDataGenerator.generateRecordsWrite()`.
+ */
+const defaultTestProtocolDefinition: ProtocolDefinition = {
+  protocol  : 'http://test-protocol.xyz',
+  published : false,
+  types     : {
+    testRecord: {}
+  },
+  structure: {
+    testRecord: {}
+  }
+};
 
 const testDwnUrl = process.env.TEST_DWN_URL || 'http://localhost:3000';
+
+/** Installs the default test protocol on the remote DWN for the given persona. */
+async function installDefaultTestProtocolViaHttp(httpClient: HttpDwnRpcClient, dwnUrl: string, persona: Persona): Promise<void> {
+  const protocolsConfigure = await ProtocolsConfigure.create({
+    definition : defaultTestProtocolDefinition,
+    signer     : Jws.createSigner(persona),
+  });
+  const reply = await httpClient.sendDwnRequest({
+    dwnUrl,
+    targetDid : persona.did,
+    message   : protocolsConfigure.message,
+  });
+  if (reply.status.code !== 202) {
+    throw new Error(`Failed to install default test protocol: ${reply.status.code} ${reply.status.detail}`);
+  }
+}
 
 /** helper method to sleep while waiting for events to process/arrive */
 async function sleepWhileWaitingForEvents(override?: number):Promise<void> {
@@ -112,6 +142,9 @@ describe('WebSocketDwnRpcClient', () => {
     });
 
     it('responds to a RecordsRead message', async () => {
+      // install the default test protocol so the DWN accepts the record
+      await installDefaultTestProtocolViaHttp(httpClient, testDwnUrl, alice);
+
       // create a generic record with schema `foo/bar`
       const { message: writeMessage, dataBytes } = await TestDataGenerator.generateRecordsWrite({
         author : alice,
@@ -149,6 +182,9 @@ describe('WebSocketDwnRpcClient', () => {
     });
 
     it('subscribes to updates to a record', async () => {
+      // install the default test protocol so the DWN accepts the record
+      await installDefaultTestProtocolViaHttp(httpClient, testDwnUrl, alice);
+
       // create an initial record, we will subscribe to updates of this record
       const { message: writeMessage, dataBytes, recordsWrite } = await TestDataGenerator.generateRecordsWrite({
         author : alice,
