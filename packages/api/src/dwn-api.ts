@@ -26,12 +26,17 @@ import {
 import { isEmptyObject } from '@enbox/common';
 import { DwnInterface, getRecordAuthor } from '@enbox/agent';
 
+import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+
+import type { SchemaMap, TypedProtocol } from './protocol-types.js';
+
 import { dataToBlob } from './utils.js';
 import { PermissionGrant } from './permission-grant.js';
 import { PermissionRequest } from './permission-request.js';
 import { Protocol } from './protocol.js';
 import { Record } from './record.js';
 import { SubscriptionUtil } from './subscription-util.js';
+import { TypedDwnApi } from './typed-dwn-api.js';
 
 /**
  * Represents the request payload for fetching permission requests from a Decentralized Web Node (DWN).
@@ -329,6 +334,30 @@ export class DwnApi {
     this.connectedDid = options.connectedDid;
     this.delegateDid = options.delegateDid;
     this.permissionsApi = new AgentPermissionsApi({ agent: this.agent });
+  }
+
+  /**
+   * Returns a {@link TypedDwnApi} scoped to the given typed protocol.
+   *
+   * The returned API provides path autocompletion, typed data payloads,
+   * and automatically injects the protocol URI and protocolPath into every
+   * DWN operation.
+   *
+   * @param protocol - A typed protocol created via `defineProtocol()`.
+   * @returns A `TypedDwnApi` instance bound to the given protocol.
+   *
+   * @example
+   * ```ts
+   * const social = dwn.using(SocialGraphProtocol);
+   * const { record } = await social.write('friend', {
+   *   data: { did: 'did:example:alice' },
+   * });
+   * ```
+   */
+  public using<D extends ProtocolDefinition, M extends SchemaMap>(
+    protocol: TypedProtocol<D, M>,
+  ): TypedDwnApi<D, M> {
+    return new TypedDwnApi<D, M>(this, protocol);
   }
 
   /**
