@@ -1,11 +1,11 @@
 import type {
   AsymmetricKeyConverter,
-  DsaApi,
   InferKeyGeneratorAlgorithm,
   Jwk,
   KeyCompressor,
   KeyIdentifier,
   KeyImporterExporter,
+  KeyManager,
   KmsExportKeyParams,
   KmsImportKeyParams,
 } from '@enbox/crypto';
@@ -88,7 +88,7 @@ export interface DidKeyCreateOptions<TKms> extends DidCreateOptions<TKms> {
   /**
    * Optionally specify the algorithm to be used for key generation.
    */
-  algorithm?: TKms extends DsaApi
+  algorithm?: TKms extends KeyManager
     ? InferKeyGeneratorAlgorithm<TKms>
     : InferKeyGeneratorAlgorithm<LocalKeyManager>;
 
@@ -295,7 +295,7 @@ export class DidKey extends DidMethod {
    * @param params.options - Optional parameters that can be specified when creating a new DID.
    * @returns A Promise resolving to a {@link BearerDid} object representing the new DID.
    */
-  public static async create<TKms extends DsaApi | undefined = undefined>({
+  public static async create<TKms extends KeyManager | undefined = undefined>({
     keyManager = new LocalKeyManager(),
     options = {}
   }: {
@@ -408,7 +408,7 @@ export class DidKey extends DidMethod {
    * @throws An error if the DID document does not contain exactly one verification method.
    */
   public static async import({ portableDid, keyManager = new LocalKeyManager() }: {
-    keyManager?: DsaApi & KeyImporterExporter<KmsImportKeyParams, KeyIdentifier, KmsExportKeyParams>;
+    keyManager?: KeyManager & KeyImporterExporter<KmsImportKeyParams, KeyIdentifier, KmsExportKeyParams>;
     portableDid: PortableDid;
   }): Promise<BearerDid> {
     // Verify the DID method is supported.
@@ -473,7 +473,7 @@ export class DidKey extends DidMethod {
    */
   private static async createDocument({ didUri, options = {} }: {
     didUri: string;
-    options?: Exclude<DidKeyCreateOptions<DsaApi>, 'algorithm' | 'verificationMethods'> | DidResolutionOptions;
+    options?: Exclude<DidKeyCreateOptions<KeyManager>, 'algorithm' | 'verificationMethods'> | DidResolutionOptions;
   }): Promise<DidDocument> {
     const {
       defaultContext = 'https://www.w3.org/ns/did/v1',
@@ -582,7 +582,7 @@ export class DidKey extends DidMethod {
   private static async createSignatureMethod({ didUri, multibaseValue, options }: {
     didUri: string;
     multibaseValue: string;
-    options: Required<Pick<DidKeyCreateOptions<DsaApi>, 'enableExperimentalPublicKeyTypes' | 'publicKeyFormat'>>
+    options: Required<Pick<DidKeyCreateOptions<KeyManager>, 'enableExperimentalPublicKeyTypes' | 'publicKeyFormat'>>
   }): Promise<DidVerificationMethod> {
     const { enableExperimentalPublicKeyTypes, publicKeyFormat } = options;
 

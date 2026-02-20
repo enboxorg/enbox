@@ -65,17 +65,9 @@ export interface DsaApi<
   DigestInput = KmsDigestParams,
   SignInput = KmsSignParams,
   VerifyInput = KmsVerifyParams
-> extends AsymmetricKeyGenerator<GenerateKeyInput, GenerateKeyOutput, GetPublicKeyInput>,
+ > extends AsymmetricKeyGenerator<GenerateKeyInput, GenerateKeyOutput, GetPublicKeyInput>,
           Hasher<DigestInput>,
-          Signer<SignInput, VerifyInput> {
-  /**
-   *
-   * @param params - The parameters for getting the key URI.
-   * @param params.key - The key to get the URI for.
-   * @returns The key URI.
-   */
-  getKeyUri(params: KmsGetKeyUriParams): Promise<KeyIdentifier>;
-}
+          Signer<SignInput, VerifyInput> {}
 
 /**
  * The `CryptoApi` interface extends {@link DsaApi} with encryption, key conversion,
