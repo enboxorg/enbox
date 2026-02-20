@@ -145,12 +145,10 @@ export class StateIndexSql implements StateIndex {
     const globalSmt = await this.getGlobalTree(tenant);
     await globalSmt.insert(messageCid);
 
-    // If the message is associated with a protocol, insert into the protocol-scoped tree
-    const protocol = indexes.protocol as string | undefined;
-    if (protocol !== undefined) {
-      const protoSmt = await this.getProtocolTree(tenant, protocol);
-      await protoSmt.insert(messageCid);
-    }
+    // Insert into the protocol-scoped tree (all records belong to a protocol)
+    const protocol = indexes.protocol as string;
+    const protoSmt = await this.getProtocolTree(tenant, protocol);
+    await protoSmt.insert(messageCid);
 
     // Store reverse lookup metadata for deletion
     await this.#db
@@ -158,7 +156,7 @@ export class StateIndexSql implements StateIndex {
       .values({
         tenant,
         messageCid,
-        protocol: protocol ?? null,
+        protocol,
       })
       .execute();
   }
@@ -186,11 +184,11 @@ export class StateIndexSql implements StateIndex {
       // Delete from global tree
       await globalSmt.delete(messageCid);
 
-      // Delete from protocol tree if applicable
+      // Delete from protocol tree
       if (meta?.protocol) {
         const protoSmt = await this.getProtocolTree(tenant, meta.protocol);
         await protoSmt.delete(messageCid);
-      }
+      } // meta.protocol is always present for new records; guard kept for legacy data
 
       // Remove the reverse lookup
       await this.#db

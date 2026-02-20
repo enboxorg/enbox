@@ -257,7 +257,7 @@ export function testRecordsWriteHandler(): void {
           .toBe(newerWrite.message.descriptor.dataCid); // expecting unchanged
       });
 
-      it('#690 - should allow data format of a flat-space record to be updated to any value', async () => {
+      it('#690 - should allow data format of a record to be updated to any value', async () => {
         const initialWriteData = await TestDataGenerator.generateRecordsWrite();
         const tenant = initialWriteData.author.did;
 

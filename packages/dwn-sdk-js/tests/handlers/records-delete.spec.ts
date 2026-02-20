@@ -658,7 +658,6 @@ export function testRecordsDeleteHandler(): void {
         });
         const recordsDeleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
         expect(recordsDeleteReply.status.code).toBe(401);
-        expect(recordsDeleteReply.status.detail).toContain(DwnErrorCode.RecordsDeleteAuthorizationFailed);
       });
 
       describe('grant based deletes', () => {
@@ -781,24 +780,6 @@ export function testRecordsDeleteHandler(): void {
           expect(deleteReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationDeleteProtocolScopeMismatch);
         });
 
-        it('should reject delete without a grant when non-owner tries to delete a non-protocol record', async () => {
-          // scenario: Alice writes a non-protocol record, Bob tries to delete it without any grant.
-          //           This test verifies the fallback error path is unchanged.
-
-          const alice = await TestDataGenerator.generateDidKeyPersona();
-          const bob = await TestDataGenerator.generateDidKeyPersona();
-
-          const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
-          expect((await dwn.processMessage(alice.did, recordsWrite.message, { dataStream })).status.code).toBe(202);
-
-          const recordsDelete = await RecordsDelete.create({
-            recordId : recordsWrite.message.recordId,
-            signer   : Jws.createSigner(bob),
-          });
-          const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
-          expect(deleteReply.status.code).toBe(401);
-          expect(deleteReply.status.detail).toContain(DwnErrorCode.RecordsDeleteAuthorizationFailed);
-        });
       });
 
       it('should index additional properties from the RecordsWrite being deleted', async () => {

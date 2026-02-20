@@ -58,7 +58,7 @@ export function testOwnerSignature(): void {
       await dwn.close();
     });
 
-    it('should use `ownerSignature` for authorization when it is given - flat-space', async () => {
+    it('should use `ownerSignature` for authorization when it is given', async () => {
       // scenario: Alice fetch a message authored by Bob from Bob's DWN and retains (writes) it in her DWN
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
@@ -124,7 +124,7 @@ export function testOwnerSignature(): void {
       const recordsWriteReply = await dwn.processMessage(alice.did, bobRecordsWrite.message, { dataStream: bobRecordsWrite.dataStream });
       expect(recordsWriteReply.status.code).toBe(401);
 
-      // Skipping Alice fetching the message from Bob's DWN (as this is tested already in the flat-space test)
+      // Skipping Alice fetching the message from Bob's DWN (as this is tested already in the owner-signature test above)
 
       // Alice augments Bob's message as an external owner
       const ownerSignedMessage = await RecordsWrite.parse(bobRecordsWrite.message);
@@ -149,7 +149,7 @@ export function testOwnerSignature(): void {
       expect(ArrayUtility.byteArraysEqual(dataFetched, bobRecordsWrite.dataBytes!)).toBe(true);
     });
 
-    it('should throw if `ownerSignature` in `authorization` is mismatching with the tenant - flat-space', async () => {
+    it('should throw if `ownerSignature` in `authorization` is mismatching with the tenant', async () => {
       // scenario: Carol attempts to store a message with Alice being the owner, and should fail
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();

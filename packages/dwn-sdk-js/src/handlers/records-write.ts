@@ -43,10 +43,7 @@ export class RecordsWriteHandler implements MethodHandler {
     try {
       recordsWrite = await RecordsWrite.parse(message);
 
-      // Protocol-authorized record specific validation
-      if (message.descriptor.protocol !== undefined) {
-        await ProtocolAuthorization.validateReferentialIntegrity(tenant, recordsWrite, this.messageStore);
-      }
+      await ProtocolAuthorization.validateReferentialIntegrity(tenant, recordsWrite, this.messageStore);
     } catch (e) {
       return messageReplyFromError(e, 400);
     }
@@ -410,10 +407,8 @@ export class RecordsWriteHandler implements MethodHandler {
         permissionGrant,
         messageStore
       });
-    } else if (recordsWrite.message.descriptor.protocol !== undefined) {
-      await ProtocolAuthorization.authorizeWrite(tenant, recordsWrite, messageStore);
     } else {
-      throw new DwnError(DwnErrorCode.RecordsWriteAuthorizationFailed, 'message failed authorization');
+      await ProtocolAuthorization.authorizeWrite(tenant, recordsWrite, messageStore);
     }
   }
 }

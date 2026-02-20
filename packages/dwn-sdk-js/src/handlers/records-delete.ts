@@ -16,7 +16,6 @@ import { RecordsDelete } from '../interfaces/records-delete.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { ResumableTaskName } from '../core/resumable-task-manager.js';
-import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 export class RecordsDeleteHandler implements MethodHandler {
 
@@ -124,13 +123,8 @@ export class RecordsDeleteHandler implements MethodHandler {
         permissionGrant,
         messageStore,
       });
-    } else if (recordsWrite.message.descriptor.protocol !== undefined) {
-      await ProtocolAuthorization.authorizeDelete(tenant, recordsDelete, recordsWrite, messageStore);
     } else {
-      throw new DwnError(
-        DwnErrorCode.RecordsDeleteAuthorizationFailed,
-        'RecordsDelete message failed authorization'
-      );
+      await ProtocolAuthorization.authorizeDelete(tenant, recordsDelete, recordsWrite, messageStore);
     }
   }
 };

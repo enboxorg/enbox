@@ -121,7 +121,7 @@ export function testMessagesSyncHandler(): void {
         const writeReply = await dwn.processMessage(alice.did, recordMessage, { dataStream });
         expect(writeReply.status.code).toBe(202);
 
-        // write a flat-space (non-protocol) record to diverge the global root
+        // write a record under a different protocol to diverge the global root
         const { message: flatRecord, dataStream: flatDataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
         const flatWriteReply = await dwn.processMessage(alice.did, flatRecord, { dataStream: flatDataStream });
         expect(flatWriteReply.status.code).toBe(202);
@@ -144,7 +144,7 @@ export function testMessagesSyncHandler(): void {
         expect(protoReply.status.code).toBe(200);
 
         // global root and protocol root should be different
-        // (global includes the flat-space record which is not in any protocol)
+        // (global includes the record from the other protocol)
         expect(protoReply.root).not.toBe(globalReply.root);
         // both should be non-empty roots
         expect(protoReply.root!.length).toBe(64);

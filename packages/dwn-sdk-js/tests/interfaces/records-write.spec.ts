@@ -234,60 +234,6 @@ describe('RecordsWrite', () => {
       expect(recordsWrite.message.authorization!.signature.signatures[0].signature).toBe(Encoder.bytesToBase64Url(hardCodedSignature));
     });
 
-    it('should throw if attempting to use `protocols` key derivation encryption scheme on non-protocol-based record', async () => {
-      const alice = await TestDataGenerator.generatePersona();
-
-      const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12);
-      const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-      const encryptionInput: EncryptionInput = {
-        initializationVector : dataEncryptionInitializationVector,
-        key                  : dataEncryptionKey,
-        authenticationTag    : TestDataGenerator.randomBytes(16),
-        keyEncryptionInputs  : [{
-          publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
-          publicKey        : alice.encryptionKeyPair.publicJwk,
-          derivationScheme : KeyDerivationScheme.ProtocolPath
-        }]
-      };
-
-      // intentionally generating a record that is not protocol-based
-      const createPromise = RecordsWrite.create({
-        signer     : Jws.createSigner(alice),
-        dataFormat : 'application/json',
-        data       : TestDataGenerator.randomBytes(10),
-        encryptionInput
-      });
-
-      await expect(createPromise).rejects.toThrow(DwnErrorCode.RecordsWriteMissingProtocol);
-    });
-
-    it('should throw if attempting to use `schemas` key derivation encryption scheme on a record without `schema`', async () => {
-      const alice = await TestDataGenerator.generatePersona();
-
-      const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12);
-      const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-      const encryptionInput: EncryptionInput = {
-        initializationVector : dataEncryptionInitializationVector,
-        key                  : dataEncryptionKey,
-        authenticationTag    : TestDataGenerator.randomBytes(16),
-        keyEncryptionInputs  : [{
-          publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
-          publicKey        : alice.encryptionKeyPair.publicJwk,
-          derivationScheme : KeyDerivationScheme.Schemas
-        }]
-      };
-
-      // intentionally generating a record that is without `schema`
-      const createPromise = RecordsWrite.create({
-        signer     : Jws.createSigner(alice),
-        dataFormat : 'application/octet-stream',
-        data       : TestDataGenerator.randomBytes(10),
-        encryptionInput
-      });
-
-      await expect(createPromise).rejects.toThrow(DwnErrorCode.RecordsWriteMissingSchema);
-    });
-
     it('should throw if delegated grant is given but signer is not given', async () => {
       const alice = await TestDataGenerator.generatePersona();
       const bob = await TestDataGenerator.generatePersona();
@@ -560,14 +506,14 @@ describe('RecordsWrite', () => {
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId,
           publicKey        : alice.encryptionKeyPair.publicJwk,
-          derivationScheme : KeyDerivationScheme.Schemas,
+          derivationScheme : KeyDerivationScheme.ProtocolContext,
         }],
       };
       await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput2);
 
-      // Should have replaced — only 1 entry with Schemas scheme
+      // Should have replaced — only 1 entry with ProtocolContext scheme
       expect(recordsWrite['_message'].encryption!.recipients).toHaveLength(1);
-      expect(recordsWrite['_message'].encryption!.recipients[0].header.derivationScheme).toBe('schemas');
+      expect(recordsWrite['_message'].encryption!.recipients[0].header.derivationScheme).toBe('protocolContext');
     });
 
     it('should append recipients when append option is true', async () => {

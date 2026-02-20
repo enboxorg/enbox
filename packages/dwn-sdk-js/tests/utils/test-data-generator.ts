@@ -442,8 +442,8 @@ export class TestDataGenerator {
 
     const options: RecordsWriteOptions = {
       recipient         : input?.recipient,
-      protocol          : input?.protocol,
-      protocolPath      : input?.protocolPath,
+      protocol          : input?.protocol ?? 'http://test-protocol.xyz',
+      protocolPath      : input?.protocolPath ?? 'testRecord',
       protocolRole      : input?.protocolRole,
       schema            : input?.schema ?? `http://${TestDataGenerator.randomString(20)}`,
       tags              : input?.tags,

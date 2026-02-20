@@ -139,30 +139,14 @@ export class Records {
     const contextId = recordsWriteMessage.contextId;
 
     let fullDerivationPath;
-    if (keyDerivationScheme === KeyDerivationScheme.DataFormats) {
-      fullDerivationPath = Records.constructKeyDerivationPathUsingDataFormatsScheme(descriptor.dataFormat);
-    } else if (keyDerivationScheme === KeyDerivationScheme.ProtocolPath) {
+    if (keyDerivationScheme === KeyDerivationScheme.ProtocolPath) {
       fullDerivationPath = Records.constructKeyDerivationPathUsingProtocolPathScheme(descriptor);
-    } else if (keyDerivationScheme === KeyDerivationScheme.ProtocolContext) {
-      fullDerivationPath = Records.constructKeyDerivationPathUsingProtocolContextScheme(contextId);
     } else {
-      // `schemas` scheme
-      fullDerivationPath = Records.constructKeyDerivationPathUsingSchemasScheme(descriptor.schema);
+      // `protocolContext` scheme
+      fullDerivationPath = Records.constructKeyDerivationPathUsingProtocolContextScheme(contextId);
     }
 
     return fullDerivationPath;
-  }
-
-  /**
-   * Constructs the full key derivation path using `dataFormats` scheme.
-   * The derivation path is always `["dataFormats", "<mime-type>"]` regardless of whether
-   * a schema is present. This matches the spec: keys are derived purely from the MIME type.
-   */
-  public static constructKeyDerivationPathUsingDataFormatsScheme(dataFormat: string): string[] {
-    return [
-      KeyDerivationScheme.DataFormats,
-      dataFormat
-    ];
   }
 
   /**
@@ -217,25 +201,6 @@ export class Records {
     const fullDerivationPath = [
       KeyDerivationScheme.ProtocolContext,
       firstContextSegment
-    ];
-
-    return fullDerivationPath;
-  }
-
-  /**
-   * Constructs the full key derivation path using `schemas` scheme.
-   */
-  public static constructKeyDerivationPathUsingSchemasScheme( schema: string | undefined ): string[] {
-    if (schema === undefined) {
-      throw new DwnError(
-        DwnErrorCode.RecordsSchemasDerivationSchemeMissingSchema,
-        'Unable to construct key derivation path using `schemas` scheme because `schema` is missing.'
-      );
-    }
-
-    const fullDerivationPath = [
-      KeyDerivationScheme.Schemas,
-      schema
     ];
 
     return fullDerivationPath;

@@ -21,7 +21,7 @@ describe('Records', () => {
   });
 
   describe('constructKeyDerivationPathUsingProtocolPathScheme()', () => {
-    it('should throw if given a flat-space descriptor', async () => {
+    it('should throw if given a descriptor without protocol', async () => {
       const descriptor: RecordsWriteDescriptor = {
         interface        : DwnInterfaceName.Records,
         method           : DwnMethodName.Write,
@@ -41,13 +41,6 @@ describe('Records', () => {
     it('should throw if not given contextId', async () => {
       expect(() => Records.constructKeyDerivationPathUsingProtocolContextScheme(undefined))
         .toThrow(DwnErrorCode.RecordsProtocolContextDerivationSchemeMissingContextId);
-    });
-  });
-
-  describe('constructKeyDerivationPathUsingSchemasScheme()', () => {
-    it('should throw if not given schema', async () => {
-      expect(() => Records.constructKeyDerivationPathUsingSchemasScheme(undefined))
-        .toThrow(DwnErrorCode.RecordsSchemasDerivationSchemeMissingSchema);
     });
   });
 

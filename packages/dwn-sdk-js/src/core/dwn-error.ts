@@ -125,7 +125,7 @@ export enum DwnErrorCode {
   RecordsAuthorDelegatedGrantNotADelegatedGrant = 'RecordsAuthorDelegatedGrantNotADelegatedGrant',
   RecordsDecryptNoMatchingKeyEncryptedFound = 'RecordsDecryptNoMatchingKeyEncryptedFound',
   RecordsCountFilterMissingRequiredProperties = 'RecordsCountFilterMissingRequiredProperties',
-  RecordsDeleteAuthorizationFailed = 'RecordsDeleteAuthorizationFailed',
+
   RecordsQueryCreateFilterPublishedSortInvalid = 'RecordsQueryCreateFilterPublishedSortInvalid',
   RecordsQueryParseFilterPublishedSortInvalid = 'RecordsQueryParseFilterPublishedSortInvalid',
   RecordsGrantAuthorizationConditionPublicationProhibited = 'RecordsGrantAuthorizationConditionPublicationProhibited',
@@ -144,16 +144,16 @@ export enum DwnErrorCode {
   RecordsProtocolContextDerivationSchemeMissingContextId = 'RecordsProtocolContextDerivationSchemeMissingContextId',
   RecordsProtocolPathDerivationSchemeMissingProtocol = 'RecordsProtocolPathDerivationSchemeMissingProtocol',
   RecordsQueryFilterMissingRequiredProperties = 'RecordsQueryFilterMissingRequiredProperties',
-  RecordsReadAuthorizationFailed = 'RecordsReadAuthorizationFailed',
+
   RecordsReadCreateFilterPublishedSortInvalid = 'RecordsReadCreateFilterPublishedSortInvalid',
   RecordsReadParseFilterPublishedSortInvalid = 'RecordsReadParseFilterPublishedSortInvalid',
   RecordsSubscribeEventStreamUnimplemented = 'RecordsSubscribeEventStreamUnimplemented',
   RecordsSubscribeFilterMissingRequiredProperties = 'RecordsSubscribeFilterMissingRequiredProperties',
-  RecordsSchemasDerivationSchemeMissingSchema = 'RecordsSchemasDerivationSchemeMissingSchema',
+
   RecordsWriteAttestationIntegrityMoreThanOneSignature = 'RecordsWriteAttestationIntegrityMoreThanOneSignature',
   RecordsWriteAttestationIntegrityDescriptorCidMismatch = 'RecordsWriteAttestationIntegrityDescriptorCidMismatch',
   RecordsWriteAttestationIntegrityInvalidPayloadProperty = 'RecordsWriteAttestationIntegrityInvalidPayloadProperty',
-  RecordsWriteAuthorizationFailed = 'RecordsWriteAuthorizationFailed',
+
   RecordsWriteCreateMissingSigner = 'RecordsWriteCreateMissingSigner',
   RecordsWriteCreateDataAndDataCidMutuallyExclusive = 'RecordsWriteCreateDataAndDataCidMutuallyExclusive',
   RecordsWriteCreateDataCidAndDataSizeMutuallyInclusive = 'RecordsWriteCreateDataCidAndDataSizeMutuallyInclusive',
@@ -168,8 +168,7 @@ export enum DwnErrorCode {
   RecordsWriteMissingDataInPrevious = 'RecordsWriteMissingDataInPrevious',
   RecordsWriteMissingEncodedDataInPrevious = 'RecordsWriteMissingEncodedDataInPrevious',
   RecordsWriteMissingEncryption = 'RecordsWriteMissingEncryption',
-  RecordsWriteMissingProtocol = 'RecordsWriteMissingProtocol',
-  RecordsWriteMissingSchema = 'RecordsWriteMissingSchema',
+
   RecordsWriteNotAllowedAfterDelete = 'RecordsWriteNotAllowedAfterDelete',
   RecordsWriteOwnerAndTenantMismatch = 'RecordsWriteOwnerAndTenantMismatch',
   RecordsWriteSignAsOwnerDelegateUnknownAuthor = 'RecordsWriteSignAsOwnerDelegateUnknownAuthor',

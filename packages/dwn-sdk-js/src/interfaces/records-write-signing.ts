@@ -8,7 +8,6 @@ import { Encoder } from '../utils/encoder.js';
 import { Encryption } from '../utils/encryption.js';
 import { GeneralJwsBuilder } from '../jose/jws/general/builder.js';
 import { Jws } from '../utils/jws.js';
-import { KeyDerivationScheme } from '../utils/hd-key.js';
 import { removeUndefinedProperties } from '../utils/object.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
@@ -24,23 +23,6 @@ export async function createEncryptionProperty(
 ): Promise<JweEncryption | undefined> {
   if (encryptionInput === undefined) {
     return undefined;
-  }
-
-  // Validate derivation scheme prerequisites
-  for (const keyEncryptionInput of encryptionInput.keyEncryptionInputs) {
-    if (keyEncryptionInput.derivationScheme === KeyDerivationScheme.ProtocolPath && descriptor.protocol === undefined) {
-      throw new DwnError(
-        DwnErrorCode.RecordsWriteMissingProtocol,
-        '`protocols` encryption scheme cannot be applied to record without the `protocol` property.'
-      );
-    }
-
-    if (keyEncryptionInput.derivationScheme === KeyDerivationScheme.Schemas && descriptor.schema === undefined) {
-      throw new DwnError(
-        DwnErrorCode.RecordsWriteMissingSchema,
-        '`schemas` encryption scheme cannot be applied to record without the `schema` property.'
-      );
-    }
   }
 
   // Build the JWE structure. The authentication tag comes from the AEAD encryption of record data.
