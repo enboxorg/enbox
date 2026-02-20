@@ -204,9 +204,13 @@ describe('web5 api', () => {
       });
 
       // Call connect() with the custom agent.
+      // Sync is disabled because this test only verifies that connect() accepts
+      // a pre-created DID; firing sync against the unreachable testDwnUrls would
+      // hold the sync lock and cause subsequent tests to time out.
       const { web5, did } = await Web5.connect({
         agent        : testHarness.agent,
         connectedDid : testIdentity.did.uri,
+        sync         : 'off',
       });
 
       expect(did).toBeDefined();
