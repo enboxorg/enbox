@@ -270,9 +270,14 @@ export class Record implements RecordModel {
   /** Role under which the record is written. */
   private _protocolRole?: RecordOptions['protocolRole'];
 
+  /** Cached reconstructed raw message, invalidated when record state changes. */
+  private _rawMessageCache?: DwnMessage[DwnInterface.RecordsWrite] | DwnMessage[DwnInterface.RecordsDelete];
+  /** Dirty flag indicating the cached raw message needs to be rebuilt. */
+  private _rawMessageDirty: boolean = true;
+
   /** The `RecordsWriteMessage` descriptor unless the record is in a deleted state */
   private get _recordsWriteDescriptor(): DwnMessageDescriptor[DwnInterface.RecordsWrite] | undefined {
-    if (isDwnMessage(DwnInterface.RecordsWrite, this.rawMessage)) {
+    if (!this.isRecordsDeleteDescriptor(this._descriptor)) {
       return this._descriptor as DwnMessageDescriptor[DwnInterface.RecordsWrite];
     }
 
@@ -354,15 +359,20 @@ export class Record implements RecordModel {
   get protocolRole(): string | undefined { return this._protocolRole; }
 
   /** Record's deleted state (true/false) */
-  get deleted(): boolean { return isDwnMessage(DwnInterface.RecordsDelete, this.rawMessage); }
+  get deleted(): boolean { return this.isRecordsDeleteDescriptor(this._descriptor); }
 
   /** Record's initial write if the record has been updated */
   get initialWrite(): RecordOptions['initialWrite'] { return this._initialWrite; }
 
   /**
    * Returns a copy of the raw `RecordsWriteMessage` that was used to create the current `Record` instance.
+   * The result is cached and only rebuilt when the record's state changes (via `update()` or `delete()`).
    */
   get rawMessage(): DwnMessage[DwnInterface.RecordsWrite] | DwnMessage[DwnInterface.RecordsDelete] {
+    if (!this._rawMessageDirty && this._rawMessageCache) {
+      return this._rawMessageCache;
+    }
+
     const messageType = this._descriptor.interface + this._descriptor.method;
     let message: DwnMessage[DwnInterface.RecordsWrite] | DwnMessage[DwnInterface.RecordsDelete];
     if (messageType === DwnInterface.RecordsWrite) {
@@ -382,6 +392,9 @@ export class Record implements RecordModel {
     }
 
     removeUndefinedProperties(message);
+
+    this._rawMessageCache = message;
+    this._rawMessageDirty = false;
     return message;
   }
 
@@ -661,7 +674,7 @@ export class Record implements RecordModel {
         messageType : DwnInterface.RecordsWrite,
         author      : this._connectedDid,
         target      : target,
-        dataStream  : await this.data.blob(),
+        dataStream  : this._encodedData ?? await this.data.blob(),
         rawMessage  : { ...this.rawMessage }
       };
     }
@@ -843,6 +856,9 @@ export class Record implements RecordModel {
       if (data !== undefined) {
         this._encodedData = dataBlob;
       }
+
+      // Invalidate cached rawMessage since record state has changed.
+      this._rawMessageDirty = true;
     }
 
     return { status };
@@ -934,6 +950,9 @@ export class Record implements RecordModel {
     this._encryption = undefined;
     this._attestation = undefined;
     this._contextId = undefined;
+
+    // Invalidate cached rawMessage since record state has changed.
+    this._rawMessageDirty = true;
 
     return { status };
   }
@@ -1051,7 +1070,10 @@ export class Record implements RecordModel {
     if (200 <= status.code && status.code <= 299) {
       // If we are signing as the owner, make sure to update the current record state's
       // authorization, because now it will have the owner's signature on it.
-      if (signAsOwner) {this._authorization = responseMessage.authorization;}
+      if (signAsOwner) {
+        this._authorization = responseMessage.authorization;
+        this._rawMessageDirty = true;
+      }
     }
 
     return { status };
