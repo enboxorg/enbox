@@ -196,6 +196,8 @@ export type GenerateRecordsSubscribeInput = {
     author?: Persona;
     messageTimestamp?: string;
     filter?: RecordsFilter;
+    dateSort?: DateSort;
+    pagination?: Pagination;
     protocolRole?: string;
 };
 
@@ -708,6 +710,8 @@ export class TestDataGenerator {
       messageTimestamp : input?.messageTimestamp,
       signer,
       filter           : input?.filter ?? { schema: TestDataGenerator.randomString(10) }, // must have one filter property if no filter is given
+      dateSort         : input?.dateSort,
+      pagination       : input?.pagination,
       protocolRole     : input?.protocolRole,
     };
     removeUndefinedProperties(options);

@@ -37,6 +37,30 @@
         },
         "filter": {
           "$ref": "https://identity.foundation/dwn/json-schemas/records-filter.json"
+        },
+        "pagination": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "limit": {
+              "type": "number",
+              "minimum": 1
+            },
+            "cursor": {
+              "$ref": "https://identity.foundation/dwn/json-schemas/pagination-cursor.json"
+            }
+          }
+        },
+        "dateSort": {
+          "enum": [
+            "createdAscending",
+            "createdDescending",
+            "publishedAscending",
+            "publishedDescending",
+            "updatedAscending",
+            "updatedDescending"
+          ],
+          "type": "string"
         }
       }
     }

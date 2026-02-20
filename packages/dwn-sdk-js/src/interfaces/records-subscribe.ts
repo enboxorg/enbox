@@ -1,6 +1,7 @@
 import type { MessageSigner } from '../types/signer.js';
 import type { MessageStore } from '../types/message-store.js';
-import type { DataEncodedRecordsWriteMessage, RecordsFilter, RecordsSubscribeDescriptor, RecordsSubscribeMessage } from '../types/records-types.js';
+import type { Pagination } from '../types/message-types.js';
+import type { DataEncodedRecordsWriteMessage, DateSort, RecordsFilter, RecordsSubscribeDescriptor, RecordsSubscribeMessage } from '../types/records-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
 import { Message } from '../core/message.js';
@@ -16,6 +17,8 @@ import { validateProtocolUrlNormalized, validateSchemaUrlNormalized } from '../u
 export type RecordsSubscribeOptions = {
   messageTimestamp?: string;
   filter: RecordsFilter;
+  dateSort?: DateSort;
+  pagination?: Pagination;
   signer?: MessageSigner;
   protocolRole?: string;
 
@@ -63,6 +66,8 @@ export class RecordsSubscribe extends AbstractMessage<RecordsSubscribeMessage> {
       method           : DwnMethodName.Subscribe,
       messageTimestamp : options.messageTimestamp ?? Time.getCurrentTimestamp(),
       filter           : Records.normalizeFilter(options.filter),
+      dateSort         : options.dateSort,
+      pagination       : options.pagination,
     };
 
     // delete all descriptor properties that are `undefined` else the code will encounter the following IPLD issue when attempting to generate CID:

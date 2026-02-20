@@ -1,17 +1,21 @@
 import type { DidResolver } from '@enbox/dids';
-import type { Filter } from '../types/query-types.js';
+import type { MessageSort } from '../types/message-types.js';
 import type { MessageStore } from '../types//message-store.js';
 import type { MethodHandler } from '../types/method-handler.js';
 import type { EventListener, EventStream } from '../types/subscriptions.js';
-import type { RecordEvent, RecordsSubscribeMessage, RecordsSubscribeReply, RecordSubscriptionHandler } from '../types/records-types.js';
+import type { Filter, PaginationCursor } from '../types/query-types.js';
+import type { RecordEvent, RecordsQueryReplyEntry, RecordsSubscribeMessage, RecordsSubscribeReply, RecordSubscriptionHandler } from '../types/records-types.js';
 
 import { authenticate } from '../core/auth.js';
+import { DateSort } from '../types/records-types.js';
 import { FilterUtility } from '../utils/filter.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsSubscribe } from '../interfaces/records-subscribe.js';
+import { RecordsWrite } from '../interfaces/records-write.js';
+import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
@@ -42,11 +46,13 @@ export class RecordsSubscribeHandler implements MethodHandler {
       return messageReplyFromError(e, 400);
     }
 
-    let filters:Filter[] = [];
+    let eventFilters: Filter[] = [];
+    let queryFilters: Filter[] = [];
+
     // if this is an anonymous subscribe and the filter supports published records, subscribe to only published records
     if (Records.filterIncludesPublishedRecords(recordsSubscribe.message.descriptor.filter) && recordsSubscribe.author === undefined) {
-      // build filters for a stream of published records
-      filters = [ RecordsSubscribeHandler.buildPublishedRecordsFilter(recordsSubscribe) ];
+      eventFilters = [RecordsSubscribeHandler.buildPublishedEventFilter(recordsSubscribe)];
+      queryFilters = [RecordsSubscribeHandler.buildPublishedQueryFilter(recordsSubscribe)];
       // delete the undefined authorization property else the code will encounter the following IPLD issue when attempting to generate CID:
       // Error: `undefined` is not supported by the IPLD Data Model and cannot be encoded
       delete message.authorization;
@@ -60,138 +66,231 @@ export class RecordsSubscribeHandler implements MethodHandler {
       }
 
       if (recordsSubscribe.author === tenant) {
-        // if the subscribe author is the tenant, filter as owner.
-        filters = await RecordsSubscribeHandler.filterAsOwner(recordsSubscribe);
+        eventFilters = RecordsSubscribeHandler.buildOwnerEventFilters(recordsSubscribe);
+        queryFilters = RecordsSubscribeHandler.buildOwnerQueryFilters(recordsSubscribe);
       } else {
-        // otherwise build filters based on published records, permissions, or protocol rules
-        filters = await RecordsSubscribeHandler.filterAsNonOwner(recordsSubscribe);
+        eventFilters = RecordsSubscribeHandler.buildNonOwnerEventFilters(recordsSubscribe);
+        queryFilters = RecordsSubscribeHandler.buildNonOwnerQueryFilters(recordsSubscribe);
       }
     }
 
+    // Step 1: Register event listener FIRST to ensure no events are missed between query and subscribe
     const listener: EventListener = (eventTenant, event, eventIndexes):void => {
-      if (tenant === eventTenant && FilterUtility.matchAnyFilter(eventIndexes, filters)) {
-        // the filters check for interface and method
-        // if matched the message is either a `RecordsWriteMessage` or `RecordsDeleteMessage` so we cast the event to a `RecordEvent`
+      if (tenant === eventTenant && FilterUtility.matchAnyFilter(eventIndexes, eventFilters)) {
         subscriptionHandler(event as RecordEvent);
       }
     };
 
     const messageCid = await Message.getCid(message);
     const subscription = await this.eventStream.subscribe(tenant, messageCid, listener);
+
+    // Step 2: Query for initial snapshot of matching records
+    let entries: RecordsQueryReplyEntry[];
+    let cursor: PaginationCursor | undefined;
+    try {
+      const { dateSort, pagination } = recordsSubscribe.message.descriptor;
+      const messageSort = RecordsSubscribeHandler.convertDateSort(dateSort);
+      const queryResult = await this.messageStore.query(tenant, queryFilters, messageSort, pagination);
+      entries = queryResult.messages as RecordsQueryReplyEntry[];
+      cursor = queryResult.cursor;
+
+      // attach initialWrite for non-initial writes
+      for (const entry of entries) {
+        if (!await RecordsWrite.isInitialWrite(entry)) {
+          const initialWriteResult = await this.messageStore.query(
+            tenant,
+            [{ recordId: entry.recordId, isLatestBaseState: false, method: DwnMethodName.Write }]
+          );
+          const initialWrite = initialWriteResult.messages[0] as RecordsQueryReplyEntry;
+          delete initialWrite.encodedData;
+          entry.initialWrite = initialWrite;
+        }
+      }
+    } catch (error) {
+      // if the query fails, close the subscription and return the error
+      await subscription.close();
+      return messageReplyFromError(error, 500);
+    }
+
+    // Step 3: Return subscription + initial entries + cursor
     return {
       status: { code: 200, detail: 'OK' },
-      subscription
+      subscription,
+      entries,
+      cursor
     };
   }
 
   /**
-   * Subscribe to records as the owner of the DWN with no additional filtering.
+   * Convert an incoming DateSort to a sort type accepted by MessageStore.
+   * Defaults to `dateCreated` ascending if no sort is supplied.
    */
-  private static async filterAsOwner(RecordsSubscribe: RecordsSubscribe): Promise<Filter[]> {
-    const { filter } = RecordsSubscribe.message.descriptor;
+  private static convertDateSort(dateSort?: DateSort): MessageSort {
+    switch (dateSort) {
+    case DateSort.CreatedAscending:
+      return { dateCreated: SortDirection.Ascending };
+    case DateSort.CreatedDescending:
+      return { dateCreated: SortDirection.Descending };
+    case DateSort.PublishedAscending:
+      return { datePublished: SortDirection.Ascending };
+    case DateSort.PublishedDescending:
+      return { datePublished: SortDirection.Descending };
+    case DateSort.UpdatedAscending:
+      return { messageTimestamp: SortDirection.Ascending };
+    case DateSort.UpdatedDescending:
+      return { messageTimestamp: SortDirection.Descending };
+    default:
+      return { dateCreated: SortDirection.Ascending };
+    }
+  }
 
-    const subscribeFilter = {
+  // =============================================
+  // Event filters (for live subscription)
+  // These match Write+Delete and do NOT use isLatestBaseState
+  // =============================================
+
+  /**
+   * Build event filters for owner: all matching Write+Delete events.
+   */
+  private static buildOwnerEventFilters(recordsSubscribe: RecordsSubscribe): Filter[] {
+    const { filter } = recordsSubscribe.message.descriptor;
+    return [{
       ...Records.convertFilter(filter),
       interface : DwnInterfaceName.Records,
-      method    : [ DwnMethodName.Write, DwnMethodName.Delete ], // we filter for both write and delete so that subscriber can update state.
-    };
-
-    return [ subscribeFilter ];
+      method    : [DwnMethodName.Write, DwnMethodName.Delete],
+    }];
   }
 
   /**
-   * Creates filters in order to subscribe to records as a non-owner.
-   *
-   * Filters can support emitting messages for both published and unpublished records,
-   * as well as explicitly only published or only unpublished records.
-   *
-   * A) BOTH published and unpublished:
-   *    1. published records; and
-   *    2. unpublished records intended for the subscription author (where `recipient` is the subscription author); and
-   *    3. unpublished records authorized by a protocol rule.
-   *
-   * B) PUBLISHED:
-   *    1. only published records;
-   *
-   * C) UNPUBLISHED:
-   *    1. unpublished records intended for the subscription author (where `recipient` is the subscription author); and
-   *    2. unpublished records authorized by a protocol rule.
+   * Build event filters for non-owner with visibility rules.
    */
-  private static async filterAsNonOwner(
-    recordsSubscribe: RecordsSubscribe
-  ): Promise<Filter[]> {
-    const filters:Filter[] = [];
+  private static buildNonOwnerEventFilters(recordsSubscribe: RecordsSubscribe): Filter[] {
+    const filters: Filter[] = [];
     const { filter } = recordsSubscribe.message.descriptor;
     if (Records.filterIncludesPublishedRecords(filter)) {
-      filters.push(RecordsSubscribeHandler.buildPublishedRecordsFilter(recordsSubscribe));
+      filters.push(RecordsSubscribeHandler.buildPublishedEventFilter(recordsSubscribe));
     }
 
     if (Records.filterIncludesUnpublishedRecords(filter)) {
       if (Records.shouldBuildUnpublishedAuthorFilter(filter, recordsSubscribe.author!)) {
-        filters.push(RecordsSubscribeHandler.buildUnpublishedRecordsBySubscribeAuthorFilter(recordsSubscribe));
+        filters.push({
+          ...Records.convertFilter(filter),
+          author    : recordsSubscribe.author!,
+          interface : DwnInterfaceName.Records,
+          method    : [DwnMethodName.Write, DwnMethodName.Delete],
+          published : false,
+        });
       }
 
       if (Records.shouldProtocolAuthorize(recordsSubscribe.signaturePayload!)) {
-        filters.push(RecordsSubscribeHandler.buildUnpublishedProtocolAuthorizedRecordsFilter(recordsSubscribe));
+        filters.push({
+          ...Records.convertFilter(filter),
+          interface : DwnInterfaceName.Records,
+          method    : [DwnMethodName.Write, DwnMethodName.Delete],
+          published : false,
+        });
       }
 
       if (Records.shouldBuildUnpublishedRecipientFilter(filter, recordsSubscribe.author!)) {
-        filters.push(RecordsSubscribeHandler.buildUnpublishedRecordsForSubscribeAuthorFilter(recordsSubscribe));
+        filters.push({
+          ...Records.convertFilter(filter),
+          interface : DwnInterfaceName.Records,
+          method    : [DwnMethodName.Write, DwnMethodName.Delete],
+          recipient : recordsSubscribe.author!,
+          published : false,
+        });
       }
     }
     return filters;
   }
 
   /**
-   * Creates a filter for all published records matching the subscribe
+   * Build a published-only event filter (Write+Delete).
    */
-  private static buildPublishedRecordsFilter(recordsSubscribe: RecordsSubscribe): Filter {
+  private static buildPublishedEventFilter(recordsSubscribe: RecordsSubscribe): Filter {
     return {
       ...Records.convertFilter(recordsSubscribe.message.descriptor.filter),
       interface : DwnInterfaceName.Records,
-      method    : [ DwnMethodName.Write, DwnMethodName.Delete ],
+      method    : [DwnMethodName.Write, DwnMethodName.Delete],
       published : true,
     };
   }
 
+  // =============================================
+  // Query filters (for initial snapshot)
+  // These match Write only and use isLatestBaseState: true
+  // =============================================
+
   /**
-   * Creates a filter for unpublished records that are intended for the subscribe author (where `recipient` is the author).
+   * Build query filters for owner: latest writes matching the filter.
    */
-  private static buildUnpublishedRecordsForSubscribeAuthorFilter(recordsSubscribe: RecordsSubscribe): Filter {
-    // include records where recipient is subscribe author
-    return {
-      ...Records.convertFilter(recordsSubscribe.message.descriptor.filter),
-      interface : DwnInterfaceName.Records,
-      method    : [ DwnMethodName.Write, DwnMethodName.Delete ],
-      recipient : recordsSubscribe.author!,
-      published : false
-    };
+  private static buildOwnerQueryFilters(recordsSubscribe: RecordsSubscribe): Filter[] {
+    const { dateSort, filter } = recordsSubscribe.message.descriptor;
+    return [{
+      ...Records.convertFilter(filter, dateSort),
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      isLatestBaseState : true,
+    }];
   }
 
   /**
-   * Creates a filter for unpublished records that are within the specified protocol.
-   * Validation that `protocol` and other required protocol-related fields occurs before this method.
+   * Build query filters for non-owner with visibility rules.
    */
-  private static buildUnpublishedProtocolAuthorizedRecordsFilter(recordsSubscribe: RecordsSubscribe): Filter {
-    return {
-      ...Records.convertFilter(recordsSubscribe.message.descriptor.filter),
-      interface : DwnInterfaceName.Records,
-      method    : [ DwnMethodName.Write, DwnMethodName.Delete ],
-      published : false
-    };
+  private static buildNonOwnerQueryFilters(recordsSubscribe: RecordsSubscribe): Filter[] {
+    const filters: Filter[] = [];
+    const { dateSort, filter } = recordsSubscribe.message.descriptor;
+    if (Records.filterIncludesPublishedRecords(filter)) {
+      filters.push(RecordsSubscribeHandler.buildPublishedQueryFilter(recordsSubscribe));
+    }
+
+    if (Records.filterIncludesUnpublishedRecords(filter)) {
+      if (Records.shouldBuildUnpublishedAuthorFilter(filter, recordsSubscribe.author!)) {
+        filters.push({
+          ...Records.convertFilter(filter, dateSort),
+          author            : recordsSubscribe.author!,
+          interface         : DwnInterfaceName.Records,
+          method            : DwnMethodName.Write,
+          isLatestBaseState : true,
+          published         : false,
+        });
+      }
+
+      if (Records.shouldProtocolAuthorize(recordsSubscribe.signaturePayload!)) {
+        filters.push({
+          ...Records.convertFilter(filter, dateSort),
+          interface         : DwnInterfaceName.Records,
+          method            : DwnMethodName.Write,
+          isLatestBaseState : true,
+          published         : false,
+        });
+      }
+
+      if (Records.shouldBuildUnpublishedRecipientFilter(filter, recordsSubscribe.author!)) {
+        filters.push({
+          ...Records.convertFilter(filter, dateSort),
+          interface         : DwnInterfaceName.Records,
+          method            : DwnMethodName.Write,
+          recipient         : recordsSubscribe.author!,
+          isLatestBaseState : true,
+          published         : false,
+        });
+      }
+    }
+    return filters;
   }
 
   /**
-   * Creates a filter for only unpublished records where the author is the same as the subscribe author.
+   * Build a published-only query filter (latest writes).
    */
-  private static buildUnpublishedRecordsBySubscribeAuthorFilter(recordsSubscribe: RecordsSubscribe): Filter {
-    // include records where author is the same as the subscribe author
+  private static buildPublishedQueryFilter(recordsSubscribe: RecordsSubscribe): Filter {
+    const { dateSort, filter } = recordsSubscribe.message.descriptor;
     return {
-      ...Records.convertFilter(recordsSubscribe.message.descriptor.filter),
-      author    : recordsSubscribe.author!,
-      interface : DwnInterfaceName.Records,
-      method    : [ DwnMethodName.Write, DwnMethodName.Delete ],
-      published : false
+      ...Records.convertFilter(filter, dateSort),
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      published         : true,
+      isLatestBaseState : true,
     };
   }
 

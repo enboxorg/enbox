@@ -132,6 +132,128 @@ export function testRecordsSubscribeHandler(): void {
         const reply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler: () => {} });
         expect(reply.status.code).toBe(200);
         expect(reply.subscription).toBeDefined();
+        expect(reply.entries).toBeDefined();
+        expect(reply.entries!.length).toBe(0); // no matching records exist yet
+      });
+
+      it('should return initial entries matching the filter', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // write some records before subscribing
+        const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://test-schema' });
+        const write1Reply = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
+        expect(write1Reply.status.code).toBe(202);
+
+        const write2 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://test-schema' });
+        const write2Reply = await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
+        expect(write2Reply.status.code).toBe(202);
+
+        // write a record with a different schema that should NOT be in the entries
+        const write3 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://other-schema' });
+        const write3Reply = await dwn.processMessage(alice.did, write3.message, { dataStream: write3.dataStream });
+        expect(write3Reply.status.code).toBe(202);
+
+        // subscribe with a filter that matches only the first two writes
+        const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+          author : alice,
+          filter : { schema: 'http://test-schema' },
+        });
+        const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler: () => {} });
+        expect(subReply.status.code).toBe(200);
+        expect(subReply.subscription).toBeDefined();
+        expect(subReply.entries).toBeDefined();
+        expect(subReply.entries!.length).toBe(2);
+
+        const returnedRecordIds = subReply.entries!.map(e => e.recordId);
+        expect(returnedRecordIds).toContain(write1.message.recordId);
+        expect(returnedRecordIds).toContain(write2.message.recordId);
+      });
+
+      it('should support pagination on initial entries', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // write 5 records
+        for (let i = 0; i < 5; i++) {
+          const write = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://paginated' });
+          const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
+          expect(writeReply.status.code).toBe(202);
+        }
+
+        // subscribe with a limit of 2
+        const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+          author     : alice,
+          filter     : { schema: 'http://paginated' },
+          pagination : { limit: 2 },
+        });
+        const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler: () => {} });
+        expect(subReply.status.code).toBe(200);
+        expect(subReply.subscription).toBeDefined();
+        expect(subReply.entries).toBeDefined();
+        expect(subReply.entries!.length).toBe(2);
+        expect(subReply.cursor).toBeDefined();
+      });
+
+      it('should include initialWrite for updated records in entries', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // create a record
+        const write = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://update-test' });
+        const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
+        expect(writeReply.status.code).toBe(202);
+
+        // update the record
+        const update = await TestDataGenerator.generateFromRecordsWrite({
+          author        : alice,
+          existingWrite : write.recordsWrite,
+        });
+        const updateReply = await dwn.processMessage(alice.did, update.message, { dataStream: update.dataStream });
+        expect(updateReply.status.code).toBe(202);
+
+        // subscribe and check the entries
+        const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+          author : alice,
+          filter : { schema: 'http://update-test' },
+        });
+        const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler: () => {} });
+        expect(subReply.status.code).toBe(200);
+        expect(subReply.entries).toBeDefined();
+        expect(subReply.entries!.length).toBe(1);
+
+        // the entry should be the update, with initialWrite attached
+        expect(subReply.entries![0].recordId).toBe(write.message.recordId);
+        expect(subReply.entries![0].initialWrite).toBeDefined();
+        expect(subReply.entries![0].initialWrite!.descriptor.dateCreated).toBe(write.message.descriptor.dateCreated);
+      });
+
+      it('should still receive live events after initial entries', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // write a record before subscribing
+        const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://live-test' });
+        const write1Reply = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
+        expect(write1Reply.status.code).toBe(202);
+
+        // subscribe
+        const receivedEvents: RecordEvent[] = [];
+        const subscriptionHandler: RecordSubscriptionHandler = (event): void => { receivedEvents.push(event); };
+        const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+          author : alice,
+          filter : { schema: 'http://live-test' },
+        });
+        const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler });
+        expect(subReply.status.code).toBe(200);
+        expect(subReply.entries!.length).toBe(1); // initial entries has write1
+
+        // write another record after subscribing
+        const write2 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://live-test' });
+        const write2Reply = await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
+        expect(write2Reply.status.code).toBe(202);
+
+        // wait for the event to arrive
+        await Poller.pollUntilSuccessOrTimeout(async () => {
+          expect(receivedEvents.length).toBe(1);
+          expect((receivedEvents[0].message as RecordsWriteMessage).recordId).toBe(write2.message.recordId);
+        });
       });
 
       it('should return 400 if protocol is not normalized', async () => {
