@@ -185,10 +185,10 @@ export class StateIndexSql implements StateIndex {
       await globalSmt.delete(messageCid);
 
       // Delete from protocol tree
-      if (meta?.protocol) {
+      if (meta) {
         const protoSmt = await this.getProtocolTree(tenant, meta.protocol);
         await protoSmt.delete(messageCid);
-      } // meta.protocol is always present for new records; guard kept for legacy data
+      }
 
       // Remove the reverse lookup
       await this.#db
