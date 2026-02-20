@@ -2639,6 +2639,60 @@ describe('DwnApi', () => {
 
         await live!.close();
       });
+
+      it('should return a pagination cursor when the initial snapshot is limited', async () => {
+        const protocolConfigure = await dwnAlice.protocols.configure({
+          message: { definition: { ...emailProtocolDefinition, published: true } }
+        });
+        expect(protocolConfigure.status.code).toBe(202);
+
+        // write 3 records
+        for (let i = 0; i < 3; i++) {
+          const writeResult = await dwnAlice.records.write({
+            data    : `Message ${i}`,
+            message : {
+              recipient    : bobDid.uri,
+              protocol     : emailProtocolDefinition.protocol,
+              protocolPath : 'thread',
+              schema       : emailProtocolDefinition.types.thread.schema,
+              dataFormat   : 'text/plain'
+            }
+          });
+          expect(writeResult.status.code).toBe(202);
+        }
+
+        // subscribe with a limit of 2
+        const { liveQuery: live } = await dwnAlice.records.subscribe({
+          message: {
+            filter     : { protocol: emailProtocolDefinition.protocol },
+            pagination : { limit: 2 }
+          }
+        });
+        expect(live).toBeDefined();
+
+        // should have 2 initial records and a cursor for the next page
+        expect(live!.records.length).toBe(2);
+        expect(live!.cursor).toBeDefined();
+        expect(live!.cursor!.messageCid).toBeDefined();
+        expect(live!.cursor!.value).toBeDefined();
+
+        await live!.close();
+
+        // subscribe again using the cursor to get the remaining records
+        const { liveQuery: live2 } = await dwnAlice.records.subscribe({
+          message: {
+            filter     : { protocol: emailProtocolDefinition.protocol },
+            pagination : { limit: 2, cursor: live!.cursor }
+          }
+        });
+        expect(live2).toBeDefined();
+
+        // should have 1 remaining record and no cursor (end of results)
+        expect(live2!.records.length).toBe(1);
+        expect(live2!.cursor).toBeUndefined();
+
+        await live2!.close();
+      });
     });
 
     describe('from: did', () => {
