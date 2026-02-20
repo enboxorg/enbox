@@ -62,7 +62,7 @@ export class RecordsReadHandler implements MethodHandler {
     const matchedMessage = existingMessages[0];
 
     // if the matched message is a RecordsDelete, we mark the record as not-found and return both the RecordsDelete and the initial RecordsWrite
-    // TODO: https://github.com/enboxorg/enbox/issues/819:
+    // TODO: https://github.com/enboxorg/enbox/issues/222
     // Consider performing authorization checks like when records exists before returning RecordsDelete and initial RecordsWrite of a deleted record
     if (matchedMessage.descriptor.method === DwnMethodName.Delete) {
       const recordsDeleteMessage = matchedMessage as RecordsDeleteMessage;
