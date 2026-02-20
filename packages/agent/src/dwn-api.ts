@@ -15,10 +15,10 @@ import type {
   RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type { KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
-import { CryptoUtils } from '@enbox/crypto';
 import { TtlCache } from '@enbox/common';
 import {
   Cid,
+  ContentEncryptionAlgorithm,
   DataStoreLevel,
   DataStream,
   Dwn,
@@ -34,9 +34,9 @@ import {
   Protocols,
   Records,
   ResumableTaskStoreLevel,
-  Secp256k1,
   StateIndexLevel
 } from '@enbox/dwn-sdk-js';
+import { CryptoUtils, X25519 } from '@enbox/crypto';
 import { DidDht, DidJwk, DidResolverCacheLevel, UniversalResolver } from '@enbox/dids';
 
 import type { Web5PlatformAgent } from './types/agent.js';
@@ -250,7 +250,7 @@ export class AgentDwnApi {
 
             // Reactive root-record upgrade (PR E): if this is an externally-authored
             // root record with only ProtocolPath encryption, the owner upgrades it by
-            // appending a ProtocolContext keyEncryption entry so that context key
+            // appending a ProtocolContext recipient entry so that context key
             // holders (including the external author) can also decrypt.
             const authorDid = Jws.getSignerDid(
               recordsWriteMessage.authorization.signature.signatures[0]
@@ -296,7 +296,7 @@ export class AgentDwnApi {
                   derivationPath: contextDerivationPath,
                 });
               const contextDerivedPrivateJwk =
-                await Secp256k1.privateKeyToJwk(contextDerivedPrivateKeyBytes);
+                await X25519.bytesToPrivateKey({ privateKeyBytes: contextDerivedPrivateKeyBytes });
               const contextKeyPayload: DerivedPrivateJwk = {
                 rootKeyId         : keyId,
                 derivationScheme  : KeyDerivationScheme.ProtocolContext,
@@ -553,7 +553,7 @@ export class AgentDwnApi {
     // For cross-DWN writes (target !== author), the external author cannot
     // derive the target's context key. Root records use the target's ProtocolPath
     // public key. The target's agent reactively upgrades the record to include a
-    // ProtocolContext keyEncryption entry. Non-root records extract the context
+    // ProtocolContext recipient entry. Non-root records extract the context
     // public key (derivedPublicKey) from existing ProtocolContext-encrypted records
     // in the same context on the target's DWN.
 
@@ -575,6 +575,7 @@ export class AgentDwnApi {
       dataEncryptionKey: Uint8Array;
       dataEncryptionIV: Uint8Array;
       encryptedBytes: Uint8Array;
+      authenticationTag: Uint8Array;
     } | undefined;
 
     if (isDwnRequest(request, DwnInterface.RecordsWrite) && request.encryption && !rawMessage) {
@@ -648,12 +649,12 @@ export class AgentDwnApi {
 
         // 5. Generate random DEK and IV
         const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
-        const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(16));
+        const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(12));
 
-        // 6. Build EncryptionInput based on the encryption scheme decision
-        let encryptionInput: EncryptionInput | undefined;
+        // 6. Build partial EncryptionInput (authenticationTag added after AEAD encryption)
+        let encryptionInput: (Omit<EncryptionInput, 'authenticationTag'> & { authenticationTag?: Uint8Array }) | undefined;
 
-        const buildProtocolPathInput = (): EncryptionInput => this.buildEncryptionInput(
+        const buildProtocolPathInput = (): Omit<EncryptionInput, 'authenticationTag'> => this.buildEncryptionInput(
           dataEncryptionKey, dataEncryptionIV,
           ruleSet.$encryption.rootKeyId, ruleSet.$encryption.publicKeyJwk,
           KeyDerivationScheme.ProtocolPath,
@@ -664,7 +665,7 @@ export class AgentDwnApi {
           // External authors cannot derive the target's context key (HKDF requires
           // the private key). Use the target's ProtocolPath public key from their
           // protocol definition. The target's agent will reactively upgrade the record
-          // to include a ProtocolContext keyEncryption entry.
+          // to include a ProtocolContext recipient entry.
           encryptionInput = buildProtocolPathInput();
 
         } else if (isCrossDwn && isMultiPartyContext && !isRootRecord) {
@@ -730,8 +731,8 @@ export class AgentDwnApi {
           encryptionInput = buildProtocolPathInput();
         }
 
-        // 7. Encrypt data with AES-256-CTR and compute CID
-        const { encryptedBytes, dataCid, dataSize } =
+        // 7. Encrypt data with AEAD (AES-256-GCM) and compute CID
+        const { encryptedBytes, dataCid, dataSize, authenticationTag } =
           await this.encryptAndComputeCid(plaintextBytes, dataEncryptionKey, dataEncryptionIV);
 
         // 8. Replace plaintext with encrypted data
@@ -742,10 +743,11 @@ export class AgentDwnApi {
         request.dataStream = undefined;
 
         if (encryptionInput) {
-          messageParams.encryptionInput = encryptionInput;
+          encryptionInput.authenticationTag = authenticationTag;
+          messageParams.encryptionInput = encryptionInput as EncryptionInput;
         } else {
           // Deferred — store info for post-creation encryption
-          deferredContextEncryption = { dataEncryptionKey, dataEncryptionIV, encryptedBytes };
+          deferredContextEncryption = { dataEncryptionKey, dataEncryptionIV, encryptedBytes, authenticationTag };
         }
 
         // 9. For cross-DWN writes in multi-party contexts, attach the author's
@@ -803,7 +805,8 @@ export class AgentDwnApi {
             deferredContextEncryption.dataEncryptionIV,
           );
 
-        await recordsWriteInstance.encryptSymmetricEncryptionKey(contextEncryptionInput);
+        const fullContextInput = { ...contextEncryptionInput, authenticationTag: deferredContextEncryption.authenticationTag };
+        await recordsWriteInstance.encryptSymmetricEncryptionKey(fullContextInput as EncryptionInput);
         await recordsWriteInstance.sign({ signer });
 
         // Cache context key info for subsequent writes in this context
@@ -957,9 +960,9 @@ export class AgentDwnApi {
   }
 
   /**
-   * Builds an EncryptionInput object for a single key-encryption entry.
-   * Consolidates the repeated pattern of assembling DEK, IV, and a single
-   * keyEncryptionInputs entry into one place.
+   * Builds a partial EncryptionInput object for a single key-encryption entry.
+   * The `authenticationTag` is NOT set here — the caller must set it after
+   * AEAD encryption produces the tag.
    */
   private buildEncryptionInput(
     dek: Uint8Array,
@@ -967,7 +970,7 @@ export class AgentDwnApi {
     publicKeyId: string,
     publicKey: PublicKeyJwk,
     derivationScheme: typeof KeyDerivationScheme.ProtocolPath | typeof KeyDerivationScheme.ProtocolContext,
-  ): EncryptionInput {
+  ): Omit<EncryptionInput, 'authenticationTag'> {
     return {
       initializationVector : iv,
       key                  : dek,
@@ -980,21 +983,22 @@ export class AgentDwnApi {
   }
 
   /**
-   * Encrypts plaintext bytes with AES-256-CTR and computes the CID of the
-   * resulting ciphertext. Returns everything needed to attach the encrypted
-   * data to a DWN message.
+   * Encrypts plaintext bytes with AEAD (AES-256-GCM by default) and computes
+   * the CID of the resulting ciphertext. Returns everything needed to attach
+   * the encrypted data to a DWN message, including the authentication tag.
    */
   private async encryptAndComputeCid(
     plaintextBytes: Uint8Array,
     dek: Uint8Array,
     iv: Uint8Array,
-  ): Promise<{ encryptedBytes: Uint8Array; dataCid: string; dataSize: number }> {
-    const plaintextStream = DataStream.fromBytes(plaintextBytes);
-    const encryptedStream = await Encryption.aes256CtrEncrypt(dek, iv, plaintextStream);
-    const encryptedBytes = await DataStream.toBytes(encryptedStream);
+  ): Promise<{ encryptedBytes: Uint8Array; dataCid: string; dataSize: number; authenticationTag: Uint8Array }> {
+    const { ciphertextStream, tag: authenticationTag } = await Encryption.aeadEncryptStream(
+      ContentEncryptionAlgorithm.A256GCM, dek, iv, DataStream.fromBytes(plaintextBytes),
+    );
+    const encryptedBytes = await DataStream.toBytes(ciphertextStream);
     const cidStream = DataStream.fromBytes(encryptedBytes);
     const dataCid = await Cid.computeDagPbCidFromStream(cidStream);
-    return { encryptedBytes, dataCid, dataSize: encryptedBytes.length };
+    return { encryptedBytes, dataCid, dataSize: encryptedBytes.length, authenticationTag };
   }
 
   /**
@@ -1008,7 +1012,7 @@ export class AgentDwnApi {
     contextId: string,
     dek: Uint8Array,
     iv: Uint8Array,
-  ): Promise<{ encryptionInput: EncryptionInput; keyId: string; keyUri: KeyIdentifier; contextDerivationPath: string[] }> {
+  ): Promise<{ encryptionInput: Omit<EncryptionInput, 'authenticationTag'>; keyId: string; keyUri: KeyIdentifier; contextDerivationPath: string[] }> {
     const { keyId, keyUri } = await this.getEncryptionKeyInfo(didUri);
     const contextDerivationPath =
       Records.constructKeyDerivationPathUsingProtocolContextScheme(contextId);
@@ -1025,7 +1029,7 @@ export class AgentDwnApi {
   }
 
   /**
-   * Builds a KMS-backed ECIES decrypt callback. Used for both ProtocolPath
+   * Builds a KMS-backed JWE key unwrap callback. Used for both ProtocolPath
    * and ProtocolContext decryption where the KMS holds the root private key.
    */
   private buildKmsDecryptCallback(
@@ -1037,14 +1041,12 @@ export class AgentDwnApi {
     return {
       rootKeyId : keyId,
       derivationScheme,
-      decrypt   : async (fullDerivationPath, eciesPayload): Promise<Uint8Array> => {
-        return keyManager.eciesSecp256k1Decrypt({
+      decrypt   : async (fullDerivationPath, jwePayload): Promise<Uint8Array> => {
+        return keyManager.jweKeyUnwrap({
           keyUri,
-          derivationPath            : fullDerivationPath,
-          ciphertext                : eciesPayload.ciphertext,
-          ephemeralPublicKey        : eciesPayload.ephemeralPublicKey,
-          initializationVector      : eciesPayload.initializationVector,
-          messageAuthenticationCode : eciesPayload.messageAuthenticationCode,
+          derivationPath     : fullDerivationPath,
+          encryptedKey       : jwePayload.encryptedKey,
+          ephemeralPublicKey : jwePayload.ephemeralPublicKey,
         });
       },
     };
@@ -1381,18 +1383,18 @@ export class AgentDwnApi {
       return undefined;
     }
 
-    // Search entries for one with a ProtocolContext keyEncryption entry
+    // Search entries for one with a ProtocolContext recipient entry
     // that includes derivedPublicKey
     for (const entry of queryReply.entries) {
-      if (entry.encryption?.keyEncryption) {
-        const contextEntry = entry.encryption.keyEncryption.find(
-          (k: { derivationScheme: string; derivedPublicKey?: PublicKeyJwk }) =>
-            k.derivationScheme === KeyDerivationScheme.ProtocolContext && k.derivedPublicKey
+      if (entry.encryption?.recipients) {
+        const contextEntry = entry.encryption.recipients.find(
+          (r: { header: { derivationScheme: string; derivedPublicKey?: PublicKeyJwk } }) =>
+            r.header.derivationScheme === KeyDerivationScheme.ProtocolContext && r.header.derivedPublicKey
         );
-        if (contextEntry?.derivedPublicKey) {
+        if (contextEntry?.header.derivedPublicKey) {
           return {
-            rootKeyId        : contextEntry.rootKeyId,
-            derivedPublicKey : contextEntry.derivedPublicKey,
+            rootKeyId        : contextEntry.header.kid,
+            derivedPublicKey : contextEntry.header.derivedPublicKey,
           };
         }
       }
@@ -1403,7 +1405,7 @@ export class AgentDwnApi {
 
   /**
    * Reactively upgrades an externally-authored root record that has only
-   * ProtocolPath encryption by appending a ProtocolContext keyEncryption entry.
+   * ProtocolPath encryption by appending a ProtocolContext recipient entry.
    *
    * After the upgrade, both the owner (ProtocolPath) and context key holders —
    * including the external author (ProtocolContext) — can decrypt the record.
@@ -1412,7 +1414,7 @@ export class AgentDwnApi {
    *   1. Decrypt the DEK using the owner's ProtocolPath-derived private key
    *   2. Derive the context public key from the owner's #enc key
    *   3. ECIES-encrypt the same DEK to the context public key
-   *   4. Append the ProtocolContext keyEncryption entry (using PR 0b append mode)
+   *   4. Append the ProtocolContext recipient entry (using PR 0b append mode)
    *   5. Re-sign the record as owner
    *
    * The author's signature payload includes an `encryptionCid` that becomes
@@ -1438,20 +1440,20 @@ export class AgentDwnApi {
     if (!encryption) { return; }
 
     // Verify: has ProtocolPath but NOT ProtocolContext
-    const hasProtocolPath = encryption.keyEncryption.some(
-      (k: { derivationScheme: string }) => k.derivationScheme === KeyDerivationScheme.ProtocolPath
+    const hasProtocolPath = encryption.recipients.some(
+      (r: { header: { derivationScheme: string } }) => r.header.derivationScheme === KeyDerivationScheme.ProtocolPath
     );
-    const hasProtocolContext = encryption.keyEncryption.some(
-      (k: { derivationScheme: string }) => k.derivationScheme === KeyDerivationScheme.ProtocolContext
+    const hasProtocolContext = encryption.recipients.some(
+      (r: { header: { derivationScheme: string } }) => r.header.derivationScheme === KeyDerivationScheme.ProtocolContext
     );
     if (!hasProtocolPath || hasProtocolContext) { return; }
 
     // 1. Decrypt the DEK using the owner's ProtocolPath key
     const keyDecrypter = await this.getKeyDecrypter(tenantDid);
 
-    // Find the ProtocolPath keyEncryption entry
-    const pathEntry = encryption.keyEncryption.find(
-      (k: { derivationScheme: string }) => k.derivationScheme === KeyDerivationScheme.ProtocolPath
+    // Find the ProtocolPath recipient entry
+    const pathRecipient = encryption.recipients.find(
+      (r: { header: { derivationScheme: string } }) => r.header.derivationScheme === KeyDerivationScheme.ProtocolPath
     )!;
 
     const fullDerivationPath = Records.constructKeyDerivationPathUsingProtocolPathScheme(
@@ -1461,22 +1463,23 @@ export class AgentDwnApi {
     const dataEncryptionKey = await keyDecrypter.decrypt(
       fullDerivationPath,
       {
-        ciphertext                : Encoder.base64UrlToBytes(pathEntry.encryptedKey),
-        ephemeralPublicKey        : Secp256k1.publicJwkToBytes(pathEntry.ephemeralPublicKey),
-        initializationVector      : Encoder.base64UrlToBytes(pathEntry.initializationVector),
-        messageAuthenticationCode : Encoder.base64UrlToBytes(pathEntry.messageAuthenticationCode),
+        encryptedKey       : Encoder.base64UrlToBytes(pathRecipient.encrypted_key),
+        ephemeralPublicKey : pathRecipient.header.epk,
       },
     );
 
     // 2. Derive the context public key — contextId = recordId for root records
     const contextId = recordsWrite.recordId;
-    const encryptionIV = Encoder.base64UrlToBytes(encryption.initializationVector);
+    const encryptionIV = Encoder.base64UrlToBytes(encryption.iv);
 
-    // 3 & 4. Append the ProtocolContext keyEncryption entry using append mode.
+    // 3 & 4. Append the ProtocolContext recipient entry using append mode.
     // Append mode preserves the author's identity and authorization so that
     // signAsOwner() can be called in step 5.
     const { encryptionInput: contextEncryptionInput, keyId, keyUri, contextDerivationPath } =
       await this.deriveContextEncryptionInput(tenantDid, contextId, dataEncryptionKey, encryptionIV);
+
+    // Set the authentication tag from the existing JWE encryption property
+    const fullContextInput = { ...contextEncryptionInput, authenticationTag: Encoder.base64UrlToBytes(encryption.tag) };
 
     // Parse the message to get a RecordsWrite instance we can mutate
     const recordsWriteInstance = await dwnMessageConstructors[DwnInterface.RecordsWrite].parse(
@@ -1484,7 +1487,7 @@ export class AgentDwnApi {
     ) as unknown as RecordsWrite;
 
     await recordsWriteInstance.encryptSymmetricEncryptionKey(
-      contextEncryptionInput,
+      fullContextInput as EncryptionInput,
       { append: true },
     );
 
@@ -1565,8 +1568,8 @@ export class AgentDwnApi {
     const { encryption } = recordsWrite;
 
     // Check if the record uses context-derived encryption
-    const hasContextKey = encryption?.keyEncryption.some(
-      (k: { derivationScheme: string }) => k.derivationScheme === KeyDerivationScheme.ProtocolContext
+    const hasContextKey = encryption?.recipients.some(
+      (r: { header: { derivationScheme: string } }) => r.header.derivationScheme === KeyDerivationScheme.ProtocolContext
     );
 
     if (!hasContextKey || !recordsWrite.contextId) {
@@ -1575,15 +1578,15 @@ export class AgentDwnApi {
     }
 
     // --- Multi-party context encryption ---
-    const contextKeyEntry = encryption!.keyEncryption.find(
-      (k: { derivationScheme: string }) => k.derivationScheme === KeyDerivationScheme.ProtocolContext
+    const contextKeyEntry = encryption!.recipients.find(
+      (r: { header: { derivationScheme: string } }) => r.header.derivationScheme === KeyDerivationScheme.ProtocolContext
     )!;
 
     const rootContextId = recordsWrite.contextId.split('/')[0];
 
     // Case 1: I am the context creator — rootKeyId matches my encryption key
     const { keyId, keyUri } = await this.getEncryptionKeyInfo(authorDid);
-    if (contextKeyEntry.rootKeyId === keyId) {
+    if (contextKeyEntry.header.kid === keyId) {
       return this.buildKmsDecryptCallback(keyId, keyUri, KeyDerivationScheme.ProtocolContext);
     }
 
@@ -1644,17 +1647,12 @@ export class AgentDwnApi {
     return {
       rootKeyId        : contextKey.rootKeyId,
       derivationScheme : contextKey.derivationScheme,
-      decrypt          : async (fullDerivationPath, eciesPayload): Promise<Uint8Array> => {
-        const leafPrivateKey = await Records.derivePrivateKey(
+      decrypt          : async (fullDerivationPath, jwePayload): Promise<Uint8Array> => {
+        const leafPrivateKeyBytes = await Records.derivePrivateKey(
           contextKey, fullDerivationPath,
         );
-        return Encryption.eciesSecp256k1Decrypt({
-          privateKey                : leafPrivateKey,
-          ciphertext                : eciesPayload.ciphertext,
-          ephemeralPublicKey        : eciesPayload.ephemeralPublicKey,
-          initializationVector      : eciesPayload.initializationVector,
-          messageAuthenticationCode : eciesPayload.messageAuthenticationCode,
-        });
+        const leafPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
+        return Encryption.ecdhEsUnwrapKey(leafPrivateKeyJwk, jwePayload.ephemeralPublicKey, jwePayload.encryptedKey);
       },
     };
   }
@@ -1876,17 +1874,20 @@ export class AgentDwnApi {
       // Manually build encryption input targeting the recipient's key so the
       // record is decryptable only by the recipient.
       const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
-      const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(16));
+      const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(12));
 
-      const { encryptedBytes, dataCid, dataSize } =
+      const { encryptedBytes, dataCid, dataSize, authenticationTag } =
         await this.encryptAndComputeCid(plaintextBytes, dataEncryptionKey, dataEncryptionIV);
 
-      const encryptionInput = this.buildEncryptionInput(
-        dataEncryptionKey, dataEncryptionIV,
-        recipientKeyDeliveryPublicKey.rootKeyId,
-        recipientKeyDeliveryPublicKey.publicKeyJwk,
-        KeyDerivationScheme.ProtocolPath,
-      );
+      const encryptionInput = {
+        ...this.buildEncryptionInput(
+          dataEncryptionKey, dataEncryptionIV,
+          recipientKeyDeliveryPublicKey.rootKeyId,
+          recipientKeyDeliveryPublicKey.publicKeyJwk,
+          KeyDerivationScheme.ProtocolPath,
+        ),
+        authenticationTag,
+      } as EncryptionInput;
 
       ({ message, reply: { status } } = await this.processRequest({
         author        : tenantDid,

@@ -33,7 +33,7 @@ export interface AgentKeyManager extends KeyManager,
    *
    * The private key never leaves the KMS boundary — only the public key is returned.
    *
-   * @param params.keyUri - URI of the stored ancestor private key (secp256k1)
+   * @param params.keyUri - URI of the stored ancestor private key (X25519)
    * @param params.derivationPath - Array of HKDF path segments to derive through
    * @returns The derived child public key as a JWK
    */
@@ -43,30 +43,26 @@ export interface AgentKeyManager extends KeyManager,
   }): Promise<PublicKeyJwk>;
 
   /**
-   * Decrypts an ECIES-SECP256K1 encrypted payload using a derived private key.
+   * Unwraps a JWE-encrypted Content Encryption Key (CEK) using a derived X25519 private key.
    *
    * This method:
    * 1. Derives the leaf private key via HKDF through the derivation path
-   * 2. Performs ECIES decryption using the derived key
-   * 3. Returns the decrypted plaintext (typically a 32-byte DEK)
+   * 2. Performs ECDH-ES key agreement with the ephemeral public key
+   * 3. Derives the KEK via Concat KDF and unwraps the CEK with AES-256 Key Unwrap
    *
-   * The derived private key is used internally and discarded after decryption.
+   * The derived private key is used internally and discarded after unwrapping.
    *
-   * @param params.keyUri - URI of the stored ancestor private key (secp256k1)
+   * @param params.keyUri - URI of the stored ancestor private key (X25519)
    * @param params.derivationPath - Array of HKDF path segments to derive the leaf key
-   * @param params.ciphertext - The ECIES encrypted payload
-   * @param params.ephemeralPublicKey - Ephemeral public key from ECIES encryption
-   * @param params.initializationVector - IV for the symmetric encryption step
-   * @param params.messageAuthenticationCode - MAC tag for integrity verification
-   * @returns The decrypted plaintext bytes
+   * @param params.encryptedKey - The wrapped CEK bytes from the JWE recipient
+   * @param params.ephemeralPublicKey - Ephemeral X25519 public key from the JWE recipient header
+   * @returns The unwrapped CEK bytes (typically 32 bytes for AES-256)
    */
-  eciesSecp256k1Decrypt(params: {
+  jweKeyUnwrap(params: {
     keyUri: KeyIdentifier;
     derivationPath: string[];
-    ciphertext: Uint8Array;
-    ephemeralPublicKey: Uint8Array;
-    initializationVector: Uint8Array;
-    messageAuthenticationCode: Uint8Array;
+    encryptedKey: Uint8Array;
+    ephemeralPublicKey: PublicKeyJwk;
   }): Promise<Uint8Array>;
 
   /**
@@ -83,7 +79,7 @@ export interface AgentKeyManager extends KeyManager,
    * immediately encrypted with the recipient's public key and the raw bytes
    * are discarded after encryption.
    *
-   * @param params.keyUri - URI of the stored ancestor private key (secp256k1)
+   * @param params.keyUri - URI of the stored ancestor private key (X25519)
    * @param params.derivationPath - Array of HKDF path segments to derive through
    * @returns The derived child private key as raw bytes
    */

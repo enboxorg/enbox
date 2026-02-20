@@ -261,7 +261,7 @@ export type DwnMessageWithData<T extends DwnInterface> = {
 export {
   DateSort as DwnDateSort,
   DwnConstant,
-  EncryptionAlgorithm as DwnEncryptionAlgorithm,
+  ContentEncryptionAlgorithm as DwnContentEncryptionAlgorithm,
   KeyDerivationScheme as DwnKeyDerivationScheme,
   PermissionGrant as DwnPermissionGrant,
   PermissionRequest as DwnPermissionRequest,
