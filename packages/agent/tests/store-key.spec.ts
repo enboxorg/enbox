@@ -526,6 +526,31 @@ describe('KeyStore', () => {
 
         expect((freshKeyStore as any).isEncryptionActive(tenantDid)).toBe(false);
       });
+
+      it('should still decrypt old records after re-initialization', async () => {
+        // Write an encrypted key record.
+        const keyUri = await testHarness.agent.keyManager.generateKey({
+          algorithm: 'Ed25519'
+        });
+
+        // Read it back to verify it decrypts successfully.
+        const storedKeyBefore = await keyStore.get({ id: keyUri, agent: testHarness.agent });
+        expect(storedKeyBefore).toBeDefined();
+        expect(storedKeyBefore!.kty).toBe('OKP');
+
+        // Clear the protocol initialization cache (simulating agent restart).
+        (keyStore as DwnDataStore<Jwk>)['_protocolInitializedCache']?.clear();
+        (keyStore as any)._tenantEncryptionActive?.clear();
+
+        // Re-initialize — should detect the existing protocol, not re-install.
+        await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
+
+        // The previously written encrypted record should still be readable.
+        const storedKeyAfter = await keyStore.get({ id: keyUri, agent: testHarness.agent });
+        expect(storedKeyAfter).toBeDefined();
+        expect(storedKeyAfter!.kty).toBe(storedKeyBefore!.kty);
+        expect(storedKeyAfter!.kid).toBe(storedKeyBefore!.kid);
+      });
     });
 
     describe('getAllRecords() error handling', () => {
