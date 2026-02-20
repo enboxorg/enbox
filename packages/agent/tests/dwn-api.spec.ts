@@ -3454,6 +3454,68 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
 
       warnStub.restore();
     }, 10000);
+
+    it('should handle concurrent contextKey writes for different recipients gracefully', async () => {
+      const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
+      const carol = await testHarness.createIdentity({ name: 'Carol', testDwnUrls });
+
+      // Install key delivery protocol for all participants
+      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
+      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(bob.did.uri);
+      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(carol.did.uri);
+
+      const contextId = 'concurrent-context-id';
+      const mockContextKey = {
+        rootKeyId         : `${alice.did.uri}#enc`,
+        derivationScheme  : 'protocolContext',
+        derivationPath    : ['protocolContext', contextId],
+        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'test', d: 'test' },
+      };
+
+      // Fire two contextKey writes concurrently for different recipients
+      const [bobRecordId, carolRecordId] = await Promise.all([
+        testHarness.agent.dwn.writeContextKeyRecord({
+          tenantDid       : alice.did.uri,
+          recipientDid    : bob.did.uri,
+          contextKeyData  : mockContextKey as any,
+          sourceProtocol  : 'https://protocol.xyz/concurrent-test',
+          sourceContextId : contextId,
+        }),
+        testHarness.agent.dwn.writeContextKeyRecord({
+          tenantDid       : alice.did.uri,
+          recipientDid    : carol.did.uri,
+          contextKeyData  : mockContextKey as any,
+          sourceProtocol  : 'https://protocol.xyz/concurrent-test',
+          sourceContextId : contextId,
+        }),
+      ]);
+
+      // Both writes should succeed with distinct record IDs
+      expect(typeof bobRecordId).toBe('string');
+      expect(typeof carolRecordId).toBe('string');
+      expect(bobRecordId).not.toBe(carolRecordId);
+
+      // Verify both records exist
+      const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            protocol     : KeyDeliveryProtocolDefinition.protocol,
+            protocolPath : 'contextKey',
+          }
+        }
+      });
+
+      expect(queryReply.entries).toHaveLength(2);
+
+      const recipientDids = queryReply.entries!.map(
+        (entry: any) => entry.descriptor.recipient as string
+      );
+      expect(recipientDids).toContain(bob.did.uri);
+      expect(recipientDids).toContain(carol.did.uri);
+    }, 15000);
   });
 
   describe('fetchContextKeyRecord()', () => {
