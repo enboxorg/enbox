@@ -5,6 +5,23 @@ import { defineConfig } from 'vitest/config';
 
 const isCI = !!process.env.CI;
 
+// When BROWSER is set (e.g. by CI matrix), run only that browser and write
+// coverage to a per-browser directory.  Otherwise run all browsers with a
+// single merged coverage directory (the local-dev default).
+const singleBrowser = process.env.BROWSER as 'chromium' | 'firefox' | 'webkit' | undefined;
+
+const instances = singleBrowser
+  ? [{ browser: singleBrowser }]
+  : [
+    { browser: 'chromium' as const },
+    { browser: 'firefox' as const },
+    ...(isCI ? [{ browser: 'webkit' as const }] : []),
+  ];
+
+const coverageDir = singleBrowser
+  ? `./coverage-browser-${singleBrowser}`
+  : './coverage-browser';
+
 export default defineConfig({
   define: {
     'process.env' : '({})',
@@ -121,17 +138,13 @@ export default defineConfig({
     coverage: {
       provider         : 'istanbul',
       reporter         : ['text', 'lcov'],
-      reportsDirectory : './coverage-browser',
+      reportsDirectory : coverageDir,
     },
     browser     : {
       enabled  : true,
       headless : true,
       provider : playwright(),
-      instances: [
-        { browser: 'chromium' },
-        { browser: 'firefox' },
-        ...(isCI ? [{ browser: 'webkit' as const }] : []),
-      ],
+      instances,
     },
   },
 });
