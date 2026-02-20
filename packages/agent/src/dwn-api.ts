@@ -647,9 +647,10 @@ export class AgentDwnApi {
           throw new Error('AgentDwnApi: Data must be provided for encrypted records.');
         }
 
-        // 5. Generate random DEK and IV
+        // 5. Generate random DEK and IV (IV size depends on content encryption algorithm)
+        const contentEncryptionAlgorithm = ContentEncryptionAlgorithm.A256GCM;
         const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
-        const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(12));
+        const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(AgentDwnApi.ivLength(contentEncryptionAlgorithm)));
 
         // 6. Build partial EncryptionInput (authenticationTag added after AEAD encryption)
         let encryptionInput: (Omit<EncryptionInput, 'authenticationTag'> & { authenticationTag?: Uint8Array }) | undefined;
@@ -731,9 +732,9 @@ export class AgentDwnApi {
           encryptionInput = buildProtocolPathInput();
         }
 
-        // 7. Encrypt data with AEAD (AES-256-GCM) and compute CID
+        // 7. Encrypt data with AEAD and compute CID
         const { encryptedBytes, dataCid, dataSize, authenticationTag } =
-          await this.encryptAndComputeCid(plaintextBytes, dataEncryptionKey, dataEncryptionIV);
+          await this.encryptAndComputeCid(plaintextBytes, dataEncryptionKey, dataEncryptionIV, contentEncryptionAlgorithm);
 
         // 8. Replace plaintext with encrypted data
         messageParams.dataCid = dataCid;
@@ -964,6 +965,14 @@ export class AgentDwnApi {
    * The `authenticationTag` is NOT set here — the caller must set it after
    * AEAD encryption produces the tag.
    */
+  /**
+   * Returns the correct nonce/IV byte length for the given content encryption algorithm.
+   * A256GCM uses 96-bit (12-byte) nonces; XC20P uses 192-bit (24-byte) nonces.
+   */
+  private static ivLength(algorithm: ContentEncryptionAlgorithm): number {
+    return algorithm === ContentEncryptionAlgorithm.XC20P ? 24 : 12;
+  }
+
   private buildEncryptionInput(
     dek: Uint8Array,
     iv: Uint8Array,
@@ -983,17 +992,18 @@ export class AgentDwnApi {
   }
 
   /**
-   * Encrypts plaintext bytes with AEAD (AES-256-GCM by default) and computes
-   * the CID of the resulting ciphertext. Returns everything needed to attach
-   * the encrypted data to a DWN message, including the authentication tag.
+   * Encrypts plaintext bytes with AEAD and computes the CID of the resulting ciphertext.
+   * Returns everything needed to attach the encrypted data to a DWN message, including
+   * the authentication tag.
    */
   private async encryptAndComputeCid(
     plaintextBytes: Uint8Array,
     dek: Uint8Array,
     iv: Uint8Array,
+    algorithm: ContentEncryptionAlgorithm = ContentEncryptionAlgorithm.A256GCM,
   ): Promise<{ encryptedBytes: Uint8Array; dataCid: string; dataSize: number; authenticationTag: Uint8Array }> {
     const { ciphertextStream, tag: authenticationTag } = await Encryption.aeadEncryptStream(
-      ContentEncryptionAlgorithm.A256GCM, dek, iv, DataStream.fromBytes(plaintextBytes),
+      algorithm, dek, iv, DataStream.fromBytes(plaintextBytes),
     );
     const encryptedBytes = await DataStream.toBytes(ciphertextStream);
     const cidStream = DataStream.fromBytes(encryptedBytes);
@@ -1873,11 +1883,12 @@ export class AgentDwnApi {
       // --- Encrypt to the recipient's ProtocolPath key (cross-DWN delivery) ---
       // Manually build encryption input targeting the recipient's key so the
       // record is decryptable only by the recipient.
+      const algorithm = ContentEncryptionAlgorithm.A256GCM;
       const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
-      const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(12));
+      const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(AgentDwnApi.ivLength(algorithm)));
 
       const { encryptedBytes, dataCid, dataSize, authenticationTag } =
-        await this.encryptAndComputeCid(plaintextBytes, dataEncryptionKey, dataEncryptionIV);
+        await this.encryptAndComputeCid(plaintextBytes, dataEncryptionKey, dataEncryptionIV, algorithm);
 
       const encryptionInput = {
         ...this.buildEncryptionInput(

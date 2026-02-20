@@ -1864,7 +1864,7 @@ export function testRecordsReadHandler(): void {
           };
 
           const dataFormat = 'some/format';
-          const dataFormatDerivationPath = Records.constructKeyDerivationPathUsingDataFormatsScheme(schema, dataFormat);
+          const dataFormatDerivationPath = Records.constructKeyDerivationPathUsingDataFormatsScheme(dataFormat);
           const dataFormatDerivedPublicKey = await HdKey.derivePublicKey(rootPrivateKeyWithDataFormatsScheme, dataFormatDerivationPath);
 
           const encryptionInput: EncryptionInput = {
@@ -1920,12 +1920,12 @@ export function testRecordsReadHandler(): void {
           const plaintextBytes2 = await DataStream.toBytes(plaintextDataStream2);
           expect(ArrayUtility.byteArraysEqual(plaintextBytes2, originalData)).toBe(true);
 
-          // test unable to decrypt the message if dataFormat-derived key is derived without taking `schema` as input to derivation path
+          // test unable to decrypt the message if dataFormat-derived key uses an incorrect data format in derivation path
           const readReply3 = await dwn.processMessage(alice.did, recordsRead.message); // process the same read message to get a new cipher stream
           expect(readReply3.status.code).toBe(200);
           const cipherStream3 = readReply3.entry!.data!;
 
-          const invalidDerivationPath = [KeyDerivationScheme.DataFormats, message.descriptor.dataFormat];
+          const invalidDerivationPath = [KeyDerivationScheme.DataFormats, 'wrong/format'];
           const inValidDescendantPrivateKey: DerivedPrivateJwk
             = await HdKey.derivePrivateKey(rootPrivateKeyWithDataFormatsScheme, invalidDerivationPath);
 
@@ -1956,7 +1956,7 @@ export function testRecordsReadHandler(): void {
           };
 
           const dataFormat = `image/jpg`;
-          const dataFormatDerivationPath = Records.constructKeyDerivationPathUsingDataFormatsScheme(undefined, dataFormat);
+          const dataFormatDerivationPath = Records.constructKeyDerivationPathUsingDataFormatsScheme(dataFormat);
           const dataFormatDerivedPublicKey = await HdKey.derivePublicKey(rootPrivateKeyWithDataFormatsScheme, dataFormatDerivationPath);
 
           const encryptionInput: EncryptionInput = {
