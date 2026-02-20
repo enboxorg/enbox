@@ -124,16 +124,14 @@ describe('web5 api', () => {
           connectedDid : careerIdentity.did.uri,
         });
         const careerResult = await web5Career.dwn.records.write({
-          data    : 'Hello, world!',
-          message : {
-            schema     : 'foo/bar',
-            dataFormat : 'text/plain',
-          },
+          data       : 'Hello, world!',
+          schema     : 'foo/bar',
+          dataFormat : 'text/plain',
         });
         expect(careerResult.status.code).toBe(202);
         expect(careerResult.record).toBeDefined();
-        expect(careerResult.record?.author).toBe(careerIdentity.did.uri);
-        expect(await careerResult.record?.data.text()).toBe(
+        expect(careerResult.record.author).toBe(careerIdentity.did.uri);
+        expect(await careerResult.record.data.text()).toBe(
           'Hello, world!'
         );
 
@@ -143,16 +141,14 @@ describe('web5 api', () => {
           connectedDid : socialIdentity.did.uri,
         });
         const socialResult = await web5Social.dwn.records.write({
-          data    : 'Hello, everyone!',
-          message : {
-            schema     : 'foo/bar',
-            dataFormat : 'text/plain',
-          },
+          data       : 'Hello, everyone!',
+          schema     : 'foo/bar',
+          dataFormat : 'text/plain',
         });
         expect(socialResult.status.code).toBe(202);
         expect(socialResult.record).toBeDefined();
-        expect(socialResult.record?.author).toBe(socialIdentity.did.uri);
-        expect(await socialResult.record?.data.text()).toBe(
+        expect(socialResult.record.author).toBe(socialIdentity.did.uri);
+        expect(await socialResult.record.data.text()).toBe(
           'Hello, everyone!'
         );
       });
@@ -472,11 +468,9 @@ describe('web5 api', () => {
 
         // use the grant to write a record
         const writeResult = await web5.dwn.records.write({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : protocol.protocol,
-            protocolPath : 'foo',
-          }
+          data         : 'Hello, world!',
+          protocol     : protocol.protocol,
+          protocolPath : 'foo',
         });
         expect(writeResult.status.code).toBe(202);
         expect(writeResult.record).toBeDefined();
@@ -487,9 +481,7 @@ describe('web5 api', () => {
 
         const readResult = await web5.dwn.records.read({
           protocol : protocol.protocol,
-          message  : {
-            filter: { recordId: writeResult.record.id }
-          }
+          filter   : { recordId: writeResult.record.id }
         });
         expect(readResult.status.code).toBe(200);
         expect(readResult.record).toBeDefined();
@@ -501,10 +493,7 @@ describe('web5 api', () => {
         // Because no grants exist for query, it will not fail but instead author AND sign as the delegate DID.
         // It will only return results if they are public, here it will return none. This is tested elsewhere.
         const noPermissionQuery = await web5.dwn.records.query({
-          protocol : protocol.protocol,
-          message  : {
-            filter: { protocol: protocol.protocol }
-          }
+          filter: { protocol: protocol.protocol }
         });
         expect(noPermissionQuery.status.code).toBe(200);
         expect(noPermissionQuery.records).toHaveLength(0);
@@ -512,9 +501,7 @@ describe('web5 api', () => {
         try {
           await web5.dwn.records.delete({
             protocol : protocol.protocol,
-            message  : {
-              recordId: writeResult.record.id
-            }
+            recordId : writeResult.record.id
           });
 
           throw new Error('Should have thrown an error');
@@ -558,18 +545,13 @@ describe('web5 api', () => {
         // attempt to delete using the grant
         const deleteResult = await web5.dwn.records.delete({
           protocol : protocol.protocol,
-          message  : {
-            recordId: writeResult.record.id
-          }
+          recordId : writeResult.record.id
         });
         expect(deleteResult.status.code).toBe(202);
 
         // attempt to query using the grant
         const queryResult = await web5.dwn.records.query({
-          protocol : protocol.protocol,
-          message  : {
-            filter: { protocol: protocol.protocol }
-          }
+          filter: { protocol: protocol.protocol }
         });
         expect(queryResult.status.code).toBe(200);
         expect(queryResult.records).toHaveLength(0); // record has been deleted

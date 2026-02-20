@@ -142,14 +142,14 @@ describe('DwnApi', () => {
 
       // alice and bob both configure the protocol
       const { status: aliceConfigStatus, protocol: aliceNotesProtocol } =
-        await dwnAlice.protocols.configure({ message: { definition: notesProtocol } });
+        await dwnAlice.protocols.configure({ definition: notesProtocol });
       expect(aliceConfigStatus.code).toBe(202);
       const { status: aliceNotesProtocolSend } = await aliceNotesProtocol.send(aliceDid.uri);
       expect(aliceNotesProtocolSend.code).toBe(202);
 
-      const { status: bobConfigStatus, protocol: bobNotesProtocol } = await dwnBob.protocols.configure({ message: { definition: notesProtocol } });
+      const { status: bobConfigStatus, protocol: bobNotesProtocol } = await dwnBob.protocols.configure({ definition: notesProtocol });
       expect(bobConfigStatus.code).toBe(202);
-      const { status: bobNotesProtocolSend } = await bobNotesProtocol!.send(bobDid.uri);
+      const { status: bobNotesProtocolSend } = await bobNotesProtocol.send(bobDid.uri);
       expect(bobNotesProtocolSend.code).toBe(202);
 
       const grants = await Oidc.createPermissionGrants(aliceDid.uri, delegatedBearerDid, testHarness.agent, grantRequest.permissionScopes);
@@ -173,14 +173,12 @@ describe('DwnApi', () => {
 
     describe('records', () => {
       it('should create a record with a delegated grant', async () => {
-        const { status, record } = await delegateDwn.records.create({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : notesProtocol.protocol,
-            protocolPath : 'note',
-            schema       : notesProtocol.types.note.schema,
-            dataFormat   : 'text/plain',
-          }
+        const { status, record } = await delegateDwn.records.write({
+          data         : 'Hello, world!',
+          protocol     : notesProtocol.protocol,
+          protocolPath : 'note',
+          schema       : notesProtocol.types.note.schema,
+          dataFormat   : 'text/plain',
         });
 
         expect(status.code).toBe(202);
@@ -194,14 +192,12 @@ describe('DwnApi', () => {
       });
 
       it('should read records with a delegated grant', async () => {
-        const { status: writeStatus, record } = await dwnAlice.records.create({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : notesProtocol.protocol,
-            protocolPath : 'note',
-            schema       : notesProtocol.types.note.schema,
-            dataFormat   : 'text/plain',
-          }
+        const { status: writeStatus, record } = await dwnAlice.records.write({
+          data         : 'Hello, world!',
+          protocol     : notesProtocol.protocol,
+          protocolPath : 'note',
+          schema       : notesProtocol.types.note.schema,
+          dataFormat   : 'text/plain',
         });
 
         expect(writeStatus.code).toBe(202);
@@ -212,10 +208,8 @@ describe('DwnApi', () => {
         const { status: readStatus, record: readRecord } = await delegateDwn.records.read({
           from     : aliceDid.uri,
           protocol : notesProtocol.protocol,
-          message  : {
-            filter: {
-              recordId: record.id
-            }
+          filter   : {
+            recordId: record.id
           }
         });
 
@@ -225,26 +219,21 @@ describe('DwnApi', () => {
       });
 
       it('should query records with a delegated grant', async () => {
-        const { status: writeStatus, record } = await delegateDwn.records.create({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : notesProtocol.protocol,
-            protocolPath : 'note',
-            schema       : notesProtocol.types.note.schema,
-            dataFormat   : 'text/plain',
-          }
+        const { status: writeStatus, record } = await delegateDwn.records.write({
+          data         : 'Hello, world!',
+          protocol     : notesProtocol.protocol,
+          protocolPath : 'note',
+          schema       : notesProtocol.types.note.schema,
+          dataFormat   : 'text/plain',
         });
 
         expect(writeStatus.code).toBe(202);
         expect(record).toBeDefined();
 
         const { status: queryStatus, records } = await delegateDwn.records.query({
-          protocol : notesProtocol.protocol,
-          message  : {
-            filter: {
-              protocol     : notesProtocol.protocol,
-              protocolPath : 'note'
-            }
+          filter: {
+            protocol     : notesProtocol.protocol,
+            protocolPath : 'note'
           }
         });
 
@@ -253,23 +242,20 @@ describe('DwnApi', () => {
         expect(records).toHaveLength(1);
 
         // alice is the author, but the signer is the delegateDid
-        expect(records![0].author).toBe(aliceDid.uri);
-        const signerDid = Jws.getSignerDid(records![0].rawMessage.authorization.signature.signatures[0]);
+        expect(records[0].author).toBe(aliceDid.uri);
+        const signerDid = Jws.getSignerDid(records[0].rawMessage.authorization.signature.signatures[0]);
         expect(signerDid).toBe(delegateDid.uri);
-        expect(records![0].rawMessage.authorization.authorDelegatedGrant).toBeDefined();
+        expect(records[0].rawMessage.authorization.authorDelegatedGrant).toBeDefined();
 
         // the record should be the same
-        expect(records![0].id).toBe(record!.id);
+        expect(records[0].id).toBe(record.id);
       });
 
       it('should subscribe to records with a delegated grant', async () => {
         // subscribe to all messages from the protocol
         const subscribeResult = await delegateDwn.records.subscribe({
-          protocol : notesProtocol.protocol,
-          message  : {
-            filter: {
-              protocol: notesProtocol.protocol
-            }
+          filter: {
+            protocol: notesProtocol.protocol
           }
         });
         expect(subscribeResult.status.code).toBe(200);
@@ -281,14 +267,12 @@ describe('DwnApi', () => {
 
         // write a record
         const writeResult = await delegateDwn.records.write({
-          data    : 'Hello, world!',
-          message : {
-            recipient    : bobDid.uri,
-            protocol     : notesProtocol.protocol,
-            protocolPath : 'note',
-            schema       : notesProtocol.types.note.schema,
-            dataFormat   : 'text/plain',
-          }
+          data         : 'Hello, world!',
+          recipient    : bobDid.uri,
+          protocol     : notesProtocol.protocol,
+          protocolPath : 'note',
+          schema       : notesProtocol.types.note.schema,
+          dataFormat   : 'text/plain',
         });
         expect(writeResult.status.code).toBe(202);
 
@@ -313,14 +297,12 @@ describe('DwnApi', () => {
 
         // write another record
         const writeResult2 = await delegateDwn.records.write({
-          data    : 'Hello, world!',
-          message : {
-            recipient    : bobDid.uri,
-            protocol     : notesProtocol.protocol,
-            protocolPath : 'note',
-            schema       : notesProtocol.types.note.schema,
-            dataFormat   : 'text/plain',
-          }
+          data         : 'Hello, world!',
+          recipient    : bobDid.uri,
+          protocol     : notesProtocol.protocol,
+          protocolPath : 'note',
+          schema       : notesProtocol.types.note.schema,
+          dataFormat   : 'text/plain',
         });
         expect(writeResult2.status.code).toBe(202);
 
@@ -336,23 +318,21 @@ describe('DwnApi', () => {
 
       it('should read records as the delegate DID if no grant is found', async () => {
         // alice installs some other protocol
-        const { status: aliceConfigStatus, protocol: aliceOtherProtocol } = await dwnAlice.protocols.configure({ message: { definition: {
+        const { status: aliceConfigStatus, protocol: aliceOtherProtocol } = await dwnAlice.protocols.configure({ definition: {
           ...notesProtocol,
           protocol: `http://other-protocol.xyz/protocol/${TestDataGenerator.randomString(15)}`
-        } } });
+        } });
         expect(aliceConfigStatus.code).toBe(202);
         const { status: aliceOtherProtocolSend } = await aliceOtherProtocol.send(aliceDid.uri);
         expect(aliceOtherProtocolSend.code).toBe(202);
 
         // alice writes a note record to the permissioned protocol
-        const { status: writeStatus1, record: allowedRecord } = await dwnAlice.records.create({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : notesProtocol.protocol,
-            protocolPath : 'note',
-            schema       : notesProtocol.types.note.schema,
-            dataFormat   : 'text/plain',
-          }
+        const { status: writeStatus1, record: allowedRecord } = await dwnAlice.records.write({
+          data         : 'Hello, world!',
+          protocol     : notesProtocol.protocol,
+          protocolPath : 'note',
+          schema       : notesProtocol.types.note.schema,
+          dataFormat   : 'text/plain',
         });
         expect(writeStatus1.code).toBe(202);
         expect(allowedRecord).toBeDefined();
@@ -360,29 +340,25 @@ describe('DwnApi', () => {
         expect(allowedRecordSendStatus.code).toBe(202);
 
         // alice writes a public and private note to the other protocol
-        const { status: writeStatus2, record: publicRecord } = await dwnAlice.records.create({
-          data    : 'Hello, world!',
-          message : {
-            published    : true,
-            protocol     : aliceOtherProtocol.definition.protocol,
-            protocolPath : 'note',
-            schema       : aliceOtherProtocol.definition.types.note.schema,
-            dataFormat   : 'text/plain',
-          }
+        const { status: writeStatus2, record: publicRecord } = await dwnAlice.records.write({
+          data         : 'Hello, world!',
+          published    : true,
+          protocol     : aliceOtherProtocol.definition.protocol,
+          protocolPath : 'note',
+          schema       : aliceOtherProtocol.definition.types.note.schema,
+          dataFormat   : 'text/plain',
         });
         expect(writeStatus2.code).toBe(202);
         expect(publicRecord).toBeDefined();
         const { status: publicRecordSendStatus } = await publicRecord.send();
         expect(publicRecordSendStatus.code).toBe(202);
 
-        const { status: writeStatus3, record: privateRecord } = await dwnAlice.records.create({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : aliceOtherProtocol.definition.protocol,
-            protocolPath : 'note',
-            schema       : aliceOtherProtocol.definition.types.note.schema,
-            dataFormat   : 'text/plain',
-          }
+        const { status: writeStatus3, record: privateRecord } = await dwnAlice.records.write({
+          data         : 'Hello, world!',
+          protocol     : aliceOtherProtocol.definition.protocol,
+          protocolPath : 'note',
+          schema       : aliceOtherProtocol.definition.types.note.schema,
+          dataFormat   : 'text/plain',
         });
         expect(writeStatus3.code).toBe(202);
         expect(privateRecord).toBeDefined();
@@ -394,10 +370,8 @@ describe('DwnApi', () => {
         const { status: readStatus1, record: allowedRecordReturned } = await delegateDwn.records.read({
           from     : aliceDid.uri,
           protocol : notesProtocol.protocol,
-          message  : {
-            filter: {
-              recordId: allowedRecord.id
-            }
+          filter   : {
+            recordId: allowedRecord.id
           }
         });
         expect(readStatus1.code).toBe(200);
@@ -407,12 +381,9 @@ describe('DwnApi', () => {
         // delegateDwn reads from the other protocol, which no permissions exist
         // only the public record is successfully returned
         const { status: readStatus2, record: publicRecordReturned } = await delegateDwn.records.read({
-          from     : aliceDid.uri,
-          protocol : aliceOtherProtocol.definition.protocol,
-          message  : {
-            filter: {
-              recordId: publicRecord.id
-            }
+          from   : aliceDid.uri,
+          filter : {
+            recordId: publicRecord.id
           }
         });
         expect(readStatus2.code).toBe(200);
@@ -421,12 +392,9 @@ describe('DwnApi', () => {
 
         // attempt to read the private record, which should fail
         const { status: readStatus3, record: privateRecordReturned } = await delegateDwn.records.read({
-          from     : aliceDid.uri,
-          protocol : aliceOtherProtocol.definition.protocol,
-          message  : {
-            filter: {
-              recordId: privateRecord.id
-            }
+          from   : aliceDid.uri,
+          filter : {
+            recordId: privateRecord.id
           }
         });
         expect(readStatus3.code).toBe(401);
@@ -434,12 +402,9 @@ describe('DwnApi', () => {
 
         // sanity: query as alice to get both records
         const { status: readStatus4, record: privateRecordReturnedAlice } = await dwnAlice.records.read({
-          from     : aliceDid.uri,
-          protocol : aliceOtherProtocol.definition.protocol,
-          message  : {
-            filter: {
-              recordId: privateRecord.id
-            }
+          from   : aliceDid.uri,
+          filter : {
+            recordId: privateRecord.id
           }
         });
         expect(readStatus4.code).toBe(200);
@@ -449,23 +414,21 @@ describe('DwnApi', () => {
 
       it('should query records as the delegate DID if no grant is found', async () => {
         // alice installs some other protocol
-        const { status: aliceConfigStatus, protocol: aliceOtherProtocol } = await dwnAlice.protocols.configure({ message: { definition: {
+        const { status: aliceConfigStatus, protocol: aliceOtherProtocol } = await dwnAlice.protocols.configure({ definition: {
           ...notesProtocol,
           protocol: `http://other-protocol.xyz/protocol/${TestDataGenerator.randomString(15)}`
-        } } });
+        } });
         expect(aliceConfigStatus.code).toBe(202);
         const { status: aliceOtherProtocolSend } = await aliceOtherProtocol.send(aliceDid.uri);
         expect(aliceOtherProtocolSend.code).toBe(202);
 
         // alice writes a note record to the permissioned protocol
-        const { status: writeStatus1, record: allowedRecord } = await dwnAlice.records.create({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : notesProtocol.protocol,
-            protocolPath : 'note',
-            schema       : notesProtocol.types.note.schema,
-            dataFormat   : 'text/plain',
-          }
+        const { status: writeStatus1, record: allowedRecord } = await dwnAlice.records.write({
+          data         : 'Hello, world!',
+          protocol     : notesProtocol.protocol,
+          protocolPath : 'note',
+          schema       : notesProtocol.types.note.schema,
+          dataFormat   : 'text/plain',
         });
         expect(writeStatus1.code).toBe(202);
         expect(allowedRecord).toBeDefined();
@@ -473,29 +436,25 @@ describe('DwnApi', () => {
         expect(allowedRecordSendStatus.code).toBe(202);
 
         // alice writes a public and private note to the other protocol
-        const { status: writeStatus2, record: publicRecord } = await dwnAlice.records.create({
-          data    : 'Hello, world!',
-          message : {
-            published    : true,
-            protocol     : aliceOtherProtocol.definition.protocol,
-            protocolPath : 'note',
-            schema       : aliceOtherProtocol.definition.types.note.schema,
-            dataFormat   : 'text/plain',
-          }
+        const { status: writeStatus2, record: publicRecord } = await dwnAlice.records.write({
+          data         : 'Hello, world!',
+          published    : true,
+          protocol     : aliceOtherProtocol.definition.protocol,
+          protocolPath : 'note',
+          schema       : aliceOtherProtocol.definition.types.note.schema,
+          dataFormat   : 'text/plain',
         });
         expect(writeStatus2.code).toBe(202);
         expect(publicRecord).toBeDefined();
         const { status: publicRecordSendStatus } = await publicRecord.send();
         expect(publicRecordSendStatus.code).toBe(202);
 
-        const { status: writeStatus3, record: privateRecord } = await dwnAlice.records.create({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : aliceOtherProtocol.definition.protocol,
-            protocolPath : 'note',
-            schema       : aliceOtherProtocol.definition.types.note.schema,
-            dataFormat   : 'text/plain',
-          }
+        const { status: writeStatus3, record: privateRecord } = await dwnAlice.records.write({
+          data         : 'Hello, world!',
+          protocol     : aliceOtherProtocol.definition.protocol,
+          protocolPath : 'note',
+          schema       : aliceOtherProtocol.definition.types.note.schema,
+          dataFormat   : 'text/plain',
         });
         expect(writeStatus3.code).toBe(202);
         expect(privateRecord).toBeDefined();
@@ -505,12 +464,9 @@ describe('DwnApi', () => {
 
         // sanity: delegateDwn queries for the allowed record from alice's DWN
         const { status: queryStatus1, records: allowedRecords } = await delegateDwn.records.query({
-          from     : aliceDid.uri,
-          protocol : notesProtocol.protocol,
-          message  : {
-            filter: {
-              protocol: notesProtocol.protocol
-            }
+          from   : aliceDid.uri,
+          filter : {
+            protocol: notesProtocol.protocol
           }
         });
         expect(queryStatus1.code).toBe(200);
@@ -520,27 +476,21 @@ describe('DwnApi', () => {
         // delegateDwn queries for the other protocol, which no permissions exist
         // only the public record is returned
         const { status: queryStatus2, records: publicRecords } = await delegateDwn.records.query({
-          from     : aliceDid.uri,
-          protocol : aliceOtherProtocol.definition.protocol,
-          message  : {
-            filter: {
-              protocol: aliceOtherProtocol.definition.protocol
-            }
+          from   : aliceDid.uri,
+          filter : {
+            protocol: aliceOtherProtocol.definition.protocol
           }
         });
         expect(queryStatus2.code).toBe(200);
         expect(publicRecords).toBeDefined();
         expect(publicRecords).toHaveLength(1);
-        expect(publicRecords![0].id).toBe(publicRecord.id);
+        expect(publicRecords[0].id).toBe(publicRecord.id);
 
         // sanity: query as alice to get both records
         const { status: queryStatus3, records: allRecords } = await dwnAlice.records.query({
-          from     : aliceDid.uri,
-          protocol : aliceOtherProtocol.definition.protocol,
-          message  : {
-            filter: {
-              protocol: aliceOtherProtocol.definition.protocol
-            }
+          from   : aliceDid.uri,
+          filter : {
+            protocol: aliceOtherProtocol.definition.protocol
           }
         });
         expect(queryStatus3.code).toBe(200);
@@ -551,10 +501,10 @@ describe('DwnApi', () => {
 
       it('should subscribe to records as the delegate DID if no grant is found', async () => {
         // alice installs some other protocol
-        const { status: aliceConfigStatus, protocol: aliceOtherProtocol } = await dwnAlice.protocols.configure({ message: { definition: {
+        const { status: aliceConfigStatus, protocol: aliceOtherProtocol } = await dwnAlice.protocols.configure({ definition: {
           ...notesProtocol,
           protocol: `http://other-protocol.xyz/protocol/${TestDataGenerator.randomString(15)}`
-        } } });
+        } });
         expect(aliceConfigStatus.code).toBe(202);
         const { status: aliceOtherProtocolSend } = await aliceOtherProtocol.send(aliceDid.uri);
         expect(aliceOtherProtocolSend.code).toBe(202);
@@ -562,12 +512,9 @@ describe('DwnApi', () => {
         // delegatedDwn subscribes to both protocols
         const permissionedNotesChanges: RecordChange[] = [];
         const { liveQuery: permissionedLive } = await delegateDwn.records.subscribe({
-          from     : aliceDid.uri,
-          protocol : notesProtocol.protocol,
-          message  : {
-            filter: {
-              protocol: notesProtocol.protocol
-            }
+          from   : aliceDid.uri,
+          filter : {
+            protocol: notesProtocol.protocol
           }
         });
         expect(permissionedLive).toBeDefined();
@@ -575,12 +522,9 @@ describe('DwnApi', () => {
 
         const otherProtocolChanges: RecordChange[] = [];
         const { liveQuery: otherLive } = await delegateDwn.records.subscribe({
-          from     : aliceDid.uri,
-          protocol : aliceOtherProtocol.definition.protocol,
-          message  : {
-            filter: {
-              protocol: aliceOtherProtocol.definition.protocol
-            }
+          from   : aliceDid.uri,
+          filter : {
+            protocol: aliceOtherProtocol.definition.protocol
           }
         });
         expect(otherLive).toBeDefined();
@@ -589,12 +533,9 @@ describe('DwnApi', () => {
         // alice subscribes to the other protocol as a sanity
         const aliceOtherProtocolChanges: RecordChange[] = [];
         const { liveQuery: aliceOtherLive } = await dwnAlice.records.subscribe({
-          from     : aliceDid.uri,
-          protocol : aliceOtherProtocol.definition.protocol,
-          message  : {
-            filter: {
-              protocol: aliceOtherProtocol.definition.protocol
-            }
+          from   : aliceDid.uri,
+          filter : {
+            protocol: aliceOtherProtocol.definition.protocol
           }
         });
         expect(aliceOtherLive).toBeDefined();
@@ -602,15 +543,13 @@ describe('DwnApi', () => {
 
         // NOTE: write the private record before the public so that it should be received first
         // alice writes a public and private note to the other protocol
-        const { status: writeStatus2, record: publicRecord } = await dwnAlice.records.create({
-          data    : 'Hello, world!',
-          message : {
-            published    : true,
-            protocol     : aliceOtherProtocol.definition.protocol,
-            protocolPath : 'note',
-            schema       : aliceOtherProtocol.definition.types.note.schema,
-            dataFormat   : 'text/plain',
-          }
+        const { status: writeStatus2, record: publicRecord } = await dwnAlice.records.write({
+          data         : 'Hello, world!',
+          published    : true,
+          protocol     : aliceOtherProtocol.definition.protocol,
+          protocolPath : 'note',
+          schema       : aliceOtherProtocol.definition.types.note.schema,
+          dataFormat   : 'text/plain',
         });
         expect(writeStatus2.code).toBe(202);
         expect(publicRecord).toBeDefined();
@@ -618,28 +557,24 @@ describe('DwnApi', () => {
         expect(publicRecordSendStatus.code).toBe(202);
 
         // alice writes a note record to the permissioned protocol
-        const { status: writeStatus1, record: allowedRecord } = await dwnAlice.records.create({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : notesProtocol.protocol,
-            protocolPath : 'note',
-            schema       : notesProtocol.types.note.schema,
-            dataFormat   : 'text/plain',
-          }
+        const { status: writeStatus1, record: allowedRecord } = await dwnAlice.records.write({
+          data         : 'Hello, world!',
+          protocol     : notesProtocol.protocol,
+          protocolPath : 'note',
+          schema       : notesProtocol.types.note.schema,
+          dataFormat   : 'text/plain',
         });
         expect(writeStatus1.code).toBe(202);
         expect(allowedRecord).toBeDefined();
         const { status: allowedRecordSendStatus } = await allowedRecord.send();
         expect(allowedRecordSendStatus.code).toBe(202);
 
-        const { status: writeStatus3, record: privateRecord } = await dwnAlice.records.create({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : aliceOtherProtocol.definition.protocol,
-            protocolPath : 'note',
-            schema       : aliceOtherProtocol.definition.types.note.schema,
-            dataFormat   : 'text/plain',
-          }
+        const { status: writeStatus3, record: privateRecord } = await dwnAlice.records.write({
+          data         : 'Hello, world!',
+          protocol     : aliceOtherProtocol.definition.protocol,
+          protocolPath : 'note',
+          schema       : aliceOtherProtocol.definition.types.note.schema,
+          dataFormat   : 'text/plain',
         });
         expect(writeStatus3.code).toBe(202);
         expect(privateRecord).toBeDefined();
@@ -678,11 +613,9 @@ describe('DwnApi', () => {
         // attempt to configure the protocol without a grant, it should fail
         try {
           await delegateDwn.protocols.configure({
-            message: {
-              definition: {
-                ...notesProtocol,
-                protocol: protocolUri,
-              }
+            definition: {
+              ...notesProtocol,
+              protocol: protocolUri,
             }
           });
           throw new Error('Expected an error to be thrown.');
@@ -702,11 +635,9 @@ describe('DwnApi', () => {
 
         // now try again after processing the connected grant
         const { status, protocol } = await delegateDwn.protocols.configure({
-          message: {
-            definition: {
-              ...notesProtocol,
-              protocol: protocolUri,
-            }
+          definition: {
+            ...notesProtocol,
+            protocol: protocolUri,
           }
         });
         expect(status.code).toBe(202);
@@ -723,9 +654,7 @@ describe('DwnApi', () => {
         };
 
         const { status: nonPublicStatus, protocol: nonPublicProtocolResponse } = await dwnAlice.protocols.configure({
-          message: {
-            definition: nonPublicProtocol
-          }
+          definition: nonPublicProtocol
         });
         expect(nonPublicStatus.code).toBe(202);
         expect(nonPublicProtocolResponse).toBeDefined();
@@ -734,11 +663,9 @@ describe('DwnApi', () => {
 
         // attempt to query the protocol, should not return any results as there are no grants for it
         const { status: nonPublicQueryStatus, protocols: nonPublicProtocols } = await delegateDwn.protocols.query({
-          from    : aliceDid.uri,
-          message : {
-            filter: {
-              protocol: nonPublicProtocol.protocol
-            }
+          from   : aliceDid.uri,
+          filter : {
+            protocol: nonPublicProtocol.protocol
           }
         });
         expect(nonPublicQueryStatus.code).toBe(200);
@@ -756,11 +683,9 @@ describe('DwnApi', () => {
 
         // now query for the non-public protocol, should return the protocol
         const { status: nonPublicQueryStatus2, protocols: nonPublicProtocols2 } = await delegateDwn.protocols.query({
-          from    : aliceDid.uri,
-          message : {
-            filter: {
-              protocol: nonPublicProtocol.protocol
-            }
+          from   : aliceDid.uri,
+          filter : {
+            protocol: nonPublicProtocol.protocol
           }
         });
         expect(nonPublicQueryStatus2.code).toBe(200);
@@ -777,9 +702,7 @@ describe('DwnApi', () => {
         };
 
         const { status: publicStatus, protocol: publicProtocolResponse } = await dwnAlice.protocols.configure({
-          message: {
-            definition: publicProtocol
-          }
+          definition: publicProtocol
         });
         expect(publicStatus.code).toBe(202);
         expect(publicProtocolResponse).toBeDefined();
@@ -787,11 +710,9 @@ describe('DwnApi', () => {
         expect(publicProtocolSend.status.code).toBe(202);
 
         const { status: publicQueryStatus, protocols: publicProtocols } = await delegateDwn.protocols.query({
-          from    : aliceDid.uri,
-          message : {
-            filter: {
-              protocol: publicProtocol.protocol
-            }
+          from   : aliceDid.uri,
+          filter : {
+            protocol: publicProtocol.protocol
           }
         });
         expect(publicQueryStatus.code).toBe(200);
@@ -806,9 +727,7 @@ describe('DwnApi', () => {
     describe('agent', () => {
       it('writes a protocol definition', async () => {
         const response = await dwnAlice.protocols.configure({
-          message: {
-            definition: protocolDefinition
-          }
+          definition: protocolDefinition
         });
 
         expect(response.status.code).toBe(202);
@@ -822,19 +741,15 @@ describe('DwnApi', () => {
       it('should return protocols matching the query', async () => {
         // Write a protocols configure to the connected agent's DWN.
         const configureResponse = await dwnAlice.protocols.configure({
-          message: {
-            definition: protocolDefinition
-          }
+          definition: protocolDefinition
         });
         expect(configureResponse.status.code).toBe(202);
         expect(configureResponse.status.detail).toBe('Accepted');
 
         // Query for the protocol just configured.
         const queryResponse = await dwnAlice.protocols.query({
-          message: {
-            filter: {
-              protocol: protocolDefinition.protocol
-            }
+          filter: {
+            protocol: protocolDefinition.protocol
           }
         });
 
@@ -851,9 +766,7 @@ describe('DwnApi', () => {
       it('should return protocols matching the query', async () => {
         // Write a protocols configure to the connected agent's DWN.
         const configureResponse = await dwnAlice.protocols.configure({
-          message: {
-            definition: protocolDefinition
-          }
+          definition: protocolDefinition
         });
         expect(configureResponse.status.code).toBe(202);
         expect(configureResponse.status.detail).toBe('Accepted');
@@ -863,11 +776,9 @@ describe('DwnApi', () => {
 
         // Query for the protocol just configured.
         const queryResponse = await dwnAlice.protocols.query({
-          from    : aliceDid.uri,
-          message : {
-            filter: {
-              protocol: protocolDefinition.protocol
-            }
+          from   : aliceDid.uri,
+          filter : {
+            protocol: protocolDefinition.protocol
           }
         });
 
@@ -882,11 +793,9 @@ describe('DwnApi', () => {
       it('returns empty protocols array when no protocols match the filter provided', async () => {
         // Query for a non-existent protocol.
         const response = await dwnAlice.protocols.query({
-          from    : aliceDid.uri,
-          message : {
-            filter: {
-              protocol: 'https://doesnotexist.com/protocol'
-            }
+          from   : aliceDid.uri,
+          filter : {
+            protocol: 'https://doesnotexist.com/protocol'
           }
         });
 
@@ -898,9 +807,7 @@ describe('DwnApi', () => {
       it('returns published protocol definitions for requests from external DID', async () => {
         // Configure a published protocol on Alice's local DWN.
         const publicProtocol = await dwnAlice.protocols.configure({
-          message: {
-            definition: { ...protocolDefinition, protocol: 'http://proto-published', published: true }
-          }
+          definition: { ...protocolDefinition, protocol: 'http://proto-published', published: true }
         });
         expect(publicProtocol.status.code).toBe(202);
 
@@ -910,11 +817,9 @@ describe('DwnApi', () => {
 
         // Attempt to query for the published protocol on Alice's remote DWN authored by Bob.
         const publishedResponse = await dwnBob.protocols.query({
-          from    : aliceDid.uri,
-          message : {
-            filter: {
-              protocol: 'http://proto-published'
-            }
+          from   : aliceDid.uri,
+          filter : {
+            protocol: 'http://proto-published'
           }
         });
 
@@ -927,9 +832,7 @@ describe('DwnApi', () => {
       it('does not return unpublished protocol definitions for requests from external DID', async () => {
         // Configure an unpublished protocol on Alice's DWN.
         const notPublicProtocol = await dwnAlice.protocols.configure({
-          message: {
-            definition: { ...protocolDefinition, protocol: 'http://proto-not-published', published: false }
-          }
+          definition: { ...protocolDefinition, protocol: 'http://proto-not-published', published: false }
         });
         expect(notPublicProtocol.status.code).toBe(202);
 
@@ -939,11 +842,9 @@ describe('DwnApi', () => {
 
         // Attempt to query for the unpublished protocol on Alice's remote DWN authored by Bob.
         const nonPublishedResponse = await dwnBob.protocols.query({
-          from    : aliceDid.uri,
-          message : {
-            filter: {
-              protocol: 'http://proto-not-published'
-            }
+          from   : aliceDid.uri,
+          filter : {
+            protocol: 'http://proto-not-published'
           }
         });
 
@@ -955,12 +856,10 @@ describe('DwnApi', () => {
       it('returns a 401 with an invalid permissions grant', async () => {
         // Attempt to query for a record using Bob's DWN tenant with an invalid grant.
         const response = await dwnAlice.protocols.query({
-          from    : bobDid.uri,
-          message : {
-            permissionGrantId : 'bafyreiduimprbncdo2oruvjrvmfmwuyz4xx3d5biegqd2qntlryvuuosem',
-            filter            : {
-              protocol: 'https://doesnotexist.com/protocol'
-            }
+          from              : bobDid.uri,
+          permissionGrantId : 'bafyreiduimprbncdo2oruvjrvmfmwuyz4xx3d5biegqd2qntlryvuuosem',
+          filter            : {
+            protocol: 'https://doesnotexist.com/protocol'
           }
         });
 
@@ -972,61 +871,57 @@ describe('DwnApi', () => {
     });
   });
 
-  describe('records.create()', () => {
+  describe('records.write()', () => {
     beforeEach(async() => {
       // Configure the protocol on both DWNs
       const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
-        message: { definition: protocolDefinition }
+        definition: protocolDefinition
       });
       expect(aliceProtocolStatus.code).toBe(202);
       expect(aliceProtocol).toBeDefined();
       const { status: aliceProtocolSendStatus } = await aliceProtocol.send(aliceDid.uri);
       expect(aliceProtocolSendStatus.code).toBe(202);
-      const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({ message: { definition: protocolDefinition } });
+      const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({ definition: protocolDefinition });
       expect(bobProtocolStatus.code).toBe(202);
       expect(bobProtocol).toBeDefined();
-      const { status: bobProtocolSendStatus } = await bobProtocol!.send(bobDid.uri);
+      const { status: bobProtocolSendStatus } = await bobProtocol.send(bobDid.uri);
       expect(bobProtocolSendStatus.code).toBe(202);
     });
 
     describe('agent', () => {
       it('creates a record with string data', async () => {
         const dataString = 'Hello, world!Hello, world!';
-        const result = await dwnAlice.records.create({
-          data    : dataString,
-          message : {
-            protocol     : protocolUri,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema,
-          }
+        const result = await dwnAlice.records.write({
+          data         : dataString,
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
         });
 
         expect(result.status.code).toBe(202);
         expect(result.status.detail).toBe('Accepted');
         expect(result.record).toBeDefined();
-        expect(await result.record?.data.text()).toBe(dataString);
+        expect(await result.record.data.text()).toBe(dataString);
       });
 
       it('creates a record with tags', async () => {
-        const result = await dwnAlice.records.create({
-          data    : 'some data',
-          message : {
-            protocol     : protocolUri,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema,
-            tags         : {
-              foo   : 'bar',
-              count : 2,
-              bool  : true
-            }
+        const result = await dwnAlice.records.write({
+          data         : 'some data',
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
+          tags         : {
+            foo   : 'bar',
+            count : 2,
+            bool  : true
           }
         });
 
         expect(result.status.code).toBe(202);
         expect(result.status.detail).toBe('Accepted');
         expect(result.record).toBeDefined();
-        expect(result.record?.tags).toBeDefined();
-        expect(result.record?.tags).toEqual({
+        expect(result.record.tags).toBeDefined();
+        expect(result.record.tags).toEqual({
           foo   : 'bar',
           count : 2,
           bool  : true
@@ -1036,19 +931,17 @@ describe('DwnApi', () => {
 
       it('creates a record with JSON data', async () => {
         const dataJson = { hello: 'world!' };
-        const result = await dwnAlice.records.create({
-          data    : dataJson,
-          message : {
-            protocol     : protocolUri,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema,
-            dataFormat   : 'application/json'
-          }
+        const result = await dwnAlice.records.write({
+          data         : dataJson,
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
+          dataFormat   : 'application/json'
         });
         expect(result.status.code).toBe(202);
         expect(result.status.detail).toBe('Accepted');
         expect(result.record).toBeDefined();
-        expect(await result.record?.data.json()).toEqual(dataJson);
+        expect(await result.record.data.json()).toEqual(dataJson);
       });
 
       it('creates a role record for another user that they can use to create role-based records', async () => {
@@ -1072,33 +965,27 @@ describe('DwnApi', () => {
 
         // Configure the photos protocol on Alice and Bob's local and remote DWNs.
         const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({
-          message: {
-            definition: photosProtocolDefinition
-          }
+          definition: photosProtocolDefinition
         });
         expect(bobProtocolStatus.code).toBe(202);
         const { status: bobRemoteProtocolStatus } = await bobProtocol.send(bobDid.uri);
         expect(bobRemoteProtocolStatus.code).toBe(202);
 
         const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
-          message: {
-            definition: photosProtocolDefinition
-          }
+          definition: photosProtocolDefinition
         });
         expect(aliceProtocolStatus.code).toBe(202);
         const { status: aliceRemoteProtocolStatus } = await aliceProtocol.send(aliceDid.uri);
         expect(aliceRemoteProtocolStatus.code).toBe(202);
 
         // Alice creates a role-based 'friend' record, updates it, then sends it to her remote DWN.
-        const { status: friendCreateStatus, record: friendRecord } = await dwnAlice.records.create({
-          data    : 'test',
-          message : {
-            recipient    : bobDid.uri,
-            protocol     : photosProtocolDefinition.protocol,
-            protocolPath : 'friend',
-            schema       : photosProtocolDefinition.types.friend.schema,
-            dataFormat   : 'text/plain'
-          }
+        const { status: friendCreateStatus, record: friendRecord } = await dwnAlice.records.write({
+          data         : 'test',
+          recipient    : bobDid.uri,
+          protocol     : photosProtocolDefinition.protocol,
+          protocolPath : 'friend',
+          schema       : photosProtocolDefinition.types.friend.schema,
+          dataFormat   : 'text/plain'
         });
         expect(friendCreateStatus.code).toBe(202);
         const { status: friendRecordUpdateStatus, record: updatedFriendRecord } = await friendRecord.update({ data: 'update' });
@@ -1107,16 +994,14 @@ describe('DwnApi', () => {
         expect(aliceFriendSendStatus.code).toBe(202);
 
         // Bob creates an album record using the role 'friend' and sends it to Alice
-        const { status: albumCreateStatus, record: albumRecord } = await dwnBob.records.create({
-          data    : 'test',
-          message : {
-            recipient    : aliceDid.uri,
-            protocol     : photosProtocolDefinition.protocol,
-            protocolPath : 'album',
-            protocolRole : 'friend',
-            schema       : photosProtocolDefinition.types.album.schema,
-            dataFormat   : 'text/plain'
-          }
+        const { status: albumCreateStatus, record: albumRecord } = await dwnBob.records.write({
+          data         : 'test',
+          recipient    : aliceDid.uri,
+          protocol     : photosProtocolDefinition.protocol,
+          protocolPath : 'album',
+          protocolRole : 'friend',
+          schema       : photosProtocolDefinition.types.album.schema,
+          dataFormat   : 'text/plain'
         });
         expect(albumCreateStatus.code).toBe(202);
         const { status: bobAlbumSendStatus } = await albumRecord.send(bobDid.uri);
@@ -1125,16 +1010,14 @@ describe('DwnApi', () => {
         expect(aliceAlbumSendStatus.code).toBe(202);
 
         // Bob makes Alice a `participant` and sends the record to her and his own remote node.
-        const { status: participantCreateStatus, record: participantRecord } = await dwnBob.records.create({
-          data    : 'test',
-          message : {
-            parentContextId : albumRecord.contextId,
-            recipient       : aliceDid.uri,
-            protocol        : photosProtocolDefinition.protocol,
-            protocolPath    : 'album/participant',
-            schema          : photosProtocolDefinition.types.participant.schema,
-            dataFormat      : 'text/plain'
-          }
+        const { status: participantCreateStatus, record: participantRecord } = await dwnBob.records.write({
+          data            : 'test',
+          parentContextId : albumRecord.contextId,
+          recipient       : aliceDid.uri,
+          protocol        : photosProtocolDefinition.protocol,
+          protocolPath    : 'album/participant',
+          schema          : photosProtocolDefinition.types.participant.schema,
+          dataFormat      : 'text/plain'
         });
         expect(participantCreateStatus.code).toBe(202);
         const { status: bobParticipantSendStatus } = await participantRecord.send(bobDid.uri);
@@ -1144,11 +1027,9 @@ describe('DwnApi', () => {
 
         // Alice fetches the album record as well as the participant record that Bob created and stores it on her local node.
         const aliceAlbumReadResult = await dwnAlice.records.read({
-          from    : aliceDid.uri,
-          message : {
-            filter: {
-              recordId: albumRecord.id
-            }
+          from   : aliceDid.uri,
+          filter : {
+            recordId: albumRecord.id
           }
         });
         expect(aliceAlbumReadResult.status.code).toBe(200);
@@ -1157,11 +1038,9 @@ describe('DwnApi', () => {
         expect(aliceAlbumReadStoreStatus.code).toBe(202);
 
         const aliceParticipantReadResult = await dwnAlice.records.read({
-          from    : aliceDid.uri,
-          message : {
-            filter: {
-              recordId: participantRecord.id
-            }
+          from   : aliceDid.uri,
+          filter : {
+            recordId: participantRecord.id
           }
         });
         expect(aliceParticipantReadResult.status.code).toBe(200);
@@ -1171,17 +1050,15 @@ describe('DwnApi', () => {
 
         // Using the participant role, Alice can make Bob an `updater` and send the record to him and her own remote node.
         // Only updater roles can update the photo record after it's been created.
-        const { status: updaterCreateStatus, record: updaterRecord } = await dwnAlice.records.create({
-          data    : 'test',
-          message : {
-            parentContextId : albumRecord.contextId,
-            recipient       : bobDid.uri,
-            protocol        : photosProtocolDefinition.protocol,
-            protocolPath    : 'album/updater',
-            protocolRole    : 'album/participant',
-            schema          : photosProtocolDefinition.types.updater.schema,
-            dataFormat      : 'text/plain'
-          }
+        const { status: updaterCreateStatus, record: updaterRecord } = await dwnAlice.records.write({
+          data            : 'test',
+          parentContextId : albumRecord.contextId,
+          recipient       : bobDid.uri,
+          protocol        : photosProtocolDefinition.protocol,
+          protocolPath    : 'album/updater',
+          protocolRole    : 'album/participant',
+          schema          : photosProtocolDefinition.types.updater.schema,
+          dataFormat      : 'text/plain'
         });
         expect(updaterCreateStatus.code).toBe(202);
         const { status: bobUpdaterSendStatus } = await updaterRecord.send(bobDid.uri);
@@ -1190,16 +1067,14 @@ describe('DwnApi', () => {
         expect(aliceUpdaterSendStatus.code).toBe(202);
 
         // Alice creates a photo using her participant role and sends it to her own DWN and Bob's DWN.
-        const { status: photoCreateStatus, record: photoRecord } = await dwnAlice.records.create({
-          data    : 'test',
-          message : {
-            parentContextId : albumRecord.contextId,
-            protocol        : photosProtocolDefinition.protocol,
-            protocolPath    : 'album/photo',
-            protocolRole    : 'album/participant',
-            schema          : photosProtocolDefinition.types.photo.schema,
-            dataFormat      : 'text/plain'
-          }
+        const { status: photoCreateStatus, record: photoRecord } = await dwnAlice.records.write({
+          data            : 'test',
+          parentContextId : albumRecord.contextId,
+          protocol        : photosProtocolDefinition.protocol,
+          protocolPath    : 'album/photo',
+          protocolRole    : 'album/participant',
+          schema          : photosProtocolDefinition.types.photo.schema,
+          dataFormat      : 'text/plain'
         });
         expect(photoCreateStatus.code).toBe(202);
         const { status:alicePhotoSendStatus } = await photoRecord.send(aliceDid.uri);
@@ -1209,18 +1084,16 @@ describe('DwnApi', () => {
 
         // Bob updates the photo using his updater role and sends it to Alice and his own DWN.
         const { status: photoUpdateStatus, record: photoUpdateRecord } = await dwnBob.records.write({
-          data    : 'test again',
-          store   : false,
-          message : {
-            parentContextId : albumRecord.contextId,
-            recordId        : photoRecord.id,
-            dateCreated     : photoRecord.dateCreated,
-            protocol        : photosProtocolDefinition.protocol,
-            protocolPath    : 'album/photo',
-            protocolRole    : 'album/updater',
-            schema          : photosProtocolDefinition.types.photo.schema,
-            dataFormat      : 'text/plain'
-          }
+          data            : 'test again',
+          store           : false,
+          parentContextId : albumRecord.contextId,
+          recordId        : photoRecord.id,
+          dateCreated     : photoRecord.dateCreated,
+          protocol        : photosProtocolDefinition.protocol,
+          protocolPath    : 'album/photo',
+          protocolRole    : 'album/updater',
+          schema          : photosProtocolDefinition.types.photo.schema,
+          dataFormat      : 'text/plain'
         });
         expect(photoUpdateStatus.code).toBe(202);
         const { status:alicePhotoUpdateSendStatus } = await photoUpdateRecord.send(aliceDid.uri);
@@ -1230,11 +1103,9 @@ describe('DwnApi', () => {
 
         // Alice fetches the photo and stores it on her local DWN.
         const alicePhotoReadResult = await dwnAlice.records.read({
-          from    : aliceDid.uri,
-          message : {
-            filter: {
-              recordId: photoRecord.id
-            }
+          from   : aliceDid.uri,
+          filter : {
+            recordId: photoRecord.id
           }
         });
         expect(alicePhotoReadResult.status.code).toBe(200);
@@ -1247,89 +1118,54 @@ describe('DwnApi', () => {
     describe('agent store: false', () => {
       it('does not persist record to agent DWN', async () => {
         const dataString = 'Hello, world!';
-        const createResult = await dwnAlice.records.create({
-          store   : false,
-          data    : dataString,
-          message : {
-            schema     : 'foo/bar',
-            dataFormat : 'text/plain'
-          }
+        const createResult = await dwnAlice.records.write({
+          store      : false,
+          data       : dataString,
+          schema     : 'foo/bar',
+          dataFormat : 'text/plain'
         });
 
         expect(createResult.status.code).toBe(202);
         expect(createResult.status.detail).toBe('Accepted');
         expect(createResult.record).toBeDefined();
-        expect(await createResult.record?.data.text()).toBe(dataString);
+        expect(await createResult.record.data.text()).toBe(dataString);
 
         const queryResult = await dwnAlice.records.query({
-          message: {
-            filter: {
-              schema: 'foo/bar'
-            }
+          filter: {
+            schema: 'foo/bar'
           }
         });
 
         expect(queryResult.status.code).toBe(200);
         expect(queryResult.records).toBeDefined();
-        expect(queryResult.records!.length).toBe(0);
+        expect(queryResult.records.length).toBe(0);
       });
 
       it('has no effect if `store: true`', async () => {
         const dataString = 'Hello, world!';
-        const createResult = await dwnAlice.records.create({
-          store   : true,
-          data    : dataString,
-          message : {
-            schema     : 'foo/bar',
-            dataFormat : 'text/plain'
-          }
+        const createResult = await dwnAlice.records.write({
+          store      : true,
+          data       : dataString,
+          schema     : 'foo/bar',
+          dataFormat : 'text/plain'
         });
 
         expect(createResult.status.code).toBe(202);
         expect(createResult.status.detail).toBe('Accepted');
         expect(createResult.record).toBeDefined();
-        expect(await createResult.record?.data.text()).toBe(dataString);
+        expect(await createResult.record.data.text()).toBe(dataString);
 
         const queryResult = await dwnAlice.records.query({
-          message: {
-            filter: {
-              schema: 'foo/bar'
-            }
+          filter: {
+            schema: 'foo/bar'
           }
         });
 
         expect(queryResult.status.code).toBe(200);
         expect(queryResult.records).toBeDefined();
-        expect(queryResult.records!.length).toBe(1);
-        expect(queryResult.records![0].id).toBe(createResult.record!.id);
-        expect(await queryResult.records![0].data.text()).toBe(dataString);
-      });
-    });
-  });
-
-  describe('records.createFrom()', () => {
-    describe('agent', () => {
-      it('creates a new record that inherits properties from an existing record', async () => {
-        // Create a record.
-        const { record: baseRecord } = await dwnAlice.records.create({
-          data    : 'Hello, world!',
-          message : {
-            schema     : 'foo/bar',
-            dataFormat : 'text/plain'
-          }
-        });
-
-        // Create a new record, inheriting properties from the first record.
-        const writeResponse = await dwnAlice.records.createFrom({
-          author : aliceDid.uri,
-          data   : 'Foo bar!',
-          record : baseRecord
-        });
-
-        expect(writeResponse.status.code).toBe(202);
-        expect(writeResponse.status.detail).toBe('Accepted');
-        expect(writeResponse.record).toBeDefined();
-        expect(await writeResponse.record?.data.text()).toBe('Foo bar!');
+        expect(queryResult.records.length).toBe(1);
+        expect(queryResult.records[0].id).toBe(createResult.record.id);
+        expect(await queryResult.records[0].data.text()).toBe(dataString);
       });
     });
   });
@@ -1338,42 +1174,38 @@ describe('DwnApi', () => {
     beforeEach(async() => {
       // Configure the protocol on both DWNs
       const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
-        message: { definition: protocolDefinition }
+        definition: protocolDefinition
       });
       expect(aliceProtocolStatus.code).toBe(202);
       expect(aliceProtocol).toBeDefined();
       const { status: aliceProtocolSendStatus } = await aliceProtocol.send(aliceDid.uri);
       expect(aliceProtocolSendStatus.code).toBe(202);
-      const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({ message: { definition: protocolDefinition } });
+      const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({ definition: protocolDefinition });
       expect(bobProtocolStatus.code).toBe(202);
       expect(bobProtocol).toBeDefined();
-      const { status: bobProtocolSendStatus } = await bobProtocol!.send(bobDid.uri);
+      const { status: bobProtocolSendStatus } = await bobProtocol.send(bobDid.uri);
       expect(bobProtocolSendStatus.code).toBe(202);
     });
 
     describe('agent', () => {
       it('deletes a record', async () => {
         const { status: writeStatus, record } = await dwnAlice.records.write({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : protocolUri,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema,
-          }
+          data         : 'Hello, world!',
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
         });
 
         expect(writeStatus.code).toBe(202);
         expect(record).toBeDefined();
 
         // Write the record to Alice's remote DWN.
-        const { status } = await record!.send(aliceDid.uri);
+        const { status } = await record.send(aliceDid.uri);
         expect(status.code).toBe(202);
 
         const deleteResult = await dwnAlice.records.delete({
           protocol : protocolUri,
-          message  : {
-            recordId: record!.id
-          }
+          recordId : record.id
         });
 
         expect(deleteResult.status.code).toBe(202);
@@ -1382,22 +1214,20 @@ describe('DwnApi', () => {
       it('deletes a record and prunes its children', async () => {
         // Install a protocol that supports parent-child relationships.
         const { status: protocolStatus, protocol } = await dwnAlice.protocols.configure({
-          message: {
-            definition: {
-              protocol  : 'http://example.com/parent-child',
-              published : true,
-              types     : {
-                foo: {
-                  schema: 'http://example.com/foo',
-                },
-                bar: {
-                  schema: 'http://example.com/bar'
-                }
+          definition: {
+            protocol  : 'http://example.com/parent-child',
+            published : true,
+            types     : {
+              foo: {
+                schema: 'http://example.com/foo',
               },
-              structure: {
-                foo: {
-                  bar: {}
-                }
+              bar: {
+                schema: 'http://example.com/bar'
+              }
+            },
+            structure: {
+              foo: {
+                bar: {}
               }
             }
           }
@@ -1406,61 +1236,51 @@ describe('DwnApi', () => {
 
         // Write a parent record.
         const { status: parentWriteStatus, record: parentRecord } = await dwnAlice.records.write({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : protocol.definition.protocol,
-            protocolPath : 'foo',
-            schema       : 'http://example.com/foo',
-            dataFormat   : 'text/plain'
-          }
+          data         : 'Hello, world!',
+          protocol     : protocol.definition.protocol,
+          protocolPath : 'foo',
+          schema       : 'http://example.com/foo',
+          dataFormat   : 'text/plain'
         });
         expect(parentWriteStatus.code).toBe(202);
         expect(parentRecord).toBeDefined();
 
         // Write a child record.
         const { status: childWriteStatus, record: childRecord } = await dwnAlice.records.write({
-          data    : 'Hello, world!',
-          message : {
-            protocol        : protocol.definition.protocol,
-            protocolPath    : 'foo/bar',
-            schema          : 'http://example.com/bar',
-            dataFormat      : 'text/plain',
-            parentContextId : parentRecord.contextId
-          }
+          data            : 'Hello, world!',
+          protocol        : protocol.definition.protocol,
+          protocolPath    : 'foo/bar',
+          schema          : 'http://example.com/bar',
+          dataFormat      : 'text/plain',
+          parentContextId : parentRecord.contextId
         });
         expect(childWriteStatus.code).toBe(202);
         expect(childRecord).toBeDefined();
 
         // query for child records to confirm it exists
         const { status: childrenStatus, records: childrenRecords } = await dwnAlice.records.query({
-          message: {
-            filter: {
-              protocol     : protocol.definition.protocol,
-              protocolPath : 'foo/bar'
-            }
+          filter: {
+            protocol     : protocol.definition.protocol,
+            protocolPath : 'foo/bar'
           }
         });
         expect(childrenStatus.code).toBe(200);
         expect(childrenRecords).toBeDefined();
         expect(childrenRecords).toHaveLength(1);
-        expect(childrenRecords![0].id).toBe(childRecord.id);
+        expect(childrenRecords[0].id).toBe(childRecord.id);
 
         // Delete the parent record and its children.
         const { status: deleteStatus } = await dwnAlice.records.delete({
-          message: {
-            recordId : parentRecord.id,
-            prune    : true
-          }
+          recordId : parentRecord.id,
+          prune    : true
         });
         expect(deleteStatus.code).toBe(202);
 
         // query for child records to confirm it was deleted
         const { status: childrenStatusAfterDelete, records: childrenRecordsAfterDelete } = await dwnAlice.records.query({
-          message: {
-            filter: {
-              protocol     : protocol.definition.protocol,
-              protocolPath : 'foo/bar'
-            }
+          filter: {
+            protocol     : protocol.definition.protocol,
+            protocolPath : 'foo/bar'
           }
         });
         expect(childrenStatusAfterDelete.code).toBe(200);
@@ -1471,9 +1291,7 @@ describe('DwnApi', () => {
       it('returns a 404 when the specified record does not exist', async () => {
         const deleteResult = await dwnAlice.records.delete({
           protocol : protocolUri,
-          message  : {
-            recordId: 'abcd1234'
-          }
+          recordId : 'abcd1234'
         });
         expect(deleteResult.status.code).toBe(404);
       });
@@ -1481,13 +1299,11 @@ describe('DwnApi', () => {
       it('stores a deleted record along with its initialWrite', async () => {
         // Write a record but do not store it
         const { status: initialWriteStatus, record: initialWriteRecord } = await dwnAlice.records.write({
-          store   : false,
-          data    : 'Hello, world!',
-          message : {
-            protocol     : protocolUri,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema,
-          }
+          store        : false,
+          data         : 'Hello, world!',
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
         });
         expect(initialWriteStatus.code).toBe(202);
 
@@ -1508,26 +1324,22 @@ describe('DwnApi', () => {
     describe('from: did', () => {
       it('deletes a record', async () => {
         const { status: writeStatus, record } = await dwnAlice.records.write({
-          data    : 'Hello, world!',
-          message : {
-            schema     : 'foo/bar',
-            dataFormat : 'text/plain'
-          }
+          data       : 'Hello, world!',
+          schema     : 'foo/bar',
+          dataFormat : 'text/plain'
         });
 
         expect(writeStatus.code).toBe(202);
         expect(record).toBeDefined();
 
         // Write the record to the remote DWN.
-        const { status } = await record!.send(aliceDid.uri);
+        const { status } = await record.send(aliceDid.uri);
         expect(status.code).toBe(202);
 
         // Attempt to delete a record from the remote DWN.
         const deleteResult = await dwnAlice.records.delete({
-          from    : aliceDid.uri,
-          message : {
-            recordId: record.id
-          }
+          from     : aliceDid.uri,
+          recordId : record.id
         });
 
         expect(deleteResult.status.code).toBe(202);
@@ -1537,10 +1349,8 @@ describe('DwnApi', () => {
       it('returns a 401 when authentication or authorization fails', async () => {
         // Create a record on Bob's local DWN.
         const writeResult = await dwnBob.records.write({
-          data    : 'Hello, world!',
-          message : {
-            dataFormat: 'foo'
-          }
+          data       : 'Hello, world!',
+          dataFormat : 'foo'
         });
         expect(writeResult.status.code).toBe(202);
 
@@ -1550,10 +1360,8 @@ describe('DwnApi', () => {
 
         // Alice attempts to delete a record from Bob's remote DWN specifying a recordId.
         const deleteResult = await dwnAlice.records.delete({
-          from    : bobDid.uri,
-          message : {
-            recordId: writeResult.record.id
-          }
+          from     : bobDid.uri,
+          recordId : writeResult.record.id
         });
 
         /** Confirm that authorization failed because the Alice identity does not have
@@ -1573,9 +1381,7 @@ describe('DwnApi', () => {
          *   1. Configure the email protocol on Bob's local DWN.
          */
         const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({
-          message: {
-            definition: protocolDefinition,
-          }
+          definition: protocolDefinition,
         });
         expect(bobProtocolStatus.code).toBe(202);
         /**
@@ -1586,15 +1392,13 @@ describe('DwnApi', () => {
         /**
          *   3. Alice creates a record, but doesn't store it locally.
          */
-        const { status: createStatus, record: testRecord } = await dwnAlice.records.create({
-          store   : false,
-          data    : 'test',
-          message : {
-            protocol     : protocolUri,
-            protocolPath : 'thread',
-            schema       : 'http://email-protocol.xyz/schema/thread',
-            dataFormat   : 'text/plain'
-          }
+        const { status: createStatus, record: testRecord } = await dwnAlice.records.write({
+          store        : false,
+          data         : 'test',
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : 'http://email-protocol.xyz/schema/thread',
+          dataFormat   : 'text/plain'
         });
         expect(createStatus.code).toBe(202);
         expect(testRecord.author).toBe(aliceDid.uri);
@@ -1607,10 +1411,8 @@ describe('DwnApi', () => {
          *   5. Bob deletes the record from his remote DWN.
          */
         const deleteResult = await dwnBob.records.delete({
-          from    : bobDid.uri,
-          message : {
-            recordId: testRecord.id
-          }
+          from     : bobDid.uri,
+          recordId : testRecord.id
         });
         expect(deleteResult.status.code).toBe(202);
       });
@@ -1621,61 +1423,55 @@ describe('DwnApi', () => {
     beforeEach(async() => {
       // Configure the protocol on both DWNs
       const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
-        message: { definition: protocolDefinition }
+        definition: protocolDefinition
       });
       expect(aliceProtocolStatus.code).toBe(202);
       expect(aliceProtocol).toBeDefined();
       const { status: aliceProtocolSendStatus } = await aliceProtocol.send(aliceDid.uri);
       expect(aliceProtocolSendStatus.code).toBe(202);
-      const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({ message: { definition: protocolDefinition } });
+      const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({ definition: protocolDefinition });
       expect(bobProtocolStatus.code).toBe(202);
       expect(bobProtocol).toBeDefined();
-      const { status: bobProtocolSendStatus } = await bobProtocol!.send(bobDid.uri);
+      const { status: bobProtocolSendStatus } = await bobProtocol.send(bobDid.uri);
       expect(bobProtocolSendStatus.code).toBe(202);
     });
 
     describe('agent', () => {
       it('returns an array of records that match the filter provided', async () => {
         const writeResult = await dwnAlice.records.write({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : protocolUri,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain'
-          }
+          data         : 'Hello, world!',
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
         });
         expect(writeResult.status.code).toBe(202);
         expect(writeResult.status.detail).toBe('Accepted');
         expect(writeResult.record).toBeDefined();
 
         const result = await dwnAlice.records.query({
-          message: {
-            filter: {
-              protocol     : protocolUri,
-              protocolPath : 'thread',
-              schema       : protocolDefinition.types.thread.schema,
-              dataFormat   : 'text/plain'
-            }
+          filter: {
+            protocol     : protocolUri,
+            protocolPath : 'thread',
+            schema       : protocolDefinition.types.thread.schema,
+            dataFormat   : 'text/plain'
           }
         });
 
         expect(result.status.code).toBe(200);
         expect(result.records).toBeDefined();
-        expect(result.records!.length).toBe(1);
-        expect(result.records![0].id).toBe(writeResult.record!.id);
+        expect(result.records.length).toBe(1);
+        expect(result.records[0].id).toBe(writeResult.record.id);
       });
 
       it('returns cursor when there are additional results', async () => {
         for (let i = 0; i < 3; i++ ) {
           const writeResult = await dwnAlice.records.write({
-            data    : `Hello, world ${i + 1}!`,
-            message : {
-              protocol     : protocolUri,
-              protocolPath : 'thread',
-              schema       : protocolDefinition.types.thread.schema,
-              dataFormat   : 'text/plain'
-            }
+            data         : `Hello, world ${i + 1}!`,
+            protocol     : protocolUri,
+            protocolPath : 'thread',
+            schema       : protocolDefinition.types.thread.schema,
+            dataFormat   : 'text/plain'
           });
 
           expect(writeResult.status.code).toBe(202);
@@ -1684,36 +1480,32 @@ describe('DwnApi', () => {
         }
 
         const results = await dwnAlice.records.query({
-          message: {
-            filter: {
-              protocol     : protocolUri,
-              protocolPath : 'thread',
-              schema       : protocolDefinition.types.thread.schema,
-              dataFormat   : 'text/plain'
-            },
-            pagination: { limit: 2 } // set a limit of 2
-          }
+          filter: {
+            protocol     : protocolUri,
+            protocolPath : 'thread',
+            schema       : protocolDefinition.types.thread.schema,
+            dataFormat   : 'text/plain'
+          },
+          pagination: { limit: 2 } // set a limit of 2
         });
 
         expect(results.status.code).toBe(200);
         expect(results.records).toBeDefined();
-        expect(results.records!.length).toBe(2);
+        expect(results.records.length).toBe(2);
         expect(results.cursor).toBeDefined();
 
         const additionalResults = await dwnAlice.records.query({
-          message: {
-            filter: {
-              protocol     : protocolUri,
-              protocolPath : 'thread',
-              schema       : protocolDefinition.types.thread.schema,
-              dataFormat   : 'text/plain'
-            },
-            pagination: { limit: 2, cursor: results.cursor }
-          }
+          filter: {
+            protocol     : protocolUri,
+            protocolPath : 'thread',
+            schema       : protocolDefinition.types.thread.schema,
+            dataFormat   : 'text/plain'
+          },
+          pagination: { limit: 2, cursor: results.cursor }
         });
         expect(additionalResults.status.code).toBe(200);
         expect(additionalResults.records).toBeDefined();
-        expect(additionalResults.records!.length).toBe(1);
+        expect(additionalResults.records.length).toBe(1);
         expect(additionalResults.cursor).toBeUndefined();
       });
 
@@ -1724,14 +1516,12 @@ describe('DwnApi', () => {
         const publishedItems = [];
         for (let i = 0; i < 6; i++ ) {
           const writeResult = await dwnAlice.records.write({
-            data    : `Hello, world ${i + 1}!`,
-            message : {
-              published    : i % 2 == 0 ? true : false,
-              protocol     : protocolUri,
-              protocolPath : 'thread',
-              schema       : protocolDefinition.types.thread.schema,
-              dataFormat   : 'text/plain'
-            }
+            data         : `Hello, world ${i + 1}!`,
+            published    : i % 2 == 0 ? true : false,
+            protocol     : protocolUri,
+            protocolPath : 'thread',
+            schema       : protocolDefinition.types.thread.schema,
+            dataFormat   : 'text/plain'
           });
 
           expect(writeResult.status.code).toBe(202);
@@ -1749,70 +1539,62 @@ describe('DwnApi', () => {
 
         // query in ascending order by the dateCreated field
         const createdAscResults = await dwnAlice.records.query({
-          message: {
-            filter: {
-              protocol     : protocolUri,
-              protocolPath : 'thread',
-              schema       : protocolDefinition.types.thread.schema,
-              dataFormat   : 'text/plain'
-            },
-            dateSort: DwnDateSort.CreatedAscending // same as default
-          }
+          filter: {
+            protocol     : protocolUri,
+            protocolPath : 'thread',
+            schema       : protocolDefinition.types.thread.schema,
+            dataFormat   : 'text/plain'
+          },
+          dateSort: DwnDateSort.CreatedAscending // same as default
         });
         expect(createdAscResults.status.code).toBe(200);
         expect(createdAscResults.records).toBeDefined();
-        expect(createdAscResults.records!.length).toBe(6);
+        expect(createdAscResults.records.length).toBe(6);
         expect(createdAscResults.records.map(r => r.id)).toEqual(items);
 
         // query in descending order by the dateCreated field
         const createdDescResults = await dwnAlice.records.query({
-          message: {
-            filter: {
-              protocol     : protocolUri,
-              protocolPath : 'thread',
-              schema       : protocolDefinition.types.thread.schema,
-              dataFormat   : 'text/plain'
-            },
-            dateSort: DwnDateSort.CreatedDescending
-          }
+          filter: {
+            protocol     : protocolUri,
+            protocolPath : 'thread',
+            schema       : protocolDefinition.types.thread.schema,
+            dataFormat   : 'text/plain'
+          },
+          dateSort: DwnDateSort.CreatedDescending
         });
         expect(createdDescResults.status.code).toBe(200);
         expect(createdDescResults.records).toBeDefined();
-        expect(createdDescResults.records!.length).toBe(6);
+        expect(createdDescResults.records.length).toBe(6);
         expect(createdDescResults.records.map(r => r.id)).toEqual([...items].reverse());
 
         // query in ascending order by the datePublished field, this will only return published records
         const publishedAscResults = await dwnAlice.records.query({
-          message: {
-            filter: {
-              protocol     : protocolUri,
-              protocolPath : 'thread',
-              schema       : protocolDefinition.types.thread.schema,
-              dataFormat   : 'text/plain'
-            },
-            dateSort: DwnDateSort.PublishedAscending
-          }
+          filter: {
+            protocol     : protocolUri,
+            protocolPath : 'thread',
+            schema       : protocolDefinition.types.thread.schema,
+            dataFormat   : 'text/plain'
+          },
+          dateSort: DwnDateSort.PublishedAscending
         });
         expect(publishedAscResults.status.code).toBe(200);
         expect(publishedAscResults.records).toBeDefined();
-        expect(publishedAscResults.records!.length).toBe(3);
+        expect(publishedAscResults.records.length).toBe(3);
         expect(publishedAscResults.records.map(r => r.id)).toEqual(publishedItems);
 
         // query in desscending order by the datePublished field, this will only return published records
         const publishedDescResults = await dwnAlice.records.query({
-          message: {
-            filter: {
-              protocol     : protocolUri,
-              protocolPath : 'thread',
-              schema       : protocolDefinition.types.thread.schema,
-              dataFormat   : 'text/plain'
-            },
-            dateSort: DwnDateSort.PublishedDescending
-          }
+          filter: {
+            protocol     : protocolUri,
+            protocolPath : 'thread',
+            schema       : protocolDefinition.types.thread.schema,
+            dataFormat   : 'text/plain'
+          },
+          dateSort: DwnDateSort.PublishedDescending
         });
         expect(publishedDescResults.status.code).toBe(200);
         expect(publishedDescResults.records).toBeDefined();
-        expect(publishedDescResults.records!.length).toBe(3);
+        expect(publishedDescResults.records.length).toBe(3);
         expect(publishedDescResults.records.map(r => r.id)).toEqual([...publishedItems].reverse());
       });
 
@@ -1820,8 +1602,49 @@ describe('DwnApi', () => {
 
         // Write a record to the agent's local DWN that includes a tag `foo` with value `bar`
         const { status, record } = await dwnAlice.records.write({
-          data    : 'Hello, world!',
-          message : {
+          data         : 'Hello, world!',
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain',
+          tags         : {
+            foo: 'bar',
+          }
+        });
+        expect(status.code).toBe(202);
+
+        // Write a record to the agent's local DWN that includes a tag `foo` with value `baz`
+        const { status: status2 } = await dwnAlice.records.write({
+          data         : 'Hello, world!',
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain',
+          tags         : {
+            foo: 'baz',
+          }
+        });
+        expect(status2.code).toBe(202);
+
+        // Control: query the agent's local DWN for the record without any tag filters
+        const result = await dwnAlice.records.query({
+          filter: {
+            protocol     : protocolUri,
+            protocolPath : 'thread',
+            schema       : protocolDefinition.types.thread.schema,
+            dataFormat   : 'text/plain'
+          }
+        });
+
+        // should return both records
+        expect(result.status.code).toBe(200);
+        expect(result.records).toBeDefined();
+        expect(result.records.length).toBe(2);
+
+
+        // Query the agent's local DWN for the record using the tags.
+        const fooBarResult = await dwnAlice.records.query({
+          filter: {
             protocol     : protocolUri,
             protocolPath : 'thread',
             schema       : protocolDefinition.types.thread.schema,
@@ -1831,62 +1654,13 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(status.code).toBe(202);
-
-        // Write a record to the agent's local DWN that includes a tag `foo` with value `baz`
-        const { status: status2 } = await dwnAlice.records.write({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : protocolUri,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain',
-            tags         : {
-              foo: 'baz',
-            }
-          }
-        });
-        expect(status2.code).toBe(202);
-
-        // Control: query the agent's local DWN for the record without any tag filters
-        const result = await dwnAlice.records.query({
-          message: {
-            filter: {
-              protocol     : protocolUri,
-              protocolPath : 'thread',
-              schema       : protocolDefinition.types.thread.schema,
-              dataFormat   : 'text/plain'
-            }
-          }
-        });
-
-        // should return both records
-        expect(result.status.code).toBe(200);
-        expect(result.records).toBeDefined();
-        expect(result.records!.length).toBe(2);
-
-
-        // Query the agent's local DWN for the record using the tags.
-        const fooBarResult = await dwnAlice.records.query({
-          message: {
-            filter: {
-              protocol     : protocolUri,
-              protocolPath : 'thread',
-              schema       : protocolDefinition.types.thread.schema,
-              dataFormat   : 'text/plain',
-              tags         : {
-                foo: 'bar',
-              }
-            }
-          }
-        });
 
         // should only return the record with the tag `foo` and value `bar`
         expect(fooBarResult.status.code).toBe(200);
         expect(fooBarResult.records).toBeDefined();
-        expect(fooBarResult.records!.length).toBe(1);
-        expect(fooBarResult.records![0].id).toBe(record.id);
-        expect(fooBarResult.records![0].tags).toEqual({ foo: 'bar' });
+        expect(fooBarResult.records.length).toBe(1);
+        expect(fooBarResult.records[0].id).toBe(record.id);
+        expect(fooBarResult.records[0].tags).toEqual({ foo: 'bar' });
       });
     });
 
@@ -1894,13 +1668,11 @@ describe('DwnApi', () => {
       it('returns an array of records that match the filter provided', async () => {
         // Write a record to the agent's local DWN.
         const { record } = await dwnAlice.records.write({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : protocolUri,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain'
-          }
+          data         : 'Hello, world!',
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
         });
 
         // Write the record to the agent's remote DWN.
@@ -1908,38 +1680,34 @@ describe('DwnApi', () => {
 
         // Query the agent's remote DWN.
         const result = await dwnAlice.records.query({
-          from    : aliceDid.uri,
-          message : {
-            filter: {
-              protocol     : protocolUri,
-              protocolPath : 'thread',
-              schema       : protocolDefinition.types.thread.schema,
-              dataFormat   : 'text/plain'
-            }
+          from   : aliceDid.uri,
+          filter : {
+            protocol     : protocolUri,
+            protocolPath : 'thread',
+            schema       : protocolDefinition.types.thread.schema,
+            dataFormat   : 'text/plain'
           }
         });
 
         // Verify the query returns a result.
         expect(result.status.code).toBe(200);
         expect(result.records).toBeDefined();
-        expect(result.records!.length).toBe(1);
-        expect(result.records![0].id).toBe(record!.id);
+        expect(result.records.length).toBe(1);
+        expect(result.records[0].id).toBe(record.id);
       });
 
       it('returns empty records array when no records match the filter provided', async () => {
         // Attempt to query Bob's DWN using the ID of a record that does not exist.
         const result = await dwnAlice.records.query({
-          from    : bobDid.uri,
-          message : {
-            filter: {
-              recordId: 'abcd1234'
-            }
+          from   : bobDid.uri,
+          filter : {
+            recordId: 'abcd1234'
           }
         });
         // Confirm that the record does not currently exist on Bob's DWN.
         expect(result.status.code).toBe(200);
         expect(result.records).toBeDefined();
-        expect(result.records!.length).toBe(0);
+        expect(result.records.length).toBe(0);
       });
 
       it('returns the correct author for records signed by another DID', async () => {
@@ -1953,9 +1721,7 @@ describe('DwnApi', () => {
          *   1. Configure the email protocol on Bob's local DWN.
          */
         const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({
-          message: {
-            definition: protocolDefinition
-          }
+          definition: protocolDefinition
         });
         expect(bobProtocolStatus.code).toBe(202);
         /**
@@ -1966,15 +1732,13 @@ describe('DwnApi', () => {
         /**
          *   3. Alice creates a record, but doesn't store it locally.
          */
-        const { status: createStatus, record: testRecord } = await dwnAlice.records.create({
-          store   : false,
-          data    : 'test',
-          message : {
-            protocol     : protocolUri,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain'
-          }
+        const { status: createStatus, record: testRecord } = await dwnAlice.records.write({
+          store        : false,
+          data         : 'test',
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
         });
         expect(createStatus.code).toBe(202);
         expect(testRecord.author).toBe(aliceDid.uri);
@@ -1987,11 +1751,9 @@ describe('DwnApi', () => {
          *   5. Bob queries his remote DWN for the record.
          */
         const bobQueryResult = await dwnBob.records.query({
-          from    : bobDid.uri,
-          message : {
-            filter: {
-              recordId: testRecord.id
-            }
+          from   : bobDid.uri,
+          filter : {
+            recordId: testRecord.id
           }
         });
 
@@ -2004,9 +1766,57 @@ describe('DwnApi', () => {
 
         // Write a record to alice's remote DWN that includes a tag `foo` with value `bar`
         const { status, record } = await dwnAlice.records.write({
-          store   : false,
-          data    : 'Hello, world!',
-          message : {
+          store        : false,
+          data         : 'Hello, world!',
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain',
+          tags         : {
+            foo: 'bar',
+          }
+        });
+        expect(status.code).toBe(202);
+        const { status: sendFooBarStatus } = await record.send(aliceDid.uri);
+        expect(sendFooBarStatus.code).toBe(202);
+
+        // Write a record to alice's remote DWN that includes a tag `foo` with value `baz`
+        const { status: status2, record: record2 } = await dwnAlice.records.write({
+          store        : false,
+          data         : 'Hello, world!',
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain',
+          tags         : {
+            foo: 'baz',
+          }
+        });
+        expect(status2.code).toBe(202);
+        const { status: sendFooBazStatus } = await record2.send(aliceDid.uri);
+        expect(sendFooBazStatus.code).toBe(202);
+
+        // Control: query the agent's local DWN for the record without any tag filters
+        const result = await dwnAlice.records.query({
+          from   : aliceDid.uri,
+          filter : {
+            protocol     : protocolUri,
+            protocolPath : 'thread',
+            schema       : protocolDefinition.types.thread.schema,
+            dataFormat   : 'text/plain'
+          }
+        });
+
+        // should return both records
+        expect(result.status.code).toBe(200);
+        expect(result.records).toBeDefined();
+        expect(result.records.length).toBe(2);
+
+
+        // Query the agent's local DWN for the record using the tags.
+        const fooBarResult = await dwnAlice.records.query({
+          from   : aliceDid.uri,
+          filter : {
             protocol     : protocolUri,
             protocolPath : 'thread',
             schema       : protocolDefinition.types.thread.schema,
@@ -2016,69 +1826,13 @@ describe('DwnApi', () => {
             }
           }
         });
-        expect(status.code).toBe(202);
-        const { status: sendFooBarStatus } = await record.send(aliceDid.uri);
-        expect(sendFooBarStatus.code).toBe(202);
-
-        // Write a record to alice's remote DWN that includes a tag `foo` with value `baz`
-        const { status: status2, record: record2 } = await dwnAlice.records.write({
-          store   : false,
-          data    : 'Hello, world!',
-          message : {
-            protocol     : protocolUri,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain',
-            tags         : {
-              foo: 'baz',
-            }
-          }
-        });
-        expect(status2.code).toBe(202);
-        const { status: sendFooBazStatus } = await record2.send(aliceDid.uri);
-        expect(sendFooBazStatus.code).toBe(202);
-
-        // Control: query the agent's local DWN for the record without any tag filters
-        const result = await dwnAlice.records.query({
-          from    : aliceDid.uri,
-          message : {
-            filter: {
-              protocol     : protocolUri,
-              protocolPath : 'thread',
-              schema       : protocolDefinition.types.thread.schema,
-              dataFormat   : 'text/plain'
-            }
-          }
-        });
-
-        // should return both records
-        expect(result.status.code).toBe(200);
-        expect(result.records).toBeDefined();
-        expect(result.records!.length).toBe(2);
-
-
-        // Query the agent's local DWN for the record using the tags.
-        const fooBarResult = await dwnAlice.records.query({
-          from    : aliceDid.uri,
-          message : {
-            filter: {
-              protocol     : protocolUri,
-              protocolPath : 'thread',
-              schema       : protocolDefinition.types.thread.schema,
-              dataFormat   : 'text/plain',
-              tags         : {
-                foo: 'bar',
-              }
-            }
-          }
-        });
 
         // should only return the record with the tag `foo` and value `bar`
         expect(fooBarResult.status.code).toBe(200);
         expect(fooBarResult.records).toBeDefined();
-        expect(fooBarResult.records!.length).toBe(1);
-        expect(fooBarResult.records![0].id).toBe(record.id);
-        expect(fooBarResult.records![0].tags).toEqual({ foo: 'bar' });
+        expect(fooBarResult.records.length).toBe(1);
+        expect(fooBarResult.records[0].id).toBe(record.id);
+        expect(fooBarResult.records[0].tags).toEqual({ foo: 'bar' });
       });
 
       it('ensures that a protocolRole used to query is also used to read the data of the resulted records', async () => {
@@ -2093,9 +1847,7 @@ describe('DwnApi', () => {
 
         // Bob configures the notes protocol for himself
         const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({
-          message: {
-            definition: protocol
-          }
+          definition: protocol
         });
         expect(bobProtocolStatus.code).toBe(202);
         const { status: bobRemoteProtocolStatus } = await bobProtocol.send(bobDid.uri);
@@ -2106,14 +1858,12 @@ describe('DwnApi', () => {
         const recordData: Map<string, string> = new Map();
         for (let i = 0; i < 3; i++) {
           const data = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
-          const { status: noteCreateStatus, record: noteRecord } = await dwnBob.records.create({
+          const { status: noteCreateStatus, record: noteRecord } = await dwnBob.records.write({
             data,
-            message: {
-              protocol     : protocol.protocol,
-              protocolPath : 'note',
-              schema       : protocol.types.note.schema,
-              dataFormat   : 'text/plain',
-            }
+            protocol     : protocol.protocol,
+            protocolPath : 'note',
+            schema       : protocol.types.note.schema,
+            dataFormat   : 'text/plain',
           });
           expect(noteCreateStatus.code).toBe(202);
           const { status: noteSendStatus } = await noteRecord.send();
@@ -2122,15 +1872,13 @@ describe('DwnApi', () => {
         }
 
         // Bob makes Alice a `friend` to allow her to read and comment on his notes
-        const { status: friendCreateStatus, record: friendRecord } = await dwnBob.records.create({
-          data    : 'friend!',
-          message : {
-            recipient    : aliceDid.uri,
-            protocol     : protocol.protocol,
-            protocolPath : 'friend',
-            schema       : protocol.types.friend.schema,
-            dataFormat   : 'text/plain'
-          }
+        const { status: friendCreateStatus, record: friendRecord } = await dwnBob.records.write({
+          data         : 'friend!',
+          recipient    : aliceDid.uri,
+          protocol     : protocol.protocol,
+          protocolPath : 'friend',
+          schema       : protocol.types.friend.schema,
+          dataFormat   : 'text/plain'
         });
         expect(friendCreateStatus.code).toBe(202);
         const { status: bobFriendSendStatus } = await friendRecord.send(bobDid.uri);
@@ -2138,13 +1886,11 @@ describe('DwnApi', () => {
 
         // alice uses the role to query for the available notes
         const { status: notesQueryStatus, records: noteRecords } = await dwnAlice.records.query({
-          from    : bobDid.uri,
-          message : {
-            protocolRole : 'friend',
-            filter       : {
-              protocol     : protocol.protocol,
-              protocolPath : 'note'
-            }
+          from         : bobDid.uri,
+          protocolRole : 'friend',
+          filter       : {
+            protocol     : protocol.protocol,
+            protocolPath : 'note'
           }
         });
         expect(notesQueryStatus.code).toBe(200);
@@ -2179,29 +1925,27 @@ describe('DwnApi', () => {
     beforeEach(async() => {
       // Configure the protocol on both DWNs
       const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
-        message: { definition: protocolDefinition }
+        definition: protocolDefinition
       });
       expect(aliceProtocolStatus.code).toBe(202);
       expect(aliceProtocol).toBeDefined();
       const { status: aliceProtocolSendStatus } = await aliceProtocol.send(aliceDid.uri);
       expect(aliceProtocolSendStatus.code).toBe(202);
-      const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({ message: { definition: protocolDefinition } });
+      const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({ definition: protocolDefinition });
       expect(bobProtocolStatus.code).toBe(202);
       expect(bobProtocol).toBeDefined();
-      const { status: bobProtocolSendStatus } = await bobProtocol!.send(bobDid.uri);
+      const { status: bobProtocolSendStatus } = await bobProtocol.send(bobDid.uri);
       expect(bobProtocolSendStatus.code).toBe(202);
     });
 
     describe('agent', () => {
       it('returns a record', async () => {
         const writeResult = await dwnAlice.records.write({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : protocolUri,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain'
-          }
+          data         : 'Hello, world!',
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
         });
 
         expect(writeResult.status.code).toBe(202);
@@ -2209,26 +1953,22 @@ describe('DwnApi', () => {
         expect(writeResult.record).toBeDefined();
 
         const result = await dwnAlice.records.read({
-          message: {
-            filter: {
-              recordId: writeResult.record!.id
-            }
+          filter: {
+            recordId: writeResult.record.id
           }
         });
 
         expect(result.status.code).toBe(200);
-        expect(result.record.id).toBe(writeResult.record!.id);
+        expect(result.record.id).toBe(writeResult.record.id);
       });
 
       it('returns a 404 when a record cannot be found', async () => {
         const writeResult = await dwnAlice.records.write({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : protocolUri,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain'
-          }
+          data         : 'Hello, world!',
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
         });
 
         expect(writeResult.status.code).toBe(202);
@@ -2237,13 +1977,11 @@ describe('DwnApi', () => {
 
 
         // Delete the record
-        await writeResult.record!.delete();
+        await writeResult.record.delete();
 
         const result = await dwnAlice.records.read({
-          message: {
-            filter: {
-              recordId: writeResult.record!.id
-            }
+          filter: {
+            recordId: writeResult.record.id
           }
         });
 
@@ -2256,13 +1994,11 @@ describe('DwnApi', () => {
       it('returns a record', async () => {
         // Write a record to the agent's local DWN.
         const writeResult = await dwnAlice.records.write({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : protocolUri,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain'
-          }
+          data         : 'Hello, world!',
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
         });
 
         expect(writeResult.status.code).toBe(202);
@@ -2274,26 +2010,22 @@ describe('DwnApi', () => {
 
         // Attempt to read the record from the agent's remote DWN.
         const result = await dwnAlice.records.read({
-          from    : aliceDid.uri,
-          message : {
-            filter: {
-              recordId: writeResult.record!.id
-            }
+          from   : aliceDid.uri,
+          filter : {
+            recordId: writeResult.record.id
           }
         });
 
         expect(result.status.code).toBe(200);
-        expect(result.record.id).toBe(writeResult.record!.id);
+        expect(result.record.id).toBe(writeResult.record.id);
       });
 
       it('returns undefined record when requested record does not exit', async () => {
         // Attempt to read a record from Bob's DWN using the ID of a record that only exists in the connected agent's DWN.
         const result = await dwnAlice.records.read({
-          from    : bobDid.uri,
-          message : {
-            filter: {
-              recordId: 'non-existent-id'
-            }
+          from   : bobDid.uri,
+          filter : {
+            recordId: 'non-existent-id'
           }
         });
 
@@ -2313,9 +2045,7 @@ describe('DwnApi', () => {
          *   1. Configure the email protocol on Bob's local DWN.
          */
         const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({
-          message: {
-            definition: protocolDefinition,
-          }
+          definition: protocolDefinition,
         });
         expect(bobProtocolStatus.code).toBe(202);
         /**
@@ -2326,15 +2056,13 @@ describe('DwnApi', () => {
         /**
          *   3. Alice creates a record, but doesn't store it locally.
          */
-        const { status: createStatus, record: testRecord } = await dwnAlice.records.create({
-          store   : false,
-          data    : 'test',
-          message : {
-            protocol     : protocolUri,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain'
-          }
+        const { status: createStatus, record: testRecord } = await dwnAlice.records.write({
+          store        : false,
+          data         : 'test',
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
         });
         expect(createStatus.code).toBe(202);
         expect(testRecord.author).toBe(aliceDid.uri);
@@ -2347,11 +2075,9 @@ describe('DwnApi', () => {
          *   5. Bob queries his remote DWN for the record.
          */
         const bobQueryResult = await dwnBob.records.read({
-          from    : bobDid.uri,
-          message : {
-            filter: {
-              recordId: testRecord.id
-            }
+          from   : bobDid.uri,
+          filter : {
+            recordId: testRecord.id
           }
         });
 
@@ -2367,29 +2093,25 @@ describe('DwnApi', () => {
       it('should return a LiveQuery with initial records and respond to live events', async () => {
         // configure a protocol
         const protocolConfigure = await dwnAlice.protocols.configure({
-          message: { definition: { ...emailProtocolDefinition, published: true } }
+          definition: { ...emailProtocolDefinition, published: true }
         });
         expect(protocolConfigure.status.code).toBe(202);
 
         // write a record BEFORE subscribing
         const write1 = await dwnAlice.records.write({
-          data    : 'Message 1',
-          message : {
-            recipient    : bobDid.uri,
-            protocol     : emailProtocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : emailProtocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain'
-          }
+          data         : 'Message 1',
+          recipient    : bobDid.uri,
+          protocol     : emailProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          schema       : emailProtocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
         });
         expect(write1.status.code).toBe(202);
 
         // subscribe — returns a LiveQuery with the initial snapshot
         const subscribeResult = await dwnAlice.records.subscribe({
-          message: {
-            filter: {
-              protocol: emailProtocolDefinition.protocol
-            }
+          filter: {
+            protocol: emailProtocolDefinition.protocol
           }
         });
         expect(subscribeResult.status.code).toBe(200);
@@ -2406,14 +2128,12 @@ describe('DwnApi', () => {
 
         // write a new record AFTER subscribing — should emit 'create'
         const write2 = await dwnAlice.records.write({
-          data    : 'Message 2',
-          message : {
-            recipient    : bobDid.uri,
-            protocol     : emailProtocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : emailProtocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain'
-          }
+          data         : 'Message 2',
+          recipient    : bobDid.uri,
+          protocol     : emailProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          schema       : emailProtocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
         });
         expect(write2.status.code).toBe(202);
 
@@ -2440,28 +2160,24 @@ describe('DwnApi', () => {
 
       it('should emit update events for updated records', async () => {
         const protocolConfigure = await dwnAlice.protocols.configure({
-          message: { definition: { ...emailProtocolDefinition, published: true } }
+          definition: { ...emailProtocolDefinition, published: true }
         });
         expect(protocolConfigure.status.code).toBe(202);
 
         // write a record
         const write1 = await dwnAlice.records.write({
-          data    : 'Original',
-          message : {
-            recipient    : bobDid.uri,
-            protocol     : emailProtocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : emailProtocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain'
-          }
+          data         : 'Original',
+          recipient    : bobDid.uri,
+          protocol     : emailProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          schema       : emailProtocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
         });
         expect(write1.status.code).toBe(202);
 
         // subscribe
         const { liveQuery: live } = await dwnAlice.records.subscribe({
-          message: {
-            filter: { protocol: emailProtocolDefinition.protocol }
-          }
+          filter: { protocol: emailProtocolDefinition.protocol }
         });
         expect(live).toBeDefined();
         expect(live!.records.length).toBe(1);
@@ -2484,28 +2200,24 @@ describe('DwnApi', () => {
 
       it('should emit delete events for deleted records', async () => {
         const protocolConfigure = await dwnAlice.protocols.configure({
-          message: { definition: { ...emailProtocolDefinition, published: true } }
+          definition: { ...emailProtocolDefinition, published: true }
         });
         expect(protocolConfigure.status.code).toBe(202);
 
         // write a record
         const write1 = await dwnAlice.records.write({
-          data    : 'To be deleted',
-          message : {
-            recipient    : bobDid.uri,
-            protocol     : emailProtocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : emailProtocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain'
-          }
+          data         : 'To be deleted',
+          recipient    : bobDid.uri,
+          protocol     : emailProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          schema       : emailProtocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
         });
         expect(write1.status.code).toBe(202);
 
         // subscribe
         const { liveQuery: live } = await dwnAlice.records.subscribe({
-          message: {
-            filter: { protocol: emailProtocolDefinition.protocol }
-          }
+          filter: { protocol: emailProtocolDefinition.protocol }
         });
         expect(live).toBeDefined();
 
@@ -2527,14 +2239,12 @@ describe('DwnApi', () => {
 
       it('should support typed convenience events (create/update/delete)', async () => {
         const protocolConfigure = await dwnAlice.protocols.configure({
-          message: { definition: { ...emailProtocolDefinition, published: true } }
+          definition: { ...emailProtocolDefinition, published: true }
         });
         expect(protocolConfigure.status.code).toBe(202);
 
         const { liveQuery: live } = await dwnAlice.records.subscribe({
-          message: {
-            filter: { protocol: emailProtocolDefinition.protocol }
-          }
+          filter: { protocol: emailProtocolDefinition.protocol }
         });
         expect(live).toBeDefined();
 
@@ -2547,14 +2257,12 @@ describe('DwnApi', () => {
 
         // write a record
         const writeResult = await dwnAlice.records.write({
-          data    : 'Hello',
-          message : {
-            recipient    : bobDid.uri,
-            protocol     : emailProtocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : emailProtocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain'
-          }
+          data         : 'Hello',
+          recipient    : bobDid.uri,
+          protocol     : emailProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          schema       : emailProtocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
         });
         expect(writeResult.status.code).toBe(202);
 
@@ -2586,14 +2294,12 @@ describe('DwnApi', () => {
 
       it('should return an unsubscribe function from on()', async () => {
         const protocolConfigure = await dwnAlice.protocols.configure({
-          message: { definition: { ...emailProtocolDefinition, published: true } }
+          definition: { ...emailProtocolDefinition, published: true }
         });
         expect(protocolConfigure.status.code).toBe(202);
 
         const { liveQuery: live } = await dwnAlice.records.subscribe({
-          message: {
-            filter: { protocol: emailProtocolDefinition.protocol }
-          }
+          filter: { protocol: emailProtocolDefinition.protocol }
         });
         expect(live).toBeDefined();
 
@@ -2602,14 +2308,12 @@ describe('DwnApi', () => {
 
         // write a record — should be received
         const write1 = await dwnAlice.records.write({
-          data    : 'First',
-          message : {
-            recipient    : bobDid.uri,
-            protocol     : emailProtocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : emailProtocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain'
-          }
+          data         : 'First',
+          recipient    : bobDid.uri,
+          protocol     : emailProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          schema       : emailProtocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
         });
         expect(write1.status.code).toBe(202);
 
@@ -2622,14 +2326,12 @@ describe('DwnApi', () => {
 
         // write another record — should NOT be received
         const write2 = await dwnAlice.records.write({
-          data    : 'Second',
-          message : {
-            recipient    : bobDid.uri,
-            protocol     : emailProtocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : emailProtocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain'
-          }
+          data         : 'Second',
+          recipient    : bobDid.uri,
+          protocol     : emailProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          schema       : emailProtocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
         });
         expect(write2.status.code).toBe(202);
 
@@ -2642,31 +2344,27 @@ describe('DwnApi', () => {
 
       it('should return a pagination cursor when the initial snapshot is limited', async () => {
         const protocolConfigure = await dwnAlice.protocols.configure({
-          message: { definition: { ...emailProtocolDefinition, published: true } }
+          definition: { ...emailProtocolDefinition, published: true }
         });
         expect(protocolConfigure.status.code).toBe(202);
 
         // write 3 records
         for (let i = 0; i < 3; i++) {
           const writeResult = await dwnAlice.records.write({
-            data    : `Message ${i}`,
-            message : {
-              recipient    : bobDid.uri,
-              protocol     : emailProtocolDefinition.protocol,
-              protocolPath : 'thread',
-              schema       : emailProtocolDefinition.types.thread.schema,
-              dataFormat   : 'text/plain'
-            }
+            data         : `Message ${i}`,
+            recipient    : bobDid.uri,
+            protocol     : emailProtocolDefinition.protocol,
+            protocolPath : 'thread',
+            schema       : emailProtocolDefinition.types.thread.schema,
+            dataFormat   : 'text/plain'
           });
           expect(writeResult.status.code).toBe(202);
         }
 
         // subscribe with a limit of 2
         const { liveQuery: live } = await dwnAlice.records.subscribe({
-          message: {
-            filter     : { protocol: emailProtocolDefinition.protocol },
-            pagination : { limit: 2 }
-          }
+          filter     : { protocol: emailProtocolDefinition.protocol },
+          pagination : { limit: 2 }
         });
         expect(live).toBeDefined();
 
@@ -2680,10 +2378,8 @@ describe('DwnApi', () => {
 
         // subscribe again using the cursor to get the remaining records
         const { liveQuery: live2 } = await dwnAlice.records.subscribe({
-          message: {
-            filter     : { protocol: emailProtocolDefinition.protocol },
-            pagination : { limit: 2, cursor: live!.cursor }
-          }
+          filter     : { protocol: emailProtocolDefinition.protocol },
+          pagination : { limit: 2, cursor: live!.cursor }
         });
         expect(live2).toBeDefined();
 
@@ -2699,7 +2395,7 @@ describe('DwnApi', () => {
       it('subscribes to records from remote', async () => {
         // configure a protocol
         const protocolConfigure = await dwnAlice.protocols.configure({
-          message: { definition: { ...protocolDefinition, published: true } }
+          definition: { ...protocolDefinition, published: true }
         });
         expect(protocolConfigure.status.code).toBe(202);
         const protocolSend = await protocolConfigure.protocol.send(aliceDid.uri);
@@ -2707,7 +2403,7 @@ describe('DwnApi', () => {
 
         //configure the protocol on bob's DWN
         const protocolConfigureBob = await dwnBob.protocols.configure({
-          message: { definition: { ...protocolDefinition, published: true } }
+          definition: { ...protocolDefinition, published: true }
         });
         expect(protocolConfigureBob.status.code).toBe(202);
         const protocolSendBob = await protocolConfigureBob.protocol.send(bobDid.uri);
@@ -2715,11 +2411,9 @@ describe('DwnApi', () => {
 
         // subscribe to all messages from the protocol
         const { liveQuery: live } = await dwnAlice.records.subscribe({
-          from    : aliceDid.uri,
-          message : {
-            filter: {
-              protocol: protocolUri,
-            }
+          from   : aliceDid.uri,
+          filter : {
+            protocol: protocolUri,
           }
         });
         expect(live).toBeDefined();
@@ -2729,14 +2423,12 @@ describe('DwnApi', () => {
 
         // write a record
         const writeResult = await dwnAlice.records.write({
-          data    : 'Hello, world!',
-          message : {
-            recipient    : bobDid.uri,
-            protocol     : protocolUri,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain'
-          }
+          data         : 'Hello, world!',
+          recipient    : bobDid.uri,
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
         });
         expect(writeResult.status.code).toBe(202);
         const writeResultSend = await writeResult.record.send();
@@ -2764,14 +2456,12 @@ describe('DwnApi', () => {
 
         // write another record
         const writeResult2 = await dwnAlice.records.write({
-          data    : 'Hello, world!',
-          message : {
-            recipient    : bobDid.uri,
-            protocol     : protocolUri,
-            protocolPath : 'thread',
-            schema       : protocolDefinition.types.thread.schema,
-            dataFormat   : 'text/plain'
-          }
+          data         : 'Hello, world!',
+          recipient    : bobDid.uri,
+          protocol     : protocolUri,
+          protocolPath : 'thread',
+          schema       : protocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
         });
         const writeResult2Send = await writeResult2.record.send();
         expect(writeResult2Send.status.code).toBe(202);
@@ -2797,9 +2487,7 @@ describe('DwnApi', () => {
 
         // Bob configures the notes protocol for himself
         const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({
-          message: {
-            definition: protocol
-          }
+          definition: protocol
         });
         expect(bobProtocolStatus.code).toBe(202);
         const { status: bobRemoteProtocolStatus } = await bobProtocol.send(bobDid.uri);
@@ -2807,15 +2495,13 @@ describe('DwnApi', () => {
 
 
         // Bob makes Alice a `friend` to allow her to read and comment on his notes
-        const { status: friendCreateStatus, record: friendRecord } = await dwnBob.records.create({
-          data    : 'friend!',
-          message : {
-            recipient    : aliceDid.uri,
-            protocol     : protocol.protocol,
-            protocolPath : 'friend',
-            schema       : protocol.types.friend.schema,
-            dataFormat   : 'text/plain'
-          }
+        const { status: friendCreateStatus, record: friendRecord } = await dwnBob.records.write({
+          data         : 'friend!',
+          recipient    : aliceDid.uri,
+          protocol     : protocol.protocol,
+          protocolPath : 'friend',
+          schema       : protocol.types.friend.schema,
+          dataFormat   : 'text/plain'
         });
         expect(friendCreateStatus.code).toBe(202);
         const { status: bobFriendSendStatus } = await friendRecord.send(bobDid.uri);
@@ -2824,13 +2510,11 @@ describe('DwnApi', () => {
         // Alice subscribes to the notes protocol using the role
         const notes: Record[] = [];
         const { status: notesSubscribeStatus, liveQuery: live } = await dwnAlice.records.subscribe({
-          from    : bobDid.uri,
-          message : {
-            protocolRole : 'friend',
-            filter       : {
-              protocol     : protocol.protocol,
-              protocolPath : 'note'
-            }
+          from         : bobDid.uri,
+          protocolRole : 'friend',
+          filter       : {
+            protocol     : protocol.protocol,
+            protocolPath : 'note'
           }
         });
         expect(notesSubscribeStatus.code).toBe(200);
@@ -2845,14 +2529,12 @@ describe('DwnApi', () => {
         const recordData: Map<string, string> = new Map();
         for (let i = 0; i < 3; i++) {
           const data = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
-          const { status: noteCreateStatus, record: noteRecord } = await dwnBob.records.create({
+          const { status: noteCreateStatus, record: noteRecord } = await dwnBob.records.write({
             data,
-            message: {
-              protocol     : protocol.protocol,
-              protocolPath : 'note',
-              schema       : protocol.types.note.schema,
-              dataFormat   : 'text/plain',
-            }
+            protocol     : protocol.protocol,
+            protocolPath : 'note',
+            schema       : protocol.types.note.schema,
+            dataFormat   : 'text/plain',
           });
           expect(noteCreateStatus.code).toBe(202);
           const { status: noteSendStatus } = await noteRecord.send();
@@ -2968,19 +2650,17 @@ describe('DwnApi', () => {
 
       // query for the grant
       const fetchedGrants = await dwnAlice.records.query({
-        message: {
-          filter: {
-            protocol     : PermissionsProtocol.uri,
-            protocolPath : PermissionsProtocol.grantPath,
-          }
+        filter: {
+          protocol     : PermissionsProtocol.uri,
+          protocolPath : PermissionsProtocol.grantPath,
         }
       });
 
       // expect to have the 1 grant created for deviceX
       expect(fetchedGrants.status.code).toBe(200);
       expect(fetchedGrants.records).toBeDefined();
-      expect(fetchedGrants.records!.length).toBe(1);
-      expect(fetchedGrants.records![0].id).toBe(deviceXGrant.rawMessage.recordId);
+      expect(fetchedGrants.records.length).toBe(1);
+      expect(fetchedGrants.records[0].id).toBe(deviceXGrant.rawMessage.recordId);
     });
 
     it('creates a grant without storing it', async () => {
@@ -3006,18 +2686,16 @@ describe('DwnApi', () => {
 
       // query for the grant
       let fetchedGrants = await dwnAlice.records.query({
-        message: {
-          filter: {
-            protocol     : PermissionsProtocol.uri,
-            protocolPath : PermissionsProtocol.grantPath,
-          }
+        filter: {
+          protocol     : PermissionsProtocol.uri,
+          protocolPath : PermissionsProtocol.grantPath,
         }
       });
 
       // expect to have no grants
       expect(fetchedGrants.status.code).toBe(200);
       expect(fetchedGrants.records).toBeDefined();
-      expect(fetchedGrants.records!.length).toBe(0);
+      expect(fetchedGrants.records.length).toBe(0);
 
       // store the grant
       const processGrantReply = await deviceXGrant.store();
@@ -3025,19 +2703,17 @@ describe('DwnApi', () => {
 
       // query for the grants again
       fetchedGrants = await dwnAlice.records.query({
-        message: {
-          filter: {
-            protocol     : PermissionsProtocol.uri,
-            protocolPath : PermissionsProtocol.grantPath,
-          }
+        filter: {
+          protocol     : PermissionsProtocol.uri,
+          protocolPath : PermissionsProtocol.grantPath,
         }
       });
 
       // expect to have the 1 grant created for deviceX
       expect(fetchedGrants.status.code).toBe(200);
       expect(fetchedGrants.records).toBeDefined();
-      expect(fetchedGrants.records!.length).toBe(1);
-      expect(fetchedGrants.records![0].id).toBe(deviceXGrant.rawMessage.recordId);
+      expect(fetchedGrants.records.length).toBe(1);
+      expect(fetchedGrants.records[0].id).toBe(deviceXGrant.rawMessage.recordId);
     });
   });
 
@@ -3104,19 +2780,17 @@ describe('DwnApi', () => {
 
       // query for the request
       const fetchedRequests = await dwnAlice.records.query({
-        message: {
-          filter: {
-            protocol     : PermissionsProtocol.uri,
-            protocolPath : PermissionsProtocol.requestPath,
-          }
+        filter: {
+          protocol     : PermissionsProtocol.uri,
+          protocolPath : PermissionsProtocol.requestPath,
         }
       });
 
       // expect to have the 1 request created
       expect(fetchedRequests.status.code).toBe(200);
       expect(fetchedRequests.records).toBeDefined();
-      expect(fetchedRequests.records!.length).toBe(1);
-      expect(fetchedRequests.records![0].id).toBe(deviceXRequest.rawMessage.recordId);
+      expect(fetchedRequests.records.length).toBe(1);
+      expect(fetchedRequests.records[0].id).toBe(deviceXRequest.rawMessage.recordId);
     });
 
     it('creates a permission request without storing it', async () => {
@@ -3133,18 +2807,16 @@ describe('DwnApi', () => {
 
       // query for the request
       let fetchedRequests = await dwnAlice.records.query({
-        message: {
-          filter: {
-            protocol     : PermissionsProtocol.uri,
-            protocolPath : PermissionsProtocol.requestPath,
-          }
+        filter: {
+          protocol     : PermissionsProtocol.uri,
+          protocolPath : PermissionsProtocol.requestPath,
         }
       });
 
       // expect to have no requests
       expect(fetchedRequests.status.code).toBe(200);
       expect(fetchedRequests.records).toBeDefined();
-      expect(fetchedRequests.records!.length).toBe(0);
+      expect(fetchedRequests.records.length).toBe(0);
 
       // store the request
       const storeDeviceXRequest = await deviceXRequest.store();
@@ -3152,19 +2824,17 @@ describe('DwnApi', () => {
 
       // query for the requests again
       fetchedRequests = await dwnAlice.records.query({
-        message: {
-          filter: {
-            protocol     : PermissionsProtocol.uri,
-            protocolPath : PermissionsProtocol.requestPath,
-          }
+        filter: {
+          protocol     : PermissionsProtocol.uri,
+          protocolPath : PermissionsProtocol.requestPath,
         }
       });
 
       // expect to have the 1 request created for deviceX
       expect(fetchedRequests.status.code).toBe(200);
       expect(fetchedRequests.records).toBeDefined();
-      expect(fetchedRequests.records!.length).toBe(1);
-      expect(fetchedRequests.records![0].id).toBe(deviceXRequest.rawMessage.recordId);
+      expect(fetchedRequests.records.length).toBe(1);
+      expect(fetchedRequests.records[0].id).toBe(deviceXRequest.rawMessage.recordId);
     });
   });
 

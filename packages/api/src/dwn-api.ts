@@ -21,7 +21,6 @@ import {
   AgentPermissionsApi,
 } from '@enbox/agent';
 
-import { isEmptyObject } from '@enbox/common';
 import { DwnInterface, getRecordAuthor } from '@enbox/agent';
 
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
@@ -64,9 +63,7 @@ export type FetchGrantsRequest = Omit<FetchPermissionsParams, 'author' | 'target
  *
  * This request type is used to specify the configuration options for the protocol.
  */
-export type ProtocolsConfigureRequest = {
-  /** Configuration options for the protocol. */
-  message: Omit<DwnMessageParams[DwnInterface.ProtocolsConfigure], 'signer'>;
+export type ProtocolsConfigureRequest = Omit<DwnMessageParams[DwnInterface.ProtocolsConfigure], 'signer'> & {
   /** When true, derives and injects $encryption public keys into the protocol definition. */
   encryption?: boolean;
 };
@@ -92,12 +89,9 @@ export type ProtocolsConfigureResponse = DwnResponseStatus & {
  * target the local DWN. If the `from` property is provided, the query will target the specified
  * remote DWN.
  */
-export type ProtocolsQueryRequest = {
+export type ProtocolsQueryRequest = Omit<DwnMessageParams[DwnInterface.ProtocolsQuery], 'signer'> & {
   /** Optional DID specifying the remote target DWN tenant to be queried. */
   from?: string;
-
-  /** Query filters and options that influence the results returned. */
-  message: Omit<DwnMessageParams[DwnInterface.ProtocolsQuery], 'signer'>
 };
 
 /**
@@ -110,55 +104,18 @@ export type ProtocolsQueryResponse = DwnResponseStatus & {
 };
 
 /**
- * Type alias for {@link RecordsWriteRequest}
- */
-export type RecordsCreateRequest = RecordsWriteRequest;
-
-/**
- * Type alias for {@link RecordsWriteResponse}
- */
-export type RecordsCreateResponse = RecordsWriteResponse;
-
-/**
- * Represents a request to create a new record based on an existing one.
- *
- * This request type allows specifying the new data for the record, along with any additional
- * message parameters required for the write operation.
- */
-export type RecordsCreateFromRequest = {
-  /** The DID of the entity authoring the record. */
-  author: string;
-  /** The new data for the record. */
-  data: unknown;
-  /** Optional additional parameters for the record write operation */
-  message?: Omit<DwnMessageParams[DwnInterface.RecordsWrite], 'signer'>;
-  /** The existing record instance that is being used as a basis for the new record. */
-  record: Record;
-  /**
-   * Controls whether the new record should be auto-encrypted.
-   *
-   * If omitted, auto-detected from the source record: if the source record was
-   * encrypted, the new record is automatically encrypted with a fresh DEK.
-   */
-  encryption?: boolean;
-};
-
-/**
  * Defines a request to delete a record from the Decentralized Web Node (DWN).
  *
  * This request type optionally specifies the target from which the record should be deleted and the
  * message parameters for the delete operation. If the `from` property is not provided, the record
  * will be deleted from the local DWN.
  */
-export type RecordsDeleteRequest = {
+export type RecordsDeleteRequest = Omit<DwnMessageParams[DwnInterface.RecordsDelete], 'signer'> & {
   /** Optional DID specifying the remote target DWN tenant the record will be deleted from. */
   from?: string;
 
-  /** Records must be scoped to a specific protocol */
+  /** Protocol URI for permission grant resolution. */
   protocol?: string;
-
-  /** The parameters for the delete operation. */
-  message: Omit<DwnMessageParams[DwnInterface.RecordsDelete], 'signer'>;
 };
 
 /**
@@ -168,15 +125,9 @@ export type RecordsDeleteRequest = {
  * parameters, and optionally the target DWN to query from. If the `from` property is not provided,
  * the query will target the local DWN.
  */
-export type RecordsQueryRequest = {
+export type RecordsQueryRequest = Omit<DwnMessageParams[DwnInterface.RecordsQuery], 'signer'> & {
   /** Optional DID specifying the remote target DWN tenant to query from and return results. */
   from?: string;
-
-  /** Records must be scoped to a specific protocol */
-  protocol?: string;
-
-  /** The parameters for the query operation, detailing the criteria for selecting records. */
-  message: Omit<DwnMessageParams[DwnInterface.RecordsQuery], 'signer'>;
 
   /** When true, automatically decrypts encrypted records in the query results. */
   encryption?: boolean;
@@ -188,7 +139,7 @@ export type RecordsQueryRequest = {
  */
 export type RecordsQueryResponse = DwnResponseStatus & {
   /** Array of records matching the query. */
-  records?: Record[]
+  records: Record[];
 
   /** If there are additional results, the messageCid of the last record will be returned as a pagination cursor. */
   cursor?: DwnPaginationCursor;
@@ -201,15 +152,12 @@ export type RecordsQueryResponse = DwnResponseStatus & {
  * additional parameters for the read operation. It's useful for fetching the details of a single
  * record by its identifier or other criteria.
  */
-export type RecordsReadRequest = {
+export type RecordsReadRequest = Omit<DwnMessageParams[DwnInterface.RecordsRead], 'signer'> & {
   /** Optional DID specifying the remote target DWN tenant the record will be read from. */
   from?: string;
 
-  /** Records must be scoped to a specific protocol */
+  /** Protocol URI for permission grant resolution. */
   protocol?: string;
-
-  /** The parameters for the read operation, detailing the criteria for selecting the record. */
-  message: Omit<DwnMessageParams[DwnInterface.RecordsRead], 'signer'>;
 
   /** When true, automatically decrypts the encrypted record data. */
   encryption?: boolean;
@@ -231,15 +179,9 @@ export type RecordsReadResponse = DwnResponseStatus & {
  * matching records alongside a real-time stream of deduplicated, semantically-
  * typed change events (`create`, `update`, `delete`).
  */
-export type RecordsSubscribeRequest = {
+export type RecordsSubscribeRequest = Omit<DwnMessageParams[DwnInterface.RecordsSubscribe], 'signer'> & {
   /** Optional DID specifying the remote target DWN tenant to subscribe from. */
   from?: string;
-
-  /** Records must be scoped to a specific protocol. */
-  protocol?: string;
-
-  /** The parameters for the subscription operation, detailing the criteria for the subscription filter. */
-  message: Omit<DwnMessageParams[DwnInterface.RecordsSubscribe], 'signer'>;
 };
 
 /** Encapsulates the response from a DWN RecordsSubscribeRequest. */
@@ -254,17 +196,10 @@ export type RecordsSubscribeResponse = DwnResponseStatus & {
  * This request type allows specifying the data for the new or updated record, along with any
  * additional message parameters required for the write operation, and an optional flag to indicate
  * whether the record should be immediately stored.
- *
- * @param data -
- * @param message - , excluding the signer.
- * @param store -
  */
-export type RecordsWriteRequest = {
+export type RecordsWriteRequest = Omit<Partial<DwnMessageParams[DwnInterface.RecordsWrite]>, 'signer' | 'data'> & {
   /** The data payload for the record, which can be of any type. */
   data: unknown;
-
-  /** Optional additional parameters for the record write operation. */
-  message?: Omit<Partial<DwnMessageParams[DwnInterface.RecordsWrite]>, 'signer'>;
 
   /**
    * Optional flag indicating whether the record should be immediately stored. If true, the record
@@ -294,7 +229,7 @@ export type RecordsWriteResponse = DwnResponseStatus & {
    * The `Record` instance representing the record that was successfully written to the
    * DWN as a result of the write operation.
    */
-  record?: Record
+  record: Record;
 };
 
 /**
@@ -472,20 +407,21 @@ export class DwnApi {
        * Configure method, used to setup a new protocol (or update) with the passed definitions
        */
       configure: async (request: ProtocolsConfigureRequest): Promise<ProtocolsConfigureResponse> => {
+        const { encryption, ...messageParams } = request;
 
-        const agentRequest:ProcessDwnRequest<DwnInterface.ProtocolsConfigure> = {
-          author        : this.connectedDid,
-          messageParams : request.message,
-          messageType   : DwnInterface.ProtocolsConfigure,
-          target        : this.connectedDid,
-          encryption    : request.encryption,
+        const agentRequest: ProcessDwnRequest<DwnInterface.ProtocolsConfigure> = {
+          author      : this.connectedDid,
+          messageParams,
+          messageType : DwnInterface.ProtocolsConfigure,
+          target      : this.connectedDid,
+          encryption,
         };
 
         if (this.delegateDid) {
           const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
             connectedDid : this.connectedDid,
             delegateDid  : this.delegateDid,
-            protocol     : request.message.definition.protocol,
+            protocol     : messageParams.definition.protocol,
             delegate     : true,
             cached       : true,
             messageType  : agentRequest.messageType
@@ -515,11 +451,13 @@ export class DwnApi {
        * Query the available protocols
        */
       query: async (request: ProtocolsQueryRequest): Promise<ProtocolsQueryResponse> => {
+        const { from, ...messageParams } = request;
+
         const agentRequest: ProcessDwnRequest<DwnInterface.ProtocolsQuery> = {
-          author        : this.connectedDid,
-          messageParams : request.message,
-          messageType   : DwnInterface.ProtocolsQuery,
-          target        : request.from || this.connectedDid
+          author      : this.connectedDid,
+          messageParams,
+          messageType : DwnInterface.ProtocolsQuery,
+          target      : from || this.connectedDid,
         };
 
         if (this.delegateDid) {
@@ -530,7 +468,7 @@ export class DwnApi {
             const { grant: { id: permissionGrantId } } = await this.permissionsApi.getPermissionForRequest({
               connectedDid : this.connectedDid,
               delegateDid  : this.delegateDid,
-              protocol     : request.message.filter.protocol,
+              protocol     : messageParams.filter.protocol,
               cached       : true,
               messageType  : agentRequest.messageType
             });
@@ -548,7 +486,7 @@ export class DwnApi {
 
         let agentResponse: DwnResponse<DwnInterface.ProtocolsQuery>;
 
-        if (request.from) {
+        if (from) {
           agentResponse = await this.agent.sendDwnRequest(agentRequest);
         } else {
           agentResponse = await this.agent.processDwnRequest(agentRequest);
@@ -568,11 +506,9 @@ export class DwnApi {
   }
 
   /**
-   * API to interact with DWN records (e.g., `dwn.records.create()`).
+   * API to interact with DWN records (e.g., `dwn.records.write()`).
    */
   get records(): {
-      create: (request: RecordsCreateRequest) => Promise<RecordsCreateResponse>;
-      createFrom: (request: RecordsCreateFromRequest) => Promise<RecordsWriteResponse>;
       delete: (request: RecordsDeleteRequest) => Promise<DwnResponseStatus>;
       query: (request: RecordsQueryRequest) => Promise<RecordsQueryResponse>;
       read: (request: RecordsReadRequest) => Promise<RecordsReadResponse>;
@@ -582,79 +518,32 @@ export class DwnApi {
 
     return {
       /**
-       * Alias for the `write` method
-       */
-      create: async (request: RecordsCreateRequest): Promise<RecordsCreateResponse> => {
-        return this.records.write(request);
-      },
-
-      /**
-       * Write a record based on an existing one (useful for updating an existing record)
-       */
-      createFrom: async (request: RecordsCreateFromRequest): Promise<RecordsWriteResponse> => {
-        const { author: inheritedAuthor, timestamp, ...inheritedProperties } = request.record.toJSON();
-
-        // Map the public `timestamp` field back to the DWN SDK's `messageTimestamp`.
-        (inheritedProperties as { messageTimestamp?: string }).messageTimestamp = timestamp;
-
-        // If `data` is being updated then `dataCid` and `dataSize` must not be present.
-        if (request.data !== undefined) {
-          delete inheritedProperties.dataCid;
-          delete inheritedProperties.dataSize;
-        }
-
-        // If `published` is set to false, ensure that `datePublished` is undefined. Otherwise, DWN SDK's schema validation
-        // will throw an error if `published` is false but `datePublished` is set.
-        if (request.message?.published === false && inheritedProperties.datePublished !== undefined) {
-          delete inheritedProperties.datePublished;
-          delete inheritedProperties.published;
-        }
-
-        // If the request changes the `author` or message `descriptor` then the deterministic `recordId` will change.
-        // As a result, we will discard the `recordId` if either of these changes occur.
-        if (!isEmptyObject(request.message) || (request.author && request.author !== inheritedAuthor)) {
-          delete inheritedProperties.recordId;
-        }
-
-        // Auto-detect encryption from the source record if not explicitly set.
-        const shouldEncrypt = request.encryption
-          ?? (request.record.encryption !== undefined);
-
-        return this.records.write({
-          data    : request.data,
-          message : {
-            ...inheritedProperties,
-            ...request.message,
-          },
-          encryption: shouldEncrypt || undefined,
-        });
-      },
-
-      /**
        * Delete a record
        */
       delete: async (request: RecordsDeleteRequest): Promise<DwnResponseStatus> => {
+        const { from, protocol, ...messageParams } = request;
+
         const agentRequest: ProcessDwnRequest<DwnInterface.RecordsDelete> = {
           /**
            * The `author` is the DID that will sign the message and must be the DID the Web5 app is
            * connected with and is authorized to access the signing private key of.
            */
-          author        : this.connectedDid,
-          messageParams : request.message,
-          messageType   : DwnInterface.RecordsDelete,
+          author      : this.connectedDid,
+          messageParams,
+          messageType : DwnInterface.RecordsDelete,
           /**
            * The `target` is the DID of the DWN tenant under which the delete will be executed.
            * If `from` is provided, the delete operation will be executed on a remote DWN.
            * Otherwise, the record will be deleted on the local DWN.
            */
-          target        : request.from || this.connectedDid
+          target      : from || this.connectedDid,
         };
 
         if (this.delegateDid) {
           const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
             connectedDid : this.connectedDid,
             delegateDid  : this.delegateDid,
-            protocol     : request.protocol,
+            protocol,
             delegate     : true,
             cached       : true,
             messageType  : agentRequest.messageType
@@ -669,7 +558,7 @@ export class DwnApi {
 
         let agentResponse: DwnResponse<DwnInterface.RecordsDelete>;
 
-        if (request.from) {
+        if (from) {
           agentResponse = await this.agent.sendDwnRequest(agentRequest);
         } else {
           agentResponse = await this.agent.processDwnRequest(agentRequest);
@@ -684,21 +573,23 @@ export class DwnApi {
        * Query a single or multiple records based on the given filter
        */
       query: async (request: RecordsQueryRequest): Promise<RecordsQueryResponse> => {
+        const { from, encryption, ...messageParams } = request;
+
         const agentRequest: ProcessDwnRequest<DwnInterface.RecordsQuery> = {
           /**
            * The `author` is the DID that will sign the message and must be the DID the Web5 app is
            * connected with and is authorized to access the signing private key of.
            */
-          author        : this.connectedDid,
-          messageParams : request.message,
-          messageType   : DwnInterface.RecordsQuery,
+          author      : this.connectedDid,
+          messageParams,
+          messageType : DwnInterface.RecordsQuery,
           /**
            * The `target` is the DID of the DWN tenant under which the query will be executed.
            * If `from` is provided, the query operation will be executed on a remote DWN.
            * Otherwise, the local DWN will be queried.
            */
-          target        : request.from || this.connectedDid,
-          encryption    : request.encryption,
+          target      : from || this.connectedDid,
+          encryption,
         };
 
         if (this.delegateDid) {
@@ -712,7 +603,7 @@ export class DwnApi {
             const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
               connectedDid : this.connectedDid,
               delegateDid  : this.delegateDid,
-              protocol     : request.protocol,
+              protocol     : messageParams.filter?.protocol,
               delegate     : true,
               cached       : true,
               messageType  : agentRequest.messageType
@@ -729,10 +620,9 @@ export class DwnApi {
           }
         }
 
-
         let agentResponse: DwnResponse<DwnInterface.RecordsQuery>;
 
-        if (request.from) {
+        if (from) {
           agentResponse = await this.agent.sendDwnRequest(agentRequest);
         } else {
           agentResponse = await this.agent.processDwnRequest(agentRequest);
@@ -742,7 +632,6 @@ export class DwnApi {
         const { entries = [], status, cursor } = reply;
 
         const records = entries.map((entry) => {
-
           const recordOptions = {
             /**
              * Extract the `author` DID from the record entry since records may be signed by the
@@ -761,7 +650,7 @@ export class DwnApi {
              * to determine which DWN to send subsequent read requests to in the event the data
              * payload exceeds the threshold for being returned with queries.
              */
-            remoteOrigin : request.from,
+            remoteOrigin : from,
             delegateDid  : this.delegateDid,
             protocolRole : agentRequest.messageParams.protocolRole,
             ...entry as DwnMessage[DwnInterface.RecordsWrite]
@@ -777,22 +666,25 @@ export class DwnApi {
        * Read a single record based on the given filter
        */
       read: async (request: RecordsReadRequest): Promise<RecordsReadResponse> => {
+        const { from, protocol, encryption, ...messageParams } = request;
+
         const agentRequest: ProcessDwnRequest<DwnInterface.RecordsRead> = {
           /**
            * The `author` is the DID that will sign the message and must be the DID the Web5 app is
            * connected with and is authorized to access the signing private key of.
            */
-          author        : this.connectedDid,
-          messageParams : request.message,
-          messageType   : DwnInterface.RecordsRead,
+          author      : this.connectedDid,
+          messageParams,
+          messageType : DwnInterface.RecordsRead,
           /**
            * The `target` is the DID of the DWN tenant under which the read will be executed.
            * If `from` is provided, the read operation will be executed on a remote DWN.
            * Otherwise, the read will occur on the local DWN.
            */
-          target        : request.from || this.connectedDid,
-          encryption    : request.encryption,
+          target      : from || this.connectedDid,
+          encryption,
         };
+
         if (this.delegateDid) {
           // if we don't find a delegated grant, we will attempt to read signing as the delegated DID
           // This is to allow the API caller to read public records without needing to impersonate the delegate.
@@ -805,7 +697,7 @@ export class DwnApi {
             const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
               connectedDid : this.connectedDid,
               delegateDid  : this.delegateDid,
-              protocol     : request.protocol,
+              protocol,
               delegate     : true,
               cached       : true,
               messageType  : agentRequest.messageType
@@ -824,7 +716,7 @@ export class DwnApi {
 
         let agentResponse: DwnResponse<DwnInterface.RecordsRead>;
 
-        if (request.from) {
+        if (from) {
           agentResponse = await this.agent.sendDwnRequest(agentRequest);
         } else {
           agentResponse = await this.agent.processDwnRequest(agentRequest);
@@ -852,7 +744,7 @@ export class DwnApi {
              * to determine which DWN to send subsequent read requests to in the event the data
              * payload must be read again (e.g., if the data stream is consumed).
              */
-            remoteOrigin : request.from,
+            remoteOrigin : from,
             delegateDid  : this.delegateDid,
             data         : entry.data,
             initialWrite : entry.initialWrite,
@@ -873,12 +765,14 @@ export class DwnApi {
        * typed change events (`create`, `update`, `delete`).
        */
       subscribe: async (request: RecordsSubscribeRequest): Promise<RecordsSubscribeResponse> => {
+        const { from, ...messageParams } = request;
+
         // Build a DWN-level subscription handler that wraps raw RecordEvents
         // into Record objects and feeds them into the LiveQuery.
         let liveQuery: LiveQuery | undefined;
 
-        const remoteOrigin = request.from;
-        const protocolRole = request.message.protocolRole;
+        const remoteOrigin = from;
+        const protocolRole = messageParams.protocolRole;
 
         type RecordEvent = {
           message: DwnMessage[DwnInterface.RecordsWrite];
@@ -901,10 +795,10 @@ export class DwnApi {
         };
 
         const agentRequest: ProcessDwnRequest<DwnInterface.RecordsSubscribe> = {
-          author        : this.connectedDid,
-          messageParams : request.message,
-          messageType   : DwnInterface.RecordsSubscribe,
-          target        : request.from || this.connectedDid,
+          author      : this.connectedDid,
+          messageParams,
+          messageType : DwnInterface.RecordsSubscribe,
+          target      : from || this.connectedDid,
           subscriptionHandler,
         };
 
@@ -919,7 +813,7 @@ export class DwnApi {
             const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
               connectedDid : this.connectedDid,
               delegateDid  : this.delegateDid,
-              protocol     : request.protocol,
+              protocol     : messageParams.filter?.protocol,
               delegate     : true,
               cached       : true,
               messageType  : agentRequest.messageType
@@ -938,7 +832,7 @@ export class DwnApi {
 
         let agentResponse: DwnResponse<DwnInterface.RecordsSubscribe>;
 
-        if (request.from) {
+        if (from) {
           agentResponse = await this.agent.sendDwnRequest(agentRequest);
         } else {
           agentResponse = await this.agent.processDwnRequest(agentRequest);
@@ -974,19 +868,19 @@ export class DwnApi {
        * requires fetching from the DWN datastore.
        */
       write: async (request: RecordsWriteRequest): Promise<RecordsWriteResponse> => {
-        const { dataBlob, dataFormat } = dataToBlob(request.data, request.message?.dataFormat);
+        const { data, store, encryption, ...restParams } = request;
+        const { dataBlob, dataFormat } = dataToBlob(data, restParams.dataFormat);
+
+        const messageParams = { ...restParams, dataFormat };
 
         const dwnRequestParams: ProcessDwnRequest<DwnInterface.RecordsWrite> = {
-          store         : request.store,
-          messageType   : DwnInterface.RecordsWrite,
-          messageParams : {
-            ...request.message,
-            dataFormat
-          },
-          author     : this.connectedDid,
-          target     : this.connectedDid,
-          dataStream : dataBlob,
-          encryption : request.encryption,
+          store,
+          messageType : DwnInterface.RecordsWrite,
+          messageParams,
+          author      : this.connectedDid,
+          target      : this.connectedDid,
+          dataStream  : dataBlob,
+          encryption,
         };
 
         // if impersonation is enabled, fetch the delegated grant to use with the write operation
@@ -994,7 +888,7 @@ export class DwnApi {
           const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
             connectedDid : this.connectedDid,
             delegateDid  : this.delegateDid,
-            protocol     : request.message.protocol,
+            protocol     : messageParams.protocol,
             delegate     : true,
             cached       : true,
             messageType  : dwnRequestParams.messageType

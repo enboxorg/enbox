@@ -70,16 +70,13 @@ export type TypedWriteRequest<
   /** The data payload. Type-checked against the schema map. */
   data: DataForPath<D, M, Path>;
 
-  /** Additional message parameters (protocolPath and protocol are injected). */
-  message?: {
-    parentContextId? : string;
-    published? : boolean;
-    datePublished? : string;
-    recipient? : string;
-    protocolRole? : string;
-    dataFormat? : DataFormatForPath<D, Path>;
-    tags? : globalThis.Record<string, string | number | boolean | string[] | number[]>;
-  };
+  parentContextId?: string;
+  published?: boolean;
+  datePublished?: string;
+  recipient?: string;
+  protocolRole?: string;
+  dataFormat?: DataFormatForPath<D, Path>;
+  tags?: globalThis.Record<string, string | number | boolean | string[] | number[]>;
 
   /** Whether to persist immediately (defaults to `true`). */
   store?: boolean;
@@ -215,7 +212,7 @@ export class TypedDwnApi<
    */
   public async configure(options?: { encryption?: boolean }): Promise<DwnResponseStatus & { protocol?: Protocol }> {
     return this._dwn.protocols.configure({
-      message    : { definition: this._definition },
+      definition : this._definition,
       encryption : options?.encryption,
     });
   }
@@ -234,16 +231,19 @@ export class TypedDwnApi<
     const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
     return this._dwn.records.write({
-      data       : request.data,
-      store      : request.store,
-      encryption : request.encryption,
-      message    : {
-        ...request.message,
-        protocol     : this._definition.protocol,
-        protocolPath : path,
-        schema       : typeEntry?.schema,
-        dataFormat   : request.message?.dataFormat ?? typeEntry?.dataFormats?.[0],
-      },
+      data            : request.data,
+      store           : request.store,
+      encryption      : request.encryption,
+      parentContextId : request.parentContextId,
+      published       : request.published,
+      datePublished   : request.datePublished,
+      recipient       : request.recipient,
+      protocolRole    : request.protocolRole,
+      tags            : request.tags,
+      protocol        : this._definition.protocol,
+      protocolPath    : path,
+      schema          : typeEntry?.schema,
+      dataFormat      : request.dataFormat ?? typeEntry?.dataFormats?.[0],
     });
   }
 
@@ -262,19 +262,16 @@ export class TypedDwnApi<
 
     return this._dwn.records.query({
       from       : request?.from,
-      protocol   : this._definition.protocol,
       encryption : request?.encryption,
-      message    : {
-        filter: {
-          ...request?.filter,
-          protocol     : this._definition.protocol,
-          protocolPath : path,
-          schema       : typeEntry?.schema,
-        },
-        dateSort     : request?.dateSort,
-        pagination   : request?.pagination,
-        protocolRole : request?.protocolRole,
+      filter     : {
+        ...request?.filter,
+        protocol     : this._definition.protocol,
+        protocolPath : path,
+        schema       : typeEntry?.schema,
       },
+      dateSort     : request?.dateSort,
+      pagination   : request?.pagination,
+      protocolRole : request?.protocolRole,
     });
   }
 
@@ -293,15 +290,12 @@ export class TypedDwnApi<
 
     return this._dwn.records.read({
       from       : request.from,
-      protocol   : this._definition.protocol,
       encryption : request.encryption,
-      message    : {
-        filter: {
-          ...request.filter,
-          protocol     : this._definition.protocol,
-          protocolPath : path,
-          schema       : typeEntry?.schema,
-        },
+      filter     : {
+        ...request.filter,
+        protocol     : this._definition.protocol,
+        protocolPath : path,
+        schema       : typeEntry?.schema,
       },
     });
   }
@@ -319,9 +313,7 @@ export class TypedDwnApi<
     return this._dwn.records.delete({
       from     : request.from,
       protocol : this._definition.protocol,
-      message  : {
-        recordId: request.recordId,
-      },
+      recordId : request.recordId,
     });
   }
 
@@ -342,17 +334,14 @@ export class TypedDwnApi<
     const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
     return this._dwn.records.subscribe({
-      from     : request?.from,
-      protocol : this._definition.protocol,
-      message  : {
-        filter: {
-          ...request?.filter,
-          protocol     : this._definition.protocol,
-          protocolPath : path,
-          schema       : typeEntry?.schema,
-        },
-        protocolRole: request?.protocolRole,
+      from   : request?.from,
+      filter : {
+        ...request?.filter,
+        protocol     : this._definition.protocol,
+        protocolPath : path,
+        schema       : typeEntry?.schema,
       },
+      protocolRole: request?.protocolRole,
     });
   }
 }
