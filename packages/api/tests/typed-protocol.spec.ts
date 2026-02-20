@@ -9,7 +9,7 @@ import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { TypedDwnApi } from '../src/typed-dwn-api.js';
+import { TypedWeb5 } from '../src/typed-web5.js';
 
 // ---------------------------------------------------------------------------
 // Test protocol definition
@@ -117,28 +117,28 @@ describe('TypedProtocol API', () => {
     });
   });
 
-  describe('DwnApi.using()', () => {
-    it('should return a TypedDwnApi instance', () => {
-      const typed = dwnAlice.using(TodoProtocol);
-      expect(typed).toBeInstanceOf(TypedDwnApi);
+  describe('TypedWeb5', () => {
+    it('should be constructable from a DwnApi and TypedProtocol', () => {
+      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      expect(typed).toBeInstanceOf(TypedWeb5);
     });
 
     it('should expose the protocol URI', () => {
-      const typed = dwnAlice.using(TodoProtocol);
+      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
       expect(typed.protocol).toBe('https://example.com/protocols/todo');
     });
 
     it('should expose the protocol definition', () => {
-      const typed = dwnAlice.using(TodoProtocol);
+      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
       expect(typed.definition).toBe(TodoProtocolDefinition);
     });
   });
 
-  describe('TypedDwnApi', () => {
-    let typed: TypedDwnApi<typeof TodoProtocolDefinition, TodoSchemaMap>;
+  describe('TypedWeb5.records', () => {
+    let typed: TypedWeb5<typeof TodoProtocolDefinition, TodoSchemaMap>;
 
     beforeEach(async () => {
-      typed = dwnAlice.using(TodoProtocol);
+      typed = new TypedWeb5(dwnAlice, TodoProtocol);
 
       // Install the protocol first
       const { status } = await typed.configure();
@@ -158,7 +158,7 @@ describe('TypedProtocol API', () => {
 
     describe('write()', () => {
       it('should write a record at a root path', async () => {
-        const { status, record } = await typed.write('list', {
+        const { status, record } = await typed.records.write('list', {
           data: { name: 'Groceries', description: 'Weekly shopping' },
         });
 
@@ -171,13 +171,13 @@ describe('TypedProtocol API', () => {
 
       it('should write a record at a nested path', async () => {
         // First create a parent list
-        const { record: listRecord } = await typed.write('list', {
+        const { record: listRecord } = await typed.records.write('list', {
           data: { name: 'Work Tasks' },
         });
         expect(listRecord).toBeDefined();
 
         // Write a task nested under the list
-        const { status, record: taskRecord } = await typed.write('list/task', {
+        const { status, record: taskRecord } = await typed.records.write('list/task', {
           data            : { title: 'Review PR', completed: false },
           parentContextId : listRecord.contextId,
         });
@@ -190,7 +190,7 @@ describe('TypedProtocol API', () => {
 
       it('should read back written JSON data with correct types', async () => {
         const inputData = { name: 'Shopping', description: 'Grocery list' };
-        const { record } = await typed.write('list', { data: inputData });
+        const { record } = await typed.records.write('list', { data: inputData });
         expect(record).toBeDefined();
 
         const readBack = await record.data.json<TodoSchemaMap['list']>();
@@ -202,10 +202,10 @@ describe('TypedProtocol API', () => {
     describe('query()', () => {
       it('should query records at a given path', async () => {
         // Write two lists
-        await typed.write('list', { data: { name: 'List A' } });
-        await typed.write('list', { data: { name: 'List B' } });
+        await typed.records.write('list', { data: { name: 'List A' } });
+        await typed.records.write('list', { data: { name: 'List B' } });
 
-        const { status, records } = await typed.query('list');
+        const { status, records } = await typed.records.query('list');
 
         expect(status.code).toBe(200);
         expect(records).toBeDefined();
@@ -213,23 +213,23 @@ describe('TypedProtocol API', () => {
       });
 
       it('should apply additional filters', async () => {
-        const { record: listRecord } = await typed.write('list', {
+        const { record: listRecord } = await typed.records.write('list', {
           data: { name: 'Work' },
         });
         expect(listRecord).toBeDefined();
 
         // Write tasks under the list
-        await typed.write('list/task', {
+        await typed.records.write('list/task', {
           data            : { title: 'Task 1', completed: false },
           parentContextId : listRecord.contextId,
         });
-        await typed.write('list/task', {
+        await typed.records.write('list/task', {
           data            : { title: 'Task 2', completed: true },
           parentContextId : listRecord.contextId,
         });
 
         // Query tasks under this specific list context
-        const { records } = await typed.query('list/task', {
+        const { records } = await typed.records.query('list/task', {
           filter: { contextId: listRecord.contextId },
         });
 
@@ -240,12 +240,12 @@ describe('TypedProtocol API', () => {
 
     describe('read()', () => {
       it('should read a single record by recordId', async () => {
-        const { record: written } = await typed.write('list', {
+        const { record: written } = await typed.records.write('list', {
           data: { name: 'Reading List' },
         });
         expect(written).toBeDefined();
 
-        const { status, record: readRecord } = await typed.read('list', {
+        const { status, record: readRecord } = await typed.records.read('list', {
           filter: { recordId: written.id },
         });
 
@@ -258,18 +258,18 @@ describe('TypedProtocol API', () => {
 
     describe('delete()', () => {
       it('should delete a record by recordId', async () => {
-        const { record } = await typed.write('list', {
+        const { record } = await typed.records.write('list', {
           data: { name: 'To Delete' },
         });
         expect(record).toBeDefined();
 
-        const { status: deleteStatus } = await typed.delete('list', {
+        const { status: deleteStatus } = await typed.records.delete('list', {
           recordId: record.id,
         });
         expect(deleteStatus.code).toBe(202);
 
         // Verify it's gone
-        const { records } = await typed.query('list');
+        const { records } = await typed.records.query('list');
         expect(records.length).toBe(0);
       });
     });
@@ -278,7 +278,7 @@ describe('TypedProtocol API', () => {
       it('should subscribe and receive new records', async () => {
         const received: string[] = [];
 
-        const { status, liveQuery } = await typed.subscribe('list');
+        const { status, liveQuery } = await typed.records.subscribe('list');
 
         expect(status.code).toBe(200);
         expect(liveQuery).toBeDefined();
@@ -288,7 +288,7 @@ describe('TypedProtocol API', () => {
         });
 
         // Write a record — should trigger subscription
-        await typed.write('list', { data: { name: 'Subscribed List' } });
+        await typed.records.write('list', { data: { name: 'Subscribed List' } });
 
         // Give subscription handler time to fire
         await new Promise((resolve) => setTimeout(resolve, 100));

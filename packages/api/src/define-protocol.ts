@@ -2,7 +2,7 @@
  * Factory function for creating typed protocol definitions.
  *
  * `defineProtocol()` wraps a standard {@link ProtocolDefinition} with
- * compile-time type metadata so that {@link TypedDwnApi} can provide
+ * compile-time type metadata so that {@link TypedWeb5} can provide
  * path autocompletion, data-shape inference, and tag type safety.
  */
 
@@ -17,7 +17,7 @@ import type { SchemaMap, TypedProtocol } from './protocol-types.js';
  *
  * The `definition` argument is returned as-is (no cloning). The schema map
  * is a phantom type parameter — it exists only at compile time to thread
- * type information through to `TypedDwnApi`.
+ * type information through to `TypedWeb5`.
  *
  * @param definition - A standard `ProtocolDefinition` object.
  * @param _schemaMap - A phantom value (e.g. `{} as MySchemaMap`) that carries
@@ -32,7 +32,7 @@ import type { SchemaMap, TypedProtocol } from './protocol-types.js';
  * });
  *
  * // socialGraph.definition is the raw ProtocolDefinition
- * // TypedDwnApi infers paths like 'friend' | 'friend/message' and
+ * // TypedWeb5 infers paths like 'friend' | 'friend/message' and
  * // data types from the schema map.
  * ```
  */

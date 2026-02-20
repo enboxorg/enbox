@@ -1,10 +1,10 @@
-# Enbox API SDK
+# @enbox/api
 
-> **Research Preview** — Enbox is under active development. APIs may change without notice.
+> **Research Preview** -- Enbox is under active development. APIs may change without notice.
 
 [![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/api.json)](https://github.com/enboxorg/enbox/actions/workflows/ci.yml)
 
-The high-level SDK for building decentralized applications with identity and data management.
+The high-level SDK for building decentralized applications with protocol-first data management.
 
 ## Installation
 
@@ -14,233 +14,214 @@ bun add @enbox/api
 
 ## Quick Start
 
-```javascript
-import { Enbox } from '@enbox/api';
+```ts
+import { defineProtocol, Web5 } from '@enbox/api';
 
-const { enbox, did: myDid } = await Enbox.connect();
+// 1. Connect
+const { web5, did: myDid } = await Web5.connect();
 
-// Create a record
-const { record } = await enbox.dwn.records.create({
-  data    : 'Hello World!',
-  message : { dataFormat: 'text/plain' },
+// 2. Define a protocol with typed data shapes
+const NotesProtocol = defineProtocol({
+  protocol  : 'https://example.com/notes',
+  published : true,
+  types     : {
+    note: {
+      schema      : 'https://example.com/schemas/note',
+      dataFormats : ['application/json'],
+    },
+  },
+  structure: {
+    note: {},
+  },
+} as const, {} as {
+  note: { title: string; body: string };
 });
 
-// Send it to your remote DWN
+// 3. Scope all operations to the protocol
+const notes = web5.using(NotesProtocol);
+
+// 4. Install the protocol
+await notes.configure();
+
+// 5. Write a record (path, data, and schema are type-checked)
+const { record } = await notes.records.write('note', {
+  data: { title: 'Hello', body: 'World' },
+});
+
+// 6. Send to your remote DWN
 await record.send(myDid);
 ```
 
-## API Documentation
+## Core Concepts
 
-### **`Enbox.connect(options)`**
+### `Web5.connect(options?)`
 
-Connects to a user's local identity agent or generates an in-app DID.
+Connects to a local identity agent or generates an in-app DID.
 
-```javascript
-const { enbox, did: myDid } = await Enbox.connect();
+```ts
+const { web5, did, recoveryPhrase } = await Web5.connect();
 ```
 
-#### Options (all optional)
+**Options** (all optional):
 
-- **`agent`** - `EnboxAgent` instance. Defaults to a local `EnboxUserAgent`.
-- **`connectedDid`** - `string`: an existing DID to connect to.
-- **`sync`** - `string`: sync interval (any value accepted by [`ms`](https://www.npmjs.com/package/ms)), or `'off'` to disable. Default: `'2m'`.
-- **`techPreview.dwnEndpoints`** - `string[]`: DWN endpoints for the created DID. Default: `['https://enbox-dwn.fly.dev']`.
+| Option | Type | Description |
+|--------|------|-------------|
+| `agent` | `Web5Agent` | Custom agent instance. Defaults to a local `Web5UserAgent`. |
+| `connectedDid` | `string` | Existing DID to connect to. |
+| `password` | `string` | Password to protect the local identity vault. |
+| `recoveryPhrase` | `string` | 12-word BIP-39 phrase for vault recovery. |
+| `sync` | `string` | Sync interval (e.g. `'2m'`) or `'off'`. Default: `'2m'`. |
+| `didCreateOptions.dwnEndpoints` | `string[]` | DWN endpoints for the created DID. |
+| `walletConnectOptions` | `ConnectOptions` | Trigger external wallet connect flow. |
 
-#### Response
+**Returns** `{ web5, did, recoveryPhrase?, delegateDid? }`.
 
-- **`enbox`** - `Enbox` instance with access to DWN operations and DID methods.
-- **`did`** - `string`: the DID that was created or connected to.
+---
+
+### `Web5.anonymous(options?)`
+
+Creates a lightweight, read-only instance for querying public DWN data. No identity, vault, or signing keys are required.
+
+```ts
+const { dwn } = Web5.anonymous();
+
+const { records } = await dwn.records.query({
+  from   : 'did:dht:alice...',
+  filter : { protocol: 'https://example.com/notes', protocolPath: 'note' },
+});
+
+for (const record of records) {
+  console.log(record.id, await record.data.text());
+}
+```
+
+Returns a `{ dwn: DwnReaderApi }` with read-only `records.query()` and `records.read()`.
+
+---
+
+### `web5.using(protocol)`
+
+The **primary interface** for all record operations. Returns a `TypedWeb5` instance scoped to the given protocol.
+
+```ts
+const notes = web5.using(NotesProtocol);
+```
+
+The returned object provides:
+
+- **`notes.configure()`** -- Install the protocol on the local DWN.
+- **`notes.records.write(path, request)`** -- Write a record at a protocol path.
+- **`notes.records.query(path, request?)`** -- Query records at a path.
+- **`notes.records.read(path, request)`** -- Read a single record.
+- **`notes.records.delete(path, request)`** -- Delete a record by ID.
+- **`notes.records.subscribe(path, request?)`** -- Subscribe to real-time changes (returns a `LiveQuery`).
+
+Protocol URI, protocolPath, and schema are automatically injected into every operation.
+
+---
+
+### `defineProtocol(definition, schemaMap?)`
+
+Creates a typed protocol definition that enables compile-time path autocompletion and data type checking.
+
+```ts
+import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+
+const SocialProtocol = defineProtocol({
+  protocol  : 'https://social.example/protocol',
+  published : true,
+  types: {
+    profile : { schema: 'https://social.example/schemas/profile', dataFormats: ['application/json'] },
+    post    : { schema: 'https://social.example/schemas/post',    dataFormats: ['application/json'] },
+    reply   : { schema: 'https://social.example/schemas/reply',   dataFormats: ['application/json'] },
+  },
+  structure: {
+    profile : {},
+    post    : {
+      reply: {},
+    },
+  },
+} as const satisfies ProtocolDefinition, {} as {
+  profile : { displayName: string; bio?: string };
+  post    : { title: string; body: string };
+  reply   : { body: string };
+});
+```
+
+The `schemaMap` is a phantom type -- it exists only at compile time. Pass `{} as YourSchemaMap` as the second argument.
 
 ---
 
 ### Record Instances
 
-Methods like `create`, `write`, and `query` return `Record` instances with:
+Methods like `write`, `query`, and `read` return `Record` instances.
 
-**Properties**: `id`, `contextId`, `dataFormat`, `dateCreated`, `dateModified`, `datePublished`, `encryption`, `protocol`, `protocolPath`, `recipient`, `schema`, `dataCid`, `dataSize`, `published`.
+**Properties**: `id`, `contextId`, `dataFormat`, `dateCreated`, `timestamp`, `datePublished`, `protocol`, `protocolPath`, `recipient`, `schema`, `dataCid`, `dataSize`, `published`.
 
-**Methods**:
-- **`data.blob()`** / **`data.bytes()`** / **`data.json()`** / **`data.stream()`** / **`data.text()`** - read record data in various formats.
-- **`send(did)`** - send the record to a DID's DWN endpoints.
-- **`update(request)`** - overwrite the record with new data.
+**Data accessors**:
 
----
-
-### **`enbox.dwn.records.query(request)`**
-
-Query your own or another DID's DWN for records.
-
-```javascript
-// Query your own DWN
-const { records } = await enbox.dwn.records.query({
-  message: {
-    filter: {
-      schema     : 'https://schema.org/Playlist',
-      dataFormat : 'application/json',
-    },
-  },
-});
-
-// Query Bob's DWN
-const { records } = await enbox.dwn.records.query({
-  from: 'did:example:bob',
-  message: {
-    filter: {
-      protocol   : 'https://music.org/protocol',
-      schema     : 'https://schema.org/Playlist',
-      dataFormat : 'application/json',
-    },
-  },
-});
+```ts
+await record.data.text();          // string
+await record.data.json<MyType>();  // typed JSON
+await record.data.blob();          // Blob
+await record.data.bytes();         // Uint8Array
+await record.data.stream();        // ReadableStream
 ```
 
-**Filter properties**: `recordId`, `protocol`, `protocolPath`, `contextId`, `parentId`, `recipient`, `schema`, `dataFormat`.
+**Mutators** (return a new `Record` instance):
 
-**Pagination**: `{ limit: number, cursor: string }`. The response includes a `cursor` if more results exist.
+```ts
+const { record: updated } = await record.update({ data: { title: 'New Title', body: '...' } });
+const { status } = await record.delete();
+```
 
----
+**Side-effect methods** (return status only):
 
-### **`enbox.dwn.records.subscribe(request)`**
-
-Subscribe to record changes on your own or another DID's DWN.
-
-```javascript
-const { status } = await enbox.dwn.records.subscribe({
-  message: {
-    filter: { protocol: 'https://schema.org/protocols/social' },
-  },
-  subscriptionHandler: (record) => {
-    console.log('received', record);
-  },
-});
+```ts
+await record.send(targetDid);     // send to a remote DWN
+await record.store();             // persist locally
+await record.import();            // import from a remote DWN
 ```
 
 ---
 
-### **`enbox.dwn.records.create(request)`**
+### LiveQuery (Subscriptions)
 
-Create a new record and optionally store it locally.
+`records.subscribe()` returns a `LiveQuery` that provides an initial snapshot plus real-time deduplicated change events.
 
-```javascript
-const { record } = await enbox.dwn.records.create({
-  data    : 'Hello World!',
-  message : { dataFormat: 'text/plain' },
-});
+```ts
+const { liveQuery } = await notes.records.subscribe('post');
 
-await record.send(myDid);               // send to your remote DWN
-await record.send('did:example:bob');    // send to Bob's DWN
-```
+liveQuery.on('create', (record) => { /* new record */ });
+liveQuery.on('update', (record) => { /* updated record */ });
+liveQuery.on('delete', (record) => { /* deleted record */ });
 
-Pass `store: false` to create without storing locally (e.g., for records you only send to others).
-
----
-
-### **`enbox.dwn.records.write(request)`**
-
-Alias for `create()` — same request object.
-
----
-
-### **`enbox.dwn.records.read(request)`**
-
-Read a specific record by filter (most commonly `recordId`).
-
-```javascript
-const { record } = await enbox.dwn.records.read({
-  message: {
-    filter: { recordId: 'bfw35evr6e54c4cqa4c589h4cq3v7w4nc534c9w7h5' },
-  },
-});
-
-console.log(await record.data.text());
-```
-
-Use `from: 'did:example:bob'` to read from another DID's DWN.
-
----
-
-### **`enbox.dwn.records.delete(request)`**
-
-Delete a record by ID.
-
-```javascript
-await enbox.dwn.records.delete({
-  message: { recordId: 'bfw35evr6e54c4cqa4c589h4cq3v7w4nc534c9w7h5' },
-});
+// Clean up
+await liveQuery.close();
 ```
 
 ---
 
-### **`enbox.dwn.protocols.configure(request)`**
+## Advanced Usage
 
-Install a protocol definition on your DWN.
+For power users who need direct, unscoped DWN access (e.g. cross-protocol queries, raw permission management), import from the `@enbox/api/advanced` sub-path:
 
-```javascript
-const { protocol } = await enbox.dwn.protocols.configure({
-  message: {
-    definition: {
-      protocol  : 'https://photos.org/protocol',
-      published : true,
-      types: {
-        album : { schema: 'https://photos.org/album', dataFormats: ['application/json'] },
-        photo : { schema: 'https://photos.org/photo', dataFormats: ['application/json'] },
-        image : { dataFormats: ['image/png', 'image/jpeg', 'image/gif'] },
-      },
-      structure: {
-        album: {
-          $actions: [{ who: 'recipient', can: 'read' }],
-        },
-        photo: {
-          $actions: [{ who: 'recipient', can: 'read' }],
-          image: {
-            $actions: [{ who: 'author', of: 'photo', can: 'write' }],
-          },
-        },
-      },
-    },
-  },
-});
-
-await protocol.send(myDid); // sync to remote DWNs
+```ts
+import { DwnApi } from '@enbox/api/advanced';
 ```
+
+The `DwnApi` class provides raw `records`, `protocols`, and `permissions` accessors without protocol scoping. Most applications should use `web5.using()` instead.
 
 ---
 
-### **`enbox.dwn.protocols.query(request)`**
+## DID Operations
 
-Query a DID's DWN for installed protocols.
+```ts
+// Create a DID
+const myDid = await web5.did.create('dht');
 
-```javascript
-const { protocols } = await enbox.dwn.protocols.query({
-  from: 'did:example:bob',
-  message: {
-    filter: { protocol: 'https://music.org/protocol' },
-  },
-});
-```
-
----
-
-### **`enbox.did.create(method, options)`**
-
-Generate a DID using a supported method (`'dht'` or `'jwk'`).
-
-```javascript
-const myDid = await enbox.did.create('dht');
-```
-
-Pass `store: false` in options to skip storing the DID's keys in the agent.
-
----
-
-### **`enbox.did.resolve(didUri)`**
-
-Resolve a DID to its DID Document.
-
-```javascript
-const { didDocument } = await enbox.did.resolve(
-  'did:dht:qftx7z968xcpfy1a1diu75pg5meap3gdtg6ezagaw849wdh6oubo'
-);
+// Resolve a DID
+const { didDocument } = await web5.did.resolve('did:dht:abc...');
 ```
 
 ## License

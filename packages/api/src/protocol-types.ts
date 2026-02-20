@@ -133,7 +133,7 @@ export type TagKeys<Tags extends ProtocolTagsDefinition> = Exclude<
 /**
  * A mapping from protocol type names to their TypeScript data shapes.
  *
- * Used as a type parameter to `defineProtocol()` and `TypedDwnApi` so that
+ * Used as a type parameter to `defineProtocol()` and `TypedWeb5` so that
  * the protocol definition JSON stays JSON-compatible while TypeScript types
  * are tracked separately.
  *
@@ -154,7 +154,7 @@ export type SchemaMap = Record<string, unknown>;
 /**
  * The return type of `defineProtocol()`. Bundles the raw protocol definition
  * with its inferred path strings and schema type map for downstream use
- * by `TypedDwnApi`.
+ * by `TypedWeb5`.
  */
 export type TypedProtocol<
   D extends ProtocolDefinition = ProtocolDefinition,
