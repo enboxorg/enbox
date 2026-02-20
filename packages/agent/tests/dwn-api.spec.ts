@@ -30,7 +30,7 @@ describe('AgentDwnApi', () => {
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : TestAgent,
-      agentStores : 'dwn'
+      agentStores : 'memory'
     });
   });
 
@@ -83,7 +83,7 @@ describe('AgentDwnApi', () => {
     let alice: BearerIdentity;
     let bob: BearerIdentity;
 
-    beforeEach(async () => {
+    beforeAll(async () => {
       await testHarness.clearStorage();
       await testHarness.createAgentDid();
 
@@ -96,6 +96,10 @@ describe('AgentDwnApi', () => {
         metadata  : { name: 'Alice' },
         didMethod : 'jwk'
       });
+    });
+
+    beforeEach(async () => {
+      await testHarness.clearDwnStores();
     });
 
     afterAll(async () => {

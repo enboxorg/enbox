@@ -25,11 +25,13 @@ describe('KeyStore', () => {
         agentClass  : TestAgent,
         agentStores : 'memory'
       });
+
+      await testHarness.clearStorage();
+      await testHarness.createAgentDid();
     });
 
     beforeEach(async () => {
-      await testHarness.clearStorage();
-      await testHarness.createAgentDid();
+      await testHarness.clearDwnStores();
       keyStore = new InMemoryKeyStore();
       const keyManager = new LocalKeyManager({ agent: testHarness.agent, keyStore });
       testHarness.agent.keyManager = keyManager;
@@ -164,7 +166,7 @@ describe('KeyStore', () => {
     });
 
     beforeEach(async () => {
-      await testHarness.clearStorage();
+      await testHarness.clearDwnStores();
       // Use X25519 for the agent DID so that DWN record-level encryption
       // (which requires an X25519 keyAgreement key) works correctly.
       testHarness.agent.agentDid = x25519Did;
@@ -445,7 +447,7 @@ describe('KeyStore', () => {
       });
 
       beforeEach(async () => {
-        await ed25519Harness.clearStorage();
+        await ed25519Harness.clearDwnStores();
         // Explicitly create an Ed25519-only did:jwk (no secp256k1 keyAgreement).
         ed25519Harness.agent.agentDid = await DidJwk.create({
           options: { algorithm: 'Ed25519' }

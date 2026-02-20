@@ -21,11 +21,13 @@ describe('DidStore', () => {
       agentClass  : TestAgent,
       agentStores : 'memory'
     });
+
+    await testHarness.clearStorage();
+    await testHarness.createAgentDid();
   });
 
   beforeEach(async () => {
-    await testHarness.clearStorage();
-    await testHarness.createAgentDid();
+    await testHarness.clearDwnStores();
   });
 
   afterAll(async () => {
