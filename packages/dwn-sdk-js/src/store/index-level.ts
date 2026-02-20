@@ -757,10 +757,10 @@ export class IndexLevel {
    */
   static encodeValue(value: string | number | boolean): string {
     switch (typeof value) {
-      case 'number':
-        return this.encodeNumberValue(value);
-      default:
-        return JSON.stringify(value);
+    case 'number':
+      return this.encodeNumberValue(value);
+    default:
+      return JSON.stringify(value);
     }
   }
 
