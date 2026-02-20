@@ -69,6 +69,7 @@ describe('websocket api', function () {
 
   it('RecordsWrite messages are not supported', async function () {
     const alice = await TestDataGenerator.generateDidKeyPersona();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
     const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice);
     const dataBytes = await DataStream.toBytes(dataStream);
@@ -92,6 +93,7 @@ describe('websocket api', function () {
 
   it('subscribes to records and receives updates', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
     const { message } = await TestDataGenerator.generateRecordsSubscribe({
       author : alice,
@@ -164,6 +166,7 @@ describe('websocket api', function () {
 
   it('stops receiving updates when subscription is closed', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
     const { message } = await TestDataGenerator.generateRecordsSubscribe({
       author : alice,
@@ -251,6 +254,7 @@ describe('websocket api', function () {
 
   it('should fail to add subscription using a `JsonRpcId` that already exists for a subscription in that socket', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
     const { message } = await TestDataGenerator.generateRecordsSubscribe({
       author : alice,
@@ -337,6 +341,7 @@ describe('websocket api', function () {
 
   it('should receive an updated message as well as the initial write when subscribing to a record', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
     // write an initial message
     const initialWrite = await TestDataGenerator.generateRecordsWrite({

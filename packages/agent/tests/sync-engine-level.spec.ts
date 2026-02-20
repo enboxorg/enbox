@@ -19,6 +19,8 @@ import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 
+import freeForAllProtocolDefinition from './fixtures/protocol-definitions/free-for-all.json' with { type: 'json' };
+
 const testDwnUrls: string[] = [testDwnUrl];
 
 describe('SyncEngineLevel', () => {
@@ -90,6 +92,20 @@ describe('SyncEngineLevel', () => {
       await testHarness.dwnResumableTaskStore.clear();
       await testHarness.agent.permissions.clear();
       testHarness.dwnStores.clear();
+
+      // Install free-for-all protocol after clearing stores.
+      await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: freeForAllProtocolDefinition }
+      });
+      await testHarness.agent.dwn.sendRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: freeForAllProtocolDefinition }
+      });
     });
 
     afterAll(async () => {
@@ -162,8 +178,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain',
+            schema       : randomSchema
           },
           dataStream: new Blob([`Hello, ${i}`])
         });
@@ -176,10 +194,12 @@ describe('SyncEngineLevel', () => {
             target        : alice.did.uri,
             messageType   : DwnInterface.RecordsWrite,
             messageParams : {
-              recordId    : writeResponse.message!.recordId,
-              dataFormat  : 'text/plain',
-              schema      : writeResponse.message!.descriptor.schema,
-              dateCreated : writeResponse.message!.descriptor.dateCreated
+              recordId     : writeResponse.message!.recordId,
+              protocol     : 'http://free-for-all.xyz',
+              protocolPath : 'post',
+              dataFormat   : 'text/plain',
+              schema       : writeResponse.message!.descriptor.schema,
+              dateCreated  : writeResponse.message!.descriptor.dateCreated
             },
             dataStream: new Blob([`Hello, ${i} updated!`]),
           });
@@ -197,8 +217,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain',
+            schema       : randomSchema
           },
           dataStream: new Blob([`Hello, ${i}`])
         });
@@ -211,10 +233,12 @@ describe('SyncEngineLevel', () => {
             target        : alice.did.uri,
             messageType   : DwnInterface.RecordsWrite,
             messageParams : {
-              recordId    : writeResponse.message!.recordId,
-              dataFormat  : 'text/plain',
-              schema      : writeResponse.message!.descriptor.schema,
-              dateCreated : writeResponse.message!.descriptor.dateCreated
+              recordId     : writeResponse.message!.recordId,
+              protocol     : 'http://free-for-all.xyz',
+              protocolPath : 'post',
+              dataFormat   : 'text/plain',
+              schema       : writeResponse.message!.descriptor.schema,
+              dateCreated  : writeResponse.message!.descriptor.dateCreated
             },
             dataStream: new Blob([`Hello, ${i} updated!`]),
           });
@@ -232,8 +256,8 @@ describe('SyncEngineLevel', () => {
       });
       let localProtocolsQueryReply = localProtocolsQueryResponse.reply;
       expect(localProtocolsQueryReply.status.code).toBe(200);
-      expect(localProtocolsQueryReply.entries?.length).toBe(1);
-      expect(localProtocolsQueryReply.entries).toEqual([ protocolsConfigure1.message ]);
+      expect(localProtocolsQueryReply.entries?.length).toBe(2);
+      expect(localProtocolsQueryReply.entries).toEqual(expect.arrayContaining([ protocolsConfigure1.message ]));
 
       // query local and check for only local records
       let localRecordsQueryResponse = await testHarness.agent.dwn.processRequest({
@@ -262,8 +286,8 @@ describe('SyncEngineLevel', () => {
       });
       let remoteProtocolsQueryReply = remoteProtocolsQueryResponse.reply;
       expect(remoteProtocolsQueryReply.status.code).toBe(200);
-      expect(remoteProtocolsQueryReply.entries?.length).toBe(1);
-      expect(remoteProtocolsQueryReply.entries).toEqual([ protocolsConfigure2.message ]);
+      expect(remoteProtocolsQueryReply.entries?.length).toBe(2);
+      expect(remoteProtocolsQueryReply.entries).toEqual(expect.arrayContaining([ protocolsConfigure2.message ]));
 
       // query remote and check for only remote records
       let remoteRecordsQueryResponse = await testHarness.agent.dwn.sendRequest({
@@ -300,8 +324,8 @@ describe('SyncEngineLevel', () => {
       });
       localProtocolsQueryReply = localProtocolsQueryResponse.reply;
       expect(localProtocolsQueryReply.status.code).toBe(200);
-      expect(localProtocolsQueryReply.entries?.length).toBe(2);
-      expect(localProtocolsQueryReply.entries).toEqual([ protocolsConfigure1.message, protocolsConfigure2.message ]);
+      expect(localProtocolsQueryReply.entries?.length).toBe(3);
+      expect(localProtocolsQueryReply.entries).toEqual(expect.arrayContaining([ protocolsConfigure1.message, protocolsConfigure2.message ]));
 
       // query local node to see all records
       localRecordsQueryResponse = await testHarness.agent.dwn.processRequest({
@@ -330,8 +354,8 @@ describe('SyncEngineLevel', () => {
       });
       remoteProtocolsQueryReply = remoteProtocolsQueryResponse.reply;
       expect(remoteProtocolsQueryReply.status.code).toBe(200);
-      expect(remoteProtocolsQueryReply.entries?.length).toBe(2);
-      expect(remoteProtocolsQueryReply.entries).toEqual([ protocolsConfigure1.message, protocolsConfigure2.message ]);
+      expect(remoteProtocolsQueryReply.entries?.length).toBe(3);
+      expect(remoteProtocolsQueryReply.entries).toEqual(expect.arrayContaining([ protocolsConfigure1.message, protocolsConfigure2.message ]));
 
       // query remote node to see all records
       remoteRecordsQueryResponse = await testHarness.agent.dwn.sendRequest({
@@ -399,8 +423,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain',
+            schema       : randomSchema
           },
           dataStream: new Blob(['Hello, world!'])
         });
@@ -414,10 +440,12 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            recordId    : testRecordId,
-            dataFormat  : 'text/plain',
-            schema      : randomSchema,
-            dateCreated : writeResponse1.message!.descriptor.dateCreated
+            recordId     : testRecordId,
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain',
+            schema       : randomSchema,
+            dateCreated  : writeResponse1.message!.descriptor.dateCreated
           },
           dataStream: new Blob(['Hello, world updated!'])
         });
@@ -618,8 +646,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain',
+            schema       : randomSchema
           },
           dataStream: new Blob(['Hello, world!'])
         });
@@ -669,7 +699,9 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat: 'text/plain'
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain'
           },
           dataStream: new Blob(['Hello, world 2!'])
         });
@@ -717,7 +749,9 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat: 'text/plain'
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain'
           },
           dataStream: new Blob(Array(LARGE_DATA_SIZE).fill('a')) //large data
         });
@@ -768,13 +802,29 @@ describe('SyncEngineLevel', () => {
         // Create a second Identity to author the DWN messages.
         const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
 
+        // Install free-for-all protocol on Bob's local and remote DWNs.
+        await testHarness.agent.dwn.processRequest({
+          author        : bob.did.uri,
+          target        : bob.did.uri,
+          messageType   : DwnInterface.ProtocolsConfigure,
+          messageParams : { definition: freeForAllProtocolDefinition }
+        });
+        await testHarness.agent.dwn.sendRequest({
+          author        : bob.did.uri,
+          target        : bob.did.uri,
+          messageType   : DwnInterface.ProtocolsConfigure,
+          messageParams : { definition: freeForAllProtocolDefinition }
+        });
+
         // Write a test record to Alice's remote DWN.
         let writeResponse = await testHarness.agent.dwn.sendRequest({
           author        : alice.did.uri,
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat: 'text/plain'
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain'
           },
           dataStream: new Blob(['Hello, Bob!'])
         });
@@ -788,7 +838,9 @@ describe('SyncEngineLevel', () => {
           target        : bob.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat: 'text/plain'
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain'
           },
           dataStream: new Blob(['Hello, Alice!'])
         });
@@ -841,8 +893,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain',
+            schema       : randomSchema
           },
           dataStream: new Blob(['Hello, world!'])
         });
@@ -856,10 +910,12 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            recordId    : testRecordId,
-            dataFormat  : 'text/plain',
-            schema      : randomSchema,
-            dateCreated : writeResponse1.message!.descriptor.dateCreated
+            recordId     : testRecordId,
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain',
+            schema       : randomSchema,
+            dateCreated  : writeResponse1.message!.descriptor.dateCreated
           },
           dataStream: new Blob(['Hello, world updated!'])
         });
@@ -1050,7 +1106,9 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat: 'text/plain'
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain'
           },
           dataStream: new Blob(['Hello, world!'])
         });
@@ -1094,7 +1152,9 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat: 'text/plain'
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain'
           },
           dataStream: new Blob(['Hello, world 2!'])
         });
@@ -1141,7 +1201,9 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat: 'text/plain'
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain'
           },
           dataStream: new Blob(Array(LARGE_DATA_SIZE).fill('a')) //large data
         });
@@ -1191,13 +1253,23 @@ describe('SyncEngineLevel', () => {
         // Create a second Identity to author the DWN messages.
         const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
 
+        // Install free-for-all protocol on Bob's local DWN.
+        await testHarness.agent.dwn.processRequest({
+          author        : bob.did.uri,
+          target        : bob.did.uri,
+          messageType   : DwnInterface.ProtocolsConfigure,
+          messageParams : { definition: freeForAllProtocolDefinition }
+        });
+
         // Write a test record to Alice's local DWN.
         let writeResponse = await testHarness.agent.dwn.processRequest({
           author        : alice.did.uri,
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat: 'text/plain'
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain'
           },
           dataStream: new Blob(['Hello, Bob!'])
         });
@@ -1211,7 +1283,9 @@ describe('SyncEngineLevel', () => {
           target        : bob.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat: 'text/plain'
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain'
           },
           dataStream: new Blob(['Hello, Alice!'])
         });
@@ -1273,8 +1347,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain',
+            schema       : randomSchema
           },
           dataStream: new Blob(['Record to be deleted'])
         });
@@ -1332,8 +1408,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain',
+            schema       : randomSchema
           },
           dataStream: new Blob(['Record to be deleted'])
         });
@@ -1392,8 +1470,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain',
+            schema       : randomSchema
           },
           dataStream: new Blob(['Idempotent sync test'])
         });
@@ -1456,8 +1536,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat : 'text/plain',
-            schema     : randomSchema
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain',
+            schema       : randomSchema
           },
           dataStream: new Blob(['Original data'])
         });
@@ -1491,10 +1573,12 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            recordId    : testRecordId,
-            dataFormat  : 'text/plain',
-            schema      : randomSchema,
-            dateCreated : dateCreated,
+            recordId     : testRecordId,
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain',
+            schema       : randomSchema,
+            dateCreated  : dateCreated,
           },
           dataStream: new Blob(['Remote update'])
         });
@@ -1506,10 +1590,12 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            recordId    : testRecordId,
-            dataFormat  : 'text/plain',
-            schema      : randomSchema,
-            dateCreated : dateCreated,
+            recordId     : testRecordId,
+            protocol     : 'http://free-for-all.xyz',
+            protocolPath : 'post',
+            dataFormat   : 'text/plain',
+            schema       : randomSchema,
+            dateCreated  : dateCreated,
           },
           dataStream: new Blob(['Local update — later'])
         });

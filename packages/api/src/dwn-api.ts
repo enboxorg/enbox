@@ -192,7 +192,8 @@ export type RecordsSubscribeResponse = DwnResponseStatus & {
  * additional message parameters required for the write operation, and an optional flag to indicate
  * whether the record should be immediately stored.
  */
-export type RecordsWriteRequest = Omit<Partial<DwnMessageParams[DwnInterface.RecordsWrite]>, 'signer' | 'data'> & {
+export type RecordsWriteRequest = Omit<Partial<DwnMessageParams[DwnInterface.RecordsWrite]>, 'signer' | 'data' | 'protocol' | 'protocolPath'> &
+  Pick<DwnMessageParams[DwnInterface.RecordsWrite], 'protocol' | 'protocolPath'> & {
   /** The data payload for the record, which can be of any type. */
   data: unknown;
 

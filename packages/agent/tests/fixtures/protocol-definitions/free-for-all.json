@@ -1,0 +1,12 @@
+{
+  "protocol": "http://free-for-all.xyz",
+  "published": true,
+  "types": {
+    "post": {},
+    "other": {}
+  },
+  "structure": {
+    "post": {},
+    "other": {}
+  }
+}

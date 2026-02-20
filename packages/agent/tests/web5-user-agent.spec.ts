@@ -7,6 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 
 import { DidInterface } from '../src/did-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
+import freeForAllProtocolDefinition from './fixtures/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { Web5UserAgent } from '../src/web5-user-agent.js';
@@ -155,6 +156,13 @@ describe('Web5UserAgent', () => {
             metadata  : { name: 'Alice' },
             didMethod : 'jwk'
           });
+
+          await testHarness.agent.processDwnRequest({
+            author        : alice.did.uri,
+            target        : alice.did.uri,
+            messageType   : DwnInterface.ProtocolsConfigure,
+            messageParams : { definition: freeForAllProtocolDefinition }
+          });
         });
 
         describe('processDwnRequest()', () => {
@@ -168,7 +176,9 @@ describe('Web5UserAgent', () => {
               target        : alice.did.uri,
               messageType   : DwnInterface.RecordsWrite,
               messageParams : {
-                dataFormat: 'text/plain'
+                dataFormat   : 'text/plain',
+                protocol     : 'http://free-for-all.xyz',
+                protocolPath : 'post'
               },
               dataStream: new Blob([dataBytes])
             });
@@ -333,6 +343,13 @@ describe('Web5UserAgent', () => {
             // Ensure the DID is published to the DHT. This step is necessary while the DHT Gateways
             // operated by TBD are regularly restarted and DIDs are no longer persisted.
             await DidDht.publish({ did: alice.did });
+
+            await testHarness.agent.sendDwnRequest({
+              author        : alice.did.uri,
+              target        : alice.did.uri,
+              messageType   : DwnInterface.ProtocolsConfigure,
+              messageParams : { definition: freeForAllProtocolDefinition }
+            });
           });
 
           it('processes a Records Write request', async () => {
@@ -345,7 +362,9 @@ describe('Web5UserAgent', () => {
               target        : alice.did.uri,
               messageType   : DwnInterface.RecordsWrite,
               messageParams : {
-                dataFormat: 'text/plain'
+                dataFormat   : 'text/plain',
+                protocol     : 'http://free-for-all.xyz',
+                protocolPath : 'post'
               },
               dataStream: new Blob([dataBytes])
             });

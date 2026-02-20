@@ -118,15 +118,33 @@ describe('web5 api', () => {
           didMethod : 'jwk',
         });
 
+        // Install free-for-all protocol for both identities.
+        const freeForAllDefinition = {
+          protocol  : 'http://free-for-all.xyz',
+          published : true,
+          types     : { post: {} },
+          structure : { post: {} },
+        };
+        for (const identity of [careerIdentity, socialIdentity]) {
+          await testHarness.agent.dwn.processRequest({
+            author        : identity.did.uri,
+            target        : identity.did.uri,
+            messageType   : DwnInterface.ProtocolsConfigure,
+            messageParams : { definition: freeForAllDefinition },
+          });
+        }
+
         // Instantiate a Web5 instance with the "Career" Identity, write a record, and verify the result.
         const web5Career = new Web5({
           agent        : testHarness.agent,
           connectedDid : careerIdentity.did.uri,
         });
         const careerResult = await (web5Career as any)._dwn.records.write({
-          data       : 'Hello, world!',
-          schema     : 'foo/bar',
-          dataFormat : 'text/plain',
+          data         : 'Hello, world!',
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          schema       : 'foo/bar',
+          dataFormat   : 'text/plain',
         });
         expect(careerResult.status.code).toBe(202);
         expect(careerResult.record).toBeDefined();
@@ -141,9 +159,11 @@ describe('web5 api', () => {
           connectedDid : socialIdentity.did.uri,
         });
         const socialResult = await (web5Social as any)._dwn.records.write({
-          data       : 'Hello, everyone!',
-          schema     : 'foo/bar',
-          dataFormat : 'text/plain',
+          data         : 'Hello, everyone!',
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          schema       : 'foo/bar',
+          dataFormat   : 'text/plain',
         });
         expect(socialResult.status.code).toBe(202);
         expect(socialResult.record).toBeDefined();

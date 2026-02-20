@@ -23,8 +23,8 @@ export type RecordsWriteTagsFilter = StartsWithFilter | RangeFilter | string | n
 export type RecordsWriteDescriptor = {
   interface: DwnInterfaceName.Records;
   method: DwnMethodName.Write;
-  protocol?: string;
-  protocolPath?: string;
+  protocol: string;
+  protocolPath: string;
   recipient?: string;
   schema?: string;
   tags?: RecordsWriteTags;
@@ -57,7 +57,7 @@ export type InternalRecordsWriteMessage = GenericMessage & {
 export type RecordsWriteMessage = {
   authorization: AuthorizationModel; // overriding `GenericMessage` with `authorization` being required
   recordId: string,
-  contextId?: string;
+  contextId: string;
   descriptor: RecordsWriteDescriptor;
   attestation?: GeneralJws;
   encryption?: JweEncryption;
@@ -157,7 +157,7 @@ export type RecordsWriteAttestationPayload = {
 
 export type RecordsWriteSignaturePayload = GenericSignaturePayload & {
   recordId: string;
-  contextId?: string;
+  contextId: string;
   attestationCid?: string;
   encryptionCid?: string;
 };

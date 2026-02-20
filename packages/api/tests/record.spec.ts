@@ -96,6 +96,22 @@ describe('Record', () => {
     expect(bobProtocol).toBeDefined();
     const { status: bobProtocolSendStatus } = await bobProtocol.send(bobDid.uri);
     expect(bobProtocolSendStatus.code).toBe(202);
+
+    // Install free-for-all protocol for tests that write records without a specific protocol.
+    const freeForAllDefinition: DwnProtocolDefinition = {
+      protocol  : 'http://free-for-all.xyz',
+      published : true,
+      types     : { post: {}, other: {} },
+      structure : { post: {}, other: {} },
+    };
+    const { status: aliceFfaStatus, protocol: aliceFfaProtocol } = await dwnAlice.protocols.configure({ definition: freeForAllDefinition });
+    expect(aliceFfaStatus.code).toBe(202);
+    const { status: aliceFfaSendStatus } = await aliceFfaProtocol.send(aliceDid.uri);
+    expect(aliceFfaSendStatus.code).toBe(202);
+    const { status: bobFfaStatus, protocol: bobFfaProtocol } = await dwnBob.protocols.configure({ definition: freeForAllDefinition });
+    expect(bobFfaStatus.code).toBe(202);
+    const { status: bobFfaSendStatus } = await bobFfaProtocol.send(bobDid.uri);
+    expect(bobFfaSendStatus.code).toBe(202);
   });
 
   afterAll(async () => {
@@ -763,7 +779,11 @@ describe('Record', () => {
         const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
         // Write the 500B record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataJson });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataJson,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
 
         expect(status.code).toBe(202);
 
@@ -783,7 +803,11 @@ describe('Record', () => {
         const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
         // Write the 500B record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataJson });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataJson,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
 
         expect(status.code).toBe(202);
 
@@ -808,7 +832,11 @@ describe('Record', () => {
         const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
         // Write the large record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataJson });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataJson,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
 
         expect(status.code).toBe(202);
 
@@ -828,7 +856,11 @@ describe('Record', () => {
         const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
         // Write the large record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataJson });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataJson,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
         expect(status.code).toBe(202);
 
         // Query for the record that was just created.
@@ -854,7 +886,11 @@ describe('Record', () => {
         const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
         // Write the large record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataJson });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataJson,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
 
         expect(status.code).toBe(202);
 
@@ -883,7 +919,11 @@ describe('Record', () => {
         const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
         // Write the 500B record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataJson });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataJson,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
 
         expect(status.code).toBe(202);
 
@@ -903,7 +943,11 @@ describe('Record', () => {
         const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
         // Write the 500B record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataJson });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataJson,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
 
         expect(status.code).toBe(202);
 
@@ -928,7 +972,11 @@ describe('Record', () => {
         const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
         // Write the large record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataJson });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataJson,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
 
         expect(status.code).toBe(202);
 
@@ -948,7 +996,11 @@ describe('Record', () => {
         const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
         // Write the large record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataJson });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataJson,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
         expect(status.code).toBe(202);
 
         // Query for the record that was just created.
@@ -974,7 +1026,11 @@ describe('Record', () => {
         const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
         // Write the large record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataJson });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataJson,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
 
         expect(status.code).toBe(202);
 
@@ -1002,7 +1058,11 @@ describe('Record', () => {
         const inputDataBytes = new TextEncoder().encode(dataText500Bytes);
 
         // Write the 500B record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataText500Bytes });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataText500Bytes,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
         expect(status.code).toBe(202);
 
         // Confirm that the length of the data read as text matches the original input data.
@@ -1020,7 +1080,11 @@ describe('Record', () => {
         const inputDataBytes = new TextEncoder().encode(dataText500Bytes);
 
         // Write the 500B record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataText500Bytes });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataText500Bytes,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
         expect(status.code).toBe(202);
 
         // Read the record that was just created.
@@ -1042,7 +1106,11 @@ describe('Record', () => {
         const inputDataBytes = new TextEncoder().encode(dataTextExceedingMaxSize);
 
         // Write the large record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataTextExceedingMaxSize });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataTextExceedingMaxSize,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
         expect(status.code).toBe(202);
 
         // Confirm that the length of the data read as text matches the original input data.
@@ -1060,7 +1128,11 @@ describe('Record', () => {
         const inputDataBytes = new TextEncoder().encode(dataTextExceedingMaxSize);
 
         // Write the large record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataTextExceedingMaxSize });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataTextExceedingMaxSize,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
         expect(status.code).toBe(202);
 
         // Query for the record that was just created.
@@ -1085,7 +1157,11 @@ describe('Record', () => {
         const inputDataBytes = new TextEncoder().encode(dataTextExceedingMaxSize);
 
         // Write the large record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataTextExceedingMaxSize });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataTextExceedingMaxSize,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
 
         expect(status.code).toBe(202);
 
@@ -1112,7 +1188,11 @@ describe('Record', () => {
         const dataText = TestDataGenerator.randomString(500);
 
         // Write the 500B record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataText });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataText,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
 
         expect(status.code).toBe(202);
 
@@ -1130,7 +1210,11 @@ describe('Record', () => {
         const dataText = TestDataGenerator.randomString(500);
 
         // Write the 500B record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataText });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataText,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
 
         expect(status.code).toBe(202);
 
@@ -1153,7 +1237,11 @@ describe('Record', () => {
         const dataText = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
 
         // Write the large record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataText });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataText,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
 
         expect(status.code).toBe(202);
 
@@ -1171,7 +1259,11 @@ describe('Record', () => {
         const dataText = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
 
         // Write the large record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataText });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataText,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
         expect(status.code).toBe(202);
 
         // Query for the record that was just created.
@@ -1195,7 +1287,11 @@ describe('Record', () => {
         const dataText = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
 
         // Write the large record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataText });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataText,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
 
         expect(status.code).toBe(202);
 
@@ -1222,7 +1318,11 @@ describe('Record', () => {
         const inputDataBytes = new TextEncoder().encode(dataText500Bytes);
 
         // Write the 500B record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataText500Bytes });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataText500Bytes,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
         expect(status.code).toBe(202);
 
         // Confirm that the length of the data read as text matches the original input data.
@@ -1240,7 +1340,11 @@ describe('Record', () => {
         const dataText = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
 
         // Write the large record to agent-connected DWN.
-        const { record, status } = await dwnAlice.records.write({ data: dataText });
+        const { record, status } = await dwnAlice.records.write({
+          data         : dataText,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+        });
 
         expect(status.code).toBe(202);
 
@@ -1261,7 +1365,12 @@ describe('Record', () => {
       const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
       // Create a large record but do NOT store it on the local, agent-connected DWN.
-      const { record, status } = await dwnAlice.records.write({ data: dataJson, store: false });
+      const { record, status } = await dwnAlice.records.write({
+        store        : false,
+        data         : dataJson,
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+      });
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
@@ -1288,7 +1397,12 @@ describe('Record', () => {
       const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
       // Create a large record but do NOT store it on the local, agent-connected DWN.
-      const { record, status } = await dwnAlice.records.write({ data: dataJson, store: false });
+      const { record, status } = await dwnAlice.records.write({
+        store        : false,
+        data         : dataJson,
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+      });
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
@@ -1318,7 +1432,11 @@ describe('Record', () => {
       const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
       // Write the 500B record to agent-connected DWN.
-      const { record, status } = await dwnAlice.records.write({ data: dataJson });
+      const { record, status } = await dwnAlice.records.write({
+        data         : dataJson,
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+      });
       expect(status.code).toBe(202);
 
       // Read the data payload as bytes.
@@ -1344,7 +1462,11 @@ describe('Record', () => {
       const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
       // Write the large record to agent-connected DWN.
-      const { record, status } = await dwnAlice.records.write({ data: dataJson });
+      const { record, status } = await dwnAlice.records.write({
+        data         : dataJson,
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+      });
       expect(status.code).toBe(202);
 
       // Confirm that the size, in bytes, of the data read as JSON matches the original input data.
@@ -1379,7 +1501,11 @@ describe('Record', () => {
       const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
       // Write the large record to agent-connected DWN.
-      const { record, status } = await dwnAlice.records.write({ data: dataJson });
+      const { record, status } = await dwnAlice.records.write({
+        data         : dataJson,
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+      });
       expect(status.code).toBe(202);
 
       // Consume the data stream as bytes.
@@ -1400,7 +1526,11 @@ describe('Record', () => {
       const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
       // Write the large record to agent-connected DWN.
-      const { record, status } = await dwnAlice.records.write({ data: dataJson });
+      const { record, status } = await dwnAlice.records.write({
+        data         : dataJson,
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+      });
       expect(status.code).toBe(202);
 
       // Consume the data stream as bytes.
@@ -1421,7 +1551,12 @@ describe('Record', () => {
       const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
       // Create a large record but do NOT store it on the local, agent-connected DWN.
-      const { record, status } = await dwnAlice.records.write({ data: dataJson, store: false });
+      const { record, status } = await dwnAlice.records.write({
+        store        : false,
+        data         : dataJson,
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+      });
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
@@ -1457,7 +1592,12 @@ describe('Record', () => {
       const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
       // Create a large record but do NOT store it on the local, agent-connected DWN.
-      const { record, status } = await dwnAlice.records.write({ data: dataJson, store: false });
+      const { record, status } = await dwnAlice.records.write({
+        store        : false,
+        data         : dataJson,
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+      });
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
@@ -1494,7 +1634,12 @@ describe('Record', () => {
       const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
       // Create a large record but do NOT store it on the local, agent-connected DWN.
-      const { record, status } = await dwnAlice.records.write({ data: dataJson, store: false });
+      const { record, status } = await dwnAlice.records.write({
+        store        : false,
+        data         : dataJson,
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+      });
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
@@ -1533,7 +1678,12 @@ describe('Record', () => {
       const inputDataBytes = new TextEncoder().encode(JSON.stringify(dataJson));
 
       // Create a large record but do NOT store it on the local, agent-connected DWN.
-      const { record, status } = await dwnAlice.records.write({ data: dataJson, store: false });
+      const { record, status } = await dwnAlice.records.write({
+        store        : false,
+        data         : dataJson,
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+      });
       expect(status.code).toBe(202);
 
       // Write the large record to a remote DWN.
@@ -1747,8 +1897,10 @@ describe('Record', () => {
 
       // Alice writes a message to her agent connected DWN.
       const { status: aliceEmailStatus, record: aliceEmailRecord } = await dwnAlice.records.write({
-        data   : dataString,
-        schema : 'email',
+        data         : dataString,
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'email',
       });
 
       expect(aliceEmailStatus.code).toBe(202);
@@ -1792,8 +1944,10 @@ describe('Record', () => {
 
       // Alice writes a message to her agent connected DWN.
       const { status: aliceEmailStatus } = await dwnAlice.records.write({
-        data   : dataText,
-        schema : 'email',
+        data         : dataText,
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'email',
       });
       expect(aliceEmailStatus.code).toBe(202);
 
@@ -1820,8 +1974,10 @@ describe('Record', () => {
 
       // Alice writes a message to her agent connected DWN.
       const { status: aliceEmailStatus, record: aliceEmailRecord } = await dwnAlice.records.write({
-        data   : dataText,
-        schema : 'email',
+        data         : dataText,
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'email',
       });
       expect(aliceEmailStatus.code).toBe(202);
 
@@ -1851,9 +2007,11 @@ describe('Record', () => {
 
       // Alice writes a message to her agent connected DWN.
       const { status, record } = await dwnAlice.records.write({
-        data       : 'Hello, world!',
-        schema     : 'foo/bar',
-        dataFormat : 'text/plain'
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain'
       });
       expect(status.code).toBe(202);
 
@@ -1883,9 +2041,11 @@ describe('Record', () => {
     it('automatically sends the initial write and update of a record to a remote DWN', async () => {
       // Alice writes a message to her agent connected DWN.
       const { status, record } = await dwnAlice.records.write({
-        data       : 'Hello, world!',
-        schema     : 'foo/bar',
-        dataFormat : 'text/plain'
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain'
       });
       expect(status.code).toBe(202);
 
@@ -2298,8 +2458,10 @@ describe('Record', () => {
     it('should return a string representation of the record', async () => {
       // create a record
       const { record, status } = await dwnAlice.records.write({
-        data       : 'Hello, world!',
-        dataFormat : 'text/plain'
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        dataFormat   : 'text/plain'
       });
       expect(status.code).toBe(202);
 
@@ -2346,8 +2508,10 @@ describe('Record', () => {
     it('should return a string representation of the record in a deleted state', async () => {
       // create a record
       const { record, status } = await dwnAlice.records.write({
-        data       : 'Hello, world!',
-        dataFormat : 'text/plain'
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        dataFormat   : 'text/plain'
       });
       expect(status.code).toBe(202);
 
@@ -2419,9 +2583,11 @@ describe('Record', () => {
 
     it('updates a local record on the local DWN', async () => {
       const { status, record } = await dwnAlice.records.write({
-        data       : 'Hello, world!',
-        schema     : 'foo/bar',
-        dataFormat : 'text/plain'
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain'
       });
 
       const dataCidBeforeDataUpdate = record!.dataCid;
@@ -2452,10 +2618,12 @@ describe('Record', () => {
     it('updates a record to be unpublished from published', async () => {
       // alice creates a record and sets it to published
       const { status, record } = await dwnAlice.records.write({
-        data       : 'Hello, world!',
-        schema     : 'foo/bar',
-        dataFormat : 'text/plain',
-        published  : true
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain',
+        published    : true
       });
       expect(status.code).toBe(202);
       expect(record).toBeDefined();
@@ -2496,10 +2664,12 @@ describe('Record', () => {
     it('allows to update a record locally that was initially read from a remote DWN if store() is issued', async () => {
       // Create a record but do not store it on the local DWN.
       const { status, record } = await dwnAlice.records.write({
-        store      : false,
-        data       : 'Hello, world!',
-        schema     : 'foo/bar',
-        dataFormat : 'text/plain'
+        store        : false,
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain'
       });
       expect(status.code).toBe(202);
       expect(record).toBeDefined();
@@ -2553,10 +2723,12 @@ describe('Record', () => {
     it('updates a record that was queried from a remote DWN without storing it', async () => {
       // Create a record but do not store it on the local DWN.
       const { status, record } = await dwnAlice.records.write({
-        store      : false,
-        data       : 'Hello, world!',
-        schema     : 'foo/bar',
-        dataFormat : 'text/plain'
+        store        : false,
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain'
       });
       expect(status.code).toBe(202);
       expect(record).toBeDefined();
@@ -2699,9 +2871,11 @@ describe('Record', () => {
     it('returns new timestamp after each update', async () => {
       // Initial write of the record.
       const { status, record } = await dwnAlice.records.write({
-        data       : 'Hello, world!',
-        schema     : 'foo/bar',
-        dataFormat : 'text/plain'
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain'
       });
       const initialTimestamp = record.timestamp;
       expect(status.code).toBe(202);
@@ -2725,9 +2899,11 @@ describe('Record', () => {
 
     it('throws an exception when an immutable property is modified', async () => {
       const { status, record } = await dwnAlice.records.write({
-        data       : 'Hello, world!',
-        schema     : 'foo/bar',
-        dataFormat : 'text/plain'
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain'
       });
 
       expect(status.code).toBe(202);
@@ -2745,10 +2921,12 @@ describe('Record', () => {
     it('throws if attempting to revive a deleted record', async () => {
       // create a record but do not store it
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        store      : false,
-        data       : 'Hello, world!',
-        schema     : 'foo/bar',
-        dataFormat : 'text/plain'
+        store        : false,
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain'
       });
       expect(writeStatus.code).toBe(202);
 
@@ -2769,10 +2947,12 @@ describe('Record', () => {
     it('should override tags on update', async () => {
       // create a record with tags
       const { status, record } = await dwnAlice.records.write({
-        data       : 'Hello, world!',
-        schema     : 'foo/bar',
-        dataFormat : 'text/plain',
-        tags       : {
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain',
+        tags         : {
           tag1 : 'value1',
           tag2 : 'value2'
         }
@@ -2810,10 +2990,12 @@ describe('Record', () => {
     it('should remove tags on update if tags are set to an empty object or null', async () => {
       // create a record with tags
       const { status, record } = await dwnAlice.records.write({
-        data       : 'Hello, world!',
-        schema     : 'foo/bar',
-        dataFormat : 'text/plain',
-        tags       : {
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain',
+        tags         : {
           tag1 : 'value1',
           tag2 : 'value2'
         }
@@ -3126,9 +3308,11 @@ describe('Record', () => {
     it('should not encrypt updates when encryption is explicitly set to false', async () => {
       // Write a non-encrypted record
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data       : 'Not encrypted',
-        schema     : 'test/plain',
-        dataFormat : 'text/plain',
+        data         : 'Not encrypted',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'test/plain',
+        dataFormat   : 'text/plain',
       });
       expect(writeStatus.code).toBe(202);
       expect(record).toBeDefined();
@@ -3256,9 +3440,11 @@ describe('Record', () => {
 
     it('deletes a local record on the local DWN', async () => {
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data       : 'Hello, world!',
-        schema     : 'foo/bar',
-        dataFormat : 'text/plain'
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain'
       });
 
       expect(writeStatus.code).toBe(202);
@@ -3293,9 +3479,11 @@ describe('Record', () => {
 
     it('deletes a record on the remote DWN', async () => {
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data       : 'Hello, world!',
-        schema     : 'foo/bar',
-        dataFormat : 'text/plain'
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain'
       });
 
       expect(writeStatus.code).toBe(202);
@@ -3527,10 +3715,12 @@ describe('Record', () => {
     it('throws if a record status is deleted and initialWrite is not set', async () => {
       // create a record but do not store it
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        store      : false,
-        data       : 'Hello, world!',
-        schema     : 'foo/bar',
-        dataFormat : 'text/plain'
+        store        : false,
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain'
       });
       expect(writeStatus.code).toBe(202);
 
@@ -3553,9 +3743,11 @@ describe('Record', () => {
     it('duplicate delete with store should return not found', async () => {
       // create a record
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data       : 'Hello, world!',
-        schema     : 'foo/bar',
-        dataFormat : 'text/plain'
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain'
       });
       expect(writeStatus.code).toBe(202);
 
@@ -3582,9 +3774,11 @@ describe('Record', () => {
     it('a record in a deleted state returns undefined for data related fields', async () => {
       // create a record
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data       : 'Hello, world!',
-        schema     : 'http://example.org/test-schema',
-        dataFormat : 'text/plain'
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'http://example.org/test-schema',
+        dataFormat   : 'text/plain'
       });
       expect(writeStatus.code).toBe(202);
       expect(record).toBeDefined();

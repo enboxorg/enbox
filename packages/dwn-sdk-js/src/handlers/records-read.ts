@@ -174,10 +174,8 @@ export class RecordsReadHandler implements MethodHandler {
         permissionGrant,
         messageStore
       });
-    } else if (descriptor.protocol !== undefined) {
-      await ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, messageStore);
     } else {
-      throw new DwnError(DwnErrorCode.RecordsReadAuthorizationFailed, 'message failed authorization');
+      await ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, messageStore);
     }
   }
 }

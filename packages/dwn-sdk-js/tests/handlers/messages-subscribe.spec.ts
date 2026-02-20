@@ -140,6 +140,7 @@ export function testMessagesSubscribeHandler(): void {
 
       it('should allow tenant to subscribe their own event stream', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // set up a promise to read later that captures the emitted messageCid
         let handler;
@@ -166,8 +167,8 @@ export function testMessagesSubscribeHandler(): void {
 
         // control: ensure that the event exists
         const events = await stateIndex.getLeaves(alice.did, []);
-        expect(events.length).toBe(1);
-        expect(events[0]).toBe(messageCid);
+        expect(events.length).toBe(2);
+        expect(events).toContain(messageCid);
 
         // await the event
         const resolvedCid = await messageSubscriptionPromise;
@@ -217,6 +218,9 @@ export function testMessagesSubscribeHandler(): void {
           });
           const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream });
           expect(grantReply.status.code).toBe(202);
+
+          // install the default test protocol used by generateRecordsWrite
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
           // create a handler to capture the emitted messageCids
           const messageCids: string[] = [];

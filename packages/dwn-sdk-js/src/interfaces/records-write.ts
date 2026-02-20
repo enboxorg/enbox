@@ -43,8 +43,8 @@ import { normalizeProtocolUrl, normalizeSchemaUrl, validateProtocolUrlNormalized
 
 export type RecordsWriteOptions = {
   recipient?: string;
-  protocol?: string;
-  protocolPath?: string;
+  protocol: string;
+  protocolPath: string;
   protocolRole?: string;
   schema?: string;
   tags?: RecordsWriteTags;
@@ -52,7 +52,7 @@ export type RecordsWriteOptions = {
 
   /**
    * Must be given if this message is for a non-root protocol record.
-   * If not given, it either means this write is for a root protocol record or a flat-space record.
+   * If not given, it means this write is for a root protocol record.
    */
   parentContextId?: string;
 
@@ -282,12 +282,11 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
    * @param options.dateCreated If `undefined`, it will be auto-filled with current time.
    * @param options.messageTimestamp If `undefined`, it will be auto-filled with current time.
    * @param options.parentContextId Must be given if this message is for a non-root protocol record.
-   *                                If not given, it either means this write is for a root protocol record or a flat-space record.
+   *                                If not given, it means this write is for a root protocol record.
    */
   public static async create(options: RecordsWriteOptions): Promise<RecordsWrite> {
-    if ((options.protocol === undefined && options.protocolPath !== undefined) ||
-      (options.protocol !== undefined && options.protocolPath === undefined)) {
-      throw new DwnError(DwnErrorCode.RecordsWriteCreateProtocolAndProtocolPathMutuallyInclusive, '`protocol` and `protocolPath` must both be defined or undefined at the same time');
+    if (options.protocol === undefined || options.protocolPath === undefined) {
+      throw new DwnError(DwnErrorCode.RecordsWriteCreateProtocolAndProtocolPathMutuallyInclusive, '`protocol` and `protocolPath` are required');
     }
 
     if ((options.data === undefined && options.dataCid === undefined) ||
@@ -312,7 +311,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     const descriptor: RecordsWriteDescriptor = {
       interface         : DwnInterfaceName.Records,
       method            : DwnMethodName.Write,
-      protocol          : options.protocol !== undefined ? normalizeProtocolUrl(options.protocol) : undefined,
+      protocol          : normalizeProtocolUrl(options.protocol),
       protocolPath      : options.protocolPath,
       recipient         : options.recipient,
       schema            : options.schema !== undefined ? normalizeSchemaUrl(options.schema) : undefined,
@@ -530,22 +529,19 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     // compute `recordId` if not given at construction time
     this._message.recordId = this._message.recordId ?? await RecordsWrite.getEntryId(authorDid, descriptor);
 
-    // compute `contextId` if this is a protocol-space record
-    if (this._message.descriptor.protocol !== undefined) {
-      // if `parentContextId` is not given, this is a root protocol record
-      if (this.parentContextId === undefined || this.parentContextId === '') {
-        this._message.contextId = this._message.recordId;
-      } else {
-        // else this is a non-root protocol record
-
-        this._message.contextId = this.parentContextId + '/' + this._message.recordId;
-      }
+    // compute `contextId` — all records belong to a protocol
+    if (this.parentContextId === undefined || this.parentContextId === '') {
+      // root protocol record
+      this._message.contextId = this._message.recordId;
+    } else {
+      // non-root protocol record
+      this._message.contextId = this.parentContextId + '/' + this._message.recordId;
     }
 
     // `signature` generation
     const signature = await createSignerSignature({
       recordId    : this._message.recordId,
-      contextId   : this._message.contextId,
+      contextId   : this._message.contextId!, // contextId is computed just above, always defined here
       descriptorCid,
       attestation : this._message.attestation,
       encryption  : this._message.encryption,
@@ -634,9 +630,8 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
         );
       }
 
-      // if the message is also a protocol context root, the `contextId` must match the expected deterministic value
-      if (this.message.descriptor.protocol !== undefined &&
-        this.message.descriptor.parentId === undefined) {
+      // if the message is a protocol context root, the `contextId` must match the expected deterministic value
+      if (this.message.descriptor.parentId === undefined) {
         const expectedContextId = await this.getEntryId();
 
         if (this.message.contextId !== expectedContextId) {
@@ -699,9 +694,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       }
     }
 
-    if (this.message.descriptor.protocol !== undefined) {
-      validateProtocolUrlNormalized(this.message.descriptor.protocol);
-    }
+    validateProtocolUrlNormalized(this.message.descriptor.protocol);
     if (this.message.descriptor.schema !== undefined) {
       validateSchemaUrlNormalized(this.message.descriptor.schema);
     }
@@ -778,7 +771,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     // add additional indexes to optional values if given
     // TODO: index multiple attesters (https://github.com/enboxorg/enbox/issues/223)
     if (this.attesters.length > 0) { indexes.attester = this.attesters[0]; }
-    if (message.contextId !== undefined) { indexes.contextId = message.contextId; }
+    indexes.contextId = message.contextId;
 
     return indexes;
   }
@@ -845,7 +838,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
   /** Delegate to `createSignerSignature` in `records-write-signing.ts`. */
   public static async createSignerSignature(input: {
     recordId: string,
-    contextId: string | undefined,
+    contextId: string,
     descriptorCid: string,
     attestation: GeneralJws | undefined,
     encryption: JweEncryption | undefined,

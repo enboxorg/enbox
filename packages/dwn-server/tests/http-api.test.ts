@@ -65,6 +65,9 @@ describe('http api', function () {
     // generate a new persona for each test to avoid state pollution
     alice = await TestDataGenerator.generateDidKeyPersona();
     await registrationManager.recordTenantRegistration({ did: alice.did, termsOfServiceHash: registrationManager.getTermsOfServiceHash() });
+
+    // install the default test protocol so RecordsWrite messages are accepted
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
   });
 
   afterEach(async function () {

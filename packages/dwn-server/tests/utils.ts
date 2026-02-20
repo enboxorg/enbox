@@ -49,9 +49,11 @@ export async function createRecordsWriteMessage(
   }
 
   const recordsWrite = await RecordsWrite.create({
+    protocol     : 'http://test-protocol.xyz',
+    protocolPath : 'testRecord',
     ...overrides,
-    dataFormat : 'application/json',
-    signer     : signer.signer,
+    dataFormat   : 'application/json',
+    signer       : signer.signer,
   });
 
   let dataStream: ReadableStream<Uint8Array> | undefined;

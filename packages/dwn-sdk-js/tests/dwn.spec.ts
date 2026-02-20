@@ -55,6 +55,7 @@ export function testDwnClass(): void {
       it('should process RecordsWrite message signed by a `did:key` DID', async () => {
       // generate a `did:key` DID
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
           author: alice,

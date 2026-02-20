@@ -6,17 +6,8 @@ import { X25519 } from '@enbox/crypto';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 export enum KeyDerivationScheme {
-  /**
-   * Key derivation using the `dataFormat` value for Flat-space records.
-   */
-  DataFormats = 'dataFormats',
   ProtocolContext = 'protocolContext',
   ProtocolPath = 'protocolPath',
-
-  /**
-   * Key derivation using the `schema` value for Flat-space records.
-   */
-  Schemas = 'schemas'
 }
 
 export type DerivedPrivateJwk = {

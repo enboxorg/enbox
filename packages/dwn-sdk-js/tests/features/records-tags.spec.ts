@@ -2042,6 +2042,7 @@ export function testRecordsTags(): void {
 
       it('should be able to write a Record with tags', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create tags that represent `string[]`, `number[]`, `string`, `number`, or `boolean` values.
         const stringTag = 'string-value';
@@ -2083,6 +2084,7 @@ export function testRecordsTags(): void {
 
       it('should overwrite tags when updating a Record', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         const tagsRecord1 = await TestDataGenerator.generateRecordsWrite({
           author    : alice,
@@ -2160,6 +2162,7 @@ export function testRecordsTags(): void {
         const constructIndexesSpy = sinon.spy(RecordsWrite.prototype, 'constructIndexes');
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // write a record with tags, this should trigger the `buildTagIndexes` method
         const tagsRecord1 = await TestDataGenerator.generateRecordsWrite({
@@ -2207,6 +2210,7 @@ export function testRecordsTags(): void {
     describe('RecordsQuery filter for tags', () => {
       it('should be able to filter by string match', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const stringTag = 'string-value';
 
         const tagsRecord1 = await TestDataGenerator.generateRecordsWrite({
@@ -2264,6 +2268,7 @@ export function testRecordsTags(): void {
 
       it('should be able to filter by number match', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const numberTag = 54566975;
 
         // write a record with a numerical value tag
@@ -2329,6 +2334,7 @@ export function testRecordsTags(): void {
         // 5. Query for records with a non existent boolean tag, should not return a result.
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // write a record with a true boolean value tag
         const tagsRecordTrue = await TestDataGenerator.generateRecordsWrite({
@@ -2402,6 +2408,7 @@ export function testRecordsTags(): void {
 
       it('should be able to range filter by string value', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create four records with different first names
         const aliceRecord = await TestDataGenerator.generateRecordsWrite({
@@ -2512,6 +2519,7 @@ export function testRecordsTags(): void {
 
       it('should be able to filter by string prefix', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create two records that match the prefix 'string-'
         const tagsRecord1 = await TestDataGenerator.generateRecordsWrite({
@@ -2583,6 +2591,7 @@ export function testRecordsTags(): void {
 
       it('should be able to range filter by number value', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create four records with different test scores
         const aliceRecord = await TestDataGenerator.generateRecordsWrite({
@@ -2715,6 +2724,7 @@ export function testRecordsTags(): void {
 
       it('should return results based on the latest tag values', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         const tagsRecord1 = await TestDataGenerator.generateRecordsWrite({
           author    : alice,
@@ -2760,6 +2770,7 @@ export function testRecordsTags(): void {
 
       it('should not return results if the record was updated with empty tags', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         const tagsRecord1 = await TestDataGenerator.generateRecordsWrite({
           author    : alice,
@@ -2806,6 +2817,7 @@ export function testRecordsTags(): void {
     describe('RecordsDelete with tags', () => {
       it('should delete record with tags', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create a record with a tag
         const tagsRecord1 = await TestDataGenerator.generateRecordsWrite({

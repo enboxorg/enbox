@@ -887,6 +887,22 @@ describe('DwnApi', () => {
       expect(bobProtocol).toBeDefined();
       const { status: bobProtocolSendStatus } = await bobProtocol.send(bobDid.uri);
       expect(bobProtocolSendStatus.code).toBe(202);
+
+      // Install free-for-all protocol for tests that write records with arbitrary schema/dataFormat.
+      const freeForAllDefinition: DwnProtocolDefinition = {
+        protocol  : 'http://free-for-all.xyz',
+        published : true,
+        types     : { post: {}, other: {} },
+        structure : { post: {}, other: {} },
+      };
+      const { status: aliceFfaStatus, protocol: aliceFfaProtocol } = await dwnAlice.protocols.configure({ definition: freeForAllDefinition });
+      expect(aliceFfaStatus.code).toBe(202);
+      const { status: aliceFfaSendStatus } = await aliceFfaProtocol.send(aliceDid.uri);
+      expect(aliceFfaSendStatus.code).toBe(202);
+      const { status: bobFfaStatus, protocol: bobFfaProtocol } = await dwnBob.protocols.configure({ definition: freeForAllDefinition });
+      expect(bobFfaStatus.code).toBe(202);
+      const { status: bobFfaSendStatus } = await bobFfaProtocol.send(bobDid.uri);
+      expect(bobFfaSendStatus.code).toBe(202);
     });
 
     describe('agent', () => {
@@ -1120,10 +1136,12 @@ describe('DwnApi', () => {
       it('does not persist record to agent DWN', async () => {
         const dataString = 'Hello, world!';
         const createResult = await dwnAlice.records.write({
-          store      : false,
-          data       : dataString,
-          schema     : 'foo/bar',
-          dataFormat : 'text/plain'
+          store        : false,
+          data         : dataString,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          schema       : 'foo/bar',
+          dataFormat   : 'text/plain'
         });
 
         expect(createResult.status.code).toBe(202);
@@ -1145,10 +1163,12 @@ describe('DwnApi', () => {
       it('has no effect if `store: true`', async () => {
         const dataString = 'Hello, world!';
         const createResult = await dwnAlice.records.write({
-          store      : true,
-          data       : dataString,
-          schema     : 'foo/bar',
-          dataFormat : 'text/plain'
+          store        : true,
+          data         : dataString,
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          schema       : 'foo/bar',
+          dataFormat   : 'text/plain'
         });
 
         expect(createResult.status.code).toBe(202);
@@ -1186,6 +1206,22 @@ describe('DwnApi', () => {
       expect(bobProtocol).toBeDefined();
       const { status: bobProtocolSendStatus } = await bobProtocol.send(bobDid.uri);
       expect(bobProtocolSendStatus.code).toBe(202);
+
+      // Install free-for-all protocol for tests that write records with arbitrary schema/dataFormat.
+      const freeForAllDefinition: DwnProtocolDefinition = {
+        protocol  : 'http://free-for-all.xyz',
+        published : true,
+        types     : { post: {}, other: {} },
+        structure : { post: {}, other: {} },
+      };
+      const { status: aliceFfaStatus, protocol: aliceFfaProtocol } = await dwnAlice.protocols.configure({ definition: freeForAllDefinition });
+      expect(aliceFfaStatus.code).toBe(202);
+      const { status: aliceFfaSendStatus } = await aliceFfaProtocol.send(aliceDid.uri);
+      expect(aliceFfaSendStatus.code).toBe(202);
+      const { status: bobFfaStatus, protocol: bobFfaProtocol } = await dwnBob.protocols.configure({ definition: freeForAllDefinition });
+      expect(bobFfaStatus.code).toBe(202);
+      const { status: bobFfaSendStatus } = await bobFfaProtocol.send(bobDid.uri);
+      expect(bobFfaSendStatus.code).toBe(202);
     });
 
     describe('agent', () => {
@@ -1325,9 +1361,11 @@ describe('DwnApi', () => {
     describe('from: did', () => {
       it('deletes a record', async () => {
         const { status: writeStatus, record } = await dwnAlice.records.write({
-          data       : 'Hello, world!',
-          schema     : 'foo/bar',
-          dataFormat : 'text/plain'
+          data         : 'Hello, world!',
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          schema       : 'foo/bar',
+          dataFormat   : 'text/plain'
         });
 
         expect(writeStatus.code).toBe(202);
@@ -1350,8 +1388,10 @@ describe('DwnApi', () => {
       it('returns a 401 when authentication or authorization fails', async () => {
         // Create a record on Bob's local DWN.
         const writeResult = await dwnBob.records.write({
-          data       : 'Hello, world!',
-          dataFormat : 'foo'
+          data         : 'Hello, world!',
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'foo'
         });
         expect(writeResult.status.code).toBe(202);
 
@@ -1368,7 +1408,7 @@ describe('DwnApi', () => {
         /** Confirm that authorization failed because the Alice identity does not have
          * permission to delete a record from Bob's DWN. */
         expect(deleteResult.status.code).toBe(401);
-        expect(deleteResult.status.detail).toContain('message failed authorization');
+        expect(deleteResult.status.detail).toContain('unauthorized');
       });
 
       it('deletes records that were authored/signed by another DID', async () => {

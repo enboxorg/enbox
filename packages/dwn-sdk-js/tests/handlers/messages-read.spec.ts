@@ -132,6 +132,8 @@ export function testMessagesReadHandler(): void {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
 
+          await TestDataGenerator.installDefaultTestProtocol(dwn, bob);
+
           // bob creates a record that alice will try and get
           const { message: recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: bob });
           const { status } = await dwn.processMessage(bob.did, recordsWrite, { dataStream });
@@ -151,6 +153,8 @@ export function testMessagesReadHandler(): void {
         describe('gets record data in the reply entry', () => {
           it('data is less than threshold', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
+
+            await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
             const { message: recordsWrite, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
               author : alice,
@@ -183,6 +187,8 @@ export function testMessagesReadHandler(): void {
           it('data is greater than threshold', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
 
+            await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
             const { message: recordsWrite, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
               author : alice,
               data   : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 10),
@@ -213,6 +219,8 @@ export function testMessagesReadHandler(): void {
 
           it('data is not available', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
+
+            await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
             // initial write
             const { message: recordsWriteMessage, recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
@@ -395,6 +403,8 @@ export function testMessagesReadHandler(): void {
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // Alice writes a record to her DWN
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
@@ -655,6 +665,7 @@ export function testMessagesReadHandler(): void {
           expect(messagesReadCarolGrantRevocationReply.entry!.message).toEqual(permissionRevocationCarol.recordsWrite.message);
 
           // CONTROL: Alice writes a record not associated with the protocol
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
           const { recordsWrite: recordsWriteControl, dataStream: dataStreamControl } = await TestDataGenerator.generateRecordsWrite({
             author: alice,
           });

@@ -73,6 +73,7 @@ export function testMessagesSyncHandler(): void {
 
       it('returns a different root hash after writing a message', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // get the empty root
         const { message: rootMsg1 } = await MessagesSync.create({
@@ -100,6 +101,7 @@ export function testMessagesSyncHandler(): void {
 
       it('returns protocol-scoped root hash when protocol is specified', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true };
 
@@ -121,7 +123,7 @@ export function testMessagesSyncHandler(): void {
         const writeReply = await dwn.processMessage(alice.did, recordMessage, { dataStream });
         expect(writeReply.status.code).toBe(202);
 
-        // write a flat-space (non-protocol) record to diverge the global root
+        // write a record under a different protocol to diverge the global root
         const { message: flatRecord, dataStream: flatDataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
         const flatWriteReply = await dwn.processMessage(alice.did, flatRecord, { dataStream: flatDataStream });
         expect(flatWriteReply.status.code).toBe(202);
@@ -144,7 +146,7 @@ export function testMessagesSyncHandler(): void {
         expect(protoReply.status.code).toBe(200);
 
         // global root and protocol root should be different
-        // (global includes the flat-space record which is not in any protocol)
+        // (global includes the record from the other protocol)
         expect(protoReply.root).not.toBe(globalReply.root);
         // both should be non-empty roots
         expect(protoReply.root!.length).toBe(64);
@@ -154,6 +156,7 @@ export function testMessagesSyncHandler(): void {
     describe('subtree action', () => {
       it('returns a subtree hash for a given bit prefix', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // write a record so the tree is non-empty
         const { message: recordMessage, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -174,6 +177,7 @@ export function testMessagesSyncHandler(): void {
 
       it('returns different hashes for different prefixes', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // write several records to populate various subtrees
         for (let i = 0; i < 10; i++) {
@@ -206,6 +210,7 @@ export function testMessagesSyncHandler(): void {
     describe('leaves action', () => {
       it('returns all message CIDs for an empty prefix', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // write some messages
         const expectedCids: string[] = [];
@@ -225,7 +230,8 @@ export function testMessagesSyncHandler(): void {
         const reply = await dwn.processMessage(alice.did, message);
         expect(reply.status.code).toBe(200);
         expect(Array.isArray(reply.entries)).toBe(true);
-        expect(reply.entries!.length).toBe(3);
+        // 3 RecordsWrite messages + 1 ProtocolsConfigure for the default test protocol
+        expect(reply.entries!.length).toBe(4);
         for (const cid of expectedCids) {
           expect(reply.entries).toContain(cid);
         }
@@ -233,6 +239,7 @@ export function testMessagesSyncHandler(): void {
 
       it('returns protocol-scoped leaves when protocol is specified', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true };
 
@@ -310,6 +317,7 @@ export function testMessagesSyncHandler(): void {
         it('allows sync with a matching MessagesSync grant scope', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
           // write a record so the tree is non-empty
           const { message: recordMessage, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });

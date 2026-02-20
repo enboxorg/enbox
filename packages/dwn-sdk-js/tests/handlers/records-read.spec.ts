@@ -75,6 +75,7 @@ export function testRecordsReadHandler(): void {
 
       it('should allow tenant to RecordsRead their own record', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // insert data
         const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -101,6 +102,7 @@ export function testRecordsReadHandler(): void {
 
       it('should not allow non-tenant to RecordsRead a record', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // insert data
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -123,6 +125,7 @@ export function testRecordsReadHandler(): void {
 
       it('should allow reading of data that is published without `authorization`', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // insert public data
         const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true });
@@ -146,6 +149,7 @@ export function testRecordsReadHandler(): void {
 
       it('should allow an authenticated user to RecordRead data that is published', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // insert public data
         const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true });
@@ -172,6 +176,7 @@ export function testRecordsReadHandler(): void {
       it('should allow a non-tenant to read RecordsRead data they have received', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // Alice inserts data with Bob as recipient
         const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
@@ -200,6 +205,7 @@ export function testRecordsReadHandler(): void {
 
       it('should return 400 when fetching initial write for a deleted record fails', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // Write a record
         const { message: writeMessage, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -360,6 +366,7 @@ export function testRecordsReadHandler(): void {
 
       it('should include `initialWrite` property if RecordsWrite is not initial write', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const write = await TestDataGenerator.generateRecordsWrite({ author: alice, published: false });
 
         const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
@@ -863,6 +870,7 @@ export function testRecordsReadHandler(): void {
 
           it('should return the earliest published record when `dateSort` is `PublishedAscending`', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
+            await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
             const schema = 'aSchema';
 
             const write1 = await TestDataGenerator.generateRecordsWrite({
@@ -895,6 +903,7 @@ export function testRecordsReadHandler(): void {
 
           it('should return the latest published record when `dateSort` is `PublishedDescending`', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
+            await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
             const schema = 'aSchema';
 
             const write1 = await TestDataGenerator.generateRecordsWrite({
@@ -1220,6 +1229,7 @@ export function testRecordsReadHandler(): void {
 
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
           // Alice writes a record which Bob will later try to read
           const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
@@ -1704,6 +1714,7 @@ export function testRecordsReadHandler(): void {
 
       it('should return 404 RecordRead if data has been deleted', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // insert public data
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true });
@@ -1743,6 +1754,7 @@ export function testRecordsReadHandler(): void {
 
       it('should return 404 underlying data store cannot locate the data when data is above threshold', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         sinon.stub(dataStore, 'get').resolves(undefined);
 
@@ -1769,6 +1781,7 @@ export function testRecordsReadHandler(): void {
       describe('data from encodedData', () => {
         it('should not get data from DataStore if encodedData exists', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
           //since the data is at the threshold it will be returned from the messageStore in the `encodedData` field.
           const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
@@ -1800,6 +1813,7 @@ export function testRecordsReadHandler(): void {
 
         it('should get data from DataStore if encodedData does not exist', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
           //since the data is over the threshold it will not be returned from the messageStore in the `encodedData` field.
           const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
@@ -1831,174 +1845,6 @@ export function testRecordsReadHandler(): void {
       });
 
       describe('encryption scenarios', () => {
-        it('should be able to decrypt flat-space schema-contained record with a correct derived key', async () => {
-        // scenario: Alice writes into her own DWN an encrypted record and she is able to decrypt it
-
-          const alice = await TestDataGenerator.generatePersona();
-          TestStubGenerator.stubDidResolver(didResolver, [alice]);
-
-          // encrypt Alice's record
-          const originalData = TestDataGenerator.randomBytes(1000);
-          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12);
-          const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-          const { ciphertext: encryptedDataBytes, tag: authenticationTag } = await Encryption.aeadEncrypt(
-            ContentEncryptionAlgorithm.A256GCM, dataEncryptionKey, dataEncryptionInitializationVector, originalData
-          );
-
-          // TODO: #450 - Should not require a root key to specify the derivation scheme (https://github.com/enboxorg/enbox/issues/450)
-          const rootPrivateKeyWithSchemasScheme: DerivedPrivateJwk = {
-            rootKeyId         : alice.keyId,
-            derivationScheme  : KeyDerivationScheme.Schemas,
-            derivedPrivateKey : alice.encryptionKeyPair.privateJwk
-          };
-
-          const schema = 'https://some-schema.com';
-          const schemaDerivationPath = Records.constructKeyDerivationPathUsingSchemasScheme(schema);
-          const schemaDerivedPrivateKey = await HdKey.derivePrivateKey(rootPrivateKeyWithSchemasScheme, schemaDerivationPath);
-          const schemaDerivedPublicKey = await HdKey.derivePublicKey(rootPrivateKeyWithSchemasScheme, schemaDerivationPath);
-
-          const rootPrivateKeyWithDataFormatsScheme: DerivedPrivateJwk = {
-            rootKeyId         : alice.keyId,
-            derivationScheme  : KeyDerivationScheme.DataFormats,
-            derivedPrivateKey : alice.encryptionKeyPair.privateJwk
-          };
-
-          const dataFormat = 'some/format';
-          const dataFormatDerivationPath = Records.constructKeyDerivationPathUsingDataFormatsScheme(dataFormat);
-          const dataFormatDerivedPublicKey = await HdKey.derivePublicKey(rootPrivateKeyWithDataFormatsScheme, dataFormatDerivationPath);
-
-          const encryptionInput: EncryptionInput = {
-            initializationVector : dataEncryptionInitializationVector,
-            key                  : dataEncryptionKey,
-            authenticationTag,
-            keyEncryptionInputs  : [{
-              publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
-              publicKey        : schemaDerivedPublicKey,
-              derivationScheme : KeyDerivationScheme.Schemas
-            },
-            {
-              publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
-              publicKey        : dataFormatDerivedPublicKey,
-              derivationScheme : KeyDerivationScheme.DataFormats
-            }]
-          };
-
-          const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
-            author : alice,
-            schema,
-            dataFormat,
-            data   : encryptedDataBytes,
-            encryptionInput
-          });
-
-          const writeReply = await dwn.processMessage(alice.did, message, { dataStream });
-          expect(writeReply.status.code).toBe(202);
-
-          const recordsRead = await RecordsRead.create({
-            filter: {
-              recordId: message.recordId,
-            },
-            signer: Jws.createSigner(alice)
-          });
-
-          // test able to derive correct key using `schemas` scheme from root key to decrypt the message
-          const readReply = await dwn.processMessage(alice.did, recordsRead.message);
-          expect(readReply.status.code).toBe(200);
-          const recordsWriteMessage = readReply.entry!.recordsWrite!;
-          const cipherStream = readReply.entry!.data!;
-
-          const plaintextDataStream = await Records.decrypt(recordsWriteMessage, schemaDerivedPrivateKey, cipherStream);
-          const plaintextBytes = await DataStream.toBytes(plaintextDataStream);
-          expect(ArrayUtility.byteArraysEqual(plaintextBytes, originalData)).toBe(true);
-
-          // test able to derive correct key using `dataFormat` scheme from root key to decrypt the message
-          const readReply2 = await dwn.processMessage(alice.did, recordsRead.message); // send the same read message to get a new cipher stream
-          expect(readReply2.status.code).toBe(200);
-          const cipherStream2 = readReply2.entry!.data!;
-
-          const plaintextDataStream2 = await Records.decrypt(recordsWriteMessage, rootPrivateKeyWithDataFormatsScheme, cipherStream2);
-          const plaintextBytes2 = await DataStream.toBytes(plaintextDataStream2);
-          expect(ArrayUtility.byteArraysEqual(plaintextBytes2, originalData)).toBe(true);
-
-          // test unable to decrypt the message if dataFormat-derived key uses an incorrect data format in derivation path
-          const readReply3 = await dwn.processMessage(alice.did, recordsRead.message); // process the same read message to get a new cipher stream
-          expect(readReply3.status.code).toBe(200);
-          const cipherStream3 = readReply3.entry!.data!;
-
-          const invalidDerivationPath = [KeyDerivationScheme.DataFormats, 'wrong/format'];
-          const inValidDescendantPrivateKey: DerivedPrivateJwk
-            = await HdKey.derivePrivateKey(rootPrivateKeyWithDataFormatsScheme, invalidDerivationPath);
-
-          await expect(Records.decrypt(recordsWriteMessage, inValidDescendantPrivateKey, cipherStream3)).rejects.toThrow(
-            DwnErrorCode.RecordsInvalidAncestorKeyDerivationSegment
-          );
-        });
-
-        it('should be able to decrypt flat-space schema-less record with the correct derived key', async () => {
-          // scenario: Alice writes into her own DWN an encrypted record and she is able to decrypt it
-
-          const alice = await TestDataGenerator.generatePersona();
-          TestStubGenerator.stubDidResolver(didResolver, [alice]);
-
-          // encrypt Alice's record
-          const originalData = TestDataGenerator.randomBytes(1000);
-          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12);
-          const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-          const { ciphertext: encryptedDataBytes, tag: authenticationTag } = await Encryption.aeadEncrypt(
-            ContentEncryptionAlgorithm.A256GCM, dataEncryptionKey, dataEncryptionInitializationVector, originalData
-          );
-
-          // TODO: #450 - Should not require a root key to specify the derivation scheme (https://github.com/enboxorg/enbox/issues/450)
-          const rootPrivateKeyWithDataFormatsScheme: DerivedPrivateJwk = {
-            rootKeyId         : alice.keyId,
-            derivationScheme  : KeyDerivationScheme.DataFormats,
-            derivedPrivateKey : alice.encryptionKeyPair.privateJwk
-          };
-
-          const dataFormat = `image/jpg`;
-          const dataFormatDerivationPath = Records.constructKeyDerivationPathUsingDataFormatsScheme(dataFormat);
-          const dataFormatDerivedPublicKey = await HdKey.derivePublicKey(rootPrivateKeyWithDataFormatsScheme, dataFormatDerivationPath);
-
-          const encryptionInput: EncryptionInput = {
-            initializationVector : dataEncryptionInitializationVector,
-            key                  : dataEncryptionKey,
-            authenticationTag,
-            keyEncryptionInputs  : [{
-              publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
-              publicKey        : dataFormatDerivedPublicKey,
-              derivationScheme : KeyDerivationScheme.DataFormats
-            }]
-          };
-
-          const recordsWrite = await RecordsWrite.create({
-            signer : Jws.createSigner(alice),
-            dataFormat,
-            data   : encryptedDataBytes,
-            encryptionInput
-          });
-
-          const dataStream = DataStream.fromBytes(encryptedDataBytes);
-          const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
-          expect(writeReply.status.code).toBe(202);
-
-          const recordsRead = await RecordsRead.create({
-            filter: {
-              recordId: recordsWrite.message.recordId,
-            },
-            signer: Jws.createSigner(alice)
-          });
-
-          // test able to derive correct key using `dataFormat` scheme from root key to decrypt the message
-          const readReply = await dwn.processMessage(alice.did, recordsRead.message); // send the same read message to get a new cipher stream
-          expect(readReply.status.code).toBe(200);
-          const cipherStream = readReply.entry!.data!;
-          const recordsWriteMessage = readReply.entry!.recordsWrite!;
-
-          const plaintextDataStream = await Records.decrypt(recordsWriteMessage, rootPrivateKeyWithDataFormatsScheme, cipherStream);
-          const plaintextBytes = await DataStream.toBytes(plaintextDataStream);
-          expect(ArrayUtility.byteArraysEqual(plaintextBytes, originalData)).toBe(true);
-        });
-
         it('should only be able to decrypt record with a correct derived private key  - `protocol-context` derivation scheme', async () => {
           // scenario: Bob initiated an encrypted chat thread with Alice,
           // bob is able to decrypt subsequent messages from Alice using the `protocol-context` derived private key

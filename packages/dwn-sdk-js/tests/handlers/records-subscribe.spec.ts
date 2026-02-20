@@ -138,6 +138,7 @@ export function testRecordsSubscribeHandler(): void {
 
       it('should return initial entries matching the filter', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // write some records before subscribing
         const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://test-schema' });
@@ -171,6 +172,7 @@ export function testRecordsSubscribeHandler(): void {
 
       it('should support pagination on initial entries', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // write 5 records
         for (let i = 0; i < 5; i++) {
@@ -195,6 +197,7 @@ export function testRecordsSubscribeHandler(): void {
 
       it('should include initialWrite for updated records in entries', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create a record
         const write = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://update-test' });
@@ -227,6 +230,7 @@ export function testRecordsSubscribeHandler(): void {
 
       it('should still receive live events after initial entries', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // write a record before subscribing
         const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://live-test' });
@@ -322,6 +326,7 @@ export function testRecordsSubscribeHandler(): void {
 
       it('should return 401 for anonymous subscriptions that filter explicitly for unpublished records', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create an unpublished record
         const draftWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'post' });

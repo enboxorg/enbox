@@ -65,13 +65,13 @@ export type DelegatedGrantRecordsWriteMessage = {
     signature: GeneralJws;
   },
   recordId: string,
-  contextId?: string;
+  contextId: string;
   // NOTE: This is a direct expansion and copy of `DataEncodedRecordsWriteMessage` to avoid circular references.
   descriptor: {
     interface: DwnInterfaceName.Records;
     method: DwnMethodName.Write;
-    protocol?: string;
-    protocolPath?: string;
+    protocol: string;
+    protocolPath: string;
     recipient?: string;
     schema?: string;
     parentId?: string;

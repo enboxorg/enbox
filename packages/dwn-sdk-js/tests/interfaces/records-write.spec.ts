@@ -24,11 +24,13 @@ describe('RecordsWrite', () => {
       const alice = await TestDataGenerator.generatePersona();
 
       const options: RecordsWriteOptions = {
-        data        : TestDataGenerator.randomBytes(10),
-        dataFormat  : 'application/json',
-        dateCreated : '2022-10-14T10:20:30.405060Z',
-        recordId    : await TestDataGenerator.randomCborSha256Cid(),
-        signer      : Jws.createSigner(alice)
+        data         : TestDataGenerator.randomBytes(10),
+        dataFormat   : 'application/json',
+        dateCreated  : '2022-10-14T10:20:30.405060Z',
+        recordId     : await TestDataGenerator.randomCborSha256Cid(),
+        protocol     : 'http://test-protocol.xyz',
+        protocolPath : 'testRecord',
+        signer       : Jws.createSigner(alice)
       };
       const recordsWrite = await RecordsWrite.create(options);
 
@@ -52,6 +54,8 @@ describe('RecordsWrite', () => {
         data              : TestDataGenerator.randomBytes(10),
         dataFormat        : 'application/json',
         recordId          : await TestDataGenerator.randomCborSha256Cid(),
+        protocol          : 'http://test-protocol.xyz',
+        protocolPath      : 'testRecord',
         signer            : Jws.createSigner(alice),
         permissionGrantId : grantId,
       });
@@ -63,10 +67,12 @@ describe('RecordsWrite', () => {
       const alice = await TestDataGenerator.generatePersona();
 
       const recordsWrite = await RecordsWrite.create({
-        data       : TestDataGenerator.randomBytes(10),
-        dataFormat : 'application/json',
-        recordId   : await TestDataGenerator.randomCborSha256Cid(),
-        signer     : Jws.createSigner(alice),
+        data         : TestDataGenerator.randomBytes(10),
+        dataFormat   : 'application/json',
+        recordId     : await TestDataGenerator.randomCborSha256Cid(),
+        protocol     : 'http://test-protocol.xyz',
+        protocolPath : 'testRecord',
+        signer       : Jws.createSigner(alice),
       });
 
       expect(recordsWrite.message.descriptor.permissionGrantId).toBeUndefined();
@@ -76,11 +82,13 @@ describe('RecordsWrite', () => {
       const alice = await TestDataGenerator.generatePersona();
 
       const options: RecordsWriteOptions = {
-        data       : TestDataGenerator.randomBytes(10),
-        dataFormat : 'application/json',
-        recordId   : await TestDataGenerator.randomCborSha256Cid(),
-        published  : true,
-        signer     : Jws.createSigner(alice)
+        data         : TestDataGenerator.randomBytes(10),
+        dataFormat   : 'application/json',
+        recordId     : await TestDataGenerator.randomCborSha256Cid(),
+        protocol     : 'http://test-protocol.xyz',
+        protocolPath : 'testRecord',
+        published    : true,
+        signer       : Jws.createSigner(alice)
       };
       const recordsWrite = await RecordsWrite.create(options);
 
@@ -94,13 +102,15 @@ describe('RecordsWrite', () => {
 
       // testing `data` and `dataCid` both defined
       const options1 = {
-        recipient  : alice.did,
-        data       : TestDataGenerator.randomBytes(10),
-        dataCid    : await TestDataGenerator.randomCborSha256Cid(),
-        dataFormat : 'application/json',
-        recordId   : await TestDataGenerator.randomCborSha256Cid(),
-        published  : true,
-        signer     : Jws.createSigner(alice)
+        recipient    : alice.did,
+        data         : TestDataGenerator.randomBytes(10),
+        dataCid      : await TestDataGenerator.randomCborSha256Cid(),
+        dataFormat   : 'application/json',
+        recordId     : await TestDataGenerator.randomCborSha256Cid(),
+        protocol     : 'http://test-protocol.xyz',
+        protocolPath : 'testRecord',
+        published    : true,
+        signer       : Jws.createSigner(alice)
       };
       const createPromise1 = RecordsWrite.create(options1);
 
@@ -108,14 +118,16 @@ describe('RecordsWrite', () => {
 
       // testing `data` and `dataCid` both undefined
       const options2 = {
-        recipient  : alice.did,
+        recipient    : alice.did,
         // intentionally showing both `data` and `dataCid` are undefined
         // data                        : TestDataGenerator.randomBytes(10),
         // dataCid                     : await TestDataGenerator.randomCborSha256Cid(),
-        dataFormat : 'application/json',
-        recordId   : await TestDataGenerator.randomCborSha256Cid(),
-        published  : true,
-        signer     : Jws.createSigner(alice)
+        dataFormat   : 'application/json',
+        recordId     : await TestDataGenerator.randomCborSha256Cid(),
+        protocol     : 'http://test-protocol.xyz',
+        protocolPath : 'testRecord',
+        published    : true,
+        signer       : Jws.createSigner(alice)
       };
       const createPromise2 = RecordsWrite.create(options2);
 
@@ -126,27 +138,31 @@ describe('RecordsWrite', () => {
       const alice = await TestDataGenerator.generatePersona();
 
       const options1 = {
-        recipient  : alice.did,
-        dataCid    : await TestDataGenerator.randomCborSha256Cid(),
+        recipient    : alice.did,
+        dataCid      : await TestDataGenerator.randomCborSha256Cid(),
         // dataSize                  : 123, // intentionally missing
-        dataFormat : 'application/json',
-        recordId   : await TestDataGenerator.randomCborSha256Cid(),
-        published  : true,
-        signer     : Jws.createSigner(alice)
+        dataFormat   : 'application/json',
+        recordId     : await TestDataGenerator.randomCborSha256Cid(),
+        protocol     : 'http://test-protocol.xyz',
+        protocolPath : 'testRecord',
+        published    : true,
+        signer       : Jws.createSigner(alice)
       };
       const createPromise1 = RecordsWrite.create(options1);
 
       await expect(createPromise1).rejects.toThrow('`dataCid` and `dataSize` must both be defined or undefined at the same time');
 
       const options2 = {
-        recipient  : alice.did,
-        data       : TestDataGenerator.randomBytes(10),
+        recipient    : alice.did,
+        data         : TestDataGenerator.randomBytes(10),
         // dataCid                   : await TestDataGenerator.randomCborSha256Cid(), // intentionally missing
-        dataSize   : 123,
-        dataFormat : 'application/json',
-        recordId   : await TestDataGenerator.randomCborSha256Cid(),
-        published  : true,
-        signer     : Jws.createSigner(alice)
+        dataSize     : 123,
+        dataFormat   : 'application/json',
+        recordId     : await TestDataGenerator.randomCborSha256Cid(),
+        protocol     : 'http://test-protocol.xyz',
+        protocolPath : 'testRecord',
+        published    : true,
+        signer       : Jws.createSigner(alice)
       };
       const createPromise2 = RecordsWrite.create(options2);
 
@@ -172,37 +188,31 @@ describe('RecordsWrite', () => {
       expect(message.descriptor.protocol).toBe('http://example.com');
     });
 
-    it('should required `protocol` and `protocolPath` to be both defined or undefined at the same time', async () => {
+    it('should require `protocol` and `protocolPath`', async () => {
       const alice = await TestDataGenerator.generatePersona();
 
-      const options1 = {
+      const baseOptions = {
         recipient  : alice.did,
-        protocol   : 'http://example.com',
-        // protocolPath                : 'foo/bar', // intentionally missing
         dataCid    : await TestDataGenerator.randomCborSha256Cid(),
         dataSize   : 123,
         dataFormat : 'application/json',
         recordId   : await TestDataGenerator.randomCborSha256Cid(),
         signer     : Jws.createSigner(alice)
       };
-      const createPromise1 = RecordsWrite.create(options1);
 
-      await expect(createPromise1).rejects.toThrow('`protocol` and `protocolPath` must both be defined or undefined at the same time');
+      // missing protocol
+      const missingProtocol = RecordsWrite.create({
+        ...baseOptions,
+        protocolPath: 'foo/bar',
+      } as RecordsWriteOptions);
+      await expect(missingProtocol).rejects.toThrow('`protocol` and `protocolPath` are required');
 
-      const options2 = {
-        recipient    : alice.did,
-        // protocol                    : 'http://example.com', // intentionally missing
-        protocolPath : 'foo/bar',
-        data         : TestDataGenerator.randomBytes(10),
-        dataCid      : await TestDataGenerator.randomCborSha256Cid(),
-        dataSize     : 123,
-        dataFormat   : 'application/json',
-        recordId     : await TestDataGenerator.randomCborSha256Cid(),
-        signer       : Jws.createSigner(alice)
-      };
-      const createPromise2 = RecordsWrite.create(options2);
-
-      await expect(createPromise2).rejects.toThrow('`protocol` and `protocolPath` must both be defined or undefined at the same time');
+      // missing protocolPath
+      const missingProtocolPath = RecordsWrite.create({
+        ...baseOptions,
+        protocol: 'http://example.com',
+      } as RecordsWriteOptions);
+      await expect(missingProtocolPath).rejects.toThrow('`protocol` and `protocolPath` are required');
     });
 
     it('should be able to create a RecordsWrite successfully using a custom signer', async () => {
@@ -234,60 +244,6 @@ describe('RecordsWrite', () => {
       expect(recordsWrite.message.authorization!.signature.signatures[0].signature).toBe(Encoder.bytesToBase64Url(hardCodedSignature));
     });
 
-    it('should throw if attempting to use `protocols` key derivation encryption scheme on non-protocol-based record', async () => {
-      const alice = await TestDataGenerator.generatePersona();
-
-      const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12);
-      const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-      const encryptionInput: EncryptionInput = {
-        initializationVector : dataEncryptionInitializationVector,
-        key                  : dataEncryptionKey,
-        authenticationTag    : TestDataGenerator.randomBytes(16),
-        keyEncryptionInputs  : [{
-          publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
-          publicKey        : alice.encryptionKeyPair.publicJwk,
-          derivationScheme : KeyDerivationScheme.ProtocolPath
-        }]
-      };
-
-      // intentionally generating a record that is not protocol-based
-      const createPromise = RecordsWrite.create({
-        signer     : Jws.createSigner(alice),
-        dataFormat : 'application/json',
-        data       : TestDataGenerator.randomBytes(10),
-        encryptionInput
-      });
-
-      await expect(createPromise).rejects.toThrow(DwnErrorCode.RecordsWriteMissingProtocol);
-    });
-
-    it('should throw if attempting to use `schemas` key derivation encryption scheme on a record without `schema`', async () => {
-      const alice = await TestDataGenerator.generatePersona();
-
-      const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12);
-      const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-      const encryptionInput: EncryptionInput = {
-        initializationVector : dataEncryptionInitializationVector,
-        key                  : dataEncryptionKey,
-        authenticationTag    : TestDataGenerator.randomBytes(16),
-        keyEncryptionInputs  : [{
-          publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
-          publicKey        : alice.encryptionKeyPair.publicJwk,
-          derivationScheme : KeyDerivationScheme.Schemas
-        }]
-      };
-
-      // intentionally generating a record that is without `schema`
-      const createPromise = RecordsWrite.create({
-        signer     : Jws.createSigner(alice),
-        dataFormat : 'application/octet-stream',
-        data       : TestDataGenerator.randomBytes(10),
-        encryptionInput
-      });
-
-      await expect(createPromise).rejects.toThrow(DwnErrorCode.RecordsWriteMissingSchema);
-    });
-
     it('should throw if delegated grant is given but signer is not given', async () => {
       const alice = await TestDataGenerator.generatePersona();
       const bob = await TestDataGenerator.generatePersona();
@@ -308,6 +264,8 @@ describe('RecordsWrite', () => {
 
       const createPromise = RecordsWrite.create({
         delegatedGrant : grantToBob.dataEncodedMessage,
+        protocol       : 'http://test-protocol.xyz',
+        protocolPath   : 'testRecord',
         dataFormat     : 'application/octet-stream',
         data           : TestDataGenerator.randomBytes(10),
       });
@@ -370,9 +328,11 @@ describe('RecordsWrite', () => {
       const alice = await TestDataGenerator.generatePersona();
 
       const recordsWrite = await RecordsWrite.create({
-        signer     : Jws.createSigner(alice),
-        dataFormat : 'application/octet-stream',
-        data       : TestDataGenerator.randomBytes(10),
+        signer       : Jws.createSigner(alice),
+        protocol     : 'http://test-protocol.xyz',
+        protocolPath : 'testRecord',
+        dataFormat   : 'application/octet-stream',
+        data         : TestDataGenerator.randomBytes(10),
       });
 
       const validateJsonSchemaSpy = sinon.spy(Message, 'validateJsonSchema');
@@ -434,10 +394,12 @@ describe('RecordsWrite', () => {
   describe('signAsOwner()', () => {
     it('should throw if the RecordsWrite is not signed by an author yet', async () => {
       const options = {
-        data        : TestDataGenerator.randomBytes(10),
-        dataFormat  : 'application/json',
-        dateCreated : '2023-07-27T10:20:30.405060Z',
-        recordId    : await TestDataGenerator.randomCborSha256Cid(),
+        data         : TestDataGenerator.randomBytes(10),
+        dataFormat   : 'application/json',
+        dateCreated  : '2023-07-27T10:20:30.405060Z',
+        recordId     : await TestDataGenerator.randomCborSha256Cid(),
+        protocol     : 'http://test-protocol.xyz',
+        protocolPath : 'testRecord',
       };
       const recordsWrite = await RecordsWrite.create(options);
 
@@ -455,10 +417,12 @@ describe('RecordsWrite', () => {
   describe('signAsOwnerDelegate()', () => {
     it('should throw if the RecordsWrite is not signed by an author yet', async () => {
       const options = {
-        data        : TestDataGenerator.randomBytes(10),
-        dataFormat  : 'application/json',
-        dateCreated : '2023-07-27T10:20:30.405060Z',
-        recordId    : await TestDataGenerator.randomCborSha256Cid(),
+        data         : TestDataGenerator.randomBytes(10),
+        dataFormat   : 'application/json',
+        dateCreated  : '2023-07-27T10:20:30.405060Z',
+        recordId     : await TestDataGenerator.randomCborSha256Cid(),
+        protocol     : 'http://test-protocol.xyz',
+        protocolPath : 'testRecord',
       };
       const recordsWrite = await RecordsWrite.create(options);
 
@@ -492,10 +456,12 @@ describe('RecordsWrite', () => {
   describe('ownerSignatureSigner()', () => {
     it('should return `undefined` if owner signature is not present in the message', async () => {
       const options = {
-        data        : TestDataGenerator.randomBytes(10),
-        dataFormat  : 'application/json',
-        dateCreated : '2023-07-27T10:20:30.405060Z',
-        recordId    : await TestDataGenerator.randomCborSha256Cid(),
+        data         : TestDataGenerator.randomBytes(10),
+        dataFormat   : 'application/json',
+        dateCreated  : '2023-07-27T10:20:30.405060Z',
+        recordId     : await TestDataGenerator.randomCborSha256Cid(),
+        protocol     : 'http://test-protocol.xyz',
+        protocolPath : 'testRecord',
       };
       const recordsWrite = await RecordsWrite.create(options);
 
@@ -506,10 +472,12 @@ describe('RecordsWrite', () => {
   describe('message', () => {
     it('should throw if attempting to access the message of a RecordsWrite that is not given authorization signature input', async () => {
       const options = {
-        data        : TestDataGenerator.randomBytes(10),
-        dataFormat  : 'application/json',
-        dateCreated : '2023-07-27T10:20:30.405060Z',
-        recordId    : await TestDataGenerator.randomCborSha256Cid(),
+        data         : TestDataGenerator.randomBytes(10),
+        dataFormat   : 'application/json',
+        dateCreated  : '2023-07-27T10:20:30.405060Z',
+        recordId     : await TestDataGenerator.randomCborSha256Cid(),
+        protocol     : 'http://test-protocol.xyz',
+        protocolPath : 'testRecord',
       };
       const recordsWrite = await RecordsWrite.create(options);
 
@@ -560,14 +528,14 @@ describe('RecordsWrite', () => {
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId,
           publicKey        : alice.encryptionKeyPair.publicJwk,
-          derivationScheme : KeyDerivationScheme.Schemas,
+          derivationScheme : KeyDerivationScheme.ProtocolContext,
         }],
       };
       await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput2);
 
-      // Should have replaced — only 1 entry with Schemas scheme
+      // Should have replaced — only 1 entry with ProtocolContext scheme
       expect(recordsWrite['_message'].encryption!.recipients).toHaveLength(1);
-      expect(recordsWrite['_message'].encryption!.recipients[0].header.derivationScheme).toBe('schemas');
+      expect(recordsWrite['_message'].encryption!.recipients[0].header.derivationScheme).toBe('protocolContext');
     });
 
     it('should append recipients when append option is true', async () => {
