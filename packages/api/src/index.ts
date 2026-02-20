@@ -25,6 +25,7 @@ export * from './define-protocol.js';
 export * from './did-api.js';
 export * from './dwn-api.js';
 export * from './grant-revocation.js';
+export * from './live-query.js';
 export * from './permission-grant.js';
 export * from './permission-request.js';
 export * from './protocol.js';

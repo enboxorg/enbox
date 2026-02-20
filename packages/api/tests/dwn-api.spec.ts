@@ -7,6 +7,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { AgentPermissionsApi, DwnDateSort, DwnInterface, getRecordAuthor, Oidc, PlatformAgentTestHarness, WalletConnect, Web5UserAgent } from '@enbox/agent';
 import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, PermissionsProtocol, Poller, Time } from '@enbox/dwn-sdk-js';
 
+import type { RecordChange } from '../src/live-query.js';
+
 import { DwnApi } from '../src/dwn-api.js';
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
 import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json' with { type: 'json' };
@@ -2649,6 +2651,273 @@ describe('DwnApi', () => {
           (call.args[0] as ProcessDwnRequest<DwnInterface.RecordsRead>).messageParams.protocolRole === 'friend'
         )).toBe(true);
       });
+    });
+  });
+
+  describe('records.live()', () => {
+    it('should return a LiveQuery with initial records and respond to live events', async () => {
+      // configure a protocol
+      const protocolConfigure = await dwnAlice.protocols.configure({
+        message: { definition: { ...emailProtocolDefinition, published: true } }
+      });
+      expect(protocolConfigure.status.code).toBe(202);
+
+      // write a record BEFORE subscribing
+      const write1 = await dwnAlice.records.write({
+        data    : 'Message 1',
+        message : {
+          recipient    : bobDid.uri,
+          protocol     : emailProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          schema       : emailProtocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
+        }
+      });
+      expect(write1.status.code).toBe(202);
+
+      // create a live query
+      const liveResult = await dwnAlice.records.live({
+        message: {
+          filter: {
+            protocol: emailProtocolDefinition.protocol
+          }
+        }
+      });
+      expect(liveResult.status.code).toBe(200);
+      expect(liveResult.liveQuery).toBeDefined();
+      const live = liveResult.liveQuery!;
+
+      // initial records should contain write1
+      expect(live.records.length).toBe(1);
+      expect(live.records[0].id).toBe(write1.record.id);
+
+      // track change events
+      const changes: RecordChange[] = [];
+      live.on('change', (change) => { changes.push(change); });
+
+      // write a new record AFTER subscribing — should emit 'create'
+      const write2 = await dwnAlice.records.write({
+        data    : 'Message 2',
+        message : {
+          recipient    : bobDid.uri,
+          protocol     : emailProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          schema       : emailProtocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
+        }
+      });
+      expect(write2.status.code).toBe(202);
+
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(changes.length).toBe(1);
+        expect(changes[0].type).toBe('create');
+        expect(changes[0].record.id).toBe(write2.record.id);
+      });
+
+      // clean up
+      await live.close();
+    });
+
+    it('should emit update events for updated records', async () => {
+      const protocolConfigure = await dwnAlice.protocols.configure({
+        message: { definition: { ...emailProtocolDefinition, published: true } }
+      });
+      expect(protocolConfigure.status.code).toBe(202);
+
+      // write a record
+      const write1 = await dwnAlice.records.write({
+        data    : 'Original',
+        message : {
+          recipient    : bobDid.uri,
+          protocol     : emailProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          schema       : emailProtocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
+        }
+      });
+      expect(write1.status.code).toBe(202);
+
+      // create a live query
+      const { liveQuery: live } = await dwnAlice.records.live({
+        message: {
+          filter: { protocol: emailProtocolDefinition.protocol }
+        }
+      });
+      expect(live).toBeDefined();
+      expect(live!.records.length).toBe(1);
+
+      const changes: RecordChange[] = [];
+      live!.on('change', (change) => { changes.push(change); });
+
+      // update the record
+      const updateResult = await write1.record.update({ data: 'Updated' });
+      expect(updateResult.status.code).toBe(202);
+
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(changes.length).toBe(1);
+        expect(changes[0].type).toBe('update');
+        expect(changes[0].record.id).toBe(write1.record.id);
+      });
+
+      await live!.close();
+    });
+
+    it('should emit delete events for deleted records', async () => {
+      const protocolConfigure = await dwnAlice.protocols.configure({
+        message: { definition: { ...emailProtocolDefinition, published: true } }
+      });
+      expect(protocolConfigure.status.code).toBe(202);
+
+      // write a record
+      const write1 = await dwnAlice.records.write({
+        data    : 'To be deleted',
+        message : {
+          recipient    : bobDid.uri,
+          protocol     : emailProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          schema       : emailProtocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
+        }
+      });
+      expect(write1.status.code).toBe(202);
+
+      // create a live query
+      const { liveQuery: live } = await dwnAlice.records.live({
+        message: {
+          filter: { protocol: emailProtocolDefinition.protocol }
+        }
+      });
+      expect(live).toBeDefined();
+
+      const changes: RecordChange[] = [];
+      live!.on('change', (change) => { changes.push(change); });
+
+      // delete the record
+      const deleteResult = await write1.record.delete();
+      expect(deleteResult.status.code).toBe(202);
+
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(changes.length).toBe(1);
+        expect(changes[0].type).toBe('delete');
+        expect(changes[0].record.id).toBe(write1.record.id);
+      });
+
+      await live!.close();
+    });
+
+    it('should support typed convenience events (create/update/delete)', async () => {
+      const protocolConfigure = await dwnAlice.protocols.configure({
+        message: { definition: { ...emailProtocolDefinition, published: true } }
+      });
+      expect(protocolConfigure.status.code).toBe(202);
+
+      const { liveQuery: live } = await dwnAlice.records.live({
+        message: {
+          filter: { protocol: emailProtocolDefinition.protocol }
+        }
+      });
+      expect(live).toBeDefined();
+
+      const created: Record[] = [];
+      const updated: Record[] = [];
+      const deleted: Record[] = [];
+      live!.on('create', (record) => { created.push(record); });
+      live!.on('update', (record) => { updated.push(record); });
+      live!.on('delete', (record) => { deleted.push(record); });
+
+      // write a record
+      const writeResult = await dwnAlice.records.write({
+        data    : 'Hello',
+        message : {
+          recipient    : bobDid.uri,
+          protocol     : emailProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          schema       : emailProtocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
+        }
+      });
+      expect(writeResult.status.code).toBe(202);
+
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(created.length).toBe(1);
+        expect(created[0].id).toBe(writeResult.record.id);
+      });
+
+      // update it
+      const updateResult = await writeResult.record.update({ data: 'Updated' });
+      expect(updateResult.status.code).toBe(202);
+
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(updated.length).toBe(1);
+        expect(updated[0].id).toBe(writeResult.record.id);
+      });
+
+      // delete it
+      const deleteResult = await writeResult.record.delete();
+      expect(deleteResult.status.code).toBe(202);
+
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(deleted.length).toBe(1);
+        expect(deleted[0].id).toBe(writeResult.record.id);
+      });
+
+      await live!.close();
+    });
+
+    it('should return an unsubscribe function from on()', async () => {
+      const protocolConfigure = await dwnAlice.protocols.configure({
+        message: { definition: { ...emailProtocolDefinition, published: true } }
+      });
+      expect(protocolConfigure.status.code).toBe(202);
+
+      const { liveQuery: live } = await dwnAlice.records.live({
+        message: {
+          filter: { protocol: emailProtocolDefinition.protocol }
+        }
+      });
+      expect(live).toBeDefined();
+
+      const changes: RecordChange[] = [];
+      const off = live!.on('change', (change) => { changes.push(change); });
+
+      // write a record — should be received
+      const write1 = await dwnAlice.records.write({
+        data    : 'First',
+        message : {
+          recipient    : bobDid.uri,
+          protocol     : emailProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          schema       : emailProtocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
+        }
+      });
+      expect(write1.status.code).toBe(202);
+
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(changes.length).toBe(1);
+      });
+
+      // unsubscribe
+      off();
+
+      // write another record — should NOT be received
+      const write2 = await dwnAlice.records.write({
+        data    : 'Second',
+        message : {
+          recipient    : bobDid.uri,
+          protocol     : emailProtocolDefinition.protocol,
+          protocolPath : 'thread',
+          schema       : emailProtocolDefinition.types.thread.schema,
+          dataFormat   : 'text/plain'
+        }
+      });
+      expect(write2.status.code).toBe(202);
+
+      // give it time to potentially arrive (it shouldn't)
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(changes.length).toBe(1); // still only 1
+
+      await live!.close();
     });
   });
 
