@@ -5,6 +5,7 @@ import type { Web5Rpc } from '@enbox/dwn-clients';
 import type { DidInterface, DidRequest, DidResponse } from './did-api.js';
 import type { DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './types/dwn.js';
 import type { ProcessVcRequest, SendVcRequest, VcResponse } from './types/vc.js';
+import type { LocalDwnStrategy } from './local-dwn.js';
 
 import { AgentCryptoApi } from './crypto-api.js';
 import { AgentDidApi } from './did-api.js';
@@ -87,6 +88,10 @@ export type AgentParams<TKeyManager extends AgentKeyManager = LocalKeyManager> =
   syncApi: AgentSyncApi;
 };
 
+export type CreateUserAgentParams = Partial<AgentParams> & {
+  localDwnStrategy?: LocalDwnStrategy;
+};
+
 export class Web5UserAgent<TKeyManager extends AgentKeyManager = LocalKeyManager> implements Web5PlatformAgent<TKeyManager> {
   public crypto: AgentCryptoApi;
   public did: AgentDidApi<TKeyManager>;
@@ -140,8 +145,9 @@ export class Web5UserAgent<TKeyManager extends AgentKeyManager = LocalKeyManager
    */
   public static async create({
     dataPath = 'DATA/AGENT',
+    localDwnStrategy,
     agentDid, agentVault, cryptoApi, didApi, dwnApi, identityApi, keyManager, permissionsApi, rpcClient, syncApi
-  }: Partial<AgentParams> = {}
+  }: CreateUserAgentParams = {}
   ): Promise<Web5UserAgent> {
 
     agentVault ??= new HdIdentityVault({
@@ -158,8 +164,12 @@ export class Web5UserAgent<TKeyManager extends AgentKeyManager = LocalKeyManager
     });
 
     dwnApi ??= new AgentDwnApi({
-      dwn: await AgentDwnApi.createDwn({ dataPath, didResolver: didApi })
+      dwn              : await AgentDwnApi.createDwn({ dataPath, didResolver: didApi }),
+      localDwnStrategy : localDwnStrategy ?? 'prefer',
     });
+    if (localDwnStrategy) {
+      dwnApi.setLocalDwnStrategy(localDwnStrategy);
+    }
 
     identityApi ??= new AgentIdentityApi({ store: new DwnIdentityStore() });
 

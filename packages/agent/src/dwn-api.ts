@@ -50,6 +50,8 @@ import type {
 import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
 import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
 import { getDwnServiceEndpointUrls, isRecordsWrite } from './utils.js';
+import type { LocalDwnStrategy } from './local-dwn.js';
+import { LocalDwnDiscovery } from './local-dwn.js';
 
 // Re-export type guards for backward compatibility
 export { isDwnMessage, isDwnRequest, isMessagesPermissionScope, isRecordPermissionScope, isRecordsType } from './dwn-type-guards.js';
@@ -95,6 +97,7 @@ type DwnMessageWithBlob<T extends DwnInterface> = {
 type DwnApiParams = {
   agent?: Web5PlatformAgent;
   dwn: Dwn;
+  localDwnStrategy?: LocalDwnStrategy;
 };
 
 interface DwnApiCreateDwnParams extends Partial<DwnConfig> {
@@ -142,12 +145,24 @@ export class AgentDwnApi {
     ttl: 30 * 60 * 1000
   });
 
-  constructor({ agent, dwn }: DwnApiParams) {
+  private _localManagedDidCache = new TtlCache<string, boolean>({
+    ttl: 30 * 1000,
+  });
+
+  private _localDwnStrategy: LocalDwnStrategy;
+  private _localDwnDiscovery?: LocalDwnDiscovery;
+
+  constructor({ agent, dwn, localDwnStrategy = 'prefer' }: DwnApiParams) {
     // If an agent is provided, set it as the execution context for this API.
     this._agent = agent;
 
     // Set the DWN instance for this API.
     this._dwn = dwn;
+    this._localDwnStrategy = localDwnStrategy;
+
+    if (agent) {
+      this._localDwnDiscovery = new LocalDwnDiscovery(agent.rpc);
+    }
   }
 
   /**
@@ -166,6 +181,16 @@ export class AgentDwnApi {
 
   set agent(agent: Web5PlatformAgent) {
     this._agent = agent;
+    this._localDwnDiscovery = new LocalDwnDiscovery(agent.rpc);
+    this._localManagedDidCache.clear();
+  }
+
+  get localDwnStrategy(): LocalDwnStrategy {
+    return this._localDwnStrategy;
+  }
+
+  public setLocalDwnStrategy(strategy: LocalDwnStrategy): void {
+    this._localDwnStrategy = strategy;
   }
 
   /**
@@ -205,6 +230,88 @@ export class AgentDwnApi {
     eventStream ??= new EventEmitterStream();
 
     return await Dwn.create({ dataStore, didResolver, stateIndex, eventStream, messageStore, tenantGate, resumableTaskStore });
+  }
+
+  public async getDwnEndpointUrlsForTarget(targetDid: string): Promise<string[]> {
+    const shouldUseLocalDwn = await this.shouldUseLocalDwnForTarget(targetDid);
+
+    if (!shouldUseLocalDwn) {
+      return getDwnServiceEndpointUrls(targetDid, this.agent.did);
+    }
+
+    const localDwnEndpoint = await this.getLocalDwnEndpoint();
+    if (this._localDwnStrategy === 'only') {
+      if (!localDwnEndpoint) {
+        throw new Error(
+          `AgentDwnApi: Local DWN strategy is 'only' but no local server is available ` +
+          `on localhost/127.0.0.1:{3000,55555-55559}`
+        );
+      }
+
+      return [localDwnEndpoint];
+    }
+
+    let dwnEndpointUrls: string[] = [];
+    try {
+      dwnEndpointUrls = await getDwnServiceEndpointUrls(targetDid, this.agent.did);
+    } catch (error) {
+      if (!localDwnEndpoint) {
+        throw error;
+      }
+    }
+
+    if (!localDwnEndpoint) {
+      return dwnEndpointUrls;
+    }
+
+    const uniqueEndpoints = new Set<string>([
+      localDwnEndpoint,
+      ...dwnEndpointUrls,
+    ]);
+
+    return [...uniqueEndpoints];
+  }
+
+  private async getLocalDwnEndpoint(): Promise<string | undefined> {
+    this._localDwnDiscovery ??= new LocalDwnDiscovery(this.agent.rpc);
+    return this._localDwnDiscovery.getEndpoint();
+  }
+
+  private async shouldUseLocalDwnForTarget(targetDid: string): Promise<boolean> {
+    if (this._localDwnStrategy === 'off') {
+      return false;
+    }
+
+    const cached = this._localManagedDidCache.get(targetDid);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    if (targetDid === this.agent.agentDid.uri) {
+      this._localManagedDidCache.set(targetDid, true);
+      return true;
+    }
+
+    const identities = await this.agent.identity.list();
+    const localManagedDids = new Set<string>();
+
+    for (const identity of identities) {
+      localManagedDids.add(identity.did.uri);
+      if (identity.metadata.connectedDid) {
+        localManagedDids.add(identity.metadata.connectedDid);
+      }
+    }
+
+    for (const localDid of localManagedDids) {
+      this._localManagedDidCache.set(localDid, true);
+    }
+
+    const isLocalManaged = localManagedDids.has(targetDid);
+    if (!isLocalManaged) {
+      this._localManagedDidCache.set(targetDid, false);
+    }
+
+    return isLocalManaged;
   }
 
   public async processRequest<T extends DwnInterface>(
@@ -361,7 +468,7 @@ export class AgentDwnApi {
     request: SendDwnRequest<T>
   ): Promise<DwnResponse<T>> {
     // First, confirm the target DID can be dereferenced and extract the DWN service endpoint URLs.
-    const dwnEndpointUrls = await getDwnServiceEndpointUrls(request.target, this.agent.did);
+    const dwnEndpointUrls = await this.getDwnEndpointUrlsForTarget(request.target);
     if (dwnEndpointUrls.length === 0) {
       throw new Error(`AgentDwnApi: DID Service is missing or malformed: ${request.target}#dwn`);
     }
@@ -1007,9 +1114,7 @@ export class AgentDwnApi {
 
     const reply = await this.sendDwnRpcRequest({
       targetDid,
-      dwnEndpointUrls: await getDwnServiceEndpointUrls(
-        targetDid, this.agent.did,
-      ),
+      dwnEndpointUrls: await this.getDwnEndpointUrlsForTarget(targetDid),
       message: protocolsQuery.message,
     }) as ProtocolsQueryReply;
 
@@ -1054,7 +1159,7 @@ export class AgentDwnApi {
       },
     });
 
-    const dwnEndpointUrls = await getDwnServiceEndpointUrls(targetDid, this.agent.did);
+    const dwnEndpointUrls = await this.getDwnEndpointUrlsForTarget(targetDid);
     const queryReply = await this.sendDwnRpcRequest<DwnInterface.RecordsQuery>({
       targetDid,
       dwnEndpointUrls,

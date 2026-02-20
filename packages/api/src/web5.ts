@@ -11,6 +11,7 @@ import type {
   DwnProtocolDefinition,
   DwnRecordsPermissionScope,
   HdIdentityVault,
+  LocalDwnStrategy,
   Permission,
   WalletConnectOptions,
   Web5Agent,
@@ -69,6 +70,12 @@ export type ConnectOptions = Omit<WalletConnectOptions, 'permissionRequests'> & 
 
 /** Optional overrides that can be provided when calling {@link Web5.connect}. */
 export type Web5ConnectOptions = {
+  /**
+   * Controls local DWN discovery behavior for remote-target DWN sends/sync.
+   * `prefer` (default) tries local first, `only` requires local, `off` disables local probing.
+   */
+  localDwnStrategy?: LocalDwnStrategy;
+
   /**
    * When specified, external wallet connect flow is triggered.
    * This param currently will not work in apps that are currently connected.
@@ -254,6 +261,7 @@ export class Web5 {
   static async connect({
     agent,
     agentVault,
+    localDwnStrategy = 'prefer',
     connectedDid,
     password,
     recoveryPhrase,
@@ -267,7 +275,7 @@ export class Web5 {
     if (agent === undefined) {
       let registerSync = false;
       // A custom Web5Agent implementation was not specified, so use default managed user agent.
-      const userAgent = await Web5UserAgent.create({ agentVault });
+      const userAgent = await Web5UserAgent.create({ agentVault, localDwnStrategy });
       agent = userAgent;
 
       // Warn the developer and application user of the security risks of using a static password.

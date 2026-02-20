@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Enbox DWN Server</title>
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
+  <main class="container">
+    <h1>Local Enbox DWN Server</h1>
+    <p class="description">
+      This native Electrobun app runs <code>@enbox/dwn-server</code> locally on your machine.
+    </p>
+    <p class="status">
+      Status: <strong id="status">Running</strong> at
+      <a id="server-url" href="#" target="_blank" rel="noreferrer"></a>
+    </p>
+
+    <section class="notes">
+      <h2>Notes</h2>
+      <ul>
+        <li>Close this window to stop the local server process.</li>
+        <li>Uses port <code>3000</code> first, then <code>55555-55559</code>.</li>
+        <li>Use your client against this local JSON-RPC endpoint.</li>
+      </ul>
+    </section>
+  </main>
+  <script type="module" src="./index.js"></script>
+</body>
+</html>
