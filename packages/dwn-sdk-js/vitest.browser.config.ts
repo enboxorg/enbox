@@ -64,35 +64,46 @@ export default defineConfig({
     holdUntilCrawlEnd: true,
   },
   test: {
-    // Pure-logic and utility tests that do not depend on LevelDB stores.
-    // Tests using TestStores are excluded (they instantiate Level-backed stores that
-    // require IndexedDB transactions which are more complex in Vitest browser mode).
+    // Browser-safe tests that do not depend on TestStores / TestEventStream.
+    // Tests using TestStores are excluded because they instantiate Level-backed
+    // stores requiring IndexedDB transactions that are complex in Vitest browser
+    // mode. See https://github.com/enboxorg/enbox/issues/236 for the plan to
+    // unlock those tests.
     include: [
-      'tests/utils/url.spec.ts',
-      'tests/utils/time.spec.ts',
-      'tests/utils/object.spec.ts',
-      'tests/utils/memory-cache.spec.ts',
-      'tests/utils/jws.spec.ts',
-      'tests/utils/hd-key.spec.ts',
-      'tests/utils/filters.spec.ts',
-      'tests/utils/secp256k1.spec.ts',
-      'tests/utils/secp256r1.spec.ts',
+      'tests/utils/cid.spec.ts',
+      // data-stream.spec.ts excluded: its 500KB×3 stream duplication test exceeds
+      // the 15s timeout on WebKit in CI (~25s). DataStream is still covered
+      // transitively by cid.spec.ts and the interfaces/ tests.
       'tests/utils/encryption.spec.ts',
       'tests/utils/encryption-callbacks.spec.ts',
+      'tests/utils/filters.spec.ts',
+      'tests/utils/hd-key.spec.ts',
+      'tests/utils/jws.spec.ts',
+      'tests/utils/memory-cache.spec.ts',
+      'tests/utils/messages.spec.ts',
+      'tests/utils/object.spec.ts',
+      'tests/utils/private-key-signer.spec.ts',
+      'tests/utils/records.spec.ts',
+      'tests/utils/secp256k1.spec.ts',
+      'tests/utils/secp256r1.spec.ts',
+      'tests/utils/time.spec.ts',
+      'tests/utils/url.spec.ts',
       'tests/validation/**/*.spec.ts',
       'tests/core/auth.spec.ts',
       'tests/core/message-reply.spec.ts',
       'tests/core/message.spec.ts',
       'tests/jose/jws/general.spec.ts',
       'tests/smt/sparse-merkle-tree.spec.ts',
-      'tests/interfaces/records-read.spec.ts',
-      'tests/interfaces/records-query.spec.ts',
-      'tests/interfaces/records-delete.spec.ts',
-      'tests/interfaces/records-subscribe.spec.ts',
+      'tests/store/blockstore-mock.spec.ts',
+      'tests/interfaces/messages-get.spec.ts',
+      'tests/interfaces/messages-subscribe.spec.ts',
       'tests/interfaces/protocols-configure.spec.ts',
       'tests/interfaces/protocols-query.spec.ts',
-      'tests/interfaces/messages-subscribe.spec.ts',
-      'tests/interfaces/messages-get.spec.ts',
+      'tests/interfaces/records-delete.spec.ts',
+      'tests/interfaces/records-query.spec.ts',
+      'tests/interfaces/records-read.spec.ts',
+      'tests/interfaces/records-subscribe.spec.ts',
+      'tests/protocols/permission-grant.spec.ts',
       'tests/protocols/permission-request.spec.ts',
     ],
     testTimeout : 15_000,
