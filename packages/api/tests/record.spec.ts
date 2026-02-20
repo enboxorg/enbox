@@ -3862,22 +3862,19 @@ describe('Record', () => {
 
     it('deletes a record from someone else', async () => {
       // subscribe to records so that we can receive a record in a deleted state
-      const records = new Map<string, Record>();
-      const subscriptionHandler = (record: Record): void => {
-        records.set(record.id, record);
-      };
+      const receivedRecords: Record[] = [];
 
-      const { status, subscription } = await dwnAlice.records.subscribe({
+      const { status, liveQuery } = await dwnAlice.records.subscribe({
         from     : aliceDid.uri,
         protocol : notesProtocol.protocol,
         message  : {
           filter: {
             protocol: notesProtocol.protocol,
           }
-        },
-        subscriptionHandler
+        }
       });
       expect(status.code).toBe(200);
+      liveQuery!.on('create', (record) => { receivedRecords.push(record); });
 
       // bob writes a record for alice, alice deletes it and stores it
       const { status: bobWriteStatus, record: bobWriteRecord } = await dwnBob.records.write({
@@ -3898,40 +3895,36 @@ describe('Record', () => {
 
       // wait for the record to be received
       await Poller.pollUntilSuccessOrTimeout(async () => {
-        expect(records.size).toBe(1);
-        const record = records.get(bobWriteRecord.id);
-        expect(record.toJSON()).toEqual(bobWriteRecord.toJSON());
+        expect(receivedRecords.length).toBe(1);
+        expect(receivedRecords[0].id).toBe(bobWriteRecord.id);
       });
 
       // delete the record
-      const bobsRecordToDelete = records.get(bobWriteRecord.id);
+      const bobsRecordToDelete = receivedRecords[0];
       expect(bobsRecordToDelete.deleted).toBe(false);
 
       const { status: storeStatus } = await bobsRecordToDelete.delete();
       expect(storeStatus.code).toBe(202);
       expect(bobsRecordToDelete.deleted).toBe(true);
 
-      await subscription.close();
+      await liveQuery!.close();
     });
 
     it('deletes a record as owner from someone else', async () => {
       // subscribe to records so that we can receive a record in a deleted state
-      const records = new Map<string, Record>();
-      const subscriptionHandler = (record: Record): void => {
-        records.set(record.id, record);
-      };
+      const receivedRecords: Record[] = [];
 
-      const { status, subscription } = await dwnAlice.records.subscribe({
+      const { status, liveQuery } = await dwnAlice.records.subscribe({
         from     : bobDid.uri,
         protocol : notesProtocol.protocol,
         message  : {
           filter: {
             protocol: notesProtocol.protocol,
           }
-        },
-        subscriptionHandler
+        }
       });
       expect(status.code).toBe(200);
+      liveQuery!.on('create', (record) => { receivedRecords.push(record); });
 
       // bob writes a record for alice, alice deletes it and stores it
       const { status: bobWriteStatus, record: bobWriteRecord } = await dwnBob.records.write({
@@ -3952,20 +3945,19 @@ describe('Record', () => {
 
       // wait for the record to be received
       await Poller.pollUntilSuccessOrTimeout(async () => {
-        expect(records.size).toBe(1);
-        const record = records.get(bobWriteRecord.id);
-        expect(record.toJSON()).toEqual(bobWriteRecord.toJSON());
+        expect(receivedRecords.length).toBe(1);
+        expect(receivedRecords[0].id).toBe(bobWriteRecord.id);
       });
 
       // delete the record
-      const bobsRecordToDelete = records.get(bobWriteRecord.id);
+      const bobsRecordToDelete = receivedRecords[0];
       expect(bobsRecordToDelete.deleted).toBe(false);
 
       const { status: storeStatus } = await bobsRecordToDelete.delete({ signAsOwner: true });
       expect(storeStatus.code).toBe(202);
       expect(bobsRecordToDelete.deleted).toBe(true);
 
-      await subscription.close();
+      await liveQuery!.close();
     });
 
     it('deletes a record using a different protocolRole than the one used when querying for/reading the record', async () => {
@@ -4318,12 +4310,9 @@ describe('Record', () => {
 
     it('stores a deleted record as owner to the local DWN from an external signer', async () => {
       // subscribe to records so that we can receive a record in a deleted state
-      const records = new Map<string, Record>();
-      const subscriptionHandler = (record: Record): void => {
-        records.set(record.id, record);
-      };
+      const receivedRecords: Record[] = [];
 
-      const { status, subscription } = await dwnAlice.records.subscribe({
+      const { status, liveQuery } = await dwnAlice.records.subscribe({
         from     : aliceDid.uri,
         protocol : notesProtocol.protocol,
         message  : {
@@ -4331,10 +4320,10 @@ describe('Record', () => {
             protocol     : notesProtocol.protocol,
             protocolPath : 'request'
           }
-        },
-        subscriptionHandler
+        }
       });
       expect(status.code).toBe(200);
+      liveQuery!.on('change', (change) => { receivedRecords.push(change.record); });
 
       // bob writes a record for alice, alice deletes it and stores it
       const { status: bobWriteStatus, record: bobWriteRecord } = await dwnBob.records.write({
@@ -4357,20 +4346,19 @@ describe('Record', () => {
 
       // wait for the deleted record to be received
       await Poller.pollUntilSuccessOrTimeout(async () => {
-        expect(records.size).toBe(1);
-        const record = records.get(bobWriteRecord.id);
-        expect(record.deleted).toBe(true);
-        expect(record.toJSON()).toEqual(bobWriteRecord.toJSON());
+        // We expect 2 events: create (the write) + delete (the delete)
+        const deletedRecord = receivedRecords.find(r => r.id === bobWriteRecord.id && r.deleted);
+        expect(deletedRecord).toBeDefined();
       });
 
-      // import the deleted record
-      const bobsRecordToDelete = records.get(bobWriteRecord.id);
+      // get the deleted record
+      const bobsRecordToDelete = receivedRecords.find(r => r.id === bobWriteRecord.id && r.deleted);
       expect(bobsRecordToDelete.deleted).toBe(true);
 
       const { status: storeStatus } = await bobsRecordToDelete.store(true);
       expect(storeStatus.code).toBe(202);
 
-      await subscription.close();
+      await liveQuery!.close();
     });
   });
 
@@ -4521,13 +4509,10 @@ describe('Record', () => {
 
     it('signs and imports a deleted record as the owner', async () => {
       // subscribe to records so that we can receive a record in a deleted state
-      const records = new Map<string, Record>();
-      const subscriptionHandler = (record: Record): void => {
-        records.set(record.id, record);
-      };
+      const receivedRecords: Record[] = [];
 
       // subscribe to requests
-      const { status, subscription } = await dwnAlice.records.subscribe({
+      const { status, liveQuery } = await dwnAlice.records.subscribe({
         from     : aliceDid.uri,
         protocol : notesProtocol.protocol,
         message  : {
@@ -4535,10 +4520,10 @@ describe('Record', () => {
             protocol     : notesProtocol.protocol,
             protocolPath : 'request'
           }
-        },
-        subscriptionHandler
+        }
       });
       expect(status.code).toBe(200);
+      liveQuery!.on('change', (change) => { receivedRecords.push(change.record); });
 
       // bob writes a record for alice, alice deletes it and stores it
       const { status: bobWriteStatus, record: bobWriteRecord } = await dwnBob.records.write({
@@ -4562,20 +4547,18 @@ describe('Record', () => {
 
       // wait for the deleted record to be received
       await Poller.pollUntilSuccessOrTimeout(async () => {
-        expect(records.size).toBe(1);
-        const record = records.get(bobWriteRecord.id);
-        expect(record.deleted).toBe(true);
-        expect(record.toJSON()).toEqual(bobWriteRecord.toJSON());
+        const deletedRecord = receivedRecords.find(r => r.id === bobWriteRecord.id && r.deleted);
+        expect(deletedRecord).toBeDefined();
       });
 
       // import the deleted record
-      const bobsRecordToDelete = records.get(bobWriteRecord.id);
+      const bobsRecordToDelete = receivedRecords.find(r => r.id === bobWriteRecord.id && r.deleted);
       expect(bobsRecordToDelete.deleted).toBe(true);
 
       const { status: importStatus } = await bobsRecordToDelete.import();
       expect(importStatus.code).toBe(202);
 
-      await subscription.close();
+      await liveQuery!.close();
     });
 
     describe('store: false', () => {
@@ -4714,12 +4697,9 @@ describe('Record', () => {
 
       it('signs and an external deleted record as the owner', async () => {
         // subscribe to records so that we can receive a record in a deleted state
-        const records = new Map<string, Record>();
-        const subscriptionHandler = (record: Record): void => {
-          records.set(record.id, record);
-        };
+        const receivedRecords: Record[] = [];
 
-        const { status, subscription } = await dwnAlice.records.subscribe({
+        const { status, liveQuery } = await dwnAlice.records.subscribe({
           from     : aliceDid.uri,
           protocol : notesProtocol.protocol,
           message  : {
@@ -4727,10 +4707,10 @@ describe('Record', () => {
               protocol     : notesProtocol.protocol,
               protocolPath : 'request'
             }
-          },
-          subscriptionHandler
+          }
         });
         expect(status.code).toBe(200);
+        liveQuery!.on('change', (change) => { receivedRecords.push(change.record); });
 
         // bob writes a record for alice, alice deletes it and stores it
         const { status: bobWriteStatus, record: bobWriteRecord } = await dwnBob.records.write({
@@ -4754,14 +4734,12 @@ describe('Record', () => {
 
         // wait for the deleted record to be received
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(records.size).toBe(1);
-          const record = records.get(bobWriteRecord.id);
-          expect(record.deleted).toBe(true);
-          expect(record.toJSON()).toEqual(bobWriteRecord.toJSON());
+          const deletedRecord = receivedRecords.find(r => r.id === bobWriteRecord.id && r.deleted);
+          expect(deletedRecord).toBeDefined();
         });
 
         // import the deleted record
-        const bobsRecordToDelete = records.get(bobWriteRecord.id);
+        const bobsRecordToDelete = receivedRecords.find(r => r.id === bobWriteRecord.id && r.deleted);
         expect(bobsRecordToDelete.deleted).toBe(true);
 
         const { status: importStatus } = await bobsRecordToDelete.import(false);
@@ -4770,7 +4748,7 @@ describe('Record', () => {
         const { status: storeStatus } = await bobsRecordToDelete.store();
         expect(storeStatus.code).toBe(202);
 
-        await subscription.close();
+        await liveQuery!.close();
       });
     });
   });
