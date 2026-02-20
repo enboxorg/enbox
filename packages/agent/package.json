@@ -15,7 +15,7 @@
     "test:node": "bun test --timeout 10000 .spec.ts",
     "test:node:coverage": "bun test --timeout 10000 --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .spec.ts",
     "test:browser": "bunx --bun vitest --config vitest.browser.config.ts --run",
-    "test:browser:coverage": "bunx --bun vitest --config vitest.browser.config.ts --run --coverage --coverage.provider=istanbul --coverage.reportsDirectory=./coverage-browser"
+    "test:browser:coverage": "bunx --bun vitest --config vitest.browser.config.ts --run --coverage --coverage.provider=istanbul"
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/agent#readme",
   "bugs": "https://github.com/enboxorg/enbox/issues",

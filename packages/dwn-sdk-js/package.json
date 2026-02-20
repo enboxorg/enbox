@@ -130,7 +130,7 @@
     "test:node:coverage": "bun run compile-validators && bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .spec.ts",
     "test:node-grep": "bun run compile-validators && bun test .spec.ts -t $GREP",
     "test:browser": "bun run compile-validators && bunx --bun vitest --config vitest.browser.config.ts --run",
-    "test:browser:coverage": "bun run compile-validators && bunx --bun vitest --config vitest.browser.config.ts --run --coverage --coverage.provider=istanbul --coverage.reportsDirectory=./coverage-browser",
+    "test:browser:coverage": "bun run compile-validators && bunx --bun vitest --config vitest.browser.config.ts --run --coverage --coverage.provider=istanbul",
     "license-check": "license-report --only=prod > license-report.json && bun ./build/license-check.cjs",
     "publish:unstable": "./build/publish-unstable.sh"
   }
