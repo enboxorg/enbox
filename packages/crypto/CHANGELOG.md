@@ -1,5 +1,20 @@
 # @enbox/crypto
 
+## 0.0.4
+
+### Patch Changes
+
+- [#202](https://github.com/enboxorg/enbox/pull/202) [`af2ba3a`](https://github.com/enboxorg/enbox/commit/af2ba3a7e9d5de44b40a38169e9296427a4f049b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(crypto): publish updated barrel with algorithm class exports
+
+  The `@enbox/crypto@0.0.3` dist was built before the algorithm barrel
+  exports (`AesKwAlgorithm`, `HkdfAlgorithm`, `Pbkdf2Algorithm`,
+  `X25519Algorithm`, `EciesSecp256k1`) were added to `index.ts`.
+  `@enbox/agent@0.1.4` imports these symbols, causing Vite/Rollup build
+  failures in downstream apps (`"AesKwAlgorithm" is not exported`).
+
+  The source was already correct — this bump triggers a fresh publish so
+  the dist matches the source.
+
 ## 0.0.3
 
 ### Patch Changes
