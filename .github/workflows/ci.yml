@@ -500,11 +500,10 @@ jobs:
           threshold=90
           mkdir -p coverage-badges
 
-          # Use temp files to accumulate per-section table rows
+          # Temp files: node rows and a TSV of (pkg, browser, coverage) for
+          # browser results that we pivot into a single table at the end.
           node_file=$(mktemp)
-          for b in $browsers; do
-            eval "browser_file_${b}=$(mktemp)"
-          done
+          browser_tsv=$(mktemp)
 
           for lcov_file in coverage-artifacts/*/lcov.info; do
             [ -f "$lcov_file" ] || continue
@@ -525,7 +524,7 @@ jobs:
 
             if [ -n "$matched_browser" ]; then
               pkg=$(echo "$dir_name" | sed "s/-${matched_browser}\$//")
-              eval "echo '| $pkg | ${coverage}% | :information_source: |' >> \$browser_file_${matched_browser}"
+              printf '%s\t%s\t%s\n' "$pkg" "$matched_browser" "$coverage" >> "$browser_tsv"
             else
               pkg="$dir_name"
               if [ "$(echo "$coverage < $threshold" | bc -l)" = "1" ]; then
@@ -562,30 +561,29 @@ jobs:
             fi
             echo ""
 
-            # Per-browser collapsible sections
-            has_browser=false
-            for b in $browsers; do
-              eval "bf=\$browser_file_${b}"
-              if [ -s "$bf" ]; then has_browser=true; fi
-            done
-
-            if [ "$has_browser" = true ]; then
+            # Browser table: one row per package, one column per browser.
+            if [ -s "$browser_tsv" ]; then
               echo "<details>"
               echo "<summary>Browser Coverage (informational)</summary>"
               echo ""
+              cr_icon='![Chromium](https://img.shields.io/badge/-Chromium-4285F4?logo=googlechrome&logoColor=white&style=flat-square)'
+              ff_icon='![Firefox](https://img.shields.io/badge/-Firefox-FF7139?logo=firefox&logoColor=white&style=flat-square)'
+              wk_icon='![WebKit](https://img.shields.io/badge/-WebKit-006CFF?logo=safari&logoColor=white&style=flat-square)'
+              echo "| Package | $cr_icon | $ff_icon | $wk_icon |"
+              echo "|---------|----------|---------|--------|"
 
-              for b in $browsers; do
-                eval "bf=\$browser_file_${b}"
-                [ -s "$bf" ] || continue
-                heading="$(echo "$b" | sed 's/./\U&/')"
-                echo "#### $heading"
-                echo ""
-                echo "| Package | Line Coverage | Status |"
-                echo "|---------|---------------|--------|"
-                cat "$bf"
-                echo ""
+              # Collect unique package names (sorted) from the TSV
+              sort -t$'\t' -k1,1 "$browser_tsv" -o "$browser_tsv"
+              pkg_list=$(cut -f1 "$browser_tsv" | sort -u)
+
+              for pkg in $pkg_list; do
+                chromium_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="chromium" {print $3}' "$browser_tsv")
+                firefox_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="firefox" {print $3}' "$browser_tsv")
+                webkit_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="webkit" {print $3}' "$browser_tsv")
+                echo "| $pkg | ${chromium_cov:+${chromium_cov}%}${chromium_cov:-—} | ${firefox_cov:+${firefox_cov}%}${firefox_cov:-—} | ${webkit_cov:+${webkit_cov}%}${webkit_cov:-—} |"
               done
 
+              echo ""
               echo "_Browser coverage is informational only (subset of tests)._"
               echo "_Node coverage enforces the ${threshold}% threshold._"
               echo ""
@@ -594,8 +592,7 @@ jobs:
           } > coverage-report.md
 
           # Clean up temp files
-          rm -f "$node_file"
-          for b in $browsers; do eval "rm -f \$browser_file_${b}"; done
+          rm -f "$node_file" "$browser_tsv"
 
           cat coverage-report.md >> "$GITHUB_STEP_SUMMARY"
 
