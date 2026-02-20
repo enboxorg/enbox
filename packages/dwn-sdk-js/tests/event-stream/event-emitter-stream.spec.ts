@@ -1,71 +1,110 @@
 import type { KeyValues } from '../../src/types/query-types.js';
 import type { MessageEvent } from '../../src/types/subscriptions.js';
-import type { MessageStore } from '../../src/index.js';
 
 import { EventEmitterStream } from '../../src/event-stream/event-emitter-stream.js';
 import { TestDataGenerator } from '../../src/index.js';
-import { TestStores } from '../test-stores.js';
 
 import sinon from 'sinon';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, describe, expect, it } from 'bun:test';
 
 describe('EventEmitterStream', () => {
-  let messageStore: MessageStore;
-
-  beforeAll(async () => {
-    ({ messageStore } = TestStores.get());
-    await messageStore.open();
-  });
-
-  beforeEach(async () => {
-    await messageStore.clear();
-  });
-
-  afterAll(async () => {
-    // Clean up after each test by closing and clearing the event stream
-    await messageStore.close();
+  afterAll(() => {
     sinon.restore();
   });
 
-  it('should remove listeners when `close` method is used', async () => {
+  it('should deliver events to subscribers', async () => {
     const eventStream = new EventEmitterStream();
-    const emitter = eventStream['eventEmitter'];
+    await eventStream.open();
 
-    // count the `events` listeners, which represents all listeners
-    expect(emitter.listenerCount('did:alice_events')).toBe(0);
+    const received: { tenant: string; event: MessageEvent; indexes: KeyValues }[] = [];
+    await eventStream.subscribe('did:alice', 'sub-1', (tenant: string, event: MessageEvent, indexes: KeyValues): void => {
+      received.push({ tenant, event, indexes });
+    });
 
-    const sub = await eventStream.subscribe('did:alice', 'id', () => {});
-    expect(emitter.listenerCount('did:alice_events')).toBe(1);
+    const message = await TestDataGenerator.generateRecordsWrite({});
+    eventStream.emit('did:alice', { message: message.message }, { key: 'value' });
 
-    // close the subscription, which should remove the listener
-    await sub.close();
-    expect(emitter.listenerCount('did:alice_events')).toBe(0);
+    expect(received.length).toBe(1);
+    expect(received[0].tenant).toBe('did:alice');
+    expect(received[0].event.message).toBe(message.message);
+    expect(received[0].indexes).toEqual({ key: 'value' });
+
+    await eventStream.close();
   });
 
-  it('logs message when the emitter experiences an error', async () => {
+  it('should remove a single listener when subscription.close() is called', async () => {
+    const eventStream = new EventEmitterStream();
+    await eventStream.open();
+
+    let callCount = 0;
+    const sub = await eventStream.subscribe('did:alice', 'sub-1', (): void => { callCount++; });
+
+    const message = await TestDataGenerator.generateRecordsWrite({});
+    eventStream.emit('did:alice', { message: message.message }, {});
+    expect(callCount).toBe(1);
+
+    // close the subscription — listener should no longer fire
+    await sub.close();
+    eventStream.emit('did:alice', { message: message.message }, {});
+    expect(callCount).toBe(1);
+
+    await eventStream.close();
+  });
+
+  it('should remove all listeners when eventStream.close() is called', async () => {
+    const eventStream = new EventEmitterStream();
+    await eventStream.open();
+
+    let aliceCount = 0;
+    let bobCount = 0;
+    await eventStream.subscribe('did:alice', 'sub-1', (): void => { aliceCount++; });
+    await eventStream.subscribe('did:bob', 'sub-2', (): void => { bobCount++; });
+
+    const message = await TestDataGenerator.generateRecordsWrite({});
+    eventStream.emit('did:alice', { message: message.message }, {});
+    eventStream.emit('did:bob', { message: message.message }, {});
+    expect(aliceCount).toBe(1);
+    expect(bobCount).toBe(1);
+
+    // close stream — all listeners removed
+    await eventStream.close();
+
+    // re-open to allow emit without triggering error handler
+    await eventStream.open();
+    eventStream.emit('did:alice', { message: message.message }, {});
+    eventStream.emit('did:bob', { message: message.message }, {});
+    expect(aliceCount).toBe(1);
+    expect(bobCount).toBe(1);
+
+    await eventStream.close();
+  });
+
+  it('should call error handler when the stream is closed', async () => {
     const testHandler = {
-      errorHandler: (_:any):void => {},
+      errorHandler: (_: any): void => {},
     };
     const eventErrorSpy = sinon.spy(testHandler, 'errorHandler');
 
     const eventStream = new EventEmitterStream({ errorHandler: testHandler.errorHandler });
-    const emitter = eventStream['eventEmitter'];
-    emitter.emit('error', new Error('random error'));
+
+    const message = await TestDataGenerator.generateRecordsWrite({});
+    eventStream.emit('did:alice', { message: message.message }, {});
     expect(eventErrorSpy.callCount).toBe(1);
   });
 
   it('does not emit messages if event stream is closed', async () => {
     const testHandler = {
-      errorHandler: (_:any):void => {},
+      errorHandler: (_: any): void => {},
     };
     const eventErrorSpy = sinon.spy(testHandler, 'errorHandler');
 
     const eventStream = new EventEmitterStream({ errorHandler: testHandler.errorHandler });
 
-    const handler = async (_tenant: string, _event: MessageEvent, _indexes: KeyValues): Promise<void> => {};
-    await eventStream.subscribe('did:alice', 'sub-1', handler);
+    let callCount = 0;
+    await eventStream.subscribe('did:alice', 'sub-1', (): void => { callCount++; });
 
-    // close eventStream
+    // open then close to remove all listeners
+    await eventStream.open();
     await eventStream.close();
 
     const message1 = await TestDataGenerator.generateRecordsWrite({});
@@ -73,18 +112,10 @@ describe('EventEmitterStream', () => {
     const message2 = await TestDataGenerator.generateRecordsWrite({});
     eventStream.emit('did:alice', { message: message2.message }, {});
 
+    // error handler called twice (once per emit while closed)
     expect(eventErrorSpy.callCount).toBe(2);
 
-    // check that all listeners have been removed
-    const eventEmitter = eventStream['eventEmitter'];
-    for (const event of eventEmitter.eventNames()) {
-      expect(eventEmitter.listenerCount(event)).toBe(0);
-    }
-  });
-
-  it('sets max listeners to 0 which represents infinity', async () => {
-    const eventStreamOne = new EventEmitterStream();
-    const emitterOne = eventStreamOne['eventEmitter'];
-    expect(emitterOne.getMaxListeners()).toBe(0);
+    // listener never called — stream is closed
+    expect(callCount).toBe(0);
   });
 });

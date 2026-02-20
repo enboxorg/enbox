@@ -30,7 +30,9 @@ export default defineConfig({
   resolve: {
     alias: {
       'bun:test' : resolve(__dirname, '../../testing/bun-test-shim.ts'),
-      // Polyfill Node events module for browser (used by EventEmitterStream)
+      // Polyfill Node events module for transitive dependencies that may use it.
+      // EventEmitterStream now uses mitt directly, but browser-level or other
+      // packages in the dependency tree may still reference Node's events module.
       'events'   : 'eventemitter3',
     },
   },
@@ -129,10 +131,8 @@ export default defineConfig({
       'tests/protocols/permission-grant.spec.ts',
       'tests/protocols/permission-request.spec.ts',
       'tests/protocols/permissions.spec.ts',
-      // event-emitter-stream.spec.ts and scenarios/aggregator.spec.ts excluded:
-      // both use EventEmitterStream which calls setMaxListeners() — a method
-      // not provided by eventemitter3 (the browser polyfill for Node's events).
-      // See https://github.com/enboxorg/enbox/issues/236 for the plan to fix.
+      'tests/event-stream/event-emitter-stream.spec.ts',
+      'tests/scenarios/aggregator.spec.ts',
     ],
     testTimeout : 15_000,
     coverage: {

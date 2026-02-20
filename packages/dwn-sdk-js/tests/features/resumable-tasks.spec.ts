@@ -3,7 +3,6 @@ import type { EventStream } from '../../src/types/subscriptions.js';
 import type { ResumableTask } from '../../src/core/resumable-task-manager.js';
 import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
 
-import EventEmitter from 'events';
 import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
 import sinon from 'sinon';
 
@@ -321,9 +320,9 @@ export function testResumableTasks(): void {
       expect(protocolsConfigureReply.status.code).toBe(202);
 
       // 1. Mock code to never complete the `RecordsDelete` until given a signal to complete.
-      const completeDeleteSignal = new EventEmitter();
-      const completeDeletePromise = new Promise((resolve) => {
-        completeDeleteSignal.once('complete-delete', resolve);
+      let signalDeleteComplete: () => void;
+      const completeDeletePromise = new Promise<void>((resolve) => {
+        signalDeleteComplete = resolve;
       });
       sinon.stub(dwn['storageController'], 'performRecordsDelete').callsFake(async () => {
         await completeDeletePromise;
@@ -386,7 +385,7 @@ export function testResumableTasks(): void {
       });
 
       // 5. Signal the mocked code to complete the `RecordsDelete`.
-      completeDeleteSignal.emit('complete-delete');
+      signalDeleteComplete!();
 
       // wait until the `RecordsDelete` is completed
       await recordsDeletePromise;
