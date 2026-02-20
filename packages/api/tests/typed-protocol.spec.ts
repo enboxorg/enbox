@@ -154,6 +154,48 @@ describe('TypedProtocol API', () => {
         expect(status.code).toBe(200);
         expect(protocols.length).toBe(1);
       });
+
+      it('should skip re-configuration when the definition is unchanged', async () => {
+        // Protocol was already configured in beforeEach.
+        const { status, protocol } = await typed.configure();
+
+        // Should return 200 (cached) instead of 202 (newly configured).
+        expect(status.code).toBe(200);
+        expect(protocol).toBeDefined();
+        expect(protocol.definition.protocol).toBe(TodoProtocol.definition.protocol);
+      });
+
+      it('should re-configure when the definition changes', async () => {
+        // Protocol was already configured in beforeEach with the original definition.
+        // Create a new TypedWeb5 with a modified definition (added a new type).
+        const updatedDefinition = {
+          ...TodoProtocolDefinition,
+          types: {
+            ...TodoProtocolDefinition.types,
+            tag: {
+              schema      : 'https://example.com/schemas/tag',
+              dataFormats : ['application/json'] as const,
+            },
+          },
+          structure: {
+            ...TodoProtocolDefinition.structure,
+            list: {
+              ...TodoProtocolDefinition.structure.list,
+              task: {
+                ...TodoProtocolDefinition.structure.list.task,
+              },
+            },
+          },
+        };
+
+        const updatedProtocol = defineProtocol(updatedDefinition);
+        const updatedTyped = new TypedWeb5(dwnAlice, updatedProtocol);
+
+        const { status } = await updatedTyped.configure();
+
+        // Should return 202 (newly configured) since the definition changed.
+        expect(status.code).toBe(202);
+      });
     });
 
     describe('write()', () => {

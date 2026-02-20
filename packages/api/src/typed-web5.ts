@@ -227,9 +227,28 @@ export class TypedWeb5<
   /**
    * Configures (installs) this protocol on the local DWN.
    *
+   * If the protocol is already installed with an identical definition,
+   * this is a no-op and returns the existing protocol. If the definition
+   * has changed (e.g. new types, modified structure), the protocol is
+   * re-configured with the updated definition.
+   *
    * @param options - Optional overrides like `encryption`.
    */
   public async configure(options?: { encryption?: boolean }): Promise<DwnResponseStatus & { protocol?: Protocol }> {
+    // Query for an existing installation of this protocol.
+    const { protocols } = await this._dwn.protocols.query({
+      filter: { protocol: this._definition.protocol },
+    });
+
+    // If already installed with the same definition, return it as-is.
+    if (protocols.length > 0) {
+      const existing = protocols[0];
+      if (definitionsEqual(existing.definition, this._definition)) {
+        return { status: { code: 200, detail: 'OK' }, protocol: existing };
+      }
+    }
+
+    // Not installed or definition has changed — configure the new version.
     return this._dwn.protocols.configure({
       definition : this._definition,
       encryption : options?.encryption,
@@ -388,9 +407,39 @@ export class TypedWeb5<
 // ---------------------------------------------------------------------------
 
 /**
+ * Compares two protocol definitions for deep equality using deterministic
+ * JSON serialization.
+ *
+ * Keys are sorted recursively so that semantically identical definitions
+ * with different key ordering are treated as equal.
+ */
+function definitionsEqual(a: unknown, b: unknown): boolean {
+  return stableStringify(a) === stableStringify(b);
+}
+
+/**
  * Returns the last segment of a slash-delimited path.
  */
 function lastSegment(path: string): string {
   const parts = path.split('/');
   return parts[parts.length - 1];
+}
+
+/**
+ * Deterministic JSON serialization with sorted keys.
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || value === undefined || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return '[' + value.map((item) => stableStringify(item)).join(',') + ']';
+  }
+
+  const keys = Object.keys(value as globalThis.Record<string, unknown>).sort();
+  const pairs = keys.map((key) =>
+    JSON.stringify(key) + ':' + stableStringify((value as globalThis.Record<string, unknown>)[key])
+  );
+  return '{' + pairs.join(',') + '}';
 }
