@@ -10,6 +10,7 @@
  * @packageDocumentation
  */
 
+export * from './connect.js';
 export * from './lists.js';
 export * from './preferences.js';
 export * from './profile.js';
