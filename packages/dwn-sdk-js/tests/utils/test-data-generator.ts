@@ -26,7 +26,6 @@ import { DataStream } from '../../src/utils/data-stream.js';
 import { DidKey } from '@enbox/dids';
 import { ed25519 } from '../../src/jose/algorithms/signing/ed25519.js';
 import { Encoder } from '../../src/utils/encoder.js';
-import { Encryption } from '../../src/utils/encryption.js';
 import { Jws } from '../../src/utils/jws.js';
 import { MessagesRead } from '../../src/interfaces/messages-read.js';
 import { MessagesSubscribe } from '../../src/interfaces/messages-subscribe.js';
@@ -44,6 +43,8 @@ import { removeUndefinedProperties } from '../../src/utils/object.js';
 import { Secp256k1 } from '../../src/utils/secp256k1.js';
 import { sha256 } from 'multiformats/hashes/sha2';
 import { Time } from '../../src/utils/time.js';
+import { X25519 } from '@enbox/crypto';
+import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
 import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
 import { HdKey, KeyDerivationScheme } from '../../src/utils/hd-key.js';
 
@@ -54,6 +55,8 @@ export type Persona = {
   did: string;
   keyId: string;
   keyPair: { publicJwk: PublicKeyJwk, privateJwk: PrivateKeyJwk };
+  /** X25519 key pair for encryption (key agreement). Separate from the signing key pair. */
+  encryptionKeyPair: { publicJwk: PublicKeyJwk, privateJwk: PrivateKeyJwk };
   signer: MessageSigner;
 };
 
@@ -273,13 +276,25 @@ export class TestDataGenerator {
     const keyIdSuffix = TestDataGenerator.randomString(10);
     const keyId = input?.keyId ?? `${did}#${keyIdSuffix}`;
 
-    // generate persona key pair if not given
+    // generate persona signing key pair if not given (secp256k1 for ES256K signatures)
     const keyPair = input?.keyPair ?? await Secp256k1.generateKeyPair();
+
+    // generate persona encryption key pair if not given (X25519 for ECDH-ES key agreement)
+    let encryptionKeyPair = input?.encryptionKeyPair;
+    if (!encryptionKeyPair) {
+      const encPrivateKey = await X25519.generateKey();
+      const encPublicKey = await X25519.getPublicKey({ key: encPrivateKey });
+      encryptionKeyPair = {
+        publicJwk  : encPublicKey as PublicKeyJwk,
+        privateJwk : encPrivateKey as PrivateKeyJwk,
+      };
+    }
 
     const persona: Persona = {
       did,
       keyId,
       keyPair,
+      encryptionKeyPair,
       signer: new PrivateKeySigner({
         privateJwk : keyPair.privateJwk,
         algorithm  : keyPair.privateJwk.alg,
@@ -503,13 +518,11 @@ export class TestDataGenerator {
     } = input;
 
     // encrypt the plaintext data for the target with a randomly generated symmetric key
-    const plaintextStream = DataStream.fromBytes(plaintextBytes);
-    const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
+    const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12); // 12 bytes for AES-GCM
     const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-    const encryptedDataStream = await Encryption.aes256CtrEncrypt(
-      dataEncryptionKey, dataEncryptionInitializationVector, plaintextStream
+    const { ciphertext: encryptedDataBytes, tag: authenticationTag } = await Encryption.aeadEncrypt(
+      ContentEncryptionAlgorithm.A256GCM, dataEncryptionKey, dataEncryptionInitializationVector, plaintextBytes
     );
-    const encryptedDataBytes = await DataStream.toBytes(encryptedDataStream);
 
     // author generates a RecordsWrite using the encrypted data
     const protocolPathSegments = protocolPath.split('/');
@@ -531,6 +544,7 @@ export class TestDataGenerator {
     const encryptionInput: EncryptionInput = {
       initializationVector : dataEncryptionInitializationVector,
       key                  : dataEncryptionKey,
+      authenticationTag,
       keyEncryptionInputs  : []
     };
 
@@ -560,7 +574,7 @@ export class TestDataGenerator {
         const authorRootPrivateKey: DerivedPrivateJwk = {
           rootKeyId         : author.keyId,
           derivationScheme  : KeyDerivationScheme.ProtocolContext,
-          derivedPrivateKey : author.keyPair.privateJwk
+          derivedPrivateKey : author.encryptionKeyPair.privateJwk
         };
 
         const contextId = await RecordsWrite.getEntryId(author.did, message.descriptor);
@@ -943,10 +957,19 @@ export class TestDataGenerator {
       privateJwk : portableDid.privateKeys![0] as PrivateKeyJwk,
     };
 
+    // Generate X25519 encryption key pair for did:key personas
+    const encPrivateKey = await X25519.generateKey();
+    const encPublicKey = await X25519.getPublicKey({ key: encPrivateKey });
+    const encryptionKeyPair = {
+      publicJwk  : encPublicKey as PublicKeyJwk,
+      privateJwk : encPrivateKey as PrivateKeyJwk,
+    };
+
     return {
       did    : did.uri,
       keyId,
       keyPair,
+      encryptionKeyPair,
       signer : new PrivateKeySigner({
         privateJwk : keyPair.privateJwk,
         algorithm  : keyPair.privateJwk.alg,

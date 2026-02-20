@@ -2,7 +2,7 @@ import type { PrivateKeyJwk, PublicKeyJwk } from '../types/jose-types.js';
 
 import { Encoder } from './encoder.js';
 import { getWebcryptoSubtle } from '@noble/ciphers/webcrypto';
-import { Secp256k1 } from './secp256k1.js';
+import { X25519 } from '@enbox/crypto';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 export enum KeyDerivationScheme {
@@ -32,18 +32,18 @@ export type DerivedPrivateJwk = {
 export class HdKey {
   /**
    * Derives a descendant private key.
-   * NOTE: currently only supports SECP256K1 keys.
+   * Uses X25519 keys for encryption key derivation.
    */
   public static async derivePrivateKey(ancestorKey: DerivedPrivateJwk, subDerivationPath: string[]): Promise<DerivedPrivateJwk> {
-    const ancestorPrivateKey = Secp256k1.privateJwkToBytes(ancestorKey.derivedPrivateKey);
+    const ancestorPrivateKey = await X25519.privateKeyToBytes({ privateKey: ancestorKey.derivedPrivateKey });
     const ancestorPrivateKeyDerivationPath = ancestorKey.derivationPath ?? [];
     const derivedPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(ancestorPrivateKey, subDerivationPath);
-    const derivedPrivateKeyJwk = await Secp256k1.privateKeyToJwk(derivedPrivateKeyBytes);
+    const derivedPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: derivedPrivateKeyBytes });
     const derivedDescendantPrivateKey: DerivedPrivateJwk = {
       rootKeyId         : ancestorKey.rootKeyId,
       derivationScheme  : ancestorKey.derivationScheme,
       derivationPath    : [...ancestorPrivateKeyDerivationPath, ...subDerivationPath],
-      derivedPrivateKey : derivedPrivateKeyJwk
+      derivedPrivateKey : derivedPrivateKeyJwk as PrivateKeyJwk
     };
 
     return derivedDescendantPrivateKey;
@@ -51,13 +51,13 @@ export class HdKey {
 
   /**
    * Derives a descendant public key from an ancestor private key.
-   * NOTE: currently only supports SECP256K1 keys.
+   * Uses X25519 keys for encryption key derivation.
    */
   public static async derivePublicKey(ancestorKey: DerivedPrivateJwk, subDerivationPath: string[]): Promise<PublicKeyJwk> {
     const derivedDescendantPrivateKey = await HdKey.derivePrivateKey(ancestorKey, subDerivationPath);
-    const derivedDescendantPublicKey = await Secp256k1.getPublicJwk(derivedDescendantPrivateKey.derivedPrivateKey);
+    const derivedDescendantPublicKey = await X25519.getPublicKey({ key: derivedDescendantPrivateKey.derivedPrivateKey });
 
-    return derivedDescendantPublicKey;
+    return derivedDescendantPublicKey as PublicKeyJwk;
   }
 
   /**
@@ -82,7 +82,6 @@ export class HdKey {
 
   /**
    * Derives a key using  HMAC-based Extract-and-Expand Key Derivation Function (HKDF) as defined in RFC 5869.
-   * TODO: Consolidate HKDF implementation and usage with web5-js - https://github.com/enboxorg/enbox/issues/742
    */
   public static async deriveKeyUsingHkdf(params: {
     hashAlgorithm: 'SHA-256' | 'SHA-384' | 'SHA-512',

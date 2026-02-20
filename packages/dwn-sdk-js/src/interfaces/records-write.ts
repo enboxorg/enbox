@@ -6,8 +6,6 @@ import type { MessageStore } from '../types/message-store.js';
 import type { PublicKeyJwk } from '../types/jose-types.js';
 import type {
   DataEncodedRecordsWriteMessage,
-  EncryptedKey,
-  EncryptionProperty,
   InternalRecordsWriteMessage,
   RecordsWriteAttestationPayload,
   RecordsWriteDescriptor,
@@ -15,12 +13,12 @@ import type {
   RecordsWriteSignaturePayload,
   RecordsWriteTags
 } from '../types/records-types.js';
+import type { EncryptionInput, JweEncryption } from '../utils/encryption.js';
 import type { GenericMessage, GenericSignaturePayload } from '../types/message-types.js';
 
 import { Cid } from '../utils/cid.js';
 import { Encoder } from '../utils/encoder.js';
 import { Encryption } from '../utils/encryption.js';
-import { EncryptionAlgorithm } from '../utils/encryption.js';
 import { GeneralJwsBuilder } from '../jose/jws/general/builder.js';
 import { Jws } from '../utils/jws.js';
 import { KeyDerivationScheme } from '../utils/hd-key.js';
@@ -29,7 +27,6 @@ import { PermissionGrant } from '../protocols/permission-grant.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { removeUndefinedProperties } from '../utils/object.js';
-import { Secp256k1 } from '../utils/secp256k1.js';
 import { Time } from '../utils/time.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -85,57 +82,7 @@ export type RecordsWriteOptions = {
   };
 };
 
-/**
- * Input that describes how data is encrypted as spec-ed in TP18.
- */
-export type EncryptionInput = {
-  /**
-   * Algorithm used for encrypting the Data. Uses {EncryptionAlgorithm.Aes256Ctr} if not given.
-   */
-  algorithm?: EncryptionAlgorithm;
-
-  /**
-   * Initialization vector used for encrypting the data.
-   */
-  initializationVector: Uint8Array;
-
-  /**
-   * Symmetric key used to encrypt the data.
-   */
-  key: Uint8Array;
-
-  /**
-   * Array of input that specifies how the symmetric key is encrypted.
-   * Each entry in the array will result in a unique ciphertext of the symmetric key.
-   */
-  keyEncryptionInputs: KeyEncryptionInput[];
-};
-
-/**
- * Input that specifies how a symmetric key is encrypted.
- */
-export type KeyEncryptionInput = {
-  /**
-   * Key derivation scheme used to derive the public key to encrypt the symmetric key.
-   */
-  derivationScheme: KeyDerivationScheme;
-
-  /**
-   * Fully qualified ID of root public key used derive the public key to be used to to encrypt the symmetric key.
-   * (e.g. did:example:abc#encryption-key-id)
-   */
-  publicKeyId: string;
-
-  /**
-   * Public key to be used to encrypt the symmetric key.
-   */
-  publicKey: PublicKeyJwk;
-
-  /**
-   * Algorithm used for encrypting the symmetric key. Uses {EncryptionAlgorithm.EciesSecp256k1} if not given.
-   */
-  algorithm?: EncryptionAlgorithm;
-};
+export type { EncryptionInput, KeyEncryptionInput } from '../utils/encryption.js';
 
 export type CreateFromOptions = {
   recordsWriteMessage: RecordsWriteMessage,
@@ -499,10 +446,10 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
   /**
    * Encrypts the symmetric encryption key using the public keys given and attach the resulting `encryption` property to the RecordsWrite.
    *
-   * @param options.append - When `true`, appends new `keyEncryption` entries to the existing
+   * @param options.append - When `true`, appends new `recipients` entries to the existing
    *   `encryption` property instead of replacing it. Requires `this._message.encryption` to
    *   already exist (i.e., the record must already be encrypted). This is used for the reactive
-   *   root-record upgrade: adding a ProtocolContext `keyEncryption` entry alongside an existing
+   *   root-record upgrade: adding a ProtocolContext recipient entry alongside an existing
    *   ProtocolPath entry so both the owner and context key holders can decrypt.
    */
   public async encryptSymmetricEncryptionKey(
@@ -513,20 +460,20 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       if (!this._message.encryption) {
         throw new DwnError(
           DwnErrorCode.RecordsWriteMissingEncryption,
-          'Cannot append keyEncryption entries: record does not have an existing `encryption` property.'
+          'Cannot append recipients: record does not have an existing `encryption` property.'
         );
       }
 
-      // Build only the new keyEncryption entries (reuses createEncryptionProperty for ECIES logic)
+      // Build only the new recipients (reuses createEncryptionProperty for ECDH-ES+A256KW logic)
       const newEncryption = await RecordsWrite.createEncryptionProperty(this._message.descriptor, encryptionInput);
       if (newEncryption) {
-        this._message.encryption.keyEncryption.push(...newEncryption.keyEncryption);
+        this._message.encryption.recipients.push(...newEncryption.recipients);
       }
 
       // In append mode, preserve the author's identity and authorization so
       // that signAsOwner() can be called afterwards. The author's signature
       // payload will have a stale encryptionCid (since we just appended new
-      // keyEncryption entries), but the owner's signature vouches for the
+      // recipients), but the owner's signature vouches for the
       // updated state. validateIntegrity() skips the encryptionCid check on
       // the author's signature when an ownerSignature is present.
       //
@@ -727,7 +674,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
 
     // If `encryption` is given in message, make sure the correct `encryptionCid`
     // is in the payload of the message signature — UNLESS the message has an
-    // ownerSignature. When the DWN owner appends keyEncryption entries to an
+    // ownerSignature. When the DWN owner appends recipients to an
     // externally-authored record (reactive root-record upgrade), the author's
     // encryptionCid becomes stale. The owner's signature vouches for the
     // updated encryption property, so the mismatch is expected and safe.
@@ -906,21 +853,33 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
   }
 
   /**
-   * Creates the `encryption` property if encryption input is given. Else `undefined` is returned.
-   * @param descriptor Descriptor of the `RecordsWrite` message which contains the information need by key path derivation schemes.
+   * Creates the JWE `encryption` property if encryption input is given. Else `undefined` is returned.
+   * Uses ECDH-ES+A256KW key agreement with X25519 and AEAD content encryption (A256GCM or XC20P).
+   * @param descriptor Descriptor of the `RecordsWrite` message which contains the information needed by key path derivation schemes.
+   */
+  /**
+   * Creates the JWE `encryption` property if encryption input is given. Else `undefined` is returned.
+   * Uses ECDH-ES+A256KW key agreement with X25519 and AEAD content encryption (A256GCM or XC20P).
+   * @param descriptor Descriptor of the `RecordsWrite` message which contains the information needed by key path derivation schemes.
+   * @param encryptionInput The encryption input containing CEK, IV, and recipient key encryption inputs.
+   * @param tag The authentication tag from the AEAD content encryption (stored in the JWE, separate from the ciphertext).
+   */
+  /**
+   * Creates the JWE `encryption` property if encryption input is given. Else `undefined` is returned.
+   * Uses ECDH-ES+A256KW key agreement with X25519 and AEAD content encryption (A256GCM or XC20P).
+   * @param descriptor Descriptor of the `RecordsWrite` message which contains the information needed by key path derivation schemes.
+   * @param encryptionInput The encryption input containing CEK, IV, authentication tag, and recipient key encryption inputs.
    */
   private static async createEncryptionProperty(
     descriptor: RecordsWriteDescriptor,
-    encryptionInput: EncryptionInput | undefined
-  ): Promise<EncryptionProperty | undefined> {
+    encryptionInput: EncryptionInput | undefined,
+  ): Promise<JweEncryption | undefined> {
     if (encryptionInput === undefined) {
       return undefined;
     }
 
-    // encrypt the data encryption key once per encryption input
-    const keyEncryption: EncryptedKey[] = [];
+    // Validate derivation scheme prerequisites
     for (const keyEncryptionInput of encryptionInput.keyEncryptionInputs) {
-
       if (keyEncryptionInput.derivationScheme === KeyDerivationScheme.ProtocolPath && descriptor.protocol === undefined) {
         throw new DwnError(
           DwnErrorCode.RecordsWriteMissingProtocol,
@@ -934,43 +893,12 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
           '`schemas` encryption scheme cannot be applied to record without the `schema` property.'
         );
       }
-
-      // NOTE: right now only `ECIES-ES256K` algorithm is supported for asymmetric encryption,
-      // so we will assume that's the algorithm without additional switch/if statements
-      const publicKeyBytes = Secp256k1.publicJwkToBytes(keyEncryptionInput.publicKey);
-      const keyEncryptionOutput = await Encryption.eciesSecp256k1Encrypt(publicKeyBytes, encryptionInput.key);
-
-      const encryptedKey = Encoder.bytesToBase64Url(keyEncryptionOutput.ciphertext);
-      const ephemeralPublicKey = await Secp256k1.publicKeyToJwk(keyEncryptionOutput.ephemeralPublicKey);
-      const keyEncryptionInitializationVector = Encoder.bytesToBase64Url(keyEncryptionOutput.initializationVector);
-      const messageAuthenticationCode = Encoder.bytesToBase64Url(keyEncryptionOutput.messageAuthenticationCode);
-      const encryptedKeyData: EncryptedKey = {
-        rootKeyId            : keyEncryptionInput.publicKeyId,
-        algorithm            : keyEncryptionInput.algorithm ?? EncryptionAlgorithm.EciesSecp256k1,
-        derivationScheme     : keyEncryptionInput.derivationScheme,
-        ephemeralPublicKey,
-        initializationVector : keyEncryptionInitializationVector,
-        messageAuthenticationCode,
-        encryptedKey
-      };
-
-      // we need to attach the actual public key if derivation scheme is protocol-context,
-      // so that the responder to this message is able to encrypt the message/symmetric key using the same protocol-context derived public key,
-      // without needing the knowledge of the corresponding private key
-      if (keyEncryptionInput.derivationScheme === KeyDerivationScheme.ProtocolContext) {
-        encryptedKeyData.derivedPublicKey = keyEncryptionInput.publicKey;
-      }
-
-      keyEncryption.push(encryptedKeyData);
     }
 
-    const encryption: EncryptionProperty = {
-      algorithm            : encryptionInput.algorithm ?? EncryptionAlgorithm.Aes256Ctr,
-      initializationVector : Encoder.bytesToBase64Url(encryptionInput.initializationVector),
-      keyEncryption
-    };
+    // Build the JWE structure. The authentication tag comes from the AEAD encryption of record data.
+    const jwe = await Encryption.buildJwe(encryptionInput, encryptionInput.authenticationTag);
 
-    return encryption;
+    return jwe;
   }
 
   /**
@@ -996,7 +924,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     contextId: string | undefined,
     descriptorCid: string,
     attestation: GeneralJws | undefined,
-    encryption: EncryptionProperty | undefined,
+    encryption: JweEncryption | undefined,
     signer: MessageSigner,
     delegatedGrantId?: string,
     permissionGrantId?: string,

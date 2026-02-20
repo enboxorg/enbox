@@ -16,11 +16,11 @@ import { Web5UserAgent } from '../src/web5-user-agent.js';
  * underlying key material is deterministically derived from a BIP-39 seed phrase.
  *
  * Layer 2 (DWN record-level): Private keys stored in the DWN via DwnKeyStore are
- * encrypted using ECIES with the agent DID's secp256k1 `#enc` key. The protocol
+ * encrypted using JWE (ECDH-ES+A256KW) with the agent DID's X25519 `#enc` key. The protocol
  * definition for JWK storage has `encryptionRequired: true`, which triggers
  * `$encryption` key injection at protocol install time.
  *
- * Recovery path: seed phrase → deterministic agent DID → secp256k1 `#enc` key →
+ * Recovery path: seed phrase → deterministic agent DID → X25519 `#enc` key →
  * decrypt DWN key records.
  */
 describe('e2e: two-layer encryption recovery', () => {
@@ -61,7 +61,7 @@ describe('e2e: two-layer encryption recovery', () => {
       });
 
       // Initialize the vault — this creates the agent DID (did:dht with Ed25519 +
-      // secp256k1) deterministically from a generated seed phrase, and encrypts
+      // X25519) deterministically from a generated seed phrase, and encrypts
       // the PortableDid with the password (Layer 1).
       recoveryPhrase = await (harness.agent as Web5UserAgent).initialize({ password });
       expect(typeof recoveryPhrase).toBe('string');
@@ -73,10 +73,10 @@ describe('e2e: two-layer encryption recovery', () => {
       expect(originalAgentDidUri).toMatch(/^did:dht:/);
     });
 
-    it('should have Ed25519 (#sig) and secp256k1 (#enc) verification methods', async () => {
+    it('should have Ed25519 (#sig) and X25519 (#enc) verification methods', async () => {
       // The agent DID must have both verification methods for the two-layer
-      // encryption to function. Ed25519 #sig is for signing; secp256k1 #enc is
-      // the keyAgreement key used by Layer 2 (ECIES encryption of DWN records).
+      // encryption to function. Ed25519 #sig is for signing; X25519 #enc is
+      // the keyAgreement key used by Layer 2 (JWE encryption of DWN records).
       const doc = harness.agent.agentDid.document;
 
       // Verify #sig (Ed25519) exists and is in authentication.
@@ -90,15 +90,14 @@ describe('e2e: two-layer encryption recovery', () => {
         (doc.authentication as string[]).some((r: string): boolean => r.endsWith('#sig'))
       ).toBe(true);
 
-      // Verify #enc (secp256k1) exists and is in keyAgreement.
+      // Verify #enc (X25519) exists and is in keyAgreement.
       const encKey = doc.verificationMethod?.find(
         (vm: any): boolean => vm.id.endsWith('#enc')
       );
       expect(encKey).toBeDefined();
-      expect(encKey?.publicKeyJwk).toHaveProperty('kty', 'EC');
-      expect(encKey?.publicKeyJwk).toHaveProperty('crv', 'secp256k1');
+      expect(encKey?.publicKeyJwk).toHaveProperty('kty', 'OKP');
+      expect(encKey?.publicKeyJwk).toHaveProperty('crv', 'X25519');
       expect(encKey?.publicKeyJwk).toHaveProperty('x');
-      expect(encKey?.publicKeyJwk).toHaveProperty('y');
       expect(encKey?.publicKeyJwk).not.toHaveProperty('d'); // public only in document
       expect(
         (doc.keyAgreement as string[]).some((r: string): boolean => r.endsWith('#enc'))
@@ -176,9 +175,14 @@ describe('e2e: two-layer encryption recovery', () => {
       expect(reply.entries).toHaveLength(3);
 
       for (const entry of reply.entries!) {
-        // Verify encryption metadata is present.
+        // Verify encryption metadata is present (JWE format with protected header).
         expect(entry.encryption).toBeDefined();
-        expect(entry.encryption!.algorithm).toBe('A256CTR');
+        expect(entry.encryption!.protected).toBeDefined();
+        const protectedHeader = JSON.parse(
+          Buffer.from(entry.encryption!.protected, 'base64url').toString()
+        );
+        expect(protectedHeader.alg).toBe('ECDH-ES+A256KW');
+        expect(protectedHeader.enc).toBe('A256GCM');
 
         // Verify the raw data is ciphertext, not readable JSON. Encrypted records
         // may have encodedData (base64url ciphertext) — if present, decoding it
@@ -271,7 +275,7 @@ describe('e2e: two-layer encryption recovery', () => {
 
     it('should read back all encrypted keys with exact match (Layer 2)', async () => {
       // Read each key back — the DwnKeyStore transparently decrypts using the
-      // recovered agent DID's secp256k1 `#enc` key.
+      // recovered agent DID's X25519 `#enc` key.
       for (let i = 0; i < originalKeyUris.length; i++) {
         const recovered = await harness.agent.keyManager.exportKey({
           keyUri: originalKeyUris[i]

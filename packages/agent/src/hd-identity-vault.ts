@@ -494,10 +494,10 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       privateKeyBytes : signingHdKey.privateKey
     });
 
-    // Derive the encryption key using index 2 (secp256k1 for ECIES encryption).
+    // Derive the encryption key using index 2 (X25519 for ECDH-ES JWE encryption).
     const encryptionHdKey = rootHdKey.derive(`m/44'/0'/1708523827'/0'/2'`);
     const encryptionPrivateKey = await this.crypto.bytesToPrivateKey({
-      algorithm       : 'secp256k1',
+      algorithm       : 'X25519',
       privateKeyBytes : encryptionHdKey.privateKey
     });
 
@@ -517,7 +517,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
           purposes  : ['assertionMethod', 'authentication']
         },
         {
-          algorithm : 'secp256k1',
+          algorithm : 'X25519',
           id        : 'enc',
           purposes  : ['keyAgreement']
         }

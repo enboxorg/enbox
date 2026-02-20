@@ -61,7 +61,7 @@ export class DeterministicKeyGenerator extends LocalKeyManager {
   }
 
   public async generateKey(_params: {
-    algorithm: 'Ed25519' | 'secp256k1' | 'secp256r1'
+    algorithm: 'Ed25519' | 'secp256k1' | 'secp256r1' | 'X25519'
   }): Promise<KeyIdentifier> {
     // Get the next key from the array of predefined keys.
     const { value: keyUri, done } = this._keyGenerator.next();

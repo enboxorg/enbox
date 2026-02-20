@@ -6,8 +6,8 @@ import { Encoder } from '../../src/utils/encoder.js';
 import { Encryption } from '../../src/utils/encryption.js';
 import { Protocols } from '../../src/utils/protocols.js';
 import { Records } from '../../src/utils/records.js';
-import { Secp256k1 } from '../../src/utils/secp256k1.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
+import { X25519 } from '@enbox/crypto';
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { HdKey, KeyDerivationScheme } from '../../src/utils/hd-key.js';
 
@@ -16,8 +16,8 @@ describe('Encryption Callback Interfaces', () => {
   let rootKeyId: string;
 
   beforeEach(async () => {
-    const { privateJwk: key } = await Secp256k1.generateKeyPair();
-    privateJwk = key;
+    const key = await X25519.generateKey();
+    privateJwk = key as PrivateKeyJwk;
     rootKeyId = 'did:example:alice#enc';
   });
 
@@ -55,12 +55,12 @@ describe('Encryption Callback Interfaces', () => {
         rootKeyId,
         derivationScheme : KeyDerivationScheme.ProtocolPath,
         derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicKeyJwk> => {
-          const privateKeyBytes = Secp256k1.privateJwkToBytes(privateJwk);
+          const privateKeyBytes = await X25519.privateKeyToBytes({ privateKey: privateJwk });
           const derivedPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(
             privateKeyBytes, fullDerivationPath
           );
-          const derivedPublicKeyBytes = await Secp256k1.getPublicKey(derivedPrivateKeyBytes);
-          return Secp256k1.publicKeyToJwk(derivedPublicKeyBytes);
+          const derivedPrivateKey = await X25519.bytesToPrivateKey({ privateKeyBytes: derivedPrivateKeyBytes });
+          return await X25519.getPublicKey({ key: derivedPrivateKey }) as PublicKeyJwk;
         }
       };
 
@@ -117,12 +117,12 @@ describe('Encryption Callback Interfaces', () => {
         derivationScheme : KeyDerivationScheme.ProtocolPath,
         derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicKeyJwk> => {
           calledPaths.push([...fullDerivationPath]);
-          const privateKeyBytes = Secp256k1.privateJwkToBytes(privateJwk);
+          const privateKeyBytes = await X25519.privateKeyToBytes({ privateKey: privateJwk });
           const derivedPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(
             privateKeyBytes, fullDerivationPath
           );
-          const derivedPublicKeyBytes = await Secp256k1.getPublicKey(derivedPrivateKeyBytes);
-          return Secp256k1.publicKeyToJwk(derivedPublicKeyBytes);
+          const derivedPrivateKey = await X25519.bytesToPrivateKey({ privateKeyBytes: derivedPrivateKeyBytes });
+          return await X25519.getPublicKey({ key: derivedPrivateKey }) as PublicKeyJwk;
         }
       };
 
@@ -199,22 +199,21 @@ describe('Encryption Callback Interfaces', () => {
       );
       const plaintextA = await DataStream.toBytes(decryptedStreamA);
 
-      // Build a KeyDecrypter that uses the same key
+      // Build a KeyDecrypter that performs ECDH-ES key agreement and AES Key Unwrap
       const keyDecrypter: KeyDecrypter = {
         rootKeyId,
         derivationScheme : KeyDerivationScheme.ProtocolPath,
-        decrypt          : async (fullDerivationPath, eciesPayload) => {
-          const privateKeyBytes = Secp256k1.privateJwkToBytes(privateJwk);
+        decrypt          : async (fullDerivationPath, jwePayload) => {
+          const privateKeyBytes = await X25519.privateKeyToBytes({ privateKey: privateJwk });
           const leafPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(
             privateKeyBytes, fullDerivationPath
           );
-          return Encryption.eciesSecp256k1Decrypt({
-            privateKey                : leafPrivateKeyBytes,
-            ciphertext                : eciesPayload.ciphertext,
-            ephemeralPublicKey        : eciesPayload.ephemeralPublicKey,
-            initializationVector      : eciesPayload.initializationVector,
-            messageAuthenticationCode : eciesPayload.messageAuthenticationCode,
-          });
+          const leafPrivateKey = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
+          return Encryption.ecdhEsUnwrapKey(
+            leafPrivateKey,
+            jwePayload.ephemeralPublicKey,
+            jwePayload.encryptedKey,
+          );
         }
       };
 
@@ -241,7 +240,7 @@ describe('Encryption Callback Interfaces', () => {
       expect(plaintextA).toEqual(plaintextB);
     });
 
-    it('throws if no matching keyEncryption entry found', async () => {
+    it('throws if no matching recipient entry found', async () => {
       const protocolDefinition = {
         protocol  : 'https://example.com/protocol/mismatch-test',
         published : true,
@@ -291,7 +290,7 @@ describe('Encryption Callback Interfaces', () => {
           keyDecrypter,
           encryptedRecord.dataStream!
         )
-      ).rejects.toThrow('Unable to find a symmetric key encrypted using key');
+      ).rejects.toThrow('Unable to find a JWE recipient matching key');
     });
   });
 });

@@ -38,11 +38,13 @@ import {
   isPrivateJwk,
   KEY_URI_PREFIX_JWK,
   Sha2Algorithm,
+  X25519Algorithm,
 } from '@enbox/crypto';
 
 import type { PrivateKeyJwk } from '@enbox/dwn-sdk-js';
 
-import { Encryption, HdKey, Secp256k1 } from '@enbox/dwn-sdk-js';
+import { X25519 } from '@enbox/crypto';
+import { Encryption, HdKey } from '@enbox/dwn-sdk-js';
 
 import type { AgentDataStore } from './store-data.js';
 import type { AgentKeyManager } from './types/key-manager.js';
@@ -81,7 +83,11 @@ const supportedAlgorithms = {
   },
   'SHA-256': {
     implementation : Sha2Algorithm,
-    names          : ['SHA-256'] as const
+    names          : ['SHA-256']
+  },
+  'X25519': {
+    implementation : X25519Algorithm,
+    names          : ['X25519']
   }
 } satisfies {
   [key: string]: {
@@ -103,6 +109,7 @@ type AlgorithmConstructor = typeof supportedAlgorithms[SupportedAlgorithm]['impl
 type SupportedKeyGeneratorAlgorithm =
   | 'Ed25519' // Edwards Curve Digital Signature Algorithm (EdDSA)
   | 'secp256k1' | 'ES256K' | 'secp256r1' | 'ES256' // Elliptic Curve Digital Signature Algorithm (ECDSA)
+  | 'X25519' // Elliptic Curve Diffie-Hellman key agreement (ECDH)
   | 'A128GCM' | 'A192GCM' | 'A256GCM' // AES GCM with a 128-bit, 192-bit, or 256-bit key
   | 'A128KW' | 'A192KW' | 'A256KW'; // AES Key Wrap with a 128-bit, 192-bit, or 256-bit key
 
@@ -401,8 +408,8 @@ export class LocalKeyManager implements AgentKeyManager {
     keyUri: KeyIdentifier;
     derivationPath: string[];
   }): Promise<PublicKeyJwk> {
-    // Get stored secp256k1 private key as bytes
-    const privateKeyBytes = await this.getSecp256k1PrivateKeyBytes({ keyUri });
+    // Get stored X25519 private key as bytes
+    const privateKeyBytes = await this.getX25519PrivateKeyBytes({ keyUri });
 
     // Run HKDF derivation through each path segment
     const derivedPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(
@@ -410,35 +417,29 @@ export class LocalKeyManager implements AgentKeyManager {
       derivationPath
     );
 
-    // Compute public key from derived private key
-    const derivedPublicKeyBytes = await Secp256k1.getPublicKey(derivedPrivateKeyBytes);
-
-    // Convert to JWK format — cast is safe because secp256k1 public keys
-    // always produce JwkParamsEcPublic (kty: 'EC', crv: 'secp256k1', x, y)
-    return await Secp256k1.publicKeyToJwk(derivedPublicKeyBytes) as PublicKeyJwk;
+    // Convert derived bytes to X25519 JWK and compute public key
+    const derivedPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: derivedPrivateKeyBytes });
+    return await X25519.getPublicKey({ key: derivedPrivateKeyJwk }) as PublicKeyJwk;
   }
 
   /**
-   * Decrypts an ECIES-SECP256K1 encrypted payload using a derived private key.
-   * The derived private key is used internally and discarded after decryption.
+   * Unwraps a JWE-encrypted Content Encryption Key (CEK) using a derived X25519 private key.
+   * Performs ECDH-ES key agreement with the ephemeral public key, derives the KEK via
+   * Concat KDF, and unwraps the CEK with AES-256 Key Unwrap.
    */
-  public async eciesSecp256k1Decrypt({
+  public async jweKeyUnwrap({
     keyUri,
     derivationPath,
-    ciphertext,
+    encryptedKey,
     ephemeralPublicKey,
-    initializationVector,
-    messageAuthenticationCode
   }: {
     keyUri: KeyIdentifier;
     derivationPath: string[];
-    ciphertext: Uint8Array;
-    ephemeralPublicKey: Uint8Array;
-    initializationVector: Uint8Array;
-    messageAuthenticationCode: Uint8Array;
+    encryptedKey: Uint8Array;
+    ephemeralPublicKey: PublicKeyJwk;
   }): Promise<Uint8Array> {
-    // Get stored secp256k1 private key as bytes
-    const privateKeyBytes = await this.getSecp256k1PrivateKeyBytes({ keyUri });
+    // Get stored X25519 private key as bytes
+    const privateKeyBytes = await this.getX25519PrivateKeyBytes({ keyUri });
 
     // Run HKDF derivation through each path segment to get leaf private key
     const leafPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(
@@ -446,14 +447,11 @@ export class LocalKeyManager implements AgentKeyManager {
       derivationPath
     );
 
-    // Perform ECIES decryption — leaf key bytes consumed and discarded after
-    return Encryption.eciesSecp256k1Decrypt({
-      privateKey: leafPrivateKeyBytes,
-      ciphertext,
-      ephemeralPublicKey,
-      initializationVector,
-      messageAuthenticationCode,
-    });
+    // Convert leaf bytes to X25519 JWK for ECDH-ES unwrap
+    const leafPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
+
+    // Perform ECDH-ES key agreement and AES-256 Key Unwrap
+    return Encryption.ecdhEsUnwrapKey(leafPrivateKeyJwk, ephemeralPublicKey, encryptedKey);
   }
 
   /**
@@ -465,8 +463,8 @@ export class LocalKeyManager implements AgentKeyManager {
     keyUri: KeyIdentifier;
     derivationPath: string[];
   }): Promise<Uint8Array> {
-    // Get stored secp256k1 private key as bytes
-    const privateKeyBytes = await this.getSecp256k1PrivateKeyBytes({ keyUri });
+    // Get stored X25519 private key as bytes
+    const privateKeyBytes = await this.getX25519PrivateKeyBytes({ keyUri });
 
     // Run HKDF derivation through each path segment, return raw bytes
     return HdKey.derivePrivateKeyBytes(
@@ -733,18 +731,18 @@ export class LocalKeyManager implements AgentKeyManager {
   }
 
   /**
-   * Helper method to retrieve a secp256k1 private key and convert it to bytes.
+   * Helper method to retrieve an X25519 private key and convert it to bytes.
    * Used by HD key derivation methods to avoid code duplication.
    *
-   * @param keyUri - The key URI identifying the secp256k1 private key
+   * @param keyUri - The key URI identifying the X25519 private key
    * @returns The private key as raw bytes
-   * @throws Error if the key is not found or is not a secp256k1 key
+   * @throws Error if the key is not found or is not an X25519 key
    */
-  private async getSecp256k1PrivateKeyBytes({ keyUri }: {
+  private async getX25519PrivateKeyBytes({ keyUri }: {
     keyUri: KeyIdentifier;
   }): Promise<Uint8Array> {
     const privateKeyJwk = await this.getPrivateKey({ keyUri }) as PrivateKeyJwk;
-    return Secp256k1.privateJwkToBytes(privateKeyJwk);
+    return X25519.privateKeyToBytes({ privateKey: privateKeyJwk });
   }
 
   /**
@@ -769,7 +767,7 @@ export class LocalKeyManager implements AgentKeyManager {
     // (from the vault) are held in-memory by BearerDid.keyManager and are NOT
     // stored in the DwnKeyStore. Checking here FIRST is critical when the
     // DwnKeyStore is encrypted: the encryption/decryption key is derived from the
-    // agent DID's secp256k1 key, so looking up that key via the DwnKeyStore would
+    // agent DID's X25519 key, so looking up that key via the DwnKeyStore would
     // cause infinite recursion (decrypt → getPrivateKey → DwnKeyStore.get → decrypt…).
     try {
       const agentKeyManager = this.agent?.agentDid?.keyManager;

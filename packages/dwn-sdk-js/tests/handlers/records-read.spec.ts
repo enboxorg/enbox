@@ -16,7 +16,6 @@ import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread
 import { ArrayUtility } from '../../src/utils/array.js';
 import { authenticate } from '../../src/core/auth.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
-import { Encryption } from '../../src/utils/encryption.js';
 import { HdKey } from '../../src/utils/hd-key.js';
 import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
 import { RecordsReadHandler } from '../../src/handlers/records-read.js';
@@ -25,8 +24,9 @@ import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
 import { DataStoreLevel, DwnConstant, MessageStoreLevel, PermissionsProtocol, Time } from '../../src/index.js';
-import { DataStream, DateSort, Dwn, Jws, Protocols, ProtocolsConfigure, ProtocolsQuery, Records, RecordsDelete, RecordsRead , RecordsWrite, Secp256k1 } from '../../src/index.js';
+import { DataStream, DateSort, Dwn, Jws, Protocols, ProtocolsConfigure, ProtocolsQuery, Records, RecordsDelete, RecordsRead , RecordsWrite } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '../../src/index.js';
 
@@ -1839,28 +1839,28 @@ export function testRecordsReadHandler(): void {
 
           // encrypt Alice's record
           const originalData = TestDataGenerator.randomBytes(1000);
-          const originalDataStream = DataStream.fromBytes(originalData);
-          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
+          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12);
           const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-          const encryptedDataStream = await Encryption.aes256CtrEncrypt(dataEncryptionKey, dataEncryptionInitializationVector, originalDataStream);
-          const encryptedDataBytes = await DataStream.toBytes(encryptedDataStream);
+          const { ciphertext: encryptedDataBytes, tag: authenticationTag } = await Encryption.aeadEncrypt(
+            ContentEncryptionAlgorithm.A256GCM, dataEncryptionKey, dataEncryptionInitializationVector, originalData
+          );
 
           // TODO: #450 - Should not require a root key to specify the derivation scheme (https://github.com/enboxorg/enbox/issues/450)
           const rootPrivateKeyWithSchemasScheme: DerivedPrivateJwk = {
             rootKeyId         : alice.keyId,
             derivationScheme  : KeyDerivationScheme.Schemas,
-            derivedPrivateKey : alice.keyPair.privateJwk
+            derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
 
           const schema = 'https://some-schema.com';
           const schemaDerivationPath = Records.constructKeyDerivationPathUsingSchemasScheme(schema);
           const schemaDerivedPrivateKey = await HdKey.derivePrivateKey(rootPrivateKeyWithSchemasScheme, schemaDerivationPath);
-          const schemaDerivedPublicKey = await Secp256k1.getPublicJwk(schemaDerivedPrivateKey.derivedPrivateKey);
+          const schemaDerivedPublicKey = await HdKey.derivePublicKey(rootPrivateKeyWithSchemasScheme, schemaDerivationPath);
 
           const rootPrivateKeyWithDataFormatsScheme: DerivedPrivateJwk = {
             rootKeyId         : alice.keyId,
             derivationScheme  : KeyDerivationScheme.DataFormats,
-            derivedPrivateKey : alice.keyPair.privateJwk
+            derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
 
           const dataFormat = 'some/format';
@@ -1870,6 +1870,7 @@ export function testRecordsReadHandler(): void {
           const encryptionInput: EncryptionInput = {
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
+            authenticationTag,
             keyEncryptionInputs  : [{
               publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
               publicKey        : schemaDerivedPublicKey,
@@ -1941,17 +1942,17 @@ export function testRecordsReadHandler(): void {
 
           // encrypt Alice's record
           const originalData = TestDataGenerator.randomBytes(1000);
-          const originalDataStream = DataStream.fromBytes(originalData);
-          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
+          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12);
           const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-          const encryptedDataStream = await Encryption.aes256CtrEncrypt(dataEncryptionKey, dataEncryptionInitializationVector, originalDataStream);
-          const encryptedDataBytes = await DataStream.toBytes(encryptedDataStream);
+          const { ciphertext: encryptedDataBytes, tag: authenticationTag } = await Encryption.aeadEncrypt(
+            ContentEncryptionAlgorithm.A256GCM, dataEncryptionKey, dataEncryptionInitializationVector, originalData
+          );
 
           // TODO: #450 - Should not require a root key to specify the derivation scheme (https://github.com/enboxorg/enbox/issues/450)
           const rootPrivateKeyWithDataFormatsScheme: DerivedPrivateJwk = {
             rootKeyId         : alice.keyId,
             derivationScheme  : KeyDerivationScheme.DataFormats,
-            derivedPrivateKey : alice.keyPair.privateJwk
+            derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
 
           const dataFormat = `image/jpg`;
@@ -1961,6 +1962,7 @@ export function testRecordsReadHandler(): void {
           const encryptionInput: EncryptionInput = {
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
+            authenticationTag,
             keyEncryptionInputs  : [{
               publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
               publicKey        : dataFormatDerivedPublicKey,
@@ -2010,7 +2012,7 @@ export function testRecordsReadHandler(): void {
           const protocolDefinition: ProtocolDefinition = chatProtocolDefinition as ProtocolDefinition;
 
           const protocolDefinitionForAlice
-                      = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, alice.keyId, alice.keyPair.privateJwk);
+                      = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk);
           const protocolsConfigureForAlice = await TestDataGenerator.generateProtocolsConfigure({
             author             : alice,
             protocolDefinition : protocolDefinitionForAlice
@@ -2024,7 +2026,7 @@ export function testRecordsReadHandler(): void {
 
           // Bob configures chat protocol with encryption
           const protocolDefinitionForBob
-          = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, bob.keyId, bob.keyPair.privateJwk);
+          = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, bob.keyId, bob.encryptionKeyPair.privateJwk);
           const protocolsConfigureForBob = await TestDataGenerator.generateProtocolsConfigure({
             author             : bob,
             protocolDefinition : protocolDefinitionForBob
@@ -2071,7 +2073,7 @@ export function testRecordsReadHandler(): void {
           const bobRootPrivateKey: DerivedPrivateJwk = {
             rootKeyId         : bob.keyId,
             derivationScheme  : KeyDerivationScheme.ProtocolContext,
-            derivedPrivateKey : bob.keyPair.privateJwk
+            derivedPrivateKey : bob.encryptionKeyPair.privateJwk
           };
 
           const protocolPathDerivationPath = Records.constructKeyDerivationPathUsingProtocolPathScheme(recordsWrite.message.descriptor);
@@ -2117,10 +2119,11 @@ export function testRecordsReadHandler(): void {
 
           // verify that Alice is able to send an encrypted message using the protocol-context derived public key and Bob is able to decrypt it
           // NOTE: we will skip verification of Bob's protocol configuration because we have test the such scenario above as well as in other tests
-          const { derivedPublicKey: protocolContextDerivedPublicJwkReturned, rootKeyId: protocolContextDerivingRootKeyIdReturned }
-            = fetchedRecordsWrite.encryption!.keyEncryption.find(
-              encryptedKey => encryptedKey.derivationScheme === KeyDerivationScheme.ProtocolContext
-            )!;
+          const matchingRecipient = fetchedRecordsWrite.encryption!.recipients.find(
+            recipient => recipient.header.derivationScheme === KeyDerivationScheme.ProtocolContext
+          )!;
+          const protocolContextDerivedPublicJwkReturned = matchingRecipient.header.derivedPublicKey;
+          const protocolContextDerivingRootKeyIdReturned = matchingRecipient.header.kid;
 
           const plaintextMessageToBob = TestDataGenerator.randomBytes(100);
           const recordsWriteToBob = await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
@@ -2168,7 +2171,7 @@ export function testRecordsReadHandler(): void {
           // Alice configures email protocol with encryption
           const protocolDefinition: ProtocolDefinition = emailProtocolDefinition as ProtocolDefinition;
           const encryptedProtocolDefinition
-            = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, alice.keyId, alice.keyPair.privateJwk);
+            = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk);
           const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
             author             : alice,
             protocolDefinition : encryptedProtocolDefinition
@@ -2191,13 +2194,11 @@ export function testRecordsReadHandler(): void {
 
           // Bob encrypts his email to Alice with a randomly generated symmetric key
           const bobMessageBytes = TestDataGenerator.randomBytes(100);
-          const bobMessageStream = DataStream.fromBytes(bobMessageBytes);
-          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
+          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12);
           const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-          const bobMessageEncryptedStream = await Encryption.aes256CtrEncrypt(
-            dataEncryptionKey, dataEncryptionInitializationVector, bobMessageStream
+          const { ciphertext: bobMessageEncryptedBytes, tag: authenticationTag } = await Encryption.aeadEncrypt(
+            ContentEncryptionAlgorithm.A256GCM, dataEncryptionKey, dataEncryptionInitializationVector, bobMessageBytes
           );
-          const bobMessageEncryptedBytes = await DataStream.toBytes(bobMessageEncryptedStream);
 
           // Bob generates an encrypted RecordsWrite,
           // the public encryption key designated by Alice is used to encrypt the symmetric key Bob generated above
@@ -2206,6 +2207,7 @@ export function testRecordsReadHandler(): void {
           const encryptionInput: EncryptionInput = {
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
+            authenticationTag,
             keyEncryptionInputs  : [{
               publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
               publicKey        : publicJwk!,
@@ -2244,7 +2246,7 @@ export function testRecordsReadHandler(): void {
           const rootPrivateKey: DerivedPrivateJwk = {
             rootKeyId         : alice.keyId,
             derivationScheme  : KeyDerivationScheme.ProtocolPath,
-            derivedPrivateKey : alice.keyPair.privateJwk
+            derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
 
           const fetchedRecordsWrite = readReply.entry!.recordsWrite!;
@@ -2278,7 +2280,7 @@ export function testRecordsReadHandler(): void {
           const privateKeyWithMismatchingDerivationScheme: DerivedPrivateJwk = {
             rootKeyId         : alice.keyId,
             derivationScheme  : 'scheme-that-is-not-protocol-context' as any,
-            derivedPrivateKey : alice.keyPair.privateJwk
+            derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
           await expect(Records.decrypt(fetchedRecordsWrite, privateKeyWithMismatchingDerivationScheme, cipherStream)).rejects.toThrow(
             DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound
@@ -2288,7 +2290,7 @@ export function testRecordsReadHandler(): void {
           const privateKeyWithMismatchingKeyId: DerivedPrivateJwk = {
             rootKeyId         : 'mismatchingKeyId',
             derivationScheme  : KeyDerivationScheme.ProtocolPath,
-            derivedPrivateKey : alice.keyPair.privateJwk
+            derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
           await expect(Records.decrypt(fetchedRecordsWrite, privateKeyWithMismatchingKeyId, cipherStream)).rejects.toThrow(
             DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound
