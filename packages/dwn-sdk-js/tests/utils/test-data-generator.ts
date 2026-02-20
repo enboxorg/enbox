@@ -26,7 +26,7 @@ import { DataStream } from '../../src/utils/data-stream.js';
 import { DidKey } from '@enbox/dids';
 import { ed25519 } from '../../src/jose/algorithms/signing/ed25519.js';
 import { Encoder } from '../../src/utils/encoder.js';
-import { Encryption } from '../../src/utils/encryption.js';
+import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
 import { Jws } from '../../src/utils/jws.js';
 import { MessagesRead } from '../../src/interfaces/messages-read.js';
 import { MessagesSubscribe } from '../../src/interfaces/messages-subscribe.js';
@@ -503,13 +503,11 @@ export class TestDataGenerator {
     } = input;
 
     // encrypt the plaintext data for the target with a randomly generated symmetric key
-    const plaintextStream = DataStream.fromBytes(plaintextBytes);
-    const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
+    const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12); // 12 bytes for AES-GCM
     const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-    const encryptedDataStream = await Encryption.aes256CtrEncrypt(
-      dataEncryptionKey, dataEncryptionInitializationVector, plaintextStream
+    const { ciphertext: encryptedDataBytes, tag: authenticationTag } = await Encryption.aeadEncrypt(
+      ContentEncryptionAlgorithm.A256GCM, dataEncryptionKey, dataEncryptionInitializationVector, plaintextBytes
     );
-    const encryptedDataBytes = await DataStream.toBytes(encryptedDataStream);
 
     // author generates a RecordsWrite using the encrypted data
     const protocolPathSegments = protocolPath.split('/');
@@ -531,6 +529,7 @@ export class TestDataGenerator {
     const encryptionInput: EncryptionInput = {
       initializationVector : dataEncryptionInitializationVector,
       key                  : dataEncryptionKey,
+      authenticationTag,
       keyEncryptionInputs  : []
     };
 

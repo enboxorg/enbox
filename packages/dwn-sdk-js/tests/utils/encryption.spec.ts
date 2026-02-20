@@ -1,104 +1,143 @@
 import { ArrayUtility } from '../../src/utils/array.js';
+import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
 import { DataStream } from '../../src/index.js';
-import { Encryption } from '../../src/utils/encryption.js';
-import { Secp256k1 } from '../../src/utils/secp256k1.js';
-import { etc as Secp256k1Etc } from '@noble/secp256k1';
 import { TestDataGenerator } from './test-data-generator.js';
+import { X25519 } from '@enbox/crypto';
 import { describe, expect, it } from 'bun:test';
 
 describe('Encryption', () => {
-  describe('AES-256-CTR', () => {
+  describe('AEAD A256GCM', () => {
+    it('should be able to encrypt and decrypt data correctly', async () => {
+      const key = TestDataGenerator.randomBytes(32);
+      const iv = TestDataGenerator.randomBytes(12); // 96-bit nonce for AES-GCM
+
+      const inputBytes = TestDataGenerator.randomBytes(1_000_000);
+
+      const { ciphertext, tag } = await Encryption.aeadEncrypt(
+        ContentEncryptionAlgorithm.A256GCM, key, iv, inputBytes
+      );
+
+      const plaintext = await Encryption.aeadDecrypt(
+        ContentEncryptionAlgorithm.A256GCM, key, iv, ciphertext, tag
+      );
+
+      expect(ArrayUtility.byteArraysEqual(inputBytes, plaintext)).toBe(true);
+    });
+
     it('should be able to encrypt and decrypt a data stream correctly', async () => {
       const key = TestDataGenerator.randomBytes(32);
-      const initializationVector = TestDataGenerator.randomBytes(16);
+      const iv = TestDataGenerator.randomBytes(12);
 
       const inputBytes = TestDataGenerator.randomBytes(1_000_000);
       const inputStream = DataStream.fromBytes(inputBytes);
 
-      const cipherStream = await Encryption.aes256CtrEncrypt(key, initializationVector, inputStream);
+      const { ciphertextStream, tag } = await Encryption.aeadEncryptStream(
+        ContentEncryptionAlgorithm.A256GCM, key, iv, inputStream
+      );
 
-      const plaintextStream = await Encryption.aes256CtrDecrypt(key, initializationVector, cipherStream);
+      const plaintextStream = await Encryption.aeadDecryptStream(
+        ContentEncryptionAlgorithm.A256GCM, key, iv, ciphertextStream, tag
+      );
       const plaintextBytes = await DataStream.toBytes(plaintextStream);
 
       expect(ArrayUtility.byteArraysEqual(inputBytes, plaintextBytes)).toBe(true);
     });
+  });
 
-    it('should propagate error on encrypt if the plaintext data stream errors', async () => {
+  describe('AEAD XC20P', () => {
+    it('should be able to encrypt and decrypt data correctly', async () => {
       const key = TestDataGenerator.randomBytes(32);
-      const initializationVector = TestDataGenerator.randomBytes(16);
+      const nonce = TestDataGenerator.randomBytes(24); // 192-bit nonce for XChaCha20-Poly1305
 
-      const simulatedErrorMessage = 'Simulated error';
+      const inputBytes = TestDataGenerator.randomBytes(1_000_000);
 
-      // Create a Web ReadableStream that errors after the first chunk
-      const mockPlaintextStream = new ReadableStream<Uint8Array>({
-        start(controller): void {
-          controller.enqueue(TestDataGenerator.randomBytes(1));
-          controller.error(new Error(simulatedErrorMessage));
-        }
-      });
+      const { ciphertext, tag } = await Encryption.aeadEncrypt(
+        ContentEncryptionAlgorithm.XC20P, key, nonce, inputBytes
+      );
 
-      const cipherStream = await Encryption.aes256CtrEncrypt(key, initializationVector, mockPlaintextStream);
+      const plaintext = await Encryption.aeadDecrypt(
+        ContentEncryptionAlgorithm.XC20P, key, nonce, ciphertext, tag
+      );
 
-      // Reading the cipher stream should propagate the error
-      try {
-        await DataStream.toBytes(cipherStream);
-        throw new Error('Expected an error to be thrown');
-      } catch (error: any) {
-        expect(error.message).toBe(simulatedErrorMessage);
-      }
+      expect(ArrayUtility.byteArraysEqual(inputBytes, plaintext)).toBe(true);
     });
 
-    it('should propagate error on decrypt if the cipher data stream errors', async () => {
+    it('should be able to encrypt and decrypt a data stream correctly', async () => {
       const key = TestDataGenerator.randomBytes(32);
-      const initializationVector = TestDataGenerator.randomBytes(16);
+      const nonce = TestDataGenerator.randomBytes(24);
 
-      const simulatedErrorMessage = 'Simulated error';
+      const inputBytes = TestDataGenerator.randomBytes(1_000_000);
+      const inputStream = DataStream.fromBytes(inputBytes);
 
-      // Create a Web ReadableStream that errors after the first chunk
-      const mockCipherStream = new ReadableStream<Uint8Array>({
-        start(controller): void {
-          controller.enqueue(TestDataGenerator.randomBytes(1));
-          controller.error(new Error(simulatedErrorMessage));
-        }
-      });
+      const { ciphertextStream, tag } = await Encryption.aeadEncryptStream(
+        ContentEncryptionAlgorithm.XC20P, key, nonce, inputStream
+      );
 
-      const plaintextStream = await Encryption.aes256CtrDecrypt(key, initializationVector, mockCipherStream);
+      const plaintextStream = await Encryption.aeadDecryptStream(
+        ContentEncryptionAlgorithm.XC20P, key, nonce, ciphertextStream, tag
+      );
+      const plaintextBytes = await DataStream.toBytes(plaintextStream);
 
-      // Reading the plaintext stream should propagate the error
-      try {
-        await DataStream.toBytes(plaintextStream);
-        throw new Error('Expected an error to be thrown');
-      } catch (error: any) {
-        expect(error.message).toBe(simulatedErrorMessage);
-      }
+      expect(ArrayUtility.byteArraysEqual(inputBytes, plaintextBytes)).toBe(true);
     });
   });
 
-  describe('ECIES-SECP256K1', () => {
-    it('should be able to encrypt and decrypt given bytes correctly', async () => {
-      const { publicKey, privateKey } = await Secp256k1.generateKeyPairRaw();
+  describe('ECDH-ES+A256KW', () => {
+    it('should be able to wrap and unwrap a CEK correctly', async () => {
+      const recipientPrivateKey = await X25519.generateKey();
+      const recipientPublicKey = await X25519.getPublicKey({ key: recipientPrivateKey });
+      const ephemeralPrivateKey = await X25519.generateKey();
 
-      const originalPlaintext = TestDataGenerator.randomBytes(32);
-      const encryptionOutput = await Encryption.eciesSecp256k1Encrypt(publicKey, originalPlaintext);
-      const decryptionInput = { privateKey, ...encryptionOutput };
-      const decryptedPlaintext = await Encryption.eciesSecp256k1Decrypt(decryptionInput);
+      const cek = TestDataGenerator.randomBytes(32);
 
-      expect(ArrayUtility.byteArraysEqual(originalPlaintext, decryptedPlaintext)).toBe(true);
+      const wrappedKey = await Encryption.ecdhEsWrapKey(
+        ephemeralPrivateKey, recipientPublicKey, cek
+      );
+
+      const ephemeralPublicKey = await X25519.getPublicKey({ key: ephemeralPrivateKey });
+      const unwrappedCek = await Encryption.ecdhEsUnwrapKey(
+        recipientPrivateKey, ephemeralPublicKey, wrappedKey
+      );
+
+      expect(ArrayUtility.byteArraysEqual(cek, unwrappedCek)).toBe(true);
     });
+  });
 
-    it('should be able to accept both compressed and uncompressed publicKeys', async () => {
-      const originalPlaintext = TestDataGenerator.randomBytes(32);
-      const h2b = Secp256k1Etc.hexToBytes;
-      // Following test vector was taken from @noble/secp256k1 test file.
-      // noble-secp256k1/main/test/vectors/secp256k1/privates.json
-      const privateKey = h2b('9c7fc36bc106fd7df5e1078d03e34b9a045892abdd053ec69bfeb22327529f6c');
-      const compressed = h2b('03936cb2bd56e681d360bbce6a3a7a1ccbf72f3ab8792edbc45fb08f55b929c588');
-      const uncompressed = h2b('04936cb2bd56e681d360bbce6a3a7a1ccbf72f3ab8792edbc45fb08f55b929c588529b8cee53f7eff1da5fc0e6050d952b37d4de5c3b85e952dfe9d9e9b2b3b6eb');
-      for (const publicKey of [compressed, uncompressed]) {
-        const encrypted = await Encryption.eciesSecp256k1Encrypt(publicKey, originalPlaintext);
-        const decrypted = await Encryption.eciesSecp256k1Decrypt({ privateKey, ...encrypted });
-        expect(ArrayUtility.byteArraysEqual(originalPlaintext, decrypted)).toBe(true);
-      }
+  describe('buildJwe', () => {
+    it('should build a valid JWE structure with recipients', async () => {
+      const recipientPrivateKey = await X25519.generateKey();
+      const recipientPublicKey = await X25519.getPublicKey({ key: recipientPrivateKey });
+
+      const cek = TestDataGenerator.randomBytes(32);
+      const iv = TestDataGenerator.randomBytes(12);
+      const tag = TestDataGenerator.randomBytes(16);
+
+      const jwe = await Encryption.buildJwe(
+        {
+          key                  : cek,
+          initializationVector : iv,
+          authenticationTag    : tag,
+          keyEncryptionInputs  : [{
+            publicKeyId      : 'did:example:alice#enc',
+            publicKey        : recipientPublicKey,
+            derivationScheme : 'protocolPath' as any,
+          }],
+        },
+        tag,
+      );
+
+      expect(jwe.protected).toBeDefined();
+      expect(jwe.iv).toBeDefined();
+      expect(jwe.tag).toBeDefined();
+      expect(jwe.recipients).toHaveLength(1);
+      expect(jwe.recipients[0].header.kid).toBe('did:example:alice#enc');
+      expect(jwe.recipients[0].header.epk).toBeDefined();
+      expect(jwe.recipients[0].encrypted_key).toBeDefined();
+
+      // Verify protected header
+      const protectedHeader = Encryption.parseProtectedHeader(jwe.protected);
+      expect(protectedHeader.alg).toBe('ECDH-ES+A256KW');
+      expect(protectedHeader.enc).toBe('A256GCM');
     });
   });
 });

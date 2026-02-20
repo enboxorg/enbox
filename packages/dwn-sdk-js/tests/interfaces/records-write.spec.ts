@@ -237,11 +237,12 @@ describe('RecordsWrite', () => {
     it('should throw if attempting to use `protocols` key derivation encryption scheme on non-protocol-based record', async () => {
       const alice = await TestDataGenerator.generatePersona();
 
-      const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
+      const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12);
       const dataEncryptionKey = TestDataGenerator.randomBytes(32);
       const encryptionInput: EncryptionInput = {
         initializationVector : dataEncryptionInitializationVector,
         key                  : dataEncryptionKey,
+        authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
           publicKey        : alice.keyPair.publicJwk,
@@ -263,11 +264,12 @@ describe('RecordsWrite', () => {
     it('should throw if attempting to use `schemas` key derivation encryption scheme on a record without `schema`', async () => {
       const alice = await TestDataGenerator.generatePersona();
 
-      const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
+      const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12);
       const dataEncryptionKey = TestDataGenerator.randomBytes(32);
       const encryptionInput: EncryptionInput = {
         initializationVector : dataEncryptionInitializationVector,
         key                  : dataEncryptionKey,
+        authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
           publicKey        : alice.keyPair.publicJwk,
@@ -522,7 +524,7 @@ describe('RecordsWrite', () => {
     it('should replace encryption property by default', async () => {
       const alice = await TestDataGenerator.generatePersona();
       const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-      const dataEncryptionIV = TestDataGenerator.randomBytes(16);
+      const dataEncryptionIV = TestDataGenerator.randomBytes(12);
 
       const recordsWrite = await RecordsWrite.create({
         signer       : Jws.createSigner(alice),
@@ -537,6 +539,7 @@ describe('RecordsWrite', () => {
       const encryptionInput1: EncryptionInput = {
         initializationVector : dataEncryptionIV,
         key                  : dataEncryptionKey,
+        authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId,
           publicKey        : alice.keyPair.publicJwk,
@@ -546,13 +549,14 @@ describe('RecordsWrite', () => {
       await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput1);
 
       expect(recordsWrite['_message'].encryption).toBeDefined();
-      expect(recordsWrite['_message'].encryption!.keyEncryption).toHaveLength(1);
-      expect(recordsWrite['_message'].encryption!.keyEncryption[0].derivationScheme).toBe('protocolPath');
+      expect(recordsWrite['_message'].encryption!.recipients).toHaveLength(1);
+      expect(recordsWrite['_message'].encryption!.recipients[0].header.derivationScheme).toBe('protocolPath');
 
       // Second encryption (replace mode) — should overwrite
       const encryptionInput2: EncryptionInput = {
         initializationVector : dataEncryptionIV,
         key                  : dataEncryptionKey,
+        authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId,
           publicKey        : alice.keyPair.publicJwk,
@@ -562,14 +566,14 @@ describe('RecordsWrite', () => {
       await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput2);
 
       // Should have replaced — only 1 entry with Schemas scheme
-      expect(recordsWrite['_message'].encryption!.keyEncryption).toHaveLength(1);
-      expect(recordsWrite['_message'].encryption!.keyEncryption[0].derivationScheme).toBe('schemas');
+      expect(recordsWrite['_message'].encryption!.recipients).toHaveLength(1);
+      expect(recordsWrite['_message'].encryption!.recipients[0].header.derivationScheme).toBe('schemas');
     });
 
-    it('should append keyEncryption entries when append option is true', async () => {
+    it('should append recipients when append option is true', async () => {
       const alice = await TestDataGenerator.generatePersona();
       const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-      const dataEncryptionIV = TestDataGenerator.randomBytes(16);
+      const dataEncryptionIV = TestDataGenerator.randomBytes(12);
 
       const recordsWrite = await RecordsWrite.create({
         signer       : Jws.createSigner(alice),
@@ -584,6 +588,7 @@ describe('RecordsWrite', () => {
       const encryptionInput1: EncryptionInput = {
         initializationVector : dataEncryptionIV,
         key                  : dataEncryptionKey,
+        authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId,
           publicKey        : alice.keyPair.publicJwk,
@@ -592,13 +597,14 @@ describe('RecordsWrite', () => {
       };
       await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput1);
 
-      const originalIV = recordsWrite['_message'].encryption!.initializationVector;
-      const originalAlgorithm = recordsWrite['_message'].encryption!.algorithm;
+      const originalIV = recordsWrite['_message'].encryption!.iv;
+      const originalProtected = recordsWrite['_message'].encryption!.protected;
 
       // Second encryption with append — ProtocolContext
       const encryptionInput2: EncryptionInput = {
         initializationVector : dataEncryptionIV,
         key                  : dataEncryptionKey,
+        authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId,
           publicKey        : alice.keyPair.publicJwk,
@@ -609,16 +615,16 @@ describe('RecordsWrite', () => {
 
       // Should have both entries
       const encryption = recordsWrite['_message'].encryption!;
-      expect(encryption.keyEncryption).toHaveLength(2);
-      expect(encryption.keyEncryption[0].derivationScheme).toBe('protocolPath');
-      expect(encryption.keyEncryption[1].derivationScheme).toBe('protocolContext');
+      expect(encryption.recipients).toHaveLength(2);
+      expect(encryption.recipients[0].header.derivationScheme).toBe('protocolPath');
+      expect(encryption.recipients[1].header.derivationScheme).toBe('protocolContext');
 
-      // Original IV and algorithm should be preserved
-      expect(encryption.initializationVector).toBe(originalIV);
-      expect(encryption.algorithm).toBe(originalAlgorithm);
+      // Original IV and protected header should be preserved
+      expect(encryption.iv).toBe(originalIV);
+      expect(encryption.protected).toBe(originalProtected);
 
       // ProtocolContext entry should have derivedPublicKey
-      expect(encryption.keyEncryption[1].derivedPublicKey).toBeDefined();
+      expect(encryption.recipients[1].header.derivedPublicKey).toBeDefined();
 
       // Authorization was already wiped by the first (non-append) call, so
       // append mode preserves whatever state exists — which is undefined here.
@@ -629,11 +635,11 @@ describe('RecordsWrite', () => {
 
     it('should allow signAsOwner after append (reactive root-record upgrade)', async () => {
       // Simulates the cross-DWN scenario: Bob authors a record, Alice (owner)
-      // appends a ProtocolContext keyEncryption entry, then signs as owner.
+      // appends a ProtocolContext recipient entry, then signs as owner.
       const alice = await TestDataGenerator.generatePersona();
       const bob = await TestDataGenerator.generatePersona();
       const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-      const dataEncryptionIV = TestDataGenerator.randomBytes(16);
+      const dataEncryptionIV = TestDataGenerator.randomBytes(12);
 
       // Bob creates and signs the record
       const recordsWrite = await RecordsWrite.create({
@@ -649,6 +655,7 @@ describe('RecordsWrite', () => {
       const encryptionInput1: EncryptionInput = {
         initializationVector : dataEncryptionIV,
         key                  : dataEncryptionKey,
+        authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId,
           publicKey        : alice.keyPair.publicJwk,
@@ -668,6 +675,7 @@ describe('RecordsWrite', () => {
       const encryptionInput2: EncryptionInput = {
         initializationVector : dataEncryptionIV,
         key                  : dataEncryptionKey,
+        authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId,
           publicKey        : alice.keyPair.publicJwk,
@@ -686,11 +694,11 @@ describe('RecordsWrite', () => {
       expect(parsed.owner).toBe(alice.did);
       expect(parsed['_message'].authorization!.ownerSignature).toBeDefined();
 
-      // Both keyEncryption entries should be present
+      // Both recipient entries should be present
       const encryption = parsed['_message'].encryption!;
-      expect(encryption.keyEncryption).toHaveLength(2);
-      expect(encryption.keyEncryption[0].derivationScheme).toBe('protocolPath');
-      expect(encryption.keyEncryption[1].derivationScheme).toBe('protocolContext');
+      expect(encryption.recipients).toHaveLength(2);
+      expect(encryption.recipients[0].header.derivationScheme).toBe('protocolPath');
+      expect(encryption.recipients[1].header.derivationScheme).toBe('protocolContext');
 
       // validateIntegrity should pass — the stale encryptionCid in the
       // author's signature is allowed when ownerSignature is present
@@ -700,7 +708,7 @@ describe('RecordsWrite', () => {
     it('should throw when append is true but encryption does not exist', async () => {
       const alice = await TestDataGenerator.generatePersona();
       const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-      const dataEncryptionIV = TestDataGenerator.randomBytes(16);
+      const dataEncryptionIV = TestDataGenerator.randomBytes(12);
 
       const recordsWrite = await RecordsWrite.create({
         signer       : Jws.createSigner(alice),
@@ -713,6 +721,7 @@ describe('RecordsWrite', () => {
       const encryptionInput: EncryptionInput = {
         initializationVector : dataEncryptionIV,
         key                  : dataEncryptionKey,
+        authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId,
           publicKey        : alice.keyPair.publicJwk,

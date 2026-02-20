@@ -35,7 +35,7 @@ import { PermissionConditionPublication } from '../../src/types/permission-types
 import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { RecordsWriteHandler } from '../../src/handlers/records-write.js';
-import { Secp256k1 } from '../../src/utils/secp256k1.js';
+import { X25519 } from '@enbox/crypto';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
@@ -45,7 +45,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { DataStoreLevel, DwnConstant, DwnInterfaceName, DwnMethodName, KeyDerivationScheme, MessageStoreLevel, PermissionsProtocol, RecordsDelete, RecordsQuery } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnError, DwnErrorCode } from '../../src/core/dwn-error.js';
-import { Encryption, EncryptionAlgorithm } from '../../src/utils/encryption.js';
+import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
 
 export function testRecordsWriteHandler(): void {
   describe('RecordsWriteHandler.handle()', () => {
@@ -2621,20 +2621,20 @@ export function testRecordsWriteHandler(): void {
           const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
           expect(configReply.status.code).toBe(202);
 
-          // Generate a secp256k1 key pair for encryption (did:key personas use Ed25519 for signing)
-          const encryptionKeyPair = await Secp256k1.generateKeyPair();
+          // Generate an X25519 key pair for encryption (did:key personas use Ed25519 for signing)
+          const encryptionPrivateKey = await X25519.generateKey();
+          const encryptionPublicKey = await X25519.getPublicKey({ key: encryptionPrivateKey });
           const data = Encoder.stringToBytes('encrypted secret');
           const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
+          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12);
 
           const encryptionInput: EncryptionInput = {
-            algorithm            : EncryptionAlgorithm.Aes256Ctr,
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
+            authenticationTag    : TestDataGenerator.randomBytes(16),
             keyEncryptionInputs  : [{
               publicKeyId      : alice.keyId,
-              publicKey        : encryptionKeyPair.publicJwk,
-              algorithm        : EncryptionAlgorithm.EciesSecp256k1,
+              publicKey        : encryptionPublicKey,
               derivationScheme : KeyDerivationScheme.ProtocolPath
             }]
           };
@@ -2966,22 +2966,19 @@ export function testRecordsWriteHandler(): void {
           expect(protocolsConfigureReply.status.code).toBe(202);
 
           const bobMessageBytes = Encoder.stringToBytes('message from bob');
-          const bobMessageStream = DataStream.fromBytes(bobMessageBytes);
-          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
+          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12);
           const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-          const bobMessageEncryptedStream = await Encryption.aes256CtrEncrypt(
-            dataEncryptionKey, dataEncryptionInitializationVector, bobMessageStream
+          const { ciphertext: bobMessageEncryptedBytes, tag: authenticationTag } = await Encryption.aeadEncrypt(
+            ContentEncryptionAlgorithm.A256GCM, dataEncryptionKey, dataEncryptionInitializationVector, bobMessageBytes
           );
-          const bobMessageEncryptedBytes = await DataStream.toBytes(bobMessageEncryptedStream);
 
           const encryptionInput: EncryptionInput = {
-            algorithm            : EncryptionAlgorithm.Aes256Ctr,
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
+            authenticationTag,
             keyEncryptionInputs  : [{
               publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
               publicKey        : alice.keyPair.publicJwk,
-              algorithm        : EncryptionAlgorithm.EciesSecp256k1,
               derivationScheme : KeyDerivationScheme.ProtocolPath
             }]
           };
@@ -2994,8 +2991,8 @@ export function testRecordsWriteHandler(): void {
             encryptionInput
           });
 
-        // replace valid `encryption` property with a mismatching one
-        message.encryption!.initializationVector = Encoder.stringToBase64Url('any value which will result in a different CID');
+        // replace valid `encryption` property with a mismatching one — mutate the iv to cause CID mismatch
+        message.encryption!.iv = Encoder.stringToBase64Url('any value which will result in a different CID');
 
         const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, eventStream);
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });

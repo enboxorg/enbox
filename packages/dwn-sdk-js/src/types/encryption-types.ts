@@ -1,4 +1,4 @@
-import type { EciesEncryptionOutput } from '../utils/encryption.js';
+import type { JweKeyUnwrapPayload } from '../utils/encryption.js';
 import type { KeyDerivationScheme } from '../utils/hd-key.js';
 import type { PublicKeyJwk } from './jose-types.js';
 
@@ -26,8 +26,8 @@ export interface EncryptionKeyDeriver {
 }
 
 /**
- * A callback interface for decrypting ECIES-encrypted data encryption keys.
- * The implementor performs HKDF key derivation and ECIES decryption
+ * A callback interface for decrypting JWE-wrapped Content Encryption Keys (CEKs).
+ * The implementor performs HKDF key derivation, ECDH-ES key agreement, and AES Key Unwrap
  * internally — the private key never leaves the implementation boundary.
  *
  * Analogous to `MessageSigner` for signing operations.
@@ -38,15 +38,16 @@ export interface KeyDecrypter {
   /** The derivation scheme (e.g. KeyDerivationScheme.ProtocolPath) */
   derivationScheme: KeyDerivationScheme;
   /**
-   * Decrypts an ECIES-SECP256K1 encrypted payload after deriving the
-   * leaf decryption key via HKDF through the given derivation path.
+   * Unwraps a JWE-encrypted Content Encryption Key (CEK) after deriving the
+   * leaf decryption key via HKDF through the given derivation path, then
+   * performing ECDH-ES key agreement and AES-256 Key Unwrap.
    *
    * @param fullDerivationPath - The complete HKDF path to derive the leaf key
-   * @param eciesEncryptedPayload - The ECIES ciphertext components
-   * @returns The decrypted plaintext bytes (typically a 32-byte DEK)
+   * @param jweKeyUnwrapPayload - The wrapped CEK and ephemeral public key from the JWE recipient
+   * @returns The unwrapped CEK bytes (typically 32 bytes for AES-256)
    */
   decrypt(
     fullDerivationPath: string[],
-    eciesEncryptedPayload: EciesEncryptionOutput,
+    jweKeyUnwrapPayload: JweKeyUnwrapPayload,
   ): Promise<Uint8Array>;
 }

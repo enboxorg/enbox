@@ -5,7 +5,7 @@ export type { AuthorizationModel, Descriptor, DelegatedGrantRecordsWriteMessage,
 export type { MessagesFilter, MessagesReadMessage as MessagesReadMessage, MessagesReadReply as MessagesReadReply, MessagesReadReplyEntry as MessagesReadReplyEntry, MessagesReadDescriptor, MessagesSubscribeDescriptor, MessagesSubscribeMessage, MessagesSubscribeReply, MessageSubscriptionHandler, MessagesSubscribeMessageOptions, MessagesSyncAction, MessagesSyncDescriptor, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
 export type { GT, LT, Filter, FilterValue, KeyValues, EqualFilter, OneOfFilter, RangeFilter, RangeCriterion, PaginationCursor, QueryOptions, RangeValue, StartsWithFilter } from './types/query-types.js';
 export type { ProtocolsConfigureDescriptor, ProtocolDefinition, ProtocolTypes, ProtocolRuleSet, ProtocolsQueryFilter, ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply, ProtocolActionRule, ProtocolPathEncryption, ProtocolsQueryDescriptor, ProtocolType, ProtocolUses } from './types/protocols-types.js';
-export type { DataEncodedRecordsWriteMessage, EncryptedKey, EncryptionProperty, RecordsCountDescriptor, RecordsCountMessage, RecordsCountReply, RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsQueryReply, RecordsQueryReplyEntry, RecordsReadMessage, RecordsReadReply, RecordsSubscribeDescriptor, RecordsSubscribeMessage, RecordsSubscribeReply, RecordSubscriptionHandler, RecordsWriteDescriptor, RecordsWriteTags, RecordsWriteTagValue, RecordsWriteMessage, RecordsWriteSignaturePayload, RecordsDeleteDescriptor, RecordsQueryDescriptor, RecordsReadDescriptor, RecordsSubscribeMessageOptions, RecordsWriteMessageOptions, InternalRecordsWriteMessage, RecordEvent, RecordsWriteTagsFilter } from './types/records-types.js';
+export type { DataEncodedRecordsWriteMessage, RecordsCountDescriptor, RecordsCountMessage, RecordsCountReply, RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsQueryReply, RecordsQueryReplyEntry, RecordsReadMessage, RecordsReadReply, RecordsSubscribeDescriptor, RecordsSubscribeMessage, RecordsSubscribeReply, RecordSubscriptionHandler, RecordsWriteDescriptor, RecordsWriteTags, RecordsWriteTagValue, RecordsWriteMessage, RecordsWriteSignaturePayload, RecordsDeleteDescriptor, RecordsQueryDescriptor, RecordsReadDescriptor, RecordsSubscribeMessageOptions, RecordsWriteMessageOptions, InternalRecordsWriteMessage, RecordEvent, RecordsWriteTagsFilter } from './types/records-types.js';
 export type { GeneralJws, SignatureEntry } from './types/jws-types.js';
 export { authenticate } from './core/auth.js';
 export { AllowAllTenantGate } from './core/tenant-gate.js';
@@ -28,8 +28,8 @@ export { DwnInterfaceName, DwnMethodName } from './enums/dwn-interface-method.js
 export { Encoder } from './utils/encoder.js';
 export { MessagesSubscribe as MessagesSubscribe } from './interfaces/messages-subscribe.js';
 export type { MessagesSubscribeOptions as MessagesSubscribeOptions } from './interfaces/messages-subscribe.js';
-export { Encryption, EncryptionAlgorithm } from './utils/encryption.js';
-export type { EciesEncryptionOutput, EciesEncryptionInput } from './utils/encryption.js';
+export { Encryption, ContentEncryptionAlgorithm, KeyAgreementAlgorithm } from './utils/encryption.js';
+export type { JweEncryption, JweRecipient, JweRecipientHeader, JweProtectedHeader, JweKeyUnwrapPayload } from './utils/encryption.js';
 export { RecordsWrite } from './interfaces/records-write.js';
 export type { EncryptionInput, KeyEncryptionInput, RecordsWriteOptions, CreateFromOptions } from './interfaces/records-write.js';
 export { executeUnlessAborted } from './utils/abort.js';

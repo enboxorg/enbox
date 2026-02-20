@@ -23,73 +23,68 @@
     "encryption": {
       "type": "object",
       "properties": {
-        "algorithm": {
-          "type": "string",
-          "enum": [
-            "A256CTR"
-          ]
-        },
-        "initializationVector": {
+        "protected": {
           "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
         },
-        "keyEncryption": {
+        "iv": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
+        },
+        "tag": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
+        },
+        "recipients": {
           "type": "array",
           "minItems": 1,
           "items": {
             "type": "object",
             "properties": {
-              "rootKeyId": {
-                "type": "string"
-              },
-              "derivationScheme": {
-                "type": "string",
-                "enum": [
-                  "dataFormats",
-                  "protocolContext",
-                  "protocolPath",
-                  "schemas"
+              "header": {
+                "type": "object",
+                "properties": {
+                  "kid": {
+                    "type": "string"
+                  },
+                  "epk": {
+                    "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
+                  },
+                  "derivationScheme": {
+                    "type": "string",
+                    "enum": [
+                      "dataFormats",
+                      "protocolContext",
+                      "protocolPath",
+                      "schemas"
+                    ]
+                  },
+                  "derivedPublicKey": {
+                    "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "kid",
+                  "epk",
+                  "derivationScheme"
                 ]
               },
-              "derivedPublicKey": {
-                "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
-              },
-              "algorithm": {
-                "type": "string",
-                "enum": [
-                  "ECIES-ES256K"
-                ]
-              },
-              "encryptedKey": {
-                "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
-              },
-              "initializationVector": {
-                "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
-              },
-              "ephemeralPublicKey": {
-                "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
-              },
-              "messageAuthenticationCode": {
+              "encrypted_key": {
                 "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
               }
             },
             "additionalProperties": false,
             "required": [
-              "rootKeyId",
-              "derivationScheme",
-              "algorithm",
-              "encryptedKey",
-              "initializationVector",
-              "ephemeralPublicKey",
-              "messageAuthenticationCode"
+              "header",
+              "encrypted_key"
             ]
           }
         }
       },
       "additionalProperties": false,
       "required": [
-        "algorithm",
-        "initializationVector",
-        "keyEncryption"
+        "protected",
+        "iv",
+        "tag",
+        "recipients"
       ]
     },
     "descriptor": {

@@ -1,7 +1,5 @@
-import type { EncryptionAlgorithm } from '../utils/encryption.js';
+import type { JweEncryption } from '../utils/encryption.js';
 import type { GeneralJws } from './jws-types.js';
-import type { KeyDerivationScheme } from '../utils/hd-key.js';
-import type { PublicKeyJwk } from './jose-types.js';
 import type { AuthorizationModel, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSubscription, Pagination } from './message-types.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import type { PaginationCursor, RangeCriterion, RangeFilter, StartsWithFilter } from './query-types.js';
@@ -53,7 +51,7 @@ export type InternalRecordsWriteMessage = GenericMessage & {
   contextId?: string;
   descriptor: RecordsWriteDescriptor;
   attestation?: GeneralJws;
-  encryption?: EncryptionProperty;
+  encryption?: JweEncryption;
 };
 
 export type RecordsWriteMessage = {
@@ -62,31 +60,7 @@ export type RecordsWriteMessage = {
   contextId?: string;
   descriptor: RecordsWriteDescriptor;
   attestation?: GeneralJws;
-  encryption?: EncryptionProperty;
-};
-
-export type EncryptionProperty = {
-  algorithm: EncryptionAlgorithm;
-  initializationVector: string;
-  keyEncryption: EncryptedKey[]
-};
-
-export type EncryptedKey = {
-  /**
-   * The fully qualified key ID (e.g. did:example:abc#encryption-key-id) of the root public key used to encrypt the symmetric encryption key.
-   */
-  rootKeyId: string;
-
-  /**
-   * The actual derived public key.
-   */
-  derivedPublicKey?: PublicKeyJwk;
-  derivationScheme: KeyDerivationScheme;
-  algorithm: EncryptionAlgorithm;
-  initializationVector: string;
-  ephemeralPublicKey: PublicKeyJwk;
-  messageAuthenticationCode: string;
-  encryptedKey: string;
+  encryption?: JweEncryption;
 };
 
 /**
