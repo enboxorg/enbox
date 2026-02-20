@@ -1,5 +1,17 @@
 # @enbox/api
 
+## 0.1.0
+
+### Minor Changes
+
+- Add typed protocol API: defineProtocol() factory, TypedDwnApi class with type-safe write/query/read/delete/subscribe/configure methods, DwnApi.using() entry point, and generic Record.data.json<T>() return type
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @enbox/agent@0.1.4
+  - @enbox/dwn-clients@0.0.2
+
 ## 0.0.8
 
 ### Patch Changes
