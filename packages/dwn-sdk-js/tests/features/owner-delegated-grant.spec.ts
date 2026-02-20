@@ -82,9 +82,11 @@ export function testOwnerDelegatedGrant(): void {
 
         // Bob creates a RecordsWrite message
         const recordsWrite = await RecordsWrite.create({
-          signer     : Jws.createSigner(bob),
-          dataFormat : 'application/octet-stream',
-          data       : TestDataGenerator.randomBytes(10),
+          signer       : Jws.createSigner(bob),
+          protocol     : 'http://test-protocol.xyz',
+          protocolPath : 'testRecord',
+          dataFormat   : 'application/octet-stream',
+          data         : TestDataGenerator.randomBytes(10),
         });
 
         // App X signs over Bob's RecordsWrite as DWN owner but does not include the delegated grant (we remove it below)
@@ -118,9 +120,11 @@ export function testOwnerDelegatedGrant(): void {
 
         // Bob creates a RecordsWrite message
         const recordsWrite = await RecordsWrite.create({
-          signer     : Jws.createSigner(bob),
-          dataFormat : 'application/octet-stream',
-          data       : TestDataGenerator.randomBytes(10),
+          signer       : Jws.createSigner(bob),
+          protocol     : 'http://test-protocol.xyz',
+          protocolPath : 'testRecord',
+          dataFormat   : 'application/octet-stream',
+          data         : TestDataGenerator.randomBytes(10),
         });
 
         // App X attempts to sign over Bob's RecordsWrite as the DWN owner by including an owner-delegated grant

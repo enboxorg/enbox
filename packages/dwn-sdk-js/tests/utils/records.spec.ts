@@ -30,6 +30,8 @@ describe('Records', () => {
         dataSize         : 123,
         dateCreated      : '2022-12-19T10:20:30.123456Z',
         messageTimestamp : '2022-12-19T10:20:30.123456Z',
+        protocol         : 'http://test-protocol.xyz',
+        protocolPath     : 'testRecord',
       };
 
       expect(() => Records.constructKeyDerivationPathUsingProtocolPathScheme(descriptor))

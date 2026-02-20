@@ -240,7 +240,7 @@ export class AgentDwnApi {
       if (writeParams.protocol !== KeyDeliveryProtocolDefinition.protocol) {
         try {
           const protocolDefinition = await this.getProtocolDefinition(
-            request.target, writeParams.protocol!,
+            request.target, writeParams.protocol,
           );
           if (protocolDefinition) {
             const recordsWriteMessage = message as unknown as RecordsWriteMessage;
@@ -254,7 +254,7 @@ export class AgentDwnApi {
             );
             const isExternallyAuthored = authorDid !== request.target;
             const isRootRecord = !writeParams.parentContextId;
-            const rootPathSegment = writeParams.protocolPath!.split('/')[0];
+            const rootPathSegment = writeParams.protocolPath.split('/')[0];
             const isMultiParty = isMultiPartyContextFn(protocolDefinition, rootPathSegment);
 
             if (isExternallyAuthored && isRootRecord && isMultiParty) {
@@ -273,7 +273,7 @@ export class AgentDwnApi {
 
             const newParticipants = detectNewParticipantsFn({
               protocolDefinition,
-              protocolPath : writeParams.protocolPath!,
+              protocolPath : writeParams.protocolPath,
               recipient    : writeParams.recipient,
               tenantDid    : request.target,
               authorDid    : isExternallyAuthored ? authorDid : undefined,
@@ -322,7 +322,7 @@ export class AgentDwnApi {
                     tenantDid                     : request.target,
                     recipientDid                  : participantDid,
                     contextKeyData                : contextKeyPayload,
-                    sourceProtocol                : writeParams.protocol!,
+                    sourceProtocol                : writeParams.protocol,
                     sourceContextId               : rootContextId,
                     recipientKeyDeliveryPublicKey : recipientKey,
                   });

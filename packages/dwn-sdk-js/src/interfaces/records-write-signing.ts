@@ -51,7 +51,7 @@ export async function createAttestation(descriptorCid: string, signers?: Message
  */
 export async function createSignerSignature(input: {
   recordId: string,
-  contextId: string | undefined,
+  contextId: string,
   descriptorCid: string,
   attestation: GeneralJws | undefined,
   encryption: JweEncryption | undefined,

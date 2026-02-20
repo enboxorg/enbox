@@ -43,8 +43,8 @@ import { normalizeProtocolUrl, normalizeSchemaUrl, validateProtocolUrlNormalized
 
 export type RecordsWriteOptions = {
   recipient?: string;
-  protocol?: string;
-  protocolPath?: string;
+  protocol: string;
+  protocolPath: string;
   protocolRole?: string;
   schema?: string;
   tags?: RecordsWriteTags;
@@ -541,7 +541,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     // `signature` generation
     const signature = await createSignerSignature({
       recordId    : this._message.recordId,
-      contextId   : this._message.contextId,
+      contextId   : this._message.contextId!, // contextId is computed just above, always defined here
       descriptorCid,
       attestation : this._message.attestation,
       encryption  : this._message.encryption,
@@ -694,7 +694,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       }
     }
 
-    validateProtocolUrlNormalized(this.message.descriptor.protocol!);
+    validateProtocolUrlNormalized(this.message.descriptor.protocol);
     if (this.message.descriptor.schema !== undefined) {
       validateSchemaUrlNormalized(this.message.descriptor.schema);
     }
@@ -771,7 +771,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     // add additional indexes to optional values if given
     // TODO: index multiple attesters (https://github.com/enboxorg/enbox/issues/223)
     if (this.attesters.length > 0) { indexes.attester = this.attesters[0]; }
-    indexes.contextId = message.contextId!;
+    indexes.contextId = message.contextId;
 
     return indexes;
   }
@@ -838,7 +838,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
   /** Delegate to `createSignerSignature` in `records-write-signing.ts`. */
   public static async createSignerSignature(input: {
     recordId: string,
-    contextId: string | undefined,
+    contextId: string,
     descriptorCid: string,
     attestation: GeneralJws | undefined,
     encryption: JweEncryption | undefined,

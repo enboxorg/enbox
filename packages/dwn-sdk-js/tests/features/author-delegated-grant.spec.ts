@@ -209,6 +209,8 @@ export function testAuthorDelegatedGrant(): void {
         const recordsWrite = await RecordsWrite.create({
           signer         : Jws.createSigner(bob),
           delegatedGrant : grantToBob.dataEncodedMessage,
+          protocol       : 'http://test-protocol.xyz',
+          protocolPath   : 'testRecord',
           dataFormat     : 'application/octet-stream',
           data           : TestDataGenerator.randomBytes(10),
         });
@@ -243,6 +245,8 @@ export function testAuthorDelegatedGrant(): void {
         const recordsWrite = await RecordsWrite.create({
           signer         : Jws.createSigner(bob),
           delegatedGrant : grantToBob.dataEncodedMessage,
+          protocol       : 'http://test-protocol.xyz',
+          protocolPath   : 'testRecord',
           dataFormat     : 'application/octet-stream',
           data           : TestDataGenerator.randomBytes(10),
         });
