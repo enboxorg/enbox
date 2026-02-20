@@ -450,7 +450,7 @@ jobs:
   coverage:
     name: Coverage Check
     runs-on: ubuntu-latest
-    needs: [test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server]
+    needs: [test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server, test-browser]
     if: always() && !cancelled()
 
     steps:
@@ -466,8 +466,8 @@ jobs:
         run: |
           echo "## Coverage Report" > coverage-report.md
           echo "" >> coverage-report.md
-          echo "| Package | Line Coverage | Status |" >> coverage-report.md
-          echo "|---------|-------------|--------|" >> coverage-report.md
+          echo "| Package | Environment | Line Coverage | Status |" >> coverage-report.md
+          echo "|---------|-------------|---------------|--------|" >> coverage-report.md
 
           failed=false
           found_any=false
@@ -477,7 +477,18 @@ jobs:
             [ -f "$lcov_file" ] || continue
             found_any=true
 
-            pkg=$(echo "$lcov_file" | sed 's|coverage-artifacts/\([^/]*\)/.*|\1|')
+            dir_name=$(echo "$lcov_file" | sed 's|coverage-artifacts/\([^/]*\)/.*|\1|')
+
+            # Detect browser coverage directories (named *-browser)
+            if echo "$dir_name" | grep -q '\-browser$'; then
+              pkg=$(echo "$dir_name" | sed 's/-browser$//')
+              env_label="Browser"
+              is_browser=true
+            else
+              pkg="$dir_name"
+              env_label="Node"
+              is_browser=false
+            fi
 
             # Filter lcov to only count the package's own src/ files, skip
             # transitive dependency coverage (e.g. ../common/dist/...).
@@ -514,14 +525,18 @@ jobs:
 
             # Write shields.io endpoint JSON for this package
             mkdir -p coverage-badges
-            printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$coverage" "$badge_color" > "coverage-badges/${pkg}.json"
+            printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$coverage" "$badge_color" > "coverage-badges/${dir_name}.json"
 
-            if [ "$(echo "$coverage < $threshold" | bc -l)" = "1" ]; then
-              echo "| $pkg | ${coverage}% | :x: Below ${threshold}% |" >> coverage-report.md
+            # Browser coverage is informational — no threshold enforcement.
+            # Browser test suites are intentionally smaller subsets.
+            if [ "$is_browser" = true ]; then
+              echo "| $pkg | $env_label | ${coverage}% | :information_source: |" >> coverage-report.md
+            elif [ "$(echo "$coverage < $threshold" | bc -l)" = "1" ]; then
+              echo "| $pkg | $env_label | ${coverage}% | :x: Below ${threshold}% |" >> coverage-report.md
               echo "::error::Coverage for $pkg is ${coverage}%, below ${threshold}% threshold"
               failed=true
             else
-              echo "| $pkg | ${coverage}% | :white_check_mark: |" >> coverage-report.md
+              echo "| $pkg | $env_label | ${coverage}% | :white_check_mark: |" >> coverage-report.md
             fi
           done
 
@@ -537,6 +552,8 @@ jobs:
             else
               echo ":white_check_mark: **All packages meet the ${threshold}% coverage threshold.**" >> coverage-report.md
             fi
+            echo "" >> coverage-report.md
+            echo "_Browser coverage is informational only (subset of tests). Node coverage enforces the ${threshold}% threshold._" >> coverage-report.md
           fi
 
           cat coverage-report.md >> $GITHUB_STEP_SUMMARY
@@ -667,17 +684,36 @@ jobs:
         # the downloaded browser binaries match what vitest expects at runtime.
         run: bunx playwright install --with-deps chromium firefox webkit
 
-      - name: Run browser tests
+      - name: Run browser tests with coverage
         env:
           CI: true
         run: |
-          bun run --filter @enbox/common      test:browser
-          bun run --filter @enbox/crypto      test:browser
-          bun run --filter @enbox/dids        test:browser
-          bun run --filter @enbox/browser     test:browser
-          bun run --filter @enbox/dwn-sdk-js  test:browser
-          bun run --filter @enbox/agent       test:browser
-          bun run --filter @enbox/api         test:browser
+          bun run --filter @enbox/common      test:browser:coverage
+          bun run --filter @enbox/crypto      test:browser:coverage
+          bun run --filter @enbox/dids        test:browser:coverage
+          bun run --filter @enbox/browser     test:browser:coverage
+          bun run --filter @enbox/dwn-sdk-js  test:browser:coverage
+          bun run --filter @enbox/agent       test:browser:coverage
+          bun run --filter @enbox/api         test:browser:coverage
+
+      - name: Stage browser coverage
+        if: always()
+        run: |
+          mkdir -p coverage-staging/common-browser coverage-staging/crypto-browser coverage-staging/dids-browser coverage-staging/browser-browser coverage-staging/dwn-sdk-js-browser coverage-staging/agent-browser coverage-staging/api-browser
+          cp packages/common/coverage-browser/lcov.info coverage-staging/common-browser/lcov.info 2>/dev/null || true
+          cp packages/crypto/coverage-browser/lcov.info coverage-staging/crypto-browser/lcov.info 2>/dev/null || true
+          cp packages/dids/coverage-browser/lcov.info coverage-staging/dids-browser/lcov.info 2>/dev/null || true
+          cp packages/browser/coverage-browser/lcov.info coverage-staging/browser-browser/lcov.info 2>/dev/null || true
+          cp packages/dwn-sdk-js/coverage-browser/lcov.info coverage-staging/dwn-sdk-js-browser/lcov.info 2>/dev/null || true
+          cp packages/agent/coverage-browser/lcov.info coverage-staging/agent-browser/lcov.info 2>/dev/null || true
+          cp packages/api/coverage-browser/lcov.info coverage-staging/api-browser/lcov.info 2>/dev/null || true
+
+      - name: Upload browser coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-browser
+          path: coverage-staging/
 
   # ---------------------------------------------------------------------------
   # Gate job for branch protection — always runs so required checks pass even
