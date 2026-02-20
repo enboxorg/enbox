@@ -1,5 +1,11 @@
 # @enbox/dwn-sdk-js
 
+## 0.0.5
+
+### Patch Changes
+
+- Tighten ProtocolRuleSet types: replace `[key: string]: any` with typed union, use enum types for ProtocolActionRule.who and .can, extract ProtocolTagsDefinition, ProtocolTagSchema, and ProtocolSizeDefinition as named types
+
 ## 0.0.4
 
 ### Patch Changes
