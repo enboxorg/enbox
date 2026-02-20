@@ -28,7 +28,7 @@ export default defineConfig({
     // from this package's node_modules. Entries that can't be resolved produce
     // "Failed to resolve dependency" warnings and are silently skipped.
     include: [
-      // noble — CJS format, direct deps of @enbox/dwn-sdk-js
+      // noble — CJS/dual-format, direct deps of @enbox/dwn-sdk-js
       '@noble/ciphers/aes',
       '@noble/ciphers/chacha',
       '@noble/ciphers/crypto',
@@ -40,9 +40,15 @@ export default defineConfig({
       '@noble/curves/secp256k1',
       '@noble/ed25519',
       '@noble/secp256k1',
-      // CJS / mixed-format packages
+      // @js-temporal/polyfill — mixed CJS/ESM; its ESM entry imports jsbi (CJS).
+      // Pre-bundling lets Vite convert both to ESM before Firefox loads them.
+      '@js-temporal/polyfill',
+      // ajv — CJS; the precompiled validators import a deep runtime subpath
+      // that must also be pre-bundled (discovered mid-run otherwise).
       'ajv',
       'ajv/dist/2020.js',
+      'ajv/dist/runtime/ucs2length.js',
+      // CJS / mixed-format packages
       'eventemitter3',
       'level',
       'lodash',
