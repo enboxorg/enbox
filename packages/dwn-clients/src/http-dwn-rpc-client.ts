@@ -66,9 +66,10 @@ export class HttpDwnRpcClient implements DwnRpc {
     }
 
     // Materialise the response body before attaching to the reply.
-    // Bun (<=1.3.9) has a bug where resp.body.getReader() can intermittently
-    // return undefined, crashing DataStream.toBytes() in its finally block.
-    // Buffering via arrayBuffer() is a safe workaround.
+    // Bun has a bug where ReadableStream from fetch resp.body crashes in
+    // DataStream.toBytes() (reader.releaseLock() is undefined) when the
+    // stream is later consumed by the local DWN node (e.g. during sync).
+    // Buffering via arrayBuffer() avoids the broken getReader() path.
     // TODO: https://github.com/enboxorg/enbox/issues/90 — remove once Bun ships fix
     const { reply } = dwnRpcResponse.result;
     if (hasDataStream) {

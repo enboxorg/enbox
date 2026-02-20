@@ -328,10 +328,11 @@ export class HttpApi {
     }
 
     // Materialise the request body before passing to DWN.
-    // Bun (<=1.3.9) has a bug where req.body.getReader() can return undefined
-    // when the stream hasn't been fully received yet, causing DataStream.toBytes()
-    // to crash in its finally block.  Buffering via arrayBuffer() is a safe
-    // workaround until Bun fixes this.
+    // Bun's Bun.serve() returns a ReadableStream for req.body that is
+    // incompatible with the ReadableStream consumer code in dwn-sdk-js,
+    // causing DataStream.toBytes() to crash with "undefined is not a
+    // function" at reader.releaseLock().  Buffering via arrayBuffer()
+    // converts it into a well-behaved stream that dwn-sdk-js can consume.
     // TODO: https://github.com/enboxorg/enbox/issues/90 — remove once Bun ships fix
     const contentLength = req.headers.get('content-length');
     const transferEncoding = req.headers.get('transfer-encoding');
