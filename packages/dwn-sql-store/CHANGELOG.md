@@ -1,5 +1,12 @@
 # @enbox/dwn-sql-store
 
+## 0.0.7
+
+### Patch Changes
+
+- Updated dependencies [[`bb0bfa3`](https://github.com/enboxorg/enbox/commit/bb0bfa31917d296968d3e6f2a41daa9ce5d603b1)]:
+  - @enbox/dwn-sdk-js@0.0.7
+
 ## 0.0.6
 
 ### Patch Changes
