@@ -17,7 +17,7 @@ import type { DataEncodedRecordsWriteMessage, DateSort, RecordsCountMessage, Rec
 import type { MessagesFilter, MessagesReadMessage, MessagesSubscribeMessage } from '../../src/types/messages-types.js';
 import type { PermissionConditions, PermissionScope } from '../../src/types/permission-types.js';
 import type { PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js';
-import type { ProtocolDefinition, ProtocolsConfigureMessage, ProtocolsQueryMessage } from '../../src/types/protocols-types.js';
+import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage, ProtocolsQueryMessage } from '../../src/types/protocols-types.js';
 import type { RecordsSubscribeMessage, RecordsWriteMessage } from '../../src/types/records-types.js';
 
 import * as cbor from '@ipld/dag-cbor';
@@ -550,15 +550,15 @@ export class TestDataGenerator {
 
     if (input.encryptSymmetricKeyWithProtocolPathDerivedKey) {
       // locate the rule set corresponding the protocol path of the message
-      let protocolRuleSetSegment = protocolDefinition.structure;
+      let protocolRuleSetSegment: ProtocolRuleSet = protocolDefinition.structure as ProtocolRuleSet;
       for (const pathSegment of protocolPathSegments) {
-        protocolRuleSetSegment = protocolRuleSetSegment[pathSegment];
+        protocolRuleSetSegment = protocolRuleSetSegment[pathSegment] as ProtocolRuleSet;
       }
 
       const protocolPathDerivedPublicKeyJwk = protocolRuleSetSegment.$encryption?.publicKeyJwk;
       const protocolPathDerivationRootKeyId = protocolRuleSetSegment.$encryption?.rootKeyId;
       const protocolPathDerivedKeyEncryptionInput: KeyEncryptionInput = {
-        publicKeyId      : protocolPathDerivationRootKeyId,
+        publicKeyId      : protocolPathDerivationRootKeyId as string,
         publicKey        : protocolPathDerivedPublicKeyJwk!,
         derivationScheme : KeyDerivationScheme.ProtocolPath
       };

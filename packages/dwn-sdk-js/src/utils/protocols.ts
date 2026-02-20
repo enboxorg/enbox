@@ -115,25 +115,26 @@ export class Protocols {
         for (const key in ruleSet) {
           if (!key.startsWith('$')) {
             const currentPath = [...parentPath, key];
+            const childRuleSet = ruleSet[key] as ProtocolRuleSet;
 
             // Skip $ref nodes — they are governed by the referenced protocol's encryption keys.
             // Still recurse into children, which belong to the composing protocol.
-            if (ruleSet[key].$ref !== undefined) {
-              await injectKeysViaCallback(ruleSet[key], currentPath);
+            if (childRuleSet.$ref !== undefined) {
+              await injectKeysViaCallback(childRuleSet, currentPath);
               continue;
             }
 
             const publicKeyJwk = await keyDeriver.derivePublicKey(currentPath);
-            ruleSet[key].$encryption = {
+            childRuleSet.$encryption = {
               rootKeyId: keyDeriver.rootKeyId,
               publicKeyJwk,
             };
-            await injectKeysViaCallback(ruleSet[key], currentPath);
+            await injectKeysViaCallback(childRuleSet, currentPath);
           }
         }
       }
 
-      await injectKeysViaCallback(clone.structure, basePath);
+      await injectKeysViaCallback(clone.structure as ProtocolRuleSet, basePath);
       return clone;
     }
 
@@ -146,18 +147,19 @@ export class Protocols {
         // if we encounter a nested rule set (a property name that doesn't begin with '$'), recursively inject the `$encryption` property
         if (!key.startsWith('$')) {
           const derivedPrivateKey = await HdKey.derivePrivateKey(parentKey, [key]);
+          const childRuleSet = ruleSet[key] as ProtocolRuleSet;
 
           // Skip $ref nodes — they are governed by the referenced protocol's encryption keys.
           // Still recurse into children, which belong to the composing protocol.
-          if (ruleSet[key].$ref !== undefined) {
-            await addEncryptionProperty(ruleSet[key], derivedPrivateKey);
+          if (childRuleSet.$ref !== undefined) {
+            await addEncryptionProperty(childRuleSet, derivedPrivateKey);
             continue;
           }
 
           const publicKeyJwk = await X25519.getPublicKey({ key: derivedPrivateKey.derivedPrivateKey });
 
-          ruleSet[key].$encryption = { rootKeyId, publicKeyJwk };
-          await addEncryptionProperty(ruleSet[key], derivedPrivateKey);
+          childRuleSet.$encryption = { rootKeyId, publicKeyJwk };
+          await addEncryptionProperty(childRuleSet, derivedPrivateKey);
         }
       }
     }
@@ -169,7 +171,7 @@ export class Protocols {
       rootKeyId
     };
     const protocolLevelDerivedKey = await HdKey.derivePrivateKey(rootKey, [KeyDerivationScheme.ProtocolPath, protocolDefinition.protocol]);
-    await addEncryptionProperty(clone.structure, protocolLevelDerivedKey);
+    await addEncryptionProperty(clone.structure as ProtocolRuleSet, protocolLevelDerivedKey);
 
     return clone;
   }

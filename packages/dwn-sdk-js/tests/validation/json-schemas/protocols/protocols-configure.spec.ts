@@ -21,7 +21,7 @@ describe('ProtocolsConfigure schema definition', () => {
         email: {
           $actions: [
             {
-              who : 'unknown',
+              who : 'unknown' as any, // intentionally invalid to test JSON Schema validation
               can : [ProtocolAction.Create]
             }
           ]

@@ -105,9 +105,11 @@ export type ProtocolActionRule = {
   /**
    * May be 'anyone' | 'author' | 'recipient'.
    * If `who` === 'anyone', then `of` must be omitted. Otherwise `of` must be present.
-   * Mutually exclusive with `role`
+   * Mutually exclusive with `role`.
+   *
+   * Accepts both enum values (`ProtocolActor.Anyone`) and string literals (`'anyone'`).
    */
-  who?: string,
+  who?: ProtocolActor | `${ProtocolActor}` | (string & {});
 
   /**
    * The protocol path of a role record type marked with $role: true.
@@ -126,7 +128,7 @@ export type ProtocolActionRule = {
    * See {ProtocolAction} for possible values.
    * 'read' authorizes read, query, and subscribe access.
    */
-  can: string[];
+  can: (ProtocolAction | `${ProtocolAction}` | (string & {}))[];
 };
 /**
  * Config for protocol-path encryption scheme.
@@ -143,6 +145,65 @@ export type ProtocolPathEncryption = {
    */
   publicKeyJwk: PublicKeyJwk;
 };
+
+/**
+ * Size constraints for records at a given protocol path.
+ */
+export type ProtocolSizeDefinition = {
+  min?: number;
+  max?: number;
+};
+
+/**
+ * Tag rules for records at a given protocol path. Each non-`$`-prefixed property
+ * is a JSON Schema object constraining that tag's value.
+ */
+export type ProtocolTagsDefinition = {
+  /** Array of tag names that must be present on every record. */
+  $requiredTags?: string[];
+  /** When `false` (default), only tags explicitly listed are allowed. */
+  $allowUndefinedTags?: boolean;
+  /** JSON Schema definitions for individual tags. */
+  [tag: string]: ProtocolTagSchema | string[] | boolean | undefined;
+};
+
+/**
+ * A JSON Schema object constraining a single tag value.
+ * Supports the subset of JSON Schema used by DWN tag validation.
+ */
+export type ProtocolTagSchema = {
+  type: 'string' | 'number' | 'integer' | 'boolean' | 'array';
+  items?: { type: 'string' | 'number' | 'integer' };
+  contains?: { type: 'string' | 'number' | 'integer' };
+  enum?: (string | number | boolean)[];
+  minimum?: number;
+  maximum?: number;
+  exclusiveMinimum?: number;
+  exclusiveMaximum?: number;
+  minLength?: number;
+  maxLength?: number;
+  minItems?: number;
+  maxItems?: number;
+  uniqueItems?: boolean;
+  minContains?: number;
+  maxContains?: number;
+};
+
+/**
+ * Union of all value types that can appear as properties of a `ProtocolRuleSet`.
+ * This includes:
+ * - `$`-prefixed directive values (`$encryption`, `$actions`, `$role`, `$ref`, `$size`, `$tags`)
+ * - Child `ProtocolRuleSet` entries (non-`$` keys)
+ */
+type ProtocolRuleSetValue =
+  | ProtocolRuleSet
+  | ProtocolActionRule[]
+  | ProtocolPathEncryption
+  | ProtocolTagsDefinition
+  | ProtocolSizeDefinition
+  | boolean
+  | string
+  | undefined;
 
 export type ProtocolRuleSet = {
   /**
@@ -179,25 +240,18 @@ export type ProtocolRuleSet = {
   /**
    * If $size is set, the record size in bytes must be within the limits.
    */
-  $size?: {
-    min?: number,
-    max?: number
-  }
+  $size?: ProtocolSizeDefinition;
 
   /**
    * If $tags is set, the record must conform to the tag rules.
    */
-  $tags?: {
-    /** array of required tags */
-    $requiredTags?: string[],
-    /** allow properties other than those explicitly listed. defaults to false  */
-    $allowUndefinedTags?: boolean;
+  $tags?: ProtocolTagsDefinition;
 
-    [key: string]: any;
-  }
-
-  // JSON Schema verifies that properties other than properties prefixed with $ will actually have type ProtocolRuleSet
-  [key: string]: any;
+  /**
+   * Non-`$`-prefixed keys are nested child `ProtocolRuleSet` entries.
+   * At runtime, JSON Schema validation ensures only valid child rule sets appear here.
+   */
+  [key: string]: ProtocolRuleSetValue;
 };
 
 export type ProtocolsConfigureMessage = GenericMessage & {
