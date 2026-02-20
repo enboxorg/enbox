@@ -12,6 +12,9 @@ COPY tsconfig.json ./
 # Copy scripts directory (needed for build)
 COPY scripts/ ./scripts/
 
+# Copy build directory (browser-bundle.js is referenced by package build scripts)
+COPY build/ ./build/
+
 # Copy all packages (since dwn-server depends on other packages in the monorepo)
 COPY packages/ ./packages/
 

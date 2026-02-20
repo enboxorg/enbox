@@ -32,6 +32,7 @@ jobs:
           filters: |
             dwn-server:
               - 'packages/dwn-server/**'
+              - 'build/**'
               - 'fly.toml'
 
   deploy-dwn-server:
