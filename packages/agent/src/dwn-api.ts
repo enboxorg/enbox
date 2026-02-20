@@ -3,6 +3,7 @@ import type {
   DwnConfig,
   EncryptionInput,
   EncryptionKeyDeriver,
+  KeyDecrypter,
   ProtocolDefinition,
   ProtocolsQueryReply,
   RecordsQueryReply,
@@ -63,6 +64,7 @@ import {
   encryptAndComputeCid as encryptAndComputeCidFn,
   getEncryptionKeyDeriver as getEncryptionKeyDeriverFn,
   getEncryptionKeyInfo as getEncryptionKeyInfoFn,
+  getKeyDecrypter as getKeyDecrypterFn,
   ivLength as ivLengthFn,
   maybeDecryptReply as maybeDecryptReplyFn,
 } from './dwn-encryption.js';
@@ -70,6 +72,7 @@ import {
 // Import extracted protocol utilities
 import {
   detectNewParticipants as detectNewParticipantsFn,
+  hasRelationalReadAccess as hasRelationalReadAccessFn,
   isMultiPartyContext as isMultiPartyContextFn,
 } from './protocol-utils.js';
 
@@ -878,7 +881,75 @@ export class AgentDwnApi {
   }
 
   /**
-   * Fetches a protocol definition from the local DWN, with caching.
+   * Resolves the keyAgreement verification method for the given DID and returns
+   * the key ID, key URI, and public key JWK.
+   *
+   * @param didUri - The DID URI to look up
+   */
+  private async getEncryptionKeyInfo(
+    didUri: string
+  ): Promise<{ keyId: string; keyUri: KeyIdentifier; publicKeyJwk: PublicKeyJwk }> {
+    return getEncryptionKeyInfoFn(this.agent, didUri);
+  }
+
+  /**
+   * Constructs a ProtocolPath KeyDecrypter for the given DID.
+   *
+   * @param didUri - The DID URI to build a decrypter for
+   */
+  private async getKeyDecrypter(
+    didUri: string
+  ): Promise<KeyDecrypter> {
+    return getKeyDecrypterFn(this.agent, didUri);
+  }
+
+  /**
+   * Checks if a protocol path represents a multi-party context.
+   *
+   * @param protocolDefinition - The full protocol definition
+   * @param rootProtocolPath - The root protocol path to check
+   */
+  private isMultiPartyContext(
+    protocolDefinition: ProtocolDefinition,
+    rootProtocolPath: string,
+  ): boolean {
+    return isMultiPartyContextFn(protocolDefinition, rootProtocolPath);
+  }
+
+  /**
+   * Checks if any `$actions` rule in the protocol grants read access
+   * via `who: '<actorType>'` and `of: '<path>'`.
+   *
+   * @param actorType - The actor type to check ('author', 'recipient', or undefined for any)
+   * @param ofPath - The protocol path to check
+   * @param protocolDefinition - The protocol definition
+   */
+  private hasRelationalReadAccess(
+    actorType: 'author' | 'recipient' | undefined,
+    ofPath: string,
+    protocolDefinition: ProtocolDefinition,
+  ): boolean {
+    return hasRelationalReadAccessFn(actorType, ofPath, protocolDefinition);
+  }
+
+  /**
+   * Analyses a record write to determine which DIDs need context key delivery.
+   *
+   * @param params - Parameters for participant detection
+   * @returns Set of DIDs that need context key delivery
+   */
+  public detectNewParticipants(params: {
+    protocolDefinition: ProtocolDefinition;
+    protocolPath: string;
+    recipient?: string;
+    tenantDid: string;
+    authorDid?: string;
+  }): Set<string> {
+    return detectNewParticipantsFn(params);
+  }
+
+  /**
+    * Fetches a protocol definition from the local DWN, with caching.
    * Returns undefined if the protocol is not installed.
    *
    * @param tenantDid - The tenant DID to query
