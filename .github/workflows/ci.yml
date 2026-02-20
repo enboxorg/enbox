@@ -646,11 +646,29 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Browser tests: run Vitest browser mode with Playwright (Chromium + Firefox + WebKit)
+  # Packages are split into 3 shards by test-file count (~25/25/22) so they
+  # run in parallel, cutting wall-clock time from ~6 min to ~3 min.
   # ---------------------------------------------------------------------------
   test-browser:
-    name: 'Test: Browser'
+    name: 'Test: Browser (${{ matrix.shard.name }})'
     runs-on: ubuntu-latest
     needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          # Shard 1 — crypto: 25 browser test files
+          - name: crypto
+            packages: '@enbox/common @enbox/crypto'
+            coverage-dirs: common crypto
+          # Shard 2 — dwn-sdk-js: 25 browser test files
+          - name: dwn-sdk-js
+            packages: '@enbox/dwn-sdk-js'
+            coverage-dirs: dwn-sdk-js
+          # Shard 3 — remaining: dids(11) + browser(1) + agent(3) + api(1) = 16 files
+          - name: dids-agent-api
+            packages: '@enbox/dids @enbox/browser @enbox/agent @enbox/api'
+            coverage-dirs: dids browser agent api
 
     steps:
       - name: Checkout repository
@@ -693,37 +711,32 @@ jobs:
         # the final step to fail the job if tests actually broke.
         continue-on-error: true
         run: |
-          bun run --filter @enbox/common      test:browser:coverage
-          bun run --filter @enbox/crypto      test:browser:coverage
-          bun run --filter @enbox/dids        test:browser:coverage
-          bun run --filter @enbox/browser     test:browser:coverage
-          bun run --filter @enbox/dwn-sdk-js  test:browser:coverage
-          bun run --filter @enbox/agent       test:browser:coverage
-          bun run --filter @enbox/api         test:browser:coverage
+          exit_code=0
+          for pkg in ${{ matrix.shard.packages }}; do
+            bun run --filter "$pkg" test:browser:coverage || exit_code=$?
+          done
+          exit $exit_code
 
       - name: Stage browser coverage
         if: always()
         run: |
-          mkdir -p coverage-staging/common-browser coverage-staging/crypto-browser coverage-staging/dids-browser coverage-staging/browser-browser coverage-staging/dwn-sdk-js-browser coverage-staging/agent-browser coverage-staging/api-browser
-          cp packages/common/coverage-browser/lcov.info coverage-staging/common-browser/lcov.info 2>/dev/null || true
-          cp packages/crypto/coverage-browser/lcov.info coverage-staging/crypto-browser/lcov.info 2>/dev/null || true
-          cp packages/dids/coverage-browser/lcov.info coverage-staging/dids-browser/lcov.info 2>/dev/null || true
-          cp packages/browser/coverage-browser/lcov.info coverage-staging/browser-browser/lcov.info 2>/dev/null || true
-          cp packages/dwn-sdk-js/coverage-browser/lcov.info coverage-staging/dwn-sdk-js-browser/lcov.info 2>/dev/null || true
-          cp packages/agent/coverage-browser/lcov.info coverage-staging/agent-browser/lcov.info 2>/dev/null || true
-          cp packages/api/coverage-browser/lcov.info coverage-staging/api-browser/lcov.info 2>/dev/null || true
+          for dir in ${{ matrix.shard.coverage-dirs }}; do
+            mkdir -p "coverage-staging/${dir}-browser"
+            cp "packages/${dir}/coverage-browser/lcov.info" \
+               "coverage-staging/${dir}-browser/lcov.info" 2>/dev/null || true
+          done
 
       - name: Upload browser coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-browser
+          name: coverage-browser-${{ matrix.shard.name }}
           path: coverage-staging/
 
       - name: Fail if browser tests failed
         if: always() && steps.browser-tests.outcome == 'failure'
         run: |
-          echo "::error::Browser tests failed (coverage was still collected)"
+          echo "::error::Browser tests failed in shard '${{ matrix.shard.name }}' (coverage was still collected)"
           exit 1
 
   # ---------------------------------------------------------------------------
