@@ -45,6 +45,14 @@ export function isCrossProtocolRef(ref: string): boolean {
 }
 
 /**
+ * Extracts the last segment of a protocolPath — i.e. the type name.
+ * e.g. `'thread/comment'` → `'comment'`, `'note'` → `'note'`.
+ */
+export function getTypeName(protocolPath: string): string {
+  return protocolPath.split('/').slice(-1)[0];
+}
+
+/**
  * Gets the rule set at a given protocol path within a protocol definition's structure tree.
  * Returns `undefined` if the path does not exist.
  */
