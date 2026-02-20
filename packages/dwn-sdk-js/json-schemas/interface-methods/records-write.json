@@ -1,6 +1,6 @@
 {
-  "$id": "https://identity.foundation/dwn/json-schemas/records-write.json",
-  "$ref": "https://identity.foundation/dwn/json-schemas/records-write-unidentified.json",
+  "$id": "https://enbox.org/dwn/json-schemas/records-write.json",
+  "$ref": "https://enbox.org/dwn/json-schemas/records-write-unidentified.json",
   "unevaluatedProperties": false,
   "type": "object",
   "required": [

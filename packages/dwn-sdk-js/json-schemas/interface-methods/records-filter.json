@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://identity.foundation/dwn/json-schemas/records-filter.json",
+  "$id": "https://enbox.org/dwn/json-schemas/records-filter.json",
   "type": "object",
   "minProperties": 1,
   "additionalProperties": false,
@@ -13,24 +13,24 @@
     },
     "author": {
       "oneOf": [{
-        "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/did"
+        "$ref": "https://enbox.org/dwn/json-schemas/defs.json#/$defs/did"
       },{
         "type": "array",
         "items": {
-          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/did"
+          "$ref": "https://enbox.org/dwn/json-schemas/defs.json#/$defs/did"
         }
       }]
     },
     "attester": {
-      "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/did"
+      "$ref": "https://enbox.org/dwn/json-schemas/defs.json#/$defs/did"
     },
     "recipient": {
       "oneOf": [{
-        "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/did"
+        "$ref": "https://enbox.org/dwn/json-schemas/defs.json#/$defs/did"
       },{
         "type": "array",
         "items": {
-          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/did"
+          "$ref": "https://enbox.org/dwn/json-schemas/defs.json#/$defs/did"
         }
       }]
     },
@@ -66,9 +66,9 @@
             }
           },
           {
-            "$ref": "https://identity.foundation/dwn/json-schemas/string-range-filter.json"
+            "$ref": "https://enbox.org/dwn/json-schemas/string-range-filter.json"
           }, {
-            "$ref": "https://identity.foundation/dwn/json-schemas/number-range-filter.json"
+            "$ref": "https://enbox.org/dwn/json-schemas/number-range-filter.json"
           }
         ]
       }
@@ -86,7 +86,7 @@
       "type": "string"
     },
     "dataSize": {
-      "$ref": "https://identity.foundation/dwn/json-schemas/number-range-filter.json"
+      "$ref": "https://enbox.org/dwn/json-schemas/number-range-filter.json"
     },
     "dataCid": {
       "type": "string"
@@ -97,10 +97,10 @@
       "additionalProperties": false,
       "properties": {
         "from": {
-          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
+          "$ref": "https://enbox.org/dwn/json-schemas/defs.json#/$defs/date-time"
         },
         "to": {
-          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
+          "$ref": "https://enbox.org/dwn/json-schemas/defs.json#/$defs/date-time"
         }
       }
     },
@@ -110,10 +110,10 @@
       "additionalProperties": false,
       "properties": {
         "from": {
-          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
+          "$ref": "https://enbox.org/dwn/json-schemas/defs.json#/$defs/date-time"
         },
         "to": {
-          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
+          "$ref": "https://enbox.org/dwn/json-schemas/defs.json#/$defs/date-time"
         }
       }
     },
@@ -123,10 +123,10 @@
       "additionalProperties": false,
       "properties": {
         "from": {
-          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
+          "$ref": "https://enbox.org/dwn/json-schemas/defs.json#/$defs/date-time"
         },
         "to": {
-          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
+          "$ref": "https://enbox.org/dwn/json-schemas/defs.json#/$defs/date-time"
         }
       }
     }

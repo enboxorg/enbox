@@ -1,7 +1,7 @@
 {
-  "$id": "https://identity.foundation/dwn/json-schemas/public-jwk.json",
+  "$id": "https://enbox.org/dwn/json-schemas/public-jwk.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$ref": "https://identity.foundation/dwn/json-schemas/general-jwk.json",
+  "$ref": "https://enbox.org/dwn/json-schemas/general-jwk.json",
   "not": {
     "anyOf": [
       {

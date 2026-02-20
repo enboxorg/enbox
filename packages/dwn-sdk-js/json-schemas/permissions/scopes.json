@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://identity.foundation/dwn/json-schemas/permissions/scopes.json",
+  "$id": "https://enbox.org/dwn/json-schemas/permissions/scopes.json",
   "type": "object",
   "$defs": {
     "messages-read-scope": {

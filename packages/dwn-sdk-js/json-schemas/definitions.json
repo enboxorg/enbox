@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://identity.foundation/dwn/json-schemas/defs.json",
+  "$id": "https://enbox.org/dwn/json-schemas/defs.json",
   "type": "object",
   "$defs": {
     "base64url": {

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://identity.foundation/dwn/json-schemas/records-query.json",
+  "$id": "https://enbox.org/dwn/json-schemas/records-query.json",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -8,7 +8,7 @@
   ],
   "properties": {
     "authorization": {
-      "$ref": "https://identity.foundation/dwn/json-schemas/authorization-delegated-grant.json"
+      "$ref": "https://enbox.org/dwn/json-schemas/authorization-delegated-grant.json"
     },
     "descriptor": {
       "type": "object",
@@ -33,10 +33,10 @@
           "type": "string"
         },
         "messageTimestamp": {
-          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
+          "$ref": "https://enbox.org/dwn/json-schemas/defs.json#/$defs/date-time"
         },
         "filter": {
-          "$ref": "https://identity.foundation/dwn/json-schemas/records-filter.json"
+          "$ref": "https://enbox.org/dwn/json-schemas/records-filter.json"
         },
         "pagination": {
           "type": "object",
@@ -47,7 +47,7 @@
               "minimum": 1
             },
             "cursor": {
-              "$ref": "https://identity.foundation/dwn/json-schemas/pagination-cursor.json"
+              "$ref": "https://enbox.org/dwn/json-schemas/pagination-cursor.json"
             }
           }
         },

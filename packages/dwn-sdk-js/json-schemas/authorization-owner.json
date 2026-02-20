@@ -1,20 +1,20 @@
 {
-  "$id": "https://identity.foundation/dwn/json-schemas/authorization-owner.json",
+  "$id": "https://enbox.org/dwn/json-schemas/authorization-owner.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "signature": {
-      "$ref": "https://identity.foundation/dwn/json-schemas/general-jws.json"
+      "$ref": "https://enbox.org/dwn/json-schemas/general-jws.json"
     },
     "authorDelegatedGrant": {
-      "$ref": "https://identity.foundation/dwn/json-schemas/records-write-data-encoded.json"
+      "$ref": "https://enbox.org/dwn/json-schemas/records-write-data-encoded.json"
     },
     "ownerSignature": {
-      "$ref": "https://identity.foundation/dwn/json-schemas/general-jws.json"
+      "$ref": "https://enbox.org/dwn/json-schemas/general-jws.json"
     },
     "ownerDelegatedGrant": {
-      "$ref": "https://identity.foundation/dwn/json-schemas/records-write-data-encoded.json"
+      "$ref": "https://enbox.org/dwn/json-schemas/records-write-data-encoded.json"
     },
     "authorKeyDeliveryPublicKey": {
       "type": "object",
@@ -25,7 +25,7 @@
           "type": "string"
         },
         "publicKeyJwk": {
-          "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
+          "$ref": "https://enbox.org/dwn/json-schemas/public-jwk.json"
         }
       }
     }

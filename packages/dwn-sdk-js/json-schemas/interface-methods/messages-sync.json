@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://identity.foundation/dwn/json-schemas/messages-sync.json",
+  "$id": "https://enbox.org/dwn/json-schemas/messages-sync.json",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -9,7 +9,7 @@
   ],
   "properties": {
     "authorization": {
-      "$ref": "https://identity.foundation/dwn/json-schemas/authorization.json"
+      "$ref": "https://enbox.org/dwn/json-schemas/authorization.json"
     },
     "descriptor": {
       "type": "object",
@@ -30,7 +30,7 @@
           "type": "string"
         },
         "messageTimestamp": {
-          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
+          "$ref": "https://enbox.org/dwn/json-schemas/defs.json#/$defs/date-time"
         },
         "action": {
           "enum": ["root", "subtree", "leaves"],

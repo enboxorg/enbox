@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://identity.foundation/dwn/json-schemas/records-delete.json",
+  "$id": "https://enbox.org/dwn/json-schemas/records-delete.json",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -9,7 +9,7 @@
   ],
   "properties": {
     "authorization": {
-      "$ref": "https://identity.foundation/dwn/json-schemas/authorization-delegated-grant.json"
+      "$ref": "https://enbox.org/dwn/json-schemas/authorization-delegated-grant.json"
     },
     "descriptor": {
       "type": "object",
@@ -35,7 +35,7 @@
           "type": "string"
         },
         "messageTimestamp": {
-          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
+          "$ref": "https://enbox.org/dwn/json-schemas/defs.json#/$defs/date-time"
         },
         "recordId": {
           "type": "string"

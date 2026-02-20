@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://identity.foundation/dwn/json-schemas/permission-grant-data.json",
+  "$id": "https://enbox.org/dwn/json-schemas/permission-grant-data.json",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -12,7 +12,7 @@
       "type": "string"
     },
     "dateExpires": {
-      "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
+      "$ref": "https://enbox.org/dwn/json-schemas/defs.json#/$defs/date-time"
     },
     "requestId": {
       "type": "string"
@@ -21,10 +21,10 @@
       "type": "boolean"
     },
     "scope": {
-      "$ref": "https://identity.foundation/dwn/json-schemas/permissions/defs.json#/$defs/scope"
+      "$ref": "https://enbox.org/dwn/json-schemas/permissions/defs.json#/$defs/scope"
     },
     "conditions": {
-      "$ref": "https://identity.foundation/dwn/json-schemas/permissions/defs.json#/$defs/conditions"
+      "$ref": "https://enbox.org/dwn/json-schemas/permissions/defs.json#/$defs/conditions"
     }
   }
 }

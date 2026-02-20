@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://identity.foundation/dwn/json-schemas/messages-subscribe.json",
+  "$id": "https://enbox.org/dwn/json-schemas/messages-subscribe.json",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -9,7 +9,7 @@
   ],
   "properties": {
     "authorization": {
-      "$ref": "https://identity.foundation/dwn/json-schemas/authorization.json"
+      "$ref": "https://enbox.org/dwn/json-schemas/authorization.json"
     },
     "descriptor": {
       "type": "object",
@@ -39,7 +39,7 @@
         "filters": {
           "type": "array",
           "items": {
-            "$ref": "https://identity.foundation/dwn/json-schemas/messages-filter.json"
+            "$ref": "https://enbox.org/dwn/json-schemas/messages-filter.json"
           }
         },
         "permissionGrantId": {

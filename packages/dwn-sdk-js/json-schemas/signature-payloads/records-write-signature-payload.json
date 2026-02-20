@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://identity.foundation/dwn/json-schemas/signature-payloads/records-write-signature-payload.json",
+  "$id": "https://enbox.org/dwn/json-schemas/signature-payloads/records-write-signature-payload.json",
   "type": "object",
   "additionalProperties": false,
   "required": [

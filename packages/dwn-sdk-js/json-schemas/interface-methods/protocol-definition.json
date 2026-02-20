@@ -1,5 +1,5 @@
 {
-  "$id": "https://identity.foundation/dwn/json-schemas/protocol-definition.json",
+  "$id": "https://enbox.org/dwn/json-schemas/protocol-definition.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
@@ -55,7 +55,7 @@
       "type": "object",
       "patternProperties": {
         ".*": {
-          "$ref": "https://identity.foundation/dwn/json-schemas/protocol-rule-set.json"
+          "$ref": "https://enbox.org/dwn/json-schemas/protocol-rule-set.json"
         }
       }
     }

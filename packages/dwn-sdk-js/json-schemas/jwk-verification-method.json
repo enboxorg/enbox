@@ -1,5 +1,5 @@
 {
-  "$id": "https://identity.foundation/dwn/json-schemas/jwk-verification-method.json",
+  "$id": "https://enbox.org/dwn/json-schemas/jwk-verification-method.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
@@ -20,10 +20,10 @@
       ]
     },
     "controller": {
-      "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/did"
+      "$ref": "https://enbox.org/dwn/json-schemas/defs.json#/$defs/did"
     },
     "publicKeyJwk": {
-      "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
+      "$ref": "https://enbox.org/dwn/json-schemas/public-jwk.json"
     }
   }
 }
