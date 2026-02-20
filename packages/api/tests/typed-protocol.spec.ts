@@ -149,9 +149,7 @@ describe('TypedProtocol API', () => {
       it('should configure the protocol on the local DWN', async () => {
         // Already configured in beforeEach — query to verify
         const { status, protocols } = await dwnAlice.protocols.query({
-          message: {
-            filter: { protocol: TodoProtocol.definition.protocol },
-          },
+          filter: { protocol: TodoProtocol.definition.protocol },
         });
         expect(status.code).toBe(200);
         expect(protocols.length).toBe(1);
@@ -166,9 +164,9 @@ describe('TypedProtocol API', () => {
 
         expect(status.code).toBe(202);
         expect(record).toBeDefined();
-        expect(record!.protocolPath).toBe('list');
-        expect(record!.schema).toBe('https://example.com/schemas/list');
-        expect(record!.protocol).toBe('https://example.com/protocols/todo');
+        expect(record.protocolPath).toBe('list');
+        expect(record.schema).toBe('https://example.com/schemas/list');
+        expect(record.protocol).toBe('https://example.com/protocols/todo');
       });
 
       it('should write a record at a nested path', async () => {
@@ -180,16 +178,14 @@ describe('TypedProtocol API', () => {
 
         // Write a task nested under the list
         const { status, record: taskRecord } = await typed.write('list/task', {
-          data    : { title: 'Review PR', completed: false },
-          message : {
-            parentContextId: listRecord!.contextId,
-          },
+          data            : { title: 'Review PR', completed: false },
+          parentContextId : listRecord.contextId,
         });
 
         expect(status.code).toBe(202);
         expect(taskRecord).toBeDefined();
-        expect(taskRecord!.protocolPath).toBe('list/task');
-        expect(taskRecord!.schema).toBe('https://example.com/schemas/task');
+        expect(taskRecord.protocolPath).toBe('list/task');
+        expect(taskRecord.schema).toBe('https://example.com/schemas/task');
       });
 
       it('should read back written JSON data with correct types', async () => {
@@ -197,7 +193,7 @@ describe('TypedProtocol API', () => {
         const { record } = await typed.write('list', { data: inputData });
         expect(record).toBeDefined();
 
-        const readBack = await record!.data.json<TodoSchemaMap['list']>();
+        const readBack = await record.data.json<TodoSchemaMap['list']>();
         expect(readBack.name).toBe('Shopping');
         expect(readBack.description).toBe('Grocery list');
       });
@@ -213,7 +209,7 @@ describe('TypedProtocol API', () => {
 
         expect(status.code).toBe(200);
         expect(records).toBeDefined();
-        expect(records!.length).toBe(2);
+        expect(records.length).toBe(2);
       });
 
       it('should apply additional filters', async () => {
@@ -224,21 +220,21 @@ describe('TypedProtocol API', () => {
 
         // Write tasks under the list
         await typed.write('list/task', {
-          data    : { title: 'Task 1', completed: false },
-          message : { parentContextId: listRecord!.contextId },
+          data            : { title: 'Task 1', completed: false },
+          parentContextId : listRecord.contextId,
         });
         await typed.write('list/task', {
-          data    : { title: 'Task 2', completed: true },
-          message : { parentContextId: listRecord!.contextId },
+          data            : { title: 'Task 2', completed: true },
+          parentContextId : listRecord.contextId,
         });
 
         // Query tasks under this specific list context
         const { records } = await typed.query('list/task', {
-          filter: { contextId: listRecord!.contextId },
+          filter: { contextId: listRecord.contextId },
         });
 
         expect(records).toBeDefined();
-        expect(records!.length).toBe(2);
+        expect(records.length).toBe(2);
       });
     });
 
@@ -250,7 +246,7 @@ describe('TypedProtocol API', () => {
         expect(written).toBeDefined();
 
         const { status, record: readRecord } = await typed.read('list', {
-          filter: { recordId: written!.id },
+          filter: { recordId: written.id },
         });
 
         expect(status.code).toBe(200);
@@ -268,13 +264,13 @@ describe('TypedProtocol API', () => {
         expect(record).toBeDefined();
 
         const { status: deleteStatus } = await typed.delete('list', {
-          recordId: record!.id,
+          recordId: record.id,
         });
         expect(deleteStatus.code).toBe(202);
 
         // Verify it's gone
         const { records } = await typed.query('list');
-        expect(records!.length).toBe(0);
+        expect(records.length).toBe(0);
       });
     });
 
@@ -287,7 +283,7 @@ describe('TypedProtocol API', () => {
         expect(status.code).toBe(200);
         expect(liveQuery).toBeDefined();
 
-        liveQuery!.on('create', (record) => {
+        liveQuery.on('create', (record) => {
           received.push(record.id);
         });
 
@@ -300,7 +296,7 @@ describe('TypedProtocol API', () => {
         expect(received.length).toBeGreaterThanOrEqual(1);
 
         // Clean up
-        await liveQuery!.close();
+        await liveQuery.close();
       });
     });
   });

@@ -4,6 +4,7 @@
  */
 /// <reference types="@enbox/dwn-sdk-js" />
 
+import type { DidMethodResolver } from '@enbox/dids';
 import type {
   BearerIdentity,
   DwnDataEncodedRecordsWriteMessage,
@@ -16,11 +17,13 @@ import type {
   Web5Agent,
 } from '@enbox/agent';
 
-import { DwnRegistrar } from '@enbox/dwn-clients';
-import { WalletConnect, Web5UserAgent } from '@enbox/agent';
+import { AnonymousDwnApi, WalletConnect, Web5UserAgent } from '@enbox/agent';
+import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
+import { DwnRegistrar, Web5RpcClient } from '@enbox/dwn-clients';
 
 import { DidApi } from './did-api.js';
 import { DwnApi } from './dwn-api.js';
+import { DwnReaderApi } from './dwn-reader-api.js';
 import { PermissionGrant } from './permission-grant.js';
 import { VcApi } from './vc-api.js';
 
@@ -65,6 +68,28 @@ export type ConnectOptions = Omit<WalletConnectOptions, 'permissionRequests'> & 
    * This is used to create the {@link ConnectPermissionRequest} for the wallet connect flow.
    */
   permissionRequests: ConnectPermissionRequest[];
+};
+
+/**
+ * Options for creating an anonymous (read-only) Web5 instance via {@link Web5.anonymous}.
+ *
+ * @beta
+ */
+export type Web5AnonymousOptions = {
+  /** Override the default DID method resolvers. Defaults to `[DidDht, DidJwk, DidKey, DidWeb]`. */
+  didResolvers?: DidMethodResolver[];
+};
+
+/**
+ * The result of calling {@link Web5.anonymous}.
+ *
+ * Contains only a read-only `dwn` property — no `did`, `vc`, or `agent`.
+ *
+ * @beta
+ */
+export type Web5AnonymousApi = {
+  /** A read-only DWN API for querying public data on remote DWNs. */
+  dwn: DwnReaderApi;
 };
 
 /** Optional overrides that can be provided when calling {@link Web5.connect}. */
@@ -238,6 +263,46 @@ export class Web5 {
     this.did = new DidApi({ agent, connectedDid });
     this.dwn = new DwnApi({ agent, connectedDid, delegateDid });
     this.vc = new VcApi({ agent, connectedDid });
+  }
+
+  /**
+   * Creates a lightweight, read-only Web5 instance for querying public DWN data.
+   *
+   * No identity, vault, password, or signing keys are required. The returned
+   * API supports querying and reading published records and protocols from any
+   * remote DWN, using **unsigned** (anonymous) DWN messages.
+   *
+   * @param options - Optional configuration overrides.
+   * @returns A {@link Web5AnonymousApi} with a read-only `dwn` property.
+   *
+   * @example
+   * ```ts
+   * const { dwn } = Web5.anonymous();
+   *
+   * const { records } = await dwn.records.query({
+   *   from: 'did:dht:alice...',
+   *   filter: { protocol: 'https://social.example/posts', protocolPath: 'post' },
+   * });
+   *
+   * for (const record of records) {
+   *   console.log(record.id, await record.data.text());
+   * }
+   * ```
+   *
+   * @beta
+   */
+  static anonymous(options?: Web5AnonymousOptions): Web5AnonymousApi {
+    const didResolver = new UniversalResolver({
+      didResolvers : options?.didResolvers ?? [DidDht, DidJwk, DidKey, DidWeb],
+      cache        : new DidResolverCacheMemory(),
+    });
+
+    const rpcClient = new Web5RpcClient();
+    const anonymousDwn = new AnonymousDwnApi({ didResolver, rpcClient });
+
+    return {
+      dwn: new DwnReaderApi(anonymousDwn),
+    };
   }
 
   /**
