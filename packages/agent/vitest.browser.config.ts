@@ -40,7 +40,13 @@ export default defineConfig({
     // See packages/dwn-sdk-js/vitest.browser.config.ts for full explanation.
     noDiscovery: true,
     include: [
+      // --- CJS packages reachable from agent browser test imports ---
+      'abstract-level',
+      'level',
       'ms',
+      // @isaacs/ttlcache — CJS; transitive dep via @enbox/crypto -> @enbox/common.
+      // Use Vite's nested-dep `>` syntax to resolve through workspace symlinks.
+      '@enbox/crypto > @enbox/common > @isaacs/ttlcache',
     ],
     holdUntilCrawlEnd: true,
   },
