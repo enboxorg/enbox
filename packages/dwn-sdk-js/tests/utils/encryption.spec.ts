@@ -1,8 +1,13 @@
+import type { KeyDecrypter } from '../../src/types/encryption-types.js';
 import type { PublicKeyJwk } from '../../src/types/jose-types.js';
+import type { RecordsWriteMessage } from '../../src/types/records-types.js';
 
 import { ArrayUtility } from '../../src/utils/array.js';
 import { DataStream } from '../../src/index.js';
+import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Encoder } from '../../src/utils/encoder.js';
+import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
+import { Records } from '../../src/utils/records.js';
 import { TestDataGenerator } from './test-data-generator.js';
 import { X25519 } from '@enbox/crypto';
 import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
@@ -299,6 +304,217 @@ describe('Encryption', () => {
 
       expect(ArrayUtility.byteArraysEqual(unwrapped1, cek)).toBe(true);
       expect(ArrayUtility.byteArraysEqual(unwrapped2, cek)).toBe(true);
+    });
+
+    it('should attach derivedPublicKey for ProtocolContext scheme', async () => {
+      const recipientPrivateKey = await X25519.generateKey();
+      const recipientPublicKey = await X25519.getPublicKey({ key: recipientPrivateKey }) as PublicKeyJwk;
+
+      const cek = TestDataGenerator.randomBytes(32);
+      const iv = TestDataGenerator.randomBytes(12);
+      const tag = TestDataGenerator.randomBytes(16);
+
+      const jwe = await Encryption.buildJwe(
+        {
+          key                  : cek,
+          initializationVector : iv,
+          authenticationTag    : tag,
+          keyEncryptionInputs  : [{
+            publicKeyId      : 'did:example:alice#enc',
+            publicKey        : recipientPublicKey,
+            derivationScheme : KeyDerivationScheme.ProtocolContext,
+          }],
+        },
+        tag,
+      );
+
+      // ProtocolContext recipients should have derivedPublicKey set to the input public key
+      expect(jwe.recipients).toHaveLength(1);
+      expect(jwe.recipients[0].header.derivedPublicKey).toBeDefined();
+      expect(jwe.recipients[0].header.derivedPublicKey!.kty).toBe(recipientPublicKey.kty);
+    });
+
+    it('should not attach derivedPublicKey for non-ProtocolContext schemes', async () => {
+      const recipientPrivateKey = await X25519.generateKey();
+      const recipientPublicKey = await X25519.getPublicKey({ key: recipientPrivateKey }) as PublicKeyJwk;
+
+      const cek = TestDataGenerator.randomBytes(32);
+      const iv = TestDataGenerator.randomBytes(12);
+      const tag = TestDataGenerator.randomBytes(16);
+
+      const jwe = await Encryption.buildJwe(
+        {
+          key                  : cek,
+          initializationVector : iv,
+          authenticationTag    : tag,
+          keyEncryptionInputs  : [{
+            publicKeyId      : 'did:example:alice#enc',
+            publicKey        : recipientPublicKey,
+            derivationScheme : KeyDerivationScheme.ProtocolPath,
+          }],
+        },
+        tag,
+      );
+
+      // Non-ProtocolContext recipients should NOT have derivedPublicKey
+      expect(jwe.recipients).toHaveLength(1);
+      expect(jwe.recipients[0].header.derivedPublicKey).toBeUndefined();
+    });
+  });
+
+  describe('error handling', () => {
+    it('should throw on corrupted ciphertext (wrong tag)', async () => {
+      const key = TestDataGenerator.randomBytes(32);
+      const iv = TestDataGenerator.randomBytes(12);
+      const plaintext = TestDataGenerator.randomBytes(64);
+
+      const { ciphertext } = await Encryption.aeadEncrypt(ContentEncryptionAlgorithm.A256GCM, key, iv, plaintext);
+
+      // Use a wrong tag
+      const wrongTag = TestDataGenerator.randomBytes(16);
+
+      await expect(
+        Encryption.aeadDecrypt(ContentEncryptionAlgorithm.A256GCM, key, iv, ciphertext, wrongTag)
+      ).rejects.toThrow();
+    });
+
+    it('should throw on corrupted ciphertext stream (wrong tag)', async () => {
+      const key = TestDataGenerator.randomBytes(32);
+      const iv = TestDataGenerator.randomBytes(12);
+      const plaintext = TestDataGenerator.randomBytes(64);
+      const plaintextStream = DataStream.fromBytes(plaintext);
+
+      const { ciphertextStream } = await Encryption.aeadEncryptStream(
+        ContentEncryptionAlgorithm.A256GCM, key, iv, plaintextStream
+      );
+
+      // Use a wrong tag to trigger decryption error
+      const wrongTag = TestDataGenerator.randomBytes(16);
+
+      await expect(
+        Encryption.aeadDecryptStream(ContentEncryptionAlgorithm.A256GCM, key, iv, ciphertextStream, wrongTag)
+      ).rejects.toThrow();
+    });
+
+    it('should throw on decryption with wrong key', async () => {
+      const key = TestDataGenerator.randomBytes(32);
+      const wrongKey = TestDataGenerator.randomBytes(32);
+      const iv = TestDataGenerator.randomBytes(12);
+      const plaintext = TestDataGenerator.randomBytes(64);
+
+      const { ciphertext, tag } = await Encryption.aeadEncrypt(ContentEncryptionAlgorithm.A256GCM, key, iv, plaintext);
+
+      await expect(
+        Encryption.aeadDecrypt(ContentEncryptionAlgorithm.A256GCM, wrongKey, iv, ciphertext, tag)
+      ).rejects.toThrow();
+    });
+
+    it('should throw for unsupported algorithm in aeadEncrypt', async () => {
+      const key = TestDataGenerator.randomBytes(32);
+      const iv = TestDataGenerator.randomBytes(12);
+      const plaintext = TestDataGenerator.randomBytes(64);
+
+      await expect(
+        Encryption.aeadEncrypt('INVALID_ALG' as ContentEncryptionAlgorithm, key, iv, plaintext)
+      ).rejects.toThrow('Unsupported content encryption algorithm');
+    });
+
+    it('should throw for unsupported algorithm in aeadDecrypt', async () => {
+      const key = TestDataGenerator.randomBytes(32);
+      const iv = TestDataGenerator.randomBytes(12);
+      const ciphertext = TestDataGenerator.randomBytes(64);
+      const tag = TestDataGenerator.randomBytes(16);
+
+      await expect(
+        Encryption.aeadDecrypt('INVALID_ALG' as ContentEncryptionAlgorithm, key, iv, ciphertext, tag)
+      ).rejects.toThrow('Unsupported content encryption algorithm');
+    });
+  });
+
+  describe('Records.decrypt', () => {
+    it('should throw when message has no encryption property', async () => {
+      // Create a minimal RecordsWriteMessage without encryption
+      const messageWithoutEncryption = {
+        descriptor: {
+          interface        : 'Records',
+          method           : 'Write',
+          dataCid          : 'bafyreib3e4uj32nq5ql3q',
+          dataSize         : 100,
+          dateCreated      : '2024-01-01T00:00:00.000000Z',
+          messageTimestamp : '2024-01-01T00:00:00.000000Z',
+          dataFormat       : 'application/json',
+        },
+        // no encryption property
+      } as unknown as RecordsWriteMessage;
+
+      const dummyKey = await X25519.generateKey();
+      const cipherStream = DataStream.fromBytes(TestDataGenerator.randomBytes(32));
+
+      await expect(
+        Records.decrypt(messageWithoutEncryption, {
+          rootKeyId         : 'did:example:alice#enc',
+          derivationScheme  : KeyDerivationScheme.ProtocolPath,
+          derivedPrivateKey : dummyKey,
+        } as any, cipherStream)
+      ).rejects.toThrow(DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound);
+    });
+
+    it('should propagate errors thrown by KeyDecrypter.decrypt()', async () => {
+      // Build a minimal encrypted message that has enough structure to reach the callback path
+      const recipientPrivateKey = await X25519.generateKey();
+      const recipientPublicKey = await X25519.getPublicKey({ key: recipientPrivateKey }) as PublicKeyJwk;
+
+      const cek = TestDataGenerator.randomBytes(32);
+      const iv = TestDataGenerator.randomBytes(12);
+      const plaintext = TestDataGenerator.randomBytes(64);
+
+      const { tag } = await Encryption.aeadEncrypt(ContentEncryptionAlgorithm.A256GCM, cek, iv, plaintext);
+      const jwe = await Encryption.buildJwe(
+        {
+          key                  : cek,
+          initializationVector : iv,
+          authenticationTag    : tag,
+          keyEncryptionInputs  : [{
+            publicKeyId      : 'did:example:alice#enc',
+            publicKey        : recipientPublicKey,
+            derivationScheme : KeyDerivationScheme.ProtocolPath,
+          }],
+        },
+        tag,
+      );
+
+      // Construct a minimal RecordsWriteMessage with the JWE encryption property
+      const message = {
+        descriptor: {
+          interface        : 'Records',
+          method           : 'Write',
+          dataCid          : 'bafyreib3e4uj32nq5ql3q',
+          dataSize         : 100,
+          dateCreated      : '2024-01-01T00:00:00.000000Z',
+          messageTimestamp : '2024-01-01T00:00:00.000000Z',
+          dataFormat       : 'application/json',
+          protocol         : 'https://example.com/protocol',
+          protocolPath     : 'foo',
+        },
+        encryption : jwe,
+        recordId   : 'test-record-id',
+      } as unknown as RecordsWriteMessage;
+
+      // Create a KeyDecrypter that throws an error
+      const failingDecrypter: KeyDecrypter = {
+        rootKeyId        : 'did:example:alice#enc',
+        derivationScheme : KeyDerivationScheme.ProtocolPath,
+        decrypt          : async (): Promise<Uint8Array> => {
+          throw new Error('KeyDecrypter: key derivation failed');
+        },
+      };
+
+      const cipherStream = DataStream.fromBytes(TestDataGenerator.randomBytes(64));
+
+      // The error from KeyDecrypter.decrypt() should propagate directly
+      await expect(
+        Records.decrypt(message, failingDecrypter, cipherStream)
+      ).rejects.toThrow('KeyDecrypter: key derivation failed');
     });
   });
 });
