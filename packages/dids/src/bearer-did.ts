@@ -1,10 +1,10 @@
 import type {
-  DsaApi,
   EnclosedSignParams,
   EnclosedVerifyParams,
   Jwk,
   KeyIdentifier,
   KeyImporterExporter,
+  KeyManager,
   KmsExportKeyParams,
   KmsImportKeyParams,
   Signer,
@@ -77,13 +77,13 @@ export class BearerDid {
    *
    * Each DID method requires at least one key be present in the provided `keyManager`.
    */
-  keyManager: DsaApi;
+  keyManager: KeyManager;
 
   constructor({ uri, document, metadata, keyManager }: {
     uri: string,
     document: DidDocument,
     metadata: DidMetadata,
-    keyManager: DsaApi
+    keyManager: KeyManager
   }) {
     this.uri = uri;
     this.document = document;
@@ -238,7 +238,7 @@ export class BearerDid {
    *         keys for any verification method are missing in the key manager.
    */
   public static async import({ portableDid, keyManager = new LocalKeyManager() }: {
-    keyManager?: DsaApi & KeyImporterExporter<KmsImportKeyParams, KeyIdentifier, KmsExportKeyParams>;
+    keyManager?: KeyManager & KeyImporterExporter<KmsImportKeyParams, KeyIdentifier, KmsExportKeyParams>;
     portableDid: PortableDid;
   }): Promise<BearerDid> {
 

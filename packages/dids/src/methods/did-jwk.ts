@@ -1,9 +1,9 @@
 import type {
-  DsaApi,
   InferKeyGeneratorAlgorithm,
   Jwk,
   KeyIdentifier,
   KeyImporterExporter,
+  KeyManager,
   KmsExportKeyParams,
   KmsImportKeyParams,
 } from '@enbox/crypto';
@@ -76,7 +76,7 @@ export interface DidJwkCreateOptions<TKms> extends DidCreateOptions<TKms> {
   /**
    * Optionally specify the algorithm to be used for key generation.
    */
-  algorithm?: TKms extends DsaApi
+  algorithm?: TKms extends KeyManager
     ? InferKeyGeneratorAlgorithm<TKms>
     : InferKeyGeneratorAlgorithm<LocalKeyManager>;
 
@@ -193,7 +193,7 @@ export class DidJwk extends DidMethod {
    * @param params.options - Optional parameters that can be specified when creating a new DID.
    * @returns A Promise resolving to a {@link BearerDid} object representing the new DID.
    */
-  public static async create<TKms extends DsaApi | undefined = undefined>({
+  public static async create<TKms extends KeyManager | undefined = undefined>({
     keyManager = new LocalKeyManager(),
     options = {}
   }: {
@@ -305,7 +305,7 @@ export class DidJwk extends DidMethod {
    * @throws An error if the DID document does not contain exactly one verification method.
    */
   public static async import({ portableDid, keyManager = new LocalKeyManager() }: {
-    keyManager?: DsaApi & KeyImporterExporter<KmsImportKeyParams, KeyIdentifier, KmsExportKeyParams>;
+    keyManager?: KeyManager & KeyImporterExporter<KmsImportKeyParams, KeyIdentifier, KmsExportKeyParams>;
     portableDid: PortableDid;
   }): Promise<BearerDid> {
     // Verify the DID method is supported.

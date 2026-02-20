@@ -19,7 +19,6 @@ import type {
   KeyBytesDeriver,
   KeyConverter,
   KeyWrapper,
-  KmsGetKeyUriParams,
   Pbkdf2Params,
   PrivateKeyToBytesParams,
   PublicKeyToBytesParams,
@@ -414,11 +413,6 @@ export class AgentCryptoApi implements CryptoApi<
     privateKey.kid ??= await computeJwkThumbprint({ jwk: privateKey });
 
     return privateKey;
-  }
-
-  // ! TODO: Remove this once the `Dsa` interface is updated in @enbox/crypto to remove KMS-specific methods.
-  public async getKeyUri(_params: KmsGetKeyUriParams): Promise<string> {
-    throw new Error('Method not implemented.');
   }
 
   public async getPublicKey({ key }:

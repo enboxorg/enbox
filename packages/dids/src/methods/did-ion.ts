@@ -1,10 +1,17 @@
-import type { DsaApi, Jwk, KeyIdentifier, KeyImporterExporter, KmsExportKeyParams, KmsImportKeyParams } from '@enbox/crypto';
 import type {
   IonDocumentModel,
   IonPublicKeyModel,
   IonPublicKeyPurpose,
   JwkEs256k,
 } from '@decentralized-identity/ion-sdk';
+import type {
+  Jwk,
+  KeyIdentifier,
+  KeyImporterExporter,
+  KeyManager,
+  KmsExportKeyParams,
+  KmsImportKeyParams,
+} from '@enbox/crypto';
 
 import { computeJwkThumbprint, LocalKeyManager } from '@enbox/crypto';
 import { IonDid, IonRequest } from '@decentralized-identity/ion-sdk';
@@ -364,7 +371,7 @@ export class DidIon extends DidMethod {
    * @param params.options - Optional parameters that can be specified when creating a new DID.
    * @returns A Promise resolving to a {@link BearerDid} object representing the new DID.
    */
-  public static async create<TKms extends DsaApi | undefined = undefined>({
+  public static async create<TKms extends KeyManager | undefined = undefined>({
     keyManager = new LocalKeyManager(),
     options = {}
   }: {
@@ -517,7 +524,7 @@ export class DidIon extends DidMethod {
    *         any verification method are missing in the key manager.
    */
   public static async import({ portableDid, keyManager = new LocalKeyManager() }: {
-    keyManager?: DsaApi & KeyImporterExporter<KmsImportKeyParams, KeyIdentifier, KmsExportKeyParams>;
+    keyManager?: KeyManager & KeyImporterExporter<KmsImportKeyParams, KeyIdentifier, KmsExportKeyParams>;
     portableDid: PortableDid;
   }): Promise<BearerDid> {
     // Verify the DID method is supported.
