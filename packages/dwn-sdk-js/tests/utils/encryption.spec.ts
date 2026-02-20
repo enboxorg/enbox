@@ -1,8 +1,8 @@
 import { ArrayUtility } from '../../src/utils/array.js';
-import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
 import { DataStream } from '../../src/index.js';
 import { TestDataGenerator } from './test-data-generator.js';
 import { X25519 } from '@enbox/crypto';
+import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
 import { describe, expect, it } from 'bun:test';
 
 describe('Encryption', () => {

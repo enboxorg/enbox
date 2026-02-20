@@ -1,10 +1,10 @@
 import type { Jwk } from '@enbox/crypto';
-import { KeyDerivationScheme } from './hd-key.js';
 import type { PublicKeyJwk } from '../types/jose-types.js';
 
-import { AesGcm, AesKw, ConcatKdf, X25519, XChaCha20Poly1305 } from '@enbox/crypto';
 import { concatBytes } from '@noble/ciphers/utils';
 import { Encoder } from './encoder.js';
+import { KeyDerivationScheme } from './hd-key.js';
+import { AesGcm, AesKw, ConcatKdf, X25519, XChaCha20Poly1305 } from '@enbox/crypto';
 
 /**
  * Content encryption algorithms supported by the DWN.
@@ -299,9 +299,9 @@ export class Encryption {
     // 3. AES-256 Key Unwrap
     const kekJwk: Jwk = { kty: 'oct', k: Encoder.bytesToBase64Url(kek), alg: 'A256KW' };
     const unwrappedJwk = await AesKw.unwrapKey({
-      wrappedKeyBytes      : wrappedKey,
-      wrappedKeyAlgorithm  : 'A256GCM',
-      decryptionKey        : kekJwk,
+      wrappedKeyBytes     : wrappedKey,
+      wrappedKeyAlgorithm : 'A256GCM',
+      decryptionKey       : kekJwk,
     });
 
     return Encoder.base64UrlToBytes(unwrappedJwk.k!);
@@ -321,7 +321,7 @@ export class Encryption {
   ): Promise<JweEncryption> {
     const enc = encryptionInput.algorithm ?? ContentEncryptionAlgorithm.A256GCM;
     const protectedHeader: JweProtectedHeader = {
-      alg : KeyAgreementAlgorithm.EcdhEsA256kw,
+      alg: KeyAgreementAlgorithm.EcdhEsA256kw,
       enc,
     };
 
@@ -358,9 +358,9 @@ export class Encryption {
     }
 
     return {
-      protected  : protectedHeaderBase64url,
-      iv         : Encoder.bytesToBase64Url(encryptionInput.initializationVector),
-      tag        : Encoder.bytesToBase64Url(tag),
+      protected : protectedHeaderBase64url,
+      iv        : Encoder.bytesToBase64Url(encryptionInput.initializationVector),
+      tag       : Encoder.bytesToBase64Url(tag),
       recipients,
     };
   }

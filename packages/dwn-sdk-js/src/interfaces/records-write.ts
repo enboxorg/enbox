@@ -1,5 +1,4 @@
 import type { GeneralJws } from '../types/jws-types.js';
-import type { EncryptionInput, JweEncryption } from '../utils/encryption.js';
 import type { KeyValues } from '../types/query-types.js';
 import type { MessageInterface } from '../types/message-interface.js';
 import type { MessageSigner } from '../types/signer.js';
@@ -14,6 +13,7 @@ import type {
   RecordsWriteSignaturePayload,
   RecordsWriteTags
 } from '../types/records-types.js';
+import type { EncryptionInput, JweEncryption } from '../utils/encryption.js';
 import type { GenericMessage, GenericSignaturePayload } from '../types/message-types.js';
 
 import { Cid } from '../utils/cid.js';

@@ -26,7 +26,6 @@ import { DataStream } from '../../src/utils/data-stream.js';
 import { DidKey } from '@enbox/dids';
 import { ed25519 } from '../../src/jose/algorithms/signing/ed25519.js';
 import { Encoder } from '../../src/utils/encoder.js';
-import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
 import { Jws } from '../../src/utils/jws.js';
 import { MessagesRead } from '../../src/interfaces/messages-read.js';
 import { MessagesSubscribe } from '../../src/interfaces/messages-subscribe.js';
@@ -44,6 +43,7 @@ import { removeUndefinedProperties } from '../../src/utils/object.js';
 import { Secp256k1 } from '../../src/utils/secp256k1.js';
 import { sha256 } from 'multiformats/hashes/sha2';
 import { Time } from '../../src/utils/time.js';
+import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
 import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
 import { HdKey, KeyDerivationScheme } from '../../src/utils/hd-key.js';
 

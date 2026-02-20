@@ -1,5 +1,5 @@
-import type { Jwk } from '@enbox/crypto';
 import type { DerivedPrivateJwk } from './hd-key.js';
+import type { Jwk } from '@enbox/crypto';
 import type { KeyDecrypter } from '../types/encryption-types.js';
 import type { Filter, KeyValues, StartsWithFilter } from '../types/query-types.js';
 import type { GenericMessage, GenericSignaturePayload, MessageSort } from '../types/message-types.js';

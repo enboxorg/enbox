@@ -35,17 +35,17 @@ import { PermissionConditionPublication } from '../../src/types/permission-types
 import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { RecordsWriteHandler } from '../../src/handlers/records-write.js';
-import { X25519 } from '@enbox/crypto';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
+import { X25519 } from '@enbox/crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
 import { DataStoreLevel, DwnConstant, DwnInterfaceName, DwnMethodName, KeyDerivationScheme, MessageStoreLevel, PermissionsProtocol, RecordsDelete, RecordsQuery } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnError, DwnErrorCode } from '../../src/core/dwn-error.js';
-import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
 
 export function testRecordsWriteHandler(): void {
   describe('RecordsWriteHandler.handle()', () => {
