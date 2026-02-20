@@ -53,6 +53,10 @@
       "types": "./dist/types/index.d.ts",
       "import": "./dist/esm/index.js"
     },
+    "./advanced": {
+      "types": "./dist/types/advanced.d.ts",
+      "import": "./dist/esm/advanced.js"
+    },
     "./browser": {
       "types": "./dist/types/index.d.ts",
       "import": "./dist/browser.mjs"

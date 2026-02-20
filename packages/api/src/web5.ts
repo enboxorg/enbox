@@ -5,6 +5,7 @@
 /// <reference types="@enbox/dwn-sdk-js" />
 
 import type { DidMethodResolver } from '@enbox/dids';
+import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type {
   BearerIdentity,
   DwnDataEncodedRecordsWriteMessage,
@@ -17,6 +18,8 @@ import type {
   Web5Agent,
 } from '@enbox/agent';
 
+import type { SchemaMap, TypedProtocol } from './protocol-types.js';
+
 import { AnonymousDwnApi, WalletConnect, Web5UserAgent } from '@enbox/agent';
 import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 import { DwnRegistrar, Web5RpcClient } from '@enbox/dwn-clients';
@@ -25,6 +28,7 @@ import { DidApi } from './did-api.js';
 import { DwnApi } from './dwn-api.js';
 import { DwnReaderApi } from './dwn-reader-api.js';
 import { PermissionGrant } from './permission-grant.js';
+import { TypedWeb5 } from './typed-web5.js';
 import { VcApi } from './vc-api.js';
 
 /** Override defaults configured during the technical preview phase. */
@@ -252,8 +256,8 @@ export class Web5 {
   /** Exposed instance to the DID APIs, allow users to create and resolve DIDs  */
   did: DidApi;
 
-  /** Exposed instance to the DWN APIs, allow users to read/write records */
-  dwn: DwnApi;
+  /** Internal DWN API instance. Use {@link Web5.using} for protocol-scoped access. */
+  private _dwn: DwnApi;
 
   /** Exposed instance to the VC APIs, allow users to issue, present and verify VCs */
   vc: VcApi;
@@ -261,8 +265,38 @@ export class Web5 {
   constructor({ agent, connectedDid, delegateDid }: Web5Params) {
     this.agent = agent;
     this.did = new DidApi({ agent, connectedDid });
-    this.dwn = new DwnApi({ agent, connectedDid, delegateDid });
+    this._dwn = new DwnApi({ agent, connectedDid, delegateDid });
     this.vc = new VcApi({ agent, connectedDid });
+  }
+
+  /**
+   * Returns a {@link TypedWeb5} instance scoped to the given protocol.
+   *
+   * This is the **primary developer interface** for interacting with
+   * protocol-backed records. It auto-injects the protocol URI, protocolPath,
+   * and schema into every operation, and provides compile-time path
+   * autocompletion plus typed data payloads via the schema map.
+   *
+   * @param protocol - A typed protocol created via `defineProtocol()`.
+   * @returns A `TypedWeb5` instance bound to the given protocol.
+   *
+   * @example
+   * ```ts
+   * const social = web5.using(SocialProtocol);
+   *
+   * await social.configure();
+   *
+   * const { record } = await social.records.write('friend', {
+   *   data: { did: 'did:example:alice', alias: 'Alice' },
+   * });
+   *
+   * const { records } = await social.records.query('friend');
+   * ```
+   */
+  public using<D extends ProtocolDefinition, M extends SchemaMap>(
+    protocol: TypedProtocol<D, M>,
+  ): TypedWeb5<D, M> {
+    return new TypedWeb5<D, M>(this._dwn, protocol);
   }
 
   /**

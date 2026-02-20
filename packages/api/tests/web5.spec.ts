@@ -69,8 +69,8 @@ describe('web5 api', () => {
         });
         expect(web5).toBeDefined();
         expect(web5).toHaveProperty('did');
-        expect(web5).toHaveProperty('dwn');
         expect(web5).toHaveProperty('vc');
+        expect(web5).toHaveProperty('using');
       });
 
       it('supports a single agent with multiple Web5 instances and different DIDs', async () => {
@@ -123,7 +123,7 @@ describe('web5 api', () => {
           agent        : testHarness.agent,
           connectedDid : careerIdentity.did.uri,
         });
-        const careerResult = await web5Career.dwn.records.write({
+        const careerResult = await (web5Career as any)._dwn.records.write({
           data       : 'Hello, world!',
           schema     : 'foo/bar',
           dataFormat : 'text/plain',
@@ -140,7 +140,7 @@ describe('web5 api', () => {
           agent        : testHarness.agent,
           connectedDid : socialIdentity.did.uri,
         });
-        const socialResult = await web5Social.dwn.records.write({
+        const socialResult = await (web5Social as any)._dwn.records.write({
           data       : 'Hello, everyone!',
           schema     : 'foo/bar',
           dataFormat : 'text/plain',
@@ -467,7 +467,7 @@ describe('web5 api', () => {
         expect(delegateDid).toBe(app.uri);
 
         // use the grant to write a record
-        const writeResult = await web5.dwn.records.write({
+        const writeResult = await (web5 as any)._dwn.records.write({
           data         : 'Hello, world!',
           protocol     : protocol.protocol,
           protocolPath : 'foo',
@@ -479,7 +479,7 @@ describe('web5 api', () => {
         const writeSigner = Jws.getSignerDid(writeResult.record.authorization.signature.signatures[0]);
         expect(writeSigner).toBe(delegateDid);
 
-        const readResult = await web5.dwn.records.read({
+        const readResult = await (web5 as any)._dwn.records.read({
           protocol : protocol.protocol,
           filter   : { recordId: writeResult.record.id }
         });
@@ -492,14 +492,14 @@ describe('web5 api', () => {
 
         // Because no grants exist for query, it will not fail but instead author AND sign as the delegate DID.
         // It will only return results if they are public, here it will return none. This is tested elsewhere.
-        const noPermissionQuery = await web5.dwn.records.query({
+        const noPermissionQuery = await (web5 as any)._dwn.records.query({
           filter: { protocol: protocol.protocol }
         });
         expect(noPermissionQuery.status.code).toBe(200);
         expect(noPermissionQuery.records).toHaveLength(0);
 
         try {
-          await web5.dwn.records.delete({
+          await (web5 as any)._dwn.records.delete({
             protocol : protocol.protocol,
             recordId : writeResult.record.id
           });
@@ -543,14 +543,14 @@ describe('web5 api', () => {
         });
 
         // attempt to delete using the grant
-        const deleteResult = await web5.dwn.records.delete({
+        const deleteResult = await (web5 as any)._dwn.records.delete({
           protocol : protocol.protocol,
           recordId : writeResult.record.id
         });
         expect(deleteResult.status.code).toBe(202);
 
         // attempt to query using the grant
-        const queryResult = await web5.dwn.records.query({
+        const queryResult = await (web5 as any)._dwn.records.query({
           filter: { protocol: protocol.protocol }
         });
         expect(queryResult.status.code).toBe(200);

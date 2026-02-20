@@ -192,9 +192,10 @@ describe('Record', () => {
       });
 
       // connect with grants
-      ({ web5: { dwn: delegateDwn } } = await Web5.connect({ walletConnectOptions: {
+      const connectResult = await Web5.connect({ walletConnectOptions: {
         permissionRequests: [ grantRequest ]
-      } as any }));
+      } as any });
+      delegateDwn = (connectResult.web5 as any)._dwn;
     });
 
     it('should update a record with a delegated grant', async () => {
