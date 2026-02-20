@@ -596,9 +596,8 @@ export class DwnApi {
           // if we don't find a delegated grant, we will attempt to query signing as the delegated DID
           // This is to allow the API caller to query public records without needing to impersonate the delegate.
           //
-          // NOTE: When a read-only DwnApi is implemented, callers should use that instead when they don't have an explicit permission.
-          // This should fail if a permission is not found.
-          // TODO: https://github.com/enboxorg/enbox/issues/898
+          // NOTE: For anonymous/public queries without explicit permissions, callers can use `DwnReaderApi` via `Web5.anonymous()`.
+          // See: https://github.com/enboxorg/enbox/issues/898
           try {
             const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
               connectedDid : this.connectedDid,
@@ -689,9 +688,8 @@ export class DwnApi {
           // if we don't find a delegated grant, we will attempt to read signing as the delegated DID
           // This is to allow the API caller to read public records without needing to impersonate the delegate.
           //
-          // NOTE: When a read-only DwnApi is implemented, callers should use that instead when they don't have an explicit permission.
-          // This should fail if a permission is not found.
-          // TODO: https://github.com/enboxorg/enbox/issues/898
+          // NOTE: For anonymous/public reads without explicit permissions, callers can use `DwnReaderApi` via `Web5.anonymous()`.
+          // See: https://github.com/enboxorg/enbox/issues/898
 
           try {
             const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
@@ -806,9 +804,8 @@ export class DwnApi {
           // if we don't find a delegated grant, we will attempt to subscribe signing as the delegated DID
           // This is to allow the API caller to subscribe to public records without needing to impersonate the delegate.
           //
-          // NOTE: When a read-only DwnApi is implemented, callers should use that instead when they don't have an explicit permission.
-          // This should fail if a permission is not found.
-          // TODO: https://github.com/enboxorg/enbox/issues/898
+          // NOTE: For anonymous/public subscriptions without explicit permissions, callers can use `DwnReaderApi` via `Web5.anonymous()`.
+          // See: https://github.com/enboxorg/enbox/issues/898
           try {
             const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
               connectedDid : this.connectedDid,
