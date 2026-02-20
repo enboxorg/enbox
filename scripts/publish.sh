@@ -25,8 +25,10 @@ PACKAGES=(
   "packages/crypto"
   "packages/dids"
   "packages/dwn-sdk-js"
+  "packages/dwn-clients"
   "packages/agent"
   "packages/api"
+  "packages/protocols"
   "packages/browser"
   "packages/dwn-sql-store"
 )
