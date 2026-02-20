@@ -13,11 +13,11 @@ import { Encoder } from '../../src/utils/encoder.js';
 import { Jws } from '../../src/utils/jws.js';
 import { Protocols } from '../../src/utils/protocols.js';
 import { Records } from '../../src/utils/records.js';
-import { Secp256k1 } from '../../src/utils/secp256k1.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
+import { X25519 } from '@enbox/crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnErrorCode, Message, ProtocolsConfigure, RecordsDelete, RecordsQuery, RecordsRead, Time } from '../../src/index.js';
@@ -1602,8 +1602,8 @@ export function testProtocolComposition(): void {
       let encryptionRootKeyId: string;
 
       beforeAll(async () => {
-        const { privateJwk } = await Secp256k1.generateKeyPair();
-        encryptionPrivateJwk = privateJwk;
+        const privateKey = await X25519.generateKey();
+        encryptionPrivateJwk = privateKey as PrivateKeyJwk;
         encryptionRootKeyId = 'did:example:alice#enc';
       });
 
@@ -1674,10 +1674,10 @@ export function testProtocolComposition(): void {
           derivationScheme : KeyDerivationScheme.ProtocolPath,
           derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicKeyJwk> => {
             calledPaths.push([...fullDerivationPath]);
-            const privateKeyBytes = Secp256k1.privateJwkToBytes(encryptionPrivateJwk);
+            const privateKeyBytes = await X25519.privateKeyToBytes({ privateKey: encryptionPrivateJwk });
             const derivedPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(privateKeyBytes, fullDerivationPath);
-            const derivedPublicKeyBytes = await Secp256k1.getPublicKey(derivedPrivateKeyBytes);
-            return Secp256k1.publicKeyToJwk(derivedPublicKeyBytes);
+            const derivedPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: derivedPrivateKeyBytes });
+            return await X25519.getPublicKey({ key: derivedPrivateKeyJwk }) as PublicKeyJwk;
           },
         };
 
@@ -1729,10 +1729,10 @@ export function testProtocolComposition(): void {
           rootKeyId        : encryptionRootKeyId,
           derivationScheme : KeyDerivationScheme.ProtocolPath,
           derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicKeyJwk> => {
-            const privateKeyBytes = Secp256k1.privateJwkToBytes(encryptionPrivateJwk);
+            const privateKeyBytes = await X25519.privateKeyToBytes({ privateKey: encryptionPrivateJwk });
             const derivedPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(privateKeyBytes, fullDerivationPath);
-            const derivedPublicKeyBytes = await Secp256k1.getPublicKey(derivedPrivateKeyBytes);
-            return Secp256k1.publicKeyToJwk(derivedPublicKeyBytes);
+            const derivedPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: derivedPrivateKeyBytes });
+            return await X25519.getPublicKey({ key: derivedPrivateKeyJwk }) as PublicKeyJwk;
           },
         };
 
@@ -1769,7 +1769,7 @@ export function testProtocolComposition(): void {
 
         // Inject encryption keys into the composing protocol
         const encryptedComments = await Protocols.deriveAndInjectPublicEncryptionKeys(
-          commentsProtocol, alice.keyId, alice.keyPair.privateJwk,
+          commentsProtocol, alice.keyId, alice.encryptionKeyPair.privateJwk,
         );
 
         // $ref node should not have $encryption
@@ -1804,7 +1804,7 @@ export function testProtocolComposition(): void {
 
         // 2. Install the comments protocol with encryption keys
         const encryptedComments = await Protocols.deriveAndInjectPublicEncryptionKeys(
-          commentsProtocol, alice.keyId, alice.keyPair.privateJwk,
+          commentsProtocol, alice.keyId, alice.encryptionKeyPair.privateJwk,
         );
         const commentsConfigure = await ProtocolsConfigure.create({
           definition : encryptedComments,
@@ -1862,7 +1862,7 @@ export function testProtocolComposition(): void {
         const rootKey: DerivedPrivateJwk = {
           rootKeyId         : alice.keyId,
           derivationScheme  : KeyDerivationScheme.ProtocolPath,
-          derivedPrivateKey : alice.keyPair.privateJwk,
+          derivedPrivateKey : alice.encryptionKeyPair.privateJwk,
         };
         const decryptedStream = await Records.decrypt(
           readReply.entry!.recordsWrite!, rootKey, readReply.entry!.data!,

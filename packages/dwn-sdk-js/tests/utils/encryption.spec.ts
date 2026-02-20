@@ -1,3 +1,5 @@
+import type { PublicKeyJwk } from '../../src/types/jose-types.js';
+
 import { ArrayUtility } from '../../src/utils/array.js';
 import { DataStream } from '../../src/index.js';
 import { TestDataGenerator } from './test-data-generator.js';
@@ -106,7 +108,7 @@ describe('Encryption', () => {
   describe('buildJwe', () => {
     it('should build a valid JWE structure with recipients', async () => {
       const recipientPrivateKey = await X25519.generateKey();
-      const recipientPublicKey = await X25519.getPublicKey({ key: recipientPrivateKey });
+      const recipientPublicKey = await X25519.getPublicKey({ key: recipientPrivateKey }) as PublicKeyJwk;
 
       const cek = TestDataGenerator.randomBytes(32);
       const iv = TestDataGenerator.randomBytes(12);

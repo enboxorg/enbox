@@ -77,7 +77,7 @@ export function testEndToEndScenarios(): void {
 
       // Alice configures chat protocol with encryption
       const protocolDefinitionForAlice
-        = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, alice.keyId, alice.keyPair.privateJwk);
+        = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk);
       const protocolsConfigureForAlice = await TestDataGenerator.generateProtocolsConfigure({
         author             : alice,
         protocolDefinition : protocolDefinitionForAlice
@@ -91,7 +91,7 @@ export function testEndToEndScenarios(): void {
 
       // Bob configures chat protocol with encryption
       const protocolDefinitionForBob
-        = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, bob.keyId, bob.keyPair.privateJwk);
+        = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, bob.keyId, bob.encryptionKeyPair.privateJwk);
       const protocolsConfigureForBob = await TestDataGenerator.generateProtocolsConfigure({
         author             : bob,
         protocolDefinition : protocolDefinitionForBob
@@ -119,7 +119,7 @@ export function testEndToEndScenarios(): void {
       const aliceRootKey = {
         rootKeyId         : alice.keyId,
         derivationScheme  : KeyDerivationScheme.ProtocolContext,
-        derivedPrivateKey : alice.keyPair.privateJwk
+        derivedPrivateKey : alice.encryptionKeyPair.privateJwk
       };
       const contextDerivationPath = Records.constructKeyDerivationPathUsingProtocolContextScheme(threadRecord.message.contextId);
       const contextDerivedPrivateKey: DerivedPrivateJwk = await HdKey.derivePrivateKey(aliceRootKey, contextDerivationPath);
@@ -219,7 +219,7 @@ export function testEndToEndScenarios(): void {
       const bobRootKey = {
         rootKeyId         : bob.keyId,
         derivationScheme  : KeyDerivationScheme.ProtocolPath,
-        derivedPrivateKey : bob.keyPair.privateJwk
+        derivedPrivateKey : bob.encryptionKeyPair.privateJwk
       };
       const participantRecordWriteFetched = participantReadReply.entry!.recordsWrite!;
       const encryptedContextDerivedPrivateKeyBytes = await DataStream.toBytes(participantReadReply.entry!.data!); // to create streams for testing

@@ -3,6 +3,7 @@ import type { EncryptionInput } from '../../src/interfaces/records-write.js';
 import type { EventStream } from '../../src/types/subscriptions.js';
 import type { GenerateFromRecordsWriteOut } from '../utils/test-data-generator.js';
 import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
+import type { PublicKeyJwk } from '../../src/types/jose-types.js';
 import type { RecordsQueryReplyEntry } from '../../src/types/records-types.js';
 import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
 
@@ -2623,7 +2624,7 @@ export function testRecordsWriteHandler(): void {
 
           // Generate an X25519 key pair for encryption (did:key personas use Ed25519 for signing)
           const encryptionPrivateKey = await X25519.generateKey();
-          const encryptionPublicKey = await X25519.getPublicKey({ key: encryptionPrivateKey });
+          const encryptionPublicKey = await X25519.getPublicKey({ key: encryptionPrivateKey }) as PublicKeyJwk;
           const data = Encoder.stringToBytes('encrypted secret');
           const dataEncryptionKey = TestDataGenerator.randomBytes(32);
           const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12);
@@ -2978,7 +2979,7 @@ export function testRecordsWriteHandler(): void {
             authenticationTag,
             keyEncryptionInputs  : [{
               publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
-              publicKey        : alice.keyPair.publicJwk,
+              publicKey        : alice.encryptionKeyPair.publicJwk,
               derivationScheme : KeyDerivationScheme.ProtocolPath
             }]
           };

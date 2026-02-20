@@ -245,7 +245,7 @@ describe('RecordsWrite', () => {
         authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
-          publicKey        : alice.keyPair.publicJwk,
+          publicKey        : alice.encryptionKeyPair.publicJwk,
           derivationScheme : KeyDerivationScheme.ProtocolPath
         }]
       };
@@ -272,7 +272,7 @@ describe('RecordsWrite', () => {
         authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
-          publicKey        : alice.keyPair.publicJwk,
+          publicKey        : alice.encryptionKeyPair.publicJwk,
           derivationScheme : KeyDerivationScheme.Schemas
         }]
       };
@@ -542,7 +542,7 @@ describe('RecordsWrite', () => {
         authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId,
-          publicKey        : alice.keyPair.publicJwk,
+          publicKey        : alice.encryptionKeyPair.publicJwk,
           derivationScheme : KeyDerivationScheme.ProtocolPath,
         }],
       };
@@ -559,7 +559,7 @@ describe('RecordsWrite', () => {
         authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId,
-          publicKey        : alice.keyPair.publicJwk,
+          publicKey        : alice.encryptionKeyPair.publicJwk,
           derivationScheme : KeyDerivationScheme.Schemas,
         }],
       };
@@ -591,7 +591,7 @@ describe('RecordsWrite', () => {
         authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId,
-          publicKey        : alice.keyPair.publicJwk,
+          publicKey        : alice.encryptionKeyPair.publicJwk,
           derivationScheme : KeyDerivationScheme.ProtocolPath,
         }],
       };
@@ -607,7 +607,7 @@ describe('RecordsWrite', () => {
         authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId,
-          publicKey        : alice.keyPair.publicJwk,
+          publicKey        : alice.encryptionKeyPair.publicJwk,
           derivationScheme : KeyDerivationScheme.ProtocolContext,
         }],
       };
@@ -658,7 +658,7 @@ describe('RecordsWrite', () => {
         authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId,
-          publicKey        : alice.keyPair.publicJwk,
+          publicKey        : alice.encryptionKeyPair.publicJwk,
           derivationScheme : KeyDerivationScheme.ProtocolPath,
         }],
       };
@@ -678,7 +678,7 @@ describe('RecordsWrite', () => {
         authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId,
-          publicKey        : alice.keyPair.publicJwk,
+          publicKey        : alice.encryptionKeyPair.publicJwk,
           derivationScheme : KeyDerivationScheme.ProtocolContext,
         }],
       };
@@ -724,7 +724,7 @@ describe('RecordsWrite', () => {
         authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           publicKeyId      : alice.keyId,
-          publicKey        : alice.keyPair.publicJwk,
+          publicKey        : alice.encryptionKeyPair.publicJwk,
           derivationScheme : KeyDerivationScheme.ProtocolPath,
         }],
       };

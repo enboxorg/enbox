@@ -1849,7 +1849,7 @@ export function testRecordsReadHandler(): void {
           const rootPrivateKeyWithSchemasScheme: DerivedPrivateJwk = {
             rootKeyId         : alice.keyId,
             derivationScheme  : KeyDerivationScheme.Schemas,
-            derivedPrivateKey : alice.keyPair.privateJwk
+            derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
 
           const schema = 'https://some-schema.com';
@@ -1860,7 +1860,7 @@ export function testRecordsReadHandler(): void {
           const rootPrivateKeyWithDataFormatsScheme: DerivedPrivateJwk = {
             rootKeyId         : alice.keyId,
             derivationScheme  : KeyDerivationScheme.DataFormats,
-            derivedPrivateKey : alice.keyPair.privateJwk
+            derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
 
           const dataFormat = 'some/format';
@@ -1952,7 +1952,7 @@ export function testRecordsReadHandler(): void {
           const rootPrivateKeyWithDataFormatsScheme: DerivedPrivateJwk = {
             rootKeyId         : alice.keyId,
             derivationScheme  : KeyDerivationScheme.DataFormats,
-            derivedPrivateKey : alice.keyPair.privateJwk
+            derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
 
           const dataFormat = `image/jpg`;
@@ -2012,7 +2012,7 @@ export function testRecordsReadHandler(): void {
           const protocolDefinition: ProtocolDefinition = chatProtocolDefinition as ProtocolDefinition;
 
           const protocolDefinitionForAlice
-                      = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, alice.keyId, alice.keyPair.privateJwk);
+                      = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk);
           const protocolsConfigureForAlice = await TestDataGenerator.generateProtocolsConfigure({
             author             : alice,
             protocolDefinition : protocolDefinitionForAlice
@@ -2026,7 +2026,7 @@ export function testRecordsReadHandler(): void {
 
           // Bob configures chat protocol with encryption
           const protocolDefinitionForBob
-          = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, bob.keyId, bob.keyPair.privateJwk);
+          = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, bob.keyId, bob.encryptionKeyPair.privateJwk);
           const protocolsConfigureForBob = await TestDataGenerator.generateProtocolsConfigure({
             author             : bob,
             protocolDefinition : protocolDefinitionForBob
@@ -2073,7 +2073,7 @@ export function testRecordsReadHandler(): void {
           const bobRootPrivateKey: DerivedPrivateJwk = {
             rootKeyId         : bob.keyId,
             derivationScheme  : KeyDerivationScheme.ProtocolContext,
-            derivedPrivateKey : bob.keyPair.privateJwk
+            derivedPrivateKey : bob.encryptionKeyPair.privateJwk
           };
 
           const protocolPathDerivationPath = Records.constructKeyDerivationPathUsingProtocolPathScheme(recordsWrite.message.descriptor);
@@ -2171,7 +2171,7 @@ export function testRecordsReadHandler(): void {
           // Alice configures email protocol with encryption
           const protocolDefinition: ProtocolDefinition = emailProtocolDefinition as ProtocolDefinition;
           const encryptedProtocolDefinition
-            = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, alice.keyId, alice.keyPair.privateJwk);
+            = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk);
           const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
             author             : alice,
             protocolDefinition : encryptedProtocolDefinition
@@ -2246,7 +2246,7 @@ export function testRecordsReadHandler(): void {
           const rootPrivateKey: DerivedPrivateJwk = {
             rootKeyId         : alice.keyId,
             derivationScheme  : KeyDerivationScheme.ProtocolPath,
-            derivedPrivateKey : alice.keyPair.privateJwk
+            derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
 
           const fetchedRecordsWrite = readReply.entry!.recordsWrite!;
@@ -2280,7 +2280,7 @@ export function testRecordsReadHandler(): void {
           const privateKeyWithMismatchingDerivationScheme: DerivedPrivateJwk = {
             rootKeyId         : alice.keyId,
             derivationScheme  : 'scheme-that-is-not-protocol-context' as any,
-            derivedPrivateKey : alice.keyPair.privateJwk
+            derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
           await expect(Records.decrypt(fetchedRecordsWrite, privateKeyWithMismatchingDerivationScheme, cipherStream)).rejects.toThrow(
             DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound
@@ -2290,7 +2290,7 @@ export function testRecordsReadHandler(): void {
           const privateKeyWithMismatchingKeyId: DerivedPrivateJwk = {
             rootKeyId         : 'mismatchingKeyId',
             derivationScheme  : KeyDerivationScheme.ProtocolPath,
-            derivedPrivateKey : alice.keyPair.privateJwk
+            derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
           await expect(Records.decrypt(fetchedRecordsWrite, privateKeyWithMismatchingKeyId, cipherStream)).rejects.toThrow(
             DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound

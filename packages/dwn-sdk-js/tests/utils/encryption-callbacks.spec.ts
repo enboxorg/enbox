@@ -290,7 +290,7 @@ describe('Encryption Callback Interfaces', () => {
           keyDecrypter,
           encryptedRecord.dataStream!
         )
-      ).rejects.toThrow('Unable to find a symmetric key encrypted using key');
+      ).rejects.toThrow('Unable to find a JWE recipient matching key');
     });
   });
 });
