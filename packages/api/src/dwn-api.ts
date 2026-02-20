@@ -8,9 +8,7 @@ import type {
   CreateGrantParams,
   CreateRequestParams,
   DwnMessage,
-  DwnMessageParams
-  ,
-  DwnMessageSubscription,
+  DwnMessageParams,
   DwnPaginationCursor,
   DwnResponse,
   DwnResponseStatus,
@@ -36,7 +34,6 @@ import { PermissionGrant } from './permission-grant.js';
 import { PermissionRequest } from './permission-request.js';
 import { Protocol } from './protocol.js';
 import { Record } from './record.js';
-import { SubscriptionUtil } from './subscription-util.js';
 import { TypedDwnApi } from './typed-dwn-api.js';
 
 /**
@@ -227,63 +224,26 @@ export type RecordsReadResponse = DwnResponseStatus & {
   record: Record;
 };
 
-/** Subscription handler for Records */
-export type RecordsSubscriptionHandler = (record: Record) => void;
-
 /**
  * Represents a request to subscribe to records from a Decentralized Web Node (DWN).
  *
- * This request type is used to specify the target DWN from which records matching the subscription
- * criteria should be emitted. It's useful for being notified in real time when records are written, deleted or modified.
+ * Returns a {@link LiveQuery} that atomically provides an initial snapshot of
+ * matching records alongside a real-time stream of deduplicated, semantically-
+ * typed change events (`create`, `update`, `delete`).
  */
 export type RecordsSubscribeRequest = {
   /** Optional DID specifying the remote target DWN tenant to subscribe from. */
   from?: string;
 
-  /** Records must be scoped to a specific protocol */
-  protocol?: string;
-
-  /** The parameters for the subscription operation, detailing the criteria for the subscription filter */
-  message: Omit<DwnMessageParams[DwnInterface.RecordsSubscribe], 'signer'>;
-
-  /** The handler to process the subscription events */
-  subscriptionHandler: RecordsSubscriptionHandler;
-
-  /** When true, indicates encryption is active (decryption happens on subsequent reads). */
-  encryption?: boolean;
-};
-
-/** Encapsulates the response from a DWN RecordsSubscriptionRequest */
-export type RecordsSubscribeResponse = DwnResponseStatus & {
-  /**
-   * Represents the subscription that was created. Includes an ID and the close method to stop the subscription.
-   *
-   * */
-  subscription?: DwnMessageSubscription;
-};
-
-/**
- * Represents a request to create a {@link LiveQuery} that atomically returns an
- * initial snapshot of matching records and subscribes to future changes.
- *
- * Unlike `records.subscribe()`, which only provides forward-looking events,
- * `records.live()` returns a {@link LiveQuery} that includes the current state
- * and emits deduplicated, semantically-typed change events (`create`, `update`,
- * `delete`).
- */
-export type RecordsLiveRequest = {
-  /** Optional DID specifying the remote target DWN tenant. */
-  from?: string;
-
   /** Records must be scoped to a specific protocol. */
   protocol?: string;
 
-  /** The parameters for the live query operation. */
+  /** The parameters for the subscription operation, detailing the criteria for the subscription filter. */
   message: Omit<DwnMessageParams[DwnInterface.RecordsSubscribe], 'signer'>;
 };
 
-/** Encapsulates the response from a DWN RecordsLiveRequest */
-export type RecordsLiveResponse = DwnResponseStatus & {
+/** Encapsulates the response from a DWN RecordsSubscribeRequest. */
+export type RecordsSubscribeResponse = DwnResponseStatus & {
   /** The live query instance, or `undefined` if the request failed. */
   liveQuery?: LiveQuery;
 };
@@ -614,7 +574,6 @@ export class DwnApi {
       create: (request: RecordsCreateRequest) => Promise<RecordsCreateResponse>;
       createFrom: (request: RecordsCreateFromRequest) => Promise<RecordsWriteResponse>;
       delete: (request: RecordsDeleteRequest) => Promise<DwnResponseStatus>;
-      live: (request: RecordsLiveRequest) => Promise<RecordsLiveResponse>;
       query: (request: RecordsQueryRequest) => Promise<RecordsQueryResponse>;
       read: (request: RecordsReadRequest) => Promise<RecordsReadResponse>;
       subscribe: (request: RecordsSubscribeRequest) => Promise<RecordsSubscribeResponse>;
@@ -716,88 +675,6 @@ export class DwnApi {
         const { reply: { status } } = agentResponse;
 
         return { status };
-      },
-
-      /**
-       * Create a {@link LiveQuery} that atomically returns an initial snapshot of
-       * matching records and subscribes to future changes.
-       *
-       * The returned {@link LiveQuery} extends `EventTarget` and emits deduplicated,
-       * semantically-typed change events (`create`, `update`, `delete`).
-       */
-      live: async (request: RecordsLiveRequest): Promise<RecordsLiveResponse> => {
-        // Build a subscription handler that feeds live events into the LiveQuery.
-        // We create a placeholder that will be set once the LiveQuery is constructed.
-        let liveQuery: LiveQuery | undefined;
-
-        const subscriptionHandler = SubscriptionUtil.recordSubscriptionHandler({
-          agent          : this.agent,
-          connectedDid   : this.connectedDid,
-          delegateDid    : this.delegateDid,
-          permissionsApi : this.permissionsApi,
-          protocolRole   : request.message.protocolRole,
-          request        : {
-            ...request,
-            subscriptionHandler: (record: Record): void => {
-              liveQuery?.handleEvent(record);
-            }
-          }
-        });
-
-        const agentRequest: ProcessDwnRequest<DwnInterface.RecordsSubscribe> = {
-          author        : this.connectedDid,
-          messageParams : request.message,
-          messageType   : DwnInterface.RecordsSubscribe,
-          target        : request.from || this.connectedDid,
-          subscriptionHandler,
-        };
-
-        if (this.delegateDid) {
-          try {
-            const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
-              connectedDid : this.connectedDid,
-              delegateDid  : this.delegateDid,
-              protocol     : request.protocol,
-              delegate     : true,
-              cached       : true,
-              messageType  : agentRequest.messageType
-            });
-
-            agentRequest.messageParams = {
-              ...agentRequest.messageParams,
-              delegatedGrant
-            };
-            agentRequest.granteeDid = this.delegateDid;
-          } catch {
-            agentRequest.author = this.delegateDid;
-          }
-        }
-
-        let agentResponse: DwnResponse<DwnInterface.RecordsSubscribe>;
-
-        if (request.from) {
-          agentResponse = await this.agent.sendDwnRequest(agentRequest);
-        } else {
-          agentResponse = await this.agent.processDwnRequest(agentRequest);
-        }
-
-        const reply = agentResponse.reply;
-        const { status, subscription, entries = [] } = reply;
-
-        if (subscription) {
-          liveQuery = new LiveQuery({
-            agent          : this.agent,
-            connectedDid   : this.connectedDid,
-            delegateDid    : this.delegateDid,
-            protocolRole   : request.message.protocolRole,
-            remoteOrigin   : request.from,
-            permissionsApi : this.permissionsApi,
-            initialEntries : entries,
-            subscription,
-          });
-        }
-
-        return { status, liveQuery };
       },
 
       /**
@@ -986,38 +863,46 @@ export class DwnApi {
       },
 
       /**
-       * Subscribes to records based on the given filter and emits events to the `subscriptionHandler`.
+       * Subscribe to records matching the given filter.
        *
-       * @param request must include the `message` with the subscription filter and the `subscriptionHandler` to process the events.
-       * @returns the subscription status and the subscription object used to close the subscription.
+       * Returns a {@link LiveQuery} that atomically provides an initial snapshot
+       * of matching records and a real-time stream of deduplicated, semantically-
+       * typed change events (`create`, `update`, `delete`).
        */
       subscribe: async (request: RecordsSubscribeRequest): Promise<RecordsSubscribeResponse> => {
+        // Build a DWN-level subscription handler that wraps raw RecordEvents
+        // into Record objects and feeds them into the LiveQuery.
+        let liveQuery: LiveQuery | undefined;
+
+        const remoteOrigin = request.from;
+        const protocolRole = request.message.protocolRole;
+
+        type RecordEvent = {
+          message: DwnMessage[DwnInterface.RecordsWrite];
+          initialWrite?: DwnMessage[DwnInterface.RecordsWrite];
+        };
+
+        const subscriptionHandler = async (event: RecordEvent): Promise<void> => {
+          const { message, initialWrite } = event;
+          const record = new Record(this.agent, {
+            ...message,
+            author       : getRecordAuthor(message),
+            connectedDid : this.connectedDid,
+            remoteOrigin,
+            initialWrite,
+            protocolRole,
+            delegateDid  : this.delegateDid,
+          }, this.permissionsApi);
+
+          liveQuery?.handleEvent(record);
+        };
+
         const agentRequest: ProcessDwnRequest<DwnInterface.RecordsSubscribe> = {
-          /**
-           * The `author` is the DID that will sign the message and must be the DID the Web5 app is
-           * connected with and is authorized to access the signing private key of.
-           */
           author        : this.connectedDid,
           messageParams : request.message,
           messageType   : DwnInterface.RecordsSubscribe,
-          /**
-           * The `target` is the DID of the DWN tenant under which the subscribe operation will be executed.
-           * If `from` is provided, the subscribe operation will be executed on a remote DWN.
-           * Otherwise, the local DWN will execute the subscribe operation.
-           */
           target        : request.from || this.connectedDid,
-
-          /**
-           * The handler to process the subscription events.
-           */
-          subscriptionHandler: SubscriptionUtil.recordSubscriptionHandler({
-            agent          : this.agent,
-            connectedDid   : this.connectedDid,
-            delegateDid    : this.delegateDid,
-            permissionsApi : this.permissionsApi,
-            protocolRole   : request.message.protocolRole,
-            request
-          })
+          subscriptionHandler,
         };
 
         if (this.delegateDid) {
@@ -1057,9 +942,22 @@ export class DwnApi {
         }
 
         const reply = agentResponse.reply;
-        const { status, subscription } = reply;
+        const { status, subscription, entries = [] } = reply;
 
-        return { status, subscription };
+        if (subscription) {
+          liveQuery = new LiveQuery({
+            agent          : this.agent,
+            connectedDid   : this.connectedDid,
+            delegateDid    : this.delegateDid,
+            protocolRole,
+            remoteOrigin,
+            permissionsApi : this.permissionsApi,
+            initialEntries : entries,
+            subscription,
+          });
+        }
+
+        return { status, liveQuery };
       },
 
       /**

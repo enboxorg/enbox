@@ -282,14 +282,14 @@ describe('TypedProtocol API', () => {
       it('should subscribe and receive new records', async () => {
         const received: string[] = [];
 
-        const { status, subscription } = await typed.subscribe('list', {
-          subscriptionHandler: (record) => {
-            received.push(record.id);
-          },
-        });
+        const { status, liveQuery } = await typed.subscribe('list');
 
         expect(status.code).toBe(200);
-        expect(subscription).toBeDefined();
+        expect(liveQuery).toBeDefined();
+
+        liveQuery!.on('create', (record) => {
+          received.push(record.id);
+        });
 
         // Write a record — should trigger subscription
         await typed.write('list', { data: { name: 'Subscribed List' } });
@@ -300,7 +300,7 @@ describe('TypedProtocol API', () => {
         expect(received.length).toBeGreaterThanOrEqual(1);
 
         // Clean up
-        await subscription!.close();
+        await liveQuery!.close();
       });
     });
   });

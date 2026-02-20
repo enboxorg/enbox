@@ -8,11 +8,13 @@
  * injecting the protocol URI, protocolPath, and schema automatically.
  */
 
+import type { DwnApi } from './dwn-api.js';
+import type { LiveQuery } from './live-query.js';
 import type { Protocol } from './protocol.js';
 import type { Record } from './record.js';
+
 import type { DateSort, ProtocolDefinition, ProtocolType, RecordsFilter } from '@enbox/dwn-sdk-js';
-import type { DwnApi, RecordsSubscriptionHandler } from './dwn-api.js';
-import type { DwnMessageSubscription, DwnPaginationCursor, DwnResponseStatus } from '@enbox/agent';
+import type { DwnPaginationCursor, DwnResponseStatus } from '@enbox/agent';
 import type { ProtocolPaths, SchemaMap, TypedProtocol, TypeNameAtPath } from './protocol-types.js';
 
 // ---------------------------------------------------------------------------
@@ -151,15 +153,12 @@ export type TypedSubscribeRequest = {
   /** Subscription filter (protocol, protocolPath, schema are injected). */
   filter? : TypedQueryFilter;
   protocolRole? : string;
-  subscriptionHandler : RecordsSubscriptionHandler;
-
-  /** When true, indicates encryption is active. */
-  encryption?: boolean;
 };
 
 /** Response from `TypedDwnApi.subscribe()`. */
 export type TypedSubscribeResponse = DwnResponseStatus & {
-  subscription?: DwnMessageSubscription;
+  /** The live query instance, or `undefined` if the request failed. */
+  liveQuery?: LiveQuery;
 };
 
 // ---------------------------------------------------------------------------
@@ -329,29 +328,30 @@ export class TypedDwnApi<
   /**
    * Subscribe to records at the given protocol path.
    *
+   * Returns a {@link LiveQuery} that atomically provides an initial snapshot
+   * and a real-time stream of deduplicated change events.
+   *
    * @param path - The protocol path to subscribe to.
-   * @param request - Subscribe options including the subscription handler.
+   * @param request - Subscribe options including optional filter and role.
    */
   public async subscribe<Path extends ProtocolPaths<D> & string>(
     path : Path,
-    request : TypedSubscribeRequest,
+    request? : TypedSubscribeRequest,
   ): Promise<TypedSubscribeResponse> {
     const typeName = lastSegment(path);
     const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
     return this._dwn.records.subscribe({
-      from                : request.from,
-      protocol            : this._definition.protocol,
-      encryption          : request.encryption,
-      subscriptionHandler : request.subscriptionHandler,
-      message             : {
+      from     : request?.from,
+      protocol : this._definition.protocol,
+      message  : {
         filter: {
-          ...request.filter,
+          ...request?.filter,
           protocol     : this._definition.protocol,
           protocolPath : path,
           schema       : typeEntry?.schema,
         },
-        protocolRole: request.protocolRole,
+        protocolRole: request?.protocolRole,
       },
     });
   }

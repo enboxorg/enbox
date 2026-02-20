@@ -36,7 +36,7 @@ export class RecordChangeEvent extends CustomEvent<RecordChange> {
 
 /**
  * Options for creating a {@link LiveQuery}.
- * @internal — Constructed by `DwnApi.records.live()`, not by end users.
+ * @internal — Constructed by `DwnApi.records.subscribe()`, not by end users.
  */
 export type LiveQueryOptions = {
   /** The agent instance used to construct Record objects. */
@@ -84,8 +84,7 @@ export type LiveQueryOptions = {
  *
  * @example
  * ```ts
- * const live = await dwnAlice.records.live({
- *   protocol: chatProtocol.protocol,
+ * const { liveQuery } = await dwn.records.subscribe({
  *   message: {
  *     filter: {
  *       protocol     : chatProtocol.protocol,
@@ -95,22 +94,22 @@ export type LiveQueryOptions = {
  * });
  *
  * // Initial state
- * for (const record of live.records) {
+ * for (const record of liveQuery.records) {
  *   renderMessage(record);
  * }
  *
  * // Real-time changes
- * live.on('create', (record) => appendMessage(record));
- * live.on('update', (record) => refreshMessage(record));
- * live.on('delete', (record) => removeMessage(record));
+ * liveQuery.on('create', (record) => appendMessage(record));
+ * liveQuery.on('update', (record) => refreshMessage(record));
+ * liveQuery.on('delete', (record) => removeMessage(record));
  *
  * // Or use the catch-all
- * live.on('change', ({ type, record }) => {
+ * liveQuery.on('change', ({ type, record }) => {
  *   console.log(`${type}: ${record.id}`);
  * });
  *
  * // Cleanup
- * await live.close();
+ * await liveQuery.close();
  * ```
  */
 export class LiveQuery extends EventTarget {
@@ -163,7 +162,7 @@ export class LiveQuery extends EventTarget {
    * Process an incoming live event from the DWN subscription.
    * Deduplicates against the initial snapshot and classifies the change type.
    *
-   * @internal — Called by `DwnApi.records.live()` when wiring up the subscription handler.
+   * @internal — Called by `DwnApi.records.subscribe()` when wiring up the subscription handler.
    */
   public handleEvent(record: Record): void {
     if (this._closed) {
