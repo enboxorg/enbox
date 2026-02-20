@@ -1,5 +1,15 @@
 # @enbox/protocols
 
+## 0.2.2
+
+### Patch Changes
+
+- [#254](https://github.com/enboxorg/enbox/pull/254) [`d399df5`](https://github.com/enboxorg/enbox/commit/d399df5490e248703cec59b1b3265d3566689e5c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(protocols): remove empty `$actions` arrays from `ListsDefinition` folder structure
+
+  The DWN JSON schema requires `$actions` arrays to have at least one item (`minItems: 1`).
+  Empty `$actions: []` on the `folder` type caused `ProtocolsConfigure` to fail with
+  `SchemaValidatorFailure` when installing the Lists protocol.
+
 ## 0.2.1
 
 ### Patch Changes
