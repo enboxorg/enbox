@@ -15,10 +15,7 @@ describe('DidApi', () => {
       agentClass  : Web5UserAgent,
       agentStores : 'memory'
     });
-  });
 
-  beforeEach(async () => {
-    sinon.restore();
     await testHarness.clearStorage();
     await testHarness.createAgentDid();
 
@@ -30,6 +27,11 @@ describe('DidApi', () => {
 
     // Instantiate DidApi.
     did = new DidApi({ agent: testHarness.agent, connectedDid: identity.did.uri });
+  });
+
+  beforeEach(async () => {
+    sinon.restore();
+    await testHarness.clearDwnStores();
   });
 
   afterAll(async () => {

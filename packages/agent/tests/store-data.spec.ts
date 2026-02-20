@@ -129,12 +129,14 @@ describe('AgentDataStore', () => {
       agentClass  : TestAgent,
       agentStores : 'memory'
     });
+
+    await testHarness.clearStorage();
+    await testHarness.createAgentDid();
   });
 
   beforeEach(async () => {
     mock.restore();
-    await testHarness.clearStorage();
-    await testHarness.createAgentDid();
+    await testHarness.clearDwnStores();
   });
 
   afterAll(async () => {

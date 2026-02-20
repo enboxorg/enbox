@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 
 import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
 
@@ -13,9 +13,7 @@ describe('VcApi', () => {
       agentClass  : Web5UserAgent,
       agentStores : 'memory'
     });
-  });
 
-  beforeEach(async () => {
     await testHarness.clearStorage();
     await testHarness.createAgentDid();
 

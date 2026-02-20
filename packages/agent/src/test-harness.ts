@@ -128,6 +128,25 @@ export class PlatformAgentTestHarness {
     }
   }
 
+  /**
+   * Clear only DWN-level stores (data, messages, state index, resumable tasks,
+   * sync, permissions) and the DWN-backed store caches — but preserve the
+   * agent DID, vault, and all key/DID/identity material.
+   *
+   * Use this in `beforeEach` when `createAgentDid()` (and optionally
+   * `createIdentity()`) was called once in `beforeAll` to avoid expensive
+   * DID re-creation on every test.
+   */
+  public async clearDwnStores(): Promise<void> {
+    await this.syncStore.clear();
+    await this.dwnDataStore.clear();
+    await this.dwnStateIndex.clear();
+    await this.dwnMessageStore.clear();
+    await this.dwnResumableTaskStore.clear();
+    await this.agent.permissions.clear();
+    this.dwnStores.clear();
+  }
+
   public async closeStorage(): Promise<void> {
     await this.didResolverCache.close();
     await this.dwnDataStore.close();

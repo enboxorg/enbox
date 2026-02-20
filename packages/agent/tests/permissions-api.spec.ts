@@ -19,8 +19,18 @@ describe('AgentPermissionsApi', () => {
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : TestAgent,
-      agentStores : 'dwn'
+      agentStores : 'memory'
     });
+
+    await testHarness.clearStorage();
+    await testHarness.createAgentDid();
+
+    // Create an "alice" Identity to author the DWN messages.
+    const alice = await testHarness.agent.identity.create({ didMethod: 'jwk', metadata: { name: 'Alice' } });
+    aliceDid = alice.did;
+
+    const bob = await testHarness.agent.identity.create({ didMethod: 'jwk', metadata: { name: 'Bob' } });
+    bobDid = bob.did;
   });
 
   afterAll(async () => {
@@ -31,15 +41,7 @@ describe('AgentPermissionsApi', () => {
 
   beforeEach(async () => {
     mock.restore();
-    await testHarness.clearStorage();
-    await testHarness.createAgentDid();
-
-    // Create an "alice" Identity to author the DWN messages.
-    const alice = await testHarness.agent.identity.create({ didMethod: 'jwk', metadata: { name: 'Alice' } });
-    aliceDid = alice.did;
-
-    const bob = await testHarness.agent.identity.create({ didMethod: 'jwk', metadata: { name: 'Bob' } });
-    bobDid = bob.did;
+    await testHarness.clearDwnStores();
   });
 
   describe('get agent', () => {
