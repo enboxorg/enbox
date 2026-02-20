@@ -49,7 +49,7 @@ export type ProtocolType = {
   /**
    * When `true`, records of this type **must** be encrypted at the DWN record
    * level using the tenant's ProtocolPath-derived encryption key. The tenant
-   * DID must have a secp256k1 keyAgreement key; protocol installation will
+   * DID must have an X25519 keyAgreement key; protocol installation will
    * fail if it does not.
    *
    * When `false` or omitted, encryption is not required for this type.

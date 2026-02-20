@@ -381,7 +381,7 @@ export class Web5 {
                   purposes  : ['assertionMethod', 'authentication']
                 },
                 {
-                  algorithm : 'secp256k1',
+                  algorithm : 'X25519',
                   id        : 'enc',
                   purposes  : ['keyAgreement']
                 }

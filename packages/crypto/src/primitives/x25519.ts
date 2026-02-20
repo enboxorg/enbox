@@ -345,32 +345,25 @@ export class X25519 {
   }
 
   /**
-   * Computes an RFC6090-compliant Elliptic Curve Diffie-Hellman (ECDH) shared secret
-   * using secp256k1 private and public keys in JSON Web Key (JWK) format.
+   * Computes an X25519 Elliptic Curve Diffie-Hellman (ECDH) shared secret
+   * using X25519 private and public keys in JSON Web Key (JWK) format.
    *
    * @remarks
    * This method facilitates the ECDH key agreement protocol, which is a method of securely
    * deriving a shared secret between two parties based on their private and public keys.
    * It takes the private key of one party (privateKeyA) and the public key of another
-   * party (publicKeyB) to compute a shared secret. The shared secret is derived from the
-   * x-coordinate of the elliptic curve point resulting from the multiplication of the
-   * public key with the private key.
+   * party (publicKeyB) to compute a shared secret. The shared secret is the raw output
+   * of the X25519 function as defined in RFC 7748.
    *
-   * Note: When performing Elliptic Curve Diffie-Hellman (ECDH) key agreement,
-   * the resulting shared secret is a point on the elliptic curve, which
-   * consists of an x-coordinate and a y-coordinate. With a 256-bit curve like
-   * secp256k1, each of these coordinates is 32 bytes (256 bits) long. However,
-   * in the ECDH process, it's standard practice to use only the x-coordinate
-   * of the shared secret point as the resulting shared key. This is because
-   * the y-coordinate does not add to the entropy of the key, and both parties
-   * can independently compute the x-coordinate.  Consquently, this implementation
-   * omits the y-coordinate for simplicity and standard compliance.
+   * Note: Unlike Weierstrass curves (e.g., secp256k1), X25519 is a Montgomery curve
+   * where the ECDH output is a single 32-byte scalar value, not an (x, y) point.
+   * The result is used directly as the shared secret.
    *
    * @example
    * ```ts
    * const privateKeyA = { ... }; // A Jwk object for party A
    * const publicKeyB = { ... }; // A PublicKeyJwk object for party B
-   * const sharedSecret = await Secp256k1.sharedSecret({
+   * const sharedSecret = await X25519.sharedSecret({
    *   privateKeyA,
    *   publicKeyB
    * });
