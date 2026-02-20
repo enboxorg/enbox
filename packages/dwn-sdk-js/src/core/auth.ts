@@ -1,6 +1,6 @@
 import type { AuthorizationModel } from '../types/message-types.js';
-import type { GeneralJws } from '../types/jws-types.js';
 import type { DidResolver } from '@enbox/dids';
+import type { GeneralJws } from '../types/jws-types.js';
 
 import { GeneralJwsVerifier } from '../jose/jws/general/verifier.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
