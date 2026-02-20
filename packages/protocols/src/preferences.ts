@@ -67,24 +67,24 @@ export type PreferencesSchemaMap = {
 // ---------------------------------------------------------------------------
 
 export const PreferencesDefinition = {
-  protocol  : 'https://enbox.org/protocols/preferences',
+  protocol  : 'https://identity.foundation/protocols/preferences',
   published : false,
   types     : {
     theme: {
-      schema      : 'https://enbox.org/schemas/preferences/theme',
+      schema      : 'https://identity.foundation/schemas/preferences/theme',
       dataFormats : ['application/json'],
     },
     locale: {
-      schema      : 'https://enbox.org/schemas/preferences/locale',
+      schema      : 'https://identity.foundation/schemas/preferences/locale',
       dataFormats : ['application/json'],
     },
     privacy: {
-      schema             : 'https://enbox.org/schemas/preferences/privacy',
+      schema             : 'https://identity.foundation/schemas/preferences/privacy',
       dataFormats        : ['application/json'],
       encryptionRequired : true,
     },
     notification: {
-      schema      : 'https://enbox.org/schemas/preferences/notification',
+      schema      : 'https://identity.foundation/schemas/preferences/notification',
       dataFormats : ['application/json'],
     },
   },

@@ -72,30 +72,30 @@ export type ListsSchemaMap = {
 // ---------------------------------------------------------------------------
 
 export const ListsDefinition = {
-  protocol  : 'https://enbox.org/protocols/lists',
+  protocol  : 'https://identity.foundation/protocols/lists',
   published : false,
   uses      : {
-    social: 'https://enbox.org/protocols/social-graph',
+    social: 'https://identity.foundation/protocols/social-graph',
   },
   types: {
     list: {
-      schema      : 'https://enbox.org/schemas/lists/list',
+      schema      : 'https://identity.foundation/schemas/lists/list',
       dataFormats : ['application/json'],
     },
     item: {
-      schema      : 'https://enbox.org/schemas/lists/item',
+      schema      : 'https://identity.foundation/schemas/lists/item',
       dataFormats : ['application/json'],
     },
     folder: {
-      schema      : 'https://enbox.org/schemas/lists/folder',
+      schema      : 'https://identity.foundation/schemas/lists/folder',
       dataFormats : ['application/json'],
     },
     collaborator: {
-      schema      : 'https://enbox.org/schemas/lists/collaborator',
+      schema      : 'https://identity.foundation/schemas/lists/collaborator',
       dataFormats : ['application/json'],
     },
     comment: {
-      schema      : 'https://enbox.org/schemas/lists/comment',
+      schema      : 'https://identity.foundation/schemas/lists/comment',
       dataFormats : ['application/json'],
     },
   },

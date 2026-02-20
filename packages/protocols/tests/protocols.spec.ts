@@ -19,7 +19,7 @@ describe('@enbox/protocols', () => {
 
   describe('SocialGraphProtocol', () => {
     it('should have the correct protocol URI', () => {
-      expect(SocialGraphDefinition.protocol).toBe('https://enbox.org/protocols/social-graph');
+      expect(SocialGraphDefinition.protocol).toBe('https://identity.foundation/protocols/social-graph');
     });
 
     it('should be a published protocol', () => {
@@ -52,12 +52,12 @@ describe('@enbox/protocols', () => {
 
   describe('ProfileProtocol', () => {
     it('should have the correct protocol URI', () => {
-      expect(ProfileDefinition.protocol).toBe('https://enbox.org/protocols/profile');
+      expect(ProfileDefinition.protocol).toBe('https://identity.foundation/protocols/profile');
     });
 
     it('should compose with Social Graph via uses', () => {
       expect(ProfileDefinition.uses).toBeDefined();
-      expect(ProfileDefinition.uses!.social).toBe('https://enbox.org/protocols/social-graph');
+      expect(ProfileDefinition.uses!.social).toBe('https://identity.foundation/protocols/social-graph');
     });
 
     it('should define profile, avatar, hero, link, and privateNote types', () => {
@@ -100,7 +100,7 @@ describe('@enbox/protocols', () => {
 
   describe('PreferencesProtocol', () => {
     it('should have the correct protocol URI', () => {
-      expect(PreferencesDefinition.protocol).toBe('https://enbox.org/protocols/preferences');
+      expect(PreferencesDefinition.protocol).toBe('https://identity.foundation/protocols/preferences');
     });
 
     it('should be a private (not published) protocol', () => {
@@ -129,12 +129,12 @@ describe('@enbox/protocols', () => {
 
   describe('StatusProtocol', () => {
     it('should have the correct protocol URI', () => {
-      expect(StatusDefinition.protocol).toBe('https://enbox.org/protocols/status');
+      expect(StatusDefinition.protocol).toBe('https://identity.foundation/protocols/status');
     });
 
     it('should compose with Social Graph via uses', () => {
       expect(StatusDefinition.uses).toBeDefined();
-      expect(StatusDefinition.uses!.social).toBe('https://enbox.org/protocols/social-graph');
+      expect(StatusDefinition.uses!.social).toBe('https://identity.foundation/protocols/social-graph');
     });
 
     it('should define status and reaction types', () => {
@@ -165,12 +165,12 @@ describe('@enbox/protocols', () => {
 
   describe('ListsProtocol', () => {
     it('should have the correct protocol URI', () => {
-      expect(ListsDefinition.protocol).toBe('https://enbox.org/protocols/lists');
+      expect(ListsDefinition.protocol).toBe('https://identity.foundation/protocols/lists');
     });
 
     it('should compose with Social Graph via uses', () => {
       expect(ListsDefinition.uses).toBeDefined();
-      expect(ListsDefinition.uses!.social).toBe('https://enbox.org/protocols/social-graph');
+      expect(ListsDefinition.uses!.social).toBe('https://identity.foundation/protocols/social-graph');
     });
 
     it('should define list, item, folder, collaborator, and comment types', () => {
@@ -222,7 +222,7 @@ describe('@enbox/protocols', () => {
 
   describe('ConnectProtocol', () => {
     it('should have the correct protocol URI', () => {
-      expect(ConnectDefinition.protocol).toBe('https://enbox.org/protocols/connect');
+      expect(ConnectDefinition.protocol).toBe('https://identity.foundation/protocols/connect');
     });
 
     it('should be a published protocol', () => {

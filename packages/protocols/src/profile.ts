@@ -63,14 +63,14 @@ export type ProfileSchemaMap = {
 // ---------------------------------------------------------------------------
 
 export const ProfileDefinition = {
-  protocol  : 'https://enbox.org/protocols/profile',
+  protocol  : 'https://identity.foundation/protocols/profile',
   published : true,
   uses      : {
-    social: 'https://enbox.org/protocols/social-graph',
+    social: 'https://identity.foundation/protocols/social-graph',
   },
   types: {
     profile: {
-      schema      : 'https://enbox.org/schemas/profile/profile',
+      schema      : 'https://identity.foundation/schemas/profile/profile',
       dataFormats : ['application/json'],
     },
     avatar: {
@@ -80,11 +80,11 @@ export const ProfileDefinition = {
       dataFormats: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
     },
     link: {
-      schema      : 'https://enbox.org/schemas/profile/link',
+      schema      : 'https://identity.foundation/schemas/profile/link',
       dataFormats : ['application/json'],
     },
     privateNote: {
-      schema      : 'https://enbox.org/schemas/profile/private-note',
+      schema      : 'https://identity.foundation/schemas/profile/private-note',
       dataFormats : ['application/json'],
     },
   },

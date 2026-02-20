@@ -92,11 +92,11 @@ assertions where needed. Key files:
 
 | Protocol | URI | Types | Key Features |
 |----------|-----|-------|-------------|
-| Social Graph | `https://enbox.org/protocols/social-graph` | friend, block, group, member | `$role`, `$tags`, nested list, owner-only |
-| Profile | `https://enbox.org/protocols/profile` | profile, avatar, link, privateNote | `uses` Social Graph, cross-protocol role, `$size`, binary formats, mixed visibility |
-| Preferences | `https://enbox.org/protocols/preferences` | theme, locale, privacy, notification | `encryptionRequired`, `$tags`, flat, owner-only |
-| Status | `https://enbox.org/protocols/status` | status, reaction | `uses` Social Graph, cross-protocol role, `$size`, published flag |
-| Lists | `https://enbox.org/protocols/lists` | list, item, folder, collaborator, comment | Both nesting patterns, `$role`, `uses` Social Graph, `$tags` with `enum`, deep paths |
+| Social Graph | `https://identity.foundation/protocols/social-graph` | friend, block, group, member | `$role`, `$tags`, nested list, owner-only |
+| Profile | `https://identity.foundation/protocols/profile` | profile, avatar, link, privateNote | `uses` Social Graph, cross-protocol role, `$size`, binary formats, mixed visibility |
+| Preferences | `https://identity.foundation/protocols/preferences` | theme, locale, privacy, notification | `encryptionRequired`, `$tags`, flat, owner-only |
+| Status | `https://identity.foundation/protocols/status` | status, reaction | `uses` Social Graph, cross-protocol role, `$size`, published flag |
+| Lists | `https://identity.foundation/protocols/lists` | list, item, folder, collaborator, comment | Both nesting patterns, `$role`, `uses` Social Graph, `$tags` with `enum`, deep paths |
 
 ### Composition graph:
 

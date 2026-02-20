@@ -3189,7 +3189,7 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
       expect(afterReply.entries).toHaveLength(1);
 
       const definition = afterReply.entries![0].descriptor.definition;
-      expect(definition.protocol).toBe('https://enbox.org/protocols/key-delivery');
+      expect(definition.protocol).toBe('https://identity.foundation/protocols/key-delivery');
 
       // Verify $encryption keys were injected at the contextKey path
       const contextKeyRuleSet = definition.structure.contextKey as any;

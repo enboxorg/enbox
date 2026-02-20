@@ -7,7 +7,7 @@
 - [#200](https://github.com/enboxorg/enbox/pull/200) [`95781ac`](https://github.com/enboxorg/enbox/commit/95781ac7cc656bd617cdc64466ab55f4a098b7cb) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat(protocols): add hero image support to Profile and new Connect protocol
 
   - ProfileProtocol: added `hero` type (binary images nested under `profile/hero`, 2MB size limit, publicly readable) and `tagline` field to `ProfileData`
-  - New ConnectProtocol: stores wallet discovery info (`{ webWallets: string[] }`) at `https://enbox.org/protocols/connect`, publicly readable
+  - New ConnectProtocol: stores wallet discovery info (`{ webWallets: string[] }`) at `https://identity.foundation/protocols/connect`, publicly readable
 
 ### Patch Changes
 

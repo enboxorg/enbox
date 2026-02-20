@@ -36,11 +36,11 @@ export type ConnectSchemaMap = {
 // ---------------------------------------------------------------------------
 
 export const ConnectDefinition = {
-  protocol  : 'https://enbox.org/protocols/connect',
+  protocol  : 'https://identity.foundation/protocols/connect',
   published : true,
   types     : {
     wallet: {
-      schema      : 'https://enbox.org/schemas/connect/wallet',
+      schema      : 'https://identity.foundation/schemas/connect/wallet',
       dataFormats : ['application/json'],
     },
   },
