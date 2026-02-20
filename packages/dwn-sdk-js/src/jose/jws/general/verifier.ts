@@ -3,6 +3,7 @@ import type { GeneralJws } from '../../../types/jws-types.js';
 import type { PublicKeyJwk } from '../../../types/jose-types.js';
 import type { DidResolver, DidVerificationMethod } from '@enbox/dids';
 
+import { Encoder } from '../../../utils/encoder.js';
 import { Jws } from '../../../utils/jws.js';
 import { MemoryCache } from '../../../utils/memory-cache.js';
 import { validateJsonSchema } from '../../../schema-validator.js';
@@ -51,7 +52,16 @@ export class GeneralJwsVerifier {
 
     for (const signatureEntry of jws.signatures) {
       let isVerified: boolean;
-      const kid = Jws.getKid(signatureEntry);
+      const protectedHeader = Encoder.base64UrlToObject(signatureEntry.protected);
+      const { kid, alg } = protectedHeader;
+
+      if (kid === undefined || typeof kid !== 'string') {
+        throw new DwnError(DwnErrorCode.GeneralJwsVerifierMissingKid, `JWS protected header is missing required 'kid' property`);
+      }
+
+      if (alg === undefined || typeof alg !== 'string') {
+        throw new DwnError(DwnErrorCode.GeneralJwsVerifierMissingAlg, `JWS protected header is missing required 'alg' property`);
+      }
 
       const cacheKey = `${signatureEntry.protected}.${jws.payload}.${signatureEntry.signature}`;
       const cachedValue = await this.cache.get(cacheKey);
