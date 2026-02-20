@@ -120,6 +120,8 @@ export type RecordsSubscribeDescriptor = {
   method: DwnMethodName.Subscribe;
   messageTimestamp: string;
   filter: RecordsFilter;
+  dateSort?: DateSort;
+  pagination?: Pagination;
 };
 
 export type RecordsFilter = {
@@ -186,6 +188,8 @@ export type RecordsSubscribeMessage = GenericMessage & {
 
 export type RecordsSubscribeReply = GenericMessageReply & {
   subscription?: MessageSubscription;
+  entries?: RecordsQueryReplyEntry[];
+  cursor?: PaginationCursor;
 };
 
 export type RecordsReadMessage = {
