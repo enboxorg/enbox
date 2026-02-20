@@ -1,6 +1,6 @@
 import type { DerivedPrivateJwk } from '../utils/hd-key.js';
 import type { EncryptionKeyDeriver } from '../types/encryption-types.js';
-import type { PrivateKeyJwk } from '../types/jose-types.js';
+import type { PrivateKeyJwk, PublicKeyJwk } from '../types/jose-types.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 
 import { X25519 } from '@enbox/crypto';
@@ -156,7 +156,7 @@ export class Protocols {
             continue;
           }
 
-          const publicKeyJwk = await X25519.getPublicKey({ key: derivedPrivateKey.derivedPrivateKey });
+          const publicKeyJwk = await X25519.getPublicKey({ key: derivedPrivateKey.derivedPrivateKey }) as PublicKeyJwk;
 
           childRuleSet.$encryption = { rootKeyId, publicKeyJwk };
           await addEncryptionProperty(childRuleSet, derivedPrivateKey);
