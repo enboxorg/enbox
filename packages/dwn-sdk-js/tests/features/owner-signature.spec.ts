@@ -63,6 +63,10 @@ export function testOwnerSignature(): void {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
 
+      // Install default test protocol for both Bob and Alice (needed because all records require a protocol)
+      await TestDataGenerator.installDefaultTestProtocol(dwn, bob);
+      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
       // Bob writes a message to his DWN
       const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: bob, published: true });
       const writeReply = await dwn.processMessage(bob.did, message, { dataStream });
@@ -155,6 +159,9 @@ export function testOwnerSignature(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const carol = await TestDataGenerator.generateDidKeyPersona();
 
+      // Install default test protocol for Carol (the tenant where the message will be processed)
+      await TestDataGenerator.installDefaultTestProtocol(dwn, carol);
+
       // Bob creates a message, we skip writing to bob's DWN because that's orthogonal to this test
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: bob, published: true });
 
@@ -204,6 +211,9 @@ export function testOwnerSignature(): void {
       // scenario: Malicious Bob attempts to retain an externally authored message in Alice's DWN by providing an invalid `ownerSignature`
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
+
+      // Install default test protocol for Alice (the tenant where the message will be processed)
+      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
       // Bob creates a message, we skip writing to bob's DWN because that's orthogonal to this test
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: bob, published: true });

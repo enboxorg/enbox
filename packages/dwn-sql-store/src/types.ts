@@ -65,7 +65,7 @@ type StateIndexRootTable = {
 type StateIndexMetaTable = {
   tenant: string;
   messageCid: string;
-  protocol: string;
+  protocol: string | null;
 };
 
 type DataStoreTable = {

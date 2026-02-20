@@ -75,6 +75,7 @@ export function testRecordsReadHandler(): void {
 
       it('should allow tenant to RecordsRead their own record', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // insert data
         const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -101,6 +102,7 @@ export function testRecordsReadHandler(): void {
 
       it('should not allow non-tenant to RecordsRead a record', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // insert data
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -123,6 +125,7 @@ export function testRecordsReadHandler(): void {
 
       it('should allow reading of data that is published without `authorization`', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // insert public data
         const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true });
@@ -146,6 +149,7 @@ export function testRecordsReadHandler(): void {
 
       it('should allow an authenticated user to RecordRead data that is published', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // insert public data
         const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true });
@@ -172,6 +176,7 @@ export function testRecordsReadHandler(): void {
       it('should allow a non-tenant to read RecordsRead data they have received', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // Alice inserts data with Bob as recipient
         const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
@@ -200,6 +205,7 @@ export function testRecordsReadHandler(): void {
 
       it('should return 400 when fetching initial write for a deleted record fails', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // Write a record
         const { message: writeMessage, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -360,6 +366,7 @@ export function testRecordsReadHandler(): void {
 
       it('should include `initialWrite` property if RecordsWrite is not initial write', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const write = await TestDataGenerator.generateRecordsWrite({ author: alice, published: false });
 
         const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
@@ -863,6 +870,7 @@ export function testRecordsReadHandler(): void {
 
           it('should return the earliest published record when `dateSort` is `PublishedAscending`', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
+            await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
             const schema = 'aSchema';
 
             const write1 = await TestDataGenerator.generateRecordsWrite({
@@ -895,6 +903,7 @@ export function testRecordsReadHandler(): void {
 
           it('should return the latest published record when `dateSort` is `PublishedDescending`', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
+            await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
             const schema = 'aSchema';
 
             const write1 = await TestDataGenerator.generateRecordsWrite({
@@ -1220,6 +1229,7 @@ export function testRecordsReadHandler(): void {
 
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
           // Alice writes a record which Bob will later try to read
           const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
@@ -1704,6 +1714,7 @@ export function testRecordsReadHandler(): void {
 
       it('should return 404 RecordRead if data has been deleted', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // insert public data
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true });
@@ -1743,6 +1754,7 @@ export function testRecordsReadHandler(): void {
 
       it('should return 404 underlying data store cannot locate the data when data is above threshold', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         sinon.stub(dataStore, 'get').resolves(undefined);
 
@@ -1769,6 +1781,7 @@ export function testRecordsReadHandler(): void {
       describe('data from encodedData', () => {
         it('should not get data from DataStore if encodedData exists', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
           //since the data is at the threshold it will be returned from the messageStore in the `encodedData` field.
           const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
@@ -1800,6 +1813,7 @@ export function testRecordsReadHandler(): void {
 
         it('should get data from DataStore if encodedData does not exist', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
           //since the data is over the threshold it will not be returned from the messageStore in the `encodedData` field.
           const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({

@@ -71,6 +71,7 @@ export function testSubscriptionScenarios(): void {
         // Scenario: Alice subscribes to all messages and creates 3 messages. Alice then expects to receive all 3 messages.
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create a handler that adds the messageCid of each message to an array.
         const messageCids: string[] = [];
@@ -121,6 +122,7 @@ export function testSubscriptionScenarios(): void {
         // alice checks that the Records handler received the delete message
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // subscribe to the Records interface
         const recordsInterfaceSubscription = await TestDataGenerator.generateMessagesSubscribe({
@@ -215,6 +217,7 @@ export function testSubscriptionScenarios(): void {
         // Alice checks the RecordsDelete handler received the delete message
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // subscribe to records write
         const recordsWriteSubscription = await TestDataGenerator.generateMessagesSubscribe({
@@ -529,6 +532,7 @@ export function testSubscriptionScenarios(): void {
         // we purposely leave one subscription open to ensure that the messages are being processed by an external pub/sub system
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // messageCids of subscription 1 messages
         const sub1MessageCids:string[] = [];
@@ -614,6 +618,7 @@ export function testSubscriptionScenarios(): void {
         // this is to ensure that the messages are not received by the anonymous subscription handler, but have had ample time to be processed
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create a control handler to capture ALL messages in the protocol with alice as the author
         const allMessages:string[] = [];

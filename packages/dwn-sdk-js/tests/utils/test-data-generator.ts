@@ -1,5 +1,6 @@
 import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { DidResolutionResult } from '@enbox/dids';
+import type { Dwn } from '../../src/dwn.js';
 import type { GeneralJws } from '../../src/types/jws-types.js';
 import type { MessageSigner } from '../../src/types/signer.js';
 import type { MessagesReadOptions } from '../../src/interfaces/messages-read.js';
@@ -260,6 +261,23 @@ export type GenerateMessagesReadOutput = {
 };
 
 /**
+ * Protocol definition that matches the defaults used by `TestDataGenerator.generateRecordsWrite()`:
+ * `protocol: 'http://test-protocol.xyz'`, `protocolPath: 'testRecord'`.
+ *
+ * Install via `TestDataGenerator.installDefaultTestProtocol(dwn, persona)`.
+ */
+export const defaultTestProtocolDefinition: ProtocolDefinition = {
+  protocol  : 'http://test-protocol.xyz',
+  published : false,
+  types     : {
+    testRecord: {}
+  },
+  structure: {
+    testRecord: {}
+  }
+};
+
+/**
  * Utility class for generating data for testing.
  */
 export class TestDataGenerator {
@@ -305,6 +323,22 @@ export class TestDataGenerator {
     };
 
     return persona;
+  }
+
+  /**
+   * Installs the default test protocol (`http://test-protocol.xyz` with `testRecord` type)
+   * on the given DWN for the given persona. Call this before processing any RecordsWrite
+   * created with `generateRecordsWrite()` that uses the default protocol.
+   */
+  public static async installDefaultTestProtocol(dwn: Dwn, persona: Persona): Promise<void> {
+    const protocolsConfigure = await ProtocolsConfigure.create({
+      definition : defaultTestProtocolDefinition,
+      signer     : Jws.createSigner(persona),
+    });
+    const reply = await dwn.processMessage(persona.did, protocolsConfigure.message);
+    if (reply.status.code !== 202) {
+      throw new Error(`Failed to install default test protocol: ${reply.status.code} ${reply.status.detail}`);
+    }
   }
 
   /**

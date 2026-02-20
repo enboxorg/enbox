@@ -21,7 +21,7 @@ describe('Records', () => {
   });
 
   describe('constructKeyDerivationPathUsingProtocolPathScheme()', () => {
-    it('should throw if given a descriptor without protocol', async () => {
+    it('should construct a valid key derivation path using protocol path scheme', async () => {
       const descriptor: RecordsWriteDescriptor = {
         interface        : DwnInterfaceName.Records,
         method           : DwnMethodName.Write,
@@ -34,8 +34,8 @@ describe('Records', () => {
         protocolPath     : 'testRecord',
       };
 
-      expect(() => Records.constructKeyDerivationPathUsingProtocolPathScheme(descriptor))
-        .toThrow(DwnErrorCode.RecordsProtocolPathDerivationSchemeMissingProtocol);
+      const path = Records.constructKeyDerivationPathUsingProtocolPathScheme(descriptor);
+      expect(path).toEqual([KeyDerivationScheme.ProtocolPath, 'http://test-protocol.xyz', 'testRecord']);
     });
   });
 

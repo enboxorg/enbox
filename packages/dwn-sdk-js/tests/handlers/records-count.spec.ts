@@ -73,6 +73,7 @@ export function testRecordsCountHandler(): void {
       it('should count records owned by the tenant', async () => {
         const alice = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice]);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // write 3 records with the same schema
         const schema = 'http://test-schema.example';
@@ -99,6 +100,7 @@ export function testRecordsCountHandler(): void {
       it('should allow anonymous count of published records', async () => {
         const alice = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice]);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         const schema = 'http://published-schema.example';
 
@@ -135,6 +137,7 @@ export function testRecordsCountHandler(): void {
       it('should return 0 for anonymous count when no published records exist', async () => {
         const alice = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice]);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // write an unpublished record
         const schema = 'http://unpublished.example';
@@ -160,6 +163,7 @@ export function testRecordsCountHandler(): void {
         const alice = await TestDataGenerator.generatePersona();
         const bob = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         const schema = 'http://recipient-schema.example';
 
@@ -195,6 +199,7 @@ export function testRecordsCountHandler(): void {
         const alice = await TestDataGenerator.generatePersona();
         const bob = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         const schema = 'http://published-filter.example';
 

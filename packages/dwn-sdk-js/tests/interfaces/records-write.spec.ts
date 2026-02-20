@@ -188,39 +188,31 @@ describe('RecordsWrite', () => {
       expect(message.descriptor.protocol).toBe('http://example.com');
     });
 
-    it('should required `protocol` and `protocolPath` to be both defined or undefined at the same time', async () => {
+    it('should require `protocol` and `protocolPath`', async () => {
       const alice = await TestDataGenerator.generatePersona();
 
-      const options1 = {
-        recipient    : alice.did,
-        protocol     : 'http://example.com',
-        protocolPath : 'testRecord',
-        // protocolPath                : 'foo/bar', // intentionally missing
-        dataCid      : await TestDataGenerator.randomCborSha256Cid(),
-        dataSize     : 123,
-        dataFormat   : 'application/json',
-        recordId     : await TestDataGenerator.randomCborSha256Cid(),
-        signer       : Jws.createSigner(alice)
+      const baseOptions = {
+        recipient  : alice.did,
+        dataCid    : await TestDataGenerator.randomCborSha256Cid(),
+        dataSize   : 123,
+        dataFormat : 'application/json',
+        recordId   : await TestDataGenerator.randomCborSha256Cid(),
+        signer     : Jws.createSigner(alice)
       };
-      const createPromise1 = RecordsWrite.create(options1);
 
-      await expect(createPromise1).rejects.toThrow('`protocol` and `protocolPath` must both be defined or undefined at the same time');
+      // missing protocol
+      const missingProtocol = RecordsWrite.create({
+        ...baseOptions,
+        protocolPath: 'foo/bar',
+      } as RecordsWriteOptions);
+      await expect(missingProtocol).rejects.toThrow('`protocol` and `protocolPath` are required');
 
-      const options2 = {
-        recipient    : alice.did,
-        protocol     : 'http://test-protocol.xyz',
-        // protocol                    : 'http://example.com', // intentionally missing
-        protocolPath : 'foo/bar',
-        data         : TestDataGenerator.randomBytes(10),
-        dataCid      : await TestDataGenerator.randomCborSha256Cid(),
-        dataSize     : 123,
-        dataFormat   : 'application/json',
-        recordId     : await TestDataGenerator.randomCborSha256Cid(),
-        signer       : Jws.createSigner(alice)
-      };
-      const createPromise2 = RecordsWrite.create(options2);
-
-      await expect(createPromise2).rejects.toThrow('`protocol` and `protocolPath` must both be defined or undefined at the same time');
+      // missing protocolPath
+      const missingProtocolPath = RecordsWrite.create({
+        ...baseOptions,
+        protocol: 'http://example.com',
+      } as RecordsWriteOptions);
+      await expect(missingProtocolPath).rejects.toThrow('`protocol` and `protocolPath` are required');
     });
 
     it('should be able to create a RecordsWrite successfully using a custom signer', async () => {

@@ -82,6 +82,7 @@ export function testRecordsDeleteHandler(): void {
 
       it('should handle RecordsDelete successfully and return 404 if deleting a deleted record', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // insert data
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -125,6 +126,8 @@ export function testRecordsDeleteHandler(): void {
       it('should not affect other records or tenants with the same data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, bob);
         const data = Encoder.stringToBytes('test');
 
         // alice writes a records with data
@@ -211,6 +214,7 @@ export function testRecordsDeleteHandler(): void {
 
       it('should be disallowed if there is a newer RecordsWrite already in the DWN ', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // initial write
         const initialWriteData = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -251,6 +255,7 @@ export function testRecordsDeleteHandler(): void {
 
       it('should be able to delete then rewrite the same data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const data = Encoder.stringToBytes('test');
         const encodedData = Encoder.bytesToBase64Url(data);
 
@@ -645,6 +650,7 @@ export function testRecordsDeleteHandler(): void {
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         const recordsWrite = await TestDataGenerator.generateRecordsWrite({
           author: alice,
@@ -784,6 +790,7 @@ export function testRecordsDeleteHandler(): void {
 
       it('should index additional properties from the RecordsWrite being deleted', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // initial write
         const initialWriteData = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'testSchema' });
@@ -814,6 +821,7 @@ export function testRecordsDeleteHandler(): void {
       describe('state index', () => {
         it('should include RecordsDelete event and keep initial RecordsWrite event', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
           const writeReply = await dwn.processMessage(alice.did, message, { dataStream });
@@ -827,8 +835,9 @@ export function testRecordsDeleteHandler(): void {
           const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
           expect(deleteReply.status.code).toBe(202);
 
+          // NOTE: getLeaves returns ALL messageCids (including ProtocolsConfigure), so count is 3 not 2
           const events = await stateIndex.getLeaves(alice.did, []);
-          expect(events.length).toBe(2);
+          expect(events.length).toBe(3);
 
           const writeMessageCid = await Message.getCid(message);
           const deleteMessageCid = await Message.getCid(recordsDelete.message);
@@ -842,8 +851,11 @@ export function testRecordsDeleteHandler(): void {
         });
 
         it('should only keep first write and delete when subsequent writes happen', async () => {
-          const { message, author, dataStream, recordsWrite } = await TestDataGenerator.generateRecordsWrite();
+          const author = await TestDataGenerator.generatePersona();
           TestStubGenerator.stubDidResolver(didResolver, [author]);
+          await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+
+          const { message, dataStream, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ author });
 
           const reply = await dwn.processMessage(author.did, message, { dataStream });
           expect(reply.status.code).toBe(202);
@@ -866,7 +878,7 @@ export function testRecordsDeleteHandler(): void {
           expect(deleteReply.status.code).toBe(202);
 
           const events = await stateIndex.getLeaves(author.did, []);
-          expect(events.length).toBe(2);
+          expect(events.length).toBe(3);
 
           const deletedMessageCid = await Message.getCid(newWrite.message);
 

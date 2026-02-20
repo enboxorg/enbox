@@ -83,10 +83,13 @@ export class StateIndexLevel implements StateIndex {
     const globalSmt = await this.getGlobalTree(tenant);
     await globalSmt.insert(messageCid);
 
-    // Insert into the protocol-scoped tree (all records belong to a protocol)
-    const protocol = indexes.protocol as string;
-    const protoSmt = await this.getProtocolTree(tenant, protocol);
-    await protoSmt.insert(messageCid);
+    // Insert into the protocol-scoped tree if the message has a protocol (e.g. RecordsWrite).
+    // Non-record messages like ProtocolsConfigure do not have a protocol.
+    const protocol = indexes.protocol as string | undefined;
+    if (protocol !== undefined) {
+      const protoSmt = await this.getProtocolTree(tenant, protocol);
+      await protoSmt.insert(messageCid);
+    }
 
     // Store the reverse lookup so we know the protocol during deletion
     await this.storeIndexes(tenant, messageCid, indexes);
@@ -102,11 +105,13 @@ export class StateIndexLevel implements StateIndex {
       // Delete from global tree
       await globalSmt.delete(messageCid);
 
-      // Delete from protocol tree
+      // Delete from protocol tree if the message had a protocol
       if (indexes !== undefined) {
-        const protocol = indexes.protocol as string;
-        const protoSmt = await this.getProtocolTree(tenant, protocol);
-        await protoSmt.delete(messageCid);
+        const protocol = indexes.protocol as string | undefined;
+        if (protocol !== undefined) {
+          const protoSmt = await this.getProtocolTree(tenant, protocol);
+          await protoSmt.delete(messageCid);
+        }
       }
 
       // Remove the reverse lookup
