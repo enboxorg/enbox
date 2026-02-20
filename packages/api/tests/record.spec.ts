@@ -216,6 +216,7 @@ describe('Record', () => {
       // attempt to update the record with the delegated grant
       const updateResult = await record!.update({ data: 'Delegate Updated' });
       expect(updateResult.status.code).toBe(202);
+      const updatedRecord = updateResult.record;
 
       // attempt to read the record with the delegated grant
       const readResult = await delegateDwn.records.read({
@@ -231,14 +232,14 @@ describe('Record', () => {
       expect(readResult.record).toBeDefined();
 
       expect(readResult.record.dataCid).not.toBe(dataCidBeforeDataUpdate);
-      expect(readResult.record.dataCid).toBe(record!.dataCid);
+      expect(readResult.record.dataCid).toBe(updatedRecord.dataCid);
 
       // validate update signature is from the delegateDid but author is alice
       const updateSignature = Jws.getSignerDid(readResult.record.rawMessage.authorization.signature.signatures[0]);
       expect(updateSignature).toBe(delegateDid.uri);
       expect(readResult.record.author).toBe(aliceDid.uri);
 
-      const updatedData = await record!.data.text();
+      const updatedData = await updatedRecord.data.text();
       expect(updatedData).toBe('Delegate Updated');
     });
 
@@ -280,13 +281,14 @@ describe('Record', () => {
       // attempt to delete the record with the delegated grant
       const deleteResult = await aliceRecord.delete();
       expect(deleteResult.status.code).toBe(202);
+      const deletedRecord = deleteResult.record;
 
       // send the delete to the remote DWN
-      const sendDeleteResult = await aliceRecord.send();
+      const sendDeleteResult = await deletedRecord.send();
       expect(sendDeleteResult.status.code).toBe(202);
 
       // expect the delete to be signed by the delegateDid
-      const deleteSignature = Jws.getSignerDid(aliceRecord.rawMessage.authorization.signature.signatures[0]);
+      const deleteSignature = Jws.getSignerDid(deletedRecord.rawMessage.authorization.signature.signatures[0]);
       expect(deleteSignature).toBe(delegateDid.uri);
 
       // attempt to read the record with the delegated grant
@@ -320,7 +322,7 @@ describe('Record', () => {
 
 
       // attempt to delete again, record should return not found
-      const deleteResult2 = await aliceRecord.delete();
+      const deleteResult2 = await deletedRecord.delete();
       expect(deleteResult2.status.code).toBe(404);
     });
 
@@ -640,23 +642,23 @@ describe('Record', () => {
     expect(bobQueryBobDwn.records[0].id).toBe(importRecord.id);
 
     // Alice updates her record
-    const { status: aliceThreadStatusUpdated } = await aliceThreadRecord.update({
+    const { status: aliceThreadStatusUpdated, record: aliceThreadUpdated1 } = await aliceThreadRecord.update({
       data: TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000)
     });
     expect(aliceThreadStatusUpdated.code).toBe(202);
-    const { status: sentToSelfStatus } = await aliceThreadRecord!.send();
+    const { status: sentToSelfStatus } = await aliceThreadUpdated1!.send();
     expect(sentToSelfStatus.code).toBe(202);
 
-    const { status: sentToBobStatus } = await aliceThreadRecord!.send(bobDid.uri);
+    const { status: sentToBobStatus } = await aliceThreadUpdated1!.send(bobDid.uri);
     expect(sentToBobStatus.code).toBe(202);
 
     // Alice updates her record and sends it to her own DWN again
     const updatedText = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
-    const { status: aliceThreadStatusUpdatedAgain } = await aliceThreadRecord.update({
+    const { status: aliceThreadStatusUpdatedAgain, record: aliceThreadUpdated2 } = await aliceThreadUpdated1.update({
       data: updatedText
     });
     expect(aliceThreadStatusUpdatedAgain.code).toBe(202);
-    const { status: sentToSelfAgainStatus } = await aliceThreadRecord!.send();
+    const { status: sentToSelfAgainStatus } = await aliceThreadUpdated2!.send();
     expect(sentToSelfAgainStatus.code).toBe(202);
 
     // Bob queries for the updated record on alice's DWN
@@ -799,7 +801,7 @@ describe('Record', () => {
     expect(record.dataCid).toBe(recordsWrite.message.descriptor.dataCid);
     expect(record.dataSize).toBe(recordsWrite.message.descriptor.dataSize);
     expect(record.dateCreated).toBe(recordsWrite.message.descriptor.dateCreated);
-    expect(record.dateModified).toBe(recordsWrite.message.descriptor.messageTimestamp);
+    expect(record.timestamp).toBe(recordsWrite.message.descriptor.messageTimestamp);
     expect(record.published).toBe(published);
     expect(record.datePublished).toBe(recordsWrite.message.descriptor.datePublished);
     expect(record.dataFormat).toBe(dataFormat);
@@ -1944,17 +1946,19 @@ describe('Record', () => {
       // Update the record by mutating the data property.
       let updateResult = await record!.update({ data: 'hi' });
       expect(updateResult.status.code).toBe(202);
+      let updatedRecord = updateResult.record;
 
       // Write the updated record to Alice's remote DWN a second time.
-      sendResult = await record!.send(aliceDid.uri);
+      sendResult = await updatedRecord!.send(aliceDid.uri);
       expect(sendResult.status.code).toBe(202);
 
       // Update the record again.
-      updateResult = await record!.update({ data: 'bye' });
+      updateResult = await updatedRecord!.update({ data: 'bye' });
       expect(updateResult.status.code).toBe(202);
+      updatedRecord = updateResult.record;
 
       // Write the updated record to Alice's remote DWN a third time.
-      sendResult = await record!.send(aliceDid.uri);
+      sendResult = await updatedRecord!.send(aliceDid.uri);
       expect(sendResult.status.code).toBe(202);
     });
 
@@ -1974,7 +1978,7 @@ describe('Record', () => {
       expect(updateResult.status.code).toBe(202);
 
       // Write the updated record to Alice's remote DWN a second time.
-      const sendResult = await record!.send(aliceDid.uri);
+      const sendResult = await updateResult.record!.send(aliceDid.uri);
       expect(sendResult.status.code).toBe(202);
     });
 
@@ -2397,7 +2401,7 @@ describe('Record', () => {
       expect(recordJson.dataCid).toBe(recordsWrite.message.descriptor.dataCid);
       expect(recordJson.dataSize).toBe(recordsWrite.message.descriptor.dataSize);
       expect(recordJson.dateCreated).toBe(recordsWrite.message.descriptor.dateCreated);
-      expect(recordJson.messageTimestamp).toBe(recordsWrite.message.descriptor.messageTimestamp);
+      expect(recordJson.timestamp).toBe(recordsWrite.message.descriptor.messageTimestamp);
       expect(recordJson.published).toBe(published);
       expect(recordJson.datePublished).toBe(recordsWrite.message.descriptor.datePublished);
       expect(recordJson.dataFormat).toBe(dataFormat);
@@ -2420,7 +2424,7 @@ describe('Record', () => {
       expect(recordString).toContain(`ID: ${record.id}`);
       expect(recordString).toContain(`Deleted: ${false}`); // record is not deleted
       expect(recordString).toContain(`Created: ${record.dateCreated}`);
-      expect(recordString).toContain(`Modified: ${record.dateModified}`);
+      expect(recordString).toContain(`Timestamp: ${record.timestamp}`);
 
       // data related properties
       expect(recordString).toContain(`Data CID: ${record.dataCid}`);
@@ -2449,7 +2453,7 @@ describe('Record', () => {
       expect(recordString).toContain(`Schema: ${record.schema}`);
       expect(recordString).toContain(`Deleted: ${false}`); // record is not deleted
       expect(recordString).toContain(`Created: ${record.dateCreated}`);
-      expect(recordString).toContain(`Modified: ${record.dateModified}`);
+      expect(recordString).toContain(`Timestamp: ${record.timestamp}`);
 
       // data related properties
       expect(recordString).toContain(`Data CID: ${record.dataCid}`);
@@ -2468,15 +2472,15 @@ describe('Record', () => {
       expect(status.code).toBe(202);
 
       // delete the record
-      const { status: deleteStatus } = await record!.delete();
+      const { status: deleteStatus, record: deletedRecord } = await record!.delete();
       expect(deleteStatus.code).toBe(202);
 
-      const recordString = record!.toString();
+      const recordString = deletedRecord!.toString();
       expect(typeof recordString).toBe('string');
-      expect(recordString).toContain(`ID: ${record.id}`);
+      expect(recordString).toContain(`ID: ${deletedRecord.id}`);
       expect(recordString).toContain(`Deleted: ${true}`); // record is deleted
-      expect(recordString).toContain(`Created: ${record.dateCreated}`);
-      expect(recordString).toContain(`Modified: ${record.dateModified}`);
+      expect(recordString).toContain(`Created: ${deletedRecord.dateCreated}`);
+      expect(recordString).toContain(`Timestamp: ${deletedRecord.timestamp}`);
 
       // data related properties
       expect(recordString).not.toContain('Data CID');
@@ -2549,6 +2553,7 @@ describe('Record', () => {
 
       const updateResult = await record!.update({ data: 'bye' });
       expect(updateResult.status.code).toBe(202);
+      const updatedRecord = updateResult.record;
 
       const readResult = await dwnAlice.records.read({
         message: {
@@ -2562,9 +2567,9 @@ describe('Record', () => {
       expect(readResult.record).toBeDefined();
 
       expect(readResult.record.dataCid).not.toBe(dataCidBeforeDataUpdate);
-      expect(readResult.record.dataCid).toBe(record!.dataCid);
+      expect(readResult.record.dataCid).toBe(updatedRecord!.dataCid);
 
-      const updatedData = await record!.data.text();
+      const updatedData = await updatedRecord!.data.text();
       expect(updatedData).toBe('bye');
     });
 
@@ -2603,7 +2608,7 @@ describe('Record', () => {
       expect(updateResult.status.code).toBe(202);
 
       // send the updated record to alice's DWN
-      const sendResultAfterUpdate = await record!.send(aliceDid.uri);
+      const sendResultAfterUpdate = await updateResult.record!.send(aliceDid.uri);
       expect(sendResultAfterUpdate.status.code).toBe(202);
 
       // bob attempts to read the record again but it should not be authorized as it's unpublished
@@ -2663,6 +2668,7 @@ describe('Record', () => {
       // Attempt to update the record, which should write the updated record the local DWN.
       updateResult = await readRecord.update({ data: 'bye' });
       expect(updateResult.status.code).toBe(202);
+      const updatedRecord = updateResult.record;
 
       // Confirm that the record was written to the local DWN.
       readResult = await dwnAlice.records.read({
@@ -2677,7 +2683,7 @@ describe('Record', () => {
 
       // Confirm that the data CID of the record was updated.
       expect(readResult.record.dataCid).not.toBe(dataCidBeforeDataUpdate);
-      expect(readResult.record.dataCid).toBe(readRecord.dataCid);
+      expect(readResult.record.dataCid).toBe(updatedRecord.dataCid);
     });
 
     it('updates a record that was queried from a remote DWN without storing it', async () => {
@@ -2765,10 +2771,10 @@ describe('Record', () => {
       expect(emailSendStatus.code).toBe(202);
 
       // update email record
-      const { status: updateStatus } = await emailRecord!.update({ data: 'updated email record', store: false });
+      const { status: updateStatus, record: updatedEmailRecord } = await emailRecord!.update({ data: 'updated email record', store: false });
       expect(updateStatus.code).toBe(202);
 
-      const { status: updateEmailSendStatus } = await emailRecord!.send();
+      const { status: updateEmailSendStatus } = await updatedEmailRecord!.send();
       expect(updateEmailSendStatus.code).toBe(202);
 
       let readResult = await dwnAlice.records.read({
@@ -2849,7 +2855,7 @@ describe('Record', () => {
       expect(await readResult.record.data.text()).toBe('updated email record');
     });
 
-    it('returns new dateModified after each update', async () => {
+    it('returns new timestamp after each update', async () => {
       // Initial write of the record.
       const { status, record } = await dwnAlice.records.write({
         data    : 'Hello, world!',
@@ -2858,24 +2864,24 @@ describe('Record', () => {
           dataFormat : 'text/plain'
         }
       });
-      const initialDateModified = record.dateModified;
+      const initialTimestamp = record.timestamp;
       expect(status.code).toBe(202);
 
       // First update of the record.
       let updateResult = await record!.update({ data: 'hi' });
       expect(updateResult.status.code).toBe(202);
 
-      // Verify that the dateModified was updated.
-      const firstUpdateDateModified = record.dateModified;
-      expect(initialDateModified).not.toBe(firstUpdateDateModified);
+      // Verify that the timestamp was updated.
+      const firstUpdateTimestamp = updateResult.record.timestamp;
+      expect(initialTimestamp).not.toBe(firstUpdateTimestamp);
 
       //  Second update of the record.
-      updateResult = await record!.update({ data: 'bye' });
+      updateResult = await updateResult.record!.update({ data: 'bye' });
       expect(updateResult.status.code).toBe(202);
 
-      // Verify that the dateModified was updated.
-      const secondUpdateDateModified = record.dateModified;
-      expect(firstUpdateDateModified).not.toBe(secondUpdateDateModified);
+      // Verify that the timestamp was updated.
+      const secondUpdateTimestamp = updateResult.record.timestamp;
+      expect(firstUpdateTimestamp).not.toBe(secondUpdateTimestamp);
     });
 
     it('throws an exception when an immutable property is modified', async () => {
@@ -2912,12 +2918,12 @@ describe('Record', () => {
       expect(writeStatus.code).toBe(202);
 
       // delete the record but do not store it
-      const { status: deleteStatus } = await record.delete();
+      const { status: deleteStatus, record: deletedRecord } = await record.delete();
       expect(deleteStatus.code).toBe(202);
 
       // store the record
       try {
-        await record.update({ data: 'hi' });
+        await deletedRecord.update({ data: 'hi' });
         throw new Error('Should have failed because the initial write is not set');
       } catch (error: any) {
         expect(error.message).toContain('Record: Cannot revive a deleted record.');
@@ -2950,11 +2956,12 @@ describe('Record', () => {
       });
 
       expect(updateResultWithoutTags.status.code).toBe(202);
-      expect(record.tags).toEqual({ tag1: 'value1', tag2: 'value2' }); // unchanged
-      expect(await record.data.text()).toBe('hi');
+      const updatedRecord1 = updateResultWithoutTags.record;
+      expect(updatedRecord1.tags).toEqual({ tag1: 'value1', tag2: 'value2' }); // unchanged
+      expect(await updatedRecord1.data.text()).toBe('hi');
 
       // if you modify the tags they override the existing tags
-      const updateResultWithTags = await record!.update({
+      const updateResultWithTags = await updatedRecord1!.update({
         tags: {
           tag1 : 'value3',
           tag3 : 'value4'
@@ -2962,8 +2969,9 @@ describe('Record', () => {
       });
 
       expect(updateResultWithTags.status.code).toBe(202);
-      expect(record.tags).toEqual({ tag1: 'value3', tag3: 'value4' }); // changed to updated tags
-      expect(await record.data.text()).toBe('hi');
+      const updatedRecord2 = updateResultWithTags.record;
+      expect(updatedRecord2.tags).toEqual({ tag1: 'value3', tag3: 'value4' }); // changed to updated tags
+      expect(await updatedRecord2.data.text()).toBe('hi');
     });
 
     it('should remove tags on update if tags are set to an empty object or null', async () => {
@@ -2991,10 +2999,11 @@ describe('Record', () => {
       });
 
       expect(updateResultWithEmptyTags.status.code).toBe(202);
-      expect(record.tags).toBeUndefined(); // removed
+      const updatedRecord1 = updateResultWithEmptyTags.record;
+      expect(updatedRecord1.tags).toBeUndefined(); // removed
 
       // add tags to the record again
-      const updateResultWithTags = await record!.update({
+      const updateResultWithTags = await updatedRecord1!.update({
         tags: {
           tag1 : 'value3',
           tag3 : 'value4'
@@ -3002,15 +3011,17 @@ describe('Record', () => {
       });
 
       expect(updateResultWithTags.status.code).toBe(202);
-      expect(record.tags).toEqual({ tag1: 'value3', tag3: 'value4' }); // added tags
+      const updatedRecord2 = updateResultWithTags.record;
+      expect(updatedRecord2.tags).toEqual({ tag1: 'value3', tag3: 'value4' }); // added tags
 
       // if you use null it removes the tags
-      const updateResultWithNullTags = await record!.update({
+      const updateResultWithNullTags = await updatedRecord2!.update({
         tags: null
       });
 
       expect(updateResultWithNullTags.status.code).toBe(202);
-      expect(record.tags).toBeUndefined(); // removed
+      const updatedRecord3 = updateResultWithNullTags.record;
+      expect(updatedRecord3.tags).toBeUndefined(); // removed
     });
 
     it('should allow updating the dataFormat of a record', async () => {
@@ -3033,14 +3044,16 @@ describe('Record', () => {
       // update the record to JSON
       const updateResult = await record!.update({ dataFormat: 'application/json', data: { subject: 'some subject', body: 'some body' } });
       expect(updateResult.status.code).toBe(202);
-      expect(record.dataFormat).toBe('application/json');
-      expect(await record.data.json()).toEqual({ subject: 'some subject', body: 'some body' });
+      const updatedRecord1 = updateResult.record;
+      expect(updatedRecord1.dataFormat).toBe('application/json');
+      expect(await updatedRecord1.data.json()).toEqual({ subject: 'some subject', body: 'some body' });
 
       // update again without changing the dataFormat
-      const updateResult2 = await record!.update({ data: { subject: 'another subject', body: 'another body' } });
+      const updateResult2 = await updatedRecord1!.update({ data: { subject: 'another subject', body: 'another body' } });
       expect(updateResult2.status.code).toBe(202);
-      expect(record.dataFormat).toBe('application/json');
-      expect(await record.data.json()).toEqual({ subject: 'another subject', body: 'another body' });
+      const updatedRecord2 = updateResult2.record;
+      expect(updatedRecord2.dataFormat).toBe('application/json');
+      expect(await updatedRecord2.data.json()).toEqual({ subject: 'another subject', body: 'another body' });
     });
 
     it('differentiates between creator and author', async () => {
@@ -3074,10 +3087,10 @@ describe('Record', () => {
       const bobRecord = readResult.record;
       const { status: storeStatus } = await bobRecord!.store();
       expect(storeStatus.code).toBe(202);
-      const { status: updateStatus } = await bobRecord.update({ data: 'Hello, Alice!' });
+      const { status: updateStatus, record: updatedBobRecord } = await bobRecord.update({ data: 'Hello, Alice!' });
       expect(updateStatus.code).toBe(202);
 
-      const updatedData = await bobRecord.send(aliceDid.uri);
+      const updatedData = await updatedBobRecord.send(aliceDid.uri);
       expect(updatedData.status.code).toBe(202);
 
       // alice reads the record
@@ -3209,7 +3222,7 @@ describe('Record', () => {
       expect(importStatus.code).toBe(202);
 
       // Alice updates the co-author note without providing a new role
-      const { status: updateStatus } = await coAuthorNote!.update({ data: 'updated note' });
+      const { status: updateStatus, record: updatedNote } = await coAuthorNote!.update({ data: 'updated note' });
       expect(updateStatus.code).toBe(202);
 
       // spy on sendDwnRequest to ensure that the protocolRole is used to read the data of the notes
@@ -3219,20 +3232,20 @@ describe('Record', () => {
       expect(sendDwnRequestSpy.callCount).toBe(0);
 
       // This is accepted locally but will fail when sending the update to the remote DWN
-      const { status: sendStatus } = await coAuthorNote.send(bobDid.uri);
+      const { status: sendStatus } = await updatedNote.send(bobDid.uri);
       expect(sendStatus.code).toBe(401);
       expect(sendDwnRequestSpy.callCount).toBe(2); // the first call is for the initialWrite
       let record = (sendDwnRequestSpy.secondCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsWrite>).rawMessage;
       let sendAuthorizationRole = getRecordProtocolRole(record);
       expect(sendAuthorizationRole).toBe('friend');
 
-      const { status: updateStatusCoAuthor } = await coAuthorNote!.update({ data: 'updated note', protocolRole: 'note/coAuthor' });
+      const { status: updateStatusCoAuthor, record: updatedNoteCoAuthor } = await updatedNote!.update({ data: 'updated note', protocolRole: 'note/coAuthor' });
       expect(updateStatusCoAuthor.code).toBe(202);
 
       sendDwnRequestSpy.resetHistory();
 
       // Now update the record with the correct role
-      const { status: sendStatusCoAuthor } = await coAuthorNote.send(bobDid.uri);
+      const { status: sendStatusCoAuthor } = await updatedNoteCoAuthor.send(bobDid.uri);
       expect(sendStatusCoAuthor.code).toBe(202);
       expect(sendDwnRequestSpy.callCount).toBe(1); // the initialWrite was already sent and added to the sent-cache, only the update is sent
       record = (sendDwnRequestSpy.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsWrite>).rawMessage;
@@ -3284,12 +3297,12 @@ describe('Record', () => {
 
       // Update the record — encryption should be auto-detected
       const updatedPlaintext = 'Updated secret note';
-      const { status: updateStatus } = await record!.update({ data: updatedPlaintext });
+      const { status: updateStatus, record: updatedRecord } = await record!.update({ data: updatedPlaintext });
       expect(updateStatus.code).toBe(202);
 
       // Verify the record's encryption metadata was updated
-      expect(record!.encryption).toBeDefined();
-      expect(record!.encryption!.iv).not.toBe(originalIV);
+      expect(updatedRecord!.encryption).toBeDefined();
+      expect(updatedRecord!.encryption!.iv).not.toBe(originalIV);
 
       // Read back with decryption to verify the updated plaintext
       const { status: readStatus, record: readRecord } = await dwnAlice.records.read({
@@ -3464,11 +3477,11 @@ describe('Record', () => {
       expect(readRecord!.id).toBe(record.id);
 
       // delete the record
-      const { status: deleteStatus } = await record.delete();
+      const { status: deleteStatus, record: deletedRecord } = await record.delete();
       expect(deleteStatus.code).toBe(202);
 
       // confirm record is in a deleted state
-      expect(record.deleted).toBe(true);
+      expect(deletedRecord.deleted).toBe(true);
 
       // confirm the record has been deleted
       const readResult = await dwnAlice.records.read({
@@ -3511,14 +3524,14 @@ describe('Record', () => {
       expect(readResult.record.id).toBe(record.id);
 
       // delete the record
-      const { status: deleteLocalStatus } = await record.delete();
+      const { status: deleteLocalStatus, record: deletedRecord } = await record.delete();
       expect(deleteLocalStatus.code).toBe(202);
 
       // confirm record is in a deleted state
-      expect(record.deleted).toBe(true);
+      expect(deletedRecord.deleted).toBe(true);
 
       // send the delete request to the remote DWN
-      const { status: deleteSendStatus } = await record.send(aliceDid.uri);
+      const { status: deleteSendStatus } = await deletedRecord.send(aliceDid.uri);
       expect(deleteSendStatus.code).toBe(202);
 
       // confirm the record has been deleted
@@ -3724,9 +3737,9 @@ describe('Record', () => {
       expect(childrenRecords.map(r => r.id)).toEqual(expect.arrayContaining([childRecord1.id, childRecord2.id]));
 
       // Delete the parent record and its children.
-      const { status: deleteStatus } = await parentRecord.delete({ store: false, prune: true });
+      const { status: deleteStatus, record: deletedParentRecord } = await parentRecord.delete({ store: false, prune: true });
       expect(deleteStatus.code).toBe(202);
-      const { status: parentDeleteStatus } = await parentRecord.send(aliceDid.uri);
+      const { status: parentDeleteStatus } = await deletedParentRecord.send(aliceDid.uri);
       expect(parentDeleteStatus.code).toBe(202);
 
       // query for child records to confirm it was deleted
@@ -3757,15 +3770,15 @@ describe('Record', () => {
       expect(writeStatus.code).toBe(202);
 
       // delete the record but do not store it
-      const { status: deleteStatus } = await record.delete({ store: false });
+      const { status: deleteStatus, record: deletedRecord } = await record.delete({ store: false });
       expect(deleteStatus.code).toBe(202);
 
       // purposefully delete the _initialWrite property
-      delete record['_initialWrite'];
+      delete deletedRecord['_initialWrite'];
 
       // store the record
       try {
-        await record.delete();
+        await deletedRecord.delete();
         throw new Error('Should have failed because the initial write is not set');
       } catch (error: any) {
         expect(error.message).toContain('Record: Record is in an invalid state, initial write is missing.');
@@ -3796,12 +3809,12 @@ describe('Record', () => {
       expect(readRecord!.id).toBe(record.id);
 
       // delete the record
-      const { status: deleteStatus } = await record.delete();
+      const { status: deleteStatus, record: deletedRecord } = await record.delete();
       expect(deleteStatus.code).toBe(202);
-      expect(record.deleted).toBe(true);
+      expect(deletedRecord.deleted).toBe(true);
 
       // attempt to delete the record again
-      const { status: deleteStatus2 } = await record.delete();
+      const { status: deleteStatus2 } = await deletedRecord.delete();
       expect(deleteStatus2.code).toBe(404);
     });
 
@@ -3831,29 +3844,29 @@ describe('Record', () => {
       const dateCreated = record.dateCreated;
       expect(dateCreated).toBeDefined();
 
-      // sanity: check date modified
-      const dateModified = record.dateModified;
-      expect(dateModified).toBeDefined();
+      // sanity: check timestamp
+      const timestamp = record.timestamp;
+      expect(timestamp).toBeDefined();
 
       // delete the record
-      const { status: deleteStatus } = await record.delete();
+      const { status: deleteStatus, record: deletedRecord } = await record.delete();
       expect(deleteStatus.code).toBe(202);
 
       // sanity: should be unchanged
-      expect(record.id).toBe(recordId);
-      expect(record.dateCreated).toBe(dateCreated);
-      expect(record.schema).toBe(schema);
+      expect(deletedRecord.id).toBe(recordId);
+      expect(deletedRecord.dateCreated).toBe(dateCreated);
+      expect(deletedRecord.schema).toBe(schema);
 
-      // date modified should be greater than the initial date modified
-      expect(Date.parse(record.dateModified)).toBeGreaterThan(Date.parse(dateModified));
+      // timestamp should be greater than the initial timestamp
+      expect(Date.parse(deletedRecord.timestamp)).toBeGreaterThan(Date.parse(timestamp));
 
       // check for undefined data related properties
-      expect(record.dataFormat).toBeUndefined();
-      expect(record.dataCid).toBeUndefined();
-      expect(record.dataSize).toBeUndefined();
+      expect(deletedRecord.dataFormat).toBeUndefined();
+      expect(deletedRecord.dataCid).toBeUndefined();
+      expect(deletedRecord.dataSize).toBeUndefined();
 
       try {
-        await record.data.text();
+        await deletedRecord.data.text();
         throw new Error('Expected an exception to be thrown');
       } catch (error:any) {
         expect(error.message).toContain('Not Found');
@@ -3903,9 +3916,9 @@ describe('Record', () => {
       const bobsRecordToDelete = receivedRecords[0];
       expect(bobsRecordToDelete.deleted).toBe(false);
 
-      const { status: storeStatus } = await bobsRecordToDelete.delete();
+      const { status: storeStatus, record: deletedBobRecord } = await bobsRecordToDelete.delete();
       expect(storeStatus.code).toBe(202);
-      expect(bobsRecordToDelete.deleted).toBe(true);
+      expect(deletedBobRecord.deleted).toBe(true);
 
       await liveQuery!.close();
     });
@@ -3953,9 +3966,9 @@ describe('Record', () => {
       const bobsRecordToDelete = receivedRecords[0];
       expect(bobsRecordToDelete.deleted).toBe(false);
 
-      const { status: storeStatus } = await bobsRecordToDelete.delete({ signAsOwner: true });
+      const { status: storeStatus, record: deletedBobRecord } = await bobsRecordToDelete.delete({ signAsOwner: true });
       expect(storeStatus.code).toBe(202);
-      expect(bobsRecordToDelete.deleted).toBe(true);
+      expect(deletedBobRecord.deleted).toBe(true);
 
       await liveQuery!.close();
     });
@@ -4068,10 +4081,10 @@ describe('Record', () => {
       // confirm that it starts with 0 calls
       expect(sendDwnRequestSpy.callCount).toBe(0);
 
-      const { status: deleteStatus } = await coDeleteNote.delete({ store: false });
+      const { status: deleteStatus, record: deletedNote } = await coDeleteNote.delete({ store: false });
       expect(deleteStatus.code).toBe(202);
 
-      const { status: sendDeleteStatus } = await coDeleteNote.send(bobDid.uri);
+      const { status: sendDeleteStatus } = await deletedNote.send(bobDid.uri);
       expect(sendDeleteStatus.code).toBe(401);
 
       expect(sendDwnRequestSpy.callCount).toBe(2); // the first call is for the initialWrite
@@ -4081,11 +4094,11 @@ describe('Record', () => {
 
       sendDwnRequestSpy.resetHistory();
 
-      // Now update the record with the correct role
-      const { status: updateStatusCoAuthor } = await coDeleteNote.delete({ protocolRole: 'note/coAuthor', store: false });
+      // Now delete the record with the correct role
+      const { status: updateStatusCoAuthor, record: deletedNoteCoAuthor } = await deletedNote.delete({ protocolRole: 'note/coAuthor', store: false });
       expect(updateStatusCoAuthor.code).toBe(202);
 
-      const { status: sendStatusCoAuthor } = await coDeleteNote.send(bobDid.uri);
+      const { status: sendStatusCoAuthor } = await deletedNoteCoAuthor.send(bobDid.uri);
       expect(sendStatusCoAuthor.code).toBe(202);
 
       expect(sendDwnRequestSpy.callCount).toBe(1); // the initialWrite was already sent and added to the sent-cache, only the update is sent
@@ -4220,7 +4233,7 @@ describe('Record', () => {
       const updateResult = await record!.update({ data: updatedText });
       expect(updateResult.status.code).toBe(202, updateResult.status.detail);
 
-      const sendResponse = await record.send();
+      const sendResponse = await updateResult.record.send();
       expect(sendResponse.status.code).toBe(202, sendResponse.status.detail);
 
       // Bob queries for the record from his own node, should not return any results
@@ -4291,17 +4304,17 @@ describe('Record', () => {
       expect(record).toBeDefined();
 
       // delete the record without storing
-      const { status: deleteStatus } = await record.delete({ store: false });
+      const { status: deleteStatus, record: deletedRecord } = await record.delete({ store: false });
       expect(deleteStatus.code).toBe(202);
 
       // check that the record is in a deleted state
-      expect(record.deleted).toBe(true);
+      expect(deletedRecord.deleted).toBe(true);
 
       // check that processMessage has not been called yet, as the records have not been stored
       expect(processMessageSpy.callCount).toBe(0);
 
       // store the record
-      const { status: storeStatus } = await record.store();
+      const { status: storeStatus } = await deletedRecord.store();
       expect(storeStatus.code).toBe(202);
 
       // check that it was called once for initial write and once for the delete
@@ -4337,11 +4350,11 @@ describe('Record', () => {
       });
       expect(bobWriteStatus.code).toBe(202);
 
-      const { status: bobDeleteStatus } = await bobWriteRecord.delete();
+      const { status: bobDeleteStatus, record: deletedBobWriteRecord } = await bobWriteRecord.delete();
       expect(bobDeleteStatus.code).toBe(202);
 
       // send the deleted record to alice's DWN
-      const { status: deletedSend } = await bobWriteRecord.send(aliceDid.uri);
+      const { status: deletedSend } = await deletedBobWriteRecord.send(aliceDid.uri);
       expect(deletedSend.code).toBe(202);
 
       // wait for the deleted record to be received
@@ -4473,7 +4486,7 @@ describe('Record', () => {
       const updatedText = 'updated text';
       const updateResult = await record!.update({ data: updatedText });
       expect(updateResult.status.code).toBe(202, updateResult.status.detail);
-      const sendResponse = await record.send();
+      const sendResponse = await updateResult.record.send();
       expect(sendResponse.status.code).toBe(202, sendResponse.status.detail);
 
       // Bob queries Alice's DWN for the record.
@@ -4538,11 +4551,11 @@ describe('Record', () => {
       });
       expect(bobWriteStatus.code).toBe(202);
 
-      const { status: bobDeleteStatus } = await bobWriteRecord.delete();
+      const { status: bobDeleteStatus, record: deletedBobWriteRecord } = await bobWriteRecord.delete();
       expect(bobDeleteStatus.code).toBe(202);
 
       // send the deleted record to alice's DWN
-      const { status: deletedSend } = await bobWriteRecord.send(aliceDid.uri);
+      const { status: deletedSend } = await deletedBobWriteRecord.send(aliceDid.uri);
       expect(deletedSend.code).toBe(202);
 
       // wait for the deleted record to be received
@@ -4646,7 +4659,7 @@ describe('Record', () => {
         const updatedText = 'updated text';
         const updateResult = await record.update({ data: updatedText });
         expect(updateResult.status.code).toBe(202, updateResult.status.detail);
-        const sendResponse = await record.send();
+        const sendResponse = await updateResult.record.send();
         expect(sendResponse.status.code).toBe(202, sendResponse.status.detail);
 
         // Bob queries Alice's DWN for the record.
@@ -4725,11 +4738,11 @@ describe('Record', () => {
         });
         expect(bobWriteStatus.code).toBe(202);
 
-        const { status: bobDeleteStatus } = await bobWriteRecord.delete();
+        const { status: bobDeleteStatus, record: deletedBobWriteRecord } = await bobWriteRecord.delete();
         expect(bobDeleteStatus.code).toBe(202);
 
         // send the deleted record to alice's DWN
-        const { status: deletedSend } = await bobWriteRecord.send(aliceDid.uri);
+        const { status: deletedSend } = await deletedBobWriteRecord.send(aliceDid.uri);
         expect(deletedSend.code).toBe(202);
 
         // wait for the deleted record to be received
@@ -4834,11 +4847,11 @@ describe('Record', () => {
       expect(writeStatus.code).toBe(202);
 
       // delete the record
-      const { status: deleteStatus } = await record.delete({ store: false });
+      const { status: deleteStatus, record: deletedRecord } = await record.delete({ store: false });
       expect(deleteStatus.code).toBe(202);
 
       // get a pagination cursor
-      const paginationCursor = await record.paginationCursor(DwnDateSort.CreatedAscending);
+      const paginationCursor = await deletedRecord.paginationCursor(DwnDateSort.CreatedAscending);
       expect(paginationCursor).toBeUndefined();
     });
   });

@@ -170,7 +170,7 @@ export class LiveQuery extends EventTarget {
     // Seed the known-records map with recordId -> messageTimestamp for dedup.
     this._knownRecords = new Map();
     for (const record of this.records) {
-      this._knownRecords.set(record.id, record.dateModified);
+      this._knownRecords.set(record.id, record.timestamp);
     }
   }
 
@@ -195,7 +195,7 @@ export class LiveQuery extends EventTarget {
 
       if (knownTimestamp !== undefined) {
         // We've seen this recordId before (either from snapshot or a prior event).
-        if (record.dateModified <= knownTimestamp) {
+        if (record.timestamp <= knownTimestamp) {
           // Duplicate or stale event from the overlap window — skip.
           return;
         }
@@ -205,7 +205,7 @@ export class LiveQuery extends EventTarget {
       }
 
       // Update the known state.
-      this._knownRecords.set(record.id, record.dateModified);
+      this._knownRecords.set(record.id, record.timestamp);
     }
 
     const change: RecordChange = { type: changeType, record };

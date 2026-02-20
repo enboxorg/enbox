@@ -592,7 +592,10 @@ export class DwnApi {
        * Write a record based on an existing one (useful for updating an existing record)
        */
       createFrom: async (request: RecordsCreateFromRequest): Promise<RecordsWriteResponse> => {
-        const { author: inheritedAuthor, ...inheritedProperties } = request.record.toJSON();
+        const { author: inheritedAuthor, timestamp, ...inheritedProperties } = request.record.toJSON();
+
+        // Map the public `timestamp` field back to the DWN SDK's `messageTimestamp`.
+        (inheritedProperties as { messageTimestamp?: string }).messageTimestamp = timestamp;
 
         // If `data` is being updated then `dataCid` and `dataSize` must not be present.
         if (request.data !== undefined) {
