@@ -182,7 +182,7 @@ describe('web5 api', () => {
       // this avoids DB locks when the agent is created twice
       sinon.stub(Web5UserAgent, 'create').resolves(testHarness.agent as Web5UserAgent);
 
-      const { web5, recoveryPhrase, did } = await Web5.connect();
+      const { web5, recoveryPhrase, did } = await Web5.connect({ sync: 'off' });
       expect(web5).toBeDefined();
       expect(web5.agent).toBeInstanceOf(Web5UserAgent);
       // Verify recovery phrase is a 12-word string.
@@ -190,7 +190,7 @@ describe('web5 api', () => {
       expect(recoveryPhrase.split(' ')).toHaveLength(12);
 
       // if called again, the same DID is returned, and the recovery phrase is not regenerated
-      const { recoveryPhrase: recoveryPhraseConnect2, did: didConnect2 } = await Web5.connect();
+      const { recoveryPhrase: recoveryPhraseConnect2, did: didConnect2 } = await Web5.connect({ sync: 'off' });
       expect(recoveryPhraseConnect2).toBeUndefined();
       expect(didConnect2).toBe(did);
     });
@@ -225,7 +225,8 @@ describe('web5 api', () => {
       const walletConnectSpy = sinon.spy(WalletConnect, 'initClient');
       const identityApiSpy = sinon.spy(AgentIdentityApi.prototype, 'create');
       const { web5, did } = await Web5.connect({
-        techPreview: { dwnEndpoints: ['https://dwn.example.com/preview'] },
+        techPreview : { dwnEndpoints: ['https://dwn.example.com/preview'] },
+        sync        : 'off',
       });
       expect(web5).toBeDefined();
       expect(did).toBeDefined();
@@ -247,7 +248,8 @@ describe('web5 api', () => {
       const identityApiSpy = sinon.spy(AgentIdentityApi.prototype, 'create');
       const walletConnectSpy = sinon.spy(WalletConnect, 'initClient');
       const { web5, did } = await Web5.connect({
-        didCreateOptions: { dwnEndpoints: ['https://dwn.example.com'] },
+        didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+        sync             : 'off',
       });
       expect(web5).toBeDefined();
       expect(did).toBeDefined();
@@ -268,7 +270,7 @@ describe('web5 api', () => {
 
       // create an identity by connecting
       sinon.stub(Web5UserAgent, 'create').resolves(testHarness.agent as Web5UserAgent);
-      const { web5, did } = await Web5.connect({ techPreview: { dwnEndpoints: [ testDwnUrl ] } });
+      const { web5, did } = await Web5.connect({ techPreview: { dwnEndpoints: [ testDwnUrl ] }, sync: 'off' });
       expect(web5).toBeDefined();
       expect(did).toBeDefined();
 
@@ -279,7 +281,7 @@ describe('web5 api', () => {
       });
 
       // connect again
-      const { did: did2 } = await Web5.connect();
+      const { did: did2 } = await Web5.connect({ sync: 'off' });
       expect(did2).toBe(did);
     });
 
@@ -288,7 +290,7 @@ describe('web5 api', () => {
         .stub(Web5UserAgent, 'create')
         .resolves(testHarness.agent as Web5UserAgent);
       const identityApiSpy = sinon.spy(AgentIdentityApi.prototype, 'create');
-      const { web5, did } = await Web5.connect();
+      const { web5, did } = await Web5.connect({ sync: 'off' });
       expect(web5).toBeDefined();
       expect(did).toBeDefined();
 
@@ -955,6 +957,7 @@ describe('web5 api', () => {
               'https://dwn.production.com/',
             ],
           },
+          sync: 'off',
         });
         expect(web5).toBeDefined();
         expect(did).toBeDefined();
@@ -1001,6 +1004,7 @@ describe('web5 api', () => {
               'https://dwn.production.com/',
             ],
           },
+          sync: 'off',
         });
         expect(web5).toBeDefined();
         expect(did).toBeDefined();
@@ -1047,6 +1051,7 @@ describe('web5 api', () => {
               'https://dwn.production.com/',
             ],
           },
+          sync: 'off',
         });
         expect(web5).toBeDefined();
         expect(did).toBeDefined();
@@ -1093,7 +1098,8 @@ describe('web5 api', () => {
               'https://dwn.production.com/',
             ],
           }, // two endpoints,
-          techPreview: { dwnEndpoints: ['https://dwn.production.com/'] }, // one endpoint
+          techPreview : { dwnEndpoints: ['https://dwn.production.com/'] }, // one endpoint
+          sync        : 'off',
         });
         expect(web5).toBeDefined();
         expect(did).toBeDefined();
