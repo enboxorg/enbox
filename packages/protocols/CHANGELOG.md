@@ -1,5 +1,14 @@
 # @enbox/protocols
 
+## 0.2.3
+
+### Patch Changes
+
+- [#261](https://github.com/enboxorg/enbox/pull/261) [`8a2f650`](https://github.com/enboxorg/enbox/commit/8a2f650c88f4b78f415dcacc23d7f4c82bc9a67b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(protocols): increase avatar size limit to 12 MB and hero banner to 24 MB
+
+- Updated dependencies []:
+  - @enbox/api@0.2.1
+
 ## 0.2.2
 
 ### Patch Changes
