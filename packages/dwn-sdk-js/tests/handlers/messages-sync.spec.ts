@@ -1,7 +1,7 @@
 import type { DidResolver } from '@enbox/dids';
 import type {
   DataStore,
-  EventStream,
+  EventLog,
   MessageStore,
   ProtocolDefinition,
   ResumableTaskStore,
@@ -15,7 +15,7 @@ import { MessagesSync } from '../../src/interfaces/messages-sync.js';
 import { MessagesSyncHandler } from '../../src/handlers/messages-sync.js';
 import sinon from 'sinon';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { TestEventStream } from '../test-event-stream.js';
+import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
@@ -29,7 +29,7 @@ export function testMessagesSyncHandler(): void {
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
     let stateIndex: StateIndex;
-    let eventStream: EventStream;
+    let eventLog: EventLog;
     let dwn: Dwn;
 
     beforeAll(async () => {
@@ -40,9 +40,9 @@ export function testMessagesSyncHandler(): void {
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
       stateIndex = stores.stateIndex;
-      eventStream = TestEventStream.get();
+      eventLog = TestEventLog.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
     });
 
     beforeEach(async () => {

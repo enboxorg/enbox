@@ -144,7 +144,7 @@ export default defineConfig({
       'tests/protocols/permission-grant.spec.ts',
       'tests/protocols/permission-request.spec.ts',
       'tests/protocols/permissions.spec.ts',
-      'tests/event-stream/event-emitter-stream.spec.ts',
+
       'tests/scenarios/aggregator.spec.ts',
     ],
     testTimeout : 15_000,

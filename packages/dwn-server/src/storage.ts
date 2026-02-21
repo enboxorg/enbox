@@ -4,7 +4,7 @@ import type { DwnServerConfig } from './config.js';
 import type {
   DataStore,
   DwnConfig,
-  EventStream,
+  EventLog,
   MessageStore,
   ResumableTaskStore,
   StateIndex,
@@ -56,16 +56,16 @@ export async function getDwnConfig(
   options : {
     didResolver? : DidResolver,
     tenantGate? : TenantGate,
-    eventStream? : EventStream,
+    eventLog? : EventLog,
   }
 ): Promise<DwnConfig> {
-  const { tenantGate, eventStream, didResolver } = options;
+  const { tenantGate, eventLog, didResolver } = options;
   const dataStore: DataStore = await getStore(config.dataStore, StoreType.DataStore);
   const stateIndex: StateIndex = await getStore(config.stateIndex, StoreType.StateIndex);
   const messageStore: MessageStore = await getStore(config.messageStore, StoreType.MessageStore);
   const resumableTaskStore: ResumableTaskStore = await getStore(config.resumableTaskStore, StoreType.ResumableTaskStore);
 
-  return { didResolver, eventStream, stateIndex, dataStore, messageStore, resumableTaskStore, tenantGate };
+  return { didResolver, eventLog, stateIndex, dataStore, messageStore, resumableTaskStore, tenantGate };
 }
 
 function getLevelStore(

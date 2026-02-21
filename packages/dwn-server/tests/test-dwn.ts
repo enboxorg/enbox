@@ -8,7 +8,7 @@ import {
   StateIndexSql,
 } from '@enbox/dwn-sql-store';
 import { DidDht, DidIon, DidKey, UniversalResolver } from '@enbox/dids';
-import { Dwn, EventEmitterStream } from '@enbox/dwn-sdk-js';
+import { Dwn, EventEmitterEventLog } from '@enbox/dwn-sdk-js';
 
 export async function getTestDwn(options: {
   tenantGate?: TenantGate,
@@ -20,7 +20,7 @@ export async function getTestDwn(options: {
   const stateIndex = new StateIndexSql(dialect);
   const messageStore = new MessageStoreSql(dialect);
   const resumableTaskStore = new ResumableTaskStoreSql(dialect);
-  const eventStream = withEvents ? new EventEmitterStream() : undefined;
+  const eventLog = withEvents ? new EventEmitterEventLog() : undefined;
 
   // NOTE: no resolver cache used here to avoid locking LevelDB
   const didResolver = new UniversalResolver({
@@ -32,7 +32,7 @@ export async function getTestDwn(options: {
     dataStore,
     messageStore,
     resumableTaskStore,
-    eventStream,
+    eventLog,
     tenantGate,
     didResolver
   });

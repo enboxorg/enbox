@@ -1,5 +1,5 @@
 import type { DidResolver } from '@enbox/dids';
-import type { EventStream } from '../types/subscriptions.js';
+import type { EventLog } from '../types/subscriptions.js';
 import type { GenericMessageReply } from '../types/message-types.js';
 import type { MessageStore } from '../types//message-store.js';
 import type { MethodHandler } from '../types/method-handler.js';
@@ -22,7 +22,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     private didResolver: DidResolver,
     private messageStore: MessageStore,
     private stateIndex: StateIndex,
-    private eventStream?: EventStream
+    private eventLog?: EventLog
   ) { }
 
   public async handle({
@@ -79,9 +79,9 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       const messageCid = await Message.getCid(message);
       await this.stateIndex.insert(tenant, messageCid, indexes);
 
-      // only emit if the event stream is set
-      if (this.eventStream !== undefined) {
-        this.eventStream.emit(tenant, { message }, indexes);
+      // only emit if the event log is set
+      if (this.eventLog !== undefined) {
+        await this.eventLog.emit(tenant, { message }, indexes);
       }
 
       messageReply = {

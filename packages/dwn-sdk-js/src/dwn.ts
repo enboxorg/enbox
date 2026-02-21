@@ -1,7 +1,6 @@
-
 import type { DataStore } from './types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
-import type { EventStream } from './types/subscriptions.js';
+import type { EventLog } from './types/subscriptions.js';
 import type { MessageStore } from './types/message-store.js';
 import type { MethodHandler } from './types/method-handler.js';
 import type { ResumableTaskStore } from './types/resumable-task-store.js';
@@ -40,24 +39,25 @@ export class Dwn {
   private resumableTaskStore: ResumableTaskStore;
   private stateIndex: StateIndex;
   private tenantGate: TenantGate;
-  private eventStream?: EventStream;
+  private eventLog?: EventLog;
   private storageController: StorageController;
   private resumableTaskManager: ResumableTaskManager;
 
   private constructor(config: DwnConfig) {
     this.didResolver = config.didResolver!;
     this.tenantGate = config.tenantGate!;
-    this.eventStream = config.eventStream!;
     this.messageStore = config.messageStore;
     this.dataStore = config.dataStore;
     this.resumableTaskStore = config.resumableTaskStore;
     this.stateIndex = config.stateIndex;
-    this.eventStream = config.eventStream;
+
+    this.eventLog = config.eventLog;
+
     this.storageController = new StorageController({
       messageStore : this.messageStore,
       dataStore    : this.dataStore,
       stateIndex   : this.stateIndex,
-      eventStream  : this.eventStream
+      eventLog     : this.eventLog
     });
     this.resumableTaskManager = new ResumableTaskManager(
       config.resumableTaskStore,
@@ -73,7 +73,7 @@ export class Dwn {
       [DwnInterfaceName.Messages + DwnMethodName.Subscribe]: new MessagesSubscribeHandler(
         this.didResolver,
         this.messageStore,
-        this.eventStream,
+        this.eventLog,
       ),
       [DwnInterfaceName.Messages + DwnMethodName.Sync]: new MessagesSyncHandler(
         this.didResolver,
@@ -84,7 +84,7 @@ export class Dwn {
         this.didResolver,
         this.messageStore,
         this.stateIndex,
-        this.eventStream
+        this.eventLog
       ),
       [DwnInterfaceName.Protocols + DwnMethodName.Query]: new ProtocolsQueryHandler(
         this.didResolver,
@@ -113,14 +113,14 @@ export class Dwn {
       [DwnInterfaceName.Records + DwnMethodName.Subscribe]: new RecordsSubscribeHandler(
         this.didResolver,
         this.messageStore,
-        this.eventStream
+        this.eventLog
       ),
       [DwnInterfaceName.Records + DwnMethodName.Write]: new RecordsWriteHandler(
         this.didResolver,
         this.messageStore,
         this.dataStore,
         this.stateIndex,
-        this.eventStream
+        this.eventLog
       )
     };
   }
@@ -148,13 +148,13 @@ export class Dwn {
     await this.dataStore.open();
     await this.resumableTaskStore.open();
     await this.stateIndex.open();
-    await this.eventStream?.open();
+    await this.eventLog?.open();
 
     await this.resumableTaskManager.resumeTasksAndWaitForCompletion();
   }
 
   public async close(): Promise<void> {
-    await this.eventStream?.close();
+    await this.eventLog?.close();
     await this.messageStore.close();
     await this.dataStore.close();
     await this.resumableTaskStore.close();
@@ -168,11 +168,11 @@ export class Dwn {
    *
    * Callers are responsible for maintaining consistency across stores.
    */
-  public get storage(): { messageStore: MessageStore; stateIndex: StateIndex; eventStream: EventStream | undefined } {
+  public get storage(): { messageStore: MessageStore; stateIndex: StateIndex; eventLog: EventLog | undefined } {
     return {
       messageStore : this.messageStore,
       stateIndex   : this.stateIndex,
-      eventStream  : this.eventStream,
+      eventLog     : this.eventLog,
     };
   }
 
@@ -274,8 +274,11 @@ export type DwnConfig = {
   didResolver?: DidResolver;
   tenantGate?: TenantGate;
 
-  // event stream is optional if a DWN does not wish to provide subscription services.
-  eventStream?: EventStream;
+  /**
+   * Persistent event log with cursor-based reads and in-process subscriptions.
+   * Optional — if not provided, subscriptions will not be supported.
+   */
+  eventLog?: EventLog;
 
   messageStore: MessageStore;
   dataStore: DataStore;

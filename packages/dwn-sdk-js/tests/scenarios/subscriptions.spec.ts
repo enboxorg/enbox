@@ -3,7 +3,7 @@ import type { MessageEvent } from '../../src/types/subscriptions.js';
 import type { RecordEvent } from '../../src/types/records-types.js';
 import type {
   DataStore,
-  EventStream,
+  EventLog,
   MessageStore,
   ResumableTaskStore,
   StateIndex,
@@ -16,18 +16,18 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 
 import { Poller } from '../utils/poller.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { TestEventStream } from '../test-event-stream.js';
+import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { DataStream, Dwn, DwnInterfaceName, DwnMethodName, Jws, Message, PermissionGrant, PermissionsProtocol, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 // NOTE: We use `Poller.pollUntilSuccessOrTimeout` to poll for the expected results.
-// In some cases, the EventStream is a coordinated pub/sub system and the message events are emitted over the network
+// In some cases, the EventLog is a coordinated pub/sub system and the message events are emitted over the network
 // this means that the messages are not processed immediately and we need to wait for the messages to be processed
 // before we can assert the results. The `pollUntilSuccessOrTimeout` function is a utility function that will poll until the expected results are met.
 
 // It is also important to note that in some cases where we are testing a negative case (the message not arriving at the subscriber)
-// we add an alternate subscription to await results within to give the EventStream ample time to process the message.
+// we add an alternate subscription to await results within to give the EventLog ample time to process the message.
 // Additionally in some of these cases the order in which messages are sent to be processed or checked may matter, and they are noted as such.
 
 export function testSubscriptionScenarios(): void {
@@ -37,7 +37,7 @@ export function testSubscriptionScenarios(): void {
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
     let stateIndex: StateIndex;
-    let eventStream: EventStream;
+    let eventLog: EventLog;
     let dwn: Dwn;
     // important to follow the `beforeAll` and `afterAll` pattern to initialize and clean the stores in tests
     // so that different test suites can reuse the same backend store for testing
@@ -49,9 +49,9 @@ export function testSubscriptionScenarios(): void {
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
       stateIndex = stores.stateIndex;
-      eventStream = TestEventStream.get();
+      eventLog = TestEventLog.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
     });
 
     beforeEach(async () => {

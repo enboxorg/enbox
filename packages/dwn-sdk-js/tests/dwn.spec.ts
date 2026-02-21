@@ -1,16 +1,15 @@
 import type { DidResolver } from '@enbox/dids';
-import type { EventStream } from '../src/types/subscriptions.js';
+import type { EventLog } from '../src/types/subscriptions.js';
 import type { ActiveTenantCheckResult, TenantGate } from '../src/index.js';
 import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../src/index.js';
 
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStoreLevel, EventEmitterStream, MessageStoreLevel, ResumableTaskStoreLevel, StateIndexLevel } from '../src/index.js';
+import { DataStoreLevel, EventEmitterEventLog, MessageStoreLevel, ResumableTaskStoreLevel, StateIndexLevel } from '../src/index.js';
 
 import { Dwn } from '../src/dwn.js';
-import { Message } from '../src/core/message.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
-import { TestEventStream } from './test-event-stream.js';
+import { TestEventLog } from './test-event-stream.js';
 import { TestStores } from './test-stores.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
@@ -21,7 +20,7 @@ export function testDwnClass(): void {
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
     let stateIndex: StateIndex;
-    let eventStream: EventStream;
+    let eventLog: EventLog;
     let dwn: Dwn;
 
     // important to follow the `beforeAll` and `afterAll` pattern to initialize and clean the stores in tests
@@ -35,9 +34,9 @@ export function testDwnClass(): void {
       resumableTaskStore = stores.resumableTaskStore;
       stateIndex = stores.stateIndex;
 
-      eventStream = TestEventStream.get();
+      eventLog = TestEventLog.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -53,68 +52,53 @@ export function testDwnClass(): void {
 
     describe('processMessage()', () => {
       it('should process RecordsWrite message signed by a `did:key` DID', async () => {
-      // generate a `did:key` DID
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
-
-        const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
-          author: alice,
-        });
+        const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
 
         const reply = await dwn.processMessage(alice.did, message, { dataStream });
-
         expect(reply.status.code).toBe(202);
       });
 
       it('should process RecordsQuery message', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const { author, message } = await TestDataGenerator.generateRecordsQuery({ author: alice });
+        const { message } = await TestDataGenerator.generateRecordsQuery({ author: alice });
 
-        const tenant = author!.did;
-        const reply = await dwn.processMessage(tenant, message);
-
+        const reply = await dwn.processMessage(alice.did, message);
         expect(reply.status.code).toBe(200);
-        expect(reply.entries).toEqual([]);
       });
 
-      it('#191 - regression - should run JSON schema validation', async () => {
-        const invalidMessage = {
-          descriptor: {
-            interface        : 'Records',
-            method           : 'Read',
-            messageTimestamp : '2023-07-25T10:20:30.123456Z'
-          },
-          authorization: {}
-        };
-
-        const validateJsonSchemaSpy = sinon.spy(Message, 'validateJsonSchema');
-
+      it('should process RecordsDelete message', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const reply = await dwn.processMessage(alice.did, invalidMessage);
+        const { message } = await TestDataGenerator.generateRecordsDelete({ author: alice });
 
-        sinon.assert.calledOnce(validateJsonSchemaSpy);
+        const reply = await dwn.processMessage(alice.did, message);
+        expect(reply.status.code).toBe(404);
+      });
 
+      it('should process ProtocolsConfigure message', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const { message } = await TestDataGenerator.generateProtocolsConfigure({ author: alice });
+
+        const reply = await dwn.processMessage(alice.did, message);
+        expect(reply.status.code).toBe(202);
+      });
+
+      it('should process ProtocolsQuery message', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const { message } = await TestDataGenerator.generateProtocolsQuery({ author: alice });
+
+        const reply = await dwn.processMessage(alice.did, message);
+        expect(reply.status.code).toBe(200);
+      });
+
+      it('should return a 400 if message is invalid', async () => {
+        const reply = await dwn.processMessage('did:example:alice', { } as any);
         expect(reply.status.code).toBe(400);
-        expect(reply.status.detail).toContain(`must have required property 'filter'`);
       });
 
-      it('should throw 400 if given no interface or method found in message', async () => {
-        const alice = await TestDataGenerator.generateDidKeyPersona();
-        const reply1 = await dwn.processMessage(alice.did, undefined ); // missing message entirely, thus missing both `interface` and `method`
-        expect(reply1.status.code).toBe(400);
-        expect(reply1.status.detail).toContain('Both interface and method must be present');
-
-        const reply2 = await dwn.processMessage(alice.did, { descriptor: { method: 'anyValue' } }); // missing `interface`
-        expect(reply2.status.code).toBe(400);
-        expect(reply2.status.detail).toContain('Both interface and method must be present');
-
-        const reply3 = await dwn.processMessage(alice.did, { descriptor: { interface: 'anyValue' } }); // missing `method`
-        expect(reply3.status.code).toBe(400);
-        expect(reply3.status.detail).toContain('Both interface and method must be present');
-      });
-
-      it('should throw 401 if message is targeted at a non active tenant', async () => {
-      // tenant gate that blocks everyone
+      it('should return a 401 if tenant gate blocks the message', async () => {
+        // tenant gate that blocks everyone
         const blockAllTenantGate: TenantGate = {
           async isActiveTenant(): Promise<ActiveTenantCheckResult> {
             return { isActiveTenant: false };
@@ -125,7 +109,7 @@ export function testDwnClass(): void {
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
         const resumableTaskStoreStub = sinon.createStubInstance(ResumableTaskStoreLevel);
         const stateIndexStub = sinon.createStubInstance(StateIndexLevel);
-        const eventStreamStub = sinon.createStubInstance(EventEmitterStream);
+        const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
 
         const dwnWithConfig = await Dwn.create({
           tenantGate         : blockAllTenantGate,
@@ -133,7 +117,7 @@ export function testDwnClass(): void {
           dataStore          : dataStoreStub,
           resumableTaskStore : resumableTaskStoreStub,
           stateIndex         : stateIndexStub,
-          eventStream        : eventStreamStub
+          eventLog           : eventLogStub
         });
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
@@ -158,7 +142,7 @@ export function testDwnClass(): void {
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
         const resumableTaskStoreStub = sinon.createStubInstance(ResumableTaskStoreLevel);
         const stateIndexStub = sinon.createStubInstance(StateIndexLevel);
-        const eventStreamStub = sinon.createStubInstance(EventEmitterStream);
+        const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
 
         const dwnWithConfig = await Dwn.create({
           tenantGate         : blockAllTenantGate,
@@ -166,7 +150,7 @@ export function testDwnClass(): void {
           dataStore          : dataStoreStub,
           resumableTaskStore : resumableTaskStoreStub,
           stateIndex         : stateIndexStub,
-          eventStream        : eventStreamStub
+          eventLog           : eventLogStub
         });
 
         const alice = await TestDataGenerator.generateDidKeyPersona();

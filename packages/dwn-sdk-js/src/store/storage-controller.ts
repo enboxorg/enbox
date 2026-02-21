@@ -1,5 +1,5 @@
 import type { DataStore } from '../types/data-store.js';
-import type { EventStream } from '../types/subscriptions.js';
+import type { EventLog } from '../types/subscriptions.js';
 import type { GenericMessage } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
 import type { StateIndex } from '../types/state-index.js';
@@ -26,18 +26,18 @@ export class StorageController {
   private messageStore: MessageStore;
   private dataStore: DataStore;
   private stateIndex: StateIndex;
-  private eventStream?: EventStream;
+  private eventLog?: EventLog;
 
-  public constructor({ messageStore, dataStore, stateIndex, eventStream }: {
-    messageStore: MessageStore,
-    dataStore: DataStore,
-    stateIndex: StateIndex,
-    eventStream?: EventStream}
+  public constructor({ messageStore, dataStore, stateIndex, eventLog }: {
+    messageStore : MessageStore,
+    dataStore : DataStore,
+    stateIndex : StateIndex,
+    eventLog? : EventLog}
   ) {
     this.messageStore = messageStore;
     this.dataStore = dataStore;
     this.stateIndex = stateIndex;
-    this.eventStream = eventStream;
+    this.eventLog = eventLog;
   }
 
   public async performRecordsDelete({ tenant, message }: ResumableRecordsDeleteData): Promise<void> {
@@ -66,9 +66,9 @@ export class StorageController {
     await this.messageStore.put(tenant, message, indexes);
     await this.stateIndex.insert(tenant, messageCid, indexes);
 
-    // only emit if the event stream is set
-    if (this.eventStream !== undefined) {
-      this.eventStream.emit(tenant, { message, initialWrite }, indexes);
+    // only emit if the event log is set
+    if (this.eventLog !== undefined) {
+      await this.eventLog.emit(tenant, { message, initialWrite }, indexes);
     }
 
     if (message.descriptor.prune) {

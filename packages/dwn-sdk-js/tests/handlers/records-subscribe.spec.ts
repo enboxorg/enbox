@@ -1,5 +1,5 @@
 import type { DidResolver } from '@enbox/dids';
-import type { EventStream } from '../../src/types/subscriptions.js';
+import type { EventLog } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, ProtocolDefinition, RecordsWriteMessage, ResumableTaskStore, StateIndex } from '../../src/index.js';
 import type { RecordEvent, RecordsFilter, RecordSubscriptionHandler } from '../../src/types/records-types.js';
 
@@ -16,15 +16,15 @@ import { Poller } from '../utils/poller.js';
 import { RecordsSubscribe } from '../../src/interfaces/records-subscribe.js';
 import { RecordsSubscribeHandler } from '../../src/handlers/records-subscribe.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { TestEventStream } from '../test-event-stream.js';
+import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { Dwn, DwnErrorCode, DwnMethodName, EventEmitterStream, MessageStoreLevel, Time } from '../../src/index.js';
+import { Dwn, DwnErrorCode, DwnMethodName, EventEmitterEventLog, MessageStoreLevel, Time } from '../../src/index.js';
 
 export function testRecordsSubscribeHandler(): void {
   describe('RecordsSubscribeHandler.handle()', () => {
-    describe('EventStream disabled',() => {
+    describe('EventLog disabled',() => {
       let didResolver: DidResolver;
       let messageStore: MessageStore;
       let resumableTaskStore: ResumableTaskStore;
@@ -69,7 +69,7 @@ export function testRecordsSubscribeHandler(): void {
 
       it('should respond with a 501 if subscriptions are not supported', async () => {
         await dwn.close(); // close the original dwn instance
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, resumableTaskStore }); // leave out eventStream
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, resumableTaskStore }); // leave out eventLog
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
         // attempt to subscribe
@@ -78,7 +78,7 @@ export function testRecordsSubscribeHandler(): void {
         });
         const subscriptionMessageReply = await dwn.processMessage(alice.did, message, { subscriptionHandler: (_) => {} });
         expect(subscriptionMessageReply.status.code).toBe(501, subscriptionMessageReply.status.detail);
-        expect(subscriptionMessageReply.status.detail).toContain(DwnErrorCode.RecordsSubscribeEventStreamUnimplemented);
+        expect(subscriptionMessageReply.status.detail).toContain(DwnErrorCode.RecordsSubscribeEventLogUnimplemented);
       });
     });
 
@@ -88,7 +88,7 @@ export function testRecordsSubscribeHandler(): void {
       let dataStore: DataStore;
       let resumableTaskStore: ResumableTaskStore;
       let stateIndex: StateIndex;
-      let eventStream: EventStream;
+      let eventLog: EventLog;
       let dwn: Dwn;
 
       // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
@@ -101,9 +101,9 @@ export function testRecordsSubscribeHandler(): void {
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
         stateIndex = stores.stateIndex;
-        eventStream = TestEventStream.get();
+        eventLog = TestEventLog.get();
 
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
       });
 
       beforeEach(async () => {
@@ -356,9 +356,9 @@ export function testRecordsSubscribeHandler(): void {
         const mismatchingPersona = await TestDataGenerator.generatePersona({ did: author!.did, keyId: author!.keyId });
         const didResolver = TestStubGenerator.createDidResolverStub(mismatchingPersona);
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
-        const eventStreamStub = sinon.createStubInstance(EventEmitterStream);
+        const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
 
-        const recordsSubscribeHandler = new RecordsSubscribeHandler(didResolver, messageStoreStub, eventStreamStub);
+        const recordsSubscribeHandler = new RecordsSubscribeHandler(didResolver, messageStoreStub, eventLogStub);
         const reply = await recordsSubscribeHandler.handle({ tenant, message, subscriptionHandler: () => {} });
 
         expect(reply.status.code).toBe(401);
@@ -371,8 +371,8 @@ export function testRecordsSubscribeHandler(): void {
         // setting up a stub method resolver & message store
         const didResolver = TestStubGenerator.createDidResolverStub(author!);
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
-        const eventStreamStub = sinon.createStubInstance(EventEmitterStream);
-        const recordsSubscribeHandler = new RecordsSubscribeHandler(didResolver, messageStoreStub, eventStreamStub);
+        const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
+        const recordsSubscribeHandler = new RecordsSubscribeHandler(didResolver, messageStoreStub, eventLogStub);
 
         // stub the `parse()` function to throw an error
         sinon.stub(RecordsSubscribe, 'parse').throws('anyError');

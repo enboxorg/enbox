@@ -2,7 +2,7 @@ import type { DidResolver } from '@enbox/dids';
 import type { MessageSort } from '../types/message-types.js';
 import type { MessageStore } from '../types//message-store.js';
 import type { MethodHandler } from '../types/method-handler.js';
-import type { EventListener, EventStream } from '../types/subscriptions.js';
+import type { EventListener, EventLog } from '../types/subscriptions.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { RecordEvent, RecordsQueryReplyEntry, RecordsSubscribeMessage, RecordsSubscribeReply, RecordSubscriptionHandler } from '../types/records-types.js';
 
@@ -21,7 +21,7 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 
 export class RecordsSubscribeHandler implements MethodHandler {
 
-  constructor(private didResolver: DidResolver, private messageStore: MessageStore, private eventStream?: EventStream) { }
+  constructor(private didResolver: DidResolver, private messageStore: MessageStore, private eventLog?: EventLog) { }
 
   public async handle({
     tenant,
@@ -32,9 +32,9 @@ export class RecordsSubscribeHandler implements MethodHandler {
     message: RecordsSubscribeMessage,
     subscriptionHandler: RecordSubscriptionHandler,
   }): Promise<RecordsSubscribeReply> {
-    if (this.eventStream === undefined) {
+    if (this.eventLog === undefined) {
       return messageReplyFromError(new DwnError(
-        DwnErrorCode.RecordsSubscribeEventStreamUnimplemented,
+        DwnErrorCode.RecordsSubscribeEventLogUnimplemented,
         'Subscriptions are not supported'
       ), 501);
     }
@@ -82,7 +82,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
     };
 
     const messageCid = await Message.getCid(message);
-    const subscription = await this.eventStream.subscribe(tenant, messageCid, listener);
+    const subscription = await this.eventLog.subscribe(tenant, messageCid, listener);
 
     // Step 2: Query for initial snapshot of matching records
     let entries: RecordsQueryReplyEntry[];

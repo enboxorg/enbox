@@ -20,7 +20,7 @@ import {
   DataStream,
   Dwn,
   DwnMethodName,
-  EventEmitterStream,
+  EventEmitterEventLog,
   Jws,
   KeyDerivationScheme,
   Message,
@@ -184,7 +184,7 @@ export class AgentDwnApi {
   }
 
   public static async createDwn({
-    dataPath, dataStore, didResolver, stateIndex, eventStream, messageStore, tenantGate, resumableTaskStore
+    dataPath, dataStore, didResolver, stateIndex, eventLog, messageStore, tenantGate, resumableTaskStore
   }: DwnApiCreateDwnParams): Promise<Dwn> {
     dataStore ??= new DataStoreLevel({ blockstoreLocation: `${dataPath}/DWN_DATASTORE` });
 
@@ -202,9 +202,9 @@ export class AgentDwnApi {
 
     resumableTaskStore ??= new ResumableTaskStoreLevel({ location: `${dataPath}/DWN_RESUMABLETASKSTORE` });
 
-    eventStream ??= new EventEmitterStream();
+    eventLog ??= new EventEmitterEventLog();
 
-    return await Dwn.create({ dataStore, didResolver, stateIndex, eventStream, messageStore, tenantGate, resumableTaskStore });
+    return await Dwn.create({ dataStore, didResolver, stateIndex, eventLog, messageStore, tenantGate, resumableTaskStore });
   }
 
   public async processRequest<T extends DwnInterface>(

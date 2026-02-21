@@ -1,7 +1,7 @@
 import type { DidResolver } from '@enbox/dids';
 import type { MessageStore } from '../types/message-store.js';
 import type { MethodHandler } from '../types/method-handler.js';
-import type { EventListener, EventStream } from '../types/subscriptions.js';
+import type { EventListener, EventLog } from '../types/subscriptions.js';
 import type { MessagesSubscribeMessage, MessagesSubscribeReply, MessageSubscriptionHandler } from '../types/messages-types.js';
 
 import { authenticate } from '../core/auth.js';
@@ -18,7 +18,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
   constructor(
     private didResolver: DidResolver,
     private messageStore: MessageStore,
-    private eventStream?: EventStream
+    private eventLog?: EventLog
   ) {}
 
   public async handle({
@@ -30,9 +30,9 @@ export class MessagesSubscribeHandler implements MethodHandler {
     message: MessagesSubscribeMessage;
     subscriptionHandler: MessageSubscriptionHandler;
   }): Promise<MessagesSubscribeReply> {
-    if (this.eventStream === undefined) {
+    if (this.eventLog === undefined) {
       return messageReplyFromError(new DwnError(
-        DwnErrorCode.MessagesSubscribeEventStreamUnimplemented,
+        DwnErrorCode.MessagesSubscribeEventLogUnimplemented,
         'Subscriptions are not supported'
       ), 501);
     }
@@ -61,7 +61,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
       }
     };
 
-    const subscription = await this.eventStream.subscribe(tenant, messageCid, listener);
+    const subscription = await this.eventLog.subscribe(tenant, messageCid, listener);
 
     return {
       status: { code: 200, detail: 'OK' },

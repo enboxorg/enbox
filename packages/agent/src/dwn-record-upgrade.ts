@@ -118,7 +118,7 @@ export async function upgradeExternalRootRecord(
   // We must also update the state index and event stream to keep sync and
   // real-time subscribers consistent — without this, the upgraded record
   // would never propagate to remote DWNs or notify subscribers.
-  const { messageStore, stateIndex, eventStream } = dwn.storage;
+  const { messageStore, stateIndex, eventLog } = dwn.storage;
 
   // Validate the upgrade only changed encryption and authorization fields.
   // The descriptor, recordId, contextId, and data must remain identical.
@@ -157,8 +157,8 @@ export async function upgradeExternalRootRecord(
   await stateIndex.delete(tenantDid, [originalCid]);
 
   // Notify real-time subscribers (mirrors handler behavior)
-  if (eventStream !== undefined) {
-    eventStream.emit(tenantDid, { message: upgradedMessage }, upgradedIndexes);
+  if (eventLog !== undefined) {
+    await eventLog.emit(tenantDid, { message: upgradedMessage }, upgradedIndexes);
   }
 
   // Cache context key info for subsequent writes in this context
