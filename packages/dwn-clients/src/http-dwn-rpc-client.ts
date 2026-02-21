@@ -37,6 +37,11 @@ export class HttpDwnRpcClient implements DwnRpc {
     if (request.data) {
       requestHeaders['content-type'] = 'application/octet-stream';
       fetchOpts.body = request.data;
+
+      // Browsers require `duplex: 'half'` when the fetch body is a ReadableStream.
+      // The sync-push path sends record data as a raw stream (see sync-messages.ts).
+      // TypeScript's built-in RequestInit does not include `duplex` yet.
+      (fetchOpts as Record<string, unknown>).duplex = 'half';
     }
 
     const resp = await fetch(request.dwnUrl, fetchOpts);
