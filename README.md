@@ -55,19 +55,84 @@ const NotesProtocol = defineProtocol({
 const notes = web5.using(NotesProtocol);
 await notes.configure();
 
-// Write a record (path, data, and schema are type-checked)
-const { record } = await notes.records.write('note', {
+// Create a record (path, data, and schema are type-checked)
+const { record } = await notes.records.create('note', {
   data: { title: 'Hello', body: 'World' },
 });
 
-// Query records back
+// Query records back -- data is typed automatically
 const { records } = await notes.records.query('note');
 for (const r of records) {
-  console.log(r.id, await r.data.json());
+  const note = await r.data.json(); // { title: string; body: string }
+  console.log(r.id, note.title);
 }
 ```
 
 See the full [`@enbox/api` README](./packages/api/README.md) for detailed documentation, examples, and API reference.
+
+### Developer Experience: Repository Pattern
+
+For an even more ergonomic API, use the `repository()` factory to get a structure-aware CRUD interface:
+
+```ts
+import { defineProtocol, repository, Web5 } from '@enbox/api';
+
+const { web5 } = await Web5.connect({ password: 'secret' });
+
+const ProfileProtocol = defineProtocol({
+  protocol  : 'https://example.com/profile',
+  published : true,
+  types: {
+    profile : { schema: 'https://example.com/schemas/profile', dataFormats: ['application/json'] },
+    link    : { schema: 'https://example.com/schemas/link',    dataFormats: ['application/json'] },
+  },
+  structure: {
+    profile: {
+      $recordLimit: { max: 1, strategy: 'reject' },  // singleton
+      link: {},                                        // collection nested under profile
+    },
+  },
+} as const, {} as {
+  profile : { displayName: string; bio?: string };
+  link    : { url: string; title: string };
+});
+
+const repo = repository(web5.using(ProfileProtocol));
+await repo.configure();
+
+// Singletons get set() / get() instead of create() / query()
+await repo.profile.set({ data: { displayName: 'Alice', bio: 'Builder' } });
+const { record: profile } = await repo.profile.get();
+console.log(await profile.data.json()); // { displayName: 'Alice', bio: 'Builder' }
+
+// Nested collections use (parentContextId, options)
+await repo.profile.link.create(profile.contextId, {
+  data: { url: 'https://github.com/alice', title: 'GitHub' },
+});
+
+const { records: links } = await repo.profile.link.query(profile.contextId);
+```
+
+### Pre-built Protocols
+
+The `@enbox/protocols` package provides production-ready protocol definitions with typed schemas, singleton annotations, and JSON Schema files:
+
+```ts
+import { repository, Web5 } from '@enbox/api';
+import { ProfileProtocol, SocialGraphProtocol } from '@enbox/protocols';
+
+const { web5 } = await Web5.connect({ password: 'secret' });
+
+// Use pre-built protocols directly -- fully typed, zero boilerplate
+const social = repository(web5.using(SocialGraphProtocol));
+await social.configure();
+
+const { record } = await social.friend.create({
+  data: { did: 'did:dht:alice...', alias: 'Alice' },
+});
+```
+
+See [`@enbox/protocols`](./packages/protocols) for the full catalog of available protocols.
 
 ## How It Works
 
@@ -164,15 +229,19 @@ All sensitive data is encrypted at rest through two independent layers:
             │    ├─ @enbox/dwn-clients
             │    │    ├─ @enbox/agent
             │    │    │    └─ @enbox/api
+            │    │    │         └─ @enbox/protocols
             │    │    └─ @enbox/dwn-server
             │    └─ @enbox/dwn-sql-store
             │         └─ @enbox/dwn-server
+            ├─ @enbox/protocol-codegen (standalone CLI)
             └─ @enbox/browser
 ```
 
 | Package | Description |
 |---|---|
-| [`@enbox/api`](./packages/api) | **High-level SDK for applications** -- `Web5.connect()`, typed protocols, records, subscriptions |
+| [`@enbox/api`](./packages/api) | **High-level SDK for applications** -- `Web5.connect()`, typed protocols, repository pattern, records, subscriptions |
+| [`@enbox/protocols`](./packages/protocols) | Pre-built protocol definitions (social graph, profile, preferences, status, lists, connect) with JSON Schemas |
+| [`@enbox/protocol-codegen`](./packages/protocol-codegen) | CLI tool to generate TypeScript types from protocol definitions and JSON Schemas |
 | [`@enbox/agent`](./packages/agent) | Agent framework: identity vault, key management, DWN stores, sync engine |
 | [`@enbox/dwn-sdk-js`](./packages/dwn-sdk-js) | DWN protocol engine, message handlers, storage interfaces |
 | [`@enbox/dwn-clients`](./packages/dwn-clients) | DWN client libraries, shared types, JSON-RPC transport |
