@@ -1,5 +1,16 @@
 # @enbox/dwn-clients
 
+## 0.0.5
+
+### Patch Changes
+
+- [#267](https://github.com/enboxorg/enbox/pull/267) [`a111281`](https://github.com/enboxorg/enbox/commit/a111281ad3fb209680073154a95d97d26fc3edf8) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: add `duplex: 'half'` to streaming fetch requests for browser compatibility
+
+  Browsers require `duplex: 'half'` in the `RequestInit` options when the request
+  body is a `ReadableStream`. Without it, the sync-push path (which sends record
+  data as a raw stream) fails with:
+  "The `duplex` member must be specified for a request with a streaming body".
+
 ## 0.0.4
 
 ### Patch Changes
