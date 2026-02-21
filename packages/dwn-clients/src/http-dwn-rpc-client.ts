@@ -62,7 +62,13 @@ export class HttpDwnRpcClient implements DwnRpc {
       dwnRpcResponse = jsonRpcResponse;
     } else {
       const responseBody = await resp.text();
-      dwnRpcResponse = JSON.parse(responseBody);
+      const jsonRpcResponse = parseJson(responseBody) as JsonRpcResponse;
+
+      if (jsonRpcResponse == null) {
+        throw new Error(`failed to parse json rpc response. dwn url: ${request.dwnUrl}, status: ${resp.status}`);
+      }
+
+      dwnRpcResponse = jsonRpcResponse;
     }
 
     if (dwnRpcResponse.error) {
