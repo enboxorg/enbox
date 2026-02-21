@@ -68,6 +68,11 @@ export type LiveQueryOptions = {
 };
 
 /**
+ * Catch-all event type that fires for any record change (create, update, or delete).
+ */
+export type RecordCatchAllEvent = 'change';
+
+/**
  * Lifecycle event type for connection state changes.
  */
 export type LiveQueryLifecycleEvent = 'disconnected' | 'reconnecting' | 'reconnected' | 'eose';
@@ -75,7 +80,7 @@ export type LiveQueryLifecycleEvent = 'disconnected' | 'reconnecting' | 'reconne
 /**
  * Union of all event types emitted by {@link LiveQuery}.
  */
-export type LiveQueryEventType = RecordChangeType | 'change' | LiveQueryLifecycleEvent;
+export type LiveQueryEventType = RecordChangeType | RecordCatchAllEvent | LiveQueryLifecycleEvent;
 
 /**
  * A live query that combines an initial snapshot of matching records with a
