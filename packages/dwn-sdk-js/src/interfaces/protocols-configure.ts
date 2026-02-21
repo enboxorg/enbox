@@ -16,7 +16,7 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 import { normalizeProtocolUrl, normalizeSchemaUrl, validateProtocolUrlNormalized, validateSchemaUrlNormalized } from '../utils/url.js';
-import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
+import { ProtocolAction, ProtocolActor, ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
 
 export type ProtocolsConfigureOptions = {
   messageTimestamp?: string;
@@ -228,6 +228,27 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         throw new DwnError(
           DwnErrorCode.ProtocolsConfigureInvalidSize,
           `Invalid size range found: max limit ${max} less than min limit ${min} at protocol path '${ruleSetProtocolPath}'`
+        );
+      }
+    }
+
+    // Validate $recordLimit
+    if (ruleSet.$recordLimit !== undefined) {
+      const { max, strategy } = ruleSet.$recordLimit;
+
+      if (!Number.isInteger(max) || max < 1) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureInvalidRecordLimit,
+          `Invalid $recordLimit.max value ${max} at protocol path '${ruleSetProtocolPath}': must be an integer >= 1.`
+        );
+      }
+
+      const validStrategies = Object.values(ProtocolRecordLimitStrategy) as string[];
+      if (!validStrategies.includes(strategy as string)) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureInvalidRecordLimit,
+          `Invalid $recordLimit.strategy '${strategy}' at protocol path '${ruleSetProtocolPath}': ` +
+          `must be one of ${validStrategies.join(', ')}.`
         );
       }
     }
@@ -457,7 +478,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
     }
 
     // validate that `$ref` nodes do not have other directives
-    const forbiddenDirectives = ['$actions', '$role', '$size', '$tags', '$encryption'] as const;
+    const forbiddenDirectives = ['$actions', '$role', '$size', '$tags', '$encryption', '$recordLimit'] as const;
     for (const directive of forbiddenDirectives) {
       if (ruleSet[directive] !== undefined) {
         throw new DwnError(
