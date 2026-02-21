@@ -94,6 +94,12 @@ export default defineConfig({
     holdUntilCrawlEnd: true,
   },
   test: {
+    // Run test files sequentially. Multiple files (aggregator.spec.ts,
+    // permissions.spec.ts) share IndexedDB state via the TestStores singleton.
+    // Parallel execution causes clear() in one file to wipe data mid-test in
+    // another, producing intermittent 400s and missing results — especially in
+    // Firefox where IndexedDB transaction scheduling differs from Chromium.
+    fileParallelism: false,
     // Browser-compatible tests. Most are pure-logic; a few use TestStores which
     // resolve to IndexedDB-backed stores in browser mode (via level's browser
     // field). The 29 function-wrapped handler/feature/scenario tests are excluded
