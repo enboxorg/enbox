@@ -316,6 +316,116 @@ describe('AgentPermissionsApi', () => {
         expect(error.message).toBe('PermissionsApi: Failed to fetch grants: Bad Request');
       }
     });
+
+    it('should filter out revoked grants by default', async () => {
+      // create two grants
+      const grant1 = await testHarness.agent.permissions.createGrant({
+        store       : true,
+        author      : aliceDid.uri,
+        grantedTo   : aliceDid.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Write,
+          protocol  : 'http://example.com/revocation-test'
+        }
+      });
+
+      const grant2 = await testHarness.agent.permissions.createGrant({
+        store       : true,
+        author      : aliceDid.uri,
+        grantedTo   : aliceDid.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Read,
+          protocol  : 'http://example.com/revocation-test'
+        }
+      });
+
+      // both grants should be returned before revocation
+      let grants = await testHarness.agent.permissions.fetchGrants({
+        author   : aliceDid.uri,
+        target   : aliceDid.uri,
+        protocol : 'http://example.com/revocation-test',
+      });
+      expect(grants.length).toBe(2);
+
+      // revoke grant1
+      await testHarness.agent.permissions.createRevocation({
+        author : aliceDid.uri,
+        store  : true,
+        grant  : grant1.grant,
+      });
+
+      // default (checkRevoked: true) should only return the non-revoked grant
+      grants = await testHarness.agent.permissions.fetchGrants({
+        author   : aliceDid.uri,
+        target   : aliceDid.uri,
+        protocol : 'http://example.com/revocation-test',
+      });
+      expect(grants.length).toBe(1);
+      expect(grants[0].grant.id).toBe(grant2.grant.id);
+    });
+
+    it('should include revoked grants when checkRevoked is false', async () => {
+      // create a grant and revoke it
+      const grant = await testHarness.agent.permissions.createGrant({
+        store       : true,
+        author      : aliceDid.uri,
+        grantedTo   : aliceDid.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Write,
+          protocol  : 'http://example.com/revocation-test-2'
+        }
+      });
+
+      // revoke the grant
+      await testHarness.agent.permissions.createRevocation({
+        author : aliceDid.uri,
+        store  : true,
+        grant  : grant.grant,
+      });
+
+      // with checkRevoked: false, the revoked grant should still be returned
+      const grants = await testHarness.agent.permissions.fetchGrants({
+        author       : aliceDid.uri,
+        target       : aliceDid.uri,
+        protocol     : 'http://example.com/revocation-test-2',
+        checkRevoked : false,
+      });
+      expect(grants.length).toBe(1);
+      expect(grants[0].grant.id).toBe(grant.grant.id);
+    });
+
+    it('should use only 2 DWN roundtrips when checking revocations', async () => {
+      const processDwnRequestSpy = spyOn(testHarness.agent, 'processDwnRequest');
+
+      // fetch grants with revocation check (default)
+      await testHarness.agent.permissions.fetchGrants({
+        author : aliceDid.uri,
+        target : aliceDid.uri,
+      });
+
+      // expect exactly 2 calls: one for grants query, one for revocations query
+      expect(processDwnRequestSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('should use only 1 DWN roundtrip when checkRevoked is false', async () => {
+      const processDwnRequestSpy = spyOn(testHarness.agent, 'processDwnRequest');
+
+      // fetch grants without revocation check
+      await testHarness.agent.permissions.fetchGrants({
+        author       : aliceDid.uri,
+        target       : aliceDid.uri,
+        checkRevoked : false,
+      });
+
+      // expect exactly 1 call: only the grants query
+      expect(processDwnRequestSpy).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('fetchRequests', () => {
