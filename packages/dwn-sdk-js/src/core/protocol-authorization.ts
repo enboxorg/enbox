@@ -20,6 +20,7 @@ import { constructRecordChain, fetchInitialWrite, getGoverningTimestamp } from '
 import {
   verifyAsRoleRecordIfNeeded,
   verifyProtocolPathAndContextId,
+  verifyRecordLimit,
   verifySizeLimit,
   verifyTagsIfNeeded,
   verifyTypeWithComposition,
@@ -94,6 +95,9 @@ export class ProtocolAuthorization {
 
     // Verify protocol tags
     verifyTagsIfNeeded(incomingMessage, ruleSet);
+
+    // Verify record count limit
+    await verifyRecordLimit(tenant, incomingMessage, ruleSet, messageStore);
   }
 
   /**

@@ -26,6 +26,7 @@ import { testRecordsDeleteHandler } from './handlers/records-delete.spec.js';
 import { testRecordsPrune } from './features/records-prune.spec.js';
 import { testRecordsQueryHandler } from './handlers/records-query.spec.js';
 import { testRecordsReadHandler } from './handlers/records-read.spec.js';
+import { testRecordsRecordLimit } from './features/records-record-limit.spec.js';
 import { testRecordsSubscribeHandler } from './handlers/records-subscribe.spec.js';
 import { testRecordsTags } from './features/records-tags.spec.js';
 import { testRecordsWriteHandler } from './handlers/records-write.spec.js';
@@ -81,6 +82,7 @@ export class TestSuite {
     testProtocolDeleteAction();
     testProtocolUpdateAction();
     testRecordsPrune();
+    testRecordsRecordLimit();
     testRecordsTags();
     testResumableTasks();
 
