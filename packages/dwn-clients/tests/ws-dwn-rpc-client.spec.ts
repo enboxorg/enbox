@@ -209,8 +209,9 @@ describe('WebSocketDwnRpcClient', () => {
       });
 
       const dataCids:string[] = [];
-      const subscriptionHandler: RecordSubscriptionHandler = (event) => {
-        const { message, initialWrite } = event;
+      const subscriptionHandler: RecordSubscriptionHandler = (msg) => {
+        if (msg.type !== 'event') { return; }
+        const { message, initialWrite } = msg.event;
         expect(initialWrite!.recordId).toBe(writeMessage.recordId);
         expect(initialWrite!.descriptor.dataCid).toBe(writeMessage.descriptor.dataCid);
         if (message.descriptor.interface + message.descriptor.method === DwnInterfaceName.Records + DwnMethodName.Write) {

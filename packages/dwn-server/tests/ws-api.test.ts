@@ -116,8 +116,11 @@ describe('websocket api', function () {
 
     const connection = await JsonRpcSocket.connect(wsUrl);
     const { response, close } = await connection.subscribe(dwnRequest, (response) => {
-      const { event } = response.result;
-      subscriptionHandler(event);
+      const subscriptionMsg = response.result.subscription;
+      if (!subscriptionMsg || subscriptionMsg.type !== 'event') {
+        return;
+      }
+      subscriptionHandler(subscriptionMsg.event);
     });
 
     expect(response.error).toBeUndefined();
@@ -190,8 +193,11 @@ describe('websocket api', function () {
 
     const connection = await JsonRpcSocket.connect(wsUrl);
     const { response, close } = await connection.subscribe(dwnRequest, (response) => {
-      const { event } = response.result;
-      subscriptionHandler(event);
+      const subscriptionMsg = response.result.subscription;
+      if (!subscriptionMsg || subscriptionMsg.type !== 'event') {
+        return;
+      }
+      subscriptionHandler(subscriptionMsg.event);
     });
 
     expect(response.error).toBeUndefined();
@@ -278,8 +284,11 @@ describe('websocket api', function () {
 
     const connection = await JsonRpcSocket.connect(wsUrl);
     const { close } = await connection.subscribe(dwnRequest, (response) => {
-      const { event } = response.result;
-      subscriptionHandler(event);
+      const subscriptionMsg = response.result.subscription;
+      if (!subscriptionMsg || subscriptionMsg.type !== 'event') {
+        return;
+      }
+      subscriptionHandler(subscriptionMsg.event);
     });
 
     const { message: message2 } = await TestDataGenerator.generateRecordsSubscribe({ filter: { schema: 'bar/baz' }, author: alice });
@@ -292,8 +301,11 @@ describe('websocket api', function () {
     }, subscribeId);
 
     const { response: response2 } = await connection.subscribe(dwnRequest2, (response) => {
-      const { event } = response.result;
-      subscriptionHandler(event);
+      const subscriptionMsg = response.result.subscription;
+      if (!subscriptionMsg || subscriptionMsg.type !== 'event') {
+        return;
+      }
+      subscriptionHandler(subscriptionMsg.event);
     });
 
     expect(response2.error.code).toBe(JsonRpcErrorCodes.InvalidParams);
@@ -384,8 +396,11 @@ describe('websocket api', function () {
 
     const connection = await JsonRpcSocket.connect(wsUrl);
     const { close } = await connection.subscribe(dwnRequest, (response) => {
-      const { event } = response.result;
-      subscriptionHandler(event);
+      const subscriptionMsg = response.result.subscription;
+      if (!subscriptionMsg || subscriptionMsg.type !== 'event') {
+        return;
+      }
+      subscriptionHandler(subscriptionMsg.event);
     });
 
     // wait for potential records to process and confirm that initial write has not been processed

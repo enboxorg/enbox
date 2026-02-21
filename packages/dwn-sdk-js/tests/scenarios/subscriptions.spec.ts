@@ -1,6 +1,5 @@
 import type { DidResolver } from '@enbox/dids';
-import type { MessageEvent } from '../../src/types/subscriptions.js';
-import type { RecordEvent } from '../../src/types/records-types.js';
+import type { SubscriptionMessage } from '../../src/types/subscriptions.js';
 import type {
   DataStore,
   EventLog,
@@ -75,8 +74,9 @@ export function testSubscriptionScenarios(): void {
 
         // create a handler that adds the messageCid of each message to an array.
         const messageCids: string[] = [];
-        const handler = async (event: MessageEvent): Promise<void> => {
-          const { message } = event;
+        const handler = async (msg: SubscriptionMessage): Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           const messageCid = await Message.getCid(message);
           messageCids.push(messageCid);
         };
@@ -130,8 +130,9 @@ export function testSubscriptionScenarios(): void {
           filters : [{ interface: DwnInterfaceName.Records }]
         });
         const recordsMessageCids:string[] = [];
-        const recordsSubscribeHandler = async (event: MessageEvent):Promise<void> => {
-          const { message } = event;
+        const recordsSubscribeHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           const messageCid = await Message.getCid(message);
           recordsMessageCids.push(messageCid);
         };
@@ -150,8 +151,9 @@ export function testSubscriptionScenarios(): void {
           filters : [{ interface: DwnInterfaceName.Protocols }]
         });
         const protocolsMessageCids:string[] = [];
-        const protocolsSubscribeHandler = async (event: MessageEvent):Promise<void> => {
-          const { message } = event;
+        const protocolsSubscribeHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           const messageCid = await Message.getCid(message);
           protocolsMessageCids.push(messageCid);
         };
@@ -225,8 +227,9 @@ export function testSubscriptionScenarios(): void {
           filters : [{ interface: DwnInterfaceName.Records, method: DwnMethodName.Write }]
         });
         const recordsWriteMessageCids:string[] = [];
-        const recordsSubscribeHandler = async (event: MessageEvent):Promise<void> => {
-          const { message } = event;
+        const recordsSubscribeHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           const messageCid = await Message.getCid(message);
           recordsWriteMessageCids.push(messageCid);
         };
@@ -245,8 +248,9 @@ export function testSubscriptionScenarios(): void {
           filters : [{ interface: DwnInterfaceName.Records, method: DwnMethodName.Delete }]
         });
         const recordsDeleteMessageCids:string[] = [];
-        const recordsDeleteSubscribeHandler = async (event: MessageEvent):Promise<void> => {
-          const { message } = event;
+        const recordsDeleteSubscribeHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           const messageCid = await Message.getCid(message);
           recordsDeleteMessageCids.push(messageCid);
         };
@@ -332,8 +336,9 @@ export function testSubscriptionScenarios(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
         const proto1Messages:string[] = [];
-        const proto1Handler = async (event: MessageEvent):Promise<void> => {
-          const { message } = event;
+        const proto1Handler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           proto1Messages.push(await Message.getCid(message));
         };
 
@@ -348,8 +353,9 @@ export function testSubscriptionScenarios(): void {
         expect(proto1SubscriptionReply.subscription).toBeDefined();
 
         const proto2Messages:string[] = [];
-        const proto2Handler = async (event: MessageEvent):Promise<void> => {
-          const { message } = event;
+        const proto2Handler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           proto2Messages.push(await Message.getCid(message));
         };
 
@@ -536,16 +542,18 @@ export function testSubscriptionScenarios(): void {
 
         // messageCids of subscription 1 messages
         const sub1MessageCids:string[] = [];
-        const handler1 = async (event: MessageEvent): Promise<void> => {
-          const { message } = event;
+        const handler1 = async (msg: SubscriptionMessage): Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           const messageCid = await Message.getCid(message);
           sub1MessageCids.push(messageCid);
         };
 
         // messageCids of subscription 2 messages
         const sub2MessageCids:string[] = [];
-        const handler2 = async (event: MessageEvent): Promise<void> => {
-          const { message } = event;
+        const handler2 = async (msg: SubscriptionMessage): Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           const messageCid = await Message.getCid(message);
           sub2MessageCids.push(messageCid);
         };
@@ -622,8 +630,9 @@ export function testSubscriptionScenarios(): void {
 
         // create a control handler to capture ALL messages in the protocol with alice as the author
         const allMessages:string[] = [];
-        const allHandler = async (event: MessageEvent): Promise<void> => {
-          const { message } = event;
+        const allHandler = async (msg: SubscriptionMessage): Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           allMessages.push(await Message.getCid(message));
         };
         const allSubscription = await TestDataGenerator.generateMessagesSubscribe({
@@ -635,8 +644,9 @@ export function testSubscriptionScenarios(): void {
 
         // we create an anonymous subscription to capture only published messages
         const publishedMessages:string[] = [];
-        const anonymousSubscriptionHandler = async (event: RecordEvent):Promise<void> => {
-          const { message } = event;
+        const anonymousSubscriptionHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           publishedMessages.push(await Message.getCid(message));
         };
         const anonymousSubscription = await TestDataGenerator.generateRecordsSubscribe({
@@ -699,8 +709,9 @@ export function testSubscriptionScenarios(): void {
 
         // bob subscribes to all records he's authorized to see, with alice as the recipient
         const bobSubscribeAlice:string[] = [];
-        const bobSubscribeHandler = async (event: RecordEvent):Promise<void> => {
-          const { message } = event;
+        const bobSubscribeHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           bobSubscribeAlice.push(await Message.getCid(message));
         };
 
@@ -717,8 +728,9 @@ export function testSubscriptionScenarios(): void {
 
         // carol subscribes to any messages that she or alice are the recipients of
         const carolSubscribeCarolAndAlice:string[] = [];
-        const carolSubscribeHandler = async (event: RecordEvent):Promise<void> => {
-          const { message } = event;
+        const carolSubscribeHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           carolSubscribeCarolAndAlice.push(await Message.getCid(message));
         };
 
@@ -829,8 +841,9 @@ export function testSubscriptionScenarios(): void {
 
         // bob subscribes to all records he's authorized to see, with alice as the author
         const bobSubscribeAlice:string[] = [];
-        const bobSubscribeHandler = async (event: RecordEvent):Promise<void> => {
-          const { message } = event;
+        const bobSubscribeHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           bobSubscribeAlice.push(await Message.getCid(message));
         };
 
@@ -847,8 +860,9 @@ export function testSubscriptionScenarios(): void {
 
         // carol subscribes to any messages that she or alice are the authors of
         const carolSubscribeCarolAndAlice:string[] = [];
-        const carolSubscribeHandler = async (event: RecordEvent):Promise<void> => {
-          const { message } = event;
+        const carolSubscribeHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           carolSubscribeCarolAndAlice.push(await Message.getCid(message));
         };
 
@@ -994,8 +1008,9 @@ export function testSubscriptionScenarios(): void {
         // subscribe to this thread's messages
         const messages:string[] = [];
         const initialWrites: string[] = [];
-        const subscriptionHandler = async (event :MessageEvent):Promise<void> => {
-          const { message, initialWrite } = event;
+        const subscriptionHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message, initialWrite } = msg.event;
           if (initialWrite !== undefined) {
             initialWrites.push(await Message.getCid(initialWrite));
           }

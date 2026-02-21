@@ -2,7 +2,7 @@ import type { DidResolver } from '@enbox/dids';
 import type { MessageStore } from '../types/message-store.js';
 import type { MethodHandler } from '../types/method-handler.js';
 import type { EventLog, SubscriptionListener } from '../types/subscriptions.js';
-import type { MessagesSubscribeMessage, MessagesSubscribeReply, MessageSubscriptionHandler } from '../types/messages-types.js';
+import type { MessagesSubscribeMessage, MessagesSubscribeReply } from '../types/messages-types.js';
 
 import { authenticate } from '../core/auth.js';
 import { Message } from '../core/message.js';
@@ -27,7 +27,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
   }: {
     tenant: string;
     message: MessagesSubscribeMessage;
-    subscriptionHandler: MessageSubscriptionHandler;
+    subscriptionHandler: SubscriptionListener;
   }): Promise<MessagesSubscribeReply> {
     if (this.eventLog === undefined) {
       return messageReplyFromError(new DwnError(
@@ -54,16 +54,8 @@ export class MessagesSubscribeHandler implements MethodHandler {
     const messagesFilters = Messages.convertFilters(filters);
     const messageCid = await Message.getCid(message);
 
-    // Wrap SubscriptionListener → MessageSubscriptionHandler.
-    // The handler callback receives plain MessageEvents; seq/EOSE are EventLog concerns.
-    const listener: SubscriptionListener = (msg):void => {
-      if (msg.type === 'event') {
-        subscriptionHandler(msg.event);
-      }
-    };
-
     try {
-      const subscription = await this.eventLog.subscribe(tenant, messageCid, listener, {
+      const subscription = await this.eventLog.subscribe(tenant, messageCid, subscriptionHandler, {
         cursor  : eventLogCursor,
         filters : messagesFilters,
       });

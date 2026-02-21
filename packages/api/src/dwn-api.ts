@@ -17,6 +17,8 @@ import type {
   ProcessDwnRequest,
   Web5Agent } from '@enbox/agent';
 
+import type { SubscriptionMessage } from '@enbox/dwn-sdk-js';
+
 import {
   AgentPermissionsApi,
 } from '@enbox/agent';
@@ -736,19 +738,19 @@ export class DwnApi {
         const remoteOrigin = from;
         const protocolRole = messageParams.protocolRole;
 
-        type RecordEvent = {
-          message: DwnMessage[DwnInterface.RecordsWrite];
-          initialWrite?: DwnMessage[DwnInterface.RecordsWrite];
-        };
+        const subscriptionHandler = (msg: SubscriptionMessage): void => {
+          if (msg.type === 'eose') {
+            // TODO: surface EOSE to the LiveQuery once reconnection is supported
+            return;
+          }
 
-        const subscriptionHandler = async (event: RecordEvent): Promise<void> => {
-          const { message, initialWrite } = event;
+          const { message, initialWrite } = msg.event;
           const record = new Record(this.agent, {
-            ...message,
-            author       : getRecordAuthor(message),
+            ...message as DwnMessage[DwnInterface.RecordsWrite],
+            author       : getRecordAuthor(message as DwnMessage[DwnInterface.RecordsWrite]),
             connectedDid : this.connectedDid,
             remoteOrigin,
-            initialWrite,
+            initialWrite : initialWrite as DwnMessage[DwnInterface.RecordsWrite] | undefined,
             protocolRole,
             delegateDid  : this.delegateDid,
           }, this.permissionsApi);

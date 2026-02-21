@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
-import type { EventLog } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, ProtocolDefinition, RecordsWriteMessage, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { DataStore, MessageStore, ProtocolDefinition, RecordsDeleteMessage, RecordsWriteMessage, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { EventLog, SubscriptionMessage } from '../../src/types/subscriptions.js';
 import type { RecordEvent, RecordsFilter, RecordSubscriptionHandler } from '../../src/types/records-types.js';
 
 import sinon from 'sinon';
@@ -239,7 +239,7 @@ export function testRecordsSubscribeHandler(): void {
 
         // subscribe
         const receivedEvents: RecordEvent[] = [];
-        const subscriptionHandler: RecordSubscriptionHandler = (event): void => { receivedEvents.push(event); };
+        const subscriptionHandler: RecordSubscriptionHandler = (msg): void => { if (msg.type === 'event') { receivedEvents.push(msg.event as RecordEvent); } };
         const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
           author : alice,
           filter : { schema: 'http://live-test' },
@@ -280,7 +280,7 @@ export function testRecordsSubscribeHandler(): void {
           // Subscribe with the cursor from before the writes. The handler takes the
           // EventLog catch-up path, replaying events through the subscription handler.
           const receivedEvents: RecordEvent[] = [];
-          const subscriptionHandler: RecordSubscriptionHandler = (event): void => { receivedEvents.push(event); };
+          const subscriptionHandler: RecordSubscriptionHandler = (msg): void => { if (msg.type === 'event') { receivedEvents.push(msg.event as RecordEvent); } };
           const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
             author : alice,
             filter : { schema: 'http://cursor-test' },
@@ -321,7 +321,7 @@ export function testRecordsSubscribeHandler(): void {
           await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
 
           const receivedEvents: RecordEvent[] = [];
-          const subscriptionHandler: RecordSubscriptionHandler = (event): void => { receivedEvents.push(event); };
+          const subscriptionHandler: RecordSubscriptionHandler = (msg): void => { if (msg.type === 'event') { receivedEvents.push(msg.event as RecordEvent); } };
           const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
             author : alice,
             filter : { schema: 'http://cursor-live' },
@@ -364,7 +364,7 @@ export function testRecordsSubscribeHandler(): void {
           await dwn.processMessage(alice.did, noMatchWrite.message, { dataStream: noMatchWrite.dataStream });
 
           const receivedEvents: RecordEvent[] = [];
-          const subscriptionHandler: RecordSubscriptionHandler = (event): void => { receivedEvents.push(event); };
+          const subscriptionHandler: RecordSubscriptionHandler = (msg): void => { if (msg.type === 'event') { receivedEvents.push(msg.event as RecordEvent); } };
           const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
             author : alice,
             filter : { schema: 'http://filter-match' },
@@ -524,8 +524,9 @@ export function testRecordsSubscribeHandler(): void {
           expect(protocolsConfigureReply.status.code).toBe(202);
 
           const bobMessages: string[] = [];
-          const handleForBob = async (event: RecordEvent): Promise<void> => {
-            const { message } = event;
+          const handleForBob = async (msg: SubscriptionMessage): Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
             const messageCid = await Message.getCid(message);
             bobMessages.push(messageCid);
           };
@@ -542,8 +543,9 @@ export function testRecordsSubscribeHandler(): void {
           expect(subscriptionReply.subscription).toBeDefined();
 
           const carolMessages: string[] = [];
-          const handleForCarol = async (event: RecordEvent): Promise<void> => {
-            const { message } = event;
+          const handleForCarol = async (msg: SubscriptionMessage): Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
             const messageCid = await Message.getCid(message);
             carolMessages.push(messageCid);
           };
@@ -651,13 +653,13 @@ export function testRecordsSubscribeHandler(): void {
           };
 
           const noRoleRecords: Set<string> = new Set();
-          const addNoRole = async (event: RecordEvent): Promise<void> => {
-            const { message } = event;
+          const addNoRole = async (msg: SubscriptionMessage): Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
             if (message.descriptor.method === DwnMethodName.Write) {
-              const recordsWriteMessage = message as RecordsWriteMessage;
-              noRoleRecords.add(recordsWriteMessage.recordId);
+              noRoleRecords.add((message as RecordsWriteMessage).recordId);
             } else {
-              noRoleRecords.delete(message.descriptor.recordId);
+              noRoleRecords.delete((message as RecordsDeleteMessage).descriptor.recordId);
             }
           };
 
@@ -683,13 +685,13 @@ export function testRecordsSubscribeHandler(): void {
           expect(friendRoleReply.status.code).toBe(202);
 
           const recordIds: Set<string> = new Set();
-          const addRecord:RecordSubscriptionHandler = async (event) => {
-            const { message } = event;
+          const addRecord:RecordSubscriptionHandler = async (msg) => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
             if (message.descriptor.method === DwnMethodName.Write) {
-              const recordsWriteMessage = message as RecordsWriteMessage;
-              recordIds.add(recordsWriteMessage.recordId);
+              recordIds.add((message as RecordsWriteMessage).recordId);
             } else {
-              recordIds.delete(message.descriptor.recordId);
+              recordIds.delete((message as RecordsDeleteMessage).descriptor.recordId);
             }
           };
 
@@ -806,8 +808,9 @@ export function testRecordsSubscribeHandler(): void {
           };
 
           const noRoleRecords: string[] = [];
-          const addNoRole = async (event: RecordEvent): Promise<void> => {
-            const { message } = event;
+          const addNoRole = async (msg: SubscriptionMessage): Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
             if ( message.descriptor.method === DwnMethodName.Write) {
               const recordsWriteMessage = message as RecordsWriteMessage;
               noRoleRecords.push(recordsWriteMessage.recordId);
@@ -838,8 +841,9 @@ export function testRecordsSubscribeHandler(): void {
           expect(participantRoleReply.status.code).toBe(202);
 
           const recordIds: string[] = [];
-          const addRecord:RecordSubscriptionHandler = async (event) => {
-            const { message } = event;
+          const addRecord:RecordSubscriptionHandler = async (msg) => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
             if (message.descriptor.method === DwnMethodName.Write) {
               const recordsWriteMessage = message as RecordsWriteMessage;
               recordIds.push(recordsWriteMessage.recordId);
@@ -1086,8 +1090,9 @@ export function testRecordsSubscribeHandler(): void {
 
             // Bob subscribes — no role
             const bobRecordIds: Set<string> = new Set();
-            const bobHandler: RecordSubscriptionHandler = async (event): Promise<void> => {
-              const { message } = event;
+            const bobHandler: RecordSubscriptionHandler = async (msg): Promise<void> => {
+              if (msg.type !== 'event') { return; }
+              const { message } = msg.event;
               if (message.descriptor.method === DwnMethodName.Write) {
                 bobRecordIds.add((message as RecordsWriteMessage).recordId);
               }
@@ -1105,8 +1110,9 @@ export function testRecordsSubscribeHandler(): void {
 
             // Carol subscribes — no role
             const carolRecordIds: Set<string> = new Set();
-            const carolHandler: RecordSubscriptionHandler = async (event): Promise<void> => {
-              const { message } = event;
+            const carolHandler: RecordSubscriptionHandler = async (msg): Promise<void> => {
+              if (msg.type !== 'event') { return; }
+              const { message } = msg.event;
               if (message.descriptor.method === DwnMethodName.Write) {
                 carolRecordIds.add((message as RecordsWriteMessage).recordId);
               }
@@ -1124,8 +1130,9 @@ export function testRecordsSubscribeHandler(): void {
 
             // Dave subscribes — no role, not a participant at all
             const daveRecordIds: Set<string> = new Set();
-            const daveHandler: RecordSubscriptionHandler = async (event): Promise<void> => {
-              const { message } = event;
+            const daveHandler: RecordSubscriptionHandler = async (msg): Promise<void> => {
+              if (msg.type !== 'event') { return; }
+              const { message } = msg.event;
               if (message.descriptor.method === DwnMethodName.Write) {
                 daveRecordIds.add((message as RecordsWriteMessage).recordId);
               }

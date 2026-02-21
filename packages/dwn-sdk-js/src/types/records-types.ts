@@ -1,5 +1,6 @@
 import type { GeneralJws } from './jws-types.js';
 import type { JweEncryption } from '../utils/encryption.js';
+import type { SubscriptionListener } from './subscriptions.js';
 import type { AuthorizationModel, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSubscription, Pagination } from './message-types.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import type { PaginationCursor, RangeCriterion, RangeFilter, StartsWithFilter } from './query-types.js';
@@ -182,10 +183,13 @@ export type RecordEvent = {
   initialWrite?: RecordsWriteMessage;
 };
 
-export type RecordSubscriptionHandler = (event: RecordEvent) => void;
+/**
+ * @deprecated Use {@link SubscriptionListener} directly. Retained as an alias for migration.
+ */
+export type RecordSubscriptionHandler = SubscriptionListener;
 
 export type RecordsSubscribeMessageOptions = {
-  subscriptionHandler: RecordSubscriptionHandler;
+  subscriptionHandler: SubscriptionListener;
 };
 
 export type RecordsSubscribeMessage = GenericMessage & {

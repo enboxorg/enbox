@@ -1,4 +1,4 @@
-import type { Dwn, MessageEvent, ProtocolDefinition, RecordsReadReply, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { Dwn, ProtocolDefinition, RecordsReadReply, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type { JwkParamsOkpPublic, PrivateKeyJwk } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
@@ -132,8 +132,9 @@ describe('AgentDwnApi', () => {
 
     it('handles MessageSubscription', async () => {
       const receivedMessages: string[] = [];
-      const subscriptionHandler = async (event: MessageEvent): Promise<void> => {
-        const { message } = event;
+      const subscriptionHandler = async (msg): Promise<void> => {
+        if (msg.type !== 'event') { return; }
+        const { message } = msg.event;
         receivedMessages.push(await Message.getCid(message));
       };
 
@@ -499,8 +500,9 @@ describe('AgentDwnApi', () => {
 
     it('handles RecordsSubscribe message', async () => {
       const receivedMessages: RecordsWriteMessage[] = [];
-      const subscriptionHandler = (event: MessageEvent): void => {
-        const { message } = event;
+      const subscriptionHandler = (msg): void => {
+        if (msg.type !== 'event') { return; }
+        const { message } = msg.event;
         if (!isDwnMessage(DwnInterface.RecordsWrite, message)) {
           throw new Error('Received message is not a RecordsWrite message');
         }
@@ -1161,8 +1163,9 @@ describe('AgentDwnApi', () => {
 
     it('handles MessagesSubscribe', async () => {
       const receivedMessages: string[] = [];
-      const subscriptionHandler = async (event: MessageEvent): Promise<void> => {
-        const { message } = event;
+      const subscriptionHandler = async (msg): Promise<void> => {
+        if (msg.type !== 'event') { return; }
+        const { message } = msg.event;
         receivedMessages.push(await Message.getCid(message));
       };
 
@@ -1527,8 +1530,9 @@ describe('AgentDwnApi', () => {
 
     it('handles RecordsSubscribe message', async () => {
       const receivedMessages: RecordsWriteMessage[] = [];
-      const subscriptionHandler = (event: MessageEvent): void => {
-        const { message } = event;
+      const subscriptionHandler = (msg): void => {
+        if (msg.type !== 'event') { return; }
+        const { message } = msg.event;
         if (!isDwnMessage(DwnInterface.RecordsWrite, message)) {
           throw new Error('Received message is not a RecordsWrite message');
         }

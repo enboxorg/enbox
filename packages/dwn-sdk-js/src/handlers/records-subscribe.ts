@@ -4,7 +4,7 @@ import type { MessageStore } from '../types//message-store.js';
 import type { MethodHandler } from '../types/method-handler.js';
 import type { EventLog, SubscriptionListener } from '../types/subscriptions.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
-import type { RecordEvent, RecordsQueryReplyEntry, RecordsSubscribeMessage, RecordsSubscribeReply, RecordSubscriptionHandler } from '../types/records-types.js';
+import type { RecordsQueryReplyEntry, RecordsSubscribeMessage, RecordsSubscribeReply } from '../types/records-types.js';
 
 import { authenticate } from '../core/auth.js';
 import { DateSort } from '../types/records-types.js';
@@ -29,7 +29,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
   }: {
     tenant: string,
     message: RecordsSubscribeMessage,
-    subscriptionHandler: RecordSubscriptionHandler,
+    subscriptionHandler: SubscriptionListener,
   }): Promise<RecordsSubscribeReply> {
     if (this.eventLog === undefined) {
       return messageReplyFromError(new DwnError(
@@ -76,24 +76,14 @@ export class RecordsSubscribeHandler implements MethodHandler {
     const messageCid = await Message.getCid(message);
     const { cursor: eventLogCursor } = recordsSubscribe.message.descriptor;
 
-    // Wrap the SubscriptionListener → RecordSubscriptionHandler.
-    // The handler callback receives plain RecordEvents; seq/EOSE are EventLog concerns.
-    const listener: SubscriptionListener = (msg):void => {
-      if (msg.type === 'event') {
-        subscriptionHandler(msg.event as RecordEvent);
-      }
-      // EOSE is silently consumed here — it's meaningful to the EventLog consumer
-      // (server, agent) who registered via eventLog.subscribe() directly, not to the
-      // DWN handler's subscription callback.
-    };
-
     if (eventLogCursor !== undefined) {
       // ---- Cursor mode: catch-up from EventLog + EOSE + live ----
       // All catch-up, buffering, dedup, and EOSE delivery are handled by the
       // EventLog implementation. The handler just passes the cursor and filters.
+      // The subscriptionHandler receives SubscriptionMessage (event + EOSE) directly.
 
       try {
-        const subscription = await this.eventLog!.subscribe(tenant, messageCid, listener, {
+        const subscription = await this.eventLog!.subscribe(tenant, messageCid, subscriptionHandler, {
           cursor  : eventLogCursor,
           filters : eventFilters,
         });
@@ -110,7 +100,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
     // ---- No cursor: existing behavior (initial snapshot from MessageStore) ----
 
     // Step 1: Register event listener FIRST to ensure no events are missed between query and subscribe
-    const subscription = await this.eventLog!.subscribe(tenant, messageCid, listener, {
+    const subscription = await this.eventLog!.subscribe(tenant, messageCid, subscriptionHandler, {
       filters: eventFilters,
     });
 
