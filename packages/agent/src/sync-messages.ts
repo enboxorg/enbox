@@ -149,7 +149,8 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, 
           targetDid : did,
           message   : messagesRead.message,
         }) as MessagesReadReply;
-      } catch {
+      } catch (error: any) {
+        console.error(`SyncEngineLevel: pull - failed to read ${messageCid} from ${dwnUrl}:`, error.message ?? error);
         return undefined;
       }
 
@@ -217,9 +218,10 @@ export async function pushMessages({ did, dwnUrl, delegateDid, protocol, message
         const cid = await getMessageCid(entry.message);
         console.error(`SyncEngineLevel: push failed for ${cid}: ${reply.status.code} ${reply.status.detail}`);
       }
-    } catch {
-      // Remote unreachable — stop pushing to this endpoint.
-      throw new Error(`SyncEngineLevel: Remote DWN at ${dwnUrl} is unreachable.`);
+    } catch (error: any) {
+      // Preserve the original error so callers can diagnose the root cause.
+      const detail = error.message ?? error;
+      throw new Error(`SyncEngineLevel: push to ${dwnUrl} failed: ${detail}`);
     }
   }
 }
