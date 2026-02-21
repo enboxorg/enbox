@@ -5,8 +5,6 @@ import type {
   EncryptionKeyDeriver,
   KeyDecrypter,
   ProtocolDefinition,
-  ProtocolsQueryReply,
-  RecordsQueryReply,
   RecordsWrite,
   RecordsWriteMessage,
 } from '@enbox/dwn-sdk-js';
@@ -72,7 +70,6 @@ import {
 // Import extracted protocol utilities
 import {
   detectNewParticipants as detectNewParticipantsFn,
-  hasRelationalReadAccess as hasRelationalReadAccessFn,
   isMultiPartyContext as isMultiPartyContextFn,
 } from './protocol-utils.js';
 
@@ -86,6 +83,13 @@ import {
 
 // Import extracted record upgrade function
 import { upgradeExternalRootRecord as upgradeExternalRootRecordFn } from './dwn-record-upgrade.js';
+
+// Import extracted protocol definition fetching functions
+import {
+  extractDerivedPublicKey as extractDerivedPublicKeyFn,
+  fetchRemoteProtocolDefinition as fetchRemoteProtocolDefinitionFn,
+  getProtocolDefinition as getProtocolDefinitionFn,
+} from './dwn-protocol-cache.js';
 
 type DwnMessageWithBlob<T extends DwnInterface> = {
   message: DwnMessage[T];
@@ -229,122 +233,8 @@ export class AgentDwnApi {
 
 
     // Post-write key delivery: detect new participants and write contextKey records.
-    // This replaces the old roleRecordAutoPush mechanism with the unified key delivery protocol.
-    if (
-      isDwnRequest(request, DwnInterface.RecordsWrite) &&
-      request.encryption &&
-      reply.status.code === 202
-    ) {
-      const writeParams = request.messageParams as DwnMessageParams[DwnInterface.RecordsWrite];
-      // Skip key-delivery protocol writes to avoid infinite recursion (contextKey records are themselves encrypted)
-      if (writeParams.protocol !== KeyDeliveryProtocolDefinition.protocol) {
-        try {
-          const protocolDefinition = await this.getProtocolDefinition(
-            request.target, writeParams.protocol,
-          );
-          if (protocolDefinition) {
-            const recordsWriteMessage = message as unknown as RecordsWriteMessage;
+    await this.postWriteKeyDelivery(request, message, reply);
 
-            // Reactive root-record upgrade (PR E): if this is an externally-authored
-            // root record with only ProtocolPath encryption, the owner upgrades it by
-            // appending a ProtocolContext recipient entry so that context key
-            // holders (including the external author) can also decrypt.
-            const authorDid = Jws.getSignerDid(
-              recordsWriteMessage.authorization.signature.signatures[0]
-            );
-            const isExternallyAuthored = authorDid !== request.target;
-            const isRootRecord = !writeParams.parentContextId;
-            const rootPathSegment = writeParams.protocolPath.split('/')[0];
-            const isMultiParty = isMultiPartyContextFn(protocolDefinition, rootPathSegment);
-
-            if (isExternallyAuthored && isRootRecord && isMultiParty) {
-              try {
-                await upgradeExternalRootRecordFn(
-                  this.agent, request.target, recordsWriteMessage,
-                  this._dwn, this.getSigner.bind(this), this._contextKeyCache,
-                );
-              } catch (upgradeError: any) {
-                console.warn(
-                  `AgentDwnApi: Reactive root-record upgrade failed for ` +
-                  `'${recordsWriteMessage.recordId}': ${upgradeError.message}`
-                );
-              }
-            }
-
-            const newParticipants = detectNewParticipantsFn({
-              protocolDefinition,
-              protocolPath : writeParams.protocolPath,
-              recipient    : writeParams.recipient,
-              tenantDid    : request.target,
-              authorDid    : isExternallyAuthored ? authorDid : undefined,
-            });
-
-            if (newParticipants.size > 0) {
-              // Derive the context key to deliver to participants
-              const rootContextId = recordsWriteMessage.contextId?.split('/')[0]
-                || recordsWriteMessage.contextId
-                || recordsWriteMessage.recordId;
-
-              const { keyId, keyUri } = await getEncryptionKeyInfoFn(this.agent, request.target);
-              const contextDerivationPath = [
-                KeyDerivationScheme.ProtocolContext,
-                rootContextId,
-              ];
-              const contextDerivedPrivateKeyBytes =
-                await this.agent.keyManager.derivePrivateKeyBytes({
-                  keyUri,
-                  derivationPath: contextDerivationPath,
-                });
-              const contextDerivedPrivateJwk =
-                await X25519.bytesToPrivateKey({ privateKeyBytes: contextDerivedPrivateKeyBytes });
-              const contextKeyPayload: DerivedPrivateJwk = {
-                rootKeyId         : keyId,
-                derivationScheme  : KeyDerivationScheme.ProtocolContext,
-                derivationPath    : contextDerivationPath,
-                derivedPrivateKey : contextDerivedPrivateJwk as PrivateKeyJwk,
-              };
-
-              // Extract the author's key delivery public key from the record
-              // so we can encrypt the contextKey directly to the external author.
-              const authorKeyDeliveryPubKey =
-                recordsWriteMessage.authorization?.authorKeyDeliveryPublicKey;
-
-              for (const participantDid of newParticipants) {
-                try {
-                  // Use the author's key delivery public key when delivering
-                  // to the external author; for other participants (e.g.
-                  // recipient, role holders) fall back to owner-key encryption.
-                  const recipientKey = (participantDid === authorDid && authorKeyDeliveryPubKey)
-                    ? authorKeyDeliveryPubKey
-                    : undefined;
-
-                  await this.writeContextKeyRecord({
-                    tenantDid                     : request.target,
-                    recipientDid                  : participantDid,
-                    contextKeyData                : contextKeyPayload,
-                    sourceProtocol                : writeParams.protocol,
-                    sourceContextId               : rootContextId,
-                    recipientKeyDeliveryPublicKey : recipientKey,
-                  });
-                } catch (keyDeliveryError: any) {
-                  console.warn(
-                    `AgentDwnApi: Key delivery to '${participantDid}' for context ` +
-                    `'${rootContextId}' failed: ${keyDeliveryError.message}. ` +
-                    `The participant may not be able to decrypt records in this context.`
-                  );
-                }
-              }
-            }
-          }
-        } catch (detectionError: any) {
-          // Participant detection failure is non-fatal — the record is still stored.
-          console.warn(
-            `AgentDwnApi: Post-write participant detection failed: ` +
-            `${detectionError.message}`
-          );
-        }
-      }
-    }
     // Auto-decrypt reply data if encryption is enabled (Component 7)
     await this.maybeDecryptReply(request, reply);
 
@@ -408,6 +298,142 @@ export class AgentDwnApi {
     // Returns an object containing the reply from processing the message, the original message,
     // and the content identifier (CID) of the message.
     return { reply, message, messageCid };
+  }
+
+  /**
+   * Post-write key delivery: after a successful encrypted `RecordsWrite`,
+   * detect new participants and write `contextKey` records so they can
+   * decrypt records in the context.
+   *
+   * This is a non-fatal operation — if participant detection or key delivery
+   * fails, the record is still stored and a warning is logged.
+   */
+  private async postWriteKeyDelivery<T extends DwnInterface>(
+    request: ProcessDwnRequest<T>,
+    message: DwnMessage[T],
+    reply: DwnMessageReply[T],
+  ): Promise<void> {
+    if (
+      !isDwnRequest(request, DwnInterface.RecordsWrite) ||
+      !request.encryption ||
+      reply.status.code !== 202
+    ) {
+      return;
+    }
+
+    const writeParams = request.messageParams as DwnMessageParams[DwnInterface.RecordsWrite];
+    // Skip key-delivery protocol writes to avoid infinite recursion (contextKey records are themselves encrypted)
+    if (writeParams.protocol === KeyDeliveryProtocolDefinition.protocol) {
+      return;
+    }
+
+    try {
+      const protocolDefinition = await this.getProtocolDefinition(
+        request.target, writeParams.protocol,
+      );
+      if (!protocolDefinition) {
+        return;
+      }
+
+      const recordsWriteMessage = message as unknown as RecordsWriteMessage;
+
+      // Reactive root-record upgrade (PR E): if this is an externally-authored
+      // root record with only ProtocolPath encryption, the owner upgrades it by
+      // appending a ProtocolContext recipient entry so that context key
+      // holders (including the external author) can also decrypt.
+      const authorDid = Jws.getSignerDid(
+        recordsWriteMessage.authorization.signature.signatures[0]
+      );
+      const isExternallyAuthored = authorDid !== request.target;
+      const isRootRecord = !writeParams.parentContextId;
+      const rootPathSegment = writeParams.protocolPath.split('/')[0];
+      const isMultiParty = isMultiPartyContextFn(protocolDefinition, rootPathSegment);
+
+      if (isExternallyAuthored && isRootRecord && isMultiParty) {
+        try {
+          await upgradeExternalRootRecordFn(
+            this.agent, request.target, recordsWriteMessage,
+            this._dwn, this.getSigner.bind(this), this._contextKeyCache,
+          );
+        } catch (upgradeError: any) {
+          console.warn(
+            `AgentDwnApi: Reactive root-record upgrade failed for ` +
+            `'${recordsWriteMessage.recordId}': ${upgradeError.message}`
+          );
+        }
+      }
+
+      const newParticipants = detectNewParticipantsFn({
+        protocolDefinition,
+        protocolPath : writeParams.protocolPath,
+        recipient    : writeParams.recipient,
+        tenantDid    : request.target,
+        authorDid    : isExternallyAuthored ? authorDid : undefined,
+      });
+
+      if (newParticipants.size > 0) {
+        // Derive the context key to deliver to participants
+        const rootContextId = recordsWriteMessage.contextId?.split('/')[0]
+          || recordsWriteMessage.contextId
+          || recordsWriteMessage.recordId;
+
+        const { keyId, keyUri } = await getEncryptionKeyInfoFn(this.agent, request.target);
+        const contextDerivationPath = [
+          KeyDerivationScheme.ProtocolContext,
+          rootContextId,
+        ];
+        const contextDerivedPrivateKeyBytes =
+          await this.agent.keyManager.derivePrivateKeyBytes({
+            keyUri,
+            derivationPath: contextDerivationPath,
+          });
+        const contextDerivedPrivateJwk =
+          await X25519.bytesToPrivateKey({ privateKeyBytes: contextDerivedPrivateKeyBytes });
+        const contextKeyPayload: DerivedPrivateJwk = {
+          rootKeyId         : keyId,
+          derivationScheme  : KeyDerivationScheme.ProtocolContext,
+          derivationPath    : contextDerivationPath,
+          derivedPrivateKey : contextDerivedPrivateJwk as PrivateKeyJwk,
+        };
+
+        // Extract the author's key delivery public key from the record
+        // so we can encrypt the contextKey directly to the external author.
+        const authorKeyDeliveryPubKey =
+          recordsWriteMessage.authorization?.authorKeyDeliveryPublicKey;
+
+        for (const participantDid of newParticipants) {
+          try {
+            // Use the author's key delivery public key when delivering
+            // to the external author; for other participants (e.g.
+            // recipient, role holders) fall back to owner-key encryption.
+            const recipientKey = (participantDid === authorDid && authorKeyDeliveryPubKey)
+              ? authorKeyDeliveryPubKey
+              : undefined;
+
+            await this.writeContextKeyRecord({
+              tenantDid                     : request.target,
+              recipientDid                  : participantDid,
+              contextKeyData                : contextKeyPayload,
+              sourceProtocol                : writeParams.protocol,
+              sourceContextId               : rootContextId,
+              recipientKeyDeliveryPublicKey : recipientKey,
+            });
+          } catch (keyDeliveryError: any) {
+            console.warn(
+              `AgentDwnApi: Key delivery to '${participantDid}' for context ` +
+              `'${rootContextId}' failed: ${keyDeliveryError.message}. ` +
+              `The participant may not be able to decrypt records in this context.`
+            );
+          }
+        }
+      }
+    } catch (detectionError: any) {
+      // Participant detection failure is non-fatal — the record is still stored.
+      console.warn(
+        `AgentDwnApi: Post-write participant detection failed: ` +
+        `${detectionError.message}`
+      );
+    }
   }
 
   private async sendDwnRpcRequest<T extends DwnInterface>({
@@ -904,35 +930,6 @@ export class AgentDwnApi {
   }
 
   /**
-   * Checks if a protocol path represents a multi-party context.
-   *
-   * @param protocolDefinition - The full protocol definition
-   * @param rootProtocolPath - The root protocol path to check
-   */
-  private isMultiPartyContext(
-    protocolDefinition: ProtocolDefinition,
-    rootProtocolPath: string,
-  ): boolean {
-    return isMultiPartyContextFn(protocolDefinition, rootProtocolPath);
-  }
-
-  /**
-   * Checks if any `$actions` rule in the protocol grants read access
-   * via `who: '<actorType>'` and `of: '<path>'`.
-   *
-   * @param actorType - The actor type to check ('author', 'recipient', or undefined for any)
-   * @param ofPath - The protocol path to check
-   * @param protocolDefinition - The protocol definition
-   */
-  private hasRelationalReadAccess(
-    actorType: 'author' | 'recipient' | undefined,
-    ofPath: string,
-    protocolDefinition: ProtocolDefinition,
-  ): boolean {
-    return hasRelationalReadAccessFn(actorType, ofPath, protocolDefinition);
-  }
-
-  /**
    * Analyses a record write to determine which DIDs need context key delivery.
    *
    * @param params - Parameters for participant detection
@@ -949,7 +946,7 @@ export class AgentDwnApi {
   }
 
   /**
-    * Fetches a protocol definition from the local DWN, with caching.
+   * Fetches a protocol definition from the local DWN, with caching.
    * Returns undefined if the protocol is not installed.
    *
    * @param tenantDid - The tenant DID to query
@@ -958,33 +955,12 @@ export class AgentDwnApi {
    */
   private async getProtocolDefinition(
     tenantDid: string,
-    protocolUri: string
+    protocolUri: string,
   ): Promise<ProtocolDefinition | undefined> {
-    const cacheKey = `${tenantDid}~${protocolUri}`;
-
-    const cached = this._protocolDefinitionCache.get(cacheKey);
-    if (cached) {
-      return cached;
-    }
-
-    const signer = await this.getSigner(tenantDid);
-    const protocolsQuery = await dwnMessageConstructors[
-      DwnInterface.ProtocolsQuery
-    ].create({
-      filter: { protocol: protocolUri },
-      signer,
-    });
-
-    const reply = await this._dwn.processMessage(
-      tenantDid, protocolsQuery.message,
+    return getProtocolDefinitionFn(
+      tenantDid, protocolUri, this._dwn,
+      this.getSigner.bind(this), this._protocolDefinitionCache,
     );
-    if (reply.status.code !== 200 || !reply.entries?.length) {
-      return undefined;
-    }
-
-    const definition = reply.entries[0].descriptor.definition;
-    this._protocolDefinitionCache.set(cacheKey, definition);
-    return definition;
   }
 
   /**
@@ -995,34 +971,10 @@ export class AgentDwnApi {
     targetDid: string,
     protocolUri: string,
   ): Promise<ProtocolDefinition> {
-    const cacheKey = `remote~${targetDid}~${protocolUri}`;
-    const cached = this._protocolDefinitionCache.get(cacheKey);
-    if (cached) { return cached; }
-
-    const protocolsQuery = await dwnMessageConstructors[
-      DwnInterface.ProtocolsQuery
-    ].create({
-      filter: { protocol: protocolUri },
-    });
-
-    const reply = await this.sendDwnRpcRequest({
-      targetDid,
-      dwnEndpointUrls: await getDwnServiceEndpointUrls(
-        targetDid, this.agent.did,
-      ),
-      message: protocolsQuery.message,
-    }) as ProtocolsQueryReply;
-
-    if (reply.status.code !== 200 || !reply.entries?.length) {
-      throw new Error(
-        `AgentDwnApi: Failed to fetch protocol '${protocolUri}' from ` +
-        `'${targetDid}'. The recipient may not have the protocol installed.`
-      );
-    }
-
-    const definition = reply.entries[0].descriptor.definition;
-    this._protocolDefinitionCache.set(cacheKey, definition);
-    return definition;
+    return fetchRemoteProtocolDefinitionFn(
+      targetDid, protocolUri, this.agent.did,
+      this.sendDwnRpcRequest.bind(this), this._protocolDefinitionCache,
+    );
   }
 
   /**
@@ -1043,46 +995,11 @@ export class AgentDwnApi {
     rootContextId: string,
     requesterDid: string,
   ): Promise<{ rootKeyId: string; derivedPublicKey: PublicKeyJwk } | undefined> {
-    const signer = await this.getSigner(requesterDid);
-
-    // Query the target's DWN for any record in this context
-    const recordsQuery = await dwnMessageConstructors[DwnInterface.RecordsQuery].create({
-      signer,
-      filter: {
-        protocol  : protocolUri,
-        contextId : rootContextId,
-      },
-    });
-
-    const dwnEndpointUrls = await getDwnServiceEndpointUrls(targetDid, this.agent.did);
-    const queryReply = await this.sendDwnRpcRequest<DwnInterface.RecordsQuery>({
-      targetDid,
-      dwnEndpointUrls,
-      message: recordsQuery.message,
-    }) as RecordsQueryReply;
-
-    if (queryReply.status.code !== 200 || !queryReply.entries?.length) {
-      return undefined;
-    }
-
-    // Search entries for one with a ProtocolContext recipient entry
-    // that includes derivedPublicKey
-    for (const entry of queryReply.entries) {
-      if (entry.encryption?.recipients) {
-        const contextEntry = entry.encryption.recipients.find(
-          (r: { header: { derivationScheme: string; derivedPublicKey?: PublicKeyJwk } }) =>
-            r.header.derivationScheme === KeyDerivationScheme.ProtocolContext && r.header.derivedPublicKey
-        );
-        if (contextEntry?.header.derivedPublicKey) {
-          return {
-            rootKeyId        : contextEntry.header.kid,
-            derivedPublicKey : contextEntry.header.derivedPublicKey,
-          };
-        }
-      }
-    }
-
-    return undefined;
+    return extractDerivedPublicKeyFn(
+      targetDid, protocolUri, rootContextId, requesterDid,
+      this.agent.did, this.getSigner.bind(this),
+      this.sendDwnRpcRequest.bind(this),
+    );
   }
 
   /**
