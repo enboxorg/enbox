@@ -96,13 +96,13 @@ export class EventEmitterEventLog implements EventLog {
     this.tenantSeqs.clear();
   }
 
-  public async emit(tenant: string, event: MessageEvent, indexes: KeyValues): Promise<number> {
+  public async emit(tenant: string, event: MessageEvent, indexes: KeyValues): Promise<string> {
     if (!this.isOpen) {
       this.errorHandler(new DwnError(
         DwnErrorCode.EventLogNotOpenError,
         'a message emitted when EventLog is closed'
       ));
-      return -1;
+      return '';
     }
 
     // Assign a monotonic sequence number for this tenant.
@@ -133,15 +133,16 @@ export class EventEmitterEventLog implements EventLog {
     const channel = `${tenant}_${EVENTS_LISTENER_CHANNEL}`;
     this.emitter.emit(channel, { tenant, event, indexes, seq });
 
-    return seq;
+    return String(seq);
   }
 
   public async read(tenant: string, options: EventLogReadOptions = {}): Promise<EventLogReadResult> {
     const { cursor, limit, filters } = options;
+    const cursorSeq = cursor !== undefined ? EventEmitterEventLog.parseCursor(cursor) : undefined;
     const log = this.tenantLogs.get(tenant);
 
     if (log === undefined || log.size === 0) {
-      return { events: [], cursor: cursor ?? -1 };
+      return { events: [], cursor };
     }
 
     const results: EventLogEntry[] = [];
@@ -149,7 +150,7 @@ export class EventEmitterEventLog implements EventLog {
 
     for (const [seq, entry] of log) {
       // Skip entries at or before the cursor.
-      if (cursor !== undefined && seq <= cursor) { continue; }
+      if (cursorSeq !== undefined && seq <= cursorSeq) { continue; }
 
       // Apply filters if provided (OR semantics — match any filter).
       if (filters !== undefined && filters.length > 0) {
@@ -165,8 +166,19 @@ export class EventEmitterEventLog implements EventLog {
       if (results.length >= maxResults) { break; }
     }
 
-    const lastSeq = results.length > 0 ? results[results.length - 1].seq : (cursor ?? -1);
-    return { events: results, cursor: lastSeq };
+    const lastSeq = results.length > 0 ? results[results.length - 1].seq : undefined;
+    return { events: results, cursor: lastSeq !== undefined ? String(lastSeq) : cursor };
+  }
+
+  /**
+   * Parse an opaque cursor string into an internal sequence number.
+   */
+  private static parseCursor(cursor: string): number {
+    const seq = Number(cursor);
+    if (Number.isNaN(seq) || seq < 0) {
+      throw new DwnError(DwnErrorCode.EventLogNotOpenError, `invalid cursor: '${cursor}'`);
+    }
+    return seq;
   }
 
   public async subscribe(
@@ -180,6 +192,7 @@ export class EventEmitterEventLog implements EventLog {
 
     if (cursor !== undefined) {
       // ---- Cursor mode: catch-up from stored events, then EOSE, then live ----
+      const cursorSeq = EventEmitterEventLog.parseCursor(cursor);
 
       // Buffer live events that arrive during catch-up to avoid losing them.
       type BufferedEvent = { event: MessageEvent; seq: number };
@@ -194,7 +207,7 @@ export class EventEmitterEventLog implements EventLog {
         if (!catchUpComplete) {
           pendingLiveEvents.push({ event: payload.event, seq: payload.seq });
         } else {
-          listener({ type: 'event', seq: payload.seq, event: payload.event });
+          listener({ type: 'event', cursor: String(payload.seq), event: payload.event });
         }
       };
 
@@ -202,22 +215,24 @@ export class EventEmitterEventLog implements EventLog {
 
       // Step 2: Read stored events from cursor and deliver them.
       const readResult = await this.read(tenant, { cursor, filters });
-      const lastCatchUpSeq = readResult.cursor;
+      // The read cursor is the last event's seq (string) or the input cursor if nothing new.
+      const eoseCursor = readResult.cursor ?? cursor;
+      const lastCatchUpSeq = readResult.cursor !== undefined ? Number(readResult.cursor) : cursorSeq;
 
       for (const entry of readResult.events) {
-        listener({ type: 'event', seq: entry.seq, event: entry.event });
+        listener({ type: 'event', cursor: String(entry.seq), event: entry.event });
       }
 
       // Step 3: Deliver any live events that arrived during catch-up (with seq > lastCatchUpSeq).
       catchUpComplete = true;
       for (const liveEvent of pendingLiveEvents) {
         if (liveEvent.seq > lastCatchUpSeq) {
-          listener({ type: 'event', seq: liveEvent.seq, event: liveEvent.event });
+          listener({ type: 'event', cursor: String(liveEvent.seq), event: liveEvent.event });
         }
       }
 
       // Step 4: Send EOSE marker.
-      listener({ type: 'eose', seq: lastCatchUpSeq });
+      listener({ type: 'eose', cursor: eoseCursor });
 
       return {
         id,
@@ -231,7 +246,7 @@ export class EventEmitterEventLog implements EventLog {
       if (filters !== undefined && filters.length > 0) {
         if (!FilterUtility.matchAnyFilter(payload.indexes, filters)) { return; }
       }
-      listener({ type: 'event', seq: payload.seq, event: payload.event });
+      listener({ type: 'event', cursor: String(payload.seq), event: payload.event });
     };
 
     this.emitter.on(channel, handler);

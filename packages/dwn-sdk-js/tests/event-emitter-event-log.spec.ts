@@ -17,36 +17,41 @@ describe('EventEmitterEventLog', () => {
   });
 
   describe('emit()', () => {
-    it('should assign monotonically increasing sequence numbers per tenant', async () => {
+    it('should return opaque cursor strings', async () => {
       const tenant = 'did:example:alice';
       const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
 
-      const seq1 = await eventLog.emit(tenant, event, { key: 'val1' });
-      const seq2 = await eventLog.emit(tenant, event, { key: 'val2' });
-      const seq3 = await eventLog.emit(tenant, event, { key: 'val3' });
+      const cursor1 = await eventLog.emit(tenant, event, { key: 'val1' });
+      const cursor2 = await eventLog.emit(tenant, event, { key: 'val2' });
+      const cursor3 = await eventLog.emit(tenant, event, { key: 'val3' });
 
-      expect(seq1).toBe(1);
-      expect(seq2).toBe(2);
-      expect(seq3).toBe(3);
+      // Cursors are strings and should be different for each event.
+      expect(typeof cursor1).toBe('string');
+      expect(typeof cursor2).toBe('string');
+      expect(cursor1).not.toBe(cursor2);
+      expect(cursor2).not.toBe(cursor3);
     });
 
-    it('should maintain independent sequence counters per tenant', async () => {
+    it('should maintain independent cursors per tenant', async () => {
       const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
 
-      const seqAlice = await eventLog.emit('did:example:alice', event, {});
-      const seqBob = await eventLog.emit('did:example:bob', event, {});
+      const cursorAlice = await eventLog.emit('did:example:alice', event, {});
+      const cursorBob = await eventLog.emit('did:example:bob', event, {});
 
-      expect(seqAlice).toBe(1);
-      expect(seqBob).toBe(1);
+      // Both are valid cursor strings (first event for each tenant).
+      expect(typeof cursorAlice).toBe('string');
+      expect(typeof cursorBob).toBe('string');
+      expect(cursorAlice.length).toBeGreaterThan(0);
+      expect(cursorBob.length).toBeGreaterThan(0);
     });
 
-    it('should return -1 when EventLog is closed', async () => {
+    it('should return empty string when EventLog is closed', async () => {
       await eventLog.close();
 
       const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
-      const seq = await eventLog.emit('did:example:alice', event, {});
+      const cursor = await eventLog.emit('did:example:alice', event, {});
 
-      expect(seq).toBe(-1);
+      expect(cursor).toBe('');
 
       // reopen for afterAll cleanup
       await eventLog.open();
@@ -54,7 +59,7 @@ describe('EventEmitterEventLog', () => {
   });
 
   describe('read()', () => {
-    it('should read all events for a tenant', async () => {
+    it('should read all events for a tenant when no cursor is provided', async () => {
       const tenant = 'did:example:alice';
       const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
 
@@ -63,9 +68,7 @@ describe('EventEmitterEventLog', () => {
 
       const result = await eventLog.read(tenant);
       expect(result.events.length).toBe(2);
-      expect(result.events[0].seq).toBe(1);
-      expect(result.events[1].seq).toBe(2);
-      expect(result.cursor).toBe(2);
+      expect(result.cursor).toBeDefined();
     });
 
     it('should read events after a cursor', async () => {
@@ -73,13 +76,13 @@ describe('EventEmitterEventLog', () => {
       const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
 
       await eventLog.emit(tenant, event, { schema: 'http://a' });
-      await eventLog.emit(tenant, event, { schema: 'http://b' });
+      const cursor2 = await eventLog.emit(tenant, event, { schema: 'http://b' });
       await eventLog.emit(tenant, event, { schema: 'http://c' });
 
-      const result = await eventLog.read(tenant, { cursor: 2 });
+      // Read after cursor2 — should only get the third event.
+      const result = await eventLog.read(tenant, { cursor: cursor2 });
       expect(result.events.length).toBe(1);
-      expect(result.events[0].seq).toBe(3);
-      expect(result.cursor).toBe(3);
+      expect(result.cursor).toBeDefined();
     });
 
     it('should apply filters during read', async () => {
@@ -92,14 +95,24 @@ describe('EventEmitterEventLog', () => {
 
       const result = await eventLog.read(tenant, { filters: [{ schema: 'http://match' }] });
       expect(result.events.length).toBe(2);
-      expect(result.events[0].seq).toBe(1);
-      expect(result.events[1].seq).toBe(3);
     });
 
-    it('should return empty result for unknown tenant', async () => {
+    it('should return undefined cursor for unknown tenant', async () => {
       const result = await eventLog.read('did:example:unknown');
       expect(result.events.length).toBe(0);
-      expect(result.cursor).toBe(-1);
+      expect(result.cursor).toBeUndefined();
+    });
+
+    it('should return the input cursor when no new events match', async () => {
+      const tenant = 'did:example:alice';
+      const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
+
+      const lastCursor = await eventLog.emit(tenant, event, {});
+
+      // Read after the last event — nothing new.
+      const result = await eventLog.read(tenant, { cursor: lastCursor });
+      expect(result.events.length).toBe(0);
+      expect(result.cursor).toBe(lastCursor);
     });
 
     it('should respect the limit option', async () => {
@@ -112,12 +125,12 @@ describe('EventEmitterEventLog', () => {
 
       const result = await eventLog.read(tenant, { limit: 2 });
       expect(result.events.length).toBe(2);
-      expect(result.cursor).toBe(2);
+      expect(result.cursor).toBeDefined();
     });
   });
 
   describe('subscribe() — live only (no cursor)', () => {
-    it('should deliver live events to subscriber', async () => {
+    it('should deliver live events to subscriber with cursor strings', async () => {
       const tenant = 'did:example:alice';
       const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
 
@@ -131,10 +144,8 @@ describe('EventEmitterEventLog', () => {
       expect(received[0].type).toBe('event');
       expect(received[1].type).toBe('event');
       if (received[0].type === 'event') {
-        expect(received[0].seq).toBe(1);
-      }
-      if (received[1].type === 'event') {
-        expect(received[1].seq).toBe(2);
+        expect(typeof received[0].cursor).toBe('string');
+        expect(received[0].cursor.length).toBeGreaterThan(0);
       }
     });
 
@@ -190,168 +201,142 @@ describe('EventEmitterEventLog', () => {
   });
 
   describe('subscribe() — cursor mode (catch-up + EOSE + live)', () => {
-    it('should replay stored events from cursor and deliver EOSE', async () => {
+    it('should replay stored events after cursor and deliver EOSE', async () => {
       const tenant = 'did:example:alice';
       const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
 
-      // Emit 3 events before subscribing.
-      await eventLog.emit(tenant, event, { idx: '1' });
+      // Emit 3 events, capture the first cursor.
+      const cursor1 = await eventLog.emit(tenant, event, { idx: '1' });
       await eventLog.emit(tenant, event, { idx: '2' });
       await eventLog.emit(tenant, event, { idx: '3' });
 
-      // Subscribe with cursor=0 to replay all.
+      // Subscribe with cursor from first event — should replay events 2 and 3.
       const received: SubscriptionMessage[] = [];
-      await eventLog.subscribe(tenant, 'sub-1', (msg) => { received.push(msg); }, { cursor: 0 });
+      await eventLog.subscribe(tenant, 'sub-1', (msg) => { received.push(msg); }, { cursor: cursor1 });
 
-      // Should receive 3 catch-up events + EOSE.
-      expect(received.length).toBe(4);
+      // Should receive 2 catch-up events + EOSE.
+      expect(received.length).toBe(3);
       expect(received[0].type).toBe('event');
       expect(received[1].type).toBe('event');
-      expect(received[2].type).toBe('event');
-      expect(received[3].type).toBe('eose');
+      expect(received[2].type).toBe('eose');
 
-      if (received[0].type === 'event') { expect(received[0].seq).toBe(1); }
-      if (received[1].type === 'event') { expect(received[1].seq).toBe(2); }
-      if (received[2].type === 'event') { expect(received[2].seq).toBe(3); }
-      if (received[3].type === 'eose') { expect(received[3].seq).toBe(3); }
+      // Cursors should be opaque strings, each different.
+      if (received[0].type === 'event' && received[1].type === 'event') {
+        expect(received[0].cursor).not.toBe(received[1].cursor);
+      }
     });
 
-    it('should replay only events after the given cursor', async () => {
+    it('should deliver EOSE echoing the input cursor when already caught up', async () => {
       const tenant = 'did:example:alice';
       const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
 
+      // Emit events and capture last cursor.
       await eventLog.emit(tenant, event, {});
-      await eventLog.emit(tenant, event, {});
-      await eventLog.emit(tenant, event, {});
+      const lastCursor = await eventLog.emit(tenant, event, {});
 
-      // Subscribe with cursor=2 — should only replay event with seq=3.
+      // Subscribe with the last cursor — already caught up, no stored events to replay.
       const received: SubscriptionMessage[] = [];
-      await eventLog.subscribe(tenant, 'sub-1', (msg) => { received.push(msg); }, { cursor: 2 });
+      await eventLog.subscribe(tenant, 'sub-1', (msg) => { received.push(msg); }, { cursor: lastCursor });
 
-      expect(received.length).toBe(2); // 1 event + EOSE
-      expect(received[0].type).toBe('event');
-      expect(received[1].type).toBe('eose');
-
-      if (received[0].type === 'event') { expect(received[0].seq).toBe(3); }
-      if (received[1].type === 'eose') { expect(received[1].seq).toBe(3); }
-    });
-
-    it('should deliver EOSE with the cursor value when no stored events match', async () => {
-      const tenant = 'did:example:alice';
-
-      // No events emitted. Subscribe with cursor=0.
-      const received: SubscriptionMessage[] = [];
-      await eventLog.subscribe(tenant, 'sub-1', (msg) => { received.push(msg); }, { cursor: 0 });
-
-      // Should just get EOSE. The seq is the `read()` result cursor, which is
-      // the original cursor value (0) when no events were returned.
+      // Should just get EOSE echoing the input cursor.
       expect(received.length).toBe(1);
       expect(received[0].type).toBe('eose');
-      if (received[0].type === 'eose') { expect(received[0].seq).toBe(0); }
+      if (received[0].type === 'eose') { expect(received[0].cursor).toBe(lastCursor); }
     });
 
     it('should continue delivering live events after EOSE', async () => {
       const tenant = 'did:example:alice';
       const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
 
-      // Emit 1 event before subscribing.
-      await eventLog.emit(tenant, event, { idx: '1' });
+      // Emit 1 event and capture its cursor.
+      const cursor1 = await eventLog.emit(tenant, event, { idx: '1' });
 
       const received: SubscriptionMessage[] = [];
-      await eventLog.subscribe(tenant, 'sub-1', (msg) => { received.push(msg); }, { cursor: 0 });
+      await eventLog.subscribe(tenant, 'sub-1', (msg) => { received.push(msg); }, { cursor: cursor1 });
 
-      // Should have: 1 catch-up event + EOSE.
-      expect(received.length).toBe(2);
-      expect(received[0].type).toBe('event');
-      expect(received[1].type).toBe('eose');
+      // Already caught up — should have just EOSE.
+      expect(received.length).toBe(1);
+      expect(received[0].type).toBe('eose');
 
       // Now emit a live event.
       await eventLog.emit(tenant, event, { idx: '2' });
 
       // Should now have the live event appended.
-      expect(received.length).toBe(3);
-      expect(received[2].type).toBe('event');
-      if (received[2].type === 'event') { expect(received[2].seq).toBe(2); }
+      expect(received.length).toBe(2);
+      expect(received[1].type).toBe('event');
+      if (received[1].type === 'event') {
+        expect(typeof received[1].cursor).toBe('string');
+      }
     });
 
     it('should apply filters to both catch-up and live events', async () => {
       const tenant = 'did:example:alice';
       const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
 
-      // Emit events with different schemas.
+      // Emit events with different schemas, capture cursor before the batch.
+      const cursorBefore = await eventLog.emit(tenant, event, { schema: 'http://before' });
       await eventLog.emit(tenant, event, { schema: 'http://match' });
       await eventLog.emit(tenant, event, { schema: 'http://other' });
       await eventLog.emit(tenant, event, { schema: 'http://match' });
 
       const received: SubscriptionMessage[] = [];
       await eventLog.subscribe(tenant, 'sub-1', (msg) => { received.push(msg); }, {
-        cursor  : 0,
+        cursor  : cursorBefore,
         filters : [{ schema: 'http://match' }],
       });
 
-      // Catch-up: 2 matching events + EOSE. (Event at seq=2 filtered out.)
+      // Catch-up: 2 matching events + EOSE. (Event with 'http://other' filtered out.)
       expect(received.length).toBe(3);
       expect(received[0].type).toBe('event');
       expect(received[1].type).toBe('event');
       expect(received[2].type).toBe('eose');
-
-      if (received[0].type === 'event') { expect(received[0].seq).toBe(1); }
-      if (received[1].type === 'event') { expect(received[1].seq).toBe(3); }
 
       // Emit live events — only matching ones should arrive.
       await eventLog.emit(tenant, event, { schema: 'http://other' });
       await eventLog.emit(tenant, event, { schema: 'http://match' });
 
       expect(received.length).toBe(4); // +1 matching live event
-      if (received[3].type === 'event') { expect(received[3].seq).toBe(5); }
     });
 
     it('should deduplicate live events that arrived during catch-up', async () => {
-      // This test verifies the buffering + dedup behavior.
-      // We need to simulate a live event arriving while stored events are being read.
-      // Since EventEmitterEventLog.subscribe is synchronous in-memory, the only way
-      // to get overlap is if emit() is called between registering the mitt handler and
-      // the read() call completing. In the current sync implementation, this can't
-      // naturally happen, so we verify the invariant that no duplicate seq appears.
-
       const tenant = 'did:example:alice';
       const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
 
-      // Emit 2 events.
+      // Emit 2 events, capture cursor before them.
+      const cursorBefore = await eventLog.emit(tenant, event, { idx: '0' });
       await eventLog.emit(tenant, event, { idx: '1' });
       await eventLog.emit(tenant, event, { idx: '2' });
 
       const received: SubscriptionMessage[] = [];
-      await eventLog.subscribe(tenant, 'sub-1', (msg) => { received.push(msg); }, { cursor: 0 });
+      await eventLog.subscribe(tenant, 'sub-1', (msg) => { received.push(msg); }, { cursor: cursorBefore });
 
       // 2 catch-up events + EOSE.
       expect(received.length).toBe(3);
 
-      // Verify no duplicate seqs.
-      const eventSeqs = received.filter(m => m.type === 'event').map(m => m.seq);
-      const uniqueSeqs = new Set(eventSeqs);
-      expect(uniqueSeqs.size).toBe(eventSeqs.length);
+      // Verify no duplicate cursors.
+      const eventCursors = received.filter(m => m.type === 'event').map(m => m.cursor);
+      const uniqueCursors = new Set(eventCursors);
+      expect(uniqueCursors.size).toBe(eventCursors.length);
     });
 
     it('should isolate subscriptions between tenants in cursor mode', async () => {
       const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
 
-      // Emit for alice.
-      await eventLog.emit('did:example:alice', event, {});
+      // Emit for alice, capture first cursor.
+      const aliceCursor1 = await eventLog.emit('did:example:alice', event, {});
       await eventLog.emit('did:example:alice', event, {});
 
       // Emit for bob.
       await eventLog.emit('did:example:bob', event, {});
 
-      // Subscribe to alice with cursor.
+      // Subscribe to alice with cursor — should only get alice's second event.
       const aliceReceived: SubscriptionMessage[] = [];
-      await eventLog.subscribe('did:example:alice', 'sub-alice', (msg) => { aliceReceived.push(msg); }, { cursor: 0 });
+      await eventLog.subscribe('did:example:alice', 'sub-alice', (msg) => { aliceReceived.push(msg); }, { cursor: aliceCursor1 });
 
-      // Should only get alice's 2 events + EOSE.
-      expect(aliceReceived.length).toBe(3);
+      // Should only get alice's 1 catch-up event + EOSE.
+      expect(aliceReceived.length).toBe(2);
       expect(aliceReceived[0].type).toBe('event');
-      expect(aliceReceived[1].type).toBe('event');
-      expect(aliceReceived[2].type).toBe('eose');
+      expect(aliceReceived[1].type).toBe('eose');
     });
   });
 

@@ -46,8 +46,7 @@
           "type": "string"
         },
         "cursor": {
-          "type": "number",
-          "minimum": 0
+          "type": "string"
         }
       }
     }

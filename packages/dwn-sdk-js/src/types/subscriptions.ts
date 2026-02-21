@@ -32,12 +32,17 @@ export type SubscriptionReply = GenericMessageReply & {
 // ---------------------------------------------------------------------------
 
 /**
- * A regular subscription event carrying a message and its EventLog sequence number.
+ * A regular subscription event carrying a message and its EventLog cursor.
  */
 export type SubscriptionEvent = {
   type : 'event';
-  /** Monotonic EventLog sequence number. Clients should track this for cursor-based resume. */
-  seq : number;
+  /**
+   * Opaque cursor string assigned by the EventLog implementation. Clients should
+   * persist this value and pass it back to `subscribe()` or `read()` to resume
+   * from this point. The format is implementation-defined (e.g. numeric sequence
+   * for in-memory, Redis stream ID, NATS stream sequence, etc.).
+   */
+  cursor : string;
   /** The event payload (message + optional initialWrite). */
   event : MessageEvent;
 };
@@ -51,8 +56,11 @@ export type SubscriptionEvent = {
  */
 export type SubscriptionEose = {
   type : 'eose';
-  /** The sequence number of the last stored event that was replayed, or -1 if none. */
-  seq : number;
+  /**
+   * Opaque cursor string of the last stored event that was replayed.
+   * Echoes the input cursor when no stored events matched (i.e. already caught up).
+   */
+  cursor : string;
 };
 
 /**
@@ -63,7 +71,7 @@ export type SubscriptionMessage = SubscriptionEvent | SubscriptionEose;
 
 /**
  * Callback for {@link EventLog.subscribe}. Receives either a regular event
- * (with seq) or an EOSE marker indicating catch-up replay is complete.
+ * (with cursor) or an EOSE marker indicating catch-up replay is complete.
  */
 export type SubscriptionListener = (message: SubscriptionMessage) => void;
 
@@ -72,11 +80,15 @@ export type SubscriptionListener = (message: SubscriptionMessage) => void;
  */
 export type EventLogSubscribeOptions = {
   /**
-   * EventLog sequence number to resume from (exclusive — events with seq > cursor
+   * Opaque cursor string to resume from (exclusive — events after this cursor
    * are replayed). When provided, stored events are replayed first, followed by
    * an EOSE marker, then live events. When omitted, only live events are delivered.
+   *
+   * Cursor values are implementation-defined and must be obtained from a prior
+   * interaction with the same EventLog instance (e.g. `SubscriptionEvent.cursor`,
+   * `EventLogReadResult.cursor`, or the return value of `emit()`).
    */
-  cursor? : number;
+  cursor? : string;
 
   /**
    * Filters evaluated against event indexes. Events must match at least one
@@ -107,8 +119,8 @@ export type EventLogEntry = {
  * Options accepted by {@link EventLog.read}.
  */
 export type EventLogReadOptions = {
-  /** Resume reading from this sequence number (exclusive — returns events with seq > cursor). */
-  cursor? : number;
+  /** Opaque cursor string to resume from (exclusive — returns events after this cursor). */
+  cursor? : string;
 
   /** Maximum number of events to return. */
   limit? : number;
@@ -125,18 +137,21 @@ export type EventLogReadResult = {
   events : EventLogEntry[];
 
   /**
-   * The sequence number of the last event returned.
-   * Pass this value as `cursor` in a subsequent `read()` call to continue.
-   * `-1` if no events were returned.
+   * Opaque cursor string for resuming subsequent reads or subscriptions.
+   *
+   * - When events are returned: cursor of the last event.
+   * - When no events are returned but a cursor was provided: the input cursor
+   *   (meaning "you are caught up, nothing new since this point").
+   * - When no events exist and no cursor was provided: `undefined`.
    */
-  cursor : number;
+  cursor? : string;
 };
 
 /**
  * The EventLog interface provides persistent, ordered event storage with
  * cursor-based reads and subscription support.
  *
- * It persists events before delivery, exposing monotonic sequence numbers
+ * It persists events before delivery, exposing opaque cursor strings
  * that enable cursor-based resume after disconnects.
  *
  * The interface is intentionally transport-agnostic — implementations can be
@@ -147,9 +162,9 @@ export type EventLogReadResult = {
 export interface EventLog {
   /**
    * Persist an event and notify in-process subscribers.
-   * @returns The monotonic sequence number assigned to the event.
+   * @returns The opaque cursor string assigned to the event, or empty string on failure.
    */
-  emit(tenant: string, event: MessageEvent, indexes: KeyValues): Promise<number>;
+  emit(tenant: string, event: MessageEvent, indexes: KeyValues): Promise<string>;
 
   /**
    * Read events from the log starting after `cursor`, optionally filtered.

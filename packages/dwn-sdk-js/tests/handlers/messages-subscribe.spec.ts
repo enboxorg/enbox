@@ -206,13 +206,16 @@ export function testMessagesSubscribeHandler(): void {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
+          // Read the EventLog to get a cursor before writing.
+          const { cursor: cursorBefore } = await eventLog.read(alice.did);
+
           // Write a record before subscribing.
           const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice });
           const write1Reply = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
           expect(write1Reply.status.code).toBe(202);
           const write1Cid = await Message.getCid(write1.message);
 
-          // Subscribe with cursor=0 to catch up from the beginning.
+          // Subscribe with cursor from before the write to catch up.
           const messageCids: string[] = [];
           const handler = async (event: MessageEvent): Promise<void> => {
             const { message: msg } = event;
@@ -222,14 +225,13 @@ export function testMessagesSubscribeHandler(): void {
 
           const { message: subMessage } = await TestDataGenerator.generateMessagesSubscribe({
             author : alice,
-            cursor : 0,
+            cursor : cursorBefore,
           });
           const subReply = await dwn.processMessage(alice.did, subMessage, { subscriptionHandler: handler });
           expect(subReply.status.code).toBe(200);
           expect(subReply.subscription).toBeDefined();
 
           // Wait for the catch-up events.
-          // NOTE: with cursor mode, the protocol configure + record write should both come through.
           await Poller.pollUntilSuccessOrTimeout(async () => {
             expect(messageCids.length).toBeGreaterThanOrEqual(1);
             expect(messageCids).toContain(write1Cid);
@@ -244,6 +246,14 @@ export function testMessagesSubscribeHandler(): void {
           const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice });
           await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
 
+          // Read to get cursor after write1.
+          const { cursor: cursorAfterWrite1 } = await eventLog.read(alice.did);
+
+          // Write another record that we'll catch up on.
+          const write2 = await TestDataGenerator.generateRecordsWrite({ author: alice });
+          await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
+          const write2Cid = await Message.getCid(write2.message);
+
           const messageCids: string[] = [];
           const handler = async (event: MessageEvent): Promise<void> => {
             const { message: msg } = event;
@@ -253,24 +263,24 @@ export function testMessagesSubscribeHandler(): void {
 
           const { message: subMessage } = await TestDataGenerator.generateMessagesSubscribe({
             author : alice,
-            cursor : 0,
+            cursor : cursorAfterWrite1,
           });
           const subReply = await dwn.processMessage(alice.did, subMessage, { subscriptionHandler: handler });
           expect(subReply.status.code).toBe(200);
 
-          // Wait for catch-up.
+          // Wait for catch-up (write2).
           await Poller.pollUntilSuccessOrTimeout(async () => {
-            expect(messageCids.length).toBeGreaterThanOrEqual(1);
+            expect(messageCids).toContain(write2Cid);
           });
 
           // Write a live record.
-          const write2 = await TestDataGenerator.generateRecordsWrite({ author: alice });
-          await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
-          const write2Cid = await Message.getCid(write2.message);
+          const write3 = await TestDataGenerator.generateRecordsWrite({ author: alice });
+          await dwn.processMessage(alice.did, write3.message, { dataStream: write3.dataStream });
+          const write3Cid = await Message.getCid(write3.message);
 
           // Wait for the live event.
           await Poller.pollUntilSuccessOrTimeout(async () => {
-            expect(messageCids).toContain(write2Cid);
+            expect(messageCids).toContain(write3Cid);
           });
         });
       });

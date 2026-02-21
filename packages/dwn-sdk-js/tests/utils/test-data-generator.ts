@@ -200,8 +200,8 @@ export type GenerateRecordsSubscribeInput = {
     dateSort?: DateSort;
     pagination?: Pagination;
     protocolRole?: string;
-    /** EventLog cursor for catch-up + EOSE subscribe. */
-    cursor?: number;
+    /** Opaque EventLog cursor for catch-up + EOSE subscribe. */
+    cursor?: string;
 };
 
 export type GenerateRecordsSubscribeOutput = {
@@ -242,8 +242,8 @@ export type GenerateMessagesSubscribeInput = {
   filters?: MessagesFilter[];
   messageTimestamp?: string;
   permissionGrantId?: string;
-  /** EventLog cursor for catch-up + EOSE subscribe. */
-  cursor?: number;
+  /** Opaque EventLog cursor for catch-up + EOSE subscribe. */
+  cursor?: string;
 };
 
 export type GenerateMessagesSubscribeOutput = {

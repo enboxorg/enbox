@@ -265,6 +265,9 @@ export function testRecordsSubscribeHandler(): void {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
+          // Read the EventLog to get the current cursor position before writing records.
+          const { cursor: cursorBefore } = await eventLog.read(alice.did);
+
           // Write records before subscribing.
           const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://cursor-test' });
           const write1Reply = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
@@ -274,14 +277,14 @@ export function testRecordsSubscribeHandler(): void {
           const write2Reply = await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
           expect(write2Reply.status.code).toBe(202);
 
-          // Subscribe with cursor=0. With a cursor, the handler takes the EventLog catch-up path,
-          // meaning NO entries/cursor are returned (the catch-up is delivered through the subscription handler).
+          // Subscribe with the cursor from before the writes. The handler takes the
+          // EventLog catch-up path, replaying events through the subscription handler.
           const receivedEvents: RecordEvent[] = [];
           const subscriptionHandler: RecordSubscriptionHandler = (event): void => { receivedEvents.push(event); };
           const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
             author : alice,
             filter : { schema: 'http://cursor-test' },
-            cursor : 0,
+            cursor : cursorBefore,
           });
 
           const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler });
@@ -310,24 +313,31 @@ export function testRecordsSubscribeHandler(): void {
           const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://cursor-live' });
           await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
 
+          // Read to get a cursor that includes write1's protocol config + the record.
+          const { cursor: cursorAfterWrite1 } = await eventLog.read(alice.did);
+
+          // Write another record that we'll want to catch up on.
+          const write2 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://cursor-live' });
+          await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
+
           const receivedEvents: RecordEvent[] = [];
           const subscriptionHandler: RecordSubscriptionHandler = (event): void => { receivedEvents.push(event); };
           const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
             author : alice,
             filter : { schema: 'http://cursor-live' },
-            cursor : 0,
+            cursor : cursorAfterWrite1,
           });
           const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler });
           expect(subReply.status.code).toBe(200);
 
-          // Wait for catch-up event.
+          // Wait for catch-up event (write2).
           await Poller.pollUntilSuccessOrTimeout(async () => {
             expect(receivedEvents.length).toBeGreaterThanOrEqual(1);
           });
 
           // Write a live record after subscribing.
-          const write2 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://cursor-live' });
-          await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
+          const write3 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://cursor-live' });
+          await dwn.processMessage(alice.did, write3.message, { dataStream: write3.dataStream });
 
           // Wait for the live event.
           await Poller.pollUntilSuccessOrTimeout(async () => {
@@ -335,13 +345,16 @@ export function testRecordsSubscribeHandler(): void {
           });
 
           const recordIds = receivedEvents.map(e => (e.message as RecordsWriteMessage).recordId);
-          expect(recordIds).toContain(write1.message.recordId);
           expect(recordIds).toContain(write2.message.recordId);
+          expect(recordIds).toContain(write3.message.recordId);
         });
 
         it('should filter catch-up events when cursor and filter are provided', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+          // Get cursor before writing.
+          const { cursor: cursorBefore } = await eventLog.read(alice.did);
 
           // Write records with different schemas.
           const matchWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://filter-match' });
@@ -355,7 +368,7 @@ export function testRecordsSubscribeHandler(): void {
           const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
             author : alice,
             filter : { schema: 'http://filter-match' },
-            cursor : 0,
+            cursor : cursorBefore,
           });
           const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler });
           expect(subReply.status.code).toBe(200);
