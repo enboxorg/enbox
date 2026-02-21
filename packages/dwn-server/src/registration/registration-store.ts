@@ -1,7 +1,7 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
 import type { RegistrationData } from '@enbox/dwn-clients';
 
-import { Kysely } from 'kysely';
+import { Kysely, sql } from 'kysely';
 
 /**
  * The RegistrationStore is responsible for storing and retrieving tenant registration information.
@@ -19,11 +19,11 @@ export class RegistrationStore {
    * Creates a new RegistrationStore instance.
    */
   public static async create(sqlDialect: Dialect): Promise<RegistrationStore> {
-    const proofOfWorkManager = new RegistrationStore(sqlDialect);
+    const store = new RegistrationStore(sqlDialect);
 
-    await proofOfWorkManager.initialize();
+    await store.initialize();
 
-    return proofOfWorkManager;
+    return store;
   }
 
   private async initialize(): Promise<void> {
@@ -32,7 +32,20 @@ export class RegistrationStore {
       .ifNotExists()
       .addColumn('did', 'text', (column) => column.primaryKey())
       .addColumn('termsOfServiceHash', 'text')
+      .addColumn('suspended', 'integer', (column) => column.defaultTo(0))
       .execute();
+
+    // Add the `suspended` column to existing tables that don't have it yet.
+    // Kysely doesn't support `ADD COLUMN IF NOT EXISTS` across all dialects, so we
+    // catch and ignore the "column already exists" error.
+    try {
+      await this.db.schema
+        .alterTable(RegistrationStore.registeredTenantTableName)
+        .addColumn('suspended', 'integer', (column) => column.defaultTo(0))
+        .execute();
+    } catch {
+      // Column already exists — expected for new installations.
+    }
   }
 
   /**
@@ -41,24 +54,25 @@ export class RegistrationStore {
   public async insertOrUpdateTenantRegistration(registrationData: RegistrationData): Promise<void> {
     await this.db
       .insertInto(RegistrationStore.registeredTenantTableName)
-      .values(registrationData)
+      .values({ ...registrationData, suspended: 0 })
       .onConflict((oc) =>
         oc.column('did').doUpdateSet((eb) => ({
           termsOfServiceHash: eb.ref('excluded.termsOfServiceHash'),
         })),
       )
-      // Executes the query. No error is thrown if the query doesn’t affect any rows (ie. if the insert or update didn’t change anything).
+      // Executes the query. No error is thrown if the query doesn't affect any rows.
       .executeTakeFirst();
   }
 
   /**
    * Retrieves the tenant registration information.
    */
-  public async getTenantRegistration(tenantDid: string): Promise<RegistrationData | undefined> {
+  public async getTenantRegistration(tenantDid: string): Promise<RegisteredTenantRow | undefined> {
     const result = await this.db
       .selectFrom(RegistrationStore.registeredTenantTableName)
       .select('did')
       .select('termsOfServiceHash')
+      .select('suspended')
       .where('did', '=', tenantDid)
       .execute();
 
@@ -68,11 +82,118 @@ export class RegistrationStore {
 
     return result[0];
   }
+
+  // ---------------------------------------------------------------------------
+  // Admin operations
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns a paginated list of registered tenants.
+   */
+  public async listTenants(options?: {
+    cursor? : string;
+    limit? : number;
+  }): Promise<{ tenants: RegisteredTenantRow[]; cursor?: string }> {
+    const limit = options?.limit ?? 20;
+
+    let query = this.db
+      .selectFrom(RegistrationStore.registeredTenantTableName)
+      .select(['did', 'termsOfServiceHash', 'suspended'])
+      .orderBy('did', 'asc')
+      .limit(limit + 1); // fetch one extra to detect next page
+
+    if (options?.cursor) {
+      query = query.where('did', '>', options.cursor);
+    }
+
+    const results = await query.execute();
+
+    let cursor: string | undefined;
+    if (results.length > limit) {
+      results.pop();
+      cursor = results[results.length - 1].did;
+    }
+
+    return { tenants: results, cursor };
+  }
+
+  /**
+   * Returns the total count of registered tenants.
+   */
+  public async getTenantCount(): Promise<number> {
+    const result = await this.db
+      .selectFrom(RegistrationStore.registeredTenantTableName)
+      .select(sql<number>`count(*)`.as('count'))
+      .executeTakeFirstOrThrow();
+
+    return Number(result.count);
+  }
+
+  /**
+   * Suspends a tenant. Returns `true` if the tenant was found and suspended.
+   */
+  public async suspendTenant(did: string): Promise<boolean> {
+    const result = await this.db
+      .updateTable(RegistrationStore.registeredTenantTableName)
+      .set({ suspended: 1 })
+      .where('did', '=', did)
+      .executeTakeFirst();
+
+    return Number(result.numUpdatedRows) > 0;
+  }
+
+  /**
+   * Unsuspends a tenant. Returns `true` if the tenant was found and unsuspended.
+   */
+  public async unsuspendTenant(did: string): Promise<boolean> {
+    const result = await this.db
+      .updateTable(RegistrationStore.registeredTenantTableName)
+      .set({ suspended: 0 })
+      .where('did', '=', did)
+      .executeTakeFirst();
+
+    return Number(result.numUpdatedRows) > 0;
+  }
+
+  /**
+   * Deletes a tenant registration. Returns `true` if the tenant was found and deleted.
+   */
+  public async deleteTenant(did: string): Promise<boolean> {
+    const result = await this.db
+      .deleteFrom(RegistrationStore.registeredTenantTableName)
+      .where('did', '=', did)
+      .executeTakeFirst();
+
+    return Number(result.numDeletedRows) > 0;
+  }
+
+  /**
+   * Returns the count of suspended tenants.
+   */
+  public async getSuspendedCount(): Promise<number> {
+    const result = await this.db
+      .selectFrom(RegistrationStore.registeredTenantTableName)
+      .select(sql<number>`count(*)`.as('count'))
+      .where('suspended', '=', 1)
+      .executeTakeFirstOrThrow();
+
+    return Number(result.count);
+  }
+}
+
+/**
+ * A row in the `registeredTenants` table.
+ */
+export interface RegisteredTenantRow {
+  did : string;
+  termsOfServiceHash : string;
+  suspended? : number;
 }
 
 interface RegisteredTenants {
-  did: string;
-  termsOfServiceHash: string;
+  did : string;
+  termsOfServiceHash : string;
+  suspended : number;
 }
 
 interface RegistrationDatabase {

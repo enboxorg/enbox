@@ -142,7 +142,16 @@ export class RegistrationManager implements TenantGate {
       };
     }
 
-    if (tenantRegistration.termsOfServiceHash !== this.termsOfServiceHash) {
+    if (tenantRegistration.suspended) {
+      return {
+        isActiveTenant : false,
+        detail         : 'Tenant is suspended.'
+      };
+    }
+
+    // Only enforce ToS hash check when the server has a ToS configured.
+    if (this.termsOfServiceHash !== undefined &&
+      tenantRegistration.termsOfServiceHash !== this.termsOfServiceHash) {
       return {
         isActiveTenant : false,
         detail         : 'Agreed terms-of-service is outdated.'
@@ -150,5 +159,13 @@ export class RegistrationManager implements TenantGate {
     }
 
     return { isActiveTenant: true };
+  }
+
+  /**
+   * Returns the underlying RegistrationStore, if initialized.
+   * Used by the admin API to access tenant data.
+   */
+  public getRegistrationStore(): RegistrationStore | undefined {
+    return this.registrationStore;
   }
 }

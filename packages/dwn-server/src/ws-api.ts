@@ -24,6 +24,13 @@ export class WsApi {
     // No additional setup needed — Bun.serve() handles WebSocket lifecycle.
   }
 
+  /**
+   * Returns the connection manager. Used by the admin API for connection introspection.
+   */
+  get connectionManager(): ConnectionManager {
+    return this.#connectionManager;
+  }
+
   async close(): Promise<void> {
     await this.#connectionManager.closeAll();
   }

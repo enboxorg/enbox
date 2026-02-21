@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+
 import bytes from 'bytes';
 
 export type DwnServerConfig = typeof config;
@@ -72,4 +74,26 @@ export const config = {
 
   // log level - trace/debug/info/warn/error
   logLevel: process.env.DWN_SERVER_LOG_LEVEL || 'INFO',
+
+  /**
+   * Bearer token for the admin API. If unset (or empty), the admin API is disabled entirely.
+   * Can also be read from a file path via `DWN_ADMIN_TOKEN_FILE` (useful for Docker secrets).
+   */
+  adminToken: process.env.DWN_ADMIN_TOKEN || (
+    process.env.DWN_ADMIN_TOKEN_FILE
+      ? readAdminTokenFromFile(process.env.DWN_ADMIN_TOKEN_FILE)
+      : undefined
+  ),
 };
+
+/**
+ * Reads the admin token from a file path, trimming whitespace.
+ * Returns `undefined` if the file cannot be read.
+ */
+function readAdminTokenFromFile(filePath: string): string | undefined {
+  try {
+    return readFileSync(filePath).toString().trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}

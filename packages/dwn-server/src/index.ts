@@ -1,3 +1,5 @@
+export { AdminApi, AdminStore } from './admin/index.js';
+export type { AdminHealthCheck, AdminServerStats, AdminTenantDetail, AdminTenantSummary } from './admin/index.js';
 export { DwnServerConfig } from './config.js';
 export { DwnServer, DwnServerOptions } from './dwn-server.js';
 export { HttpApi } from './http-api.js';

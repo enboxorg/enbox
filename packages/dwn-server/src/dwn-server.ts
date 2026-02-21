@@ -10,6 +10,8 @@ import log from 'loglevel';
 import prefix from 'loglevel-plugin-prefix';
 import { Dwn, EventEmitterEventLog } from '@enbox/dwn-sdk-js';
 
+import { AdminApi } from './admin/admin-api.js';
+import { AdminStore } from './admin/admin-store.js';
 import { config as defaultConfig } from './config.js';
 import { getDwnConfig } from './storage.js';
 import { HttpApi } from './http-api.js';
@@ -118,7 +120,24 @@ export class DwnServer {
       this.dwn = await Dwn.create(dwnConfig);
     }
 
-    this.#httpApi = await HttpApi.create(this.config, this.dwn, registrationManager);
+    // Initialize admin API if an admin token is configured.
+    let adminApi: AdminApi | undefined;
+    if (this.config.adminToken) {
+      const storageUrl = this.config.messageStore;
+      const adminStore = AdminStore.create(storageUrl);
+
+      adminApi = AdminApi.create({
+        config            : this.config,
+        dwn               : this.dwn,
+        adminStore,
+        registrationManager,
+        registrationStore : registrationManager?.getRegistrationStore(),
+      });
+
+      log.info('Admin API enabled');
+    }
+
+    this.#httpApi = await HttpApi.create(this.config, this.dwn, registrationManager, adminApi);
 
     await this.#httpApi.start(this.config.port);
     log.info(`HttpServer listening on port ${this.config.port}`);
@@ -127,6 +146,11 @@ export class DwnServer {
       this.#wsApi = new WsApi(this.#httpApi, this.dwn, undefined, this.config.maxInFlight);
       this.#wsApi.start();
       log.info('WebSocketServer ready...');
+
+      // Wire connection manager to admin API for connection counting.
+      if (adminApi) {
+        adminApi.setConnectionManager(this.#wsApi.connectionManager);
+      }
     }
   }
 

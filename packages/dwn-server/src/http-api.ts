@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { DataStream, DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
 
 
+import type { AdminApi } from './admin/admin-api.js';
 import type { DwnServerConfig } from './config.js';
 import type { DwnServerError } from './dwn-error.js';
 import type { JsonRpcRequest } from '@enbox/dwn-clients';
@@ -33,6 +34,7 @@ export class HttpApi {
   #config: DwnServerConfig;
   #packageInfo: { version?: string, sdkVersion?: string, server: string };
   #server!: Server<WsData>;
+  #adminApi: AdminApi | undefined;
   web5ConnectServer: Web5ConnectServer;
   registrationManager: RegistrationManager;
   dwn: Dwn;
@@ -43,7 +45,7 @@ export class HttpApi {
   private constructor() { }
 
   public static async create(
-    config: DwnServerConfig, dwn: Dwn, registrationManager?: RegistrationManager
+    config: DwnServerConfig, dwn: Dwn, registrationManager?: RegistrationManager, adminApi?: AdminApi,
   ): Promise<HttpApi> {
     const httpApi = new HttpApi();
 
@@ -65,6 +67,7 @@ export class HttpApi {
 
     httpApi.#config = config;
     httpApi.dwn = dwn;
+    httpApi.#adminApi = adminApi;
 
     if (registrationManager !== undefined) {
       httpApi.registrationManager = registrationManager;
@@ -208,6 +211,11 @@ export class HttpApi {
     // --- JSON-RPC POST ---
     if (method === 'POST' && path === '/') {
       return this.#handleJsonRpcPost(req);
+    }
+
+    // --- Admin API routes ---
+    if (path.startsWith('/admin/api/') && this.#adminApi) {
+      return this.#adminApi.route(req, url, path, method);
     }
 
     // --- Registration routes ---
