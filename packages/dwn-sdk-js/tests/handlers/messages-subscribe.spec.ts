@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore, StateIndex } from '../../src/index.js';
-import type { EventLog, MessageEvent } from '../../src/types/subscriptions.js';
+import type { EventLog, SubscriptionMessage } from '../../src/types/subscriptions.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
@@ -148,8 +148,9 @@ export function testMessagesSubscribeHandler(): void {
         // set up a promise to read later that captures the emitted messageCid
         let handler;
         const messageSubscriptionPromise: Promise<string> = new Promise((resolve) => {
-          handler = async (event: MessageEvent):Promise<void> => {
-            const { message } = event;
+          handler = async (msg: SubscriptionMessage):Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
             const messageCid = await Message.getCid(message);
             resolve(messageCid);
           };
@@ -217,9 +218,10 @@ export function testMessagesSubscribeHandler(): void {
 
           // Subscribe with cursor from before the write to catch up.
           const messageCids: string[] = [];
-          const handler = async (event: MessageEvent): Promise<void> => {
-            const { message: msg } = event;
-            const cid = await Message.getCid(msg);
+          const handler = async (msg: SubscriptionMessage): Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
+            const cid = await Message.getCid(message);
             messageCids.push(cid);
           };
 
@@ -255,9 +257,10 @@ export function testMessagesSubscribeHandler(): void {
           const write2Cid = await Message.getCid(write2.message);
 
           const messageCids: string[] = [];
-          const handler = async (event: MessageEvent): Promise<void> => {
-            const { message: msg } = event;
-            const cid = await Message.getCid(msg);
+          const handler = async (msg: SubscriptionMessage): Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
+            const cid = await Message.getCid(message);
             messageCids.push(cid);
           };
 
@@ -311,8 +314,9 @@ export function testMessagesSubscribeHandler(): void {
 
           // create a handler to capture the emitted messageCids
           const messageCids: string[] = [];
-          const handler = async (event: MessageEvent):Promise<void> => {
-            const { message } = event;
+          const handler = async (msg: SubscriptionMessage):Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
             const messageCid = await Message.getCid(message);
             messageCids.push(messageCid);
           };
@@ -394,8 +398,9 @@ export function testMessagesSubscribeHandler(): void {
 
           // create a handler to capture the emitted messageCids
           const messageCids: string[] = [];
-          const handler = async (event: MessageEvent):Promise<void> => {
-            const { message } = event;
+          const handler = async (msg: SubscriptionMessage):Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
             const messageCid = await Message.getCid(message);
             messageCids.push(messageCid);
           };
@@ -525,8 +530,9 @@ export function testMessagesSubscribeHandler(): void {
 
             // bob uses the grant to subscribe to protocol 1 messages
             const proto1MessageCids: string[] = [];
-            const proto1Handler = async (event: MessageEvent):Promise<void> => {
-              const { message } = event;
+            const proto1Handler = async (msg: SubscriptionMessage):Promise<void> => {
+              if (msg.type !== 'event') { return; }
+              const { message } = msg.event;
               const messageCid = await Message.getCid(message);
               proto1MessageCids.push(messageCid);
             };
@@ -540,8 +546,9 @@ export function testMessagesSubscribeHandler(): void {
             expect(bobReply1.status.code).toBe(200);
 
             const allMessages: string[] = [];
-            const allHandler = async (event: MessageEvent):Promise<void> => {
-              const { message } = event;
+            const allHandler = async (msg: SubscriptionMessage):Promise<void> => {
+              if (msg.type !== 'event') { return; }
+              const { message } = msg.event;
               const messageCid = await Message.getCid(message);
               allMessages.push(messageCid);
             };

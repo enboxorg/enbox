@@ -1,10 +1,10 @@
-import type { MessageSubscriptionHandler, RecordsReadReply, RecordSubscriptionHandler, UnionMessageReply } from '@enbox/dwn-sdk-js';
+import type { RecordsReadReply, SubscriptionListener, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
 export interface SerializableDwnMessage {
   toJSON(): string;
 }
 
-export type DwnSubscriptionHandler = MessageSubscriptionHandler | RecordSubscriptionHandler;
+export type DwnSubscriptionHandler = SubscriptionListener;
 
 /**
  * Interface for communicating with {@link https://github.com/enboxorg/enbox | DWN Servers}

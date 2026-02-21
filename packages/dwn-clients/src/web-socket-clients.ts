@@ -1,6 +1,6 @@
 import type { JsonRpcSocketOptions } from './json-rpc-socket.js';
 import type { DwnRpc, DwnRpcRequest, DwnRpcResponse, DwnSubscriptionHandler } from './dwn-rpc-types.js';
-import type { GenericMessage, MessageSubscription, UnionMessageReply } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageSubscription, SubscriptionMessage, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
 import { CryptoUtils } from '@enbox/crypto';
 import { JsonRpcSocket } from './json-rpc-socket.js';
@@ -87,8 +87,8 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         return;
       }
 
-      const { event } = result;
-      messageHandler(event);
+      const subscriptionMessage = result.subscription as SubscriptionMessage;
+      messageHandler(subscriptionMessage);
     });
 
     const { error, result } = response;

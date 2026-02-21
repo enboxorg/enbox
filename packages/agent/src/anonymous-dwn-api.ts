@@ -11,7 +11,7 @@ import type {
   RecordsQueryReply,
   RecordsReadReply,
   RecordsSubscribeReply,
-  RecordSubscriptionHandler,
+  SubscriptionListener,
 } from '@enbox/dwn-sdk-js';
 import type { DwnRpcRequest, Web5Rpc } from '@enbox/dwn-clients';
 
@@ -154,13 +154,13 @@ export class AnonymousDwnApi {
    *
    * @param target - The DID whose DWN to subscribe to.
    * @param params - Subscribe parameters (filter).
-   * @param handler - Callback for incoming record events.
+   * @param handler - Callback for incoming subscription messages (events and EOSE).
    * @returns The raw `RecordsSubscribeReply` from the remote DWN.
    */
   public async recordsSubscribe(
     target: string,
     params: AnonymousRecordsSubscribeParams,
-    handler: RecordSubscriptionHandler,
+    handler: SubscriptionListener,
   ): Promise<RecordsSubscribeReply> {
     const recordsSubscribe = await RecordsSubscribe.create({
       filter           : params.filter,
@@ -221,7 +221,7 @@ export class AnonymousDwnApi {
     target: string,
     message: unknown,
     data?: Blob,
-    subscriptionHandler?: RecordSubscriptionHandler,
+    subscriptionHandler?: SubscriptionListener,
   ): Promise<TReply> {
     const dwnEndpointUrls = await getDwnServiceEndpointUrls(target, this._didResolver);
     const errorMessages: { url: string; message: string }[] = [];

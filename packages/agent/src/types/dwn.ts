@@ -11,7 +11,6 @@ import type {
   MessagesSubscribeReply,
   MessagesSyncMessage,
   MessagesSyncReply,
-  MessageSubscriptionHandler,
   ProtocolsConfigureMessage,
   ProtocolsConfigureOptions,
   ProtocolsQueryMessage,
@@ -28,9 +27,9 @@ import type {
   RecordsSubscribeMessage,
   RecordsSubscribeOptions,
   RecordsSubscribeReply,
-  RecordSubscriptionHandler,
   RecordsWriteMessage,
   RecordsWriteOptions,
+  SubscriptionListener,
 } from '@enbox/dwn-sdk-js';
 
 import type { MessagesSyncOptions } from '@enbox/dwn-sdk-js';
@@ -158,8 +157,8 @@ export interface DwnMessageReply {
 }
 
 export interface MessageHandler {
-  [DwnInterface.MessagesSubscribe] : MessageSubscriptionHandler;
-  [DwnInterface.RecordsSubscribe] : RecordSubscriptionHandler;
+  [DwnInterface.MessagesSubscribe] : SubscriptionListener;
+  [DwnInterface.RecordsSubscribe] : SubscriptionListener;
 
   // define all of them individually as undefined
   [DwnInterface.MessagesRead] : undefined;
@@ -273,7 +272,6 @@ export type {
   DataEncodedRecordsWriteMessage as DwnDataEncodedRecordsWriteMessage,
   MessageSigner as DwnSigner,
   MessageSubscription as DwnMessageSubscription,
-  MessageSubscriptionHandler as DwnMessageSubscriptionHandler,
   MessagesPermissionScope as DwnMessagesPermissionScope,
   PaginationCursor as DwnPaginationCursor,
   PermissionConditions as DwnPermissionConditions,
@@ -283,6 +281,7 @@ export type {
   ProtocolDefinition as DwnProtocolDefinition,
   ProtocolPermissionScope as DwnProtocolPermissionScope,
   PublicKeyJwk as DwnPublicKeyJwk,
-  RecordSubscriptionHandler as DwnRecordSubscriptionHandler,
   RecordsPermissionScope as DwnRecordsPermissionScope,
+  SubscriptionListener as DwnSubscriptionListener,
+  SubscriptionMessage as DwnSubscriptionMessage,
 } from '@enbox/dwn-sdk-js';

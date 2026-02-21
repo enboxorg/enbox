@@ -1,5 +1,5 @@
 import type { SocketConnection } from '../connection/socket-connection.js';
-import type { Dwn, MessageSubscriptionHandler } from '@enbox/dwn-sdk-js';
+import type { Dwn, SubscriptionListener } from '@enbox/dwn-sdk-js';
 import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from '@enbox/dwn-clients';
 
 export type RequestContext = {
@@ -10,8 +10,8 @@ export type RequestContext = {
   subscriptionRequest?: {
     /** The JsonRpcId of the subscription handler */
     id: JsonRpcId;
-    /** The `MessageEvent` handler associated with a subscription request, only used in `ws` requests */
-    subscriptionHandler: MessageSubscriptionHandler;
+    /** The `SubscriptionMessage` handler associated with a subscription request, only used in `ws` requests */
+    subscriptionHandler: SubscriptionListener;
   }
   /** The `ReadableStream` associated with a `RecordsWrite` request only used in `http` requests */
   dataStream?: ReadableStream<Uint8Array>;

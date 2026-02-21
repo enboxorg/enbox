@@ -1,7 +1,7 @@
 import type { DidResolver } from '@enbox/dids';
-import type { EventLog } from '../../src/types/subscriptions.js';
+import type { RecordsWriteMessage } from '../../src/types/records-types.js';
 import type { DataStore, MessageStore, PermissionScope, ResumableTaskStore, StateIndex } from '../../src/index.js';
-import type { RecordEvent, RecordsWriteMessage } from '../../src/types/records-types.js';
+import type { EventLog, SubscriptionMessage } from '../../src/types/subscriptions.js';
 
 import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' with { type: 'json' };
 import messageProtocolDefinition from '../vectors/protocol-definitions/message.json' with { type: 'json' };
@@ -599,10 +599,11 @@ export function testAuthorDelegatedGrant(): void {
 
       // Create a handler to set or delete the chat record ID in the subscription set depending on the interface method
       const subscriptionChatRecords:Set<string> = new Set();
-      const captureChatRecords = async (event: RecordEvent): Promise<void> => {
-        const { message } = event;
-        if (message.descriptor.method === DwnMethodName.Delete) {
-          const recordId = message.descriptor.recordId;
+      const captureChatRecords = async (msg: SubscriptionMessage): Promise<void> => {
+        if (msg.type !== 'event') { return; }
+        const { message } = msg.event;
+        if ((message as any).descriptor.method === DwnMethodName.Delete) {
+          const recordId = (message as any).descriptor.recordId;
           subscriptionChatRecords.delete(recordId);
         } else {
           const recordId = (message as RecordsWriteMessage).recordId;

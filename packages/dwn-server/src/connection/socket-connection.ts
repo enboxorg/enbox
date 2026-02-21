@@ -1,7 +1,7 @@
 import type { RequestContext } from '../lib/json-rpc-router.js';
 import type { ServerWebSocket } from 'bun';
 import type { WsData } from '../http-api.js';
-import type { Dwn, GenericMessage, MessageEvent } from '@enbox/dwn-sdk-js';
+import type { Dwn, GenericMessage, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 import type { JsonRpcErrorResponse, JsonRpcId, JsonRpcRequest, JsonRpcResponse, JsonRpcSubscription } from '@enbox/dwn-clients';
 
 import log from 'loglevel';
@@ -173,11 +173,12 @@ export class SocketConnection {
   }
 
   /**
-   * Creates a subscription handler to send messages matching the subscription requested.
+   * Creates a subscription handler that forwards SubscriptionMessage (event + EOSE)
+   * over the WebSocket as JSON-RPC responses.
    */
-  private createSubscriptionHandler(id: JsonRpcId): (message: MessageEvent) => void {
-    return (event) => {
-      const response = createJsonRpcSuccessResponse(id, { event });
+  private createSubscriptionHandler(id: JsonRpcId): (message: SubscriptionMessage) => void {
+    return (message) => {
+      const response = createJsonRpcSuccessResponse(id, { subscription: message });
       this.send(response);
     };
   }
@@ -198,10 +199,9 @@ export class SocketConnection {
     if (method.startsWith('rpc.subscribe.') && subscription) {
       const { message } = params as { message?: GenericMessage };
       if (message?.descriptor.method === DwnMethodName.Subscribe) {
-        const handlerFunc = this.createSubscriptionHandler(subscription.id);
         requestContext.subscriptionRequest = {
           id                  : subscription.id,
-          subscriptionHandler : (message): void => handlerFunc(message),
+          subscriptionHandler : this.createSubscriptionHandler(subscription.id),
         };
       }
     }
