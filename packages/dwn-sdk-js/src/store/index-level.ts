@@ -480,6 +480,7 @@ export class IndexLevel {
       // Execute filters sequentially rather than in parallel.
       // Concurrent IndexedDB iterators (opened by Promise.all) intermittently
       // miss results in Firefox due to cursor/transaction scheduling races.
+      // TODO: restore concurrency once Firefox IndexedDB race is resolved (https://github.com/enboxorg/enbox/issues/264)
       for (const filter of filters) {
         await this.executeSingleFilterQuery(tenant, filter, sortProperty, matches, options);
       }
@@ -504,6 +505,9 @@ export class IndexLevel {
 
   /**
    * Execute a filtered query against a single filter and return all results.
+   * Queries are executed sequentially to avoid opening multiple IndexedDB cursors
+   * concurrently, which causes intermittent failures in Firefox.
+   * TODO: restore concurrency once Firefox IndexedDB race is resolved (https://github.com/enboxorg/enbox/issues/264)
    */
   private async executeSingleFilterQuery(
     tenant: string,
@@ -513,42 +517,8 @@ export class IndexLevel {
     levelOptions?: IndexLevelOptions
   ): Promise<void> {
 
-    // Note: We have an array of Promises in order to support OR (anyOf) matches when given a list of accepted values for a property
-    const filterPromises: Promise<IndexedItem[]>[] = [];
-
-    // If the filter is empty, then we just iterate over one of the indexes that contains all the records and return all items.
-    if (isEmptyObject(filter)) {
-      const getAllItemsPromise = this.getAllItems(tenant, sortProperty);
-      filterPromises.push(getAllItemsPromise);
-    }
-
-    // else the filter is not empty
-    const searchFilter = FilterSelector.reduceFilter(filter);
-    for (const propertyName in searchFilter) {
-      const propertyFilter = searchFilter[propertyName];
-      // We will find the union of these many individual queries later.
-      if (FilterUtility.isEqualFilter(propertyFilter)) {
-        // propertyFilter is an EqualFilter, meaning it is a non-object primitive type
-        const exactMatchesPromise = this.filterExactMatches(tenant, propertyName, propertyFilter, levelOptions);
-        filterPromises.push(exactMatchesPromise);
-      } else if (FilterUtility.isOneOfFilter(propertyFilter)) {
-        // `propertyFilter` is a OneOfFilter
-        // Support OR matches by querying for each values separately, then adding them to the promises array.
-        for (const propertyValue of new Set(propertyFilter)) {
-          const exactMatchesPromise = this.filterExactMatches(tenant, propertyName, propertyValue, levelOptions);
-          filterPromises.push(exactMatchesPromise);
-        }
-      } else if (FilterUtility.isRangeFilter(propertyFilter)) {
-        // `propertyFilter` is a `RangeFilter`
-        const rangeMatchesPromise = this.filterRangeMatches(tenant, propertyName, propertyFilter, levelOptions);
-        filterPromises.push(rangeMatchesPromise);
-      }
-    }
-
-    // acting as an OR match for the property, any of the promises returning a match will be treated as a property match
-    for (const promise of filterPromises) {
-      const indexItems = await promise;
-      // reminder: the promise returns a list of IndexedItem satisfying a particular property match
+    // Collects results from each sub-query sequentially to avoid concurrent IndexedDB cursor races.
+    const processResults = (indexItems: IndexedItem[]): void => {
       for (const indexedItem of indexItems) {
         // short circuit: if a data is already included to the final matched key set (by a different `Filter`),
         // no need to evaluate if the data satisfies this current filter being evaluated
@@ -563,6 +533,36 @@ export class IndexLevel {
         }
 
         matches.set(indexedItem.messageCid, indexedItem);
+      }
+    };
+
+    // If the filter is empty, then we just iterate over one of the indexes that contains all the records and return all items.
+    if (isEmptyObject(filter)) {
+      const allItems = await this.getAllItems(tenant, sortProperty);
+      processResults(allItems);
+      return;
+    }
+
+    // else the filter is not empty
+    const searchFilter = FilterSelector.reduceFilter(filter);
+    for (const propertyName in searchFilter) {
+      const propertyFilter = searchFilter[propertyName];
+      // We will find the union of these many individual queries later.
+      if (FilterUtility.isEqualFilter(propertyFilter)) {
+        // propertyFilter is an EqualFilter, meaning it is a non-object primitive type
+        const exactMatches = await this.filterExactMatches(tenant, propertyName, propertyFilter, levelOptions);
+        processResults(exactMatches);
+      } else if (FilterUtility.isOneOfFilter(propertyFilter)) {
+        // `propertyFilter` is a OneOfFilter
+        // Support OR matches by querying for each value separately and sequentially.
+        for (const propertyValue of new Set(propertyFilter)) {
+          const exactMatches = await this.filterExactMatches(tenant, propertyName, propertyValue, levelOptions);
+          processResults(exactMatches);
+        }
+      } else if (FilterUtility.isRangeFilter(propertyFilter)) {
+        // `propertyFilter` is a `RangeFilter`
+        const rangeMatches = await this.filterRangeMatches(tenant, propertyName, propertyFilter, levelOptions);
+        processResults(rangeMatches);
       }
     }
   }
