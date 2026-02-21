@@ -22,14 +22,15 @@ export interface ConnectionManager {
 export class InMemoryConnectionManager implements ConnectionManager {
   constructor(
     private dwn: Dwn,
-    private connections: Map<ServerWebSocket<WsData>, SocketConnection> = new Map()
+    private connections: Map<ServerWebSocket<WsData>, SocketConnection> = new Map(),
+    private maxInFlight?: number,
   ) {}
 
   async connect(socket: ServerWebSocket<WsData>): Promise<void> {
     const connection = new SocketConnection(socket, this.dwn, () => {
       // this is the onClose handler to clean up any closed connections.
       this.connections.delete(socket);
-    });
+    }, this.maxInFlight);
 
     // Attach the connection to the ws.data so Bun's websocket handlers can delegate to it.
     socket.data.connection = connection;

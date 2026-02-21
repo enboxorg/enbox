@@ -4,6 +4,12 @@ export type ServerInfo = {
   /** the maximum file size the user can request to store */
   maxFileSize: number,
   /**
+   * Maximum number of unacknowledged subscription events the server will send
+   * before pausing delivery. Clients ****MUST**** send `rpc.ack` to advance the
+   * window. When absent, the server does not enforce backpressure.
+   */
+  maxInFlight?: number,
+  /**
    * an array of strings representing the server's registration requirements.
    *
    * ie. ['proof-of-work-sha256-v0', 'terms-of-service']

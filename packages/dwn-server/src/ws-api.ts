@@ -10,9 +10,9 @@ export class WsApi {
   dwn: Dwn;
   #connectionManager: ConnectionManager;
 
-  constructor(httpApi: HttpApi, dwn: Dwn, connectionManager?: ConnectionManager) {
+  constructor(httpApi: HttpApi, dwn: Dwn, connectionManager?: ConnectionManager, maxInFlight?: number) {
     this.dwn = dwn;
-    this.#connectionManager = connectionManager || new InMemoryConnectionManager(dwn);
+    this.#connectionManager = connectionManager || new InMemoryConnectionManager(dwn, new Map(), maxInFlight);
 
     // Wire up the WebSocket open event from Bun.serve() to the connection manager.
     httpApi.onWebSocketConnection = (ws: ServerWebSocket<WsData>): void => {

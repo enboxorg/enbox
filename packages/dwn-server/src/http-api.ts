@@ -296,6 +296,7 @@ export class HttpApi {
 
     const serverInfo: ServerInfo = {
       maxFileSize              : config.maxRecordDataSize,
+      maxInFlight              : config.maxInFlight,
       registrationRequirements : registrationRequirements,
       server                   : this.#packageInfo.server,
       sdkVersion               : this.#packageInfo.sdkVersion,

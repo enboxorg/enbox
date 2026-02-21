@@ -10,7 +10,8 @@ import { DwnMethodName } from '@enbox/dwn-sdk-js';
 import { jsonRpcRouter } from '../json-rpc-api.js';
 import { requestCounter } from '../metrics.js';
 import { v4 as uuidv4 } from 'uuid';
-import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
+import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
+import { DEFAULT_MAX_IN_FLIGHT, FlowController } from './flow-controller.js';
 import { DwnServerError, DwnServerErrorCode } from '../dwn-error.js';
 
 const HEARTBEAT_INTERVAL = 30_000;
@@ -26,12 +27,14 @@ const HEARTBEAT_INTERVAL = 30_000;
 export class SocketConnection {
   private heartbeatInterval: ReturnType<typeof setInterval>;
   private subscriptions: Map<JsonRpcId, JsonRpcSubscription> = new Map();
+  private flowControllers: Map<JsonRpcId, FlowController> = new Map();
   private isAlive: boolean;
 
   constructor(
     private socket: ServerWebSocket<WsData>,
     private dwn: Dwn,
-    private onCloseCallback?: () => void
+    private onCloseCallback?: () => void,
+    private maxInFlight: number = DEFAULT_MAX_IN_FLIGHT,
   ){
     // Bun handles ping/pong automatically at the protocol level, but we still
     // want an application-level heartbeat to detect dead connections.
@@ -91,6 +94,18 @@ export class SocketConnection {
     const connection = this.subscriptions.get(id);
     await connection.close();
     this.subscriptions.delete(id);
+    this.flowControllers.delete(id);
+  }
+
+  /**
+   * Acknowledges subscription events up to the given cursor, advancing the
+   * flow-control window for the subscription.
+   */
+  ackSubscription(id: JsonRpcId, cursor: string): void {
+    const fc = this.flowControllers.get(id);
+    if (fc) {
+      fc.ack(cursor);
+    }
   }
 
   /**
@@ -107,6 +122,9 @@ export class SocketConnection {
 
     // close all of the associated subscriptions
     await Promise.all(closePromises);
+
+    // clear all flow controllers
+    this.flowControllers.clear();
 
     // close the socket.
     this.socket.close();
@@ -173,13 +191,30 @@ export class SocketConnection {
   }
 
   /**
-   * Creates a subscription handler that forwards SubscriptionMessage (event + EOSE)
-   * over the WebSocket as JSON-RPC responses.
+   * Creates a flow-controlled subscription handler that enforces the
+   * `maxInFlight` window. Returns a `SubscriptionListener` to be passed
+   * to the EventLog, and stores the `FlowController` for later `rpc.ack`
+   * processing.
    */
   private createSubscriptionHandler(id: JsonRpcId): (message: SubscriptionMessage) => void {
+    const fc = new FlowController(
+      id,
+      this.maxInFlight,
+      (response) => {
+        this.send(response);
+      },
+      () => {
+        // overflow: close the subscription to prevent OOM
+        this.closeSubscription(id).catch((err) => {
+          log.error(`FlowController: error closing subscription ${String(id)} on overflow`, err);
+        });
+      },
+    );
+
+    this.flowControllers.set(id, fc);
+
     return (message) => {
-      const response = createJsonRpcSuccessResponse(id, { subscription: message });
-      this.send(response);
+      fc.push(message);
     };
   }
 

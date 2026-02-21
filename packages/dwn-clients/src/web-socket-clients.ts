@@ -4,7 +4,7 @@ import type { GenericMessage, MessageSubscription, SubscriptionMessage, UnionMes
 
 import { CryptoUtils } from '@enbox/crypto';
 import { JsonRpcSocket } from './json-rpc-socket.js';
-import { createJsonRpcRequest, createJsonRpcSubscriptionRequest } from './json-rpc.js';
+import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest } from './json-rpc.js';
 
 interface SocketConnection {
   socket: JsonRpcSocket;
@@ -89,6 +89,11 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
       const subscriptionMessage = result.subscription as SubscriptionMessage;
       messageHandler(subscriptionMessage);
+
+      // Send rpc.ack to advance the server's flow-control window.
+      if (subscriptionMessage.cursor) {
+        socket.send(createJsonRpcAck(subscriptionId, subscriptionMessage.cursor));
+      }
     });
 
     const { error, result } = response;
