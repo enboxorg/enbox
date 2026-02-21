@@ -254,8 +254,6 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
         id              : 'dwn',
         type            : 'DecentralizedWebNode',
         serviceEndpoint : endpoints,
-        enc             : '#enc',
-        sig             : '#sig'
       };
 
       // if no other services exist, create a new array with the DWN service

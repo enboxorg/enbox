@@ -19,38 +19,44 @@ import { DidError, DidErrorCode } from './did-error.js';
  * Represents a Decentralized Web Node (DWN) service in a DID Document.
  *
  * A DWN DID service is a specialized type of DID service with the `type` set to
- * `DecentralizedWebNode`. It includes specific properties `enc` and `sig` that are used to identify
- * the public keys that can be used to interact with the DID Subject. The values of these properties
- * are strings or arrays of strings containing one or more verification method `id` values present in
- * the same DID document. If the `enc` and/or `sig` properties are an array of strings, an entity
- * interacting with the DID subject is expected to use the verification methods in the order they
- * are listed.
+ * `DecentralizedWebNode`. Encryption and signing keys are resolved from the DID document's
+ * verification methods, not from the service entry.
+ *
+ * The `enc` and `sig` properties are optional legacy fields that may be present on existing
+ * DID documents for backward compatibility. When present, they contain verification method `id`
+ * values that hint at which keys to use for encryption and signing. New implementations should
+ * resolve keys from the DID document's verification methods by purpose (`keyAgreement` for
+ * encryption, `authentication`/`assertionMethod` for signing).
  *
  * @example
  * ```ts
  * const service: DwnDidService = {
  *   id: 'did:example:123#dwn',
  *   type: 'DecentralizedWebNode',
- *   serviceEndpoint: 'https://enbox-dwn.fly.dev',
- *   enc: 'did:example:123#key-1',
- *   sig: 'did:example:123#key-2'
+ *   serviceEndpoint: 'https://enbox-dwn.fly.dev'
  * }
  * ```
  *
- * @see {@link https://identity.foundation/decentralized-web-node/spec/ | DIF Decentralized Web Node (DWN) Specification}
+ * @see {@link https://github.com/enboxorg/dwn-spec | Enbox DWN Specification}
  */
 export interface DwnDidService extends DidService {
   /**
+   * @deprecated Optional legacy field. Resolve encryption keys from the DID document's
+   * `keyAgreement` verification methods instead.
+   *
    * One or more verification method `id` values that can be used to encrypt information
    * intended for the DID subject.
    */
   enc?: string | string[];
 
   /**
+   * @deprecated Optional legacy field. Resolve signing keys from the DID document's
+   * `authentication` or `assertionMethod` verification methods instead.
+   *
    * One or more verification method `id` values that will be used by the DID subject to sign data
    * or by another entity to verify signatures created by the DID subject.
    */
-  sig: string | string[];
+  sig?: string | string[];
 }
 
 /**
@@ -368,9 +374,11 @@ export function isDidService(obj: unknown): obj is DidService {
 /**
  * Checks if a given object is a {@link DwnDidService}.
  *
- * A {@link DwnDidService} is defined as {@link DidService} object with a `type` of
- * "DecentralizedWebNode" and `enc` and `sig` properties, where both properties are either strings
- * or arrays of strings.
+ * A {@link DwnDidService} is defined as a {@link DidService} object with a `type` of
+ * `"DecentralizedWebNode"`. The `enc` and `sig` properties are optional — they may be present
+ * on existing DID documents for backward compatibility, but are not required per the DWN
+ * specification. Encryption and signing keys are resolved from the DID document's verification
+ * methods, not from the service entry.
  *
  * @example
  * ```ts
@@ -382,33 +390,25 @@ export function isDidService(obj: unknown): obj is DidService {
  *       type: 'JsonWebKey2020',
  *       controller: 'did:example:123',
  *       publicKeyJwk: { ... }
- *     },
- *     {
- *       id: 'did:example:123#key-2',
- *       type: 'JsonWebKey2020',
- *       controller: 'did:example:123',
- *       publicKeyJwk: { ... }
  *     }
  *   ],
  *   service: [
  *     {
  *       id: 'did:example:123#dwn',
  *       type: 'DecentralizedWebNode',
- *       serviceEndpoint: 'https://enbox-dwn.fly.dev',
- *       enc: 'did:example:123#key-1',
- *       sig: 'did:example:123#key-2'
+ *       serviceEndpoint: 'https://enbox-dwn.fly.dev'
  *     }
  *   ]
  * };
  *
- * if (isDwnService(didDocument.service[0])) {
+ * if (isDwnDidService(didDocument.service[0])) {
  *   console.log('The object is a DwnDidService');
  * } else {
  *   console.log('The object is not a DwnDidService');
  * }
  * ```
  *
- * @see {@link https://identity.foundation/decentralized-web-node/spec/ | Decentralized Web Node (DWN) Specification}
+ * @see {@link https://github.com/enboxorg/dwn-spec | Enbox DWN Specification}
  *
  * @param obj - The object to be checked.
  * @returns `true` if `obj` is a DwnDidService; otherwise, `false`.
@@ -420,13 +420,14 @@ export function isDwnDidService(obj: unknown): obj is DwnDidService {
   // Validate that the `type` property is `DecentralizedWebNode`.
   if (obj.type !== 'DecentralizedWebNode') {return false;}
 
-  // Validate that the given object has the `enc` and `sig` properties.
-  if (!('enc' in obj && 'sig' in obj)) {return false;}
-
-  // Validate that the `enc` and `sig` properties are either strings or arrays of strings.
+  // If `enc` or `sig` are present, validate they are strings or arrays of strings.
   const isStringOrStringArray = (prop: any): boolean =>
     typeof prop === 'string' || Array.isArray(prop) && prop.every(item => typeof item === 'string');
-  return (isStringOrStringArray(obj.enc)) && (isStringOrStringArray(obj.sig));
+
+  if ('enc' in obj && obj.enc !== undefined && !isStringOrStringArray(obj.enc)) {return false;}
+  if ('sig' in obj && obj.sig !== undefined && !isStringOrStringArray(obj.sig)) {return false;}
+
+  return true;
 }
 
 /**

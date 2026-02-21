@@ -193,8 +193,6 @@ export class PlatformAgentTestHarness {
             id              : 'dwn',
             type            : 'DecentralizedWebNode',
             serviceEndpoint : testDwnUrls,
-            enc             : '#enc',
-            sig             : '#sig',
           }
         ],
         verificationMethods: [
