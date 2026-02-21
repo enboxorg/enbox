@@ -11,6 +11,7 @@
     "packages/api",
     "packages/protocols",
     "packages/browser",
+    "packages/protocol-codegen",
     "packages/dwn-sdk-js",
     "packages/dwn-sql-store",
     "packages/dwn-server"
