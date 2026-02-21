@@ -90,7 +90,7 @@ describe('web5 connect', () => {
         descriptor : {
           interface    : 'Records',
           method       : 'Write',
-          protocol     : 'https://tbd.website/dwn/permissions',
+          protocol     : 'https://identity.foundation/dwn/permissions',
           protocolPath : 'grant',
           recipient:
             'did:dht:pfm8f6w57srtci1k3spp73dqgk5eo3afkimtyi4zcqc5hg1ui5mo',
