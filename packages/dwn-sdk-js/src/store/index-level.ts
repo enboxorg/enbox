@@ -480,6 +480,7 @@ export class IndexLevel {
       // Execute filters sequentially rather than in parallel.
       // Concurrent IndexedDB iterators (opened by Promise.all) intermittently
       // miss results in Firefox due to cursor/transaction scheduling races.
+      // TODO: restore concurrency once Firefox IndexedDB race is resolved (https://github.com/enboxorg/enbox/issues/264)
       for (const filter of filters) {
         await this.executeSingleFilterQuery(tenant, filter, sortProperty, matches, options);
       }
@@ -506,6 +507,7 @@ export class IndexLevel {
    * Execute a filtered query against a single filter and return all results.
    * Queries are executed sequentially to avoid opening multiple IndexedDB cursors
    * concurrently, which causes intermittent failures in Firefox.
+   * TODO: restore concurrency once Firefox IndexedDB race is resolved (https://github.com/enboxorg/enbox/issues/264)
    */
   private async executeSingleFilterQuery(
     tenant: string,
