@@ -1,7 +1,7 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 export const IdentityProtocolDefinition: ProtocolDefinition = {
-  protocol  : 'http://identity.foundation/protocols/web5/identity-store',
+  protocol  : 'https://identity.foundation/protocols/web5/identity-store',
   published : false,
   types     : {
     portableDid: {
@@ -47,7 +47,7 @@ export const KeyDeliveryProtocolDefinition: ProtocolDefinition = {
 };
 
 export const JwkProtocolDefinition: ProtocolDefinition = {
-  protocol  : 'http://identity.foundation/protocols/web5/jwk-store',
+  protocol  : 'https://identity.foundation/protocols/web5/jwk-store',
   published : false,
   types     : {
     privateJwk: {

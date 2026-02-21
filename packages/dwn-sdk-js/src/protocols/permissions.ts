@@ -84,7 +84,7 @@ export class PermissionsProtocol {
   /**
    * The URI of the DWN Permissions protocol.
    */
-  public static readonly uri = 'https://tbd.website/dwn/permissions';
+  public static readonly uri = 'https://identity.foundation/dwn/permissions';
 
   /**
    * The protocol path of the `request` record.
