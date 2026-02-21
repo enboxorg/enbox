@@ -81,9 +81,9 @@ export type MessagesSubscribeDescriptor = {
   filters: MessagesFilter[];
   permissionGrantId?: string;
   /**
-   * EventLog sequence number to resume from. When provided, the handler replays
+   * Opaque EventLog cursor string to resume from. When provided, the handler replays
    * events from the EventLog starting after this cursor instead of returning no
    * initial snapshot. An EOSE marker is sent after catch-up.
    */
-  cursor?: number;
+  cursor?: string;
 };

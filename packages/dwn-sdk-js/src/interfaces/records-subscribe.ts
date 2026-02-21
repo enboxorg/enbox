@@ -23,10 +23,10 @@ export type RecordsSubscribeOptions = {
   protocolRole?: string;
 
   /**
-   * EventLog sequence number to resume from. When provided, catch-up events are
+   * Opaque EventLog cursor string to resume from. When provided, catch-up events are
    * replayed from the EventLog and an EOSE marker is delivered before live events.
    */
-  cursor?: number;
+  cursor?: string;
 
   /**
    * The delegated grant to sign on behalf of the logical author, which is the grantor (`grantedBy`) of the delegated grant.
