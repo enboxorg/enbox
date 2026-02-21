@@ -76,6 +76,7 @@ export default defineConfig({
 
       // --- Dual-format packages (CJS default, ESM via exports) ---
       // Pre-bundling these avoids edge cases where Vite picks the CJS entry.
+      'mitt',
       '@js-temporal/polyfill',
       '@noble/ciphers/aes',
       '@noble/ciphers/chacha',
@@ -148,6 +149,11 @@ export default defineConfig({
       'tests/scenarios/aggregator.spec.ts',
     ],
     testTimeout : 15_000,
+    // Retry failed tests once in CI. Firefox's ESM loader can occasionally
+    // crash on dynamic module imports even with noDiscovery enabled — a
+    // single retry is enough to recover from transient loader failures
+    // without masking real bugs (real failures are deterministic and fail both times).
+    retry: isCI ? 1 : 0,
     coverage: {
       provider         : 'istanbul',
       reporter         : ['text', 'lcov'],
