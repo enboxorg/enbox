@@ -119,6 +119,22 @@ export const createJsonRpcSubscriptionRequest = (
   };
 };
 
+/**
+ * Creates a JSON-RPC notification to acknowledge receipt of subscription events
+ * up to the given cursor. No `id` is set because no response is expected.
+ */
+export const createJsonRpcAck = (
+  subscriptionId: JsonRpcId,
+  cursor: string,
+): JsonRpcRequest => {
+  return {
+    jsonrpc      : '2.0',
+    method       : 'rpc.ack',
+    params       : { cursor },
+    subscription : { id: subscriptionId },
+  };
+};
+
 export const createJsonRpcSuccessResponse = (
   id: JsonRpcId,
   result?: any,

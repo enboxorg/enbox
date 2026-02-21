@@ -1,9 +1,10 @@
 import type { SinonFakeTimers } from 'sinon';
-import type { Dwn, MessageEvent } from '@enbox/dwn-sdk-js';
+import type { Dwn, MessageEvent, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import { base64url } from 'multiformats/bases/base64';
 import { useFakeTimers } from 'sinon';
 import { v4 as uuidv4 } from 'uuid';
+import { WebSocket } from 'ws';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DataStream, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
@@ -11,7 +12,7 @@ import { config } from '../src/config.js';
 import { getTestDwn } from './test-dwn.js';
 import { HttpApi } from '../src/http-api.js';
 import { WsApi } from '../src/ws-api.js';
-import { createJsonRpcRequest, createJsonRpcSubscriptionRequest, JsonRpcErrorCodes, JsonRpcSocket } from '@enbox/dwn-clients';
+import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest, JsonRpcErrorCodes, JsonRpcSocket } from '@enbox/dwn-clients';
 import { createRecordsWriteMessage, sendHttpMessage, sendWsMessage, waitUntil } from './utils.js';
 
 
@@ -432,5 +433,344 @@ describe('websocket api', function () {
       await Message.getCid(updatedMessage.message)
     ].sort();
     expect([...records].sort()).toEqual(expectedMembers);
+  });
+});
+
+describe('websocket backpressure (rpc.ack)', function () {
+  let httpApi: HttpApi;
+  let wsApi: WsApi;
+  let dwn: Dwn;
+  let clock: SinonFakeTimers;
+  let wsUrl: string;
+  let httpUrl: string;
+
+  beforeAll(() => {
+    clock = useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterAll(() => {
+    clock.restore();
+  });
+
+  afterEach(async function () {
+    await wsApi.close();
+    await httpApi.close();
+    await dwn.close();
+  });
+
+  /**
+   * Helper: creates the DWN + HTTP + WS stack with a custom maxInFlight.
+   */
+  async function setupServer(maxInFlight: number): Promise<void> {
+    dwn = await getTestDwn({ withEvents: true });
+    httpApi = await HttpApi.create(config, dwn);
+    await httpApi.start(0);
+    const port = httpApi.server.port;
+    wsUrl = `ws://127.0.0.1:${port}`;
+    httpUrl = `http://localhost:${port}`;
+    wsApi = new WsApi(httpApi, dwn, undefined, maxInFlight);
+    wsApi.start();
+  }
+
+  /**
+   * Helper: opens a raw WebSocket (from `ws` package) and subscribes to foo/bar records.
+   * Returns tools to observe events, send acks, and close.
+   *
+   * This bypasses JsonRpcSocket to avoid auto-ack behavior, giving full control
+   * over the flow-control window for testing.
+   */
+  async function rawSubscribe(
+    alice: { did: string; signer: any },
+    subscribeMessage: any,
+  ): Promise<{
+    receivedMessages: SubscriptionMessage[];
+    subscriptionId: string;
+    socket: WebSocket;
+    sendAck: (cursor: string) => void;
+    waitForMessages: (count: number, timeoutMs?: number) => Promise<void>;
+    close: () => Promise<void>;
+  }> {
+    const receivedMessages: SubscriptionMessage[] = [];
+    const requestId = uuidv4();
+    const subscriptionId = uuidv4();
+
+    const socket = new WebSocket(wsUrl);
+
+    await new Promise<void>((resolve, reject) => {
+      socket.onopen = (): void => resolve();
+      socket.onerror = (err): void => reject(err);
+      setTimeout(() => reject(new Error('raw WS connect timeout')), 3000);
+    });
+
+    // Send the subscribe request
+    const subscribeRequest = createJsonRpcSubscriptionRequest(
+      requestId, 'rpc.subscribe.dwn.processMessage',
+      { message: subscribeMessage, target: alice.did },
+      subscriptionId,
+    );
+    socket.send(JSON.stringify(subscribeRequest));
+
+    // Wait for the subscription confirmation response (matched by request id)
+    await new Promise<void>((resolve, reject) => {
+      const handler = (event: { data: any }): void => {
+        const data = JSON.parse(event.data.toString());
+        if (data.id === requestId) {
+          socket.removeEventListener('message', handler);
+          if (data.error) {
+            reject(new Error(`subscribe failed: ${data.error.message}`));
+          } else {
+            resolve();
+          }
+        }
+      };
+      socket.addEventListener('message', handler);
+      setTimeout(() => reject(new Error('subscribe response timeout')), 3000);
+    });
+
+    // Now listen for subscription event messages (matched by subscription id)
+    socket.addEventListener('message', (event: { data: any }) => {
+      const data = JSON.parse(event.data.toString());
+      if (data.id === subscriptionId && data.result?.subscription) {
+        receivedMessages.push(data.result.subscription as SubscriptionMessage);
+      }
+    });
+
+    const sendAck = (cursor: string): void => {
+      const ackRequest = createJsonRpcAck(subscriptionId, cursor);
+      socket.send(JSON.stringify(ackRequest));
+    };
+
+    const waitForMessages = async (count: number, timeoutMs = 2000): Promise<void> => {
+      await waitUntil(() => receivedMessages.length >= count, timeoutMs);
+    };
+
+    const close = async (): Promise<void> => {
+      // Send subscription close request
+      const closeRequestId = uuidv4();
+      const closeRequest = createJsonRpcSubscriptionRequest(
+        closeRequestId, 'rpc.subscribe.close', {}, subscriptionId
+      );
+      socket.send(JSON.stringify(closeRequest));
+      await new Promise(resolve => setTimeout(resolve, 50));
+      socket.close();
+    };
+
+    return { receivedMessages, subscriptionId, socket, sendAck, waitForMessages, close };
+  }
+
+  /**
+   * Helper: writes N records for a given persona and schema via HTTP, returning CIDs.
+   */
+  async function writeRecords(alice: any, count: number, schema = 'foo/bar'): Promise<string[]> {
+    const cids: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const writeMessage = await TestDataGenerator.generateRecordsWrite({
+        author     : alice,
+        schema,
+        dataFormat : 'text/plain'
+      });
+
+      const writeResult = await sendHttpMessage({
+        url     : httpUrl,
+        target  : alice.did,
+        message : writeMessage.message,
+        data    : writeMessage.dataBytes,
+      });
+      expect(writeResult.status.code).toBe(202);
+      cids.push(await Message.getCid(writeMessage.message));
+    }
+    return cids;
+  }
+
+  it('should buffer events when maxInFlight is reached and flush on rpc.ack', async () => {
+    await setupServer(2); // maxInFlight = 2
+
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+    const { message } = await TestDataGenerator.generateRecordsSubscribe({
+      author : alice,
+      filter : { schema: 'foo/bar' }
+    });
+
+    const { receivedMessages, sendAck, waitForMessages, close } = await rawSubscribe(alice, message);
+
+    // Write 4 records — only 2 should be delivered (maxInFlight=2)
+    const cids = await writeRecords(alice, 4);
+
+    // Wait for the first 2 to arrive
+    await waitForMessages(2);
+
+    // Give some extra time to make sure no more arrive
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(receivedMessages).toHaveLength(2);
+
+    // Ack the 2nd cursor — should free 2 slots and flush 2 buffered events
+    sendAck(receivedMessages[1].cursor);
+
+    await waitForMessages(4);
+    expect(receivedMessages).toHaveLength(4);
+
+    // All 4 CIDs should be accounted for
+    const receivedCids = await Promise.all(
+      receivedMessages
+        .filter((m): boolean => m.type === 'event')
+        .map(async (m) => Message.getCid(m.event.message))
+    );
+    expect(receivedCids.sort()).toEqual([...cids].sort());
+
+    await close();
+  });
+
+  it('should deliver events incrementally as individual rpc.ack messages are sent', async () => {
+    await setupServer(1); // maxInFlight = 1
+
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+    const { message } = await TestDataGenerator.generateRecordsSubscribe({
+      author : alice,
+      filter : { schema: 'foo/bar' }
+    });
+
+    const { receivedMessages, sendAck, waitForMessages, close } = await rawSubscribe(alice, message);
+
+    // Write 3 records
+    await writeRecords(alice, 3);
+
+    // Only 1 should arrive (maxInFlight=1)
+    await waitForMessages(1);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(receivedMessages).toHaveLength(1);
+
+    // Ack it — next event should arrive
+    sendAck(receivedMessages[0].cursor);
+    await waitForMessages(2);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(receivedMessages).toHaveLength(2);
+
+    // Ack again — third event should arrive
+    sendAck(receivedMessages[1].cursor);
+    await waitForMessages(3);
+    expect(receivedMessages).toHaveLength(3);
+
+    await close();
+  });
+
+  it('should work with auto-ack from JsonRpcSocket client when many events exceed maxInFlight', async () => {
+    await setupServer(2); // maxInFlight = 2
+
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+    const { message } = await TestDataGenerator.generateRecordsSubscribe({
+      author : alice,
+      filter : { schema: 'foo/bar' }
+    });
+
+    // Use the regular JsonRpcSocket client which auto-acks via WebSocketDwnRpcClient logic.
+    // Here we replicate auto-ack inline.
+    const records: string[] = [];
+    const connection = await JsonRpcSocket.connect(wsUrl);
+    const subscriptionId = uuidv4();
+
+    const dwnRequest = createJsonRpcSubscriptionRequest(
+      uuidv4(), 'rpc.subscribe.dwn.processMessage',
+      { message, target: alice.did },
+      subscriptionId,
+    );
+
+    const { response, close } = await connection.subscribe(dwnRequest, (resp) => {
+      const subscriptionMsg = resp.result?.subscription as SubscriptionMessage;
+      if (!subscriptionMsg || subscriptionMsg.type !== 'event') {
+        return;
+      }
+
+      Message.getCid(subscriptionMsg.event.message).then((cid) => records.push(cid));
+
+      // Auto-ack like the real client does
+      if (subscriptionMsg.cursor) {
+        connection.send(createJsonRpcAck(subscriptionId, subscriptionMsg.cursor));
+      }
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result.reply.status.code).toBe(200);
+
+    // Write 5 records — more than maxInFlight, but auto-ack should drain them all
+    const cids = await writeRecords(alice, 5);
+    await waitUntil(() => records.length >= 5);
+
+    expect(records.sort()).toEqual([...cids].sort());
+
+    await close();
+  });
+
+  it('should buffer many events and drain them all when acked', async () => {
+    await setupServer(1); // maxInFlight = 1
+
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+    const { message } = await TestDataGenerator.generateRecordsSubscribe({
+      author : alice,
+      filter : { schema: 'foo/bar' }
+    });
+
+    const { receivedMessages, sendAck, waitForMessages, close } = await rawSubscribe(alice, message);
+
+    // Write 10 records — only 1 should be delivered immediately (maxInFlight=1)
+    const cids = await writeRecords(alice, 10);
+    await waitForMessages(1);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(receivedMessages).toHaveLength(1);
+
+    // Drain all 10 by acking one at a time
+    for (let i = 0; i < 9; i++) {
+      sendAck(receivedMessages[receivedMessages.length - 1].cursor);
+      await waitForMessages(receivedMessages.length + 1);
+    }
+
+    expect(receivedMessages).toHaveLength(10);
+
+    const receivedCids = await Promise.all(
+      receivedMessages
+        .filter((m): boolean => m.type === 'event')
+        .map(async (m) => Message.getCid(m.event.message))
+    );
+    expect(receivedCids.sort()).toEqual([...cids].sort());
+
+    await close();
+  });
+
+  it('should handle rpc.ack for an unknown subscription gracefully', async () => {
+    await setupServer(2);
+
+    const socket = new WebSocket(wsUrl);
+    await new Promise<void>((resolve, reject) => {
+      socket.onopen = (): void => resolve();
+      socket.onerror = (err): void => reject(err);
+      setTimeout(() => reject(new Error('connect timeout')), 3000);
+    });
+
+    // Send an ack for a subscription that doesn't exist
+    const ackRequest = createJsonRpcAck('nonexistent-sub-id', 'some-cursor');
+    socket.send(JSON.stringify(ackRequest));
+
+    // Should get back a success response (the handler still responds 200 OK
+    // because ackSubscription silently ignores unknown flow controllers)
+    const response = await new Promise<any>((resolve, reject) => {
+      socket.addEventListener('message', (event: { data: any }) => {
+        resolve(JSON.parse(event.data.toString()));
+      });
+      setTimeout(() => reject(new Error('ack response timeout')), 3000);
+    });
+
+    // The ack handler returns a success response even for unknown subscriptions
+    // because it delegates to socketConnection.ackSubscription which silently
+    // ignores flow controllers that don't exist.
+    expect(response.result).toBeDefined();
+
+    socket.close();
   });
 });

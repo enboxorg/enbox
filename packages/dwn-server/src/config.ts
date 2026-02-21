@@ -41,6 +41,13 @@ export const config = {
   // max size of data that can be provided with a RecordsWrite
   maxRecordDataSize : bytes(process.env.MAX_RECORD_DATA_SIZE || '1gb'),
 
+  /**
+   * Maximum number of unacknowledged subscription events the server will send
+   * per subscription before pausing delivery. Clients must send `rpc.ack` to
+   * advance the window. Configurable via `DWN_MAX_IN_FLIGHT` env var.
+   */
+  maxInFlight: parseInt(process.env.DWN_MAX_IN_FLIGHT || '32'),
+
   // whether to enable 'ws:'
   webSocketSupport: { on: true, off: false }[process.env.DS_WEBSOCKET_SERVER] ?? true,
 
