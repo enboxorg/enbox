@@ -187,7 +187,7 @@ export class SyncEngineLevel implements SyncEngine {
             }
           }
         } catch (error: any) {
-          // If the remote DWN is unreachable, skip this target and continue.
+          // Skip this DWN endpoint for remaining targets and log the real cause.
           errored.add(dwnUrl);
           console.error(`SyncEngineLevel: Error syncing ${did} with ${dwnUrl}`, error);
         }
