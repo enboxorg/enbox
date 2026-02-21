@@ -1,6 +1,5 @@
 import type { Filter } from '../types/query-types.js';
 import type { MessageStore } from '../types/message-store.js';
-import type { ProtocolAction } from '../types/protocols-types.js';
 import type { RecordsCount } from '../interfaces/records-count.js';
 import type { RecordsDelete } from '../interfaces/records-delete.js';
 import type { RecordsQuery } from '../interfaces/records-query.js';
@@ -16,7 +15,7 @@ import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
-import { authorizeAgainstAllowedActions, getActionsSeekingARuleMatch, verifyInvokedRole } from './protocol-authorization-action.js';
+import { authorizeAgainstAllowedActions, verifyInvokedRole } from './protocol-authorization-action.js';
 import { constructRecordChain, fetchInitialWrite, getGoverningTimestamp } from './record-chain.js';
 import {
   verifyAsRoleRecordIfNeeded,
@@ -385,15 +384,4 @@ export class ProtocolAuthorization {
     return ruleSet;
   }
 
-  /**
-   * Returns all the ProtocolActions that would authorize the incoming message.
-   * Delegates to the standalone function in `protocol-authorization-action.ts`.
-   */
-  private static async getActionsSeekingARuleMatch(
-    tenant: string,
-    incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
-    messageStore: MessageStore,
-  ): Promise<ProtocolAction[]> {
-    return getActionsSeekingARuleMatch(tenant, incomingMessage, messageStore);
-  }
 }

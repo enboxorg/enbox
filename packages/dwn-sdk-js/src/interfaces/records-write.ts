@@ -286,7 +286,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
    */
   public static async create(options: RecordsWriteOptions): Promise<RecordsWrite> {
     if (options.protocol === undefined || options.protocolPath === undefined) {
-      throw new DwnError(DwnErrorCode.RecordsWriteCreateProtocolAndProtocolPathMutuallyInclusive, '`protocol` and `protocolPath` are required');
+      throw new DwnError(DwnErrorCode.RecordsWriteCreateMissingProtocol, '`protocol` and `protocolPath` are required');
     }
 
     if ((options.data === undefined && options.dataCid === undefined) ||
@@ -345,7 +345,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     const attestation = await createAttestation(descriptorCid, options.attestationSigners);
 
     // `encryption` generation
-    const encryption = await createEncryptionProperty(descriptor, options.encryptionInput);
+    const encryption = await createEncryptionProperty(options.encryptionInput);
 
     const message: InternalRecordsWriteMessage = {
       recordId,
@@ -473,7 +473,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       }
 
       // Build only the new recipients (reuses createEncryptionProperty for ECDH-ES+A256KW logic)
-      const newEncryption = await createEncryptionProperty(this._message.descriptor, encryptionInput);
+      const newEncryption = await createEncryptionProperty(encryptionInput);
       if (newEncryption) {
         this._message.encryption.recipients.push(...newEncryption.recipients);
       }
@@ -492,7 +492,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       // the contextKey schema. We chose the in-record approach because it keeps
       // records self-contained and the read/decrypt path unchanged.
     } else {
-      this._message.encryption = await createEncryptionProperty(this._message.descriptor, encryptionInput);
+      this._message.encryption = await createEncryptionProperty(encryptionInput);
 
       // Full replacement invalidates the authorization — caller must re-sign.
       delete this._message.authorization;
@@ -585,7 +585,6 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
 
     this._ownerSignaturePayload = Jws.decodePlainObjectPayload(ownerSignature);
     this._owner = Jws.extractDid(signer.keyId);
-    ;
   }
 
   /**
@@ -707,13 +706,6 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
   }
 
   /**
-   * Delegate to the standalone `validateAttestationIntegrity` function for backward compatibility.
-   */
-  private static async validateAttestationIntegrity(message: RecordsWriteMessage): Promise<void> {
-    return validateAttestationIntegrity(message);
-  }
-
-  /**
    * Computes the deterministic Entry ID of this message.
    */
   public async getEntryId(): Promise<string> {
@@ -820,14 +812,6 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     const author = Message.getAuthor(recordsWriteMessage);
     const entryId = await RecordsWrite.getEntryId(author, recordsWriteMessage.descriptor);
     return (entryId === recordsWriteMessage.recordId);
-  }
-
-  /** Delegate to `createEncryptionProperty` in `records-write-signing.ts`. */
-  private static async createEncryptionProperty(
-    descriptor: RecordsWriteDescriptor,
-    encryptionInput: EncryptionInput | undefined,
-  ): Promise<JweEncryption | undefined> {
-    return createEncryptionProperty(descriptor, encryptionInput);
   }
 
   /** Delegate to `createAttestation` in `records-write-signing.ts`. */
