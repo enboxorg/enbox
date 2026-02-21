@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://identity.foundation/schemas/lists/item",
+  "title": "ItemData",
+  "description": "Data shape for a list item.",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "The title of the item."
+    },
+    "url": {
+      "type": "string",
+      "description": "An optional URL associated with the item."
+    },
+    "note": {
+      "type": "string",
+      "description": "An optional note about the item."
+    },
+    "completed": {
+      "type": "boolean",
+      "description": "Whether the item is completed."
+    },
+    "sortOrder": {
+      "type": "number",
+      "description": "An optional sort order for display."
+    }
+  },
+  "required": ["title"],
+  "additionalProperties": false
+}

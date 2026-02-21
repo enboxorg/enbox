@@ -99,7 +99,7 @@ const ProfileProtocolDefinition = {
       $actions: [
         { who: 'anyone', can: ['create', 'read'] },
       ],
-      $recordLimit: { max: 1 },
+      $recordLimit: { max: 1, strategy: 'reject' },
     },
     group: {
       $actions: [
@@ -109,7 +109,7 @@ const ProfileProtocolDefinition = {
         $actions: [
           { who: 'anyone', can: ['create', 'read'] },
         ],
-        $recordLimit: { max: 1 },
+        $recordLimit: { max: 1, strategy: 'reject' },
       },
       member: {
         $actions: [

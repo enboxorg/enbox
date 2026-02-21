@@ -15,9 +15,9 @@ import type { TypedLiveQuery } from './typed-live-query.js';
 import type { TypedRecord } from './typed-record.js';
 import type {
   DataForPath,
+  TypedCreateRequest,
   TypedQueryRequest,
   TypedSubscribeRequest,
-  TypedWriteRequest,
 } from './typed-web5.js';
 import type { DwnPaginationCursor, DwnResponseStatus } from '@enbox/agent';
 import type { ProtocolDefinition, ProtocolRuleSet } from '@enbox/dwn-sdk-js';
@@ -83,7 +83,7 @@ export type CollectionCreateOptions<
   D extends ProtocolDefinition,
   M extends SchemaMap,
   Path extends string,
-> = Omit<TypedWriteRequest<D, M, Path>, 'data' | 'parentContextId'> & {
+> = Omit<TypedCreateRequest<D, M, Path>, 'data' | 'parentContextId'> & {
   data: DataAt<D, M, Path>;
 };
 
@@ -94,7 +94,7 @@ export type SingletonSetOptions<
   D extends ProtocolDefinition,
   M extends SchemaMap,
   Path extends string,
-> = Omit<TypedWriteRequest<D, M, Path>, 'data' | 'parentContextId'> & {
+> = Omit<TypedCreateRequest<D, M, Path>, 'data' | 'parentContextId'> & {
   data: DataAt<D, M, Path>;
 };
 

@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://identity.foundation/schemas/profile/private-note",
+  "title": "PrivateNoteData",
+  "description": "Data shape for a private note (visible only to friends).",
+  "type": "object",
+  "properties": {
+    "content": {
+      "type": "string",
+      "description": "The content of the private note."
+    }
+  },
+  "required": ["content"],
+  "additionalProperties": false
+}

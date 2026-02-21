@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://identity.foundation/schemas/social-graph/block",
+  "title": "BlockData",
+  "description": "Data shape for a block record.",
+  "type": "object",
+  "properties": {
+    "did": {
+      "type": "string",
+      "description": "The DID of the blocked identity."
+    },
+    "reason": {
+      "type": "string",
+      "description": "An optional reason for blocking."
+    }
+  },
+  "required": ["did"],
+  "additionalProperties": false
+}

@@ -86,6 +86,12 @@ describe('@enbox/protocols', () => {
       expect(ProfileDefinition.structure.profile.hero.$size?.max).toBe(25165824);
     });
 
+    it('should enforce $recordLimit on profile, avatar, and hero singletons', () => {
+      expect(ProfileDefinition.structure.profile.$recordLimit).toEqual({ max: 1, strategy: 'reject' });
+      expect(ProfileDefinition.structure.profile.avatar.$recordLimit).toEqual({ max: 1, strategy: 'reject' });
+      expect(ProfileDefinition.structure.profile.hero.$recordLimit).toEqual({ max: 1, strategy: 'reject' });
+    });
+
     it('should use cross-protocol friend role for privateNote', () => {
       const actions = ProfileDefinition.structure.privateNote.$actions;
       expect(actions).toBeDefined();
@@ -116,6 +122,12 @@ describe('@enbox/protocols', () => {
 
     it('should require encryption for privacy type', () => {
       expect(PreferencesDefinition.types.privacy.encryptionRequired).toBe(true);
+    });
+
+    it('should enforce $recordLimit on theme, locale, and privacy singletons', () => {
+      expect(PreferencesDefinition.structure.theme.$recordLimit).toEqual({ max: 1, strategy: 'reject' });
+      expect(PreferencesDefinition.structure.locale.$recordLimit).toEqual({ max: 1, strategy: 'reject' });
+      expect(PreferencesDefinition.structure.privacy.$recordLimit).toEqual({ max: 1, strategy: 'reject' });
     });
 
     it('should require channel tag on notification records', () => {
@@ -231,6 +243,10 @@ describe('@enbox/protocols', () => {
 
     it('should define wallet type', () => {
       expect(ConnectDefinition.types.wallet).toBeDefined();
+    });
+
+    it('should enforce $recordLimit on wallet singleton', () => {
+      expect(ConnectDefinition.structure.wallet.$recordLimit).toEqual({ max: 1, strategy: 'reject' });
     });
 
     it('should allow anyone to read wallet records', () => {

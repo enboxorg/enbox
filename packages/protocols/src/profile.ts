@@ -90,19 +90,22 @@ export const ProfileDefinition = {
   },
   structure: {
     profile: {
-      $size    : { max: 10000 },
-      $actions : [
+      $recordLimit : { max: 1, strategy: 'reject' },
+      $size        : { max: 10000 },
+      $actions     : [
         { who: 'anyone', can: ['read'] },
       ],
       avatar: {
-        $size    : { max: 12582912 },
-        $actions : [
+        $recordLimit : { max: 1, strategy: 'reject' },
+        $size        : { max: 12582912 },
+        $actions     : [
           { who: 'anyone', can: ['read'] },
         ],
       },
       hero: {
-        $size    : { max: 25165824 },
-        $actions : [
+        $recordLimit : { max: 1, strategy: 'reject' },
+        $size        : { max: 25165824 },
+        $actions     : [
           { who: 'anyone', can: ['read'] },
         ],
       },

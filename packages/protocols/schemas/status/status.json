@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://identity.foundation/schemas/status/status",
+  "title": "StatusData",
+  "description": "Data shape for a status update.",
+  "type": "object",
+  "properties": {
+    "text": {
+      "type": "string",
+      "description": "The status text."
+    },
+    "emoji": {
+      "type": "string",
+      "description": "An optional emoji for the status."
+    },
+    "activity": {
+      "type": "string",
+      "enum": ["online", "away", "busy", "offline"],
+      "description": "An optional activity state."
+    },
+    "expiresAt": {
+      "type": "string",
+      "description": "An optional ISO 8601 expiration timestamp."
+    }
+  },
+  "required": ["text"],
+  "additionalProperties": false
+}
