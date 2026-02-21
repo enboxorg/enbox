@@ -1,5 +1,12 @@
 # @enbox/protocols
 
+## 0.2.5
+
+### Patch Changes
+
+- Updated dependencies [[`c36ffb2`](https://github.com/enboxorg/enbox/commit/c36ffb203d8b5eaefffc698f053be6262f1b4ca6)]:
+  - @enbox/api@0.2.3
+
 ## 0.2.4
 
 ### Patch Changes

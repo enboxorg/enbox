@@ -1,5 +1,11 @@
 # @enbox/api
 
+## 0.2.3
+
+### Patch Changes
+
+- [#279](https://github.com/enboxorg/enbox/pull/279) [`c36ffb2`](https://github.com/enboxorg/enbox/commit/c36ffb203d8b5eaefffc698f053be6262f1b4ca6) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Fix TypedWeb5 injecting `schema: undefined` into DWN filters for protocol types that only define `dataFormats` (no `schema`). This caused the DWN SDK's RecordsFilter validation to fail silently, hanging wallet loading for protocols like ProfileProtocol whose `avatar`/`hero` types have no schema.
+
 ## 0.2.2
 
 ### Patch Changes
