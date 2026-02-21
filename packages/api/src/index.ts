@@ -34,6 +34,8 @@ export * from './read-only-record.js';
 export * from './record.js';
 export * from './record-data.js';
 export * from './record-types.js';
+export * from './repository.js';
+export * from './repository-types.js';
 export * from './typed-live-query.js';
 export * from './typed-record.js';
 export * from './typed-web5.js';
