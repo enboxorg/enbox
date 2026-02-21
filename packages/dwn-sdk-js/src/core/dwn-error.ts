@@ -141,8 +141,7 @@ export enum DwnErrorCode {
   RecordsOwnerDelegatedGrantCidMismatch = 'RecordsOwnerDelegatedGrantCidMismatch',
   RecordsOwnerDelegatedGrantGrantedToAndOwnerSignatureMismatch = 'RecordsOwnerDelegatedGrantGrantedToAndOwnerSignatureMismatch',
   RecordsOwnerDelegatedGrantNotADelegatedGrant = 'RecordsOwnerDelegatedGrantNotADelegatedGrant',
-  RecordsProtocolContextDerivationSchemeMissingContextId = 'RecordsProtocolContextDerivationSchemeMissingContextId',
-  RecordsProtocolPathDerivationSchemeMissingProtocol = 'RecordsProtocolPathDerivationSchemeMissingProtocol',
+
   RecordsQueryFilterMissingRequiredProperties = 'RecordsQueryFilterMissingRequiredProperties',
 
   RecordsReadCreateFilterPublishedSortInvalid = 'RecordsReadCreateFilterPublishedSortInvalid',
@@ -157,7 +156,7 @@ export enum DwnErrorCode {
   RecordsWriteCreateMissingSigner = 'RecordsWriteCreateMissingSigner',
   RecordsWriteCreateDataAndDataCidMutuallyExclusive = 'RecordsWriteCreateDataAndDataCidMutuallyExclusive',
   RecordsWriteCreateDataCidAndDataSizeMutuallyInclusive = 'RecordsWriteCreateDataCidAndDataSizeMutuallyInclusive',
-  RecordsWriteCreateProtocolAndProtocolPathMutuallyInclusive = 'RecordsWriteCreateProtocolAndProtocolPathMutuallyInclusive',
+  RecordsWriteCreateMissingProtocol = 'RecordsWriteCreateMissingProtocol',
   RecordsWriteDataCidMismatch = 'RecordsWriteDataCidMismatch',
   RecordsWriteDataSizeMismatch = 'RecordsWriteDataSizeMismatch',
   RecordsWriteGetEntryIdUndefinedAuthor = 'RecordsWriteGetEntryIdUndefinedAuthor',

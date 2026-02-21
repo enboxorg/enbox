@@ -7,9 +7,9 @@ import sinon from 'sinon';
 
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Dwn } from '../../src/dwn.js';
+import { getActionsSeekingARuleMatch } from '../../src/core/protocol-authorization-action.js';
 import { Jws } from '../../src/utils/jws.js';
 import { ProtocolAction } from '../../src/types/protocols-types.js';
-import { ProtocolAuthorization } from '../../src/core/protocol-authorization.js';
 import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -570,7 +570,7 @@ export function testProtocolDeleteAction(): void {
       expect(protocolsConfigureReply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureInvalidActionDeleteWithoutCreate);
     });
 
-    describe('ProtocolAuthorization.getActionsSeekingARuleMatch()', () => {
+    describe('getActionsSeekingARuleMatch()', () => {
       it('should return empty array when given a RecordsDelete on a non-existent record', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
@@ -584,7 +584,7 @@ export function testProtocolDeleteAction(): void {
           = await dwn.processMessage(alice.did, bobUnauthorizedFooDelete.message);
         expect(bobUnauthorizedFooDeleteReply.status.code).toBe(404);
 
-        const actionsSeekingARuleMatch = await ProtocolAuthorization['getActionsSeekingARuleMatch'](alice.did, bobUnauthorizedFooDelete, messageStore);
+        const actionsSeekingARuleMatch = await getActionsSeekingARuleMatch(alice.did, bobUnauthorizedFooDelete, messageStore);
         expect(actionsSeekingARuleMatch).toHaveLength(0);
       });
     });

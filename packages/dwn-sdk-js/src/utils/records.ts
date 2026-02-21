@@ -158,16 +158,7 @@ export class Records {
    * its children (composing protocol) use different protocol URIs and thus different key trees.
    */
   public static constructKeyDerivationPathUsingProtocolPathScheme(descriptor: RecordsWriteDescriptor): string[] {
-    // ensure `protocol` is defined
-    // NOTE: no need to check `protocolPath` and `contextId` because earlier code ensures that if `protocol` is defined, those are defined also
-    if (descriptor.protocol === undefined) {
-      throw new DwnError(
-        DwnErrorCode.RecordsProtocolPathDerivationSchemeMissingProtocol,
-        'Unable to construct key derivation path using `protocols` scheme because `protocol` is missing.'
-      );
-    }
-
-    const protocolPathSegments = descriptor.protocolPath!.split('/');
+    const protocolPathSegments = descriptor.protocolPath.split('/');
     const fullDerivationPath = [
       KeyDerivationScheme.ProtocolPath,
       descriptor.protocol,
@@ -187,14 +178,7 @@ export class Records {
    * a shared context (e.g., thread participants can decrypt messages from both the threads protocol
    * and composing protocols that attach to those threads).
    */
-  public static constructKeyDerivationPathUsingProtocolContextScheme(contextId: string | undefined): string[] {
-    if (contextId === undefined) {
-      throw new DwnError(
-        DwnErrorCode.RecordsProtocolContextDerivationSchemeMissingContextId,
-        'Unable to construct key derivation path using `protocolContext` scheme because `contextId` is missing.'
-      );
-    }
-
+  public static constructKeyDerivationPathUsingProtocolContextScheme(contextId: string): string[] {
     // TODO: Extend key derivation support to include the full contextId (https://github.com/enboxorg/enbox/issues/99)
     const firstContextSegment = contextId.split('/')[0];
 

@@ -1,7 +1,7 @@
 import type { GeneralJws } from '../types/jws-types.js';
 import type { MessageSigner } from '../types/signer.js';
 import type { EncryptionInput, JweEncryption } from '../utils/encryption.js';
-import type { RecordsWriteAttestationPayload, RecordsWriteDescriptor, RecordsWriteMessage, RecordsWriteSignaturePayload } from '../types/records-types.js';
+import type { RecordsWriteAttestationPayload, RecordsWriteMessage, RecordsWriteSignaturePayload } from '../types/records-types.js';
 
 import { Cid } from '../utils/cid.js';
 import { Encoder } from '../utils/encoder.js';
@@ -14,11 +14,9 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 /**
  * Creates the JWE `encryption` property if encryption input is given. Else `undefined` is returned.
  * Uses ECDH-ES+A256KW key agreement with X25519 and AEAD content encryption (A256GCM or XC20P).
- * @param descriptor Descriptor of the `RecordsWrite` message which contains the information needed by key path derivation schemes.
  * @param encryptionInput The encryption input containing CEK, IV, authentication tag, and recipient key encryption inputs.
  */
 export async function createEncryptionProperty(
-  descriptor: RecordsWriteDescriptor,
   encryptionInput: EncryptionInput | undefined,
 ): Promise<JweEncryption | undefined> {
   if (encryptionInput === undefined) {

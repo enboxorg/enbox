@@ -1,4 +1,5 @@
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
+import { getActionsSeekingARuleMatch } from '../../src/core/protocol-authorization-action.js';
 import { MessageStoreLevel } from '../../src/index.js';
 import { ProtocolAuthorization } from '../../src/core/protocol-authorization.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -43,7 +44,7 @@ describe('ProtocolAuthorization', () => {
       } as any;
 
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
-      expect(await ProtocolAuthorization['getActionsSeekingARuleMatch'](alice.did, deliberatelyCraftedInvalidMessage, messageStoreStub)).toHaveLength(0);
+      expect(await getActionsSeekingARuleMatch(alice.did, deliberatelyCraftedInvalidMessage, messageStoreStub)).toHaveLength(0);
     });
   });
 });

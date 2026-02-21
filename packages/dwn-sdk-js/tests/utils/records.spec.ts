@@ -40,9 +40,9 @@ describe('Records', () => {
   });
 
   describe('constructKeyDerivationPathUsingProtocolContextScheme()', () => {
-    it('should throw if not given contextId', async () => {
-      expect(() => Records.constructKeyDerivationPathUsingProtocolContextScheme(undefined))
-        .toThrow(DwnErrorCode.RecordsProtocolContextDerivationSchemeMissingContextId);
+    it('should construct a valid key derivation path using protocol context scheme', async () => {
+      const path = Records.constructKeyDerivationPathUsingProtocolContextScheme('rootId/childId');
+      expect(path).toEqual([KeyDerivationScheme.ProtocolContext, 'rootId']);
     });
   });
 
