@@ -1,6 +1,6 @@
 import type { DataStore } from '../types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
-import type { EventStream } from '../types/subscriptions.js';
+import type { EventLog } from '../types/subscriptions.js';
 import type { GenericMessageReply } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
 import type { MethodHandler } from '../types/method-handler.js';
@@ -31,7 +31,7 @@ export class RecordsWriteHandler implements MethodHandler {
     private messageStore: MessageStore,
     private dataStore: DataStore,
     private stateIndex: StateIndex,
-    private eventStream?: EventStream
+    private eventLog?: EventLog
   ) { }
 
   public async handle({
@@ -136,8 +136,8 @@ export class RecordsWriteHandler implements MethodHandler {
       // NOTE: We only emit a `RecordsWrite` when the message is the latest base state.
       // Because we allow a `RecordsWrite` which is not the latest state to be written, but not queried, we shouldn't emit it either.
       // It will be emitted as a part of a subsequent next write, if it is the latest base state.
-      if (this.eventStream !== undefined && isLatestBaseState) {
-        this.eventStream.emit(tenant, { message, initialWrite }, indexes);
+      if (this.eventLog !== undefined && isLatestBaseState) {
+        await this.eventLog.emit(tenant, { message, initialWrite }, indexes);
       }
     } catch (error) {
       if (error instanceof DwnError) {

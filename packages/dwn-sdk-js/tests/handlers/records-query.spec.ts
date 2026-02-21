@@ -1,7 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventStream } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore, StateIndex } from '../../src/index.js';
-import type { GenericMessage, RecordsWriteMessage } from '../../src/index.js';
+import type { DataStore, EventLog, GenericMessage, MessageStore, ProtocolDefinition, RecordsWriteMessage, ResumableTaskStore, StateIndex } from '../../src/index.js';
 import type { RecordsQueryReply, RecordsQueryReplyEntry, RecordsWriteDescriptor } from '../../src/types/records-types.js';
 
 import sinon from 'sinon';
@@ -23,12 +22,12 @@ import { Message } from '../../src/core/message.js';
 import { RecordsQuery } from '../../src/interfaces/records-query.js';
 import { RecordsQueryHandler } from '../../src/handlers/records-query.js';
 import { RecordsWriteHandler } from '../../src/handlers/records-write.js';
-import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { DataStoreLevel, Dwn, MessageStoreLevel, ProtocolsConfigure, RecordsWrite, Time } from '../../src/index.js';
 import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
+import { TestEventLog, TestEventStream } from '../test-event-stream.js';
 
 export function testRecordsQueryHandler(): void {
   describe('RecordsQueryHandler.handle()', () => {
@@ -44,6 +43,7 @@ export function testRecordsQueryHandler(): void {
       let resumableTaskStore: ResumableTaskStore;
       let stateIndex: StateIndex;
       let eventStream: EventStream;
+      let eventLog: EventLog;
       let dwn: Dwn;
 
       // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
@@ -57,6 +57,7 @@ export function testRecordsQueryHandler(): void {
         resumableTaskStore = stores.resumableTaskStore;
         stateIndex = stores.stateIndex;
         eventStream = TestEventStream.get();
+        eventLog = TestEventLog.get();
 
         dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
       });
@@ -2333,7 +2334,7 @@ export function testRecordsQueryHandler(): void {
           ...aliceMessagesForBobPromise,
         ];
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, eventStream);
+        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, eventLog);
 
         const messages: GenericMessage[] = [];
         for await (const { recordsWrite, message, dataBytes } of messagePromises) {

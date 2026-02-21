@@ -1,22 +1,24 @@
 import type { DidResolver } from '@enbox/dids';
 import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore, StateIndex } from '../../src/index.js';
-import type { EventStream, MessageEvent } from '../../src/types/subscriptions.js';
+import type { EventLog, EventStream, MessageEvent } from '../../src/types/subscriptions.js';
+
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+
+import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
+import sinon from 'sinon';
 
 import { Dwn } from '../../src/dwn.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
-import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
 import { MessagesSubscribe } from '../../src/interfaces/messages-subscribe.js';
 import { MessagesSubscribeHandler } from '../../src/handlers/messages-subscribe.js';
 import { Poller } from '../utils/poller.js';
-import sinon from 'sinon';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '../../src/index.js';
+import { TestEventLog, TestEventStream } from '../test-event-stream.js';
 
 export function testMessagesSubscribeHandler(): void {
   describe('MessagesSubscribe.handle()', () => {
@@ -85,6 +87,7 @@ export function testMessagesSubscribeHandler(): void {
       let resumableTaskStore: ResumableTaskStore;
       let stateIndex: StateIndex;
       let eventStream: EventStream;
+      let eventLog: EventLog;
       let dwn: Dwn;
 
       // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
@@ -98,6 +101,7 @@ export function testMessagesSubscribeHandler(): void {
         resumableTaskStore = stores.resumableTaskStore;
         stateIndex = stores.stateIndex;
         eventStream = TestEventStream.get();
+        eventLog = TestEventLog.get();
 
         dwn = await Dwn.create({
           didResolver,
@@ -131,7 +135,7 @@ export function testMessagesSubscribeHandler(): void {
         // add an invalid property to the descriptor
         (message['descriptor'] as any)['invalid'] = 'invalid';
 
-        const messagesSubscribeHandler = new MessagesSubscribeHandler(didResolver, messageStore, eventStream);
+        const messagesSubscribeHandler = new MessagesSubscribeHandler(didResolver, messageStore, eventLog);
 
         const reply = await messagesSubscribeHandler.handle({ tenant: alice.did, message, subscriptionHandler: (_) => {} });
         expect(reply.status.code).toBe(400);

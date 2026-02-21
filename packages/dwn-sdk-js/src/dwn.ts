@@ -1,19 +1,19 @@
-
 import type { DataStore } from './types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
-import type { EventStream } from './types/subscriptions.js';
 import type { MessageStore } from './types/message-store.js';
 import type { MethodHandler } from './types/method-handler.js';
 import type { ResumableTaskStore } from './types/resumable-task-store.js';
 import type { StateIndex } from './types/state-index.js';
 import type { TenantGate } from './core/tenant-gate.js';
 import type { UnionMessageReply } from './core/message-reply.js';
+import type { EventLog, EventStream } from './types/subscriptions.js';
 import type { GenericMessage, GenericMessageReply } from './types/message-types.js';
 import type { MessagesReadMessage, MessagesReadReply, MessagesSubscribeMessage, MessagesSubscribeMessageOptions, MessagesSubscribeReply, MessagesSyncMessage, MessagesSyncReply, MessageSubscriptionHandler } from './types/messages-types.js';
 import type { ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply } from './types/protocols-types.js';
 import type { RecordsCountMessage, RecordsCountReply, RecordsDeleteMessage, RecordsQueryMessage, RecordsQueryReply, RecordsReadMessage, RecordsReadReply, RecordsSubscribeMessage, RecordsSubscribeMessageOptions, RecordsSubscribeReply, RecordSubscriptionHandler, RecordsWriteMessage, RecordsWriteMessageOptions } from './types/records-types.js';
 
 import { AllowAllTenantGate } from './core/tenant-gate.js';
+import { EventStreamToEventLogAdapter } from './event-stream/event-stream-to-event-log-adapter.js';
 import { Message } from './core/message.js';
 import { messageReplyFromError } from './core/message-reply.js';
 import { MessagesReadHandler } from './handlers/messages-read.js';
@@ -40,24 +40,30 @@ export class Dwn {
   private resumableTaskStore: ResumableTaskStore;
   private stateIndex: StateIndex;
   private tenantGate: TenantGate;
-  private eventStream?: EventStream;
+  private eventLog?: EventLog;
   private storageController: StorageController;
   private resumableTaskManager: ResumableTaskManager;
 
   private constructor(config: DwnConfig) {
     this.didResolver = config.didResolver!;
     this.tenantGate = config.tenantGate!;
-    this.eventStream = config.eventStream!;
     this.messageStore = config.messageStore;
     this.dataStore = config.dataStore;
     this.resumableTaskStore = config.resumableTaskStore;
     this.stateIndex = config.stateIndex;
-    this.eventStream = config.eventStream;
+
+    // Resolve EventLog: prefer `eventLog`, fall back to wrapping deprecated `eventStream`.
+    if (config.eventLog !== undefined) {
+      this.eventLog = config.eventLog;
+    } else if (config.eventStream !== undefined) {
+      this.eventLog = new EventStreamToEventLogAdapter(config.eventStream);
+    }
+
     this.storageController = new StorageController({
       messageStore : this.messageStore,
       dataStore    : this.dataStore,
       stateIndex   : this.stateIndex,
-      eventStream  : this.eventStream
+      eventLog     : this.eventLog
     });
     this.resumableTaskManager = new ResumableTaskManager(
       config.resumableTaskStore,
@@ -73,7 +79,7 @@ export class Dwn {
       [DwnInterfaceName.Messages + DwnMethodName.Subscribe]: new MessagesSubscribeHandler(
         this.didResolver,
         this.messageStore,
-        this.eventStream,
+        this.eventLog,
       ),
       [DwnInterfaceName.Messages + DwnMethodName.Sync]: new MessagesSyncHandler(
         this.didResolver,
@@ -84,7 +90,7 @@ export class Dwn {
         this.didResolver,
         this.messageStore,
         this.stateIndex,
-        this.eventStream
+        this.eventLog
       ),
       [DwnInterfaceName.Protocols + DwnMethodName.Query]: new ProtocolsQueryHandler(
         this.didResolver,
@@ -113,14 +119,14 @@ export class Dwn {
       [DwnInterfaceName.Records + DwnMethodName.Subscribe]: new RecordsSubscribeHandler(
         this.didResolver,
         this.messageStore,
-        this.eventStream
+        this.eventLog
       ),
       [DwnInterfaceName.Records + DwnMethodName.Write]: new RecordsWriteHandler(
         this.didResolver,
         this.messageStore,
         this.dataStore,
         this.stateIndex,
-        this.eventStream
+        this.eventLog
       )
     };
   }
@@ -148,13 +154,13 @@ export class Dwn {
     await this.dataStore.open();
     await this.resumableTaskStore.open();
     await this.stateIndex.open();
-    await this.eventStream?.open();
+    await this.eventLog?.open();
 
     await this.resumableTaskManager.resumeTasksAndWaitForCompletion();
   }
 
   public async close(): Promise<void> {
-    await this.eventStream?.close();
+    await this.eventLog?.close();
     await this.messageStore.close();
     await this.dataStore.close();
     await this.resumableTaskStore.close();
@@ -168,11 +174,11 @@ export class Dwn {
    *
    * Callers are responsible for maintaining consistency across stores.
    */
-  public get storage(): { messageStore: MessageStore; stateIndex: StateIndex; eventStream: EventStream | undefined } {
+  public get storage(): { messageStore: MessageStore; stateIndex: StateIndex; eventLog: EventLog | undefined } {
     return {
       messageStore : this.messageStore,
       stateIndex   : this.stateIndex,
-      eventStream  : this.eventStream,
+      eventLog     : this.eventLog,
     };
   }
 
@@ -274,7 +280,17 @@ export type DwnConfig = {
   didResolver?: DidResolver;
   tenantGate?: TenantGate;
 
-  // event stream is optional if a DWN does not wish to provide subscription services.
+  /**
+   * Persistent event log with cursor-based reads and in-process subscriptions.
+   * Preferred over `eventStream`. If both are provided, `eventLog` takes precedence.
+   */
+  eventLog?: EventLog;
+
+  /**
+   * @deprecated Use `eventLog` instead. If only `eventStream` is provided it will
+   * be wrapped in an adapter that satisfies the {@link EventLog} interface but
+   * does NOT provide persistence or cursor-based reads.
+   */
   eventStream?: EventStream;
 
   messageStore: MessageStore;

@@ -20,7 +20,7 @@ import { TestEventStream } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { Dwn, DwnErrorCode, DwnMethodName, EventEmitterStream, MessageStoreLevel, Time } from '../../src/index.js';
+import { Dwn, DwnErrorCode, DwnMethodName, EventEmitterEventLog, MessageStoreLevel, Time } from '../../src/index.js';
 
 export function testRecordsSubscribeHandler(): void {
   describe('RecordsSubscribeHandler.handle()', () => {
@@ -356,9 +356,9 @@ export function testRecordsSubscribeHandler(): void {
         const mismatchingPersona = await TestDataGenerator.generatePersona({ did: author!.did, keyId: author!.keyId });
         const didResolver = TestStubGenerator.createDidResolverStub(mismatchingPersona);
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
-        const eventStreamStub = sinon.createStubInstance(EventEmitterStream);
+        const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
 
-        const recordsSubscribeHandler = new RecordsSubscribeHandler(didResolver, messageStoreStub, eventStreamStub);
+        const recordsSubscribeHandler = new RecordsSubscribeHandler(didResolver, messageStoreStub, eventLogStub);
         const reply = await recordsSubscribeHandler.handle({ tenant, message, subscriptionHandler: () => {} });
 
         expect(reply.status.code).toBe(401);
@@ -371,8 +371,8 @@ export function testRecordsSubscribeHandler(): void {
         // setting up a stub method resolver & message store
         const didResolver = TestStubGenerator.createDidResolverStub(author!);
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
-        const eventStreamStub = sinon.createStubInstance(EventEmitterStream);
-        const recordsSubscribeHandler = new RecordsSubscribeHandler(didResolver, messageStoreStub, eventStreamStub);
+        const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
+        const recordsSubscribeHandler = new RecordsSubscribeHandler(didResolver, messageStoreStub, eventLogStub);
 
         // stub the `parse()` function to throw an error
         sinon.stub(RecordsSubscribe, 'parse').throws('anyError');
