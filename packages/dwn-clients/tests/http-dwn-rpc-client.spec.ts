@@ -113,6 +113,44 @@ describe('HttpDwnRpcClient', () => {
       expect(readResponse.entry?.recordsWrite?.recordId).toBe(writeMessage.recordId);
     });
 
+    it('throws error if response body is not valid JSON', async () => {
+      sinon.stub(globalThis, 'fetch').resolves({
+        headers : new Headers(),
+        status  : 200,
+        text    : async (): Promise<string> => 'not json',
+      } as any);
+
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' }
+      });
+
+      await expect(client.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      })).rejects.toThrow('failed to parse json rpc response.');
+    });
+
+    it('throws error if response body is empty', async () => {
+      sinon.stub(globalThis, 'fetch').resolves({
+        headers : new Headers(),
+        status  : 502,
+        text    : async (): Promise<string> => '',
+      } as any);
+
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' }
+      });
+
+      await expect(client.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      })).rejects.toThrow('failed to parse json rpc response.');
+    });
+
     it('throws error if invalid response exists in the header', async () => {
       const headers = sinon.createStubInstance(Headers, { has: true });
       sinon.stub(globalThis, 'fetch').resolves({ headers } as any);
