@@ -220,10 +220,10 @@ describe('WebSocketDwnRpcClient', () => {
       };
 
       const subscribeResponse = await client.sendDwnRequest({
-        dwnUrl    : socketDwnUrl,
-        targetDid : alice.did,
-        message   : subscribeMessage,
-        subscriptionHandler
+        dwnUrl       : socketDwnUrl,
+        targetDid    : alice.did,
+        message      : subscribeMessage,
+        subscription : { handler: subscriptionHandler },
       });
       expect(subscribeResponse.status.code).toBe(200);
       expect(subscribeResponse.subscription).toBeDefined();
@@ -363,17 +363,23 @@ describe('WebSocketDwnRpcClient', () => {
         const subRequest = subscriptionCallArgs[0];
         const subHandler = subscriptionCallArgs[1];
 
-        // get the subscription Id from the request, and add a mock subscription to the subscriptions map
+        // get the subscription Id from the request, and add a mock tracked subscription to the subscriptions map
         const subscriptionId = subRequest.subscription!.id;
-        const subscription = {
+        const innerSubscription = {
           id    : subscriptionId,
           close : (): void => {}
         };
         // spy on the close function
-        const closeSpy = spyOn(subscription, 'close');
+        const closeSpy = spyOn(innerSubscription, 'close');
 
+        const tracked = {
+          subscription: innerSubscription,
+          target       : alice.did,
+          message,
+          handler      : (): void => {},
+        };
         // add to the subscriptions map
-        subscriptions.set(subscriptionId, subscription);
+        subscriptions.set(subscriptionId, tracked);
 
         const jsonError = createJsonRpcErrorResponse('id', JsonRpcErrorCodes.BadRequest, 'some error');
         subHandler(jsonError);

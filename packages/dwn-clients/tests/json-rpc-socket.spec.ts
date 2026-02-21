@@ -185,17 +185,13 @@ describe('JsonRpcSocket', () => {
     await sleepWhileWaitingForEvents();
     expect(onCloseSpy).toHaveBeenCalledTimes(1);
 
-    // test default logger
+    // when no onclose handler is provided, close should succeed silently
     const logInfoSpy = spyOn(console, 'info').mockImplementation(() => {});
     const defaultClient = await JsonRpcSocket.connect(socketDwnUrl);
     defaultClient.close();
 
     await sleepWhileWaitingForEvents();
-    expect(logInfoSpy).toHaveBeenCalledTimes(1);
-
-    // extract log message from argument
-    const logMessage:string = logInfoSpy.mock.calls[0][0]!;
-    expect(logMessage).toBe(`JSON RPC Socket close ${socketDwnUrl}`);
+    expect(logInfoSpy).toHaveBeenCalledTimes(0);
   });
 
   describe('event simulation', function () {
@@ -209,17 +205,13 @@ describe('JsonRpcSocket', () => {
       await sleepWhileWaitingForEvents();
       expect(onErrorSpy).toHaveBeenCalledTimes(1);
 
-      // test default logger
+      // when no onerror handler is provided, error should be handled silently
       const logInfoSpy = spyOn(console, 'error').mockImplementation(() => {});
       const defaultClient = await JsonRpcSocket.connect(socketDwnUrl);
       defaultClient['socket'].dispatchEvent(new Event('error'));
 
       await sleepWhileWaitingForEvents();
-      expect(logInfoSpy).toHaveBeenCalledTimes(1);
-
-      // extract log message from argument
-      const logMessage:string = logInfoSpy.mock.calls[0][0]!;
-      expect(logMessage).toBe(`JSON RPC Socket error ${socketDwnUrl}`);
+      expect(logInfoSpy).toHaveBeenCalledTimes(0);
     });
 
     it('closes subscription upon receiving a JsonRpc Error for a long running subscription', async () => {

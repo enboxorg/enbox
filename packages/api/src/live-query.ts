@@ -68,6 +68,16 @@ export type LiveQueryOptions = {
 };
 
 /**
+ * Lifecycle event type for connection state changes.
+ */
+export type LiveQueryLifecycleEvent = 'disconnected' | 'reconnecting' | 'reconnected' | 'eose';
+
+/**
+ * Union of all event types emitted by {@link LiveQuery}.
+ */
+export type LiveQueryEventType = RecordChangeType | 'change' | LiveQueryLifecycleEvent;
+
+/**
  * A live query that combines an initial snapshot of matching records with a
  * real-time stream of deduplicated, semantically-typed change events.
  *
@@ -84,6 +94,10 @@ export type LiveQueryOptions = {
  * | `update` | {@link RecordChange} | An existing record was updated |
  * | `delete` | {@link RecordChange} | A record was deleted |
  * | `change` | {@link RecordChange} | Catch-all for any of the above |
+ * | `disconnected` | — | Transport connection lost |
+ * | `reconnecting` | `{ attempt: number }` | Reconnection attempt in progress |
+ * | `reconnected` | — | Connection restored, subscription resubscribed |
+ * | `eose` | — | End-of-stored-events: catch-up replay complete, events are now live |
  *
  * @example
  * ```ts
@@ -106,10 +120,10 @@ export type LiveQueryOptions = {
  * liveQuery.on('update', (record) => refreshMessage(record));
  * liveQuery.on('delete', (record) => removeMessage(record));
  *
- * // Or use the catch-all
- * liveQuery.on('change', ({ type, record }) => {
- *   console.log(`${type}: ${record.id}`);
- * });
+ * // Connection lifecycle
+ * liveQuery.on('disconnected', () => showOfflineIndicator());
+ * liveQuery.on('reconnected', () => hideOfflineIndicator());
+ * liveQuery.on('eose', () => console.log('catch-up complete'));
  *
  * // Cleanup
  * await liveQuery.close();
@@ -138,6 +152,9 @@ export class LiveQuery extends EventTarget {
 
   /** Whether the live query has been closed. */
   private _closed = false;
+
+  /** Whether the transport connection is currently active. */
+  private _connected = true;
 
   constructor(options: LiveQueryOptions) {
     super();
@@ -172,6 +189,11 @@ export class LiveQuery extends EventTarget {
     for (const record of this.records) {
       this._knownRecords.set(record.id, record.timestamp);
     }
+  }
+
+  /** Whether the transport connection is currently active. */
+  public get isConnected(): boolean {
+    return this._connected;
   }
 
   /**
@@ -218,6 +240,31 @@ export class LiveQuery extends EventTarget {
   }
 
   /**
+   * Handle a transport lifecycle event (disconnected, reconnecting, reconnected)
+   * or an EOSE marker from the subscription.
+   *
+   * @internal — Called by `DwnApi.records.subscribe()` when the handler receives
+   * non-record subscription messages.
+   */
+  public handleLifecycleEvent(type: 'disconnected'): void;
+  public handleLifecycleEvent(type: 'reconnecting', detail: { attempt: number }): void;
+  public handleLifecycleEvent(type: 'reconnected'): void;
+  public handleLifecycleEvent(type: 'eose'): void;
+  public handleLifecycleEvent(type: LiveQueryLifecycleEvent, detail?: { attempt: number }): void {
+    if (this._closed) {
+      return;
+    }
+
+    if (type === 'disconnected') {
+      this._connected = false;
+    } else if (type === 'reconnected') {
+      this._connected = true;
+    }
+
+    this.dispatchEvent(new CustomEvent(type, { detail }));
+  }
+
+  /**
    * Register a typed event handler. Returns an unsubscribe function.
    *
    * @param event - The event type to listen for.
@@ -234,13 +281,25 @@ export class LiveQuery extends EventTarget {
   on(event: 'create', handler: (record: Record) => void): () => void;
   on(event: 'update', handler: (record: Record) => void): () => void;
   on(event: 'delete', handler: (record: Record) => void): () => void;
-  on(event: 'change' | 'create' | 'update' | 'delete', handler: ((change: RecordChange) => void) | ((record: Record) => void)): () => void {
+  on(event: 'disconnected', handler: () => void): () => void;
+  on(event: 'reconnecting', handler: (detail: { attempt: number }) => void): () => void;
+  on(event: 'reconnected', handler: () => void): () => void;
+  on(event: 'eose', handler: () => void): () => void;
+  on(
+    event: LiveQueryEventType,
+    handler: ((change: RecordChange) => void) | ((record: Record) => void) | ((detail: { attempt: number }) => void) | (() => void),
+  ): () => void {
     const wrapper = (e: Event): void => {
-      const detail = (e as CustomEvent<RecordChange>).detail;
+      const detail = (e as CustomEvent).detail;
       if (event === 'change') {
         (handler as (change: RecordChange) => void)(detail);
-      } else {
+      } else if (event === 'create' || event === 'update' || event === 'delete') {
         (handler as (record: Record) => void)(detail.record);
+      } else if (event === 'reconnecting') {
+        (handler as (detail: { attempt: number }) => void)(detail);
+      } else {
+        // disconnected, reconnected, eose — no payload
+        (handler as () => void)();
       }
     };
 
