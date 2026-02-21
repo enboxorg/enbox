@@ -388,6 +388,11 @@ export class AgentPermissionsApi implements PermissionsApi {
     grants: PermissionGrantEntry[],
     delegated: boolean = false
   ): Promise<PermissionGrantEntry | undefined> {
+    // Two-pass matching: prefer exact scope matches over unified Messages.Read fallback.
+    // This ensures that if both a Messages.Sync grant and a Messages.Read grant exist,
+    // the specific Messages.Sync grant is returned for MessagesSync lookups.
+    let unifiedFallback: PermissionGrantEntry | undefined;
+
     for (const entry of grants) {
       const { grant, message } = entry;
       if (delegated === true && grant.delegated !== true) {
@@ -396,9 +401,19 @@ export class AgentPermissionsApi implements PermissionsApi {
       const { messageType, protocol, protocolPath, contextId } = messageParams;
 
       if (this.matchScopeFromGrant(grantor, grantee, messageType, grant, protocol, protocolPath, contextId)) {
-        return { grant, message };
+        const scopeMessageType = grant.scope.interface + grant.scope.method;
+        // Exact match — return immediately
+        if (scopeMessageType === messageType) {
+          return { grant, message };
+        }
+        // Unified fallback match — hold for later in case an exact match is found
+        if (!unifiedFallback) {
+          unifiedFallback = { grant, message };
+        }
       }
     }
+
+    return unifiedFallback;
   }
 
   private static matchScopeFromGrant<T extends DwnInterface>(
@@ -417,7 +432,14 @@ export class AgentPermissionsApi implements PermissionsApi {
 
     const scope = grant.scope;
     const scopeMessageType = scope.interface + scope.method;
-    if (scopeMessageType === messageType) {
+
+    // Messages.Read is a unified scope that covers Messages.Read, Messages.Sync, and Messages.Subscribe.
+    // When looking for a MessagesSync or MessagesSubscribe grant, also accept a MessagesRead grant.
+    const isMessagesScopeMatch = scopeMessageType === messageType
+      || (scopeMessageType === DwnInterface.MessagesRead
+        && (messageType === DwnInterface.MessagesSync || messageType === DwnInterface.MessagesSubscribe));
+
+    if (isMessagesScopeMatch) {
       if (isRecordsType(messageType)) {
         const recordScope = scope as DwnRecordsPermissionScope;
         if (recordScope.protocol !== protocol) {
