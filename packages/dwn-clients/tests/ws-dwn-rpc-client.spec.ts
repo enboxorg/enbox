@@ -373,7 +373,7 @@ describe('WebSocketDwnRpcClient', () => {
         const closeSpy = spyOn(innerSubscription, 'close');
 
         const tracked = {
-          subscription: innerSubscription,
+          subscription : innerSubscription,
           target       : alice.did,
           message,
           handler      : (): void => {},
