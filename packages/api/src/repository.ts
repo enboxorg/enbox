@@ -88,7 +88,7 @@ function buildRootCollectionMethods(
 ): Record<string, Function> {
   return {
     async create(options: Record<string, unknown>): Promise<unknown> {
-      const { status, record } = await typed.records.write(path, options as never);
+      const { status, record } = await typed.records.create(path, options as never);
       return { status, record, ...status };
     },
 
@@ -135,7 +135,7 @@ function buildRootSingletonMethods(
         return { status, record, ...status };
       }
       // Create new
-      const { status, record } = await typed.records.write(path, options as never);
+      const { status, record } = await typed.records.create(path, options as never);
       return { status, record, ...status };
     },
 
@@ -159,7 +159,7 @@ function buildNestedCollectionMethods(
 ): Record<string, Function> {
   return {
     async create(parentContextId: string, options: Record<string, unknown>): Promise<unknown> {
-      const { status, record } = await typed.records.write(path, {
+      const { status, record } = await typed.records.create(path, {
         ...options,
         parentContextId,
       } as never);
@@ -223,7 +223,7 @@ function buildNestedSingletonMethods(
         return { status, record, ...status };
       }
 
-      const { status, record } = await typed.records.write(path, {
+      const { status, record } = await typed.records.create(path, {
         ...options,
         parentContextId,
       } as never);

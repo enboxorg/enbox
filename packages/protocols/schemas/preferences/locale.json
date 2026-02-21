@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://identity.foundation/schemas/preferences/locale",
+  "title": "LocaleData",
+  "description": "Data shape for locale preferences.",
+  "type": "object",
+  "properties": {
+    "language": {
+      "type": "string",
+      "description": "The preferred language (e.g. BCP 47 tag)."
+    },
+    "region": {
+      "type": "string",
+      "description": "An optional region code."
+    },
+    "timezone": {
+      "type": "string",
+      "description": "An optional IANA timezone identifier."
+    },
+    "dateFormat": {
+      "type": "string",
+      "description": "An optional date format string."
+    },
+    "hourCycle": {
+      "type": "string",
+      "enum": ["12h", "24h"],
+      "description": "An optional hour cycle preference."
+    }
+  },
+  "required": ["language"],
+  "additionalProperties": false
+}

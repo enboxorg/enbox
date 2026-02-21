@@ -46,7 +46,8 @@ export const ConnectDefinition = {
   },
   structure: {
     wallet: {
-      $actions: [
+      $recordLimit : { max: 1, strategy: 'reject' },
+      $actions     : [
         { who: 'anyone', can: ['read'] },
       ],
     },

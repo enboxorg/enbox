@@ -17,8 +17,8 @@
  * // Install the protocol
  * await social.configure();
  *
- * // Write — path and data type are checked at compile time
- * const { record } = await social.records.write('thread', {
+ * // Create — path and data type are checked at compile time
+ * const { record } = await social.records.create('thread', {
  *   data: { title: 'Hello World', body: '...' },
  * });
  * // record is TypedRecord<ThreadData>
@@ -91,8 +91,8 @@ type DataFormatForPath<
 // Request / response types
 // ---------------------------------------------------------------------------
 
-/** Options for {@link TypedWeb5} `records.write()`. */
-export type TypedWriteRequest<
+/** Options for {@link TypedWeb5} `records.create()`. */
+export type TypedCreateRequest<
   D extends ProtocolDefinition,
   M extends SchemaMap,
   Path extends string,
@@ -115,8 +115,8 @@ export type TypedWriteRequest<
   encryption?: boolean;
 };
 
-/** Response from {@link TypedWeb5} `records.write()`. */
-export type TypedWriteResponse<T = unknown> = DwnResponseStatus & {
+/** Response from {@link TypedWeb5} `records.create()`. */
+export type TypedCreateResponse<T = unknown> = DwnResponseStatus & {
   record: TypedRecord<T>;
 };
 
@@ -208,7 +208,7 @@ export type TypedSubscribeResponse<T = unknown> = DwnResponseStatus & {
  *
  * await social.configure();
  *
- * const { record } = await social.records.write('friend', {
+ * const { record } = await social.records.create('friend', {
  *   data: { did: 'did:example:alice', alias: 'Alice' },
  * });
  * const data = await record.data.json(); // FriendData — no cast
@@ -254,10 +254,6 @@ export class TypedWeb5<
    * @param options - Optional overrides like `encryption`.
    */
   public async configure(options?: { encryption?: boolean }): Promise<DwnResponseStatus & { protocol?: Protocol }> {
-    // Strip extended properties (e.g. $recordLimit) that the DWN engine
-    // does not yet support, so the protocol can still be configured.
-    const cleanDefinition = stripExtendedProperties(this._definition);
-
     // Query for an existing installation of this protocol.
     const { protocols } = await this._dwn.protocols.query({
       filter: { protocol: this._definition.protocol },
@@ -266,14 +262,14 @@ export class TypedWeb5<
     // If already installed with the same definition, return it as-is.
     if (protocols.length > 0) {
       const existing = protocols[0];
-      if (definitionsEqual(existing.definition, cleanDefinition)) {
+      if (definitionsEqual(existing.definition, this._definition)) {
         return { status: { code: 200, detail: 'OK' }, protocol: existing };
       }
     }
 
     // Not installed or definition has changed — configure the new version.
     return this._dwn.protocols.configure({
-      definition : cleanDefinition as D,
+      definition : this._definition,
       encryption : options?.encryption,
     });
   }
@@ -289,10 +285,10 @@ export class TypedWeb5<
    * that carry the resolved data type from the schema map.
    */
   public get records(): {
-    write: <Path extends ProtocolPaths<D> & string>(
+    create: <Path extends ProtocolPaths<D> & string>(
       path: Path,
-      request: TypedWriteRequest<D, M, Path>,
-    ) => Promise<TypedWriteResponse<DataForPath<D, M, Path>>>;
+      request: TypedCreateRequest<D, M, Path>,
+    ) => Promise<TypedCreateResponse<DataForPath<D, M, Path>>>;
 
     query: <Path extends ProtocolPaths<D> & string>(
       path: Path,
@@ -316,15 +312,15 @@ export class TypedWeb5<
     } {
     return {
       /**
-       * Write a record at the given protocol path.
+       * Create a new record at the given protocol path.
        *
        * @param path - The protocol path (e.g. `'friend'`, `'group/member'`).
-       * @param request - Write options including typed `data`.
+       * @param request - Create options including typed `data`.
        */
-      write: async <Path extends ProtocolPaths<D> & string>(
+      create: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
-        request: TypedWriteRequest<D, M, Path>,
-      ): Promise<TypedWriteResponse<DataForPath<D, M, Path>>> => {
+        request: TypedCreateRequest<D, M, Path>,
+      ): Promise<TypedCreateResponse<DataForPath<D, M, Path>>> => {
         const typeName = lastSegment(path);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
@@ -490,45 +486,6 @@ function definitionsEqual(a: unknown, b: unknown): boolean {
 function lastSegment(path: string): string {
   const parts = path.split('/');
   return parts[parts.length - 1];
-}
-
-/**
- * Extended property keys that appear in the developer-facing protocol
- * definition but are not yet recognized by the DWN engine's JSON schema
- * validator. These are stripped before sending the definition to the DWN.
- */
-const EXTENDED_RULE_SET_KEYS = new Set(['$recordLimit']);
-
-/**
- * Deep-clones a protocol definition, removing extended properties
- * (e.g. `$recordLimit`) from every rule set node in `structure`.
- *
- * This allows developers to annotate their protocol definitions with
- * repository-layer metadata without breaking DWN protocol configuration.
- */
-function stripExtendedProperties(definition: ProtocolDefinition): ProtocolDefinition {
-  return {
-    ...definition,
-    structure: stripStructure(definition.structure) as ProtocolDefinition['structure'],
-  };
-}
-
-/**
- * Recursively strips extended properties from a protocol structure object.
- */
-function stripStructure(
-  obj: globalThis.Record<string, unknown>,
-): globalThis.Record<string, unknown> {
-  const result: globalThis.Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if (EXTENDED_RULE_SET_KEYS.has(key)) { continue; }
-    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-      result[key] = stripStructure(value as globalThis.Record<string, unknown>);
-    } else {
-      result[key] = value;
-    }
-  }
-  return result;
 }
 
 /**

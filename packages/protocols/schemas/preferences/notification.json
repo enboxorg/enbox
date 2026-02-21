@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://identity.foundation/schemas/preferences/notification",
+  "title": "NotificationData",
+  "description": "Data shape for notification preferences.",
+  "type": "object",
+  "properties": {
+    "channel": {
+      "type": "string",
+      "description": "The notification channel identifier."
+    },
+    "enabled": {
+      "type": "boolean",
+      "description": "Whether the channel is enabled."
+    },
+    "quietHoursStart": {
+      "type": "string",
+      "description": "Optional quiet hours start time (HH:MM format)."
+    },
+    "quietHoursEnd": {
+      "type": "string",
+      "description": "Optional quiet hours end time (HH:MM format)."
+    }
+  },
+  "required": ["channel", "enabled"],
+  "additionalProperties": false
+}
