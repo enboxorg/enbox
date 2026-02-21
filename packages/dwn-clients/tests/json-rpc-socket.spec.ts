@@ -259,4 +259,165 @@ describe('JsonRpcSocket', () => {
       expect(errorCounter).toBe(1);
     });
   });
+
+  describe('reconnection', () => {
+    it('should set closedByUser on close() and not attempt reconnect', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, { autoReconnect: true });
+
+      expect(client.isConnected).toBe(true);
+      client.close();
+      expect(client.isConnected).toBe(false);
+
+      // closedByUser should be true — no reconnection attempt
+      expect(client['closedByUser']).toBe(true);
+      expect(client['reconnecting']).toBe(false);
+    });
+
+    it('should reject pending one-shot requests on unexpected close', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, { autoReconnect: false });
+
+      // Set up a pending one-shot request that will never get a response
+      const requestPromise = client.request({
+        jsonrpc : '2.0',
+        id      : 'pending-req',
+        method  : 'test.method',
+      });
+
+      // Simulate an unexpected socket close
+      client['socket'].close();
+      await sleepWhileWaitingForEvents(50);
+
+      // The pending request should be rejected with a transport error
+      const response = await requestPromise;
+      expect(response.error).toBeDefined();
+      expect(response.error!.code).toBe(JsonRpcErrorCodes.TransportError);
+    });
+
+    it('should not reject subscription handlers on unexpected close', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, { autoReconnect: false });
+
+      // Register a subscription handler
+      const subId = 'sub-handler-id';
+      client['subscriptionHandlerIds'].add(subId);
+      const mockHandler = mock((_event: { data: any }): void => {});
+      client['messageHandlers'].set(subId, mockHandler);
+
+      // Simulate an unexpected socket close
+      client['socket'].close();
+      await sleepWhileWaitingForEvents(50);
+
+      // Subscription handler should still be in the map
+      expect(client['messageHandlers'].has(subId)).toBe(true);
+      expect(mockHandler).not.toHaveBeenCalled();
+    });
+
+    it('should call onclose and onreconnecting on unexpected close when autoReconnect is true', async () => {
+      const onclose = mock((): void => {});
+      const onreconnecting = mock((_attempt: number): void => {});
+
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        autoReconnect        : true,
+        baseReconnectDelay   : 50,
+        maxReconnectDelay    : 100,
+        maxReconnectAttempts : 1,
+        onclose,
+        onreconnecting,
+      });
+
+      // Simulate an unexpected socket close
+      client['socket'].close();
+      await sleepWhileWaitingForEvents(200);
+
+      expect(onclose).toHaveBeenCalledTimes(1);
+      expect(onreconnecting).toHaveBeenCalledTimes(1);
+      expect(onreconnecting.mock.calls[0][0]).toBe(1);
+
+      // Clean up
+      client.close();
+    });
+
+    it('should reconnect and call onreconnected on successful reconnection', async () => {
+      const onreconnected = mock((): void => {});
+      const onclose = mock((): void => {});
+
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        autoReconnect      : true,
+        baseReconnectDelay : 50,
+        maxReconnectDelay  : 100,
+        onclose,
+        onreconnected,
+      });
+
+      expect(client.isConnected).toBe(true);
+
+      // Simulate an unexpected socket close (server is still running, so reconnect should succeed)
+      client['socket'].close();
+      await sleepWhileWaitingForEvents(500);
+
+      expect(onreconnected).toHaveBeenCalledTimes(1);
+      expect(client.isConnected).toBe(true);
+
+      // Clean up
+      client.close();
+    });
+
+    it('should stop reconnecting when maxReconnectAttempts is reached', async () => {
+      const onreconnecting = mock((_attempt: number): void => {});
+      // Use a bogus URL that will always fail to connect
+      const consoleErrorSpy = spyOn(console, 'error').mockImplementation(() => {});
+
+      let client: JsonRpcSocket | undefined;
+      try {
+        client = await JsonRpcSocket.connect(socketDwnUrl, {
+          autoReconnect        : true,
+          baseReconnectDelay   : 10,
+          maxReconnectDelay    : 20,
+          maxReconnectAttempts : 2,
+          onreconnecting,
+        });
+
+        // Replace createWebSocket to always fail, simulating the server being down
+        const originalCreate = JsonRpcSocket['createWebSocket'];
+        spyOn(JsonRpcSocket as any, 'createWebSocket').mockRejectedValue(new Error('connection refused'));
+
+        // Simulate unexpected close
+        client['socket'].close();
+        await sleepWhileWaitingForEvents(500);
+
+        // Should have attempted exactly 2 reconnections
+        expect(onreconnecting).toHaveBeenCalledTimes(2);
+        expect(client['reconnecting']).toBe(false);
+
+        // Restore
+        (JsonRpcSocket as any)['createWebSocket'] = originalCreate;
+      } finally {
+        client?.close();
+        consoleErrorSpy.mockRestore();
+      }
+    });
+
+    it('should track isConnected state through connect/disconnect/reconnect cycle', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        autoReconnect      : true,
+        baseReconnectDelay : 50,
+        maxReconnectDelay  : 100,
+      });
+
+      expect(client.isConnected).toBe(true);
+
+      // Simulate unexpected close
+      client['socket'].close();
+      await sleepWhileWaitingForEvents(10);
+
+      expect(client.isConnected).toBe(false);
+
+      // Wait for reconnection (server is still running)
+      await sleepWhileWaitingForEvents(500);
+      expect(client.isConnected).toBe(true);
+
+      // Clean up
+      client.close();
+      expect(client.isConnected).toBe(false);
+    });
+  });
 });

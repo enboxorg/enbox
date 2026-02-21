@@ -248,17 +248,13 @@ describe('JsonRpcSocket', () => {
     await new Promise((resolve) => setTimeout(resolve, 5)); // wait for close event to arrive
     expect(onCloseSpy).toHaveBeenCalledTimes(1);
 
-    // test default logger
+    // when no onclose handler is provided, close should succeed silently
     const consoleInfoSpy = spyOn(console, 'info');
     const defaultClient = await JsonRpcSocket.connect('ws://127.0.0.1:9003');
     defaultClient.close();
 
     await new Promise((resolve) => setTimeout(resolve, 5)); // wait for close event to arrive
-    expect(consoleInfoSpy).toHaveBeenCalledTimes(1);
-
-    // extract log message from argument
-    const logMessage:string = consoleInfoSpy.mock.calls[0][0]!;
-    expect(logMessage).toBe('JSON RPC Socket close ws://127.0.0.1:9003');
+    expect(consoleInfoSpy).toHaveBeenCalledTimes(0);
     consoleInfoSpy.mockRestore();
   });
 
@@ -278,18 +274,14 @@ describe('JsonRpcSocket', () => {
     }
     expect(onErrorSpy).toHaveBeenCalledTimes(1);
 
-    // test default logger
+    // when no onerror handler is provided, error should be handled silently
     const consoleErrorSpy = spyOn(console, 'error');
     try {
       await JsonRpcSocket.connect(badUrl, { connectTimeout: 2000 });
     } catch {
       // expected — connection refused
     }
-    expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
-
-    // extract log message from argument
-    const logMessage:string = consoleErrorSpy.mock.calls[0][0]!;
-    expect(logMessage).toBe(`JSON RPC Socket error ${badUrl}`);
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(0);
     consoleErrorSpy.mockRestore();
   });
 });

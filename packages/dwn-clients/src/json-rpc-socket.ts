@@ -119,7 +119,15 @@ export class JsonRpcSocket {
   public static async connect(url: string, options: JsonRpcSocketOptions = {}): Promise<JsonRpcSocket> {
     const { connectTimeout = CONNECT_TIMEOUT, responseTimeout = RESPONSE_TIMEOUT } = options;
 
-    const socket = await JsonRpcSocket.createWebSocket(url, connectTimeout);
+    let socket: WebSocket;
+    try {
+      socket = await JsonRpcSocket.createWebSocket(url, connectTimeout);
+    } catch (error) {
+      // Notify the onerror handler if one was provided, even for connection-time errors.
+      options.onerror?.(error);
+      throw error;
+    }
+
     const jsonRpcSocket = new JsonRpcSocket(socket, responseTimeout, url, options);
     jsonRpcSocket.wireSocket(socket);
 

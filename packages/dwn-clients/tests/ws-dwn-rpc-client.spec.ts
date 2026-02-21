@@ -389,5 +389,66 @@ describe('WebSocketDwnRpcClient', () => {
         expect(subscriptions.size).toBe(0);
       });
     });
+
+    describe('subscription lifecycle events', () => {
+      it('should track lastCursor from subscription events', async () => {
+        // install the default test protocol so the DWN accepts the record
+        await installDefaultTestProtocolViaHttp(httpClient, testDwnUrl, alice);
+
+        // create a subscription
+        const { message: subscribeMessage } = await TestDataGenerator.generateRecordsSubscribe({
+          author : alice,
+          filter : { schema: 'foo/bar' }
+        });
+
+        const receivedMessages: any[] = [];
+        const handler: RecordSubscriptionHandler = (msg) => {
+          receivedMessages.push(msg);
+        };
+
+        const subscribeResponse = await client.sendDwnRequest({
+          dwnUrl       : socketDwnUrl,
+          targetDid    : alice.did,
+          message      : subscribeMessage,
+          subscription : { handler },
+        });
+        expect(subscribeResponse.status.code).toBe(200);
+        expect(subscribeResponse.subscription).toBeDefined();
+
+        // write a record to trigger a subscription event
+        const { message: writeMessage, dataBytes } = await TestDataGenerator.generateRecordsWrite({
+          author : alice,
+          schema : 'foo/bar'
+        });
+
+        await httpClient.sendDwnRequest({
+          dwnUrl    : testDwnUrl,
+          targetDid : alice.did,
+          message   : writeMessage,
+          data      : dataBytes,
+        });
+
+        await sleepWhileWaitingForEvents(100);
+
+        // should have received at least one event
+        expect(receivedMessages.length).toBeGreaterThanOrEqual(1);
+
+        // check that the connection tracks the subscription with a cursor
+        const host = new URL(socketDwnUrl).host;
+        const connection = (WebSocketDwnRpcClient as any)['connections'].get(host);
+        expect(connection).toBeDefined();
+
+        // at least one tracked subscription should exist
+        const trackedSubs = [...connection.subscriptions.values()];
+        expect(trackedSubs.length).toBeGreaterThanOrEqual(1);
+
+        // the lastCursor should be set from the received event
+        const tracked = trackedSubs[0];
+        expect(tracked.lastCursor).toBeDefined();
+        expect(typeof tracked.lastCursor).toBe('string');
+
+        await subscribeResponse.subscription!.close();
+      });
+    });
   });
 });
