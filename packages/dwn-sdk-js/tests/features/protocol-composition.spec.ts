@@ -1,7 +1,7 @@
 import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, RecordsReadReply, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { DataStore, MessageStore, RecordsCountReply, RecordsReadReply, RecordsSubscribeReply, ResumableTaskStore, StateIndex } from '../../src/index.js';
 import type { PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../../src/types/protocols-types.js';
 
@@ -20,7 +20,7 @@ import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { X25519 } from '@enbox/crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { DwnErrorCode, Message, ProtocolsConfigure, RecordsDelete, RecordsQuery, RecordsRead, Time } from '../../src/index.js';
+import { DwnErrorCode, Message, ProtocolsConfigure, RecordsCount, RecordsDelete, RecordsQuery, RecordsRead, RecordsSubscribe, Time } from '../../src/index.js';
 import { HdKey, KeyDerivationScheme } from '../../src/utils/hd-key.js';
 
 /**
@@ -1431,6 +1431,722 @@ export function testProtocolComposition(): void {
           // JSON schema enforces minProperties: 1 on `uses`
           expect(error.message).toContain('must NOT have fewer than 1 properties');
         }
+      });
+    });
+
+    // =========================================================================
+    // Multi-level composition rejection (#299)
+    // =========================================================================
+
+    describe('multi-level composition rejection', () => {
+      it('should reject `$ref` that targets a node which is itself a `$ref` composition point', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // Protocol B uses Protocol A (threads)
+        const protocolB: ProtocolDefinition = {
+          protocol  : 'https://protocol-b.example.com',
+          published : true,
+          uses      : { threads: 'https://threads.example.com' },
+          types     : {
+            annotation: { schema: 'https://protocol-b.example.com/schemas/annotation', dataFormats: ['application/json'] },
+          },
+          structure: {
+            thread: {
+              $ref       : 'threads:thread',
+              annotation : {
+                $actions: [{ who: 'anyone', can: ['create', 'read'] }],
+              },
+            },
+          },
+        };
+
+        // Protocol C uses Protocol B — attempts to $ref through B's $ref node
+        const protocolC: ProtocolDefinition = {
+          protocol  : 'https://protocol-c.example.com',
+          published : true,
+          uses      : { b: 'https://protocol-b.example.com' },
+          types     : {
+            tag: { schema: 'https://protocol-c.example.com/schemas/tag', dataFormats: ['application/json'] },
+          },
+          structure: {
+            thread: {
+              $ref : 'b:thread', // 'thread' in protocol B IS a $ref node — multi-level, should be rejected
+              tag  : {
+                $actions: [{ who: 'anyone', can: ['create', 'read'] }],
+              },
+            },
+          },
+        };
+
+        // Install threads protocol (protocol A)
+        const threadsConfigure = await ProtocolsConfigure.create({
+          definition : threadsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        await dwn.processMessage(alice.did, threadsConfigure.message);
+
+        // Install protocol B (depends on threads)
+        const bConfigure = await ProtocolsConfigure.create({
+          definition : protocolB,
+          signer     : Jws.createSigner(alice),
+        });
+        const bReply = await dwn.processMessage(alice.did, bConfigure.message);
+        expect(bReply.status.code).toBe(202);
+
+        // Install protocol C (depends on B) — should be REJECTED
+        const cConfigure = await ProtocolsConfigure.create({
+          definition : protocolC,
+          signer     : Jws.createSigner(alice),
+        });
+        const cReply = await dwn.processMessage(alice.did, cConfigure.message);
+        expect(cReply.status.code).toBe(400);
+        expect(cReply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureInvalidRefTargetThroughRef);
+      });
+
+      it('should reject `$ref` that targets a multi-segment path traversing through an intermediate `$ref` node', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // Protocol B uses threads — has $ref at 'thread' and local children under it
+        const protocolB: ProtocolDefinition = {
+          protocol  : 'https://protocol-b.example.com',
+          published : true,
+          uses      : { threads: 'https://threads.example.com' },
+          types     : {
+            annotation: { schema: 'https://protocol-b.example.com/schemas/annotation', dataFormats: ['application/json'] },
+          },
+          structure: {
+            thread: {
+              $ref       : 'threads:thread',
+              annotation : {
+                $actions: [{ who: 'anyone', can: ['create', 'read'] }],
+              },
+            },
+          },
+        };
+
+        // Protocol C references a path that traverses through B's $ref node: 'thread/annotation'
+        // 'thread' is a $ref node in protocol B, so this should be rejected even though 'annotation' is a real node
+        const protocolC: ProtocolDefinition = {
+          protocol  : 'https://protocol-c.example.com',
+          published : true,
+          uses      : { b: 'https://protocol-b.example.com' },
+          types     : {
+            tag: { schema: 'https://protocol-c.example.com/schemas/tag', dataFormats: ['application/json'] },
+          },
+          structure: {
+            annotation: {
+              $ref : 'b:thread/annotation', // traverses through 'thread' which is a $ref node
+              tag  : {
+                $actions: [{ who: 'anyone', can: ['create', 'read'] }],
+              },
+            },
+          },
+        };
+
+        // Install threads protocol
+        const threadsConfigure = await ProtocolsConfigure.create({
+          definition : threadsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        await dwn.processMessage(alice.did, threadsConfigure.message);
+
+        // Install protocol B
+        const bConfigure = await ProtocolsConfigure.create({
+          definition : protocolB,
+          signer     : Jws.createSigner(alice),
+        });
+        const bReply = await dwn.processMessage(alice.did, bConfigure.message);
+        expect(bReply.status.code).toBe(202);
+
+        // Install protocol C — should be REJECTED because 'thread' (intermediate) is a $ref node
+        const cConfigure = await ProtocolsConfigure.create({
+          definition : protocolC,
+          signer     : Jws.createSigner(alice),
+        });
+        const cReply = await dwn.processMessage(alice.did, cConfigure.message);
+        expect(cReply.status.code).toBe(400);
+        expect(cReply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureInvalidRefTargetThroughRef);
+      });
+
+      it('should accept `$ref` to a node that does NOT have a `$ref` directive', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // Protocol B has a normal (non-$ref) 'item' type with children
+        const protocolB: ProtocolDefinition = {
+          protocol  : 'https://protocol-b.example.com',
+          published : true,
+          types     : {
+            item : { schema: 'https://protocol-b.example.com/schemas/item', dataFormats: ['application/json'] },
+            sub  : { schema: 'https://protocol-b.example.com/schemas/sub', dataFormats: ['application/json'] },
+          },
+          structure: {
+            item: {
+              $actions : [{ who: 'anyone', can: ['create', 'read'] }],
+              sub      : {
+                $actions: [{ who: 'anyone', can: ['create', 'read'] }],
+              },
+            },
+          },
+        };
+
+        // Protocol C references 'item' in B — this is single-level composition (no $ref in target), should succeed
+        const protocolC: ProtocolDefinition = {
+          protocol  : 'https://protocol-c.example.com',
+          published : true,
+          uses      : { b: 'https://protocol-b.example.com' },
+          types     : {
+            extra: { schema: 'https://protocol-c.example.com/schemas/extra', dataFormats: ['application/json'] },
+          },
+          structure: {
+            item: {
+              $ref  : 'b:item',
+              extra : {
+                $actions: [{ who: 'anyone', can: ['create', 'read'] }],
+              },
+            },
+          },
+        };
+
+        // Install protocol B
+        const bConfigure = await ProtocolsConfigure.create({
+          definition : protocolB,
+          signer     : Jws.createSigner(alice),
+        });
+        const bReply = await dwn.processMessage(alice.did, bConfigure.message);
+        expect(bReply.status.code).toBe(202);
+
+        // Install protocol C — should SUCCEED
+        const cConfigure = await ProtocolsConfigure.create({
+          definition : protocolC,
+          signer     : Jws.createSigner(alice),
+        });
+        const cReply = await dwn.processMessage(alice.did, cConfigure.message);
+        expect(cReply.status.code).toBe(202);
+      });
+    });
+
+    // =========================================================================
+    // RecordsSubscribe with cross-protocol role
+    // =========================================================================
+
+    describe('cross-protocol RecordsSubscribe', () => {
+      it('should allow a cross-protocol role holder to subscribe to records in the composing protocol', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        // Install both protocols on Alice's DWN
+        const threadsConfigure = await ProtocolsConfigure.create({
+          definition : threadsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        await dwn.processMessage(alice.did, threadsConfigure.message);
+
+        const commentsConfigure = await ProtocolsConfigure.create({
+          definition : commentsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        await dwn.processMessage(alice.did, commentsConfigure.message);
+
+        // Alice creates a thread
+        const threadWrite = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol     : threadsProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://threads.example.com/schemas/thread',
+          dataFormat   : 'application/json',
+        });
+        await dwn.processMessage(alice.did, threadWrite.message, { dataStream: threadWrite.dataStream });
+        const threadContextId = threadWrite.message.contextId!;
+
+        // Alice assigns Bob as a participant
+        const participantWrite = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          recipient       : bob.did,
+          protocol        : threadsProtocol.protocol,
+          protocolPath    : 'thread/participant',
+          schema          : 'https://threads.example.com/schemas/participant',
+          dataFormat      : 'application/json',
+          parentContextId : threadContextId,
+        });
+        await dwn.processMessage(alice.did, participantWrite.message, { dataStream: participantWrite.dataStream });
+
+        // Bob subscribes to comments using the cross-protocol role
+        const bobSubscribe = await RecordsSubscribe.create({
+          signer       : Jws.createSigner(bob),
+          protocolRole : 'threads:thread/participant',
+          filter       : {
+            protocol     : commentsProtocol.protocol,
+            protocolPath : 'thread/comment',
+            contextId    : threadContextId,
+          },
+        });
+        const subReply = await dwn.processMessage(
+          alice.did, bobSubscribe.message, { subscriptionHandler: (): void => {} }
+        ) as RecordsSubscribeReply;
+        expect(subReply.status.code).toBe(200);
+        expect(subReply.subscription).toBeDefined();
+
+        // Clean up subscription
+        await subReply.subscription!.close();
+      });
+    });
+
+    // =========================================================================
+    // RecordsCount with cross-protocol role
+    // =========================================================================
+
+    describe('cross-protocol RecordsCount', () => {
+      it('should allow a cross-protocol role holder to count records in the composing protocol', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        // Install both protocols on Alice's DWN
+        const threadsConfigure = await ProtocolsConfigure.create({
+          definition : threadsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        await dwn.processMessage(alice.did, threadsConfigure.message);
+
+        const commentsConfigure = await ProtocolsConfigure.create({
+          definition : commentsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        await dwn.processMessage(alice.did, commentsConfigure.message);
+
+        // Alice creates a thread
+        const threadWrite = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol     : threadsProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://threads.example.com/schemas/thread',
+          dataFormat   : 'application/json',
+        });
+        await dwn.processMessage(alice.did, threadWrite.message, { dataStream: threadWrite.dataStream });
+        const threadContextId = threadWrite.message.contextId!;
+
+        // Alice assigns Bob as a participant
+        const participantWrite = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          recipient       : bob.did,
+          protocol        : threadsProtocol.protocol,
+          protocolPath    : 'thread/participant',
+          schema          : 'https://threads.example.com/schemas/participant',
+          dataFormat      : 'application/json',
+          parentContextId : threadContextId,
+        });
+        await dwn.processMessage(alice.did, participantWrite.message, { dataStream: participantWrite.dataStream });
+
+        // Alice creates 3 comments
+        for (let i = 0; i < 3; i++) {
+          const commentWrite = await TestDataGenerator.generateRecordsWrite({
+            author          : alice,
+            protocol        : commentsProtocol.protocol,
+            protocolPath    : 'thread/comment',
+            schema          : 'https://comments.example.com/schemas/comment',
+            dataFormat      : 'application/json',
+            parentContextId : threadContextId,
+          });
+          await dwn.processMessage(alice.did, commentWrite.message, { dataStream: commentWrite.dataStream });
+        }
+
+        // Bob counts comments using the cross-protocol role
+        const bobCount = await RecordsCount.create({
+          signer       : Jws.createSigner(bob),
+          protocolRole : 'threads:thread/participant',
+          filter       : {
+            protocol     : commentsProtocol.protocol,
+            protocolPath : 'thread/comment',
+            contextId    : threadContextId,
+          },
+        });
+        const countReply = await dwn.processMessage(alice.did, bobCount.message) as RecordsCountReply;
+        expect(countReply.status.code).toBe(200);
+        expect(countReply.count).toBe(3);
+      });
+    });
+
+    // =========================================================================
+    // Cross-protocol co-update via role
+    // =========================================================================
+
+    describe('cross-protocol co-update via role', () => {
+      it('should allow a cross-protocol role holder to co-update records in the composing protocol', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        // A variant of the comments protocol where participants can also co-update
+        const commentsCoUpdateProtocol: ProtocolDefinition = {
+          protocol  : 'https://comments-coupdate.example.com',
+          published : true,
+          uses      : { threads: 'https://threads.example.com' },
+          types     : {
+            comment: { schema: 'https://comments-coupdate.example.com/schemas/comment', dataFormats: ['application/json'] },
+          },
+          structure: {
+            thread: {
+              $ref    : 'threads:thread',
+              comment : {
+                $actions: [
+                  { who: 'anyone', can: ['create', 'read'] },
+                  { role: 'threads:thread/participant', can: ['co-update'] },
+                ],
+              },
+            },
+          },
+        };
+
+        // Install both protocols on Alice's DWN
+        const threadsConfigure = await ProtocolsConfigure.create({
+          definition : threadsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        await dwn.processMessage(alice.did, threadsConfigure.message);
+
+        const commentsConfigure = await ProtocolsConfigure.create({
+          definition : commentsCoUpdateProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        const commentsReply = await dwn.processMessage(alice.did, commentsConfigure.message);
+        expect(commentsReply.status.code).toBe(202);
+
+        // Alice creates a thread
+        const threadWrite = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol     : threadsProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://threads.example.com/schemas/thread',
+          dataFormat   : 'application/json',
+        });
+        await dwn.processMessage(alice.did, threadWrite.message, { dataStream: threadWrite.dataStream });
+        const threadContextId = threadWrite.message.contextId!;
+
+        // Alice assigns Bob as a participant
+        const participantWrite = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          recipient       : bob.did,
+          protocol        : threadsProtocol.protocol,
+          protocolPath    : 'thread/participant',
+          schema          : 'https://threads.example.com/schemas/participant',
+          dataFormat      : 'application/json',
+          parentContextId : threadContextId,
+        });
+        await dwn.processMessage(alice.did, participantWrite.message, { dataStream: participantWrite.dataStream });
+
+        // Alice creates a comment (via 'anyone' can 'create')
+        const commentWrite = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          protocol        : commentsCoUpdateProtocol.protocol,
+          protocolPath    : 'thread/comment',
+          schema          : 'https://comments-coupdate.example.com/schemas/comment',
+          dataFormat      : 'application/json',
+          parentContextId : threadContextId,
+        });
+        await dwn.processMessage(alice.did, commentWrite.message, { dataStream: commentWrite.dataStream });
+
+        // Bob (participant) co-updates Alice's comment using the cross-protocol role
+        const bobUpdate = await TestDataGenerator.generateFromRecordsWrite({
+          author        : bob,
+          existingWrite : commentWrite.recordsWrite,
+          protocolRole  : 'threads:thread/participant',
+        });
+        const updateReply = await dwn.processMessage(alice.did, bobUpdate.message, { dataStream: bobUpdate.dataStream });
+        expect(updateReply.status.code).toBe(202);
+      });
+    });
+
+    // =========================================================================
+    // Query isolation — subscribing to referenced protocol does NOT yield composing protocol events
+    // =========================================================================
+
+    describe('query isolation between protocols', () => {
+      it('should not return composing protocol records when querying the referenced protocol', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // Install both protocols
+        const threadsConfigure = await ProtocolsConfigure.create({
+          definition : threadsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        await dwn.processMessage(alice.did, threadsConfigure.message);
+
+        const commentsConfigure = await ProtocolsConfigure.create({
+          definition : commentsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        await dwn.processMessage(alice.did, commentsConfigure.message);
+
+        // Alice creates a thread in the threads protocol
+        const threadWrite = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol     : threadsProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://threads.example.com/schemas/thread',
+          dataFormat   : 'application/json',
+        });
+        await dwn.processMessage(alice.did, threadWrite.message, { dataStream: threadWrite.dataStream });
+        const threadContextId = threadWrite.message.contextId!;
+
+        // Alice creates comments in the composing protocol
+        const commentWrite = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          protocol        : commentsProtocol.protocol,
+          protocolPath    : 'thread/comment',
+          schema          : 'https://comments.example.com/schemas/comment',
+          dataFormat      : 'application/json',
+          parentContextId : threadContextId,
+        });
+        await dwn.processMessage(alice.did, commentWrite.message, { dataStream: commentWrite.dataStream });
+
+        // Query the THREADS protocol for all records — should NOT include the comment
+        const threadsQuery = await RecordsQuery.create({
+          signer : Jws.createSigner(alice),
+          filter : {
+            protocol: threadsProtocol.protocol,
+          },
+        });
+        const threadsQueryReply = await dwn.processMessage(alice.did, threadsQuery.message);
+        expect(threadsQueryReply.status.code).toBe(200);
+
+        // Only the thread record itself should be returned
+        const threadsRecordIds = threadsQueryReply.entries!.map((e: any) => e.recordId);
+        expect(threadsRecordIds).toContain(threadWrite.message.recordId);
+        expect(threadsRecordIds).not.toContain(commentWrite.message.recordId);
+
+        // Query the COMMENTS protocol — should include the comment
+        const commentsQuery = await RecordsQuery.create({
+          signer : Jws.createSigner(alice),
+          filter : {
+            protocol: commentsProtocol.protocol,
+          },
+        });
+        const commentsQueryReply = await dwn.processMessage(alice.did, commentsQuery.message);
+        expect(commentsQueryReply.status.code).toBe(200);
+
+        const commentsRecordIds = commentsQueryReply.entries!.map((e: any) => e.recordId);
+        expect(commentsRecordIds).toContain(commentWrite.message.recordId);
+        expect(commentsRecordIds).not.toContain(threadWrite.message.recordId);
+      });
+    });
+
+    // =========================================================================
+    // Multiple composing protocols on the same $ref target
+    // =========================================================================
+
+    describe('multiple composing protocols on the same $ref target', () => {
+      it('should allow two different composing protocols to independently reference the same type in a base protocol', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // commentsProtocol already references threads:thread
+        // Create a second composing protocol that also references threads:thread
+        const ratingsProtocol: ProtocolDefinition = {
+          protocol  : 'https://ratings.example.com',
+          published : true,
+          uses      : { threads: 'https://threads.example.com' },
+          types     : {
+            rating: { schema: 'https://ratings.example.com/schemas/rating', dataFormats: ['application/json'] },
+          },
+          structure: {
+            thread: {
+              $ref   : 'threads:thread',
+              rating : {
+                $actions: [
+                  { who: 'anyone', can: ['create', 'read'] },
+                ],
+              },
+            },
+          },
+        };
+
+        // Install threads (base), comments, and ratings
+        const threadsConfigure = await ProtocolsConfigure.create({
+          definition : threadsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        await dwn.processMessage(alice.did, threadsConfigure.message);
+
+        const commentsConfigure = await ProtocolsConfigure.create({
+          definition : commentsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        const commentsReply = await dwn.processMessage(alice.did, commentsConfigure.message);
+        expect(commentsReply.status.code).toBe(202);
+
+        const ratingsConfigure = await ProtocolsConfigure.create({
+          definition : ratingsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        const ratingsReply = await dwn.processMessage(alice.did, ratingsConfigure.message);
+        expect(ratingsReply.status.code).toBe(202);
+
+        // Create a thread
+        const threadWrite = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol     : threadsProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://threads.example.com/schemas/thread',
+          dataFormat   : 'application/json',
+        });
+        await dwn.processMessage(alice.did, threadWrite.message, { dataStream: threadWrite.dataStream });
+        const threadContextId = threadWrite.message.contextId!;
+
+        // Create a comment under the thread via comments protocol
+        const commentWrite = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          protocol        : commentsProtocol.protocol,
+          protocolPath    : 'thread/comment',
+          schema          : 'https://comments.example.com/schemas/comment',
+          dataFormat      : 'application/json',
+          parentContextId : threadContextId,
+        });
+        const commentReply = await dwn.processMessage(
+          alice.did, commentWrite.message, { dataStream: commentWrite.dataStream }
+        );
+        expect(commentReply.status.code).toBe(202);
+
+        // Create a rating under the same thread via ratings protocol
+        const ratingWrite = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          protocol        : ratingsProtocol.protocol,
+          protocolPath    : 'thread/rating',
+          schema          : 'https://ratings.example.com/schemas/rating',
+          dataFormat      : 'application/json',
+          parentContextId : threadContextId,
+        });
+        const ratingReply = await dwn.processMessage(
+          alice.did, ratingWrite.message, { dataStream: ratingWrite.dataStream }
+        );
+        expect(ratingReply.status.code).toBe(202);
+
+        // Each protocol's records are isolated — querying comments returns only comments
+        const commentsQuery = await RecordsQuery.create({
+          signer : Jws.createSigner(alice),
+          filter : { protocol: commentsProtocol.protocol },
+        });
+        const commentsQueryReply = await dwn.processMessage(alice.did, commentsQuery.message);
+        expect(commentsQueryReply.entries!.length).toBe(1);
+        expect(commentsQueryReply.entries![0].recordId).toBe(commentWrite.message.recordId);
+
+        // Querying ratings returns only ratings
+        const ratingsQuery = await RecordsQuery.create({
+          signer : Jws.createSigner(alice),
+          filter : { protocol: ratingsProtocol.protocol },
+        });
+        const ratingsQueryReply = await dwn.processMessage(alice.did, ratingsQuery.message);
+        expect(ratingsQueryReply.entries!.length).toBe(1);
+        expect(ratingsQueryReply.entries![0].recordId).toBe(ratingWrite.message.recordId);
+      });
+    });
+
+    // =========================================================================
+    // Composing protocol definition upgrade (adding children under $ref in V2)
+    // =========================================================================
+
+    describe('composing protocol definition upgrade', () => {
+      it('should allow upgrading a composing protocol to add new child types under a `$ref` node', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // Install threads protocol
+        const threadsConfigure = await ProtocolsConfigure.create({
+          definition : threadsProtocol,
+          signer     : Jws.createSigner(alice),
+        });
+        await dwn.processMessage(alice.did, threadsConfigure.message);
+
+        // Comments V1 — only has 'comment' under 'thread'
+        const commentsV1: ProtocolDefinition = {
+          protocol  : 'https://comments-upgrade.example.com',
+          published : true,
+          uses      : { threads: 'https://threads.example.com' },
+          types     : {
+            comment: { schema: 'https://comments-upgrade.example.com/schemas/comment', dataFormats: ['application/json'] },
+          },
+          structure: {
+            thread: {
+              $ref    : 'threads:thread',
+              comment : {
+                $actions: [{ who: 'anyone', can: ['create', 'read'] }],
+              },
+            },
+          },
+        };
+
+        const v1Configure = await ProtocolsConfigure.create({
+          definition : commentsV1,
+          signer     : Jws.createSigner(alice),
+        });
+        const v1Reply = await dwn.processMessage(alice.did, v1Configure.message);
+        expect(v1Reply.status.code).toBe(202);
+
+        // Create a thread and a V1 comment
+        const threadWrite = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol     : threadsProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://threads.example.com/schemas/thread',
+          dataFormat   : 'application/json',
+        });
+        await dwn.processMessage(alice.did, threadWrite.message, { dataStream: threadWrite.dataStream });
+        const threadContextId = threadWrite.message.contextId!;
+
+        const commentWrite = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          protocol        : commentsV1.protocol,
+          protocolPath    : 'thread/comment',
+          schema          : 'https://comments-upgrade.example.com/schemas/comment',
+          dataFormat      : 'application/json',
+          parentContextId : threadContextId,
+        });
+        const commentReply = await dwn.processMessage(
+          alice.did, commentWrite.message, { dataStream: commentWrite.dataStream }
+        );
+        expect(commentReply.status.code).toBe(202);
+
+        // Wait to ensure V2 gets a later timestamp
+        await Time.minimalSleep();
+
+        // Comments V2 — adds 'reaction' type under 'thread/comment'
+        const commentsV2: ProtocolDefinition = {
+          protocol  : 'https://comments-upgrade.example.com',
+          published : true,
+          uses      : { threads: 'https://threads.example.com' },
+          types     : {
+            comment  : { schema: 'https://comments-upgrade.example.com/schemas/comment', dataFormats: ['application/json'] },
+            reaction : { schema: 'https://comments-upgrade.example.com/schemas/reaction', dataFormats: ['application/json'] },
+          },
+          structure: {
+            thread: {
+              $ref    : 'threads:thread',
+              comment : {
+                $actions : [{ who: 'anyone', can: ['create', 'read'] }],
+                reaction : {
+                  $actions: [{ who: 'anyone', can: ['create', 'read'] }],
+                },
+              },
+            },
+          },
+        };
+
+        const v2Configure = await ProtocolsConfigure.create({
+          definition : commentsV2,
+          signer     : Jws.createSigner(alice),
+        });
+        const v2Reply = await dwn.processMessage(alice.did, v2Configure.message);
+        expect(v2Reply.status.code).toBe(202);
+
+        // Now create a reaction under the comment using V2's structure
+        const commentContextId = commentWrite.message.contextId!;
+        const reactionWrite = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          protocol        : commentsV2.protocol,
+          protocolPath    : 'thread/comment/reaction',
+          schema          : 'https://comments-upgrade.example.com/schemas/reaction',
+          dataFormat      : 'application/json',
+          parentContextId : commentContextId,
+        });
+        const reactionReply = await dwn.processMessage(
+          alice.did, reactionWrite.message, { dataStream: reactionWrite.dataStream }
+        );
+        expect(reactionReply.status.code).toBe(202);
       });
     });
 

@@ -101,6 +101,7 @@ export enum DwnErrorCode {
   ProtocolsConfigureInvalidRefNodeHasDirectives = 'ProtocolsConfigureInvalidRefNodeHasDirectives',
   ProtocolsConfigureInvalidRefNotAtRoot = 'ProtocolsConfigureInvalidRefNotAtRoot',
   ProtocolsConfigureInvalidRefProtocolPath = 'ProtocolsConfigureInvalidRefProtocolPath',
+  ProtocolsConfigureInvalidRefTargetThroughRef = 'ProtocolsConfigureInvalidRefTargetThroughRef',
   ProtocolsConfigureInvalidRecordLimit = 'ProtocolsConfigureInvalidRecordLimit',
   ProtocolsConfigureInvalidSize = 'ProtocolsConfigureInvalidSize',
   ProtocolsConfigureInvalidActionMissingOf = 'ProtocolsConfigureInvalidActionMissingOf',

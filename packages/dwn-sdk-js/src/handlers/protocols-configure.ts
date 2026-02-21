@@ -230,7 +230,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       const childRuleSet = ruleSet[key] as ProtocolRuleSet;
       const childProtocolPath = protocolPath === '' ? key : `${protocolPath}/${key}`;
 
-      // Validate $ref path exists in the referenced protocol
+      // Validate $ref path exists in the referenced protocol and does not traverse through another $ref
       if (childRuleSet.$ref !== undefined) {
         const parsed = parseCrossProtocolRef(childRuleSet.$ref);
         if (parsed !== undefined) {
@@ -244,13 +244,36 @@ export class ProtocolsConfigureHandler implements MethodHandler {
             );
           }
 
-          const targetRuleSet = getRuleSetAtPath(parsed.protocolPath, refDefinition.structure);
-          if (targetRuleSet === undefined) {
-            throw new DwnError(
-              DwnErrorCode.ProtocolsConfigureInvalidRefProtocolPath,
-              `'$ref' at protocol path '${childProtocolPath}' references type path '${parsed.protocolPath}' ` +
-              `which does not exist in protocol '${refDefinition.protocol}'.`
-            );
+          // Walk the target path segment-by-segment and reject if any intermediate node has a $ref
+          const segments = parsed.protocolPath.split('/');
+          let currentLevel: { [key: string]: ProtocolRuleSet } = refDefinition.structure;
+
+          for (let i = 0; i < segments.length; i++) {
+            const segment = segments[i];
+            const node = currentLevel[segment] as ProtocolRuleSet | undefined;
+
+            if (node === undefined) {
+              throw new DwnError(
+                DwnErrorCode.ProtocolsConfigureInvalidRefProtocolPath,
+                `'$ref' at protocol path '${childProtocolPath}' references type path '${parsed.protocolPath}' ` +
+                `which does not exist in protocol '${refDefinition.protocol}'.`
+              );
+            }
+
+            // If any node along the target path (including the final target) has a $ref,
+            // it means the composition chain passes through another protocol boundary.
+            // Multi-level composition is not supported — reject at install time.
+            if (node.$ref !== undefined) {
+              const traversedPath = segments.slice(0, i + 1).join('/');
+              throw new DwnError(
+                DwnErrorCode.ProtocolsConfigureInvalidRefTargetThroughRef,
+                `'$ref' at protocol path '${childProtocolPath}' references type path '${parsed.protocolPath}' ` +
+                `in protocol '${refDefinition.protocol}', but the node '${traversedPath}' is itself ` +
+                `a '$ref' composition point. multi-level composition (chaining through '$ref' nodes) is not supported.`
+              );
+            }
+
+            currentLevel = node as { [key: string]: ProtocolRuleSet };
           }
         }
       }
