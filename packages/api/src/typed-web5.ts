@@ -295,7 +295,7 @@ export class TypedWeb5<
           tags            : request.tags,
           protocol        : this._definition.protocol,
           protocolPath    : path,
-          schema          : typeEntry?.schema,
+          ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
           dataFormat      : request.dataFormat ?? typeEntry?.dataFormats?.[0],
         });
       },
@@ -320,7 +320,7 @@ export class TypedWeb5<
             ...request?.filter,
             protocol     : this._definition.protocol,
             protocolPath : path,
-            schema       : typeEntry?.schema,
+            ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
           },
           dateSort     : request?.dateSort,
           pagination   : request?.pagination,
@@ -349,7 +349,7 @@ export class TypedWeb5<
             ...request.filter,
             protocol     : this._definition.protocol,
             protocolPath : path,
-            schema       : typeEntry?.schema,
+            ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
           },
         });
       },
@@ -393,7 +393,7 @@ export class TypedWeb5<
             ...request?.filter,
             protocol     : this._definition.protocol,
             protocolPath : path,
-            schema       : typeEntry?.schema,
+            ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
           },
           protocolRole: request?.protocolRole,
         });
