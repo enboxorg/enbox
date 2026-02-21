@@ -1,3 +1,5 @@
+// Keep in sync with `localDwnPortCandidates` / `localDwnHostCandidates`
+// in @enbox/agent/src/local-dwn.ts
 const candidatePorts = [3000, 55555, 55556, 55557, 55558, 55559];
 const candidateHosts = ["127.0.0.1", "localhost"];
 

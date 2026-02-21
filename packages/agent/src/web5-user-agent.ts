@@ -1,11 +1,11 @@
 import type { AgentKeyManager } from './types/key-manager.js';
 import type { BearerDid } from '@enbox/dids';
+import type { LocalDwnStrategy } from './local-dwn.js';
 import type { Web5PlatformAgent } from './types/agent.js';
 import type { Web5Rpc } from '@enbox/dwn-clients';
 import type { DidInterface, DidRequest, DidResponse } from './did-api.js';
 import type { DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './types/dwn.js';
 import type { ProcessVcRequest, SendVcRequest, VcResponse } from './types/vc.js';
-import type { LocalDwnStrategy } from './local-dwn.js';
 
 import { AgentCryptoApi } from './crypto-api.js';
 import { AgentDidApi } from './did-api.js';
@@ -167,9 +167,6 @@ export class Web5UserAgent<TKeyManager extends AgentKeyManager = LocalKeyManager
       dwn              : await AgentDwnApi.createDwn({ dataPath, didResolver: didApi }),
       localDwnStrategy : localDwnStrategy ?? 'prefer',
     });
-    if (localDwnStrategy) {
-      dwnApi.setLocalDwnStrategy(localDwnStrategy);
-    }
 
     identityApi ??= new AgentIdentityApi({ store: new DwnIdentityStore() });
 

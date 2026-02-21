@@ -1,6 +1,7 @@
 import { BrowserWindow, Utils } from "electrobun/bun";
 import type { DwnServerConfig } from "@enbox/dwn-server";
 
+// Keep in sync with `localDwnPortCandidates` in @enbox/agent/src/local-dwn.ts
 const preferredPorts = [3000, 55555, 55556, 55557, 55558, 55559];
 
 function selectPortCandidates(): number[] {

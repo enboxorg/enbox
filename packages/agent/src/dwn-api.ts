@@ -33,6 +33,7 @@ import {
 import { CryptoUtils, X25519 } from '@enbox/crypto';
 import { DidDht, DidJwk, DidResolverCacheLevel, UniversalResolver } from '@enbox/dids';
 
+import type { LocalDwnStrategy } from './local-dwn.js';
 import type { Web5PlatformAgent } from './types/agent.js';
 import type {
   DwnMessage,
@@ -48,10 +49,9 @@ import type {
 } from './types/dwn.js';
 
 import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
+import { LocalDwnDiscovery } from './local-dwn.js';
 import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
 import { getDwnServiceEndpointUrls, isRecordsWrite } from './utils.js';
-import type { LocalDwnStrategy } from './local-dwn.js';
-import { LocalDwnDiscovery } from './local-dwn.js';
 
 // Re-export type guards for backward compatibility
 export { isDwnMessage, isDwnRequest, isMessagesPermissionScope, isRecordPermissionScope, isRecordsType } from './dwn-type-guards.js';
@@ -185,10 +185,12 @@ export class AgentDwnApi {
     this._localManagedDidCache.clear();
   }
 
+  /** Returns the current local DWN discovery strategy. */
   get localDwnStrategy(): LocalDwnStrategy {
     return this._localDwnStrategy;
   }
 
+  /** Overrides the local DWN discovery strategy at runtime. */
   public setLocalDwnStrategy(strategy: LocalDwnStrategy): void {
     this._localDwnStrategy = strategy;
   }
@@ -232,6 +234,21 @@ export class AgentDwnApi {
     return await Dwn.create({ dataStore, didResolver, stateIndex, eventStream, messageStore, tenantGate, resumableTaskStore });
   }
 
+  /**
+   * Resolves the DWN service endpoint URLs for the given target DID, incorporating
+   * local DWN discovery based on the configured {@link LocalDwnStrategy}.
+   *
+   * - `'prefer'`: probes localhost for a running DWN server and prepends it before remote endpoints.
+   * - `'only'`: requires a local DWN server; throws if none is found.
+   * - `'off'`: resolves endpoints exclusively from the DID document.
+   *
+   * @param targetDid - The DID whose DWN endpoints should be resolved.
+   * @returns An array of DWN endpoint URLs ordered by preference.
+   * @throws If the target DID cannot be dereferenced and no local fallback is available.
+   *
+   * TODO: Replace localhost probing with an `enbox://` protocol-handler handshake
+   *       that returns host+port+auth-token (https://github.com/enboxorg/enbox/issues/287).
+   */
   public async getDwnEndpointUrlsForTarget(targetDid: string): Promise<string[]> {
     const shouldUseLocalDwn = await this.shouldUseLocalDwnForTarget(targetDid);
 
@@ -1114,8 +1131,8 @@ export class AgentDwnApi {
 
     const reply = await this.sendDwnRpcRequest({
       targetDid,
-      dwnEndpointUrls: await this.getDwnEndpointUrlsForTarget(targetDid),
-      message: protocolsQuery.message,
+      dwnEndpointUrls : await this.getDwnEndpointUrlsForTarget(targetDid),
+      message         : protocolsQuery.message,
     }) as ProtocolsQueryReply;
 
     if (reply.status.code !== 200 || !reply.entries?.length) {
