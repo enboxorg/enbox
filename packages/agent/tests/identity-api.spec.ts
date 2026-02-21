@@ -400,13 +400,11 @@ describe('AgentIdentityApi', () => {
 
           expect(updateSpy.calledOnce).toBe(true);
 
-          // expect the updated DID to have the new DWN service
+          // expect the updated DID to have the new DWN service (without legacy enc/sig)
           expect(updateSpy.firstCall.args[0].portableDid.document.service).toEqual([{
             id              : 'dwn',
             type            : 'DecentralizedWebNode',
             serviceEndpoint : newEndpoints,
-            enc             : '#enc',
-            sig             : '#sig'
           }]);
         });
 
@@ -439,8 +437,6 @@ describe('AgentIdentityApi', () => {
             id              : 'dwn',
             type            : 'DecentralizedWebNode',
             serviceEndpoint : newEndpoints,
-            enc             : '#enc',
-            sig             : '#sig'
           }]);
         });
       });

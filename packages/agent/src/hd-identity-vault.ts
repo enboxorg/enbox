@@ -530,8 +530,6 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
           id              : 'dwn',
           type            : 'DecentralizedWebNode',
           serviceEndpoint : dwnEndpoints,
-          enc             : '#enc',
-          sig             : '#sig',
         }
       ];
     }

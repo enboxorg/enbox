@@ -1655,8 +1655,6 @@ describe('AgentDwnApi', () => {
           id              : '#dwn',
           type            : 'DecentralizedWebNode',
           serviceEndpoint : ['https://localhost'], // secure endpoint
-          enc             : '#enc',
-          sig             : '#sig'
         }
       });
 
@@ -1702,9 +1700,7 @@ describe('AgentDwnApi', () => {
         contentStream         : {
           id              : '#dwn',
           type            : 'DecentralizedWebNode',
-          serviceEndpoint : ['http://localhost'], // secure endpoint
-          enc             : '#enc',
-          sig             : '#sig'
+          serviceEndpoint : ['http://localhost'], // insecure endpoint
         }
       });
 

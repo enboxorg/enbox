@@ -28,8 +28,6 @@ describe('AnonymousDwnApi', () => {
         id              : '#dwn',
         type            : 'DecentralizedWebNode',
         serviceEndpoint : [dwnEndpoint],
-        enc             : '#enc',
-        sig             : '#sig',
       },
     } as DidDereferencingResult);
     return stub;
@@ -282,8 +280,6 @@ describe('AnonymousDwnApi', () => {
           id              : '#dwn',
           type            : 'DecentralizedWebNode',
           serviceEndpoint : ['https://dwn1.example.com', 'https://dwn2.example.com'],
-          enc             : '#enc',
-          sig             : '#sig',
         },
       } as DidDereferencingResult);
 
