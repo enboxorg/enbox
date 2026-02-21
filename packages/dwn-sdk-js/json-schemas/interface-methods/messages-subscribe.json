@@ -44,6 +44,10 @@
         },
         "permissionGrantId": {
           "type": "string"
+        },
+        "cursor": {
+          "type": "number",
+          "minimum": 0
         }
       }
     }

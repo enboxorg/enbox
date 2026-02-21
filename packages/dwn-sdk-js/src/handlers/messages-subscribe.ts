@@ -1,11 +1,10 @@
 import type { DidResolver } from '@enbox/dids';
 import type { MessageStore } from '../types/message-store.js';
 import type { MethodHandler } from '../types/method-handler.js';
-import type { EventListener, EventLog } from '../types/subscriptions.js';
+import type { EventLog, SubscriptionListener } from '../types/subscriptions.js';
 import type { MessagesSubscribeMessage, MessagesSubscribeReply, MessageSubscriptionHandler } from '../types/messages-types.js';
 
 import { authenticate } from '../core/auth.js';
-import { FilterUtility } from '../utils/filter.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { Messages } from '../utils/messages.js';
@@ -51,22 +50,31 @@ export class MessagesSubscribeHandler implements MethodHandler {
       return messageReplyFromError(error, 401);
     }
 
-    const { filters } = message.descriptor;
+    const { filters, cursor: eventLogCursor } = message.descriptor;
     const messagesFilters = Messages.convertFilters(filters);
     const messageCid = await Message.getCid(message);
 
-    const listener: EventListener = (eventTenant, event, eventIndexes):void => {
-      if (tenant === eventTenant && FilterUtility.matchAnyFilter(eventIndexes, messagesFilters)) {
-        subscriptionHandler(event);
+    // Wrap SubscriptionListener → MessageSubscriptionHandler.
+    // The handler callback receives plain MessageEvents; seq/EOSE are EventLog concerns.
+    const listener: SubscriptionListener = (msg):void => {
+      if (msg.type === 'event') {
+        subscriptionHandler(msg.event);
       }
     };
 
-    const subscription = await this.eventLog.subscribe(tenant, messageCid, listener);
+    try {
+      const subscription = await this.eventLog.subscribe(tenant, messageCid, listener, {
+        cursor  : eventLogCursor,
+        filters : messagesFilters,
+      });
 
-    return {
-      status: { code: 200, detail: 'OK' },
-      subscription,
-    };
+      return {
+        status: { code: 200, detail: 'OK' },
+        subscription,
+      };
+    } catch (error) {
+      return messageReplyFromError(error, 500);
+    }
   }
 
   private static async authorizeMessagesSubscribe(tenant: string, messagesSubscribe: MessagesSubscribe, messageStore: MessageStore): Promise<void> {

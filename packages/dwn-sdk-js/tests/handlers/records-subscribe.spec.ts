@@ -260,6 +260,114 @@ export function testRecordsSubscribeHandler(): void {
         });
       });
 
+      describe('cursor-based subscriptions', () => {
+        it('should use EventLog catch-up when cursor is provided (no initial MessageStore query)', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+          // Write records before subscribing.
+          const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://cursor-test' });
+          const write1Reply = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
+          expect(write1Reply.status.code).toBe(202);
+
+          const write2 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://cursor-test' });
+          const write2Reply = await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
+          expect(write2Reply.status.code).toBe(202);
+
+          // Subscribe with cursor=0. With a cursor, the handler takes the EventLog catch-up path,
+          // meaning NO entries/cursor are returned (the catch-up is delivered through the subscription handler).
+          const receivedEvents: RecordEvent[] = [];
+          const subscriptionHandler: RecordSubscriptionHandler = (event): void => { receivedEvents.push(event); };
+          const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+            author : alice,
+            filter : { schema: 'http://cursor-test' },
+            cursor : 0,
+          });
+
+          const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler });
+          expect(subReply.status.code).toBe(200);
+          expect(subReply.subscription).toBeDefined();
+
+          // In cursor mode, initial entries are NOT returned via the reply —
+          // they come through the subscription handler as catch-up events.
+          // The handler wraps SubscriptionListener→RecordSubscriptionHandler,
+          // so we get plain RecordEvents (EOSE is silently consumed).
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(receivedEvents.length).toBeGreaterThanOrEqual(2);
+          });
+
+          // Verify the catch-up events are our records.
+          const recordIds = receivedEvents.map(e => (e.message as RecordsWriteMessage).recordId);
+          expect(recordIds).toContain(write1.message.recordId);
+          expect(recordIds).toContain(write2.message.recordId);
+        });
+
+        it('should receive live events after cursor catch-up', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+          // Write a record before subscribing.
+          const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://cursor-live' });
+          await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
+
+          const receivedEvents: RecordEvent[] = [];
+          const subscriptionHandler: RecordSubscriptionHandler = (event): void => { receivedEvents.push(event); };
+          const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+            author : alice,
+            filter : { schema: 'http://cursor-live' },
+            cursor : 0,
+          });
+          const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler });
+          expect(subReply.status.code).toBe(200);
+
+          // Wait for catch-up event.
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(receivedEvents.length).toBeGreaterThanOrEqual(1);
+          });
+
+          // Write a live record after subscribing.
+          const write2 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://cursor-live' });
+          await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
+
+          // Wait for the live event.
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(receivedEvents.length).toBeGreaterThanOrEqual(2);
+          });
+
+          const recordIds = receivedEvents.map(e => (e.message as RecordsWriteMessage).recordId);
+          expect(recordIds).toContain(write1.message.recordId);
+          expect(recordIds).toContain(write2.message.recordId);
+        });
+
+        it('should filter catch-up events when cursor and filter are provided', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+          // Write records with different schemas.
+          const matchWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://filter-match' });
+          await dwn.processMessage(alice.did, matchWrite.message, { dataStream: matchWrite.dataStream });
+
+          const noMatchWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://filter-other' });
+          await dwn.processMessage(alice.did, noMatchWrite.message, { dataStream: noMatchWrite.dataStream });
+
+          const receivedEvents: RecordEvent[] = [];
+          const subscriptionHandler: RecordSubscriptionHandler = (event): void => { receivedEvents.push(event); };
+          const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+            author : alice,
+            filter : { schema: 'http://filter-match' },
+            cursor : 0,
+          });
+          const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler });
+          expect(subReply.status.code).toBe(200);
+
+          // Wait for catch-up events. Should only get the matching one.
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(receivedEvents.length).toBe(1);
+            expect((receivedEvents[0].message as RecordsWriteMessage).recordId).toBe(matchWrite.message.recordId);
+          });
+        });
+      });
+
       it('should return 400 if protocol is not normalized', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 

@@ -61,6 +61,10 @@
             "updatedDescending"
           ],
           "type": "string"
+        },
+        "cursor": {
+          "type": "number",
+          "minimum": 0
         }
       }
     }

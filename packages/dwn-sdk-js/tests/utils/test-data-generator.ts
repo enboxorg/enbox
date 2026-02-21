@@ -200,6 +200,8 @@ export type GenerateRecordsSubscribeInput = {
     dateSort?: DateSort;
     pagination?: Pagination;
     protocolRole?: string;
+    /** EventLog cursor for catch-up + EOSE subscribe. */
+    cursor?: number;
 };
 
 export type GenerateRecordsSubscribeOutput = {
@@ -240,6 +242,8 @@ export type GenerateMessagesSubscribeInput = {
   filters?: MessagesFilter[];
   messageTimestamp?: string;
   permissionGrantId?: string;
+  /** EventLog cursor for catch-up + EOSE subscribe. */
+  cursor?: number;
 };
 
 export type GenerateMessagesSubscribeOutput = {
@@ -747,6 +751,7 @@ export class TestDataGenerator {
       dateSort         : input?.dateSort,
       pagination       : input?.pagination,
       protocolRole     : input?.protocolRole,
+      cursor           : input?.cursor,
     };
     removeUndefinedProperties(options);
 
@@ -827,6 +832,7 @@ export class TestDataGenerator {
       filters           : input?.filters,
       messageTimestamp  : input?.messageTimestamp,
       permissionGrantId : input?.permissionGrantId,
+      cursor            : input?.cursor,
       signer,
     };
     removeUndefinedProperties(options);

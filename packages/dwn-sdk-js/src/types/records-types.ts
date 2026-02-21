@@ -122,6 +122,12 @@ export type RecordsSubscribeDescriptor = {
   filter: RecordsFilter;
   dateSort?: DateSort;
   pagination?: Pagination;
+  /**
+   * EventLog sequence number to resume from. When provided, the handler replays
+   * events from the EventLog starting after this cursor instead of querying the
+   * MessageStore for an initial snapshot. An EOSE marker is sent after catch-up.
+   */
+  cursor?: number;
 };
 
 export type RecordsFilter = {
