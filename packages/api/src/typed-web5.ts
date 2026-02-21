@@ -254,6 +254,10 @@ export class TypedWeb5<
    * @param options - Optional overrides like `encryption`.
    */
   public async configure(options?: { encryption?: boolean }): Promise<DwnResponseStatus & { protocol?: Protocol }> {
+    // Strip extended properties (e.g. $recordLimit) that the DWN engine
+    // does not yet support, so the protocol can still be configured.
+    const cleanDefinition = stripExtendedProperties(this._definition);
+
     // Query for an existing installation of this protocol.
     const { protocols } = await this._dwn.protocols.query({
       filter: { protocol: this._definition.protocol },
@@ -262,14 +266,14 @@ export class TypedWeb5<
     // If already installed with the same definition, return it as-is.
     if (protocols.length > 0) {
       const existing = protocols[0];
-      if (definitionsEqual(existing.definition, this._definition)) {
+      if (definitionsEqual(existing.definition, cleanDefinition)) {
         return { status: { code: 200, detail: 'OK' }, protocol: existing };
       }
     }
 
     // Not installed or definition has changed — configure the new version.
     return this._dwn.protocols.configure({
-      definition : this._definition,
+      definition : cleanDefinition as D,
       encryption : options?.encryption,
     });
   }
@@ -486,6 +490,45 @@ function definitionsEqual(a: unknown, b: unknown): boolean {
 function lastSegment(path: string): string {
   const parts = path.split('/');
   return parts[parts.length - 1];
+}
+
+/**
+ * Extended property keys that appear in the developer-facing protocol
+ * definition but are not yet recognized by the DWN engine's JSON schema
+ * validator. These are stripped before sending the definition to the DWN.
+ */
+const EXTENDED_RULE_SET_KEYS = new Set(['$recordLimit']);
+
+/**
+ * Deep-clones a protocol definition, removing extended properties
+ * (e.g. `$recordLimit`) from every rule set node in `structure`.
+ *
+ * This allows developers to annotate their protocol definitions with
+ * repository-layer metadata without breaking DWN protocol configuration.
+ */
+function stripExtendedProperties(definition: ProtocolDefinition): ProtocolDefinition {
+  return {
+    ...definition,
+    structure: stripStructure(definition.structure) as ProtocolDefinition['structure'],
+  };
+}
+
+/**
+ * Recursively strips extended properties from a protocol structure object.
+ */
+function stripStructure(
+  obj: globalThis.Record<string, unknown>,
+): globalThis.Record<string, unknown> {
+  const result: globalThis.Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (EXTENDED_RULE_SET_KEYS.has(key)) { continue; }
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      result[key] = stripStructure(value as globalThis.Record<string, unknown>);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
 }
 
 /**
