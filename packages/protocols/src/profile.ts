@@ -95,13 +95,13 @@ export const ProfileDefinition = {
         { who: 'anyone', can: ['read'] },
       ],
       avatar: {
-        $size    : { max: 1048576 },
+        $size    : { max: 12582912 },
         $actions : [
           { who: 'anyone', can: ['read'] },
         ],
       },
       hero: {
-        $size    : { max: 2097152 },
+        $size    : { max: 25165824 },
         $actions : [
           { who: 'anyone', can: ['read'] },
         ],

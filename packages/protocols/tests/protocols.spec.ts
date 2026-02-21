@@ -82,8 +82,8 @@ describe('@enbox/protocols', () => {
     });
 
     it('should enforce size limits on avatar and hero', () => {
-      expect(ProfileDefinition.structure.profile.avatar.$size?.max).toBe(1048576);
-      expect(ProfileDefinition.structure.profile.hero.$size?.max).toBe(2097152);
+      expect(ProfileDefinition.structure.profile.avatar.$size?.max).toBe(12582912);
+      expect(ProfileDefinition.structure.profile.hero.$size?.max).toBe(25165824);
     });
 
     it('should use cross-protocol friend role for privateNote', () => {
