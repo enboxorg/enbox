@@ -349,6 +349,92 @@ export function testMessagesSyncHandler(): void {
           expect(reply.root!.length).toBe(64);
         });
 
+        it('allows sync with a unified MessagesRead grant scope', async () => {
+          // scenario: A Messages.Read grant should also authorize MessagesSync operations
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+          // write a record so the tree is non-empty
+          const { message: recordMessage, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+          const writeReply = await dwn.processMessage(alice.did, recordMessage, { dataStream });
+          expect(writeReply.status.code).toBe(202);
+
+          // grant bob permission with Messages.Read scope (unified)
+          const { message: grantMessage, dataStream: grantDataStream } = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+            },
+          });
+          const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream: grantDataStream });
+          expect(grantReply.status.code).toBe(202);
+
+          // bob syncs using the Messages.Read grant — root action
+          const { message: syncMsg } = await MessagesSync.create({
+            signer            : Jws.createSigner(bob),
+            action            : 'root',
+            permissionGrantId : grantMessage.recordId,
+          });
+
+          const reply2 = await dwn.processMessage(alice.did, syncMsg);
+          expect(reply2.status.code).toBe(200);
+          expect(typeof reply2.root).toBe('string');
+          expect(reply2.root!.length).toBe(64);
+        });
+
+        it('allows sync with a protocol-scoped MessagesRead grant', async () => {
+          // scenario: A Messages.Read grant scoped to a protocol should authorize protocol-scoped MessagesSync
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true };
+
+          // configure and write a protocol record
+          const { message: protocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
+            author: alice,
+            protocolDefinition,
+          });
+          await dwn.processMessage(alice.did, protocolMessage);
+
+          const { message: recordMessage, dataStream } = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'post',
+            schema       : protocolDefinition.types.post.schema,
+          });
+          await dwn.processMessage(alice.did, recordMessage, { dataStream });
+
+          // grant bob permission with Messages.Read scope scoped to this protocol
+          const { message: grantMessage, dataStream: grantDataStream } = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+              protocol  : protocolDefinition.protocol,
+            },
+          });
+          const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream: grantDataStream });
+          expect(grantReply.status.code).toBe(202);
+
+          // bob syncs leaves with the protocol-scoped Messages.Read grant
+          const { message: syncMsg } = await MessagesSync.create({
+            signer            : Jws.createSigner(bob),
+            action            : 'leaves',
+            prefix            : '',
+            protocol          : protocolDefinition.protocol,
+            permissionGrantId : grantMessage.recordId,
+          });
+
+          const reply2 = await dwn.processMessage(alice.did, syncMsg);
+          expect(reply2.status.code).toBe(200);
+          expect(Array.isArray(reply2.entries)).toBe(true);
+          expect(reply2.entries!.length).toBe(2);
+        });
+
         it('allows sync with a protocol-scoped grant', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();

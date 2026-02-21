@@ -224,19 +224,12 @@ function createPermissionRequestForProtocol({ definition, permissions }: Protoco
     method    : DwnMethodName.Query,
   });
 
-  // In order to enable sync, we must request permissions for `MessagesSync`, `MessagesRead` and `MessagesSubscribe`
+  // A Messages.Read grant is a unified scope that covers MessagesRead, MessagesSync, and MessagesSubscribe.
+  // This single grant enables sync and real-time subscriptions for the protocol.
   requests.push({
     protocol  : definition.protocol,
     interface : DwnInterfaceName.Messages,
     method    : DwnMethodName.Read,
-  }, {
-    protocol  : definition.protocol,
-    interface : DwnInterfaceName.Messages,
-    method    : DwnMethodName.Sync,
-  }, {
-    protocol  : definition.protocol,
-    interface : DwnInterfaceName.Messages,
-    method    : DwnMethodName.Subscribe,
   });
 
   // We also request any additional permissions the user has requested for this protocol

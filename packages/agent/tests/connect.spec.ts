@@ -856,17 +856,11 @@ describe('web5 connect', () => {
       });
 
       expect(permissionRequests.protocolDefinition).toEqual(protocol);
-      // only includes the sync permissions + protocol query permission
-      expect(permissionRequests.permissionScopes.length).toBe(4);
+      // Messages.Read (unified: covers Read, Subscribe, Sync) + Protocols.Query
+      expect(permissionRequests.permissionScopes.length).toBe(2);
       const scopes = permissionRequests.permissionScopes;
       expect(scopes.find(
         scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Read
-      )).toBeDefined();
-      expect(scopes.find(
-        scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Sync
-      )).toBeDefined();
-      expect(scopes.find(
-        scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Subscribe
       )).toBeDefined();
       expect(scopes.find(
         scope => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Query
@@ -894,8 +888,8 @@ describe('web5 connect', () => {
 
       expect(permissionRequests.protocolDefinition).toEqual(protocol);
 
-      // the 3 sync permissions plus the 2 requested permissions, and a protocol query permission
-      expect(permissionRequests.permissionScopes.length).toBe(6);
+      // Messages.Read (unified) + 2 requested Records permissions + Protocols.Query
+      expect(permissionRequests.permissionScopes.length).toBe(4);
       expect(permissionRequests.permissionScopes.find(
         scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read
       )).toBeDefined();
@@ -925,8 +919,8 @@ describe('web5 connect', () => {
 
       expect(permissionRequests.protocolDefinition).toEqual(protocol);
 
-      // the 3 sync permissions plus the 5 requested permissions
-      expect(permissionRequests.permissionScopes.length).toBe(10);
+      // Messages.Read (unified) + 5 requested Records permissions + Protocols.Query + Protocols.Configure
+      expect(permissionRequests.permissionScopes.length).toBe(8);
       const ps = permissionRequests.permissionScopes;
       expect(ps.find(
         scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read

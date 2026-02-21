@@ -288,6 +288,66 @@ export function testMessagesSubscribeHandler(): void {
           });
         });
 
+        it('allows subscribe of messages with a unified MessagesRead grant scope', async () => {
+          // scenario: A Messages.Read grant should also authorize MessagesSubscribe operations
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          // create grant that is scoped to `MessagesRead` (unified) for bob
+          const { message: grantMessage, dataStream } = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+            }
+          });
+          const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream });
+          expect(grantReply.status.code).toBe(202);
+
+          // install the default test protocol used by generateRecordsWrite
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+          // create a handler to capture the emitted messageCids
+          const messageCids: string[] = [];
+          const handler = async (event: MessageEvent):Promise<void> => {
+            const { message } = event;
+            const messageCid = await Message.getCid(message);
+            messageCids.push(messageCid);
+          };
+
+          // bob subscribes to messages using the Messages.Read grant
+          const { message: subscribeMessage } = await TestDataGenerator.generateMessagesSubscribe({
+            author            : bob,
+            permissionGrantId : grantMessage.recordId,
+          });
+
+          const subscribeReply = await dwn.processMessage(alice.did, subscribeMessage, { subscriptionHandler: handler });
+          expect(subscribeReply.status.code).toBe(200);
+
+          // install the freeForAll protocol and write a record to trigger events
+          const { message: freeForAllConfigure } = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : freeForAll,
+          });
+          const { status: freeForAllReplyStatus } = await dwn.processMessage(alice.did, freeForAllConfigure);
+          expect(freeForAllReplyStatus.code).toBe(202);
+
+          const { message: recordMessage, dataStream: recordDataStream } = await TestDataGenerator.generateRecordsWrite({
+            protocol     : freeForAll.protocol,
+            protocolPath : 'post',
+            schema       : freeForAll.types.post.schema,
+            author       : alice
+          });
+          const recordReply = await dwn.processMessage(alice.did, recordMessage, { dataStream: recordDataStream });
+          expect(recordReply.status.code).toBe(202);
+
+          // ensure that at least one event was received
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(messageCids.length).toBeGreaterThanOrEqual(1);
+          });
+        });
+
         it('rejects subscribe of messages with mismatching interface grant scope', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
