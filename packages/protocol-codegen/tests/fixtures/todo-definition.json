@@ -1,0 +1,34 @@
+{
+  "protocol": "https://example.com/protocols/todo",
+  "published": true,
+  "types": {
+    "list": {
+      "schema": "https://example.com/schemas/todo/list",
+      "dataFormats": ["application/json"]
+    },
+    "task": {
+      "schema": "https://example.com/schemas/todo/task",
+      "dataFormats": ["application/json"]
+    },
+    "attachment": {
+      "dataFormats": ["application/octet-stream", "image/png"]
+    }
+  },
+  "structure": {
+    "list": {
+      "$actions": [
+        { "who": "anyone", "can": ["create", "read"] }
+      ],
+      "task": {
+        "$actions": [
+          { "who": "anyone", "can": ["create", "read"] }
+        ],
+        "attachment": {
+          "$actions": [
+            { "who": "anyone", "can": ["create", "read"] }
+          ]
+        }
+      }
+    }
+  }
+}
