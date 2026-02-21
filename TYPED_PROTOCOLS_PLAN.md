@@ -1,86 +1,52 @@
-# Typed Protocols: Remaining Work -- App Integration
+# Typed Protocols: App Integration -- Complete
 
 WS1 (DWN SDK type tightening), WS2 (Typed Protocol API), and WS3 (Standard Protocols
 package) are complete and shipped in `@enbox/protocols` 0.2.x and `@enbox/api`.
 
-What remains is WS4: integrating the typed protocol API (`web5.using()` / `TypedWeb5`)
-and the remaining `@enbox/protocols` definitions into the example apps.
+WS4 (app integration) is complete, with one remaining enhancement tracked as an issue.
 
 ---
 
-## Current State
+## Status
 
-Both apps already import `@enbox/protocols` for protocol **definitions** (URIs, schemas)
-but neither uses the **typed API** (`defineProtocol()` / `web5.using()`).
-
-| Capability | web-wallet | dapp-demo |
+| Task | Status | PR / Issue |
 |---|---|---|
-| `@enbox/protocols` dependency | Yes | Yes |
-| Profile + Connect installed | Yes | Yes |
-| Lists installed | No | Yes |
-| Social Graph installed | No | No |
-| Preferences installed | No | No |
-| Status installed | No | No |
-| Uses `TypedWeb5` / `web5.using()` | No | No |
+| **WS4a.1** Web Wallet: adopt typed protocol API | Done | [web-wallet#28](https://github.com/enboxorg/web-wallet/pull/28) |
+| **WS4a.2** Web Wallet: Preferences protocol + settings page | Tracked | [enbox#272](https://github.com/enboxorg/enbox/issues/272) |
+| **WS4a.3** Web Wallet: install Social Graph | Done (prior PR) | |
+| **WS4b.1** Demo Dapp: adopt typed protocol API | Done | [dapp-demo#10](https://github.com/enboxorg/dapp-demo/pull/10) |
+| **WS4b.2** Demo Dapp: install remaining protocols | Done (prior PR) | |
+| **WS4b.3** Demo Dapp: update wallet connect permissions | Done (prior PR) | |
 
 ---
 
-## WS4a: Web Wallet (`examples/web-wallet/`)
+## Completed Work
 
-### 1. Adopt typed protocol API
+### WS4a.1: Web Wallet -- Typed Protocol API
 
-Replace raw `Web5Helper` CRUD calls with `web5.using(ProfileProtocol)`:
+- Rewrote `ProfileHelper` to use `web5.using(ProfileProtocol)` with typed
+  `records.query()` and `records.write()` for profile, avatar, and hero operations
+- Updated `Web5Helper.configureProtocol()` to use `TypedWeb5.configure()` for
+  idempotent protocol installation (removed manual `canonicalize` comparison)
+- Migrated wallet CRUD in `IdentitiesContext.tsx` to use
+  `web5.using(ConnectProtocol)` with typed `WalletData`
 
-- **`src/lib/ProfileProtocol.ts`** -- Rewrite `ProfileHelper` to use `TypedWeb5` methods
-  (`write()`, `query()`, `read()`) instead of manual `Web5Helper.createRecord()` /
-  `Web5Helper.readRecord()` calls. Import `ProfileProtocol` from `@enbox/protocols`
-  (the `defineProtocol()` wrapper) instead of `ProfileDefinition` (the raw object).
+### WS4b.1: Demo Dapp -- Typed Protocol API
 
-### 2. Add Preferences support
-
-- Install `PreferencesDefinition` alongside Profile and Connect during identity
-  creation/import in `IdentitiesContext.tsx`
-- Add a settings page or section for theme and locale preferences
-- Use `web5.using(PreferencesProtocol)` for CRUD
-
-### 3. Install Social Graph
-
-- Install `SocialGraphDefinition` during identity creation/import (required dependency
-  for Profile's `privateNote` cross-protocol role)
-- No UI needed immediately, but the protocol must be present for full Profile
-  functionality
+- Rewrote `TodoDwnRepository` to use `web5.using(ListsProtocol)` -- all
+  `records.write/query/read` calls auto-inject protocol, protocolPath, and schema
+- Rewrote `ProfileSettings` to use `web5.using(ProfileProtocol)` for profile and
+  avatar CRUD
+- Rewrote `protocols.ts` to use `TypedWeb5.configure()` per protocol, removing
+  manual `canonicalize()` and query/compare logic
+- Surfaced the `Web5` instance in the `useWeb5()` hook instead of accessing the
+  private `_dwn` property
+- Deleted dead protocol shim files (`src/protocols/tasks.ts`, `src/protocols/profile.ts`)
 
 ---
 
-## WS4b: Demo Dapp (`examples/dapp-demo/`)
+## Remaining: WS4a.2 -- Preferences Protocol (enbox#272)
 
-### 1. Adopt typed protocol API
-
-- **`src/lib/todo-dwn-repository.ts`** -- Rewrite to use `web5.using(ListsProtocol)` with
-  typed `write()` / `query()` / `delete()` instead of raw `dwn.records.create()` calls
-- **`src/components/profile-settings.tsx`** -- Use `web5.using(ProfileProtocol)` for
-  profile read/write
-- Remove thin re-export shims (`src/protocols/tasks.ts`, `src/protocols/profile.ts`) and
-  import directly from `@enbox/protocols`
-
-### 2. Install remaining protocols
-
-- **`src/web5/protocols.ts`** -- Add `SocialGraphDefinition` to `installProtocols()`.
-  Install order: Social Graph first, then Profile, Lists, Connect (Social Graph is a
-  dependency of Profile and Lists)
-- Preferences and Status can be added later when corresponding UI pages are built
-
-### 3. Update wallet connect permission requests
-
-- **`src/components/connect/connect-selector.tsx`** -- Add `SocialGraphDefinition` to
-  `permissionRequests` so the wallet grants access to the social graph protocol
-
----
-
-## Validation
-
-After each app is updated:
-
-1. `bun install` from repo root
-2. `bun run build` succeeds for the affected example
-3. Manual smoke test: create identity / connect, create records, verify typed API is used
+Install `PreferencesDefinition` in the web-wallet and build a settings page for
+theme and locale preferences. See [enbox#272](https://github.com/enboxorg/enbox/issues/272)
+for the full task breakdown.
