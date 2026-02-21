@@ -22,6 +22,7 @@ import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { AgentDwnApi, isDwnMessage, isMessagesPermissionScope, isRecordPermissionScope } from '../src/dwn-api.js';
+import { hasRelationalReadAccess, isMultiPartyContext } from '../src/protocol-utils.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 
@@ -2866,16 +2867,11 @@ describe('Encryption Callback Factories', () => {
     };
 
     it('should detect multi-party protocols via isMultiPartyContext()', () => {
-      // Access private method via bracket notation
-      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
-        testHarness.agent.dwn
-      );
-
       // Multi-party: thread has participant with $role: true
-      expect(isMultiParty(multiPartyProtocolDefinition, 'thread')).toBe(true);
+      expect(isMultiPartyContext(multiPartyProtocolDefinition, 'thread')).toBe(true);
 
       // Single-party: note has no $role children
-      expect(isMultiParty(singlePartyProtocolDefinition, 'note')).toBe(false);
+      expect(isMultiPartyContext(singlePartyProtocolDefinition, 'note')).toBe(false);
     });
 
     it('should encrypt root record with ProtocolContext for multi-party protocol', async () => {
@@ -3818,83 +3814,50 @@ describe('Participant Detection (PR B)', () => {
 
   describe('isMultiPartyContext()', () => {
     it('should return true for role-based protocols', () => {
-      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
-        testHarness.agent.dwn
-      );
-      expect(isMultiParty(roleProtocol, 'thread')).toBe(true);
+      expect(isMultiPartyContext(roleProtocol, 'thread')).toBe(true);
     });
 
     it('should return true for relational-only protocols with read rules', () => {
-      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
-        testHarness.agent.dwn
-      );
-      expect(isMultiParty(relationalProtocol, 'email')).toBe(true);
+      expect(isMultiPartyContext(relationalProtocol, 'email')).toBe(true);
     });
 
     it('should return true for mixed role + relational protocols', () => {
-      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
-        testHarness.agent.dwn
-      );
-      expect(isMultiParty(mixedProtocol, 'community')).toBe(true);
+      expect(isMultiPartyContext(mixedProtocol, 'community')).toBe(true);
     });
 
     it('should return false for single-party protocols', () => {
-      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
-        testHarness.agent.dwn
-      );
-      expect(isMultiParty(singlePartyProtocol, 'note')).toBe(false);
+      expect(isMultiPartyContext(singlePartyProtocol, 'note')).toBe(false);
     });
 
     it('should return false when relational rules only grant create, not read', () => {
-      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
-        testHarness.agent.dwn
-      );
-      expect(isMultiParty(createOnlyProtocol, 'form')).toBe(false);
+      expect(isMultiPartyContext(createOnlyProtocol, 'form')).toBe(false);
     });
   });
 
   describe('hasRelationalReadAccess()', () => {
     it('should find recipient-of read rules', () => {
-      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
-        testHarness.agent.dwn
-      );
-      expect(hasAccess('recipient', 'email', relationalProtocol)).toBe(true);
+      expect(hasRelationalReadAccess('recipient', 'email', relationalProtocol)).toBe(true);
     });
 
     it('should find author-of read rules', () => {
-      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
-        testHarness.agent.dwn
-      );
-      expect(hasAccess('author', 'email', relationalProtocol)).toBe(true);
+      expect(hasRelationalReadAccess('author', 'email', relationalProtocol)).toBe(true);
     });
 
     it('should return false when no matching rule exists', () => {
-      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
-        testHarness.agent.dwn
-      );
-      expect(hasAccess('recipient', 'note', singlePartyProtocol)).toBe(false);
+      expect(hasRelationalReadAccess('recipient', 'note', singlePartyProtocol)).toBe(false);
     });
 
     it('should return false when rules exist but do not grant read', () => {
-      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
-        testHarness.agent.dwn
-      );
-      expect(hasAccess('recipient', 'form/submission', createOnlyProtocol)).toBe(false);
+      expect(hasRelationalReadAccess('recipient', 'form/submission', createOnlyProtocol)).toBe(false);
     });
 
     it('should find rules with undefined actorType (any who)', () => {
-      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
-        testHarness.agent.dwn
-      );
-      expect(hasAccess(undefined, 'email', relationalProtocol)).toBe(true);
+      expect(hasRelationalReadAccess(undefined, 'email', relationalProtocol)).toBe(true);
     });
 
     it('should find deeply nested relational rules', () => {
-      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
-        testHarness.agent.dwn
-      );
       // The mixed protocol has { who: 'recipient', of: 'community/channel/message', can: ['read'...] }
-      expect(hasAccess('recipient', 'community/channel/message', mixedProtocol)).toBe(true);
+      expect(hasRelationalReadAccess('recipient', 'community/channel/message', mixedProtocol)).toBe(true);
     });
   });
 
