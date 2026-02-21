@@ -1,5 +1,11 @@
 # @enbox/agent
 
+## 0.1.7
+
+### Patch Changes
+
+- [#261](https://github.com/enboxorg/enbox/pull/261) [`8a2f650`](https://github.com/enboxorg/enbox/commit/8a2f650c88f4b78f415dcacc23d7f4c82bc9a67b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(agent): preserve original error in sync catch blocks instead of generic 'unreachable'
+
 ## 0.1.6
 
 ### Patch Changes
