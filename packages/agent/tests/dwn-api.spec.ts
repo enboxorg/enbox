@@ -221,7 +221,7 @@ describe('AgentDwnApi', () => {
           protocol     : 'http://free-for-all.xyz',
           protocolPath : 'post',
           dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/foo' // no protocol
+          schema       : 'https://schemas.xyz/foo'
         },
         dataStream: new Blob([dataBytes3])
       });
@@ -1250,7 +1250,7 @@ describe('AgentDwnApi', () => {
           protocol     : 'http://free-for-all.xyz',
           protocolPath : 'post',
           dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/foo' // no protocol
+          schema       : 'https://schemas.xyz/foo'
         },
         dataStream: new Blob([dataBytes3])
       });

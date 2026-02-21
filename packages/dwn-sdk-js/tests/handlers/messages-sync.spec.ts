@@ -124,9 +124,9 @@ export function testMessagesSyncHandler(): void {
         expect(writeReply.status.code).toBe(202);
 
         // write a record under a different protocol to diverge the global root
-        const { message: flatRecord, dataStream: flatDataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
-        const flatWriteReply = await dwn.processMessage(alice.did, flatRecord, { dataStream: flatDataStream });
-        expect(flatWriteReply.status.code).toBe(202);
+        const { message: otherRecord, dataStream: otherDataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        const otherWriteReply = await dwn.processMessage(alice.did, otherRecord, { dataStream: otherDataStream });
+        expect(otherWriteReply.status.code).toBe(202);
 
         // get the global root
         const { message: globalRootMsg } = await MessagesSync.create({
@@ -261,10 +261,10 @@ export function testMessagesSyncHandler(): void {
         const protoWriteReply = await dwn.processMessage(alice.did, protoRecord, { dataStream: protoDataStream });
         expect(protoWriteReply.status.code).toBe(202);
 
-        // write a non-protocol record
-        const { message: flatRecord, dataStream: flatDataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
-        const flatWriteReply = await dwn.processMessage(alice.did, flatRecord, { dataStream: flatDataStream });
-        expect(flatWriteReply.status.code).toBe(202);
+        // write a record under a different protocol
+        const { message: otherRecord, dataStream: otherDataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        const otherWriteReply = await dwn.processMessage(alice.did, otherRecord, { dataStream: otherDataStream });
+        expect(otherWriteReply.status.code).toBe(202);
 
         // query protocol-scoped leaves
         const { message } = await MessagesSync.create({
@@ -276,7 +276,7 @@ export function testMessagesSyncHandler(): void {
 
         const reply = await dwn.processMessage(alice.did, message);
         expect(reply.status.code).toBe(200);
-        // should contain the ProtocolsConfigure and the protocol-scoped record, but not the flat record
+        // should contain the ProtocolsConfigure and the protocol-scoped record, but not the other-protocol record
         expect(reply.entries!.length).toBe(2);
         const protocolCid = await Message.getCid(protocolMessage);
         const recordCid = await Message.getCid(protoRecord);
