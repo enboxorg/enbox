@@ -477,9 +477,12 @@ export class IndexLevel {
     }
 
     try {
-      await Promise.all(filters.map(filter => {
-        return this.executeSingleFilterQuery(tenant, filter, sortProperty, matches, options );
-      }));
+      // Execute filters sequentially rather than in parallel.
+      // Concurrent IndexedDB iterators (opened by Promise.all) intermittently
+      // miss results in Firefox due to cursor/transaction scheduling races.
+      for (const filter of filters) {
+        await this.executeSingleFilterQuery(tenant, filter, sortProperty, matches, options);
+      }
     } catch (error) {
       if ((error as DwnError).code === DwnErrorCode.IndexInvalidSortPropertyInMemory) {
         // return empty results if the sort property is invalid.
