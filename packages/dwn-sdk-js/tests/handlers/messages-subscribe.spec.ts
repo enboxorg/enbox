@@ -201,6 +201,80 @@ export function testMessagesSubscribeHandler(): void {
         expect(subscriptionReply.subscription).toBeUndefined();
       });
 
+      describe('cursor-based subscriptions', () => {
+        it('should deliver catch-up events through the handler when cursor is provided', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+          // Write a record before subscribing.
+          const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice });
+          const write1Reply = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
+          expect(write1Reply.status.code).toBe(202);
+          const write1Cid = await Message.getCid(write1.message);
+
+          // Subscribe with cursor=0 to catch up from the beginning.
+          const messageCids: string[] = [];
+          const handler = async (event: MessageEvent): Promise<void> => {
+            const { message: msg } = event;
+            const cid = await Message.getCid(msg);
+            messageCids.push(cid);
+          };
+
+          const { message: subMessage } = await TestDataGenerator.generateMessagesSubscribe({
+            author : alice,
+            cursor : 0,
+          });
+          const subReply = await dwn.processMessage(alice.did, subMessage, { subscriptionHandler: handler });
+          expect(subReply.status.code).toBe(200);
+          expect(subReply.subscription).toBeDefined();
+
+          // Wait for the catch-up events.
+          // NOTE: with cursor mode, the protocol configure + record write should both come through.
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(messageCids.length).toBeGreaterThanOrEqual(1);
+            expect(messageCids).toContain(write1Cid);
+          });
+        });
+
+        it('should receive live events after cursor catch-up completes', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+          // Write before subscribing.
+          const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice });
+          await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
+
+          const messageCids: string[] = [];
+          const handler = async (event: MessageEvent): Promise<void> => {
+            const { message: msg } = event;
+            const cid = await Message.getCid(msg);
+            messageCids.push(cid);
+          };
+
+          const { message: subMessage } = await TestDataGenerator.generateMessagesSubscribe({
+            author : alice,
+            cursor : 0,
+          });
+          const subReply = await dwn.processMessage(alice.did, subMessage, { subscriptionHandler: handler });
+          expect(subReply.status.code).toBe(200);
+
+          // Wait for catch-up.
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(messageCids.length).toBeGreaterThanOrEqual(1);
+          });
+
+          // Write a live record.
+          const write2 = await TestDataGenerator.generateRecordsWrite({ author: alice });
+          await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
+          const write2Cid = await Message.getCid(write2.message);
+
+          // Wait for the live event.
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(messageCids).toContain(write2Cid);
+          });
+        });
+      });
+
       describe('grant based subscribes', () => {
         it('allows subscribe of messages with matching interface and method grant scope', async () => {
           // scenario: Alice gives Bob permission to subscribe for all of her messages

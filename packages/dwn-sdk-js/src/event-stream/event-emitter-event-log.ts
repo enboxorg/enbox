@@ -1,12 +1,13 @@
 import type { KeyValues } from '../types/query-types.js';
 import type {
-  EventListener,
   EventLog,
   EventLogEntry,
   EventLogReadOptions,
   EventLogReadResult,
+  EventLogSubscribeOptions,
   EventSubscription,
   MessageEvent,
+  SubscriptionListener,
 } from '../types/subscriptions.js';
 
 import mitt from 'mitt';
@@ -20,7 +21,7 @@ const EVENTS_LISTENER_CHANNEL = 'events';
  * Payload shape used internally by mitt. We bundle the three EventListener
  * arguments into a single object because mitt emits one value per event.
  */
-type EmitterPayload = { tenant: string; event: MessageEvent; indexes: KeyValues };
+type EmitterPayload = { tenant: string; event: MessageEvent; indexes: KeyValues; seq: number };
 
 /**
  * mitt event map — every channel name maps to an `EmitterPayload`.
@@ -130,7 +131,7 @@ export class EventEmitterEventLog implements EventLog {
 
     // Notify in-process subscribers.
     const channel = `${tenant}_${EVENTS_LISTENER_CHANNEL}`;
-    this.emitter.emit(channel, { tenant, event, indexes });
+    this.emitter.emit(channel, { tenant, event, indexes, seq });
 
     return seq;
   }
@@ -168,12 +169,69 @@ export class EventEmitterEventLog implements EventLog {
     return { events: results, cursor: lastSeq };
   }
 
-  public async subscribe(tenant: string, id: string, listener: EventListener): Promise<EventSubscription> {
+  public async subscribe(
+    tenant: string,
+    id: string,
+    listener: SubscriptionListener,
+    options?: EventLogSubscribeOptions,
+  ): Promise<EventSubscription> {
     const channel = `${tenant}_${EVENTS_LISTENER_CHANNEL}`;
+    const { cursor, filters } = options ?? {};
 
-    // Wrap the three-arg EventListener into a single-arg mitt handler.
+    if (cursor !== undefined) {
+      // ---- Cursor mode: catch-up from stored events, then EOSE, then live ----
+
+      // Buffer live events that arrive during catch-up to avoid losing them.
+      type BufferedEvent = { event: MessageEvent; seq: number };
+      const pendingLiveEvents: BufferedEvent[] = [];
+      let catchUpComplete = false;
+
+      // Step 1: Register live listener FIRST so no events are missed during read.
+      const handler = (payload: EmitterPayload): void => {
+        if (filters !== undefined && filters.length > 0) {
+          if (!FilterUtility.matchAnyFilter(payload.indexes, filters)) { return; }
+        }
+        if (!catchUpComplete) {
+          pendingLiveEvents.push({ event: payload.event, seq: payload.seq });
+        } else {
+          listener({ type: 'event', seq: payload.seq, event: payload.event });
+        }
+      };
+
+      this.emitter.on(channel, handler);
+
+      // Step 2: Read stored events from cursor and deliver them.
+      const readResult = await this.read(tenant, { cursor, filters });
+      const lastCatchUpSeq = readResult.cursor;
+
+      for (const entry of readResult.events) {
+        listener({ type: 'event', seq: entry.seq, event: entry.event });
+      }
+
+      // Step 3: Deliver any live events that arrived during catch-up (with seq > lastCatchUpSeq).
+      catchUpComplete = true;
+      for (const liveEvent of pendingLiveEvents) {
+        if (liveEvent.seq > lastCatchUpSeq) {
+          listener({ type: 'event', seq: liveEvent.seq, event: liveEvent.event });
+        }
+      }
+
+      // Step 4: Send EOSE marker.
+      listener({ type: 'eose', seq: lastCatchUpSeq });
+
+      return {
+        id,
+        close: async (): Promise<void> => { this.emitter.off(channel, handler); }
+      };
+    }
+
+    // ---- No cursor: live events only ----
+
     const handler = (payload: EmitterPayload): void => {
-      listener(payload.tenant, payload.event, payload.indexes);
+      if (filters !== undefined && filters.length > 0) {
+        if (!FilterUtility.matchAnyFilter(payload.indexes, filters)) { return; }
+      }
+      listener({ type: 'event', seq: payload.seq, event: payload.event });
     };
 
     this.emitter.on(channel, handler);

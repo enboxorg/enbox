@@ -23,6 +23,12 @@ export type RecordsSubscribeOptions = {
   protocolRole?: string;
 
   /**
+   * EventLog sequence number to resume from. When provided, catch-up events are
+   * replayed from the EventLog and an EOSE marker is delivered before live events.
+   */
+  cursor?: number;
+
+  /**
    * The delegated grant to sign on behalf of the logical author, which is the grantor (`grantedBy`) of the delegated grant.
    */
   delegatedGrant?: DataEncodedRecordsWriteMessage;
@@ -68,6 +74,7 @@ export class RecordsSubscribe extends AbstractMessage<RecordsSubscribeMessage> {
       filter           : Records.normalizeFilter(options.filter),
       dateSort         : options.dateSort,
       pagination       : options.pagination,
+      cursor           : options.cursor,
     };
 
     // delete all descriptor properties that are `undefined` else the code will encounter the following IPLD issue when attempting to generate CID:

@@ -2,13 +2,12 @@ import type { DidResolver } from '@enbox/dids';
 import type { MessageSort } from '../types/message-types.js';
 import type { MessageStore } from '../types//message-store.js';
 import type { MethodHandler } from '../types/method-handler.js';
-import type { EventListener, EventLog } from '../types/subscriptions.js';
+import type { EventLog, SubscriptionListener } from '../types/subscriptions.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { RecordEvent, RecordsQueryReplyEntry, RecordsSubscribeMessage, RecordsSubscribeReply, RecordSubscriptionHandler } from '../types/records-types.js';
 
 import { authenticate } from '../core/auth.js';
 import { DateSort } from '../types/records-types.js';
-import { FilterUtility } from '../utils/filter.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
@@ -74,25 +73,56 @@ export class RecordsSubscribeHandler implements MethodHandler {
       }
     }
 
-    // Step 1: Register event listener FIRST to ensure no events are missed between query and subscribe
-    const listener: EventListener = (eventTenant, event, eventIndexes):void => {
-      if (tenant === eventTenant && FilterUtility.matchAnyFilter(eventIndexes, eventFilters)) {
-        subscriptionHandler(event as RecordEvent);
+    const messageCid = await Message.getCid(message);
+    const { cursor: eventLogCursor } = recordsSubscribe.message.descriptor;
+
+    // Wrap the SubscriptionListener → RecordSubscriptionHandler.
+    // The handler callback receives plain RecordEvents; seq/EOSE are EventLog concerns.
+    const listener: SubscriptionListener = (msg):void => {
+      if (msg.type === 'event') {
+        subscriptionHandler(msg.event as RecordEvent);
       }
+      // EOSE is silently consumed here — it's meaningful to the EventLog consumer
+      // (server, agent) who registered via eventLog.subscribe() directly, not to the
+      // DWN handler's subscription callback.
     };
 
-    const messageCid = await Message.getCid(message);
-    const subscription = await this.eventLog.subscribe(tenant, messageCid, listener);
+    if (eventLogCursor !== undefined) {
+      // ---- Cursor mode: catch-up from EventLog + EOSE + live ----
+      // All catch-up, buffering, dedup, and EOSE delivery are handled by the
+      // EventLog implementation. The handler just passes the cursor and filters.
+
+      try {
+        const subscription = await this.eventLog!.subscribe(tenant, messageCid, listener, {
+          cursor  : eventLogCursor,
+          filters : eventFilters,
+        });
+
+        return {
+          status: { code: 200, detail: 'OK' },
+          subscription,
+        };
+      } catch (error) {
+        return messageReplyFromError(error, 500);
+      }
+    }
+
+    // ---- No cursor: existing behavior (initial snapshot from MessageStore) ----
+
+    // Step 1: Register event listener FIRST to ensure no events are missed between query and subscribe
+    const subscription = await this.eventLog!.subscribe(tenant, messageCid, listener, {
+      filters: eventFilters,
+    });
 
     // Step 2: Query for initial snapshot of matching records
     let entries: RecordsQueryReplyEntry[];
-    let cursor: PaginationCursor | undefined;
+    let paginationCursor: PaginationCursor | undefined;
     try {
       const { dateSort, pagination } = recordsSubscribe.message.descriptor;
       const messageSort = RecordsSubscribeHandler.convertDateSort(dateSort);
       const queryResult = await this.messageStore.query(tenant, queryFilters, messageSort, pagination);
       entries = queryResult.messages as RecordsQueryReplyEntry[];
-      cursor = queryResult.cursor;
+      paginationCursor = queryResult.cursor;
 
       // attach initialWrite for non-initial writes
       for (const entry of entries) {
@@ -114,10 +144,10 @@ export class RecordsSubscribeHandler implements MethodHandler {
 
     // Step 3: Return subscription + initial entries + cursor
     return {
-      status: { code: 200, detail: 'OK' },
+      status : { code: 200, detail: 'OK' },
       subscription,
       entries,
-      cursor
+      cursor : paginationCursor,
     };
   }
 
