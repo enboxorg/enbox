@@ -553,15 +553,18 @@ describe('HdIdentityVault', () => {
           expect(uniqueKeys.size).toBe(vms.length);
         });
 
-        it('should reference encryption key in DWN service', async () => {
+        it('should create DWN service without legacy enc/sig properties', async () => {
           await identityVault.initialize({ password: 'test-password', dwnEndpoints: ['https://dwn.example.com'] });
 
           const did = await identityVault.getDid();
 
-          // Verify DWN service references #enc.
+          // Verify DWN service exists but does not include legacy enc/sig properties.
+          // Encryption keys are resolved from the DID document's keyAgreement verification methods.
           const dwnService = did.document.service?.find((svc: any) => svc.type === 'DecentralizedWebNode');
           expect(dwnService).toBeDefined();
-          expect(dwnService).toHaveProperty('enc', '#enc');
+          expect(dwnService).not.toHaveProperty('enc');
+          expect(dwnService).not.toHaveProperty('sig');
+          expect(dwnService).toHaveProperty('serviceEndpoint', ['https://dwn.example.com']);
         });
       });
     });
