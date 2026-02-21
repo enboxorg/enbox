@@ -3269,7 +3269,7 @@ describe('DwnApi', () => {
       expect(fetchedGrantsCarol[0].id).toBe(grantFromCarol.id);
     });
 
-    it('should check revocation status if option is set', async () => {
+    it('should filter out revoked grants by default', async () => {
       // alice creates a grant for bob and stores it
       const bobGrant = await dwnAlice.permissions.grant({
         store       : true,
@@ -3282,26 +3282,20 @@ describe('DwnApi', () => {
         }
       });
 
-      // query for the grants
-      let fetchedGrants = await dwnAlice.permissions.queryGrants({
-        checkRevoked: true
-      });
-
-      // expect to have the 1 grant created
+      // query for the grants — should include the grant
+      let fetchedGrants = await dwnAlice.permissions.queryGrants();
       expect(fetchedGrants.length).toBe(1);
       expect(fetchedGrants[0].id).toBe(bobGrant.id);
 
-      // stub the isRevoked method to return true
-      sinon.stub(AgentPermissionsApi.prototype, 'isGrantRevoked').resolves(true);
+      // revoke the grant
+      await bobGrant.revoke();
 
-      // query for the grants
-      fetchedGrants = await dwnAlice.permissions.queryGrants({
-        checkRevoked: true
-      });
+      // default query should now exclude the revoked grant
+      fetchedGrants = await dwnAlice.permissions.queryGrants();
       expect(fetchedGrants.length).toBe(0);
 
-      // return without checking revoked status
-      fetchedGrants = await dwnAlice.permissions.queryGrants();
+      // with checkRevoked: false, the revoked grant should still be returned
+      fetchedGrants = await dwnAlice.permissions.queryGrants({ checkRevoked: false });
       expect(fetchedGrants.length).toBe(1);
       expect(fetchedGrants[0].id).toBe(bobGrant.id);
     });

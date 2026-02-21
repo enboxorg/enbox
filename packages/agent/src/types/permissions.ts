@@ -7,6 +7,8 @@ export type FetchPermissionsParams = {
   grantor?: string;
   protocol?: string;
   remote?: boolean;
+  /** Whether to filter out revoked grants. Defaults to `true`. */
+  checkRevoked?: boolean;
 };
 
 export type FetchPermissionRequestParams = {

@@ -44,13 +44,11 @@ export type FetchRequestsRequest = Omit<FetchPermissionRequestParams, 'author' |
  * Represents the request payload for fetching permission grants from a Decentralized Web Node (DWN).
  *
  * Optionally, specify a remote DWN target in the `from` property to fetch requests from.
- * Optionally, specify whether to check if the grant is revoked in the `checkRevoked` property.
+ * Revoked grants are filtered out by default; set `checkRevoked: false` to include them.
  */
 export type FetchGrantsRequest = Omit<FetchPermissionsParams, 'author' | 'target' | 'remote'> & {
   /** Optional DID specifying the remote target DWN tenant to be queried. */
   from?: string;
-  /** Optionally check if the grant has been revoked. */
-  checkRevoked?: boolean;
 };
 
 /**
@@ -334,7 +332,7 @@ export class DwnApi {
        * Query permission grants. You can filter by grantee, grantor, protocol and specify if you want to query a remote DWN.
        */
       queryGrants: async(request: FetchGrantsRequest = {}): Promise<PermissionGrant[]> => {
-        const { checkRevoked, from, ...params } = request;
+        const { from, ...params } = request;
         const remote = from !== undefined;
         const author = this.delegateDid ?? this.connectedDid;
         const target = from ?? this.delegateDid ?? this.connectedDid;
@@ -353,12 +351,6 @@ export class DwnApi {
             message      : permission.message,
           };
 
-          if (checkRevoked) {
-            const grantRecordId = permission.grant.id;
-            if (await this.permissionsApi.isGrantRevoked({ author, target, grantRecordId, remote })) {
-              continue;
-            }
-          }
           grants.push(await PermissionGrant.parse(grantParams));
         }
 
