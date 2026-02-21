@@ -1,7 +1,7 @@
 import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from './json-rpc.js';
 
 import { CryptoUtils } from '@enbox/crypto';
-import { createJsonRpcSubscriptionRequest, parseJson } from './json-rpc.js';
+import { createJsonRpcSubscriptionRequest, JsonRpcErrorCodes, parseJson } from './json-rpc.js';
 
 /**
  * Converts WebSocket message data to a string.
@@ -26,6 +26,11 @@ function toText(data: unknown): string {
 const CONNECT_TIMEOUT = 3_000;
 const RESPONSE_TIMEOUT = 30_000;
 
+/** Default reconnection settings. */
+const DEFAULT_BASE_RECONNECT_DELAY = 1_000;
+const DEFAULT_MAX_RECONNECT_DELAY = 30_000;
+const DEFAULT_MAX_RECONNECT_ATTEMPTS = Infinity;
+
 export interface JsonRpcSocketOptions {
   /** socket connection timeout in milliseconds */
   connectTimeout?: number;
@@ -35,61 +40,106 @@ export interface JsonRpcSocketOptions {
   onclose?: () => void;
   /** optional socket error handler */
   onerror?: (error?: any) => void;
+
+  /**
+   * Whether to automatically reconnect on unexpected close.
+   * Defaults to `true`. Set to `false` to disable auto-reconnect.
+   */
+  autoReconnect?: boolean;
+
+  /** Base delay in ms for exponential backoff reconnection. Default 1000. */
+  baseReconnectDelay?: number;
+
+  /** Maximum delay in ms for exponential backoff reconnection. Default 30000. */
+  maxReconnectDelay?: number;
+
+  /** Maximum number of reconnection attempts. Default `Infinity`. */
+  maxReconnectAttempts?: number;
+
+  /** Called when a reconnection attempt is about to start. */
+  onreconnecting?: (attempt: number) => void;
+
+  /** Called when the socket has successfully reconnected. */
+  onreconnected?: () => void;
 }
 
 /**
  * JSON RPC Socket Client for WebSocket request/response and long-running subscriptions.
+ *
+ * Supports automatic reconnection with exponential backoff when the connection
+ * drops unexpectedly. Subscription message handlers survive reconnection — they
+ * are re-registered on the new underlying socket automatically.
  */
 export class JsonRpcSocket {
+  /**
+   * Map of JSON-RPC id → message handler. For one-shot `request()` calls, the
+   * handler is added before sending and removed on response or timeout.
+   * For subscriptions, the handler lives until explicitly closed.
+   */
   private messageHandlers: Map<JsonRpcId, (event: { data: any }) => void> = new Map();
 
-  private constructor(private socket: WebSocket, private responseTimeout: number) {}
+  /**
+   * Set of JSON-RPC ids that belong to subscription handlers (as opposed to
+   * one-shot request handlers). Subscription handlers survive reconnection;
+   * one-shot handlers are rejected on unexpected close.
+   */
+  private subscriptionHandlerIds: Set<JsonRpcId> = new Set();
 
-  public static async connect(url: string, options: JsonRpcSocketOptions = {}): Promise<JsonRpcSocket> {
-    const { connectTimeout = CONNECT_TIMEOUT, responseTimeout = RESPONSE_TIMEOUT, onclose, onerror } = options;
+  /** The URL to connect/reconnect to. */
+  private url: string;
 
-    const socket = new WebSocket(url);
+  /** Stored options for reconnection. */
+  private options: JsonRpcSocketOptions;
 
-    if (!onclose) {
-      socket.onclose = ():void => {
-        console.info(`JSON RPC Socket close ${url}`);
-      };
-    } else {
-      socket.onclose = onclose;
-    }
+  /** Whether `close()` was called intentionally by the user. */
+  private closedByUser = false;
 
-    if (!onerror) {
-      socket.onerror = (error?: any):void => {
-        console.error(`JSON RPC Socket error ${url}`, error);
-      };
-    } else {
-      socket.onerror = onerror;
-    }
+  /** Whether a reconnection attempt is currently in progress. */
+  private reconnecting = false;
 
-    return new Promise<JsonRpcSocket>((resolve, reject) => {
-      socket.addEventListener('open', () => {
-        const jsonRpcSocket = new JsonRpcSocket(socket, responseTimeout);
+  /** Whether the socket is currently connected. */
+  private _isConnected = false;
 
-        socket.addEventListener('message', (event: { data: any }) => {
-          const jsonRpcResponse = parseJson(toText(event.data)) as JsonRpcResponse;
-          const handler = jsonRpcSocket.messageHandlers.get(jsonRpcResponse.id);
-          if (handler) {
-            handler(event);
-          }
-        });
-
-        resolve(jsonRpcSocket);
-      });
-
-      socket.addEventListener('error', (error: any) => {
-        reject(error);
-      });
-
-      setTimeout(() => reject(new Error('connect timed out')), connectTimeout);
-    });
+  private constructor(
+    private socket: WebSocket,
+    private responseTimeout: number,
+    url: string,
+    options: JsonRpcSocketOptions,
+  ) {
+    this.url = url;
+    this.options = options;
+    this._isConnected = true;
   }
 
+  /** Whether the socket is currently connected. */
+  public get isConnected(): boolean {
+    return this._isConnected;
+  }
+
+  public static async connect(url: string, options: JsonRpcSocketOptions = {}): Promise<JsonRpcSocket> {
+    const { connectTimeout = CONNECT_TIMEOUT, responseTimeout = RESPONSE_TIMEOUT } = options;
+
+    let socket: WebSocket;
+    try {
+      socket = await JsonRpcSocket.createWebSocket(url, connectTimeout);
+    } catch (error) {
+      // Notify the onerror handler if one was provided, even for connection-time errors.
+      options.onerror?.(error);
+      throw error;
+    }
+
+    const jsonRpcSocket = new JsonRpcSocket(socket, responseTimeout, url, options);
+    jsonRpcSocket.wireSocket(socket);
+
+    return jsonRpcSocket;
+  }
+
+  /**
+   * Closes the socket and stops reconnection attempts.
+   */
   public close(): void {
+    this.closedByUser = true;
+    this._isConnected = false;
     this.socket.close();
   }
 
@@ -150,6 +200,7 @@ export class JsonRpcSocket {
         if (jsonRpcResponse.error !== undefined) {
           // remove the event listener upon receipt of a JSON RPC Error.
           this.messageHandlers.delete(subscriptionId);
+          this.subscriptionHandlerIds.delete(subscriptionId);
           this.closeSubscription(subscriptionId).catch(() => {
             // swallow timeout errors; the subscription is already cleaned up locally.
           });
@@ -159,6 +210,7 @@ export class JsonRpcSocket {
     };
 
     this.messageHandlers.set(subscriptionId, socketEventListener);
+    this.subscriptionHandlerIds.add(subscriptionId);
 
     const response = await this.request(request);
     if (response.error) {
@@ -167,6 +219,7 @@ export class JsonRpcSocket {
         this.messageHandlers.set(subscriptionId, existingHandler);
       } else {
         this.messageHandlers.delete(subscriptionId);
+        this.subscriptionHandlerIds.delete(subscriptionId);
       }
       return { response };
     }
@@ -174,6 +227,7 @@ export class JsonRpcSocket {
     // clean up listener and create a `rpc.subscribe.close` message to use when closing this JSON RPC subscription
     const close = async (): Promise<void> => {
       this.messageHandlers.delete(subscriptionId);
+      this.subscriptionHandlerIds.delete(subscriptionId);
       await this.closeSubscription(subscriptionId);
     };
 
@@ -194,5 +248,159 @@ export class JsonRpcSocket {
    */
   public send(request: JsonRpcRequest):void {
     this.socket.send(JSON.stringify(request));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Internal: socket wiring and reconnection
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Creates and connects a raw WebSocket, resolving when `open` fires.
+   */
+  private static createWebSocket(url: string, connectTimeout: number): Promise<WebSocket> {
+    return new Promise<WebSocket>((resolve, reject) => {
+      const ws = new WebSocket(url);
+
+      const onOpen = (): void => {
+        cleanup();
+        resolve(ws);
+      };
+
+      const onError = (error: any): void => {
+        cleanup();
+        reject(error);
+      };
+
+      const timer = setTimeout(() => {
+        cleanup();
+        ws.close();
+        reject(new Error('connect timed out'));
+      }, connectTimeout);
+
+      const cleanup = (): void => {
+        clearTimeout(timer);
+        ws.removeEventListener('open', onOpen);
+        ws.removeEventListener('error', onError);
+      };
+
+      ws.addEventListener('open', onOpen);
+      ws.addEventListener('error', onError);
+    });
+  }
+
+  /**
+   * Wires the `onmessage`, `onclose`, and `onerror` handlers for a given
+   * WebSocket instance. Called both on initial connect and on reconnect.
+   */
+  private wireSocket(ws: WebSocket): void {
+    ws.addEventListener('message', (event: { data: any }) => {
+      const jsonRpcResponse = parseJson(toText(event.data)) as JsonRpcResponse;
+      if (jsonRpcResponse === null) {
+        return;
+      }
+      const handler = this.messageHandlers.get(jsonRpcResponse.id);
+      if (handler) {
+        handler(event);
+      }
+    });
+
+    ws.addEventListener('close', () => {
+      this._isConnected = false;
+
+      if (this.closedByUser) {
+        this.options.onclose?.();
+        return;
+      }
+
+      // Reject all pending one-shot request handlers (non-subscription).
+      this.rejectPendingRequests();
+
+      // Notify the user handler if present.
+      this.options.onclose?.();
+
+      // Attempt reconnection if enabled.
+      const autoReconnect = this.options.autoReconnect ?? true;
+      if (autoReconnect && !this.reconnecting) {
+        this.attemptReconnect();
+      }
+    });
+
+    ws.addEventListener('error', (error: any) => {
+      this.options.onerror?.(error);
+    });
+  }
+
+  /**
+   * Rejects all pending one-shot request handlers (those not in `subscriptionHandlerIds`)
+   * by synthesizing a transport error event.
+   */
+  private rejectPendingRequests(): void {
+    for (const [id, handler] of this.messageHandlers) {
+      if (!this.subscriptionHandlerIds.has(id)) {
+        // Synthesize an error response to reject the pending promise.
+        const errorData = JSON.stringify({
+          jsonrpc : '2.0',
+          id,
+          error   : { code: JsonRpcErrorCodes.TransportError, message: 'WebSocket connection closed unexpectedly' },
+        });
+        handler({ data: errorData });
+        this.messageHandlers.delete(id);
+      }
+    }
+  }
+
+  /**
+   * Exponential backoff reconnection loop with jitter.
+   */
+  private attemptReconnect(): void {
+    this.reconnecting = true;
+
+    const baseDelay = this.options.baseReconnectDelay ?? DEFAULT_BASE_RECONNECT_DELAY;
+    const maxDelay = this.options.maxReconnectDelay ?? DEFAULT_MAX_RECONNECT_DELAY;
+    const maxAttempts = this.options.maxReconnectAttempts ?? DEFAULT_MAX_RECONNECT_ATTEMPTS;
+    const connectTimeout = this.options.connectTimeout ?? CONNECT_TIMEOUT;
+
+    let attempt = 0;
+
+    const tryReconnect = async (): Promise<void> => {
+      if (this.closedByUser) {
+        this.reconnecting = false;
+        return;
+      }
+
+      attempt++;
+
+      if (attempt > maxAttempts) {
+        this.reconnecting = false;
+        return;
+      }
+
+      this.options.onreconnecting?.(attempt);
+
+      // Exponential backoff with jitter: delay = min(baseDelay * 2^(attempt-1), maxDelay) * (0.5 + random*0.5)
+      const expDelay = Math.min(baseDelay * Math.pow(2, attempt - 1), maxDelay);
+      const jitteredDelay = expDelay * (0.5 + Math.random() * 0.5);
+
+      await new Promise(resolve => setTimeout(resolve, jitteredDelay));
+
+      if (this.closedByUser) {
+        this.reconnecting = false;
+        return;
+      }
+
+      try {
+        const newSocket = await JsonRpcSocket.createWebSocket(this.url, connectTimeout);
+        this.socket = newSocket;
+        this._isConnected = true;
+        this.reconnecting = false;
+        this.wireSocket(newSocket);
+        this.options.onreconnected?.();
+      } catch {
+        // Connection failed — retry.
+        await tryReconnect();
+      }
+    };
+
+    tryReconnect();
   }
 }

@@ -220,10 +220,10 @@ describe('WebSocketDwnRpcClient', () => {
       };
 
       const subscribeResponse = await client.sendDwnRequest({
-        dwnUrl    : socketDwnUrl,
-        targetDid : alice.did,
-        message   : subscribeMessage,
-        subscriptionHandler
+        dwnUrl       : socketDwnUrl,
+        targetDid    : alice.did,
+        message      : subscribeMessage,
+        subscription : { handler: subscriptionHandler },
       });
       expect(subscribeResponse.status.code).toBe(200);
       expect(subscribeResponse.subscription).toBeDefined();
@@ -363,17 +363,23 @@ describe('WebSocketDwnRpcClient', () => {
         const subRequest = subscriptionCallArgs[0];
         const subHandler = subscriptionCallArgs[1];
 
-        // get the subscription Id from the request, and add a mock subscription to the subscriptions map
+        // get the subscription Id from the request, and add a mock tracked subscription to the subscriptions map
         const subscriptionId = subRequest.subscription!.id;
-        const subscription = {
+        const innerSubscription = {
           id    : subscriptionId,
           close : (): void => {}
         };
         // spy on the close function
-        const closeSpy = spyOn(subscription, 'close');
+        const closeSpy = spyOn(innerSubscription, 'close');
 
+        const tracked = {
+          subscription : innerSubscription,
+          target       : alice.did,
+          message,
+          handler      : (): void => {},
+        };
         // add to the subscriptions map
-        subscriptions.set(subscriptionId, subscription);
+        subscriptions.set(subscriptionId, tracked);
 
         const jsonError = createJsonRpcErrorResponse('id', JsonRpcErrorCodes.BadRequest, 'some error');
         subHandler(jsonError);
@@ -381,6 +387,67 @@ describe('WebSocketDwnRpcClient', () => {
         // confirm close was called and subscription was removed
         expect(closeSpy).toHaveBeenCalledTimes(1);
         expect(subscriptions.size).toBe(0);
+      });
+    });
+
+    describe('subscription lifecycle events', () => {
+      it('should track lastCursor from subscription events', async () => {
+        // install the default test protocol so the DWN accepts the record
+        await installDefaultTestProtocolViaHttp(httpClient, testDwnUrl, alice);
+
+        // create a subscription
+        const { message: subscribeMessage } = await TestDataGenerator.generateRecordsSubscribe({
+          author : alice,
+          filter : { schema: 'foo/bar' }
+        });
+
+        const receivedMessages: any[] = [];
+        const handler: RecordSubscriptionHandler = (msg) => {
+          receivedMessages.push(msg);
+        };
+
+        const subscribeResponse = await client.sendDwnRequest({
+          dwnUrl       : socketDwnUrl,
+          targetDid    : alice.did,
+          message      : subscribeMessage,
+          subscription : { handler },
+        });
+        expect(subscribeResponse.status.code).toBe(200);
+        expect(subscribeResponse.subscription).toBeDefined();
+
+        // write a record to trigger a subscription event
+        const { message: writeMessage, dataBytes } = await TestDataGenerator.generateRecordsWrite({
+          author : alice,
+          schema : 'foo/bar'
+        });
+
+        await httpClient.sendDwnRequest({
+          dwnUrl    : testDwnUrl,
+          targetDid : alice.did,
+          message   : writeMessage,
+          data      : dataBytes,
+        });
+
+        await sleepWhileWaitingForEvents(100);
+
+        // should have received at least one event
+        expect(receivedMessages.length).toBeGreaterThanOrEqual(1);
+
+        // check that the connection tracks the subscription with a cursor
+        const host = new URL(socketDwnUrl).host;
+        const connection = (WebSocketDwnRpcClient as any)['connections'].get(host);
+        expect(connection).toBeDefined();
+
+        // at least one tracked subscription should exist
+        const trackedSubs = [...connection.subscriptions.values()];
+        expect(trackedSubs.length).toBeGreaterThanOrEqual(1);
+
+        // the lastCursor should be set from the received event
+        const tracked = trackedSubs[0];
+        expect(tracked.lastCursor).toBeDefined();
+        expect(typeof tracked.lastCursor).toBe('string');
+
+        await subscribeResponse.subscription!.close();
       });
     });
   });

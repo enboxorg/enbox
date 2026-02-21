@@ -17,7 +17,7 @@ import type {
   ProcessDwnRequest,
   Web5Agent } from '@enbox/agent';
 
-import type { SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { DwnSubscriptionMessage } from '@enbox/dwn-clients';
 
 import {
   AgentPermissionsApi,
@@ -738,9 +738,24 @@ export class DwnApi {
         const remoteOrigin = from;
         const protocolRole = messageParams.protocolRole;
 
-        const subscriptionHandler = (msg: SubscriptionMessage): void => {
+        const subscriptionHandler = (msg: DwnSubscriptionMessage): void => {
           if (msg.type === 'eose') {
-            // TODO: surface EOSE to the LiveQuery once reconnection is supported
+            liveQuery?.handleLifecycleEvent('eose');
+            return;
+          }
+
+          if (msg.type === 'disconnected') {
+            liveQuery?.handleLifecycleEvent('disconnected');
+            return;
+          }
+
+          if (msg.type === 'reconnected') {
+            liveQuery?.handleLifecycleEvent('reconnected');
+            return;
+          }
+
+          if (msg.type === 'reconnecting') {
+            liveQuery?.handleLifecycleEvent('reconnecting', { attempt: msg.attempt });
             return;
           }
 

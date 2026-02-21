@@ -3,11 +3,13 @@ import type {
   DwnConfig,
   EncryptionInput,
   EncryptionKeyDeriver,
+  GenericMessage,
   KeyDecrypter,
   ProtocolDefinition,
   RecordsWrite,
   RecordsWriteMessage,
 } from '@enbox/dwn-sdk-js';
+import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
 import type { KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
 import { TtlCache } from '@enbox/common';
@@ -280,13 +282,30 @@ export class AgentDwnApi {
       subscriptionHandler = request.subscriptionHandler;
     }
 
+    // Build a resubscribe factory for subscribe requests. This closure
+    // captures the original request so it can reconstruct and re-sign a new
+    // subscribe message with a cursor on reconnection.
+    let resubscribeFactory: ResubscribeFactory | undefined;
+    if (subscriptionHandler !== undefined && !('messageCid' in request)) {
+      resubscribeFactory = async (cursor?: string): Promise<GenericMessage> => {
+        const resumeParams = cursor !== undefined
+          ? { ...request.messageParams, cursor } as DwnMessageParams[T]
+          : request.messageParams;
+
+        const resumeRequest: ProcessDwnRequest<T> = { ...request, messageParams: resumeParams };
+        const { message: resumeMessage } = await this.constructDwnMessage({ request: resumeRequest });
+        return resumeMessage;
+      };
+    }
+
     // Send the RPC request to the target DID's DWN service endpoint using the Agent's RPC client.
     const reply = await this.sendDwnRpcRequest({
       targetDid: request.target,
       dwnEndpointUrls,
       message,
       data,
-      subscriptionHandler
+      subscriptionHandler,
+      resubscribeFactory,
     });
 
     // Auto-decrypt reply data if encryption is enabled (Component 7)
@@ -437,13 +456,14 @@ export class AgentDwnApi {
   }
 
   private async sendDwnRpcRequest<T extends DwnInterface>({
-    targetDid, dwnEndpointUrls, message, data, subscriptionHandler
+    targetDid, dwnEndpointUrls, message, data, subscriptionHandler, resubscribeFactory
   }: {
       targetDid: string;
       dwnEndpointUrls: string[];
       message: DwnMessage[T];
       data?: Blob;
       subscriptionHandler?: MessageHandler[T];
+      resubscribeFactory?: ResubscribeFactory;
     }
   ): Promise<DwnMessageReply[T]> {
     const errorMessages: { url: string, message: string }[] = [];
@@ -479,7 +499,10 @@ export class AgentDwnApi {
           targetDid,
           message,
           data,
-          subscriptionHandler
+          subscription: subscriptionHandler ? {
+            handler: subscriptionHandler as DwnSubscriptionHandler,
+            resubscribeFactory,
+          } : undefined,
         });
 
         return dwnReply;
