@@ -13,17 +13,6 @@ export type MessageEvent = {
   initialWrite?: RecordsWriteMessage
 };
 
-/**
- * The EventStream interface implements a pub/sub system based on Message filters.
- * @deprecated Use {@link EventLog} instead for persistent, cursor-based event delivery.
- */
-export interface EventStream {
-  subscribe(tenant: string, id: string, listener: EventListener): Promise<EventSubscription>;
-  emit(tenant: string, event: MessageEvent, indexes: KeyValues): void;
-  open(): Promise<void>;
-  close(): Promise<void>;
-}
-
 export interface EventSubscription {
   id: string;
   close: () => Promise<void>;
@@ -84,7 +73,7 @@ export type EventLogReadResult = {
  * The EventLog interface provides persistent, ordered event storage with
  * cursor-based reads and in-process subscription support.
  *
- * It supersedes {@link EventStream} by persisting events before delivery and
+ * It persists events before delivery and
  * exposing monotonic sequence numbers that enable cursor-based resume after
  * disconnects.
  *

@@ -1,19 +1,18 @@
 import type { DataStore } from './types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
+import type { EventLog } from './types/subscriptions.js';
 import type { MessageStore } from './types/message-store.js';
 import type { MethodHandler } from './types/method-handler.js';
 import type { ResumableTaskStore } from './types/resumable-task-store.js';
 import type { StateIndex } from './types/state-index.js';
 import type { TenantGate } from './core/tenant-gate.js';
 import type { UnionMessageReply } from './core/message-reply.js';
-import type { EventLog, EventStream } from './types/subscriptions.js';
 import type { GenericMessage, GenericMessageReply } from './types/message-types.js';
 import type { MessagesReadMessage, MessagesReadReply, MessagesSubscribeMessage, MessagesSubscribeMessageOptions, MessagesSubscribeReply, MessagesSyncMessage, MessagesSyncReply, MessageSubscriptionHandler } from './types/messages-types.js';
 import type { ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply } from './types/protocols-types.js';
 import type { RecordsCountMessage, RecordsCountReply, RecordsDeleteMessage, RecordsQueryMessage, RecordsQueryReply, RecordsReadMessage, RecordsReadReply, RecordsSubscribeMessage, RecordsSubscribeMessageOptions, RecordsSubscribeReply, RecordSubscriptionHandler, RecordsWriteMessage, RecordsWriteMessageOptions } from './types/records-types.js';
 
 import { AllowAllTenantGate } from './core/tenant-gate.js';
-import { EventStreamToEventLogAdapter } from './event-stream/event-stream-to-event-log-adapter.js';
 import { Message } from './core/message.js';
 import { messageReplyFromError } from './core/message-reply.js';
 import { MessagesReadHandler } from './handlers/messages-read.js';
@@ -52,12 +51,7 @@ export class Dwn {
     this.resumableTaskStore = config.resumableTaskStore;
     this.stateIndex = config.stateIndex;
 
-    // Resolve EventLog: prefer `eventLog`, fall back to wrapping deprecated `eventStream`.
-    if (config.eventLog !== undefined) {
-      this.eventLog = config.eventLog;
-    } else if (config.eventStream !== undefined) {
-      this.eventLog = new EventStreamToEventLogAdapter(config.eventStream);
-    }
+    this.eventLog = config.eventLog;
 
     this.storageController = new StorageController({
       messageStore : this.messageStore,
@@ -282,16 +276,9 @@ export type DwnConfig = {
 
   /**
    * Persistent event log with cursor-based reads and in-process subscriptions.
-   * Preferred over `eventStream`. If both are provided, `eventLog` takes precedence.
+   * Optional — if not provided, subscriptions will not be supported.
    */
   eventLog?: EventLog;
-
-  /**
-   * @deprecated Use `eventLog` instead. If only `eventStream` is provided it will
-   * be wrapped in an adapter that satisfies the {@link EventLog} interface but
-   * does NOT provide persistence or cursor-based reads.
-   */
-  eventStream?: EventStream;
 
   messageStore: MessageStore;
   dataStore: DataStore;

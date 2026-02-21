@@ -34,7 +34,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
   }): Promise<RecordsSubscribeReply> {
     if (this.eventLog === undefined) {
       return messageReplyFromError(new DwnError(
-        DwnErrorCode.RecordsSubscribeEventStreamUnimplemented,
+        DwnErrorCode.RecordsSubscribeEventLogUnimplemented,
         'Subscriptions are not supported'
       ), 501);
     }

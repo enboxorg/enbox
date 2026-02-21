@@ -1,5 +1,5 @@
-import { EventEmitterStream } from '@enbox/dwn-sdk-js';
-import type { EventStream } from '@enbox/dwn-sdk-js';
+import { EventEmitterEventLog } from '@enbox/dwn-sdk-js';
+import type { EventLog } from '@enbox/dwn-sdk-js';
 
 /**
  * An example of a plugin that is used for testing.
@@ -7,12 +7,12 @@ import type { EventStream } from '@enbox/dwn-sdk-js';
  * - The class must be a default export.
  * - The constructor must not take any arguments.
  */
-export default class EventStreamInMemory extends EventEmitterStream implements EventStream {
+export default class EventLogInMemory extends EventEmitterEventLog implements EventLog {
   constructor() {
     super();
 
     // NOTE: the following line is added purely to test the constructor invocation.
-    EventStreamInMemory.spyingTheConstructor();
+    EventLogInMemory.spyingTheConstructor();
   }
 
   /**

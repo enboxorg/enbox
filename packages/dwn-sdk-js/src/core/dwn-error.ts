@@ -20,10 +20,10 @@ export enum DwnErrorCode {
   ComputeCidCodecNotSupported = 'ComputeCidCodecNotSupported',
   ComputeCidMultihashNotSupported = 'ComputeCidMultihashNotSupported',
   Ed25519InvalidJwk = 'Ed25519InvalidJwk',
-  EventEmitterStreamNotOpenError = 'EventEmitterStreamNotOpenError',
+  EventLogNotOpenError = 'EventLogNotOpenError',
   MessagesGrantAuthorizationMismatchedProtocol = 'EventsGrantAuthorizationMismatchedProtocol',
   MessagesSubscribeAuthorizationFailed = 'MessagesSubscribeAuthorizationFailed',
-  MessagesSubscribeEventStreamUnimplemented = 'MessagesSubscribeEventStreamUnimplemented',
+  MessagesSubscribeEventLogUnimplemented = 'MessagesSubscribeEventLogUnimplemented',
   GeneralJwsVerifierGetPublicKeyNotFound = 'GeneralJwsVerifierGetPublicKeyNotFound',
   GeneralJwsVerifierInvalidSignature = 'GeneralJwsVerifierInvalidSignature',
   GeneralJwsVerifierMissingAlg = 'GeneralJwsVerifierMissingAlg',
@@ -146,7 +146,7 @@ export enum DwnErrorCode {
 
   RecordsReadCreateFilterPublishedSortInvalid = 'RecordsReadCreateFilterPublishedSortInvalid',
   RecordsReadParseFilterPublishedSortInvalid = 'RecordsReadParseFilterPublishedSortInvalid',
-  RecordsSubscribeEventStreamUnimplemented = 'RecordsSubscribeEventStreamUnimplemented',
+  RecordsSubscribeEventLogUnimplemented = 'RecordsSubscribeEventLogUnimplemented',
   RecordsSubscribeFilterMissingRequiredProperties = 'RecordsSubscribeFilterMissingRequiredProperties',
 
   RecordsWriteAttestationIntegrityMoreThanOneSignature = 'RecordsWriteAttestationIntegrityMoreThanOneSignature',

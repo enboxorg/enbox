@@ -32,7 +32,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
   }): Promise<MessagesSubscribeReply> {
     if (this.eventLog === undefined) {
       return messageReplyFromError(new DwnError(
-        DwnErrorCode.MessagesSubscribeEventStreamUnimplemented,
+        DwnErrorCode.MessagesSubscribeEventLogUnimplemented,
         'Subscriptions are not supported'
       ), 501);
     }

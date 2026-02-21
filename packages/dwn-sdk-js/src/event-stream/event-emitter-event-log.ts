@@ -98,7 +98,7 @@ export class EventEmitterEventLog implements EventLog {
   public async emit(tenant: string, event: MessageEvent, indexes: KeyValues): Promise<number> {
     if (!this.isOpen) {
       this.errorHandler(new DwnError(
-        DwnErrorCode.EventEmitterStreamNotOpenError,
+        DwnErrorCode.EventLogNotOpenError,
         'a message emitted when EventLog is closed'
       ));
       return -1;

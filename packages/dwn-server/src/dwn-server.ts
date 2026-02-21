@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { DwnServerConfig } from './config.js';
-import type { EventStream } from '@enbox/dwn-sdk-js';
+import type { EventLog } from '@enbox/dwn-sdk-js';
 import type { ProcessHandlers } from './process-handlers.js';
 import type { Server } from 'bun';
 
@@ -8,7 +8,7 @@ import type { WsData } from './http-api.js';
 
 import log from 'loglevel';
 import prefix from 'loglevel-plugin-prefix';
-import { Dwn, EventEmitterStream } from '@enbox/dwn-sdk-js';
+import { Dwn, EventEmitterEventLog } from '@enbox/dwn-sdk-js';
 
 import { config as defaultConfig } from './config.js';
 import { getDwnConfig } from './storage.js';
@@ -99,13 +99,13 @@ export class DwnServer {
         proofOfWorkInitialMaximumAllowedHash : this.config.registrationProofOfWorkInitialMaxHash,
       });
 
-      let eventStream: EventStream | undefined;
+      let eventLog: EventLog | undefined;
       if (this.config.webSocketSupport) {
-        // If Even Stream plugin is not specified, use `EventEmitterStream` implementation as default.
-        if (this.config.eventStreamPluginPath === undefined || this.config.eventStreamPluginPath === '') {
-          eventStream = new EventEmitterStream();
+        // If EventLog plugin is not specified, use `EventEmitterEventLog` implementation as default.
+        if (this.config.eventLogPluginPath === undefined || this.config.eventLogPluginPath === '') {
+          eventLog = new EventEmitterEventLog();
         } else {
-          eventStream = await PluginLoader.loadPlugin<EventStream>(this.config.eventStreamPluginPath);
+          eventLog = await PluginLoader.loadPlugin<EventLog>(this.config.eventLogPluginPath);
         }
 
       }
@@ -113,7 +113,7 @@ export class DwnServer {
       const dwnConfig = await getDwnConfig(this.config, {
         didResolver : this.didResolver,
         tenantGate  : registrationManager,
-        eventStream,
+        eventLog,
       });
       this.dwn = await Dwn.create(dwnConfig);
     }

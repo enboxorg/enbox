@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore, StateIndex } from '../../src/index.js';
-import type { EventLog, EventStream, MessageEvent } from '../../src/types/subscriptions.js';
+import type { EventLog, MessageEvent } from '../../src/types/subscriptions.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
@@ -15,15 +15,15 @@ import { MessagesSubscribe } from '../../src/interfaces/messages-subscribe.js';
 import { MessagesSubscribeHandler } from '../../src/handlers/messages-subscribe.js';
 import { Poller } from '../utils/poller.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
+import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '../../src/index.js';
-import { TestEventLog, TestEventStream } from '../test-event-stream.js';
 
 export function testMessagesSubscribeHandler(): void {
   describe('MessagesSubscribe.handle()', () => {
 
-    describe('EventStream disabled',() => {
+    describe('EventLog disabled',() => {
       let didResolver: DidResolver;
       let messageStore: MessageStore;
       let dataStore: DataStore;
@@ -69,24 +69,23 @@ export function testMessagesSubscribeHandler(): void {
 
       it('should respond with a 501 if subscriptions are not supported', async () => {
         await dwn.close(); // close the original dwn instance
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, resumableTaskStore }); // leave out eventStream
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, resumableTaskStore }); // leave out eventLog
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
         // attempt to subscribe
         const { message } = await MessagesSubscribe.create({ signer: Jws.createSigner(alice) });
         const subscriptionMessageReply = await dwn.processMessage(alice.did, message, { subscriptionHandler: (_) => {} });
         expect(subscriptionMessageReply.status.code).toBe(501);
-        expect(subscriptionMessageReply.status.detail).toContain(DwnErrorCode.MessagesSubscribeEventStreamUnimplemented);
+        expect(subscriptionMessageReply.status.detail).toContain(DwnErrorCode.MessagesSubscribeEventLogUnimplemented);
       });
     });
 
-    describe('EventStream enabled', () => {
+    describe('EventLog enabled', () => {
       let didResolver: DidResolver;
       let messageStore: MessageStore;
       let dataStore: DataStore;
       let resumableTaskStore: ResumableTaskStore;
       let stateIndex: StateIndex;
-      let eventStream: EventStream;
       let eventLog: EventLog;
       let dwn: Dwn;
 
@@ -100,7 +99,7 @@ export function testMessagesSubscribeHandler(): void {
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
         stateIndex = stores.stateIndex;
-        eventStream = TestEventStream.get();
+        eventLog = TestEventLog.get();
         eventLog = TestEventLog.get();
 
         dwn = await Dwn.create({
@@ -109,7 +108,7 @@ export function testMessagesSubscribeHandler(): void {
           dataStore,
           resumableTaskStore,
           stateIndex,
-          eventStream,
+          eventLog,
         });
 
       });
