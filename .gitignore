@@ -163,3 +163,6 @@ __screenshots__/
 
 .notes/
 TEST-COMPOUND-INDEX/
+
+# Local AI agent instructions (not committed)
+CLAUDE.local.md
