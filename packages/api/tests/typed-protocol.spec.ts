@@ -316,6 +316,51 @@ describe('TypedProtocol API', () => {
       });
     });
 
+    describe('schema-less types', () => {
+      it('should write and query a type that has no schema (only dataFormats)', async () => {
+        // Create a parent list and task for the attachment to nest under.
+        const { record: listRecord } = await typed.records.write('list', {
+          data: { name: 'Attachments Test' },
+        });
+        expect(listRecord).toBeDefined();
+
+        const { record: taskRecord } = await typed.records.write('list/task', {
+          data            : { title: 'Task with attachment', completed: false },
+          parentContextId : listRecord.contextId,
+        });
+        expect(taskRecord).toBeDefined();
+
+        // Write a binary attachment — the 'attachment' type has no schema,
+        // only dataFormats: ['application/octet-stream', 'image/png', 'image/jpeg'].
+        // Before the fix, this would inject `schema: undefined` into the DWN
+        // filter, violating the JSON Schema which requires schema to be a string.
+        const blob = new Blob(['binary-content'], { type: 'application/octet-stream' });
+        const { status: writeStatus, record: attachmentRecord } = await typed.records.write(
+          'list/task/attachment',
+          {
+            data            : blob,
+            parentContextId : taskRecord.contextId,
+          },
+        );
+
+        expect(writeStatus.code).toBe(202);
+        expect(attachmentRecord).toBeDefined();
+        expect(attachmentRecord.protocolPath).toBe('list/task/attachment');
+        // Schema should be undefined — not set on the record.
+        expect(attachmentRecord.schema).toBeUndefined();
+
+        // Query should also succeed without schema: undefined in the filter.
+        const { status: queryStatus, records } = await typed.records.query(
+          'list/task/attachment',
+          { filter: { contextId: taskRecord.contextId } },
+        );
+
+        expect(queryStatus.code).toBe(200);
+        expect(records.length).toBe(1);
+        expect(records[0].id).toBe(attachmentRecord.id);
+      });
+    });
+
     describe('subscribe()', () => {
       it('should subscribe and receive new records', async () => {
         const received: string[] = [];
