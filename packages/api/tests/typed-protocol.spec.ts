@@ -9,6 +9,8 @@ import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { testDwnUrl } from './utils/test-config.js';
+import { TypedLiveQuery } from '../src/typed-live-query.js';
+import { TypedRecord } from '../src/typed-record.js';
 import { TypedWeb5 } from '../src/typed-web5.js';
 
 // ---------------------------------------------------------------------------
@@ -199,13 +201,13 @@ describe('TypedProtocol API', () => {
     });
 
     describe('write()', () => {
-      it('should write a record at a root path', async () => {
+      it('should write a record and return a TypedRecord', async () => {
         const { status, record } = await typed.records.write('list', {
           data: { name: 'Groceries', description: 'Weekly shopping' },
         });
 
         expect(status.code).toBe(202);
-        expect(record).toBeDefined();
+        expect(record).toBeInstanceOf(TypedRecord);
         expect(record.protocolPath).toBe('list');
         expect(record.schema).toBe('https://example.com/schemas/list');
         expect(record.protocol).toBe('https://example.com/protocols/todo');
@@ -225,24 +227,34 @@ describe('TypedProtocol API', () => {
         });
 
         expect(status.code).toBe(202);
-        expect(taskRecord).toBeDefined();
+        expect(taskRecord).toBeInstanceOf(TypedRecord);
         expect(taskRecord.protocolPath).toBe('list/task');
         expect(taskRecord.schema).toBe('https://example.com/schemas/task');
       });
 
-      it('should read back written JSON data with correct types', async () => {
+      it('should read back written JSON data via TypedRecord.data.json() without manual cast', async () => {
         const inputData = { name: 'Shopping', description: 'Grocery list' };
         const { record } = await typed.records.write('list', { data: inputData });
         expect(record).toBeDefined();
 
-        const readBack = await record.data.json<TodoSchemaMap['list']>();
+        // No need for .json<TodoSchemaMap['list']>() — it's inferred!
+        const readBack = await record.data.json();
         expect(readBack.name).toBe('Shopping');
         expect(readBack.description).toBe('Grocery list');
+      });
+
+      it('should provide access to the underlying Record via rawRecord', async () => {
+        const { record } = await typed.records.write('list', {
+          data: { name: 'Raw Test' },
+        });
+
+        expect(record.rawRecord).toBeDefined();
+        expect(record.rawRecord.id).toBe(record.id);
       });
     });
 
     describe('query()', () => {
-      it('should query records at a given path', async () => {
+      it('should query records and return TypedRecord instances', async () => {
         // Write two lists
         await typed.records.write('list', { data: { name: 'List A' } });
         await typed.records.write('list', { data: { name: 'List B' } });
@@ -252,6 +264,8 @@ describe('TypedProtocol API', () => {
         expect(status.code).toBe(200);
         expect(records).toBeDefined();
         expect(records.length).toBe(2);
+        expect(records[0]).toBeInstanceOf(TypedRecord);
+        expect(records[1]).toBeInstanceOf(TypedRecord);
       });
 
       it('should apply additional filters', async () => {
@@ -277,11 +291,23 @@ describe('TypedProtocol API', () => {
 
         expect(records).toBeDefined();
         expect(records.length).toBe(2);
+        expect(records[0]).toBeInstanceOf(TypedRecord);
+      });
+
+      it('should read typed data from queried TypedRecords without manual cast', async () => {
+        await typed.records.write('list', { data: { name: 'Query Test' } });
+
+        const { records } = await typed.records.query('list');
+        expect(records.length).toBeGreaterThanOrEqual(1);
+
+        // data.json() returns the typed data directly
+        const data = await records[0].data.json();
+        expect(data.name).toBe('Query Test');
       });
     });
 
     describe('read()', () => {
-      it('should read a single record by recordId', async () => {
+      it('should read a single record by recordId and return a TypedRecord', async () => {
         const { record: written } = await typed.records.write('list', {
           data: { name: 'Reading List' },
         });
@@ -292,8 +318,8 @@ describe('TypedProtocol API', () => {
         });
 
         expect(status.code).toBe(200);
-        expect(readRecord).toBeDefined();
-        const data = await readRecord.data.json<TodoSchemaMap['list']>();
+        expect(readRecord).toBeInstanceOf(TypedRecord);
+        const data = await readRecord.data.json();
         expect(data.name).toBe('Reading List');
       });
     });
@@ -332,8 +358,6 @@ describe('TypedProtocol API', () => {
 
         // Write a binary attachment — the 'attachment' type has no schema,
         // only dataFormats: ['application/octet-stream', 'image/png', 'image/jpeg'].
-        // Before the fix, this would inject `schema: undefined` into the DWN
-        // filter, violating the JSON Schema which requires schema to be a string.
         const blob = new Blob(['binary-content'], { type: 'application/octet-stream' });
         const { status: writeStatus, record: attachmentRecord } = await typed.records.write(
           'list/task/attachment',
@@ -344,7 +368,7 @@ describe('TypedProtocol API', () => {
         );
 
         expect(writeStatus.code).toBe(202);
-        expect(attachmentRecord).toBeDefined();
+        expect(attachmentRecord).toBeInstanceOf(TypedRecord);
         expect(attachmentRecord.protocolPath).toBe('list/task/attachment');
         // Schema should be undefined — not set on the record.
         expect(attachmentRecord.schema).toBeUndefined();
@@ -358,20 +382,30 @@ describe('TypedProtocol API', () => {
         expect(queryStatus.code).toBe(200);
         expect(records.length).toBe(1);
         expect(records[0].id).toBe(attachmentRecord.id);
+        expect(records[0]).toBeInstanceOf(TypedRecord);
       });
     });
 
     describe('subscribe()', () => {
-      it('should subscribe and receive new records', async () => {
-        const received: string[] = [];
-
+      it('should subscribe and return a TypedLiveQuery', async () => {
         const { status, liveQuery } = await typed.records.subscribe('list');
 
         expect(status.code).toBe(200);
         expect(liveQuery).toBeDefined();
+        expect(liveQuery).toBeInstanceOf(TypedLiveQuery);
+
+        // Clean up
+        await liveQuery.close();
+      });
+
+      it('should receive new records as TypedRecord instances', async () => {
+        const received: TypedRecord<TodoSchemaMap['list']>[] = [];
+
+        const { liveQuery } = await typed.records.subscribe('list');
+        expect(liveQuery).toBeDefined();
 
         liveQuery.on('create', (record) => {
-          received.push(record.id);
+          received.push(record);
         });
 
         // Write a record — should trigger subscription
@@ -381,9 +415,86 @@ describe('TypedProtocol API', () => {
         await new Promise((resolve) => setTimeout(resolve, 100));
 
         expect(received.length).toBeGreaterThanOrEqual(1);
+        expect(received[0]).toBeInstanceOf(TypedRecord);
 
         // Clean up
         await liveQuery.close();
+      });
+
+      it('should provide typed initial records in liveQuery.records', async () => {
+        // Write a record first
+        await typed.records.write('list', { data: { name: 'Pre-existing' } });
+
+        // Subscribe — should include the pre-existing record in the snapshot
+        const { liveQuery } = await typed.records.subscribe('list');
+        expect(liveQuery).toBeDefined();
+
+        expect(liveQuery.records.length).toBeGreaterThanOrEqual(1);
+        expect(liveQuery.records[0]).toBeInstanceOf(TypedRecord);
+
+        const data = await liveQuery.records[0].data.json();
+        expect(data.name).toBe('Pre-existing');
+
+        await liveQuery.close();
+      });
+
+      it('should provide access to the raw LiveQuery via rawLiveQuery', async () => {
+        const { liveQuery } = await typed.records.subscribe('list');
+        expect(liveQuery).toBeDefined();
+        expect(liveQuery.rawLiveQuery).toBeDefined();
+
+        await liveQuery.close();
+      });
+    });
+
+    describe('TypedRecord lifecycle methods', () => {
+      it('should update a record and return a new TypedRecord', async () => {
+        const { record } = await typed.records.write('list', {
+          data: { name: 'Original' },
+        });
+        expect(record).toBeInstanceOf(TypedRecord);
+
+        const { status, record: updatedRecord } = await record.update({
+          data: { name: 'Updated', description: 'Now with description' },
+        });
+
+        expect(status.code).toBe(202);
+        expect(updatedRecord).toBeInstanceOf(TypedRecord);
+        const data = await updatedRecord.data.json();
+        expect(data.name).toBe('Updated');
+        expect(data.description).toBe('Now with description');
+      });
+
+      it('should delete a record via TypedRecord.delete()', async () => {
+        const { record } = await typed.records.write('list', {
+          data: { name: 'Delete Me' },
+        });
+
+        const { status, record: deletedRecord } = await record.delete();
+
+        expect(status.code).toBe(202);
+        expect(deletedRecord).toBeInstanceOf(TypedRecord);
+        expect(deletedRecord.deleted).toBe(true);
+      });
+
+      it('should forward toJSON() from the underlying Record', async () => {
+        const { record } = await typed.records.write('list', {
+          data: { name: 'JSON Test' },
+        });
+
+        const json = record.toJSON();
+        expect(json.protocol).toBe('https://example.com/protocols/todo');
+        expect(json.protocolPath).toBe('list');
+      });
+
+      it('should forward toString() from the underlying Record', async () => {
+        const { record } = await typed.records.write('list', {
+          data: { name: 'String Test' },
+        });
+
+        const str = record.toString();
+        expect(str).toContain('Record:');
+        expect(str).toContain(record.id);
       });
     });
   });

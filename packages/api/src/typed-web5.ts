@@ -6,6 +6,10 @@
  * and schema into every operation, and provides compile-time path
  * autocompletion plus typed data payloads via the schema map.
  *
+ * All record-returning methods wrap the underlying `Record` instances in
+ * {@link TypedRecord} so that type information flows through reads, queries,
+ * updates, and subscriptions without manual casts.
+ *
  * @example
  * ```ts
  * const social = web5.using(SocialProtocol);
@@ -17,24 +21,31 @@
  * const { record } = await social.records.write('thread', {
  *   data: { title: 'Hello World', body: '...' },
  * });
+ * // record is TypedRecord<ThreadData>
+ *
+ * const data = await record.data.json(); // ThreadData — no cast needed
  *
  * // Query — protocol and protocolPath are auto-injected
  * const { records } = await social.records.query('thread');
+ * // records is TypedRecord<ThreadData>[]
  *
- * // Subscribe — real-time changes via LiveQuery
+ * // Subscribe — real-time changes via TypedLiveQuery
  * const { liveQuery } = await social.records.subscribe('thread/reply');
- * liveQuery.on('create', (record) => { ... });
+ * liveQuery.on('create', (record) => {
+ *   // record is TypedRecord<ReplyData>
+ * });
  * ```
  */
 
 import type { DwnApi } from './dwn-api.js';
-import type { LiveQuery } from './live-query.js';
 import type { Protocol } from './protocol.js';
-import type { Record } from './record.js';
 
 import type { DateSort, ProtocolDefinition, ProtocolType, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { DwnPaginationCursor, DwnResponseStatus } from '@enbox/agent';
 import type { ProtocolPaths, SchemaMap, TypedProtocol, TypeNameAtPath } from './protocol-types.js';
+
+import { TypedLiveQuery } from './typed-live-query.js';
+import { TypedRecord } from './typed-record.js';
 
 // ---------------------------------------------------------------------------
 // Helper types
@@ -46,7 +57,7 @@ import type { ProtocolPaths, SchemaMap, TypedProtocol, TypeNameAtPath } from './
  * If the schema map contains a mapping for the type name at the given path,
  * that type is returned. Otherwise falls back to `unknown`.
  */
-type DataForPath<
+export type DataForPath<
   _D extends ProtocolDefinition,
   M extends SchemaMap,
   Path extends string,
@@ -105,8 +116,8 @@ export type TypedWriteRequest<
 };
 
 /** Response from {@link TypedWeb5} `records.write()`. */
-export type TypedWriteResponse = DwnResponseStatus & {
-  record: Record;
+export type TypedWriteResponse<T = unknown> = DwnResponseStatus & {
+  record: TypedRecord<T>;
 };
 
 /** Filter options for {@link TypedWeb5} `records.query()`. */
@@ -130,8 +141,8 @@ export type TypedQueryRequest = {
 };
 
 /** Response from {@link TypedWeb5} `records.query()`. */
-export type TypedQueryResponse = DwnResponseStatus & {
-  records: Record[];
+export type TypedQueryResponse<T = unknown> = DwnResponseStatus & {
+  records: TypedRecord<T>[];
   cursor?: DwnPaginationCursor;
 };
 
@@ -148,8 +159,8 @@ export type TypedReadRequest = {
 };
 
 /** Response from {@link TypedWeb5} `records.read()`. */
-export type TypedReadResponse = DwnResponseStatus & {
-  record: Record;
+export type TypedReadResponse<T = unknown> = DwnResponseStatus & {
+  record: TypedRecord<T>;
 };
 
 /** Options for {@link TypedWeb5} `records.delete()`. */
@@ -172,9 +183,9 @@ export type TypedSubscribeRequest = {
 };
 
 /** Response from {@link TypedWeb5} `records.subscribe()`. */
-export type TypedSubscribeResponse = DwnResponseStatus & {
-  /** The live query instance, or `undefined` if the request failed. */
-  liveQuery?: LiveQuery;
+export type TypedSubscribeResponse<T = unknown> = DwnResponseStatus & {
+  /** The typed live query instance, or `undefined` if the request failed. */
+  liveQuery?: TypedLiveQuery<T>;
 };
 
 // ---------------------------------------------------------------------------
@@ -184,6 +195,10 @@ export type TypedSubscribeResponse = DwnResponseStatus & {
 /**
  * A protocol-scoped API that auto-injects `protocol`, `protocolPath`, and
  * `schema` into every DWN operation.
+ *
+ * All record-returning methods wrap results in {@link TypedRecord} so that
+ * the data type `T` (resolved from the schema map) flows end-to-end — from
+ * write through read, query, update, and subscribe — without manual casts.
  *
  * Obtain an instance via `web5.using(typedProtocol)`.
  *
@@ -196,10 +211,14 @@ export type TypedSubscribeResponse = DwnResponseStatus & {
  * const { record } = await social.records.write('friend', {
  *   data: { did: 'did:example:alice', alias: 'Alice' },
  * });
+ * const data = await record.data.json(); // FriendData — no cast
  *
  * const { records } = await social.records.query('friend', {
  *   filter: { tags: { did: 'did:example:alice' } },
  * });
+ * for (const r of records) {
+ *   const d = await r.data.json(); // FriendData
+ * }
  * ```
  */
 export class TypedWeb5<
@@ -261,13 +280,35 @@ export class TypedWeb5<
    * Every method auto-injects the protocol URI, protocolPath, and schema
    * from the protocol definition. Path parameters provide compile-time
    * autocompletion via `ProtocolPaths<D>`.
+   *
+   * All methods return {@link TypedRecord} or {@link TypedLiveQuery} instances
+   * that carry the resolved data type from the schema map.
    */
   public get records(): {
-    write: <Path extends ProtocolPaths<D> & string>(path: Path, request: TypedWriteRequest<D, M, Path>) => Promise<TypedWriteResponse>;
-    query: <Path extends ProtocolPaths<D> & string>(path: Path, request?: TypedQueryRequest) => Promise<TypedQueryResponse>;
-    read: <Path extends ProtocolPaths<D> & string>(path: Path, request: TypedReadRequest) => Promise<TypedReadResponse>;
-    delete: <Path extends ProtocolPaths<D> & string>(path: Path, request: TypedDeleteRequest) => Promise<DwnResponseStatus>;
-    subscribe: <Path extends ProtocolPaths<D> & string>(path: Path, request?: TypedSubscribeRequest) => Promise<TypedSubscribeResponse>;
+    write: <Path extends ProtocolPaths<D> & string>(
+      path: Path,
+      request: TypedWriteRequest<D, M, Path>,
+    ) => Promise<TypedWriteResponse<DataForPath<D, M, Path>>>;
+
+    query: <Path extends ProtocolPaths<D> & string>(
+      path: Path,
+      request?: TypedQueryRequest,
+    ) => Promise<TypedQueryResponse<DataForPath<D, M, Path>>>;
+
+    read: <Path extends ProtocolPaths<D> & string>(
+      path: Path,
+      request: TypedReadRequest,
+    ) => Promise<TypedReadResponse<DataForPath<D, M, Path>>>;
+
+    delete: <Path extends ProtocolPaths<D> & string>(
+      path: Path,
+      request: TypedDeleteRequest,
+    ) => Promise<DwnResponseStatus>;
+
+    subscribe: <Path extends ProtocolPaths<D> & string>(
+      path: Path,
+      request?: TypedSubscribeRequest,
+    ) => Promise<TypedSubscribeResponse<DataForPath<D, M, Path>>>;
     } {
     return {
       /**
@@ -279,11 +320,11 @@ export class TypedWeb5<
       write: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request: TypedWriteRequest<D, M, Path>,
-      ): Promise<TypedWriteResponse> => {
+      ): Promise<TypedWriteResponse<DataForPath<D, M, Path>>> => {
         const typeName = lastSegment(path);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
-        return this._dwn.records.write({
+        const { status, record } = await this._dwn.records.write({
           data            : request.data,
           store           : request.store,
           encryption      : request.encryption,
@@ -298,6 +339,11 @@ export class TypedWeb5<
           ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
           dataFormat      : request.dataFormat ?? typeEntry?.dataFormats?.[0],
         });
+
+        return {
+          status,
+          record: new TypedRecord<DataForPath<D, M, Path>>(record),
+        };
       },
 
       /**
@@ -309,11 +355,11 @@ export class TypedWeb5<
       query: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request?: TypedQueryRequest,
-      ): Promise<TypedQueryResponse> => {
+      ): Promise<TypedQueryResponse<DataForPath<D, M, Path>>> => {
         const typeName = lastSegment(path);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
-        return this._dwn.records.query({
+        const { status, records, cursor } = await this._dwn.records.query({
           from       : request?.from,
           encryption : request?.encryption,
           filter     : {
@@ -326,6 +372,12 @@ export class TypedWeb5<
           pagination   : request?.pagination,
           protocolRole : request?.protocolRole,
         });
+
+        return {
+          status,
+          records: records.map((r) => new TypedRecord<DataForPath<D, M, Path>>(r)),
+          cursor,
+        };
       },
 
       /**
@@ -337,11 +389,11 @@ export class TypedWeb5<
       read: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request: TypedReadRequest,
-      ): Promise<TypedReadResponse> => {
+      ): Promise<TypedReadResponse<DataForPath<D, M, Path>>> => {
         const typeName = lastSegment(path);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
-        return this._dwn.records.read({
+        const { status, record } = await this._dwn.records.read({
           from       : request.from,
           encryption : request.encryption,
           protocol   : this._definition.protocol,
@@ -352,6 +404,11 @@ export class TypedWeb5<
             ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
           },
         });
+
+        return {
+          status,
+          record: new TypedRecord<DataForPath<D, M, Path>>(record),
+        };
       },
 
       /**
@@ -374,8 +431,9 @@ export class TypedWeb5<
       /**
        * Subscribe to records at the given protocol path.
        *
-       * Returns a {@link LiveQuery} that atomically provides an initial snapshot
-       * and a real-time stream of deduplicated change events.
+       * Returns a {@link TypedLiveQuery} that atomically provides an initial
+       * snapshot and a real-time stream of deduplicated change events, with
+       * all records typed as `TypedRecord<T>`.
        *
        * @param path - The protocol path to subscribe to.
        * @param request - Optional filter and role.
@@ -383,11 +441,11 @@ export class TypedWeb5<
       subscribe: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
         request?: TypedSubscribeRequest,
-      ): Promise<TypedSubscribeResponse> => {
+      ): Promise<TypedSubscribeResponse<DataForPath<D, M, Path>>> => {
         const typeName = lastSegment(path);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
-        return this._dwn.records.subscribe({
+        const { status, liveQuery } = await this._dwn.records.subscribe({
           from   : request?.from,
           filter : {
             ...request?.filter,
@@ -397,6 +455,11 @@ export class TypedWeb5<
           },
           protocolRole: request?.protocolRole,
         });
+
+        return {
+          status,
+          liveQuery: liveQuery ? new TypedLiveQuery<DataForPath<D, M, Path>>(liveQuery) : undefined,
+        };
       },
     };
   }
