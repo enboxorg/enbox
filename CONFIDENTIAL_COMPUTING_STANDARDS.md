@@ -22,7 +22,7 @@
 
 - Mandating a specific TEE vendor or hardware platform.
 - Replacing the existing DWN encryption model.
-- Defining a token economy or payment protocol for compute resources.
+- Defining a token economy or payment protocol for compute resources (though standardized metering enables any payment layer — see Section 10).
 - Specifying the internal implementation of TEE enclaves (that's the provider's domain).
 
 ---
@@ -468,6 +468,9 @@ ComputeReceipt = COSE_Sign1<{
   ; Protocol context
   "protocol"        : tstr,           ; protocol URI
   "protocol-path"   : tstr,           ; protocol path of the compute definition
+
+  ; Resource usage (see Section 10)
+  "usage"           : UsageReport,    ; TEE-attested resource consumption
 }>
 
 InputRef = {
@@ -480,6 +483,29 @@ OutputRef = {
   "record-id" : tstr,                 ; DWN record ID of the written result
   "record-cid": tstr,                 ; CID of the written record
   "data-hash" : bstr,                 ; SHA-256 of the output data (pre-encryption)
+}
+
+UsageReport = {
+  ; WASM instruction counter (deterministic, reproducible)
+  "instructions"   : uint,
+
+  ; Peak WASM linear memory in bytes
+  "peak-memory"    : uint,
+
+  ; Wall-clock execution time in milliseconds (measured inside TEE)
+  "execution-ms"   : uint,
+
+  ; Number of host import calls by type
+  "io-calls"       : {
+    "read-record"     : uint,
+    "query-records"   : uint,
+    "write-result"    : uint,
+    "read-descriptor" : uint,
+  },
+
+  ; Total bytes processed
+  "input-bytes"    : uint,            ; sum of decrypted input record data
+  "output-bytes"   : uint,            ; sum of output record data (pre-encryption)
 }
 ```
 
@@ -626,6 +652,18 @@ type ComputeInvokeDescriptor = {
   moduleRecordId : string;
   inputFilter    : RecordsFilter;
   params?        : Record<string, unknown>;
+
+  /** Optional resource budget. Execution aborts if any limit is exceeded. */
+  budget?: {
+    /** Maximum WASM instructions (fuel). Execution traps when exhausted. */
+    maxInstructions?  : number;
+    /** Maximum WASM linear memory in bytes. */
+    maxMemory?        : number;
+    /** Maximum wall-clock execution time in milliseconds. */
+    maxExecutionMs?   : number;
+    /** Maximum number of input records the module may read. */
+    maxInputRecords?  : number;
+  };
 };
 
 type ComputeInvokeMessage = {
@@ -813,9 +851,180 @@ This eliminates single-vendor hardware trust as a concern.
 
 ---
 
-## 10. Metadata Protection (Future — Level 3+)
+## 10. Usage Metering
 
-### 10.1 The Metadata Problem
+### 10.1 The Metering Problem
+
+Service providers need to charge for compute resources, and clients need to verify they are charged fairly. Three parties have conflicting incentives:
+
+| Party | Incentive |
+|---|---|
+| **Provider** | Overcount usage to charge more |
+| **Client** | Undercount usage to pay less |
+| **Protocol author** | Accurate metering so the system is fair |
+
+Traditional cloud metering is provider-reported — the client trusts the provider's billing system. In a decentralized context where the provider is explicitly untrusted (the "curious operator" threat), this is insufficient. The TEE solves this: metering happens *inside* the enclave, where neither party can tamper with it. The `usage` block in the compute receipt (Section 7.1) is signed inside the TEE alongside the attestation evidence, making it as trustworthy as the computation itself.
+
+### 10.2 Metering Dimensions
+
+Five natural dimensions of resource consumption are captured in the `UsageReport`:
+
+| Dimension | Field | Unit | How It's Measured |
+|---|---|---|---|
+| **Compute** | `instructions` | WASM instructions executed | Instruction counter in the WASM runtime (fuel mechanism) |
+| **Memory** | `peak-memory` | Bytes | High-water mark of WASM linear memory |
+| **Time** | `execution-ms` | Milliseconds | Wall-clock time measured inside the TEE |
+| **Record I/O** | `io-calls` | Count per call type | Incremented on each host import call |
+| **Data volume** | `input-bytes` / `output-bytes` | Bytes | Sum of record data sizes processed |
+
+Storage metering (record count, data size, retention duration) is already a solved problem for DWN hosting and is orthogonal to compute metering.
+
+### 10.3 WASM Instruction Counting
+
+Instruction counting is the most robust compute metering primitive. Most WASM runtimes support it natively:
+
+| Runtime | Mechanism |
+|---|---|
+| **wasmtime** | `fuel` — a counter decremented per instruction; execution traps at zero |
+| **wasm-micro-runtime** | Interpreter hooks for instruction counting |
+| **wasmer** | Metering middleware that injects counter increments at compile time |
+
+Instruction counting has three properties that make it the natural "gas" unit for confidential compute:
+
+1. **Deterministic** — same module with the same inputs always yields the same instruction count.
+2. **Reproducible** — a client can re-execute the WASM module locally and independently verify the count.
+3. **Hardware-independent** — unlike wall-clock time, instruction count does not vary with CPU speed, so providers compete on infrastructure cost rather than on metering variance.
+
+When `deterministic: true` is set in the `$compute` rule, the `instructions` field in the receipt is fully reproducible by any party with access to the module and input records.
+
+### 10.4 Budget Enforcement
+
+The `budget` field on `ComputeInvokeDescriptor` (Section 8.3) allows clients to cap resource consumption before invocation. The compute worker enforces these limits inside the TEE:
+
+```
+ComputeInvoke                    TEE Compute Worker
+  │                                  │
+  │  budget: {                       │
+  │    maxInstructions: 1_000_000,   │
+  │    maxMemory: 67_108_864,        │
+  │    maxExecutionMs: 5_000,        │
+  │    maxInputRecords: 100,         │
+  │  }                               │
+  │─────────────────────────────────▶│
+  │                                  │
+  │                    Set WASM fuel = 1_000_000
+  │                    Set memory limit = 64 MB
+  │                    Start timer (5 s)
+  │                    Cap input reads at 100
+  │                                  │
+  │                    ── Execution ──
+  │                                  │
+  │             If any limit exceeded:
+  │               - Halt execution
+  │               - Discard partial outputs
+  │               - Generate receipt with
+  │                 actual usage up to halt
+  │               - Return ComputeResult
+  │                 with status: "budget-exceeded"
+  │◀─────────────────────────────────│
+```
+
+When a budget is exceeded, no result records are written, but the receipt still records the actual resource consumption up to the abort point. This ensures the client only pays for resources actually consumed and can inspect *why* the budget was exceeded (e.g., too many input records, unexpectedly expensive computation).
+
+If no budget is specified, the provider's advertised limits from the `capabilities` block in its DID document service endpoint apply as defaults (Section 5.1).
+
+### 10.5 Provider Price Schedules
+
+A provider publishes its pricing as part of its DID document service endpoint, enabling clients to compare costs before selecting a provider:
+
+```json
+{
+  "id": "#confidential-dwn",
+  "type": "ConfidentialDwnService",
+  "serviceEndpoint": {
+    "nodes": ["https://cc-dwn.provider.example"],
+    "conformanceLevel": 2,
+    "pricing": {
+      "currency": "USD",
+      "compute": {
+        "perBillionInstructions": 0.10,
+        "perGbMemorySecond": 0.01,
+        "perRecordIoCall": 0.001,
+        "perGbDataProcessed": 0.05
+      },
+      "storage": {
+        "perGbMonth": 0.02
+      },
+      "attestation": {
+        "perHandshake": 0
+      }
+    }
+  }
+}
+```
+
+Because metering is standardized, pricing becomes directly comparable across providers. A client can compute the exact cost of any invocation from the receipt's `usage` block and the provider's published schedule. No surprises.
+
+### 10.6 Pre-Flight Cost Estimation
+
+For deterministic modules (`deterministic: true`), a client can estimate cost *before* invoking:
+
+1. **Input sizing** — the client queries its own DWN to determine input record count and total data size.
+2. **Local dry-run** — the client runs the WASM module locally against its own data to measure the instruction count. (The client already has read access to its own records and the module bytecode.)
+3. **Cost calculation** — multiply the measured instruction count by the provider's `perBillionInstructions` rate, add I/O and data volume costs.
+4. **Budget setting** — set the `budget` field to the estimated usage plus a safety margin (e.g., 10%).
+
+For non-deterministic modules, the provider MAY offer a cost estimation endpoint:
+
+```
+GET /compute/estimate
+  ?protocol=<uri>
+  &protocolPath=<path>
+  &moduleRecordId=<id>
+  &inputFilter=<filter>
+
+Response:
+{
+  "estimatedInstructions": 450000000,
+  "estimatedInputBytes": 1048576,
+  "estimatedOutputBytes": 256,
+  "estimatedCost": {
+    "currency": "USD",
+    "amount": 0.045
+  },
+  "confidence": "approximate"
+}
+```
+
+This is a best-effort estimate — the actual usage in the receipt is authoritative.
+
+### 10.7 Metering Trust Properties
+
+The TEE-attested metering model provides the following guarantees:
+
+| Property | Mechanism |
+|---|---|
+| **Tamper-proof** | The `usage` block is inside the COSE_Sign1 receipt, signed by the TEE. Neither party can modify it after execution. |
+| **Non-repudiable** | Both client and provider hold the same cryptographically-signed receipt. Neither can deny the recorded usage. |
+| **Reproducible** (deterministic modules) | Any party with the module and inputs can independently verify the `instructions` count by re-execution. |
+| **Auditable** | Receipts are stored as DWN records, queryable and filterable. A client can audit their complete usage history via `ComputeQuery`. |
+| **Comparable** | Standardized units mean the same module with the same inputs costs the same instruction count on any provider. Only price differs. |
+
+### 10.8 Market Implications
+
+Standardized, TEE-attested metering enables a competitive provider marketplace:
+
+- **Comparison shopping** — same module, same inputs, same instruction count across providers. The only variable is price-per-unit.
+- **Efficiency competition** — faster TEE hardware lowers a provider's infrastructure cost, but the instruction count (and the client's bill) stays constant. Providers compete by reducing their own costs, not by inflating metered usage.
+- **No billing disputes** — the receipt *is* the invoice. Both parties have identical, cryptographically-signed usage data.
+- **No lock-in** — switching providers does not change the metering model. Receipts from Provider A and Provider B use the same format and the same units.
+- **Payment-layer agnostic** — this specification defines *what* is metered and *how* it is attested, not *how* payment is settled. Fiat invoicing, cryptocurrency micropayments, pre-paid credit pools, or any other payment mechanism can be layered on top of the standardized usage data.
+
+---
+
+## 11. Metadata Protection (Future — Level 3+)
+
+### 11.1 The Metadata Problem
 
 Even with record data encrypted, DWN message descriptors contain metadata visible to the node operator:
 
@@ -830,7 +1039,7 @@ Even with record data encrypted, DWN message descriptors contain metadata visibl
 
 This metadata can reveal significant information without ever decrypting the record data.
 
-### 10.2 Encrypted Indexes
+### 11.2 Encrypted Indexes
 
 Inside a TEE, the DWN can maintain **encrypted indexes** — the index structure is only readable inside the enclave:
 
@@ -854,7 +1063,7 @@ Inside TEE (in memory):
 
 The index is sealed to the enclave measurement, so only the same (or measurement-equivalent) enclave can unseal and use it. The operator sees only an opaque encrypted blob.
 
-### 10.3 Oblivious Query Processing
+### 11.3 Oblivious Query Processing
 
 For maximum metadata protection, queries can be processed obliviously inside the TEE:
 
@@ -869,7 +1078,7 @@ This is the most ambitious level of protection and is designated as future work 
 
 ---
 
-## 11. Implementation Phases
+## 12. Implementation Phases
 
 ### Phase 1: Attestation Foundation (Level 1)
 
@@ -924,7 +1133,7 @@ This is the most ambitious level of protection and is designated as future work 
 
 ---
 
-## 12. Example: End-to-End Walkthrough
+## 13. Example: End-to-End Walkthrough
 
 ### Scenario: Privacy-Preserving Income Verification
 
@@ -1134,7 +1343,7 @@ The verifier now knows:
 
 ---
 
-## 13. Comparison with Alternatives
+## 14. Comparison with Alternatives
 
 | Approach | Vendor Lock-in | Hardware Trust | Metadata Protection | Arbitrary Compute | Standard |
 |---|---|---|---|---|---|
@@ -1149,7 +1358,7 @@ The hybrid approach (TEE for performance + ZK for verification) is a promising f
 
 ---
 
-## 14. Open Standards Engagement
+## 15. Open Standards Engagement
 
 ### Target Standards Bodies
 
