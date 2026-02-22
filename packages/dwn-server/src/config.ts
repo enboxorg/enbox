@@ -65,6 +65,15 @@ export const config = {
   stateIndex         : process.env.DWN_STORAGE_STATE_INDEX || process.env.DWN_STORAGE || 'level://data',
   resumableTaskStore : process.env.DWN_STORAGE_RESUMABLE_TASKS || process.env.DWN_STORAGE || 'level://data',
 
+  /**
+   * PostgreSQL connection pool tuning. When multiple DWN stores share the same
+   * Postgres connection URL, a single shared pool is used instead of one pool
+   * per store (which would be 4 pools x 10 default connections = 40 connections).
+   */
+  pgPoolMin         : parseInt(process.env.DWN_PG_POOL_MIN || '5'),
+  pgPoolMax         : parseInt(process.env.DWN_PG_POOL_MAX || '30'),
+  pgPoolIdleTimeout : parseInt(process.env.DWN_PG_POOL_IDLE_TIMEOUT || '30000'),
+
   // tenant registration feature configuration
   registrationStoreUrl                  : process.env.DWN_REGISTRATION_STORE_URL || process.env.DWN_STORAGE,
   registrationProofOfWorkSeed           : process.env.DWN_REGISTRATION_PROOF_OF_WORK_SEED,
