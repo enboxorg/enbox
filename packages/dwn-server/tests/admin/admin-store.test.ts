@@ -262,4 +262,140 @@ describe('AdminStore', () => {
       expect(stats1).not.toBe(stats2);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // getTenantMessages()
+  // ---------------------------------------------------------------------------
+
+  describe('getTenantMessages()', () => {
+    it('should return message metadata for a tenant', async () => {
+      // Create a persona and write a message.
+      const persona = await TestDataGenerator.generateDidKeyPersona();
+      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona });
+      const result = await dwn.processMessage(persona.did, recordsWrite.message, { dataStream });
+      expect(result.status.code).toBe(202);
+
+      const { messages } = await adminStore.getTenantMessages(persona.did);
+      expect(messages.length).toBeGreaterThanOrEqual(1);
+
+      // Verify metadata fields are present and encodedMessageBytes is not.
+      const msg = messages[0];
+      expect(msg.messageCid).toBeDefined();
+      expect(typeof msg.messageCid).toBe('string');
+      expect((msg as any).encodedMessageBytes).toBeUndefined();
+      expect(msg.interface).toBeDefined();
+      expect(msg.method).toBeDefined();
+    });
+
+    it('should return empty results for a tenant with no messages', async () => {
+      const { messages } = await adminStore.getTenantMessages('did:key:nonexistent-tenant');
+      expect(messages).toBeInstanceOf(Array);
+      expect(messages.length).toBe(0);
+    });
+
+    it('should support pagination with limit and cursor', async () => {
+      // Create a persona with multiple messages.
+      const persona = await TestDataGenerator.generateDidKeyPersona();
+      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+
+      for (let i = 0; i < 5; i++) {
+        const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona });
+        await dwn.processMessage(persona.did, recordsWrite.message, { dataStream });
+      }
+
+      // Fetch first page.
+      const page1 = await adminStore.getTenantMessages(persona.did, { limit: 2 });
+      expect(page1.messages.length).toBe(2);
+      expect(page1.cursor).toBeDefined();
+
+      // Fetch second page.
+      const page2 = await adminStore.getTenantMessages(persona.did, { limit: 2, cursor: page1.cursor });
+      expect(page2.messages.length).toBe(2);
+
+      // No overlap (compare messageCids).
+      const page1Cids = page1.messages.map((m): string => m.messageCid);
+      const page2Cids = page2.messages.map((m): string => m.messageCid);
+      for (const cid of page2Cids) {
+        expect(page1Cids).not.toContain(cid);
+      }
+    });
+
+    it('should filter by interface', async () => {
+      const persona = await TestDataGenerator.generateDidKeyPersona();
+      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona });
+      await dwn.processMessage(persona.did, recordsWrite.message, { dataStream });
+
+      // Filter for Records interface messages.
+      const { messages } = await adminStore.getTenantMessages(persona.did, { interface: 'Records' });
+      for (const msg of messages) {
+        expect(msg.interface).toBe('Records');
+      }
+
+      // Filter for Protocols interface — should include the protocol install.
+      const { messages: protoMsgs } = await adminStore.getTenantMessages(persona.did, { interface: 'Protocols' });
+      expect(protoMsgs.length).toBeGreaterThanOrEqual(1);
+      for (const msg of protoMsgs) {
+        expect(msg.interface).toBe('Protocols');
+      }
+    });
+
+    it('should filter by method', async () => {
+      const persona = await TestDataGenerator.generateDidKeyPersona();
+      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona });
+      await dwn.processMessage(persona.did, recordsWrite.message, { dataStream });
+
+      const { messages } = await adminStore.getTenantMessages(persona.did, { method: 'Write' });
+      for (const msg of messages) {
+        expect(msg.method).toBe('Write');
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // getTenantProtocolCounts()
+  // ---------------------------------------------------------------------------
+
+  describe('getTenantProtocolCounts()', () => {
+    it('should return per-protocol message counts', async () => {
+      const persona = await TestDataGenerator.generateDidKeyPersona();
+      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona });
+      await dwn.processMessage(persona.did, recordsWrite.message, { dataStream });
+
+      const protocols = await adminStore.getTenantProtocolCounts(persona.did);
+      expect(protocols.length).toBeGreaterThanOrEqual(1);
+
+      for (const proto of protocols) {
+        expect(proto.protocol).toBeDefined();
+        expect(typeof proto.protocol).toBe('string');
+        expect(typeof proto.messageCount).toBe('number');
+        expect(proto.messageCount).toBeGreaterThan(0);
+      }
+    });
+
+    it('should return empty array for tenant with no protocol messages', async () => {
+      const protocols = await adminStore.getTenantProtocolCounts('did:key:no-protocols');
+      expect(protocols).toBeInstanceOf(Array);
+      expect(protocols.length).toBe(0);
+    });
+
+    it('should order by messageCount descending', async () => {
+      const persona = await TestDataGenerator.generateDidKeyPersona();
+      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+
+      // Write multiple records to increase the protocol message count.
+      for (let i = 0; i < 3; i++) {
+        const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona });
+        await dwn.processMessage(persona.did, recordsWrite.message, { dataStream });
+      }
+
+      const protocols = await adminStore.getTenantProtocolCounts(persona.did);
+      for (let i = 1; i < protocols.length; i++) {
+        expect(protocols[i - 1].messageCount).toBeGreaterThanOrEqual(protocols[i].messageCount);
+      }
+    });
+  });
 });

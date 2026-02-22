@@ -226,3 +226,56 @@ export type RateLimitStatus = {
     tenant : number;
   };
 };
+
+// ---------------------------------------------------------------------------
+// Runtime configuration
+// ---------------------------------------------------------------------------
+
+/**
+ * Runtime-changeable server settings (subset of DwnServerConfig).
+ */
+export type RuntimeConfig = {
+  logLevel : string;
+  maxRecordDataSize : number;
+  maxInFlight : number;
+  quotaMaxMessages : number;
+  quotaMaxStorageBytes : number;
+  rateLimitRequestsPerSecond : number;
+  rateLimitBurst : number;
+  rateLimitTenantRequestsPerSecond : number;
+  rateLimitTenantBurst : number;
+};
+
+/**
+ * Input for PATCH /admin/api/config. All fields are optional.
+ */
+export type RuntimeConfigPatch = Partial<RuntimeConfig>;
+
+// ---------------------------------------------------------------------------
+// Tenant data browser
+// ---------------------------------------------------------------------------
+
+/**
+ * Metadata-only view of a DWN message for the tenant data browser.
+ * Does not include decrypted content or encoded message bytes.
+ */
+export type AdminMessageSummary = {
+  messageCid : string;
+  interface : string | null;
+  method : string | null;
+  protocol : string | null;
+  protocolPath : string | null;
+  schema : string | null;
+  dataFormat : string | null;
+  dataSize : number | null;
+  dateCreated : string | null;
+  messageTimestamp : string | null;
+};
+
+/**
+ * Protocol summary with record count per protocol.
+ */
+export type AdminProtocolSummary = {
+  protocol : string;
+  messageCount : number;
+};

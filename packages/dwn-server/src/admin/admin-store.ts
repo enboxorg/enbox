@@ -1,5 +1,5 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
-import type { GlobalStats, TenantStats } from './types.js';
+import type { AdminMessageSummary, AdminProtocolSummary, GlobalStats, TenantStats } from './types.js';
 
 import { Kysely } from 'kysely';
 
@@ -275,6 +275,99 @@ export class AdminStore {
     } catch {
       return 0;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tenant data browser
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns paginated message metadata for a single tenant.
+   * Only returns metadata columns — never returns `encodedMessageBytes` (raw message content).
+   */
+  public async getTenantMessages(did: string, options?: {
+    interface? : string;
+    method? : string;
+    protocol? : string;
+    limit? : number;
+    cursor? : number;
+  }): Promise<{ messages: AdminMessageSummary[]; cursor?: number }> {
+    const limit = Math.min(options?.limit ?? 20, 100);
+
+    let query = this.db
+      .selectFrom('messageStoreMessages')
+      .select([
+        'messageCid', 'interface', 'method', 'protocol', 'protocolPath',
+        'schema', 'dataFormat', 'dataSize', 'dateCreated', 'messageTimestamp', 'id',
+      ])
+      .where('tenant', '=', did)
+      .orderBy('id', 'desc')
+      .limit(limit + 1);
+
+    if (options?.cursor !== undefined) {
+      query = query.where('id', '<', options.cursor);
+    }
+
+    if (options?.interface !== undefined) {
+      query = query.where('interface', '=', options.interface);
+    }
+
+    if (options?.method !== undefined) {
+      query = query.where('method', '=', options.method);
+    }
+
+    if (options?.protocol !== undefined) {
+      query = query.where('protocol', '=', options.protocol);
+    }
+
+    const results = await query.execute();
+
+    const messages: (AdminMessageSummary & { _id: number })[] = results.map((row): AdminMessageSummary & { _id: number } => ({
+      _id              : Number(row.id),
+      messageCid       : row.messageCid,
+      interface        : row.interface,
+      method           : row.method,
+      protocol         : row.protocol,
+      protocolPath     : row.protocolPath,
+      schema           : row.schema,
+      dataFormat       : row.dataFormat,
+      dataSize         : row.dataSize !== null ? Number(row.dataSize) : null,
+      dateCreated      : row.dateCreated,
+      messageTimestamp : row.messageTimestamp,
+    }));
+
+    let cursor: number | undefined;
+    if (messages.length > limit) {
+      messages.pop();
+      cursor = messages[messages.length - 1]._id;
+    }
+
+    // Strip internal _id before returning.
+    const cleaned: AdminMessageSummary[] = messages.map(({ _id, ...rest }): AdminMessageSummary => rest);
+
+    return { messages: cleaned, cursor };
+  }
+
+  /**
+   * Returns per-protocol message counts for a tenant.
+   */
+  public async getTenantProtocolCounts(did: string): Promise<AdminProtocolSummary[]> {
+    const results = await this.db
+      .selectFrom('messageStoreMessages')
+      .select([
+        'protocol',
+        this.db.fn.countAll<number>().as('messageCount'),
+      ])
+      .where('tenant', '=', did)
+      .where('protocol', 'is not', null)
+      .groupBy('protocol')
+      .orderBy('messageCount', 'desc')
+      .execute();
+
+    return results.map((row): AdminProtocolSummary => ({
+      protocol     : row.protocol!,
+      messageCount : Number(row.messageCount),
+    }));
   }
 
   /**
