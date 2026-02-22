@@ -290,7 +290,6 @@ describe('web5 connect', () => {
       expect(result).toEqual(authRequest);
     });
 
-    // TODO: waiting for DWN feature complete
     it('should create permission grants for each selected did', async () => {
       const results = await Oidc.createPermissionGrants(
         providerIdentity.did.uri,
