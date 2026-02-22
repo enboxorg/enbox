@@ -19,6 +19,7 @@ import { HttpApi } from './http-api.js';
 import { PluginLoader } from './plugin-loader.js';
 import { RateLimiter } from './rate-limiter.js';
 import { RegistrationManager } from './registration/registration-manager.js';
+import { WebhookManager } from './admin/webhook-manager.js';
 import { WsApi } from './ws-api.js';
 import { getDialectFromUrl, getDwnConfig } from './storage.js';
 import { removeProcessHandlers, setProcessHandlers } from './process-handlers.js';
@@ -154,6 +155,7 @@ export class DwnServer {
     let activityLog: ActivityLog | undefined;
     let adminStore: AdminStore | undefined;
     let auditLog: AuditLog | undefined;
+    let webhookManager: WebhookManager | undefined;
 
     if (this.config.adminToken) {
       const storageUrl = this.config.messageStore;
@@ -165,9 +167,22 @@ export class DwnServer {
       if (this.config.registrationStoreUrl) {
         try {
           const auditDialect = getDialectFromUrl(new URL(this.config.registrationStoreUrl));
-          auditLog = await AuditLog.create(auditDialect);
+          auditLog = await AuditLog.create(auditDialect, {
+            maxAgeDays : this.config.auditLogMaxAgeDays,
+            maxRows    : this.config.auditLogMaxRows,
+          });
         } catch (err) {
           log.warn('Failed to create audit log:', err);
+        }
+      }
+
+      // Create webhook manager using the same dialect as the audit log.
+      if (this.config.registrationStoreUrl) {
+        try {
+          const webhookDialect = getDialectFromUrl(new URL(this.config.registrationStoreUrl));
+          webhookManager = await WebhookManager.create(webhookDialect);
+        } catch (err) {
+          log.warn('Failed to create webhook manager:', err);
         }
       }
 
@@ -181,6 +196,7 @@ export class DwnServer {
         auditLog,
         ipRateLimiter,
         tenantRateLimiter,
+        webhookManager,
       });
 
       // Record server start event in audit log.

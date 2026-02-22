@@ -99,11 +99,15 @@ export class RegistrationStore {
   // ---------------------------------------------------------------------------
 
   /**
-   * Returns a paginated list of registered tenants.
+   * Returns a paginated list of registered tenants with optional search and status filtering.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/390
    */
   public async listTenants(options?: {
     cursor? : string;
     limit? : number;
+    search? : string;
+    status? : 'active' | 'suspended';
   }): Promise<{ tenants: RegisteredTenantRow[]; cursor?: string }> {
     const limit = options?.limit ?? 20;
 
@@ -115,6 +119,16 @@ export class RegistrationStore {
 
     if (options?.cursor) {
       query = query.where('did', '>', options.cursor);
+    }
+
+    if (options?.search) {
+      query = query.where('did', 'like', `%${options.search}%`);
+    }
+
+    if (options?.status === 'suspended') {
+      query = query.where('suspended', '=', 1);
+    } else if (options?.status === 'active') {
+      query = query.where('suspended', '=', 0);
     }
 
     const results = await query.execute();
@@ -129,15 +143,46 @@ export class RegistrationStore {
   }
 
   /**
-   * Returns the total count of registered tenants.
+   * Returns the total count of registered tenants matching optional filters.
    */
-  public async getTenantCount(): Promise<number> {
-    const result = await this.db
+  public async getTenantCount(options?: {
+    search? : string;
+    status? : 'active' | 'suspended';
+  }): Promise<number> {
+    let query = this.db
       .selectFrom(RegistrationStore.registeredTenantTableName)
-      .select(sql<number>`count(*)`.as('count'))
-      .executeTakeFirstOrThrow();
+      .select(sql<number>`count(*)`.as('count'));
 
+    if (options?.search) {
+      query = query.where('did', 'like', `%${options.search}%`);
+    }
+
+    if (options?.status === 'suspended') {
+      query = query.where('suspended', '=', 1);
+    } else if (options?.status === 'active') {
+      query = query.where('suspended', '=', 0);
+    }
+
+    const result = await query.executeTakeFirstOrThrow();
     return Number(result.count);
+  }
+
+  /**
+   * Inserts a new tenant registration. Returns `false` if the tenant already exists.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/393
+   */
+  public async createTenant(did: string): Promise<boolean> {
+    try {
+      await this.db
+        .insertInto(RegistrationStore.registeredTenantTableName)
+        .values({ did, termsOfServiceHash: '', suspended: 0 })
+        .execute();
+      return true;
+    } catch {
+      // Unique constraint violation — tenant already exists.
+      return false;
+    }
   }
 
   /**

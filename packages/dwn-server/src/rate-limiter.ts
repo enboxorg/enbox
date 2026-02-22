@@ -95,6 +95,27 @@ export class RateLimiter {
   }
 
   /**
+   * Reconfigures the rate limiter with new settings. Existing buckets are
+   * retained but will use the new `refillRate` and `maxTokens` going forward.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/389
+   */
+  public reconfigure(config: RateLimiterConfig): void {
+    this.#refillRate = config.refillRate;
+    this.#maxTokens = config.maxTokens;
+  }
+
+  /**
+   * Returns the current configuration of this rate limiter.
+   */
+  public get config(): RateLimiterConfig {
+    return {
+      refillRate : this.#refillRate,
+      maxTokens  : this.#maxTokens,
+    };
+  }
+
+  /**
    * Stops the periodic cleanup timer. Call this when shutting down.
    */
   public destroy(): void {

@@ -1,6 +1,7 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
 
 import { Kysely } from 'kysely';
+import log from 'loglevel';
 
 /**
  * Input for recording a new audit event.
@@ -50,10 +51,26 @@ export type AuditQueryOptions = {
  *
  * @see https://github.com/enboxorg/enbox/issues/327
  */
+/**
+ * Configuration for audit log retention.
+ *
+ * @see https://github.com/enboxorg/enbox/issues/394
+ */
+export type AuditRetentionConfig = {
+  /** Maximum age in days. 0 = no limit. */
+  maxAgeDays : number;
+  /** Maximum row count. 0 = no limit. */
+  maxRows : number;
+};
+
 export class AuditLog {
   static readonly #tableName = 'adminAuditLog';
+  /** Cleanup runs every hour. */
+  static readonly #CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
   #db: Kysely<AuditDatabase>;
+  #retentionConfig: AuditRetentionConfig | undefined;
+  #cleanupInterval: ReturnType<typeof setInterval> | undefined;
 
   private constructor(dialect: Dialect) {
     this.#db = new Kysely<AuditDatabase>({ dialect });
@@ -62,10 +79,17 @@ export class AuditLog {
   /**
    * Creates and initializes an `AuditLog` instance.
    * Creates the `adminAuditLog` table if it does not already exist.
+   * If `retentionConfig` is provided, starts periodic cleanup.
    */
-  public static async create(dialect: Dialect): Promise<AuditLog> {
+  public static async create(dialect: Dialect, retentionConfig?: AuditRetentionConfig): Promise<AuditLog> {
     const auditLog = new AuditLog(dialect);
     await auditLog.#initialize();
+
+    if (retentionConfig && (retentionConfig.maxAgeDays > 0 || retentionConfig.maxRows > 0)) {
+      auditLog.#retentionConfig = retentionConfig;
+      auditLog.#startRetentionCleanup();
+    }
+
     return auditLog;
   }
 
@@ -202,9 +226,83 @@ export class AuditLog {
   }
 
   /**
-   * Closes the underlying database connection.
+   * Runs retention cleanup: purges entries older than maxAgeDays and trims
+   * the table to maxRows. Returns the total number of rows deleted.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/394
+   */
+  public async enforceRetention(config?: AuditRetentionConfig): Promise<number> {
+    const rc = config ?? this.#retentionConfig;
+    if (!rc) {
+      return 0;
+    }
+
+    let totalDeleted = 0;
+
+    // Purge by age.
+    if (rc.maxAgeDays > 0) {
+      const cutoff = new Date(Date.now() - rc.maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
+      const result = await this.#db
+        .deleteFrom(AuditLog.#tableName)
+        .where('timestamp', '<', cutoff)
+        .executeTakeFirstOrThrow();
+      totalDeleted += Number(result.numDeletedRows);
+    }
+
+    // Purge excess rows (keep most recent).
+    if (rc.maxRows > 0) {
+      const currentCount = await this.count();
+      if (currentCount > rc.maxRows) {
+        const excess = currentCount - rc.maxRows;
+        // Delete the oldest `excess` rows using a subquery.
+        const oldestRows = await this.#db
+          .selectFrom(AuditLog.#tableName)
+          .select('id')
+          .orderBy('id', 'asc')
+          .limit(excess)
+          .execute();
+
+        if (oldestRows.length > 0) {
+          const maxIdToDelete = oldestRows[oldestRows.length - 1].id;
+          const result = await this.#db
+            .deleteFrom(AuditLog.#tableName)
+            .where('id', '<=', maxIdToDelete)
+            .executeTakeFirstOrThrow();
+          totalDeleted += Number(result.numDeletedRows);
+        }
+      }
+    }
+
+    return totalDeleted;
+  }
+
+  /**
+   * Starts the periodic retention cleanup timer.
+   */
+  #startRetentionCleanup(): void {
+    if (this.#cleanupInterval) {
+      return;
+    }
+
+    this.#cleanupInterval = setInterval((): void => {
+      this.enforceRetention().then((deleted): void => {
+        if (deleted > 0) {
+          log.info(`Audit log retention: purged ${deleted} old entries`);
+        }
+      }).catch((err): void => {
+        log.error('Audit log retention cleanup failed:', err);
+      });
+    }, AuditLog.#CLEANUP_INTERVAL_MS);
+  }
+
+  /**
+   * Closes the underlying database connection and stops the retention timer.
    */
   public async close(): Promise<void> {
+    if (this.#cleanupInterval) {
+      clearInterval(this.#cleanupInterval);
+      this.#cleanupInterval = undefined;
+    }
     await this.#db.destroy();
   }
 }
