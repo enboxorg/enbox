@@ -395,6 +395,48 @@ describe('handleDwnProcessMessage', () => {
     await dwn.close();
   });
 
+  it('should skip quota enforcement when both quotas are 0 (unlimited)', async () => {
+    const dwn = await getTestDwn();
+
+    const mockAdminStore = {
+      getTenantMessageCount : async (): Promise<number> => 999,
+      getTenantStorageSize  : async (): Promise<number> => 999999,
+    } as unknown as AdminStore;
+
+    const context: RequestContext = {
+      dwn,
+      transport  : 'http',
+      adminStore : mockAdminStore,
+      config     : { quotaMaxMessages: 0, quotaMaxStorageBytes: 0 } as any,
+    };
+
+    // Even though the tenant has 999 messages and 999999 bytes, the quota is
+    // unlimited (0/0), so the request should NOT be rejected by the quota check.
+    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.processMessage', {
+      message: {
+        descriptor: {
+          interface        : 'Records',
+          method           : 'Write',
+          messageTimestamp : new Date().toISOString(),
+          dataSize         : 100,
+          dataCid          : 'cid-unlimited',
+          dataFormat       : 'application/octet-stream',
+        },
+      },
+      target: 'did:key:unlimited-quota',
+    });
+
+    const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, context);
+
+    // Should NOT contain any quota error. DWN will return its own validation error (400).
+    if (jsonRpcResponse.error) {
+      expect(jsonRpcResponse.error.message).not.toContain('Quota');
+      expect(jsonRpcResponse.error.message).not.toContain(DwnServerErrorCode.TenantMessageQuotaExceeded);
+      expect(jsonRpcResponse.error.message).not.toContain(DwnServerErrorCode.TenantStorageQuotaExceeded);
+    }
+    await dwn.close();
+  });
+
   it('should allow RecordsWrite when quota is not exceeded', async () => {
     const dwn = await getTestDwn();
 
