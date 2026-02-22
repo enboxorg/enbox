@@ -46,16 +46,6 @@ export type ServerInfo = {
   version: string,
   /** whether web socket support is enabled on this server */
   webSocketSupport: boolean,
-  /**
-   * Provider auth configuration, present when `provider-auth-v0` is listed
-   * in `registrationRequirements`.
-   */
-  providerAuth?: {
-    authorizeUrl?: string,
-    tokenUrl?: string,
-    refreshUrl?: string,
-    managementUrl?: string,
-  },
 };
 
 export interface DwnServerInfoCache extends KeyValueStore<string, ServerInfo| undefined> {}
