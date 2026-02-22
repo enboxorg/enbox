@@ -16,6 +16,8 @@ import Cursor from 'pg-cursor';
 import { createPool as MySQLCreatePool } from 'mysql2';
 import pg from 'pg';
 
+import { Kysely } from 'kysely';
+
 import { createBunSqliteDatabase } from '@enbox/dwn-sql-store';
 import { PluginLoader } from './plugin-loader.js';
 
@@ -31,6 +33,7 @@ import {
   MysqlDialect,
   PostgresDialect,
   ResumableTaskStoreSql,
+  runDwnStoreMigrations,
   SqliteDialect,
   StateIndexSql,
 } from '@enbox/dwn-sql-store';
@@ -102,12 +105,60 @@ export async function getDwnConfig(
   }
 ): Promise<DwnConfig> {
   const { tenantGate, eventLog, didResolver } = options;
+
+  // Run SQL schema migrations before creating stores. Uses the data store
+  // connection to determine the dialect — all SQL stores typically share the
+  // same database. Non-SQL backends (level://) are skipped.
+  await runSqlMigrationsIfNeeded(config);
+
   const dataStore: DataStore = await getStore(config, config.dataStore, StoreType.DataStore);
   const stateIndex: StateIndex = await getStore(config, config.stateIndex, StoreType.StateIndex);
   const messageStore: MessageStore = await getStore(config, config.messageStore, StoreType.MessageStore);
   const resumableTaskStore: ResumableTaskStore = await getStore(config, config.resumableTaskStore, StoreType.ResumableTaskStore);
 
   return { didResolver, eventLog, stateIndex, dataStore, messageStore, resumableTaskStore, tenantGate };
+}
+
+/**
+ * Runs DWN SQL schema migrations if the data store is configured with a SQL
+ * backend. Creates a temporary Kysely instance, runs all pending migrations,
+ * then destroys it. The subsequent store `open()` calls will reuse the shared
+ * dialect/pool and find the schema already in place.
+ */
+async function runSqlMigrationsIfNeeded(config: DwnServerConfig): Promise<void> {
+  // Skip if the data store config is a file path (plugin) or non-SQL backend
+  if (isFilePath(config.dataStore)) {
+    return;
+  }
+
+  let storeUrl: URL;
+  try {
+    storeUrl = new URL(config.dataStore);
+  } catch {
+    return; // Not a valid URL — skip
+  }
+
+  const protocol = storeUrl.protocol.slice(0, -1);
+  const sqlBackends: string[] = [BackendTypes.SQLITE, BackendTypes.MYSQL, BackendTypes.POSTGRES];
+  if (!sqlBackends.includes(protocol)) {
+    return;
+  }
+
+  const dialect = getOrCreateDialect(storeUrl, config);
+  const db = new Kysely<Record<string, unknown>>({ dialect });
+  try {
+    const applied = await runDwnStoreMigrations(db, dialect);
+    if (applied.length > 0) {
+      console.log(`DWN migrations applied: ${applied.join(', ')}`);
+    }
+  } finally {
+    // Don't destroy the Kysely instance if using a shared Postgres pool —
+    // the pool is cached in sharedDialectCache and will be reused by stores.
+    // Only destroy for non-cached dialects (SQLite, MySQL).
+    if (protocol !== BackendTypes.POSTGRES) {
+      await db.destroy();
+    }
+  }
 }
 
 function getLevelStore(

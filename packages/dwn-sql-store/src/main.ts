@@ -6,5 +6,7 @@ export * from './dialect/sqlite-dialect.js';
 export * from './data-store-sql.js';
 export * from './state-index-sql.js';
 export * from './message-store-sql.js';
+export * from './migration-runner.js';
+export * from './migrations/index.js';
 export * from './resumable-task-store-sql.js';
 export * from './smt-store-sql.js';

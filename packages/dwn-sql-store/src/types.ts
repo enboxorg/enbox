@@ -68,11 +68,38 @@ type StateIndexMetaTable = {
   protocol: string | null;
 };
 
+// ─── DataStore tables (legacy + content-addressed) ────────────────────────
+
+/**
+ * @deprecated Legacy monolithic data table. Replaced by `dataRefs` + `dataBlocks`
+ * in migration 002. Retained for type compatibility during migration.
+ */
 type DataStoreTable = {
   id: Generated<number>;
   tenant: string;
   recordId: string;
   dataCid: string;
+  data: Uint8Array;
+};
+
+/**
+ * Reference table linking (tenant, recordId) to a content-addressed dataCid.
+ * Multiple tenant/record pairs can reference the same dataCid for dedup.
+ */
+type DataRefsTable = {
+  tenant: string;
+  recordId: string;
+  dataCid: string;
+  dataSize: number;
+};
+
+/**
+ * Content storage table holding individual DAG-PB blocks (~256KB each)
+ * keyed by (rootDataCid, blockCid). Shared across all refs to the same dataCid.
+ */
+type DataBlocksTable = {
+  rootDataCid: string;
+  blockCid: string;
   data: Uint8Array;
 };
 
@@ -87,6 +114,8 @@ export type DwnDatabaseType = {
   messageStoreMessages: MessageStoreTable;
   messageStoreRecordsTags: MessageStoreRecordsTagsTable;
   dataStore: DataStoreTable;
+  dataRefs: DataRefsTable;
+  dataBlocks: DataBlocksTable;
   resumableTasks: ResumableTaskTable;
   stateIndexNodes: StateIndexNodeTable;
   stateIndexRoots: StateIndexRootTable;
