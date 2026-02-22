@@ -91,6 +91,9 @@ export default defineConfig({
       '@noble/secp256k1',
       'lru-cache',
       'ulidx',
+
+      // --- Vitest coverage provider (loaded in-browser by the test runner) ---
+      '@vitest/coverage-istanbul',
     ],
     holdUntilCrawlEnd: true,
   },
