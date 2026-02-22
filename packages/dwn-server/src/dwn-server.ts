@@ -18,7 +18,9 @@ import { AdminStore } from './admin/admin-store.js';
 import { AuditLog } from './admin/audit-log.js';
 import { config as defaultConfig } from './config.js';
 import { HttpApi } from './http-api.js';
+import { JwtProviderAuthPlugin } from './registration/jwt-provider-auth-plugin.js';
 import { loadProviderAuthPlugin } from './registration/provider-auth-plugin.js';
+import { OpenAuthHandler } from './registration/open-auth-handler.js';
 import { PluginLoader } from './plugin-loader.js';
 import { RateLimiter } from './rate-limiter.js';
 import { RegistrationManager } from './registration/registration-manager.js';
@@ -106,9 +108,21 @@ export class DwnServer {
     if (!this.dwn) {
       // Load provider auth plugin if configured.
       let providerAuthPlugin: ProviderAuthPlugin | undefined;
-      if (this.config.providerAuthEnabled && this.config.providerAuthPluginPath) {
-        providerAuthPlugin = await loadProviderAuthPlugin(this.config.providerAuthPluginPath);
-        log.info('Provider auth plugin loaded');
+      if (this.config.providerAuthEnabled) {
+        if (this.config.providerAuthPluginPath) {
+          // Custom external plugin.
+          providerAuthPlugin = await loadProviderAuthPlugin(this.config.providerAuthPluginPath);
+          log.info('Provider auth plugin loaded from path');
+        } else if (this.config.providerAuthJwtSecret || this.config.providerAuthJwtJwksUrl) {
+          // Built-in JWT plugin.
+          providerAuthPlugin = await JwtProviderAuthPlugin.create({
+            secret   : this.config.providerAuthJwtSecret,
+            jwksUrl  : this.config.providerAuthJwtJwksUrl,
+            issuer   : this.config.baseUrl,
+            audience : this.config.baseUrl,
+          });
+          log.info('Built-in JWT provider auth plugin created');
+        }
       }
 
       // undefined registrationStoreUrl is used as a signal that there is no need for tenant registration, DWN is open for all.
@@ -224,9 +238,31 @@ export class DwnServer {
     this.#tenantRateLimiter = tenantRateLimiter;
     this.#auditLog = auditLog;
 
+    // Create open-auth handler if provider auth is enabled with a JWT secret
+    // and authorize/token URLs point to this server (or are not set — defaulting to built-in).
+    let openAuthHandler: OpenAuthHandler | undefined;
+    if (this.config.providerAuthEnabled && this.config.providerAuthJwtSecret && !this.config.providerAuthPluginPath) {
+      openAuthHandler = OpenAuthHandler.create(
+        this.config.providerAuthJwtSecret,
+        this.config.baseUrl,
+      );
+      log.info('Built-in open-auth endpoints enabled');
+
+      // Auto-configure authorize/token/refresh URLs if not explicitly set.
+      if (!this.config.providerAuthAuthorizeUrl) {
+        this.config.providerAuthAuthorizeUrl = `${this.config.baseUrl}/provider-auth/authorize`;
+      }
+      if (!this.config.providerAuthTokenUrl) {
+        this.config.providerAuthTokenUrl = `${this.config.baseUrl}/provider-auth/token`;
+      }
+      if (!this.config.providerAuthRefreshUrl) {
+        this.config.providerAuthRefreshUrl = `${this.config.baseUrl}/provider-auth/refresh`;
+      }
+    }
+
     this.#httpApi = await HttpApi.create(
       this.config, this.dwn, registrationManager, adminApi, activityLog,
-      { adminStore, registrationStore, ipRateLimiter, tenantRateLimiter },
+      { adminStore, registrationStore, ipRateLimiter, tenantRateLimiter, openAuthHandler },
     );
 
     await this.#httpApi.start(this.config.port);

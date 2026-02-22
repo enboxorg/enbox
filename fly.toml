@@ -14,6 +14,11 @@ primary_region = "iad"
   MAX_RECORD_DATA_SIZE = "1gb"
   DWN_SERVER_LOG_LEVEL = "info"
 
+  # Provider auth — open registration via built-in JWT plugin.
+  # DWN_REGISTRATION_STORE_URL is set as a Fly secret (same as database URL).
+  # DWN_PROVIDER_AUTH_JWT_SECRET is set as a Fly secret.
+  DWN_PROVIDER_AUTH_ENABLED = "true"
+
 [http_service]
   internal_port = 8080
   force_https = true
