@@ -28,7 +28,7 @@ describe('PermissionRequest', () => {
       scope
     });
 
-    const parsedPermissionRequest = await PermissionRequest.parse(permissionRequest.dataEncodedMessage);
+    const parsedPermissionRequest = PermissionRequest.parse(permissionRequest.dataEncodedMessage);
     expect (parsedPermissionRequest.id).toBe(permissionRequest.dataEncodedMessage.recordId);
     expect (parsedPermissionRequest.delegated).toBe(true);
     expect (parsedPermissionRequest.scope).toEqual(scope);
@@ -47,7 +47,7 @@ describe('PermissionRequest', () => {
       const message = { ...permissionRequest.dataEncodedMessage };
       (message as any).encodedData = undefined;
 
-      await expect(PermissionRequest.parse(message)).rejects.toThrow(DwnErrorCode.PermissionRequestParseMissingEncodedData);
+      expect(() => PermissionRequest.parse(message)).toThrow(DwnErrorCode.PermissionRequestParseMissingEncodedData);
     });
 
     it('should throw if authorization is missing (unable to extract requester)', async () => {
@@ -62,7 +62,7 @@ describe('PermissionRequest', () => {
       const message = { ...permissionRequest.dataEncodedMessage };
       delete (message as any).authorization;
 
-      await expect(PermissionRequest.parse(message)).rejects.toThrow(DwnErrorCode.PermissionRequestParseMissingAuthorization);
+      expect(() => PermissionRequest.parse(message)).toThrow(DwnErrorCode.PermissionRequestParseMissingAuthorization);
     });
 
     it('should throw if scope is missing from the request data', async () => {
@@ -79,7 +79,7 @@ describe('PermissionRequest', () => {
       const encodedData = Encoder.bytesToBase64Url(Encoder.objectToBytes(requestDataWithoutScope));
       const message = { ...permissionRequest.dataEncodedMessage, encodedData };
 
-      await expect(PermissionRequest.parse(message)).rejects.toThrow(DwnErrorCode.PermissionRequestParseMissingScope);
+      expect(() => PermissionRequest.parse(message)).toThrow(DwnErrorCode.PermissionRequestParseMissingScope);
     });
   });
 });

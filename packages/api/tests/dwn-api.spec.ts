@@ -3222,7 +3222,7 @@ describe('DwnApi', () => {
         }
       });
 
-      const grantFromAlice = await PermissionGrant.parse({
+      const grantFromAlice = PermissionGrant.parse({
         agent        : testHarness.agent,
         connectedDid : bobDid.uri, // bob is the connectedDid
         message      : messageGrantFromAlice
@@ -3245,7 +3245,7 @@ describe('DwnApi', () => {
         }
       });
 
-      const grantFromCarol = await PermissionGrant.parse({
+      const grantFromCarol = PermissionGrant.parse({
         agent        : testHarness.agent,
         connectedDid : bobDid.uri, // bob is the connectedDid
         message      : messageGrantFromCarol

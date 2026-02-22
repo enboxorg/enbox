@@ -94,7 +94,7 @@ export class RecordsCount extends AbstractMessage<RecordsCountMessage> {
    * @param messageStore Used to check if the grant has been revoked.
    */
   public async authorizeDelegate(messageStore: MessageStore): Promise<void> {
-    const delegatedGrant = await PermissionGrant.parse(this.message.authorization!.authorDelegatedGrant!);
+    const delegatedGrant = PermissionGrant.parse(this.message.authorization!.authorDelegatedGrant!);
     await RecordsGrantAuthorization.authorizeQueryOrSubscribe({
       incomingMessage : this.message,
       expectedGrantor : this.author!,

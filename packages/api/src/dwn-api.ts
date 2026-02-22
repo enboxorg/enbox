@@ -287,7 +287,7 @@ export class DwnApi {
           message,
         };
 
-        return await PermissionRequest.parse(requestParams);
+        return PermissionRequest.parse(requestParams);
       },
       /**
        * Grant permission for a specific scope to a grantee DID.
@@ -304,7 +304,7 @@ export class DwnApi {
           message,
         };
 
-        return await PermissionGrant.parse(grantParams);
+        return PermissionGrant.parse(grantParams);
       },
       /**
        * Query permission requests. You can filter by protocol and specify if you want to query a remote DWN.
@@ -325,7 +325,7 @@ export class DwnApi {
             agent        : this.agent,
             message      : permission.message,
           };
-          requests.push(await PermissionRequest.parse(requestParams));
+          requests.push(PermissionRequest.parse(requestParams));
         }
 
         return requests;
@@ -353,7 +353,7 @@ export class DwnApi {
             message      : permission.message,
           };
 
-          grants.push(await PermissionGrant.parse(grantParams));
+          grants.push(PermissionGrant.parse(grantParams));
         }
 
         return grants;

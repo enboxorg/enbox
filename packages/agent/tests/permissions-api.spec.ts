@@ -668,7 +668,7 @@ describe('AgentPermissionsApi', () => {
       });
 
       const grantDataObject = { ...deviceXGrant.grant };
-      const parsedGrant = await DwnPermissionGrant.parse(deviceXGrant.message);
+      const parsedGrant = DwnPermissionGrant.parse(deviceXGrant.message);
 
       expect(grantDataObject).toEqual(parsedGrant);
     });
@@ -718,7 +718,7 @@ describe('AgentPermissionsApi', () => {
       });
 
       // parse the grant
-      const writeGrant = await DwnPermissionGrant.parse(deviceXGrant.message);
+      const writeGrant = DwnPermissionGrant.parse(deviceXGrant.message);
 
       // check if the grant is revoked
       let isRevoked = await testHarness.agent.permissions.isGrantRevoked({
@@ -768,7 +768,7 @@ describe('AgentPermissionsApi', () => {
       });
 
       // parse the grant
-      const writeGrant = await DwnPermissionGrant.parse(deviceXGrant.message);
+      const writeGrant = DwnPermissionGrant.parse(deviceXGrant.message);
 
       // check if the grant is revoked
       let isRevoked = await testHarness.agent.permissions.isGrantRevoked({

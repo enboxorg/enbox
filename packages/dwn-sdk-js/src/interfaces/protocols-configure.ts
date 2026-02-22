@@ -68,7 +68,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
    * @param messageStore Used to check if the grant has been revoked.
    */
   public async authorizeAuthorDelegate(messageStore: MessageStore): Promise<void> {
-    const delegatedGrant = await PermissionGrant.parse(this.message.authorization.authorDelegatedGrant!);
+    const delegatedGrant = PermissionGrant.parse(this.message.authorization.authorDelegatedGrant!);
     await ProtocolsGrantAuthorization.authorizeConfigure({
       protocolsConfigureMessage : this.message,
       expectedGrantor           : this.author!,

@@ -405,7 +405,7 @@ export class Records {
     if (authorDelegatedGrantDefined) {
       const delegatedGrant = message.authorization!.authorDelegatedGrant!;
 
-      const permissionGrant = await PermissionGrant.parse(delegatedGrant);
+      const permissionGrant = PermissionGrant.parse(delegatedGrant);
       if (permissionGrant.delegated !== true) {
         throw new DwnError(
           DwnErrorCode.RecordsAuthorDelegatedGrantNotADelegatedGrant,
@@ -448,7 +448,7 @@ export class Records {
 
     if (ownerDelegatedGrantDefined) {
       const delegatedGrant = message.authorization!.ownerDelegatedGrant!;
-      const permissionGrant = await PermissionGrant.parse(delegatedGrant);
+      const permissionGrant = PermissionGrant.parse(delegatedGrant);
 
       if (permissionGrant.delegated !== true) {
         throw new DwnError(

@@ -96,7 +96,7 @@ export function testPermissions(): void {
       // createRevocation with a protocol derived from the grant
       const revokeWrite = await PermissionsProtocol.createRevocation({
         signer      : Jws.createSigner(alice),
-        grant       : await PermissionGrant.parse(grantWrite.dataEncodedMessage),
+        grant       : PermissionGrant.parse(grantWrite.dataEncodedMessage),
         dateRevoked : Time.getCurrentTimestamp()
       });
       expect(revokeWrite.recordsWrite.message.descriptor.tags).toEqual({ protocol: testProtocol });
@@ -187,7 +187,7 @@ export function testPermissions(): void {
       // derive the grantId and protocol from the grant record
       const revokeWrite = await PermissionsProtocol.createRevocation({
         signer      : Jws.createSigner(alice),
-        grant       : await PermissionGrant.parse(grantWrite.dataEncodedMessage),
+        grant       : PermissionGrant.parse(grantWrite.dataEncodedMessage),
         dateRevoked : Time.getCurrentTimestamp()
       });
 
@@ -315,7 +315,7 @@ export function testPermissions(): void {
       // 7. Verify that non-owner cannot revoke the grant
       const unauthorizedRevokeWrite = await PermissionsProtocol.createRevocation({
         signer      : Jws.createSigner(bob),
-        grant       : await PermissionGrant.parse(grantWrite.dataEncodedMessage),
+        grant       : PermissionGrant.parse(grantWrite.dataEncodedMessage),
         dateRevoked : Time.getCurrentTimestamp(),
       });
 
@@ -330,7 +330,7 @@ export function testPermissions(): void {
       // 8. Alice revokes the permission grant for Bob
       const revokeWrite = await PermissionsProtocol.createRevocation({
         signer      : Jws.createSigner(alice),
-        grant       : await PermissionGrant.parse(grantWrite.dataEncodedMessage),
+        grant       : PermissionGrant.parse(grantWrite.dataEncodedMessage),
         dateRevoked : Time.getCurrentTimestamp(),
       });
 
@@ -1026,7 +1026,7 @@ export function testPermissions(): void {
         // Alice revokes the grant (messageTimestamp is auto-set to current time, which is before futureTimestamp)
         const revokeWrite = await PermissionsProtocol.createRevocation({
           signer : Jws.createSigner(alice),
-          grant  : await PermissionGrant.parse(permissionGrant.dataEncodedMessage),
+          grant  : PermissionGrant.parse(permissionGrant.dataEncodedMessage),
         });
         const revokeReply = await dwn.processMessage(
           alice.did,
@@ -1096,7 +1096,7 @@ export function testPermissions(): void {
         // Alice revokes the grant (messageTimestamp is auto-set slightly after the record's dateCreated)
         const revokeWrite = await PermissionsProtocol.createRevocation({
           signer : Jws.createSigner(alice),
-          grant  : await PermissionGrant.parse(permissionGrant.dataEncodedMessage),
+          grant  : PermissionGrant.parse(permissionGrant.dataEncodedMessage),
         });
         const revokeReply = await dwn.processMessage(
           alice.did,
@@ -1175,7 +1175,7 @@ export function testPermissions(): void {
         // Alice revokes the grant
         const revokeWrite = await PermissionsProtocol.createRevocation({
           signer : Jws.createSigner(alice),
-          grant  : await PermissionGrant.parse(permissionGrant.dataEncodedMessage),
+          grant  : PermissionGrant.parse(permissionGrant.dataEncodedMessage),
         });
         const revokeReply = await dwn.processMessage(
           alice.did,
@@ -1286,7 +1286,7 @@ export function testPermissions(): void {
         // Alice revokes the grant (messageTimestamp is "now", between record 1 and records 2/3)
         const revokeWrite = await PermissionsProtocol.createRevocation({
           signer : Jws.createSigner(alice),
-          grant  : await PermissionGrant.parse(permissionGrant.dataEncodedMessage),
+          grant  : PermissionGrant.parse(permissionGrant.dataEncodedMessage),
         });
         const revokeReply = await dwn.processMessage(
           alice.did,

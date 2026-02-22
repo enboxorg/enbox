@@ -599,7 +599,7 @@ export class Web5 {
     const connectedProtocols = new Set<string>();
     for (const grantMessage of grants) {
       // use the delegateDid as the connectedDid of the grant as they do not yet support impersonation/delegation
-      const grant = await PermissionGrant.parse({ connectedDid: delegateDid, agent, message: grantMessage });
+      const grant = PermissionGrant.parse({ connectedDid: delegateDid, agent, message: grantMessage });
       // store the grant as the owner of the DWN, this will allow the delegateDid to use the grant when impersonating the connectedDid
       const { status } = await grant.store(true);
       if (status.code !== 202) {

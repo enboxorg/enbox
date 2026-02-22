@@ -652,7 +652,7 @@ export function testProtocolsConfigureHandler(): void {
           // 4. Alice revokes Bob's grant
           const revokeWrite = await PermissionsProtocol.createRevocation({
             signer      : Jws.createSigner(alice),
-            grant       : await PermissionGrant.parse(permissionGrant.dataEncodedMessage),
+            grant       : PermissionGrant.parse(permissionGrant.dataEncodedMessage),
             dateRevoked : Time.getCurrentTimestamp()
           });
 
