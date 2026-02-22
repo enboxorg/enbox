@@ -1,5 +1,11 @@
 # @enbox/common
 
+## 0.0.4
+
+### Patch Changes
+
+- [`255ea66`](https://github.com/enboxorg/enbox/commit/255ea668007d728a59899b06f1897b0b933e6bf3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: provider-auth-v0 tenant registration, immutable records, content-addressed data stores, and admin dashboard
+
 ## 0.0.3
 
 ### Patch Changes
