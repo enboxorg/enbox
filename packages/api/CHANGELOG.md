@@ -1,5 +1,16 @@
 # @enbox/api
 
+## 0.2.4
+
+### Patch Changes
+
+- [`255ea66`](https://github.com/enboxorg/enbox/commit/255ea668007d728a59899b06f1897b0b933e6bf3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: provider-auth-v0 tenant registration, immutable records, content-addressed data stores, and admin dashboard
+
+- Updated dependencies [[`255ea66`](https://github.com/enboxorg/enbox/commit/255ea668007d728a59899b06f1897b0b933e6bf3)]:
+  - @enbox/dwn-clients@0.0.6
+  - @enbox/agent@0.1.9
+  - @enbox/common@0.0.4
+
 ## 0.2.3
 
 ### Patch Changes

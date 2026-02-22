@@ -1,5 +1,15 @@
 # @enbox/dwn-sdk-js
 
+## 0.0.8
+
+### Patch Changes
+
+- [`255ea66`](https://github.com/enboxorg/enbox/commit/255ea668007d728a59899b06f1897b0b933e6bf3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: provider-auth-v0 tenant registration, immutable records, content-addressed data stores, and admin dashboard
+
+- Updated dependencies [[`255ea66`](https://github.com/enboxorg/enbox/commit/255ea668007d728a59899b06f1897b0b933e6bf3)]:
+  - @enbox/crypto@0.0.5
+  - @enbox/dids@0.0.6
+
 ## 0.0.7
 
 ### Patch Changes
