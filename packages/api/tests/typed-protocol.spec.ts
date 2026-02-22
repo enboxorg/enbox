@@ -447,6 +447,85 @@ describe('TypedProtocol API', () => {
       });
     });
 
+    describe('error paths', () => {
+      it('should throw when calling create() before configure()', async () => {
+        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+
+        await expect(
+          unconfigured.records.create('list', { data: { name: 'Fail' } }),
+        ).rejects.toThrow('has not been configured');
+      });
+
+      it('should throw when calling query() before configure()', async () => {
+        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+
+        await expect(
+          unconfigured.records.query('list'),
+        ).rejects.toThrow('has not been configured');
+      });
+
+      it('should throw when calling read() before configure()', async () => {
+        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+
+        await expect(
+          unconfigured.records.read('list', { filter: { recordId: 'abc' } }),
+        ).rejects.toThrow('has not been configured');
+      });
+
+      it('should throw when calling delete() before configure()', async () => {
+        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+
+        await expect(
+          unconfigured.records.delete('list', { recordId: 'abc' }),
+        ).rejects.toThrow('has not been configured');
+      });
+
+      it('should throw when calling subscribe() before configure()', async () => {
+        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+
+        await expect(
+          unconfigured.records.subscribe('list'),
+        ).rejects.toThrow('has not been configured');
+      });
+
+      it('should include the protocol URI in the not-configured error message', async () => {
+        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+
+        await expect(
+          unconfigured.records.create('list', { data: { name: 'Fail' } }),
+        ).rejects.toThrow('https://example.com/protocols/todo');
+      });
+
+      it('should throw on invalid protocol path', async () => {
+        // Configure first so the not-configured guard passes
+        await expect(
+          typed.records.create('nonexistent' as any, { data: {} }),
+        ).rejects.toThrow('invalid protocol path');
+      });
+
+      it('should include valid paths in the invalid path error message', async () => {
+        await expect(
+          typed.records.create('nonexistent' as any, { data: {} }),
+        ).rejects.toThrow('Valid paths are:');
+      });
+
+      it('should throw on invalid nested path', async () => {
+        await expect(
+          typed.records.query('list/nonexistent' as any),
+        ).rejects.toThrow('invalid protocol path');
+      });
+
+      it('should report isConfigured as false before configure()', () => {
+        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+        expect(unconfigured.isConfigured).toBe(false);
+      });
+
+      it('should report isConfigured as true after configure()', () => {
+        // `typed` is configured in beforeEach
+        expect(typed.isConfigured).toBe(true);
+      });
+    });
+
     describe('TypedRecord lifecycle methods', () => {
       it('should update a record and return a new TypedRecord', async () => {
         const { record } = await typed.records.create('list', {

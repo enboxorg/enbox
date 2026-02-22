@@ -38,6 +38,15 @@ import type { ProtocolDefinition, ProtocolRuleSet } from '@enbox/dwn-sdk-js';
 // ---------------------------------------------------------------------------
 
 /**
+ * Checks whether a DWN response status indicates that the record limit
+ * has been exceeded. The DWN engine returns a 400 status with a detail
+ * message containing "record limit" when `$recordLimit` rejects a write.
+ */
+function isRecordLimitExceeded(status: { code: number; detail: string }): boolean {
+  return status.code === 400 && status.detail.includes('record limit');
+}
+
+/**
  * Checks whether a protocol rule set at a given path is a singleton
  * (has `$recordLimit: { max: 1 }`).
  */
@@ -117,6 +126,11 @@ function buildRootCollectionMethods(
 
 /**
  * Build singleton CRUD methods for a root-level path.
+ *
+ * Uses a create-first strategy: attempts to create a new record, and if the
+ * DWN rejects it because the record limit is reached, falls back to querying
+ * the existing record and updating it. This avoids the race condition inherent
+ * in query-then-create/update.
  */
 function buildRootSingletonMethods(
   typed: TypedWeb5<ProtocolDefinition, SchemaMap>,
@@ -124,19 +138,22 @@ function buildRootSingletonMethods(
 ): Record<string, Function> {
   return {
     async set(options: Record<string, unknown>): Promise<unknown> {
-      // Query for existing record
-      const { records } = await typed.records.query(path);
-      if (records.length > 0) {
-        // Update existing
-        const { status, record } = await records[0].update({
-          data: options.data,
-          ...(options.tags !== undefined ? { tags: options.tags } : {}),
-        } as never);
-        return { status, record };
+      // Attempt to create — if limit not yet reached, this succeeds.
+      const createResult = await typed.records.create(path, options as never);
+
+      if (isRecordLimitExceeded(createResult.status)) {
+        // Record limit hit — query existing and update.
+        const { records } = await typed.records.query(path);
+        if (records.length > 0) {
+          const { status, record } = await records[0].update({
+            data: options.data,
+            ...(options.tags !== undefined ? { tags: options.tags } : {}),
+          } as never);
+          return { status, record };
+        }
       }
-      // Create new
-      const { status, record } = await typed.records.create(path, options as never);
-      return { status, record };
+
+      return { status: createResult.status, record: createResult.record };
     },
 
     async get(): Promise<unknown> {
@@ -203,6 +220,9 @@ function buildNestedCollectionMethods(
 
 /**
  * Build singleton CRUD methods for a nested path.
+ *
+ * Uses the same create-first strategy as root singletons to avoid race
+ * conditions between concurrent set() calls.
  */
 function buildNestedSingletonMethods(
   typed: TypedWeb5<ProtocolDefinition, SchemaMap>,
@@ -210,24 +230,28 @@ function buildNestedSingletonMethods(
 ): Record<string, Function> {
   return {
     async set(parentContextId: string, options: Record<string, unknown>): Promise<unknown> {
-      // Query for existing record under this parent
-      const { records } = await typed.records.query(path, {
-        filter: { contextId: parentContextId },
-      } as never);
-
-      if (records.length > 0) {
-        const { status, record } = await records[0].update({
-          data: options.data,
-          ...(options.tags !== undefined ? { tags: options.tags } : {}),
-        } as never);
-        return { status, record };
-      }
-
-      const { status, record } = await typed.records.create(path, {
+      // Attempt to create under this parent — succeeds if no record exists yet.
+      const createResult = await typed.records.create(path, {
         ...options,
         parentContextId,
       } as never);
-      return { status, record };
+
+      if (isRecordLimitExceeded(createResult.status)) {
+        // Record limit hit — query existing under this parent and update.
+        const { records } = await typed.records.query(path, {
+          filter: { contextId: parentContextId },
+        } as never);
+
+        if (records.length > 0) {
+          const { status, record } = await records[0].update({
+            data: options.data,
+            ...(options.tags !== undefined ? { tags: options.tags } : {}),
+          } as never);
+          return { status, record };
+        }
+      }
+
+      return { status: createResult.status, record: createResult.record };
     },
 
     async get(parentContextId: string): Promise<unknown> {

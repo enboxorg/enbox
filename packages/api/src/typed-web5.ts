@@ -227,10 +227,13 @@ export class TypedWeb5<
 > {
   private _dwn: DwnApi;
   private _definition: D;
+  private _configured: boolean = false;
+  private _validPaths: Set<string>;
 
   constructor(dwn: DwnApi, protocol: TypedProtocol<D, M>) {
     this._dwn = dwn;
     this._definition = protocol.definition;
+    this._validPaths = collectPaths(this._definition.structure);
   }
 
   /** The protocol URI. */
@@ -263,15 +266,47 @@ export class TypedWeb5<
     if (protocols.length > 0) {
       const existing = protocols[0];
       if (definitionsEqual(existing.definition, this._definition)) {
+        this._configured = true;
         return { status: { code: 200, detail: 'OK' }, protocol: existing };
       }
     }
 
     // Not installed or definition has changed — configure the new version.
-    return this._dwn.protocols.configure({
+    const result = await this._dwn.protocols.configure({
       definition : this._definition,
       encryption : options?.encryption,
     });
+
+    if (result.status.code === 202) {
+      this._configured = true;
+    }
+
+    return result;
+  }
+
+  /** Whether the protocol has been configured (installed) on the local DWN. */
+  public get isConfigured(): boolean {
+    return this._configured;
+  }
+
+  /**
+   * Validates that the protocol has been configured and that the path is
+   * recognized. Throws a descriptive error if either check fails.
+   */
+  private _assertReady(path: string): void {
+    if (!this._configured) {
+      throw new Error(
+        `TypedWeb5: protocol '${this._definition.protocol}' has not been configured. ` +
+        'Call configure() before performing record operations.',
+      );
+    }
+
+    if (!this._validPaths.has(path)) {
+      throw new Error(
+        `TypedWeb5: invalid protocol path '${path}'. ` +
+        `Valid paths are: ${[...this._validPaths].join(', ')}.`,
+      );
+    }
   }
 
   /**
@@ -321,6 +356,7 @@ export class TypedWeb5<
         path: Path,
         request: TypedCreateRequest<D, M, Path>,
       ): Promise<TypedCreateResponse<DataForPath<D, M, Path>>> => {
+        this._assertReady(path);
         const typeName = lastSegment(path);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
@@ -356,6 +392,7 @@ export class TypedWeb5<
         path: Path,
         request?: TypedQueryRequest,
       ): Promise<TypedQueryResponse<DataForPath<D, M, Path>>> => {
+        this._assertReady(path);
         const typeName = lastSegment(path);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
@@ -390,6 +427,7 @@ export class TypedWeb5<
         path: Path,
         request: TypedReadRequest,
       ): Promise<TypedReadResponse<DataForPath<D, M, Path>>> => {
+        this._assertReady(path);
         const typeName = lastSegment(path);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
@@ -421,6 +459,7 @@ export class TypedWeb5<
         _path: Path,
         request: TypedDeleteRequest,
       ): Promise<DwnResponseStatus> => {
+        this._assertReady(_path);
         return this._dwn.records.delete({
           from     : request.from,
           protocol : this._definition.protocol,
@@ -442,6 +481,7 @@ export class TypedWeb5<
         path: Path,
         request?: TypedSubscribeRequest,
       ): Promise<TypedSubscribeResponse<DataForPath<D, M, Path>>> => {
+        this._assertReady(path);
         const typeName = lastSegment(path);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
@@ -486,6 +526,35 @@ function definitionsEqual(a: unknown, b: unknown): boolean {
 function lastSegment(path: string): string {
   const parts = path.split('/');
   return parts[parts.length - 1];
+}
+
+/**
+ * Recursively collects all valid protocol path strings from a structure object.
+ *
+ * Given `{ foo: { bar: { $actions: [...] } } }`, returns `Set(['foo', 'foo/bar'])`.
+ * Keys starting with `$` are skipped.
+ */
+function collectPaths(
+  structure: Record<string, unknown>,
+  prefix: string = '',
+): Set<string> {
+  const paths = new Set<string>();
+
+  for (const key of Object.keys(structure)) {
+    if (key.startsWith('$')) { continue; }
+
+    const fullPath = prefix ? `${prefix}/${key}` : key;
+    paths.add(fullPath);
+
+    const child = structure[key];
+    if (child !== null && typeof child === 'object') {
+      for (const nested of collectPaths(child as Record<string, unknown>, fullPath)) {
+        paths.add(nested);
+      }
+    }
+  }
+
+  return paths;
 }
 
 /**

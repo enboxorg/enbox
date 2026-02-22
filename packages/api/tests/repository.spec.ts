@@ -571,6 +571,62 @@ describe('repository()', () => {
     });
   });
 
+  describe('error paths', () => {
+    it('should throw when calling create() before configure()', async () => {
+      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      const repo = repository(typed);
+
+      await expect(
+        repo.list.create({ data: { name: 'Fail' } }),
+      ).rejects.toThrow('has not been configured');
+    });
+
+    it('should throw when calling query() before configure()', async () => {
+      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      const repo = repository(typed);
+
+      await expect(
+        repo.list.query(),
+      ).rejects.toThrow('has not been configured');
+    });
+
+    it('should throw when calling singleton set() before configure()', async () => {
+      const typed = new TypedWeb5(dwnAlice, ProfileProtocol);
+      const repo = repository(typed);
+
+      await expect(
+        repo.profile.set({ data: { displayName: 'Fail' } }),
+      ).rejects.toThrow('has not been configured');
+    });
+
+    it('should throw when calling singleton get() before configure()', async () => {
+      const typed = new TypedWeb5(dwnAlice, ProfileProtocol);
+      const repo = repository(typed);
+
+      await expect(
+        repo.profile.get(),
+      ).rejects.toThrow('has not been configured');
+    });
+
+    it('should throw when calling nested create() before configure()', async () => {
+      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      const repo = repository(typed);
+
+      await expect(
+        repo.list.task.create('ctx-123', { data: { title: 'Fail', completed: false } }),
+      ).rejects.toThrow('has not been configured');
+    });
+
+    it('should throw when calling nested singleton set() before configure()', async () => {
+      const typed = new TypedWeb5(dwnAlice, ProfileProtocol);
+      const repo = repository(typed);
+
+      await expect(
+        repo.group.settings.set('ctx-123', { data: { theme: 'dark', notifications: true } }),
+      ).rejects.toThrow('has not been configured');
+    });
+  });
+
   describe('proxy node caching', () => {
     it('should return the same child node on repeated access', () => {
       const typed = new TypedWeb5(dwnAlice, TodoProtocol);
