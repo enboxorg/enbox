@@ -210,6 +210,7 @@ export class OpenAuthHandler {
     return new jose.SignJWT({ purpose })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuer(this.#issuer)
+      .setAudience(this.#issuer)
       .setSubject(accountId)
       .setIssuedAt()
       .setExpirationTime(`${ttlSeconds}s`)
