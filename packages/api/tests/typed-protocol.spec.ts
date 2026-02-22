@@ -134,6 +134,13 @@ describe('TypedProtocol API', () => {
       const typed = new TypedWeb5(dwnAlice, TodoProtocol);
       expect(typed.definition).toBe(TodoProtocolDefinition);
     });
+
+    it('should return the same records object on repeated access', () => {
+      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      const records1 = typed.records;
+      const records2 = typed.records;
+      expect(records1).toBe(records2);
+    });
   });
 
   describe('TypedWeb5.records', () => {
@@ -523,6 +530,46 @@ describe('TypedProtocol API', () => {
       it('should report isConfigured as true after configure()', () => {
         // `typed` is configured in beforeEach
         expect(typed.isConfigured).toBe(true);
+      });
+
+      it('should normalize trailing slashes on create()', async () => {
+        const { status, record } = await typed.records.create('list/' as any, {
+          data: { name: 'Trailing Slash' },
+        });
+
+        expect(status.code).toBe(202);
+        expect(record.protocolPath).toBe('list');
+      });
+
+      it('should normalize trailing slashes on query()', async () => {
+        await typed.records.create('list', { data: { name: 'Slash Test' } });
+
+        const { status, records } = await typed.records.query('list/' as any);
+        expect(status.code).toBe(200);
+        expect(records.length).toBeGreaterThanOrEqual(1);
+      });
+
+      it('should normalize leading slashes', async () => {
+        const { status, record } = await typed.records.create('/list' as any, {
+          data: { name: 'Leading Slash' },
+        });
+
+        expect(status.code).toBe(202);
+        expect(record.protocolPath).toBe('list');
+      });
+
+      it('should normalize nested paths with trailing slashes', async () => {
+        const { record: listRecord } = await typed.records.create('list', {
+          data: { name: 'Nested Slash Test' },
+        });
+
+        const { status, record } = await typed.records.create('list/task/' as any, {
+          data            : { title: 'Slashed Task', completed: false },
+          parentContextId : listRecord.contextId,
+        });
+
+        expect(status.code).toBe(202);
+        expect(record.protocolPath).toBe('list/task');
       });
     });
 

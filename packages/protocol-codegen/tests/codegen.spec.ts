@@ -39,6 +39,43 @@ describe('resolveSchema()', () => {
     expect(result.schema!.title).toBe('ListData');
   });
 
+  it('should resolve via HTTP fetch (strategy 3) when local files are missing', async () => {
+    // Serve a JSON Schema from a local HTTP server.
+    const httpSchema = JSON.stringify({
+      $schema    : 'http://json-schema.org/draft-07/schema#',
+      type       : 'object',
+      properties : { label: { type: 'string' } },
+      required   : ['label'],
+    });
+
+    const server = Bun.serve({
+      port  : 0,
+      fetch : () => new Response(httpSchema, {
+        headers: { 'content-type': 'application/json' },
+      }),
+    });
+
+    try {
+      // Use a schemas dir with no matching files so local strategies fail.
+      const emptyDir = join(FIXTURES_DIR, 'schemas-empty');
+      const { mkdirSync, existsSync: dirExists } = await import('node:fs');
+      if (!dirExists(emptyDir)) { mkdirSync(emptyDir, { recursive: true }); }
+
+      const result = await resolveSchema(
+        'notfound',
+        `http://localhost:${server.port}/schemas/widget`,
+        emptyDir,
+      );
+
+      expect(result.source).toBe('http');
+      expect(result.schema).toBeDefined();
+      expect(result.schema!.type).toBe('object');
+      expect(result.schema!.required).toEqual(['label']);
+    } finally {
+      server.stop();
+    }
+  });
+
   it('should return unresolved when no schema file exists and URI is not fetchable', async () => {
     const result = await resolveSchema(
       'missing',
@@ -234,6 +271,62 @@ describe('generateTypes()', () => {
 
     // photo — binary
     expect(code).toContain('export type PhotoData = Blob;');
+  });
+
+  it('should generate types from HTTP-resolved schemas', async () => {
+    // Serve a schema without a `title` field so json-schema-to-typescript
+    // uses the type name we provide (WidgetData).
+    const httpSchema = JSON.stringify({
+      $schema              : 'http://json-schema.org/draft-07/schema#',
+      type                 : 'object',
+      properties           : { label: { type: 'string' }, count: { type: 'number' } },
+      required             : ['label'],
+      additionalProperties : false,
+    });
+
+    const server = Bun.serve({
+      port  : 0,
+      fetch : () => new Response(httpSchema, {
+        headers: { 'content-type': 'application/json' },
+      }),
+    });
+
+    try {
+      const emptyDir = join(FIXTURES_DIR, 'schemas-empty');
+      const { mkdirSync, existsSync: dirExists } = await import('node:fs');
+      if (!dirExists(emptyDir)) { mkdirSync(emptyDir, { recursive: true }); }
+
+      const definition = {
+        protocol  : 'https://example.com/protocols/http-test',
+        published : true,
+        types     : {
+          widget: {
+            schema      : `http://localhost:${server.port}/schemas/widget`,
+            dataFormats : ['application/json'],
+          },
+        },
+        structure: {
+          widget: {},
+        },
+      };
+
+      const { code, resolutions } = await generateTypes(definition, {
+        schemasDir   : emptyDir,
+        protocolName : 'HttpTest',
+      });
+
+      // Schema should have been resolved via HTTP.
+      expect(resolutions.get('widget')!.source).toBe('http');
+
+      // Generated code should contain the interface from the HTTP schema.
+      expect(code).toContain('export interface WidgetData');
+      expect(code).toContain('label: string');
+      expect(code).toContain('count?: number');
+      expect(code).toContain('export type HttpTestSchemaMap');
+      expect(code).toContain('widget: WidgetData;');
+    } finally {
+      server.stop();
+    }
   });
 
   it('should PascalCase type names correctly', async () => {

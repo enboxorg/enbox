@@ -229,6 +229,7 @@ export class TypedWeb5<
   private _definition: D;
   private _configured: boolean = false;
   private _validPaths: Set<string>;
+  private _records?: TypedWeb5<D, M>['records'];
 
   constructor(dwn: DwnApi, protocol: TypedProtocol<D, M>) {
     this._dwn = dwn;
@@ -345,7 +346,11 @@ export class TypedWeb5<
       request?: TypedSubscribeRequest,
     ) => Promise<TypedSubscribeResponse<DataForPath<D, M, Path>>>;
     } {
-    return {
+    if (this._records !== undefined) {
+      return this._records;
+    }
+
+    const cached = {
       /**
        * Create a new record at the given protocol path.
        *
@@ -356,8 +361,9 @@ export class TypedWeb5<
         path: Path,
         request: TypedCreateRequest<D, M, Path>,
       ): Promise<TypedCreateResponse<DataForPath<D, M, Path>>> => {
-        this._assertReady(path);
-        const typeName = lastSegment(path);
+        const normalizedPath = normalizePath(path);
+        this._assertReady(normalizedPath);
+        const typeName = lastSegment(normalizedPath);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
         const { status, record } = await this._dwn.records.write({
@@ -371,7 +377,7 @@ export class TypedWeb5<
           protocolRole    : request.protocolRole,
           tags            : request.tags,
           protocol        : this._definition.protocol,
-          protocolPath    : path,
+          protocolPath    : normalizedPath,
           ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
           dataFormat      : request.dataFormat ?? typeEntry?.dataFormats?.[0],
         });
@@ -392,8 +398,9 @@ export class TypedWeb5<
         path: Path,
         request?: TypedQueryRequest,
       ): Promise<TypedQueryResponse<DataForPath<D, M, Path>>> => {
-        this._assertReady(path);
-        const typeName = lastSegment(path);
+        const normalizedPath = normalizePath(path);
+        this._assertReady(normalizedPath);
+        const typeName = lastSegment(normalizedPath);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
         const { status, records, cursor } = await this._dwn.records.query({
@@ -402,7 +409,7 @@ export class TypedWeb5<
           filter     : {
             ...request?.filter,
             protocol     : this._definition.protocol,
-            protocolPath : path,
+            protocolPath : normalizedPath,
             ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
           },
           dateSort     : request?.dateSort,
@@ -427,8 +434,9 @@ export class TypedWeb5<
         path: Path,
         request: TypedReadRequest,
       ): Promise<TypedReadResponse<DataForPath<D, M, Path>>> => {
-        this._assertReady(path);
-        const typeName = lastSegment(path);
+        const normalizedPath = normalizePath(path);
+        this._assertReady(normalizedPath);
+        const typeName = lastSegment(normalizedPath);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
         const { status, record } = await this._dwn.records.read({
@@ -438,7 +446,7 @@ export class TypedWeb5<
           filter     : {
             ...request.filter,
             protocol     : this._definition.protocol,
-            protocolPath : path,
+            protocolPath : normalizedPath,
             ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
           },
         });
@@ -459,7 +467,7 @@ export class TypedWeb5<
         _path: Path,
         request: TypedDeleteRequest,
       ): Promise<DwnResponseStatus> => {
-        this._assertReady(_path);
+        this._assertReady(normalizePath(_path));
         return this._dwn.records.delete({
           from     : request.from,
           protocol : this._definition.protocol,
@@ -481,8 +489,9 @@ export class TypedWeb5<
         path: Path,
         request?: TypedSubscribeRequest,
       ): Promise<TypedSubscribeResponse<DataForPath<D, M, Path>>> => {
-        this._assertReady(path);
-        const typeName = lastSegment(path);
+        const normalizedPath = normalizePath(path);
+        this._assertReady(normalizedPath);
+        const typeName = lastSegment(normalizedPath);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
         const { status, liveQuery } = await this._dwn.records.subscribe({
@@ -490,7 +499,7 @@ export class TypedWeb5<
           filter : {
             ...request?.filter,
             protocol     : this._definition.protocol,
-            protocolPath : path,
+            protocolPath : normalizedPath,
             ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
           },
           protocolRole: request?.protocolRole,
@@ -502,6 +511,9 @@ export class TypedWeb5<
         };
       },
     };
+
+    this._records = cached;
+    return cached;
   }
 }
 
@@ -518,6 +530,15 @@ export class TypedWeb5<
  */
 function definitionsEqual(a: unknown, b: unknown): boolean {
   return stableStringify(a) === stableStringify(b);
+}
+
+/**
+ * Strips leading and trailing slashes from a path.
+ *
+ * `'friend/'` → `'friend'`, `'/group/member/'` → `'group/member'`.
+ */
+function normalizePath(path: string): string {
+  return path.replace(/^\/+|\/+$/g, '');
 }
 
 /**
