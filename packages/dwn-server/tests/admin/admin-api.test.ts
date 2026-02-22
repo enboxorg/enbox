@@ -1631,3 +1631,69 @@ describe('AdminApi — config endpoint disabled (no admin store)', () => {
     expect(body.logLevel).toBe('warn');
   });
 });
+
+// =============================================================================
+// Phase 5 tests — admin UI static file serving
+// =============================================================================
+
+describe('Admin UI static file serving', () => {
+  let dwnServer: DwnServer;
+  let port: number;
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    port = 8900 + Math.floor(Math.random() * 40);
+    tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-ui-'));
+    dwnServer = new DwnServer({ config: createTestConfig(port, tmpDir) });
+    await dwnServer.start();
+  });
+
+  afterAll(async () => {
+    await dwnServer.stop();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should serve index.html at /admin/', async () => {
+    const response = await fetch(`http://localhost:${port}/admin/`);
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain('<!DOCTYPE html>');
+    expect(text).toContain('DWN Admin');
+  });
+
+  it('should serve index.html at /admin (without trailing slash)', async () => {
+    const response = await fetch(`http://localhost:${port}/admin`);
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain('<!DOCTYPE html>');
+  });
+
+  it('should serve app.js at /admin/app.js', async () => {
+    const response = await fetch(`http://localhost:${port}/admin/app.js`);
+    expect(response.status).toBe(200);
+    const contentType = response.headers.get('content-type');
+    expect(contentType).toContain('javascript');
+  });
+
+  it('should serve app.css at /admin/app.css', async () => {
+    const response = await fetch(`http://localhost:${port}/admin/app.css`);
+    expect(response.status).toBe(200);
+    const contentType = response.headers.get('content-type');
+    expect(contentType).toContain('css');
+  });
+
+  it('should fall back to index.html for SPA routes (e.g. /admin/tenants)', async () => {
+    const response = await fetch(`http://localhost:${port}/admin/tenants`);
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain('<!DOCTYPE html>');
+    expect(text).toContain('DWN Admin');
+  });
+
+  it('should still route /admin/api/* to the admin API (not static files)', async () => {
+    const response = await adminFetch({ port }, '/info');
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.adminApi).toBe(true);
+  });
+});

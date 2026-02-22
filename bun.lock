@@ -258,6 +258,7 @@
         "@enbox/dids": "workspace:*",
         "@enbox/dwn-clients": "workspace:*",
         "@enbox/dwn-sdk-js": "workspace:*",
+        "@enbox/dwn-server-admin-ui": "workspace:*",
         "@enbox/dwn-sql-store": "workspace:*",
         "bytes": "3.1.2",
         "kysely": "^0.26.3",
@@ -295,6 +296,18 @@
         "rimraf": "^5.0.0",
         "sinon": "17.0.1",
         "typescript": "5.5.4",
+      },
+    },
+    "packages/dwn-server-admin-ui": {
+      "name": "@enbox/dwn-server-admin-ui",
+      "version": "0.1.0",
+      "dependencies": {
+        "preact": "^10.25.0",
+        "preact-router": "^4.1.2",
+      },
+      "devDependencies": {
+        "esbuild": "0.23.0",
+        "rimraf": "^5.0.5",
       },
     },
     "packages/dwn-sql-store": {
@@ -463,6 +476,8 @@
     "@enbox/dwn-sdk-js": ["@enbox/dwn-sdk-js@workspace:packages/dwn-sdk-js"],
 
     "@enbox/dwn-server": ["@enbox/dwn-server@workspace:packages/dwn-server"],
+
+    "@enbox/dwn-server-admin-ui": ["@enbox/dwn-server-admin-ui@workspace:packages/dwn-server-admin-ui"],
 
     "@enbox/dwn-sql-store": ["@enbox/dwn-sql-store@workspace:packages/dwn-sql-store"],
 
@@ -1750,6 +1765,10 @@
 
     "postgres-range": ["postgres-range@1.1.4", "", {}, "sha512-i/hbxIE9803Alj/6ytL7UHQxRvZkI9O4Sy+J3HGc4F4oo/2eQAjTSNJ0bfxyse3bH0nuVesCk+3IRLaMtG3H6w=="],
 
+    "preact": ["preact@10.28.4", "", {}, "sha512-uKFfOHWuSNpRFVTnljsCluEFq57OKT+0QdOiQo8XWnQ/pSvg7OpX5eNOejELXJMWy+BwM2nobz0FkvzmnpCNsQ=="],
+
+    "preact-router": ["preact-router@4.1.2", "", { "peerDependencies": { "preact": ">=10" } }, "sha512-uICUaUFYh+XQ+6vZtQn1q+X6rSqwq+zorWOCLWPF5FAsQh3EJ+RsDQ9Ee+fjk545YWQHfUxhrBAaemfxEnMOUg=="],
+
     "prelude-ls": ["prelude-ls@1.2.1", "", {}, "sha512-vkcDPrRZo1QZLbn5RLGPpg/WmIQ65qoWWhcGKf/b5eplkkarX0m9z8ppCat4mlOqUsWpyNuYgO3VRyrYHSzX5g=="],
 
     "prettier": ["prettier@3.8.1", "", { "bin": { "prettier": "bin/prettier.cjs" } }, "sha512-UOnG6LftzbdaHZcKoPFtOcCKztrQ57WkHDeRD9t/PTQtmT0NHSeWWepj6pS0z/N7+08BHFDQVUrfmfMRcZwbMg=="],
@@ -2190,6 +2209,8 @@
 
     "@enbox/dwn-server/uuid": ["uuid@9.0.0", "", { "bin": { "uuid": "dist/bin/uuid" } }, "sha512-MXcSTerfPa4uqyzStbRoTgt5XIe3x5+42+q1sDuy3R5MDk66URdLMOZe5aPX/SQd+kuYAh0FdP/pO28IkQyTeg=="],
 
+    "@enbox/dwn-server-admin-ui/rimraf": ["rimraf@5.0.7", "", { "dependencies": { "glob": "^10.3.7" }, "bin": { "rimraf": "dist/esm/bin.mjs" } }, "sha512-nV6YcJo5wbLW77m+8KjH8aB/7/rxQy9SZ0HY5shnwULfS+9nmTtVXAJET5NdZmCzA4fPI/Hm1wo/Po/4mopOdg=="],
+
     "@enbox/dwn-sql-store/@ipld/dag-cbor": ["@ipld/dag-cbor@9.0.5", "", { "dependencies": { "cborg": "^4.0.0", "multiformats": "^12.0.1" } }, "sha512-TyqgtxEojc98rvxg4NGM+73JzQeM4+tK2VQes/in2mdyhO+1wbGuBijh1tvi9BErQ/dEblxs9v4vEQSX8mFCIw=="],
 
     "@enbox/dwn-sql-store/esbuild": ["esbuild@0.19.8", "", { "optionalDependencies": { "@esbuild/android-arm": "0.19.8", "@esbuild/android-arm64": "0.19.8", "@esbuild/android-x64": "0.19.8", "@esbuild/darwin-arm64": "0.19.8", "@esbuild/darwin-x64": "0.19.8", "@esbuild/freebsd-arm64": "0.19.8", "@esbuild/freebsd-x64": "0.19.8", "@esbuild/linux-arm": "0.19.8", "@esbuild/linux-arm64": "0.19.8", "@esbuild/linux-ia32": "0.19.8", "@esbuild/linux-loong64": "0.19.8", "@esbuild/linux-mips64el": "0.19.8", "@esbuild/linux-ppc64": "0.19.8", "@esbuild/linux-riscv64": "0.19.8", "@esbuild/linux-s390x": "0.19.8", "@esbuild/linux-x64": "0.19.8", "@esbuild/netbsd-x64": "0.19.8", "@esbuild/openbsd-x64": "0.19.8", "@esbuild/sunos-x64": "0.19.8", "@esbuild/win32-arm64": "0.19.8", "@esbuild/win32-ia32": "0.19.8", "@esbuild/win32-x64": "0.19.8" }, "bin": { "esbuild": "bin/esbuild" } }, "sha512-l7iffQpT2OrZfH2rXIp7/FkmaeZM0vxbxN9KfiCwGYuZqzMg/JdvX26R31Zxn/Pxvsrg3Y9N6XTcnknqDyyv4w=="],
@@ -2436,6 +2457,8 @@
 
     "@enbox/dwn-sdk-js/sinon/@sinonjs/fake-timers": ["@sinonjs/fake-timers@11.2.2", "", { "dependencies": { "@sinonjs/commons": "^3.0.0" } }, "sha512-G2piCSxQ7oWOxwGSAyFHfPIsyeJGXYtc6mFbnFA+kRXkiEnTl8c/8jul2S329iFBnDI9HGoeWWAZvuvOkZccgw=="],
 
+    "@enbox/dwn-server-admin-ui/rimraf/glob": ["glob@10.5.0", "", { "dependencies": { "foreground-child": "^3.1.0", "jackspeak": "^3.1.2", "minimatch": "^9.0.4", "minipass": "^7.1.2", "package-json-from-dist": "^1.0.0", "path-scurry": "^1.11.1" }, "bin": { "glob": "dist/esm/bin.mjs" } }, "sha512-DfXN8DfhJ7NH3Oe7cFmu3NCu1wKbkReJ8TorzSAFbSKrlNaQSKfIzqYqVY8zlbs2NLBbWpRiU52GX2PbaBVNkg=="],
+
     "@enbox/dwn-server/esbuild/@esbuild/android-arm": ["@esbuild/android-arm@0.16.17", "", { "os": "android", "cpu": "arm" }, "sha512-N9x1CMXVhtWEAMS7pNNONyA14f71VPQN9Cnavj1XQh6T7bskqiLLrSca4O0Vr8Wdcga943eThxnVp3JLnBMYtw=="],
 
     "@enbox/dwn-server/esbuild/@esbuild/android-arm64": ["@esbuild/android-arm64@0.16.17", "", { "os": "android", "cpu": "arm64" }, "sha512-MIGl6p5sc3RDTLLkYL1MyL8BMRN4tLMRCn+yRJJmEDvYZ2M7tmAf80hx1kbNEUX2KJ50RRtxZ4JHLvCfuB6kBg=="],
@@ -2676,6 +2699,10 @@
 
     "@enbox/dids/rimraf/glob/minipass": ["minipass@7.1.2", "", {}, "sha512-qOOzS1cBTWYF4BH8fVePDBOO9iptMnGUEZwNc/cMWnTV2nVLZ7VoNWEPHkYczZA0pdoA7dl6e7FL659nX9S2aw=="],
 
+    "@enbox/dwn-server-admin-ui/rimraf/glob/minimatch": ["minimatch@9.0.5", "", { "dependencies": { "brace-expansion": "^2.0.1" } }, "sha512-G6T0ZX48xgozx7587koeX9Ys2NYy6Gmv//P89sEte9V9whIapMNF4idKxnW2QtCcLiTWlb/wfCabAtAFWhhBow=="],
+
+    "@enbox/dwn-server-admin-ui/rimraf/glob/minipass": ["minipass@7.1.2", "", {}, "sha512-qOOzS1cBTWYF4BH8fVePDBOO9iptMnGUEZwNc/cMWnTV2nVLZ7VoNWEPHkYczZA0pdoA7dl6e7FL659nX9S2aw=="],
+
     "@enbox/dwn-server/rimraf/glob/minimatch": ["minimatch@9.0.5", "", { "dependencies": { "brace-expansion": "^2.0.1" } }, "sha512-G6T0ZX48xgozx7587koeX9Ys2NYy6Gmv//P89sEte9V9whIapMNF4idKxnW2QtCcLiTWlb/wfCabAtAFWhhBow=="],
 
     "@enbox/dwn-server/rimraf/glob/minipass": ["minipass@7.1.2", "", {}, "sha512-qOOzS1cBTWYF4BH8fVePDBOO9iptMnGUEZwNc/cMWnTV2nVLZ7VoNWEPHkYczZA0pdoA7dl6e7FL659nX9S2aw=="],
@@ -2715,6 +2742,8 @@
     "@enbox/crypto/rimraf/glob/minimatch/brace-expansion": ["brace-expansion@2.0.2", "", { "dependencies": { "balanced-match": "^1.0.0" } }, "sha512-Jt0vHyM+jmUBqojB7E1NIYadt0vI0Qxjxd2TErW94wDz+E2LAm5vKMXXwg6ZZBTHPuUlDgQHKXvjGBdfcF1ZDQ=="],
 
     "@enbox/dids/rimraf/glob/minimatch/brace-expansion": ["brace-expansion@2.0.2", "", { "dependencies": { "balanced-match": "^1.0.0" } }, "sha512-Jt0vHyM+jmUBqojB7E1NIYadt0vI0Qxjxd2TErW94wDz+E2LAm5vKMXXwg6ZZBTHPuUlDgQHKXvjGBdfcF1ZDQ=="],
+
+    "@enbox/dwn-server-admin-ui/rimraf/glob/minimatch/brace-expansion": ["brace-expansion@2.0.2", "", { "dependencies": { "balanced-match": "^1.0.0" } }, "sha512-Jt0vHyM+jmUBqojB7E1NIYadt0vI0Qxjxd2TErW94wDz+E2LAm5vKMXXwg6ZZBTHPuUlDgQHKXvjGBdfcF1ZDQ=="],
 
     "@enbox/dwn-server/rimraf/glob/minimatch/brace-expansion": ["brace-expansion@2.0.2", "", { "dependencies": { "balanced-match": "^1.0.0" } }, "sha512-Jt0vHyM+jmUBqojB7E1NIYadt0vI0Qxjxd2TErW94wDz+E2LAm5vKMXXwg6ZZBTHPuUlDgQHKXvjGBdfcF1ZDQ=="],
 

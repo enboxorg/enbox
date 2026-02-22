@@ -34,6 +34,7 @@
     "@enbox/dids": "workspace:*",
     "@enbox/dwn-clients": "workspace:*",
     "@enbox/dwn-sdk-js": "workspace:*",
+    "@enbox/dwn-server-admin-ui": "workspace:*",
     "@enbox/dwn-sql-store": "workspace:*",
     "bytes": "3.1.2",
     "kysely": "^0.26.3",
