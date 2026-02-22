@@ -3,7 +3,7 @@ import type { MessageStore } from '../types/message-store.js';
 import type { PermissionGrant } from '../protocols/permission-grant.js';
 
 import { Message } from './message.js';
-import { PERMISSIONS_REVOCATION_PATH } from './core-protocol.js';
+import { PERMISSIONS_REVOCATION_PATH } from './constants.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 

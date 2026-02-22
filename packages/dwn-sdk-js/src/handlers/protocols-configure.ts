@@ -1,9 +1,6 @@
-import type { DidResolver } from '@enbox/dids';
-import type { EventLog } from '../types/subscriptions.js';
 import type { GenericMessageReply } from '../types/message-types.js';
 import type { MessageStore } from '../types//message-store.js';
-import type { MethodHandler } from '../types/method-handler.js';
-import type { StateIndex } from '../types/state-index.js';
+import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage } from '../types/protocols-types.js';
 
 import { authenticate } from '../core/auth.js';
@@ -18,12 +15,7 @@ import { getRuleSetAtPath, parseCrossProtocolRef } from '../utils/protocols.js';
 
 export class ProtocolsConfigureHandler implements MethodHandler {
 
-  constructor(
-    private didResolver: DidResolver,
-    private messageStore: MessageStore,
-    private stateIndex: StateIndex,
-    private eventLog?: EventLog
-  ) { }
+  constructor(private deps: HandlerDependencies) { }
 
   public async handle({
     tenant,
@@ -38,8 +30,8 @@ export class ProtocolsConfigureHandler implements MethodHandler {
 
     // authentication & authorization
     try {
-      await authenticate(message.authorization, this.didResolver);
-      await ProtocolsConfigureHandler.authorizeProtocolsConfigure(tenant, protocolsConfigure, this.messageStore);
+      await authenticate(message.authorization, this.deps.didResolver);
+      await ProtocolsConfigureHandler.authorizeProtocolsConfigure(tenant, protocolsConfigure, this.deps.messageStore);
     } catch (e) {
       return messageReplyFromError(e, 401);
     }
@@ -48,7 +40,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     // `$ref` paths must exist in the referenced protocols, and cross-protocol roles must exist.
     try {
       await ProtocolsConfigureHandler.validateCompositionDependencies(
-        tenant, message.descriptor.definition, this.messageStore
+        tenant, message.descriptor.definition, this.deps.messageStore
       );
     } catch (e) {
       return messageReplyFromError(e, 400);
@@ -60,7 +52,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       method    : DwnMethodName.Configure,
       protocol  : message.descriptor.definition.protocol
     };
-    const { messages: existingMessages } = await this.messageStore.query(tenant, [ query ]);
+    const { messages: existingMessages } = await this.deps.messageStore.query(tenant, [ query ]);
 
     // find newest message, and if the incoming message is the newest
     let newestMessage = await Message.getNewestMessage(existingMessages);
@@ -75,13 +67,13 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     if (incomingMessageIsNewest) {
       const indexes = ProtocolsConfigureHandler.constructIndexes(protocolsConfigure, true);
 
-      await this.messageStore.put(tenant, message, indexes);
+      await this.deps.messageStore.put(tenant, message, indexes);
       const messageCid = await Message.getCid(message);
-      await this.stateIndex.insert(tenant, messageCid, indexes);
+      await this.deps.stateIndex!.insert(tenant, messageCid, indexes);
 
       // only emit if the event log is set
-      if (this.eventLog !== undefined) {
-        await this.eventLog.emit(tenant, { message }, indexes);
+      if (this.deps.eventLog !== undefined) {
+        await this.deps.eventLog.emit(tenant, { message }, indexes);
       }
 
       messageReply = {
@@ -91,9 +83,9 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       // incoming message is older — still store it as a historical version (not the latest)
       const indexes = ProtocolsConfigureHandler.constructIndexes(protocolsConfigure, false);
 
-      await this.messageStore.put(tenant, message, indexes);
+      await this.deps.messageStore.put(tenant, message, indexes);
       const messageCid = await Message.getCid(message);
-      await this.stateIndex.insert(tenant, messageCid, indexes);
+      await this.deps.stateIndex!.insert(tenant, messageCid, indexes);
 
       messageReply = {
         status: { code: 202, detail: 'Accepted' }
@@ -108,8 +100,8 @@ export class ProtocolsConfigureHandler implements MethodHandler {
         const updatedIndexes = ProtocolsConfigureHandler.constructIndexes(existingProtocolsConfigure, false);
         const existingCid = await Message.getCid(existingMessage);
 
-        await this.messageStore.delete(tenant, existingCid);
-        await this.messageStore.put(tenant, existingMessage, updatedIndexes);
+        await this.deps.messageStore.delete(tenant, existingCid);
+        await this.deps.messageStore.put(tenant, existingMessage, updatedIndexes);
       }
     }
 

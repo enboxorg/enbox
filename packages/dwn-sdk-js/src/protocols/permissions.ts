@@ -15,7 +15,7 @@ import { Message } from '../core/message.js';
 import { PermissionGrant } from './permission-grant.js';
 import { PermissionRequest } from './permission-request.js';
 import { Records } from '../utils/records.js';
-import { RecordsWrite } from '../../src/interfaces/records-write.js';
+import { RecordsWrite } from '../interfaces/records-write.js';
 import { Time } from '../utils/time.js';
 import { validateJsonSchema } from '../schema-validator.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';

@@ -1,10 +1,9 @@
 import type { CoreProtocolRegistry } from '../core/core-protocol.js';
-import type { DidResolver } from '@enbox/dids';
 import type { MessageSort } from '../types/message-types.js';
 import type { MessageStore } from '../types//message-store.js';
-import type { MethodHandler } from '../types/method-handler.js';
-import type { EventLog, SubscriptionListener } from '../types/subscriptions.js';
+import type { SubscriptionListener } from '../types/subscriptions.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
+import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsQueryReplyEntry, RecordsSubscribeMessage, RecordsSubscribeReply } from '../types/records-types.js';
 
 import { authenticate } from '../core/auth.js';
@@ -21,12 +20,7 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 
 export class RecordsSubscribeHandler implements MethodHandler {
 
-  constructor(
-    private didResolver: DidResolver,
-    private messageStore: MessageStore,
-    private coreProtocols?: CoreProtocolRegistry,
-    private eventLog?: EventLog,
-  ) { }
+  constructor(private deps: HandlerDependencies) { }
 
   public async handle({
     tenant,
@@ -37,7 +31,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
     message: RecordsSubscribeMessage,
     subscriptionHandler: SubscriptionListener,
   }): Promise<RecordsSubscribeReply> {
-    if (this.eventLog === undefined) {
+    if (this.deps.eventLog === undefined) {
       return messageReplyFromError(new DwnError(
         DwnErrorCode.RecordsSubscribeEventLogUnimplemented,
         'Subscriptions are not supported'
@@ -64,8 +58,8 @@ export class RecordsSubscribeHandler implements MethodHandler {
     } else {
       // authentication and authorization
       try {
-        await authenticate(message.authorization!, this.didResolver);
-        await RecordsSubscribeHandler.authorizeRecordsSubscribe(tenant, recordsSubscribe, this.messageStore, this.coreProtocols);
+        await authenticate(message.authorization!, this.deps.didResolver);
+        await RecordsSubscribeHandler.authorizeRecordsSubscribe(tenant, recordsSubscribe, this.deps.messageStore, this.deps.coreProtocols);
       } catch (error) {
         return messageReplyFromError(error, 401);
       }
@@ -89,7 +83,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
       // The subscriptionHandler receives SubscriptionMessage (event + EOSE) directly.
 
       try {
-        const subscription = await this.eventLog!.subscribe(tenant, messageCid, subscriptionHandler, {
+        const subscription = await this.deps.eventLog!.subscribe(tenant, messageCid, subscriptionHandler, {
           cursor  : eventLogCursor,
           filters : eventFilters,
         });
@@ -106,7 +100,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
     // ---- No cursor: existing behavior (initial snapshot from MessageStore) ----
 
     // Step 1: Register event listener FIRST to ensure no events are missed between query and subscribe
-    const subscription = await this.eventLog!.subscribe(tenant, messageCid, subscriptionHandler, {
+    const subscription = await this.deps.eventLog!.subscribe(tenant, messageCid, subscriptionHandler, {
       filters: eventFilters,
     });
 
@@ -116,14 +110,14 @@ export class RecordsSubscribeHandler implements MethodHandler {
     try {
       const { dateSort, pagination } = recordsSubscribe.message.descriptor;
       const messageSort = RecordsSubscribeHandler.convertDateSort(dateSort);
-      const queryResult = await this.messageStore.query(tenant, queryFilters, messageSort, pagination);
+      const queryResult = await this.deps.messageStore.query(tenant, queryFilters, messageSort, pagination);
       entries = queryResult.messages as RecordsQueryReplyEntry[];
       paginationCursor = queryResult.cursor;
 
       // attach initialWrite for non-initial writes
       for (const entry of entries) {
         if (!await RecordsWrite.isInitialWrite(entry)) {
-          const initialWriteResult = await this.messageStore.query(
+          const initialWriteResult = await this.deps.messageStore.query(
             tenant,
             [{ recordId: entry.recordId, isLatestBaseState: false, method: DwnMethodName.Write }]
           );

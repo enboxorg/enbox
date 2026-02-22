@@ -1,9 +1,7 @@
-import type { DataStore } from '../types/data-store.js';
-import type { DidResolver } from '@enbox/dids';
 import type { GenericMessage } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
-import type { MethodHandler } from '../types/method-handler.js';
 import type { RecordsQueryReplyEntry } from '../types/records-types.js';
+import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { MessagesReadMessage, MessagesReadReply, MessagesReadReplyEntry } from '../types/messages-types.js';
 
 import { authenticate } from '../core/auth.js';
@@ -19,7 +17,8 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 type HandleArgs = { tenant: string, message: MessagesReadMessage };
 
 export class MessagesReadHandler implements MethodHandler {
-  constructor(private didResolver: DidResolver, private messageStore: MessageStore, private dataStore: DataStore) {}
+
+  constructor(private deps: HandlerDependencies) {}
 
   public async handle({ tenant, message }: HandleArgs): Promise<MessagesReadReply> {
     let messagesRead: MessagesRead;
@@ -31,18 +30,18 @@ export class MessagesReadHandler implements MethodHandler {
     }
 
     try {
-      await authenticate(message.authorization, this.didResolver);
+      await authenticate(message.authorization, this.deps.didResolver);
     } catch (e) {
       return messageReplyFromError(e, 401);
     }
 
-    const messageResult = await this.messageStore.get(tenant, message.descriptor.messageCid);
+    const messageResult = await this.deps.messageStore.get(tenant, message.descriptor.messageCid);
     if (messageResult === undefined) {
       return { status: { code: 404, detail: 'Not Found' } };
     }
 
     try {
-      await MessagesReadHandler.authorizeMessagesRead(tenant, messagesRead, messageResult, this.messageStore);
+      await MessagesReadHandler.authorizeMessagesRead(tenant, messagesRead, messageResult, this.deps.messageStore);
     } catch (error) {
       return messageReplyFromError(error, 401);
     }
@@ -59,7 +58,7 @@ export class MessagesReadHandler implements MethodHandler {
         delete recordsWrite.encodedData;
       } else {
         // otherwise check the data store for the associated data
-        const result = await this.dataStore.get(tenant, recordsWrite.recordId, recordsWrite.descriptor.dataCid);
+        const result = await this.deps.dataStore!.get(tenant, recordsWrite.recordId, recordsWrite.descriptor.dataCid);
         if (result?.dataStream !== undefined) {
           entry.data = result.dataStream;
         }

@@ -1,13 +1,13 @@
 import type { DataStore } from './types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
 import type { MessageStore } from './types/message-store.js';
-import type { MethodHandler } from './types/method-handler.js';
 import type { ResumableTaskStore } from './types/resumable-task-store.js';
 import type { StateIndex } from './types/state-index.js';
 import type { TenantGate } from './core/tenant-gate.js';
 import type { UnionMessageReply } from './core/message-reply.js';
 import type { EventLog, SubscriptionListener } from './types/subscriptions.js';
 import type { GenericMessage, GenericMessageReply } from './types/message-types.js';
+import type { HandlerDependencies, MethodHandler } from './types/method-handler.js';
 import type { MessagesReadMessage, MessagesReadReply, MessagesSubscribeMessage, MessagesSubscribeMessageOptions, MessagesSubscribeReply, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
 import type { ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply } from './types/protocols-types.js';
 import type { RecordsCountMessage, RecordsCountReply, RecordsDeleteMessage, RecordsQueryMessage, RecordsQueryReply, RecordsReadMessage, RecordsReadReply, RecordsSubscribeMessage, RecordsSubscribeMessageOptions, RecordsSubscribeReply, RecordsWriteMessage, RecordsWriteMessageOptions } from './types/records-types.js';
@@ -71,71 +71,30 @@ export class Dwn {
     this._coreProtocols = new CoreProtocolRegistry();
     this._coreProtocols.register(new PermissionsProtocol());
 
+    // Build the shared dependency bag once; every handler receives the same object
+    // and accesses only the dependencies it needs.
+    const deps: HandlerDependencies = {
+      didResolver          : this.didResolver,
+      messageStore         : this.messageStore,
+      dataStore            : this.dataStore,
+      stateIndex           : this.stateIndex,
+      resumableTaskManager : this.resumableTaskManager,
+      coreProtocols        : this._coreProtocols,
+      eventLog             : this.eventLog,
+    };
+
     this.methodHandlers = {
-      [DwnInterfaceName.Messages + DwnMethodName.Read]: new MessagesReadHandler(
-        this.didResolver,
-        this.messageStore,
-        this.dataStore,
-      ),
-      [DwnInterfaceName.Messages + DwnMethodName.Subscribe]: new MessagesSubscribeHandler(
-        this.didResolver,
-        this.messageStore,
-        this._coreProtocols,
-        this.eventLog,
-      ),
-      [DwnInterfaceName.Messages + DwnMethodName.Sync]: new MessagesSyncHandler(
-        this.didResolver,
-        this.messageStore,
-        this.stateIndex,
-      ),
-      [DwnInterfaceName.Protocols + DwnMethodName.Configure]: new ProtocolsConfigureHandler(
-        this.didResolver,
-        this.messageStore,
-        this.stateIndex,
-        this.eventLog
-      ),
-      [DwnInterfaceName.Protocols + DwnMethodName.Query]: new ProtocolsQueryHandler(
-        this.didResolver,
-        this.messageStore,
-        this.dataStore
-      ),
-      [DwnInterfaceName.Records + DwnMethodName.Count]: new RecordsCountHandler(
-        this.didResolver,
-        this.messageStore,
-        this._coreProtocols,
-      ),
-      [DwnInterfaceName.Records + DwnMethodName.Delete]: new RecordsDeleteHandler(
-        this.didResolver,
-        this.messageStore,
-        this.resumableTaskManager,
-        this._coreProtocols,
-      ),
-      [DwnInterfaceName.Records + DwnMethodName.Query]: new RecordsQueryHandler(
-        this.didResolver,
-        this.messageStore,
-        this.dataStore,
-        this._coreProtocols,
-      ),
-      [DwnInterfaceName.Records + DwnMethodName.Read]: new RecordsReadHandler(
-        this.didResolver,
-        this.messageStore,
-        this.dataStore,
-        this._coreProtocols,
-      ),
-      [DwnInterfaceName.Records + DwnMethodName.Subscribe]: new RecordsSubscribeHandler(
-        this.didResolver,
-        this.messageStore,
-        this._coreProtocols,
-        this.eventLog,
-      ),
-      [DwnInterfaceName.Records + DwnMethodName.Write]: new RecordsWriteHandler(
-        this.didResolver,
-        this.messageStore,
-        this.dataStore,
-        this.stateIndex,
-        this._coreProtocols,
-        this.eventLog
-      )
+      [DwnInterfaceName.Messages + DwnMethodName.Read]       : new MessagesReadHandler(deps),
+      [DwnInterfaceName.Messages + DwnMethodName.Subscribe]  : new MessagesSubscribeHandler(deps),
+      [DwnInterfaceName.Messages + DwnMethodName.Sync]       : new MessagesSyncHandler(deps),
+      [DwnInterfaceName.Protocols + DwnMethodName.Configure] : new ProtocolsConfigureHandler(deps),
+      [DwnInterfaceName.Protocols + DwnMethodName.Query]     : new ProtocolsQueryHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Count]       : new RecordsCountHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Delete]      : new RecordsDeleteHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Query]       : new RecordsQueryHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Read]        : new RecordsReadHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Subscribe]   : new RecordsSubscribeHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Write]       : new RecordsWriteHandler(deps),
     };
   }
 

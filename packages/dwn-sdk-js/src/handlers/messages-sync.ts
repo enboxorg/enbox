@@ -1,7 +1,5 @@
-import type { DidResolver } from '@enbox/dids';
 import type { MessageStore } from '../types/message-store.js';
-import type { MethodHandler } from '../types/method-handler.js';
-import type { StateIndex } from '../types/state-index.js';
+import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { MessagesSyncMessage, MessagesSyncReply } from '../types/messages-types.js';
 
 import { authenticate } from '../core/auth.js';
@@ -15,11 +13,7 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 export class MessagesSyncHandler implements MethodHandler {
 
-  constructor(
-    private didResolver: DidResolver,
-    private messageStore: MessageStore,
-    private stateIndex: StateIndex,
-  ) { }
+  constructor(private deps: HandlerDependencies) { }
 
   public async handle({
     tenant,
@@ -34,8 +28,8 @@ export class MessagesSyncHandler implements MethodHandler {
     }
 
     try {
-      await authenticate(message.authorization, this.didResolver);
-      await MessagesSyncHandler.authorizeMessagesSync(tenant, messagesSync, this.messageStore);
+      await authenticate(message.authorization, this.deps.didResolver);
+      await MessagesSyncHandler.authorizeMessagesSync(tenant, messagesSync, this.deps.messageStore);
     } catch (e) {
       return messageReplyFromError(e, 401);
     }
@@ -46,8 +40,8 @@ export class MessagesSyncHandler implements MethodHandler {
       switch (action) {
       case 'root': {
         const rootHash = protocol !== undefined
-          ? await this.stateIndex.getProtocolRoot(tenant, protocol)
-          : await this.stateIndex.getRoot(tenant);
+          ? await this.deps.stateIndex!.getProtocolRoot(tenant, protocol)
+          : await this.deps.stateIndex!.getRoot(tenant);
         return {
           status : { code: 200, detail: 'OK' },
           root   : hashToHex(rootHash),
@@ -57,8 +51,8 @@ export class MessagesSyncHandler implements MethodHandler {
       case 'subtree': {
         const bitPath = MessagesSyncHandler.parseBitPrefix(prefix!);
         const hash = protocol !== undefined
-          ? await this.stateIndex.getProtocolSubtreeHash(tenant, protocol, bitPath)
-          : await this.stateIndex.getSubtreeHash(tenant, bitPath);
+          ? await this.deps.stateIndex!.getProtocolSubtreeHash(tenant, protocol, bitPath)
+          : await this.deps.stateIndex!.getSubtreeHash(tenant, bitPath);
         return {
           status : { code: 200, detail: 'OK' },
           hash   : hashToHex(hash),
@@ -68,8 +62,8 @@ export class MessagesSyncHandler implements MethodHandler {
       case 'leaves': {
         const bitPath = MessagesSyncHandler.parseBitPrefix(prefix!);
         const leaves = protocol !== undefined
-          ? await this.stateIndex.getProtocolLeaves(tenant, protocol, bitPath)
-          : await this.stateIndex.getLeaves(tenant, bitPath);
+          ? await this.deps.stateIndex!.getProtocolLeaves(tenant, protocol, bitPath)
+          : await this.deps.stateIndex!.getLeaves(tenant, bitPath);
         return {
           status  : { code: 200, detail: 'OK' },
           entries : leaves,

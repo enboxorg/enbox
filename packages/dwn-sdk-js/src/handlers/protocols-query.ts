@@ -1,7 +1,4 @@
-import type { DataStore } from '../types/data-store.js';
-import type { DidResolver } from '@enbox/dids';
-import type { MessageStore } from '../types//message-store.js';
-import type { MethodHandler } from '../types/method-handler.js';
+import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply } from '../types/protocols-types.js';
 
 import { authenticate } from '../core/auth.js';
@@ -14,7 +11,7 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 
 export class ProtocolsQueryHandler implements MethodHandler {
 
-  constructor(private didResolver: DidResolver, private messageStore: MessageStore,private dataStore: DataStore) { }
+  constructor(private deps: HandlerDependencies) { }
 
   public async handle({
     tenant,
@@ -30,8 +27,8 @@ export class ProtocolsQueryHandler implements MethodHandler {
 
     // authentication & authorization
     try {
-      await authenticate(message.authorization, this.didResolver);
-      await protocolsQuery.authorize(tenant, this.messageStore);
+      await authenticate(message.authorization, this.deps.didResolver);
+      await protocolsQuery.authorize(tenant, this.deps.messageStore);
     } catch (error: any) {
 
       // return public ProtocolsConfigures if query fails with a certain authentication or authorization code
@@ -58,7 +55,7 @@ export class ProtocolsQueryHandler implements MethodHandler {
     };
     removeUndefinedProperties(query);
 
-    const { messages } = await this.messageStore.query(tenant, [ query ]);
+    const { messages } = await this.deps.messageStore.query(tenant, [ query ]);
 
     return {
       status  : { code: 200, detail: 'OK' },
@@ -78,7 +75,7 @@ export class ProtocolsQueryHandler implements MethodHandler {
       published         : true,
       isLatestBaseState : true,
     };
-    const { messages: publishedProtocolsConfigure } = await this.messageStore.query(tenant, [ filter ]);
+    const { messages: publishedProtocolsConfigure } = await this.deps.messageStore.query(tenant, [ filter ]);
     return publishedProtocolsConfigure as ProtocolsConfigureMessage[];
   }
 }

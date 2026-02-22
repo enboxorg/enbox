@@ -2332,7 +2332,9 @@ export function testRecordsQueryHandler(): void {
           ...aliceMessagesForBobPromise,
         ];
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, new CoreProtocolRegistry(), eventLog);
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
 
         const messages: GenericMessage[] = [];
         for await (const { recordsWrite, message, dataBytes } of messagePromises) {
@@ -3490,7 +3492,9 @@ export function testRecordsQueryHandler(): void {
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
       const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-      const recordsQueryHandler = new RecordsQueryHandler(didResolver, messageStoreStub, dataStoreStub);
+      const recordsQueryHandler = new RecordsQueryHandler({
+        didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub,
+      });
       const reply = await recordsQueryHandler.handle({ tenant, message });
 
       expect(reply.status.code).toBe(401);
@@ -3504,7 +3508,9 @@ export function testRecordsQueryHandler(): void {
       const didResolver = TestStubGenerator.createDidResolverStub(author!);
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
       const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
-      const recordsQueryHandler = new RecordsQueryHandler(didResolver, messageStoreStub, dataStoreStub);
+      const recordsQueryHandler = new RecordsQueryHandler({
+        didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub,
+      });
 
       // stub the `parse()` function to throw an error
       sinon.stub(RecordsQuery, 'parse').throws('anyError');

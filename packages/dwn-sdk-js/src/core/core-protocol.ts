@@ -79,13 +79,6 @@ export interface CoreProtocol {
 }
 
 /**
- * Well-known protocol path for permission grant revocation records.
- * Defined here (rather than on `PermissionsProtocol`) to avoid circular
- * dependencies between `grant-authorization.ts` and `protocols/permissions.ts`.
- */
-export const PERMISSIONS_REVOCATION_PATH = 'grant/revocation';
-
-/**
  * Registry of core protocols. Owned by a `Dwn` instance (not a static singleton)
  * so that each DWN — including those in tests — gets an isolated registry.
  */

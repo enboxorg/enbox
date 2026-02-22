@@ -1,11 +1,6 @@
-import type { CoreProtocolRegistry } from '../core/core-protocol.js';
-import type { DataStore } from '../types/data-store.js';
-import type { DidResolver } from '@enbox/dids';
-import type { EventLog } from '../types/subscriptions.js';
 import type { GenericMessageReply } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
-import type { MethodHandler } from '../types/method-handler.js';
-import type { StateIndex } from '../types/state-index.js';
+import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsQueryReplyEntry, RecordsWriteMessage } from '../types/records-types.js';
 
 import { authenticate } from '../core/auth.js';
@@ -27,14 +22,7 @@ type HandlerArgs = { tenant: string, message: RecordsWriteMessage, dataStream?: 
 
 export class RecordsWriteHandler implements MethodHandler {
 
-  constructor(
-    private didResolver: DidResolver,
-    private messageStore: MessageStore,
-    private dataStore: DataStore,
-    private stateIndex: StateIndex,
-    private coreProtocols: CoreProtocolRegistry,
-    private eventLog?: EventLog
-  ) { }
+  constructor(private deps: HandlerDependencies) { }
 
   public async handle({
     tenant,
@@ -45,15 +33,15 @@ export class RecordsWriteHandler implements MethodHandler {
     try {
       recordsWrite = await RecordsWrite.parse(message);
 
-      await ProtocolAuthorization.validateReferentialIntegrity(tenant, recordsWrite, this.messageStore, this.coreProtocols);
+      await ProtocolAuthorization.validateReferentialIntegrity(tenant, recordsWrite, this.deps.messageStore, this.deps.coreProtocols);
     } catch (e) {
       return messageReplyFromError(e, 400);
     }
 
     // authentication & authorization
     try {
-      await authenticate(message.authorization, this.didResolver, message.attestation);
-      await this.authorizeRecordsWrite(tenant, recordsWrite, this.messageStore);
+      await authenticate(message.authorization, this.deps.didResolver, message.attestation);
+      await this.authorizeRecordsWrite(tenant, recordsWrite, this.deps.messageStore);
     } catch (e) {
       return messageReplyFromError(e, 401);
     }
@@ -63,7 +51,7 @@ export class RecordsWriteHandler implements MethodHandler {
       interface : DwnInterfaceName.Records,
       recordId  : message.recordId
     };
-    const { messages: existingMessages } = await this.messageStore.query(tenant, [ query ]);
+    const { messages: existingMessages } = await this.deps.messageStore.query(tenant, [ query ]);
 
     // if the incoming write is not the initial write, then it must not modify any immutable properties defined by the initial write
     const newMessageIsInitialWrite = await recordsWrite.isInitialWrite();
@@ -97,7 +85,7 @@ export class RecordsWriteHandler implements MethodHandler {
     // Look up the core protocol (if any) for the incoming message so that lifecycle hooks
     // can be dispatched generically rather than checking for specific protocol URIs.
     const coreProtocol = message.descriptor.protocol !== undefined
-      ? this.coreProtocols.get(message.descriptor.protocol)
+      ? this.deps.coreProtocols?.get(message.descriptor.protocol)
       : undefined;
 
     try {
@@ -112,7 +100,7 @@ export class RecordsWriteHandler implements MethodHandler {
       // This allows core protocols to perform cross-record validation before storage
       // (e.g. ensuring revocation tag consistency with the parent grant's scoped protocol).
       if (coreProtocol?.preProcessWrite !== undefined) {
-        await coreProtocol.preProcessWrite(tenant, message, this.messageStore);
+        await coreProtocol.preProcessWrite(tenant, message, this.deps.messageStore);
       }
 
       // NOTE: We allow isLatestBaseState to be true ONLY if the incoming message comes with data, or if the incoming message is NOT an initial write
@@ -139,14 +127,14 @@ export class RecordsWriteHandler implements MethodHandler {
       }
 
       const indexes = await recordsWrite.constructIndexes(isLatestBaseState);
-      await this.messageStore.put(tenant, messageWithOptionalEncodedData, indexes);
-      await this.stateIndex.insert(tenant, await Message.getCid(message), indexes);
+      await this.deps.messageStore.put(tenant, messageWithOptionalEncodedData, indexes);
+      await this.deps.stateIndex!.insert(tenant, await Message.getCid(message), indexes);
 
       // NOTE: We only emit a `RecordsWrite` when the message is the latest base state.
       // Because we allow a `RecordsWrite` which is not the latest state to be written, but not queried, we shouldn't emit it either.
       // It will be emitted as a part of a subsequent next write, if it is the latest base state.
-      if (this.eventLog !== undefined && isLatestBaseState) {
-        await this.eventLog.emit(tenant, { message, initialWrite }, indexes);
+      if (this.deps.eventLog !== undefined && isLatestBaseState) {
+        await this.deps.eventLog.emit(tenant, { message, initialWrite }, indexes);
       }
     } catch (error) {
       if (error instanceof DwnError) {
@@ -156,7 +144,7 @@ export class RecordsWriteHandler implements MethodHandler {
           error.code === DwnErrorCode.RecordsWriteDataCidMismatch ||
           error.code === DwnErrorCode.RecordsWriteDataSizeMismatch ||
           error.code.startsWith('SchemaValidator') ||
-          this.coreProtocols.mapErrorToStatusCode(error.code) !== undefined) {
+          this.deps.coreProtocols?.mapErrorToStatusCode(error.code) !== undefined) {
           return messageReplyFromError(error, 400);
         }
       }
@@ -176,7 +164,7 @@ export class RecordsWriteHandler implements MethodHandler {
 
     // delete all existing messages of the same record that are not newest, except for the initial write
     await StorageController.deleteAllOlderMessagesButKeepInitialWrite(
-      tenant, existingMessages, newestMessage, this.messageStore, this.dataStore, this.stateIndex
+      tenant, existingMessages, newestMessage, this.deps.messageStore, this.deps.dataStore!, this.deps.stateIndex!
     );
 
     // Dispatch post-processing hooks to the core protocol, if applicable.
@@ -184,9 +172,9 @@ export class RecordsWriteHandler implements MethodHandler {
     // (e.g. deleting messages authorized by a revoked grant).
     if (coreProtocol?.postProcessWrite !== undefined) {
       await coreProtocol.postProcessWrite(tenant, recordsWrite, {
-        messageStore : this.messageStore,
-        dataStore    : this.dataStore,
-        stateIndex   : this.stateIndex,
+        messageStore : this.deps.messageStore,
+        dataStore    : this.deps.dataStore!,
+        stateIndex   : this.deps.stateIndex!,
       });
     }
 
@@ -218,7 +206,7 @@ export class RecordsWriteHandler implements MethodHandler {
 
       // Dispatch schema validation to the core protocol, if applicable.
       const coreProtocol = message.descriptor.protocol !== undefined
-        ? this.coreProtocols.get(message.descriptor.protocol)
+        ? this.deps.coreProtocols?.get(message.descriptor.protocol)
         : undefined;
       if (coreProtocol?.validateRecord !== undefined) {
         coreProtocol.validateRecord(message, dataBytes);
@@ -233,13 +221,13 @@ export class RecordsWriteHandler implements MethodHandler {
         // perform storage and CID computation in parallel
         const [dataCid, DataStorePutResult] = await Promise.all([
           Cid.computeDagPbCidFromStream(dataStreamCopy1),
-          this.dataStore.put(tenant, message.recordId, message.descriptor.dataCid, dataStreamCopy2)
+          this.deps.dataStore!.put(tenant, message.recordId, message.descriptor.dataCid, dataStreamCopy2)
         ]);
 
         RecordsWriteHandler.validateDataIntegrity(message.descriptor.dataCid, message.descriptor.dataSize, dataCid, DataStorePutResult.dataSize);
       } catch (error) {
         // unwind/delete data if we have issue with storage or the data failed integrity validation
-        await this.dataStore.delete(tenant, message.recordId, message.descriptor.dataCid);
+        await this.deps.dataStore!.delete(tenant, message.recordId, message.descriptor.dataCid);
 
         throw error;
       }
@@ -276,7 +264,7 @@ export class RecordsWriteHandler implements MethodHandler {
       // else just make sure the data is in the data store
 
       // attempt to retrieve the data from the previous message
-      const DataStoreGetResult = await this.dataStore.get(tenant, newestExistingWrite.recordId, message.descriptor.dataCid);
+      const DataStoreGetResult = await this.deps.dataStore!.get(tenant, newestExistingWrite.recordId, message.descriptor.dataCid);
 
       if (DataStoreGetResult === undefined) {
         throw new DwnError(
@@ -352,7 +340,7 @@ export class RecordsWriteHandler implements MethodHandler {
         messageStore
       });
     } else {
-      await ProtocolAuthorization.authorizeWrite(tenant, recordsWrite, messageStore, this.coreProtocols);
+      await ProtocolAuthorization.authorizeWrite(tenant, recordsWrite, messageStore, this.deps.coreProtocols);
     }
   }
 }
