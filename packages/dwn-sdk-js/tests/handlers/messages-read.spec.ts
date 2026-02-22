@@ -539,7 +539,7 @@ export function testMessagesReadHandler(): void {
           // Alice revokes Carol's grant
           const permissionRevocationCarol = await PermissionsProtocol.createRevocation({
             signer : Jws.createSigner(alice),
-            grant  : await PermissionGrant.parse(permissionGrantCarol.dataEncodedMessage),
+            grant  : PermissionGrant.parse(permissionGrantCarol.dataEncodedMessage),
           });
           const permissionRevocationCarolDataStream = DataStream.fromBytes(permissionRevocationCarol.permissionRevocationBytes);
           const permissionRevocationCarolReply = await dwn.processMessage(

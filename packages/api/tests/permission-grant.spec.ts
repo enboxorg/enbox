@@ -75,7 +75,7 @@ describe('PermissionGrant', () => {
         scope       : { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, protocol: protocolUri },
       });
 
-      const parsedGrant = await PermissionGrant.parse({
+      const parsedGrant = PermissionGrant.parse({
         agent        : testHarness.agent,
         connectedDid : bobDid.uri,
         message,
@@ -108,11 +108,11 @@ describe('PermissionGrant', () => {
       const invalidMessage = { ...message };
       delete (invalidMessage as any).authorization;
 
-      await expect(PermissionGrant.parse({
+      expect(() => PermissionGrant.parse({
         agent        : testHarness.agent,
         connectedDid : bobDid.uri,
         message      : invalidMessage,
-      })).rejects.toThrow(DwnErrorCode.PermissionGrantParseMissingAuthorization);
+      })).toThrow(DwnErrorCode.PermissionGrantParseMissingAuthorization);
     });
   });
 
@@ -365,7 +365,7 @@ describe('PermissionGrant', () => {
         scope       : { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, protocol: protocolUri },
       });
 
-      const parsedGrant = await PermissionGrant.parse({
+      const parsedGrant = PermissionGrant.parse({
         agent        : testHarness.agent,
         connectedDid : bobDid.uri,
         message,

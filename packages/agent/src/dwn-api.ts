@@ -809,6 +809,9 @@ export class AgentDwnApi {
 
     // if there is no raw message provided, we need to create the dwn message
     if (!rawMessage) {
+      if (request.messageParams === undefined) {
+        throw new Error('AgentDwnApi: messageParams must be provided when rawMessage is not given.');
+      }
 
       // If we need to sign as an author delegate or with permissions we need to get the grantee's signer
       // The messageParams should include either a permissionGrantId, or a delegatedGrant message
@@ -817,8 +820,7 @@ export class AgentDwnApi {
         await this.getSigner(request.author);
 
       dwnMessage = await dwnMessageConstructor.create({
-        // TODO: Implement alternative to type assertion.
-        ...request.messageParams!,
+        ...request.messageParams,
         signer
       });
 

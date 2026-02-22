@@ -29,7 +29,7 @@ describe('PermissionGrant', () => {
       scope
     });
 
-    const parsed = await PermissionGrant.parse(permissionGrant.dataEncodedMessage);
+    const parsed = PermissionGrant.parse(permissionGrant.dataEncodedMessage);
     expect(parsed.id).toBe(permissionGrant.dataEncodedMessage.recordId);
     expect(parsed.grantor).toBe(alice.did);
     expect(parsed.grantee).toBe(bob.did);
@@ -52,7 +52,7 @@ describe('PermissionGrant', () => {
       const message = { ...permissionGrant.dataEncodedMessage };
       (message as any).encodedData = undefined;
 
-      await expect(PermissionGrant.parse(message)).rejects.toThrow(DwnErrorCode.PermissionGrantParseMissingEncodedData);
+      expect(() => PermissionGrant.parse(message)).toThrow(DwnErrorCode.PermissionGrantParseMissingEncodedData);
     });
 
     it('should throw if authorization is missing (unable to extract grantor)', async () => {
@@ -69,7 +69,7 @@ describe('PermissionGrant', () => {
       const message = { ...permissionGrant.dataEncodedMessage };
       delete (message as any).authorization;
 
-      await expect(PermissionGrant.parse(message)).rejects.toThrow(DwnErrorCode.PermissionGrantParseMissingAuthorization);
+      expect(() => PermissionGrant.parse(message)).toThrow(DwnErrorCode.PermissionGrantParseMissingAuthorization);
     });
 
     it('should throw if descriptor.recipient (grantee) is missing', async () => {
@@ -88,7 +88,7 @@ describe('PermissionGrant', () => {
         descriptor: { ...permissionGrant.dataEncodedMessage.descriptor, recipient: undefined }
       };
 
-      await expect(PermissionGrant.parse(message as any)).rejects.toThrow(DwnErrorCode.PermissionGrantParseMissingRecipient);
+      expect(() => PermissionGrant.parse(message as any)).toThrow(DwnErrorCode.PermissionGrantParseMissingRecipient);
     });
 
     it('should throw if scope is missing from the grant data', async () => {
@@ -107,7 +107,7 @@ describe('PermissionGrant', () => {
       const encodedData = Encoder.bytesToBase64Url(Encoder.objectToBytes(grantDataWithoutScope));
       const message = { ...permissionGrant.dataEncodedMessage, encodedData };
 
-      await expect(PermissionGrant.parse(message)).rejects.toThrow(DwnErrorCode.PermissionGrantParseMissingScope);
+      expect(() => PermissionGrant.parse(message)).toThrow(DwnErrorCode.PermissionGrantParseMissingScope);
     });
 
     it('should throw if dateExpires is missing from the grant data', async () => {
@@ -128,7 +128,7 @@ describe('PermissionGrant', () => {
       const encodedData = Encoder.bytesToBase64Url(Encoder.objectToBytes(grantDataWithoutExpiry));
       const message = { ...permissionGrant.dataEncodedMessage, encodedData };
 
-      await expect(PermissionGrant.parse(message)).rejects.toThrow(DwnErrorCode.PermissionGrantParseMissingDateExpires);
+      expect(() => PermissionGrant.parse(message)).toThrow(DwnErrorCode.PermissionGrantParseMissingDateExpires);
     });
   });
 });

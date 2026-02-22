@@ -48,7 +48,7 @@ describe('PermissionsProtocol', () => {
         }
       });
 
-      const request = await PermissionRequest.parse(permissionRequest.dataEncodedMessage);
+      const request = PermissionRequest.parse(permissionRequest.dataEncodedMessage);
 
       const scope = await PermissionsProtocol.getScopeFromPermissionRecord(
         alice.did,
@@ -74,7 +74,7 @@ describe('PermissionsProtocol', () => {
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 })
       });
 
-      const grant = await PermissionGrant.parse(grantMessage);
+      const grant = PermissionGrant.parse(grantMessage);
 
       const scope = await PermissionsProtocol.getScopeFromPermissionRecord(
         alice.did,
@@ -104,7 +104,7 @@ describe('PermissionsProtocol', () => {
       const indexes = await grantRecordsWrite.constructIndexes(true);
       await messageStore.put(alice.did, grantMessage, indexes);
 
-      const grant = await PermissionGrant.parse(grantMessage);
+      const grant = PermissionGrant.parse(grantMessage);
 
       const revocation = await PermissionsProtocol.createRevocation({
         signer : Jws.createSigner(alice),
@@ -136,7 +136,7 @@ describe('PermissionsProtocol', () => {
       });
 
       // notice the grant is not stored in the message store
-      const grant = await PermissionGrant.parse(grantMessage);
+      const grant = PermissionGrant.parse(grantMessage);
 
       const revocation = await PermissionsProtocol.createRevocation({
         signer : Jws.createSigner(alice),

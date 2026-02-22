@@ -114,7 +114,7 @@ export class AgentPermissionsApi implements PermissionsApi {
       if (revokedGrantIds.has(entry.recordId)) {
         continue;
       }
-      const grant = await DwnPermissionGrant.parse(entry);
+      const grant = DwnPermissionGrant.parse(entry);
       grants.push({ grant, message: entry });
     }
 
@@ -193,7 +193,7 @@ export class AgentPermissionsApi implements PermissionsApi {
 
     const requests: PermissionRequestEntry[] = [];
     for (const entry of reply.entries! as DwnDataEncodedRecordsWriteMessage[]) {
-      const request = await DwnPermissionRequest.parse(entry);
+      const request = DwnPermissionRequest.parse(entry);
       requests.push({ request, message: entry });
     }
 
@@ -275,7 +275,7 @@ export class AgentPermissionsApi implements PermissionsApi {
       encodedData: Convert.uint8Array(permissionsGrantBytes).toBase64Url()
     };
 
-    const grant = await DwnPermissionGrant.parse(dataEncodedMessage);
+    const grant = DwnPermissionGrant.parse(dataEncodedMessage);
 
     return { grant, message: dataEncodedMessage };
   }
@@ -321,7 +321,7 @@ export class AgentPermissionsApi implements PermissionsApi {
       encodedData: Convert.uint8Array(permissionRequestBytes).toBase64Url()
     };
 
-    const request = await DwnPermissionRequest.parse(dataEncodedMessage);
+    const request = DwnPermissionRequest.parse(dataEncodedMessage);
 
     return { request, message: dataEncodedMessage };
   }

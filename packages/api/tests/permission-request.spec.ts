@@ -75,7 +75,7 @@ describe('PermissionRequest', () => {
         }
       });
 
-      const parsedRequest = await PermissionRequest.parse({
+      const parsedRequest = PermissionRequest.parse({
         agent        : testHarness.agent,
         connectedDid : bobDid.uri,
         message
@@ -105,11 +105,11 @@ describe('PermissionRequest', () => {
       const invalidMessage = { ...message };
       delete (invalidMessage as any).authorization;
 
-      await expect(PermissionRequest.parse({
+      expect(() => PermissionRequest.parse({
         agent        : testHarness.agent,
         connectedDid : bobDid.uri,
         message      : invalidMessage,
-      })).rejects.toThrow(DwnErrorCode.PermissionRequestParseMissingAuthorization);
+      })).toThrow(DwnErrorCode.PermissionRequestParseMissingAuthorization);
     });
   });
 
@@ -302,7 +302,7 @@ describe('PermissionRequest', () => {
         }
       });
 
-      const grantRequest = await PermissionRequest.parse({
+      const grantRequest = PermissionRequest.parse({
         agent        : testHarness.agent,
         connectedDid : bobDid.uri,
         message

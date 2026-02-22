@@ -120,9 +120,8 @@ export class PermissionGrant implements PermissionGrantModel {
   }
 
   /** parses the grant given an agent, connectedDid and data encoded records write message  */
-  static async parse(options: PermissionGrantOptions): Promise<PermissionGrant> {
-    //TODO: this does not have to be async https://github.com/enboxorg/enbox/pull/831/files
-    const grant = await DwnPermissionGrant.parse(options.message);
+  static parse(options: PermissionGrantOptions): PermissionGrant {
+    const grant = DwnPermissionGrant.parse(options.message);
     const api = new AgentPermissionsApi({ agent: options.agent });
     return new PermissionGrant({ ...options, grant, api });
   }
