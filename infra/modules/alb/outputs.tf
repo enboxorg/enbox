@@ -22,3 +22,8 @@ output "ws_target_group_arn" {
   description = "ARN of the WebSocket target group."
   value       = aws_lb_target_group.ws.arn
 }
+
+output "alb_arn_suffix" {
+  description = "ARN suffix of the ALB (for CloudWatch metric dimensions)."
+  value       = aws_lb.this.arn_suffix
+}
