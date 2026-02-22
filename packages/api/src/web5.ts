@@ -500,17 +500,14 @@ export class Web5 {
           throw new Error(`Failed to connect to wallet: ${error.message}`);
         }
       } else {
-        // No connected identity found and no connectOptions provided, use local Identities
-        // Query the Agent's DWN tenant for identity records.
+        // No connected (WalletConnect) identity and no walletConnectOptions provided.
+        // Look for an existing local identity, or create one on first use.
         const identities = await userAgent.identity.list();
 
-        // If an existing identity is not found found, create a new one.
-        const existingIdentityCount = identities.length;
-        if (existingIdentityCount === 0) {
-          // since we are creating a new identity, we will want to register sync for the created Did
+        if (identities.length === 0) {
           registerSync = true;
 
-          // Generate a new Identity for the end-user.
+          // First use — generate a new Identity for the end-user.
           identity = await userAgent.identity.create({
             didMethod  : 'dht',
             metadata   : { name: 'Default' },
@@ -540,8 +537,9 @@ export class Web5 {
           });
 
         } else {
-          // If multiple identities are found, use the first one.
-          // TODO: Implement selecting a connectedDid from multiple identities
+          // Reconnecting — use the first local identity. When the agent manages
+          // multiple identities (e.g. created via agent.identity.create()), the
+          // first one returned by the store is used as the default for connect().
           identity = identities[0];
         }
       }
