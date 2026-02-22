@@ -8,6 +8,7 @@ import type { AdminApi } from './admin/admin-api.js';
 import type { AdminStore } from './admin/admin-store.js';
 import type { DwnServerConfig } from './config.js';
 import type { DwnServerError } from './dwn-error.js';
+import type { OpenAuthHandler } from './registration/open-auth-handler.js';
 import type { RateLimiter } from './rate-limiter.js';
 import type { RegistrationManager } from './registration/registration-manager.js';
 import type { RegistrationStore } from './registration/registration-store.js';
@@ -54,6 +55,7 @@ export class HttpApi {
   #registrationStore: RegistrationStore | undefined;
   #ipRateLimiter: RateLimiter | undefined;
   #tenantRateLimiter: RateLimiter | undefined;
+  #openAuthHandler: OpenAuthHandler | undefined;
   #adminUiPath: string | undefined;
   web5ConnectServer: Web5ConnectServer;
   registrationManager: RegistrationManager;
@@ -72,6 +74,7 @@ export class HttpApi {
       registrationStore? : RegistrationStore;
       ipRateLimiter? : RateLimiter;
       tenantRateLimiter? : RateLimiter;
+      openAuthHandler? : OpenAuthHandler;
     },
   ): Promise<HttpApi> {
     const httpApi = new HttpApi();
@@ -100,6 +103,7 @@ export class HttpApi {
     httpApi.#registrationStore = options?.registrationStore;
     httpApi.#ipRateLimiter = options?.ipRateLimiter;
     httpApi.#tenantRateLimiter = options?.tenantRateLimiter;
+    httpApi.#openAuthHandler = options?.openAuthHandler;
     httpApi.#adminUiPath = resolvedAdminUiPath;
 
     if (registrationManager !== undefined) {
@@ -317,6 +321,19 @@ export class HttpApi {
       const uiResponse = this.#serveAdminUi(path);
       if (uiResponse) {
         return uiResponse;
+      }
+    }
+
+    // --- Provider auth (open-auth) routes ---
+    if (this.#openAuthHandler && path.startsWith('/provider-auth/')) {
+      if (method === 'GET' && path === '/provider-auth/authorize') {
+        return this.#openAuthHandler.handleAuthorize(url);
+      }
+      if (method === 'POST' && path === '/provider-auth/token') {
+        return this.#openAuthHandler.handleToken(req);
+      }
+      if (method === 'POST' && path === '/provider-auth/refresh') {
+        return this.#openAuthHandler.handleRefresh(req);
       }
     }
 
