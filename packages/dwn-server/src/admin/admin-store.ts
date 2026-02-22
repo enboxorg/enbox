@@ -216,18 +216,18 @@ export class AdminStore {
         .executeTakeFirstOrThrow(),
       this.db
         .selectFrom('messageStoreMessages')
-        .select(this.db.fn.countAll<number>().as('count'))
+        .select(
+          this.db.fn.count<number>('protocol').distinct().as('count')
+        )
         .where('protocol', 'is not', null)
-        .select('protocol')
-        .distinct()
-        .execute(),
+        .executeTakeFirstOrThrow(),
     ]);
 
     this.cachedGlobalStats = {
       tenantCount,
       totalMessages  : Number(messageStats.count),
       totalDataBytes : Number(dataStats.totalBytes) || 0,
-      totalProtocols : protocolStats.length,
+      totalProtocols : Number(protocolStats.count),
     };
     this.cachedGlobalStatsTimestamp = now;
 
