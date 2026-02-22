@@ -1,10 +1,11 @@
+/* eslint-disable mocha/no-top-level-hooks -- describe.skipIf() is not recognised by eslint-plugin-mocha */
 import type { DataStoreGetResult } from '@enbox/dwn-sdk-js';
 
 import { DataStoreS3 } from '../src/data-store-s3.js';
 import { getTestSqliteDialect } from './test-dialects.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { Cid, DataStream, TestDataGenerator } from '@enbox/dwn-sdk-js';
-import { CreateBucketCommand, S3Client } from '@aws-sdk/client-s3';
+import { CreateBucketCommand, ListBucketsCommand, S3Client } from '@aws-sdk/client-s3';
 
 // ---------------------------------------------------------------------------
 // MinIO / S3 test configuration
@@ -17,7 +18,34 @@ const S3_CREDENTIALS = {
   secretAccessKey : process.env.S3_SECRET_KEY ?? 'minioadmin',
 };
 
-describe('DataStoreS3', () => {
+/**
+ * Probe whether a usable S3-compatible service is reachable at {@link S3_ENDPOINT}.
+ * Returns `true` when the ListBuckets call succeeds within 2 seconds.
+ */
+async function isS3Available(): Promise<boolean> {
+  const probe = new S3Client({
+    region         : 'us-east-1',
+    endpoint       : S3_ENDPOINT,
+    forcePathStyle : true,
+    credentials    : S3_CREDENTIALS,
+    requestHandler : { requestTimeout: 2_000 } as any,
+  });
+  try {
+    await probe.send(new ListBucketsCommand({}));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    probe.destroy();
+  }
+}
+
+const s3Available = await isS3Available();
+
+// Wrap entire suite: the `describe.skipIf(...)` call prevents every nested
+// test from registering when MinIO is unreachable, so the suite passes
+// cleanly and no coverage artefacts are distorted by "store is undefined" errors.
+describe.skipIf(!s3Available)('DataStoreS3', () => {
   let store: DataStoreS3;
   let s3Client: S3Client;
 

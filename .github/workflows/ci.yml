@@ -383,7 +383,22 @@ jobs:
           name: workspace-build
           path: packages
 
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+          # Wait for MinIO to be ready.
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 1
+          done
+
       - name: Run tests with coverage
+        env:
+          S3_ENDPOINT: http://localhost:9000
         run: bun run --filter @enbox/dwn-sql-store test:node:coverage
 
       - name: Stage coverage
