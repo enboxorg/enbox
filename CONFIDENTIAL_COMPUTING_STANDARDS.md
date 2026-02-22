@@ -150,12 +150,30 @@ Everything in Level 1, plus the ability to execute WASM compute modules inside t
 
 **What this buys:** Protocols can define computations that run over encrypted data without exposing plaintext to the operator, with cryptographic proof of correct execution.
 
-### Level 3: Attested Multi-Party Compute
+### Level 2N: Attested Native Compute
 
-Everything in Level 2, plus support for computation over records from multiple tenants with cross-tenant key delivery.
+Everything in Level 1, plus the ability to execute **native compute runtimes** (e.g., LLM inference engines, GPU-accelerated workloads) inside chained TEE environments over encrypted records. This is a variant of Level 2 designed for workloads that cannot run as WASM modules — large model inference, GPU-accelerated computation, and agentic multi-step workflows.
 
 **Requirements:**
-- All Level 2 requirements
+- All Level 1 requirements
+- Native compute runtime inside a TEE (CPU TEE, GPU TEE, or chained)
+- DWN record I/O API exposed to the native runtime (see Section 6A)
+- `NativeComputeInvoke` / `NativeComputeResult` message handlers
+- Compute receipt generation per Section 7 (with native-compute extensions)
+- Protocol `$compute` directive support with `engine: 'native'`
+- GPU TEE attestation chaining when GPU TEEs are used (see Section 5.6)
+- Session-scoped execution with bounded record access
+
+**What this buys:** Protocols can declare AI inference, GPU-accelerated analysis, and multi-step agentic workflows that run over encrypted data without exposing plaintext to the operator, with cryptographic proof of execution environment and resource consumption.
+
+**Relationship to Level 2:** A provider can support Level 2 (WASM), Level 2N (native), or both. Protocol definitions specify which engine they require. Level 2N trades WASM's deterministic reproducibility for the ability to run workloads that WASM cannot support (GPU compute, large models, non-deterministic inference).
+
+### Level 3: Attested Multi-Party Compute
+
+Everything in Level 2 or 2N, plus support for computation over records from multiple tenants with cross-tenant key delivery.
+
+**Requirements:**
+- All Level 2 or Level 2N requirements
 - Cross-tenant input aggregation inside TEE
 - Multi-party key delivery protocol extensions
 - Compute receipts that reference inputs from multiple tenants
@@ -311,6 +329,99 @@ Each adapter translates between platform-specific attestation primitives and the
 
 **A provider** implements the adapter for their TEE platform. **A client** only needs to understand the common EAT format and the reference values for the DWN software version it expects.
 
+### 5.6 GPU TEE Platforms and Enclave Chaining
+
+Level 2N workloads (native compute, LLM inference) often require GPU acceleration. Modern GPU TEEs extend confidential computing to accelerated workloads:
+
+| GPU TEE Platform | Hardware | Attestation Mechanism | Memory Protection |
+|---|---|---|---|
+| **NVIDIA Confidential Computing** | H100, H200, Blackwell (GB200) | GPU attestation report via NVIDIA RA service; chains to CPU TEE attestation | GPU memory encrypted via on-die AES engine; CPU↔GPU link encrypted in transit |
+| **AMD SEV-SNP + MI300X** | MI300X | SEV-SNP attestation extended to GPU memory | Unified HBM encrypted under SEV-SNP |
+
+#### Enclave Chaining
+
+When a native compute workload requires GPU acceleration, the CPU TEE and GPU TEE form a **chain of trust**. The attestation evidence must cover both links:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ CPU TEE (AWS Nitro / Intel TDX / AMD SEV-SNP)                      │
+│                                                                     │
+│  1. Receive encrypted DWN records                                   │
+│  2. Decrypt records using tenant's #enc key (via TEE Key Service)   │
+│  3. Re-encrypt data for GPU TEE transit                             │
+│  4. Transfer to GPU TEE over encrypted channel                      │
+│                                                                     │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │ GPU TEE (NVIDIA CC / AMD SEV-SNP GPU)                         │  │
+│  │                                                               │  │
+│  │  5. Decrypt data in GPU memory                                │  │
+│  │  6. Execute native compute (LLM inference, GPU kernels)       │  │
+│  │  7. Encrypt results                                           │  │
+│  │  8. Return encrypted results to CPU TEE                       │  │
+│  │                                                               │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│                                                                     │
+│  9. Generate chained attestation (CPU evidence + GPU evidence)      │
+│ 10. Encrypt results for tenant / recipient                          │
+│ 11. Write results back to DWN as records                            │
+│ 12. Generate compute receipt with chained attestation                │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### Chained Attestation Evidence
+
+A chained attestation extends the EAT format (Section 5.3) with GPU sub-module evidence:
+
+```cddl
+DwnChainedAttestationEvidence = DwnAttestationEvidence & {
+  ; GPU TEE attestation (present when GPU TEE is used)
+  ? "gpu-attestation" : {
+    "platform"     : tstr,          ; e.g., "nvidia-cc-h100", "amd-sev-gpu-mi300x"
+    "evidence"     : bstr,          ; GPU attestation report (platform-specific)
+    "driver-version": tstr,         ; GPU driver version
+    "model-hash"   : ? bstr,        ; SHA-256 of loaded model weights (if applicable)
+  },
+}
+```
+
+#### GPU TEE Attestation Adapters
+
+The platform abstraction layer (Section 5.5) is extended with GPU-aware adapters:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Common Attestation Interface                                 │
+│                                                               │
+│  getEvidence(nonce) -> EAT (with optional gpu-attestation)   │
+│  verifyEvidence(eat, refs) -> AttestationResult               │
+│  getMeasurements() -> MeasurementMap                          │
+│  sealData(data) -> SealedBlob                                │
+│  unsealData(blob) -> data                                    │
+│                                                               │
+│  // Level 2N extensions                                       │
+│  getGpuEvidence(nonce) -> GpuAttestationReport               │
+│  verifyChainedEvidence(eat, refs) -> ChainedAttestationResult│
+│  negotiateGpuChannel() -> EncryptedChannel                   │
+└─────┬──────────┬───────────┬────────────┬────────────────────┘
+      │          │           │            │
+┌─────▼───┐ ┌────▼────┐ ┌───▼──────┐ ┌───▼───────────────┐
+│ AWS     │ │ Intel   │ │ AMD      │ │ NVIDIA CC         │
+│ Nitro   │ │ TDX     │ │ SEV-SNP  │ │ Adapter           │
+│ Adapter │ │ Adapter │ │ Adapter  │ │ (H100/Blackwell)  │
+└─────────┘ └─────────┘ └──────────┘ └───────────────────┘
+```
+
+| Common Operation | NVIDIA CC (H100/Blackwell) | AMD SEV-SNP GPU (MI300X) |
+|---|---|---|
+| `getGpuEvidence()` | NVIDIA RA service → GPU attestation report | `SNP_GET_REPORT` extended to GPU HBM |
+| GPU measurements | GPU firmware hash, driver version, VBIOS | GPU firmware in `LAUNCH_DIGEST` extension |
+| Model integrity | SHA-256 of loaded weights in GPU memory | SHA-256 of loaded weights |
+| CPU↔GPU channel | NVIDIA CC encrypted channel (AES-256) | SEV-SNP shared encryption key |
+| Certificate chain | NVIDIA GPU Attestation CA → device cert | AMD ARK → ASK → GPU VCEK |
+
+**Chained verification**: A client verifying a Level 2N compute receipt checks both the CPU TEE attestation AND the GPU TEE attestation. Both must be valid, fresh, and match published reference values. The chain proves: "this CPU enclave, running this code, delegated computation to this GPU enclave, running this model."
+
 ---
 
 ## 6. Compute Module Interface (CMI)
@@ -434,6 +545,301 @@ This creates a chain: protocol definition → module record → module hash → 
 
 ---
 
+## 6A. Native Compute Interface (NCI)
+
+### 6A.1 Motivation
+
+The WASM CMI (Section 6) targets lightweight, deterministic, sandboxed computations. However, important workloads cannot run as WASM modules:
+
+- **LLM inference** — models with billions of parameters require GPU acceleration and native runtimes (vLLM, TensorRT-LLM, llama.cpp)
+- **GPU-accelerated analytics** — signal processing, matrix operations, and scientific computing with CUDA/ROCm
+- **Agentic workflows** — multi-step reasoning loops where an LLM reads records, reasons, reads more records, and writes results iteratively
+- **Large model hosting** — model weights measured in gigabytes, far beyond WASM module size limits
+
+The Native Compute Interface (NCI) defines a standardized contract between a DWN protocol engine and a native compute runtime running inside a TEE (CPU, GPU, or chained). It enables providers like [OpenSecret](https://opensecret.cloud) to offer confidential AI inference as a DWN compute service with minimal integration effort.
+
+### 6A.2 Architecture: Enclave-Hosted Record I/O API
+
+Instead of WASM host imports, native compute runtimes interact with DWN records through a **Record I/O API** exposed by the CPU TEE enclave. The API is available only inside the TEE boundary — it is not network-accessible.
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ CPU TEE Boundary                                                     │
+│                                                                      │
+│  ┌──────────────────┐       ┌─────────────────────────────────────┐  │
+│  │ Record I/O API   │       │ Native Compute Runtime              │  │
+│  │ (local socket)   │◀─────▶│                                     │  │
+│  │                  │       │  • LLM inference engine              │  │
+│  │ • read-record    │       │  • GPU kernel dispatcher             │  │
+│  │ • query-records  │       │  • Agentic orchestrator              │  │
+│  │ • write-result   │       │                                     │  │
+│  │ • read-descriptor│       │    ┌─────────────────────────────┐  │  │
+│  │ • get-evidence   │       │    │ GPU TEE (when applicable)   │  │  │
+│  │ • emit-token     │       │    │ • Model weights             │  │  │
+│  │ • end-session    │       │    │ • Inference execution       │  │  │
+│  │                  │       │    └─────────────────────────────┘  │  │
+│  └──────────────────┘       └─────────────────────────────────────┘  │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+The Record I/O API provides the same logical operations as the WASM CMI host imports (Section 6.1), plus extensions for streaming and session management. The transport is a local Unix domain socket or vsock channel — never exposed outside the TEE.
+
+### 6A.3 Record I/O API Specification
+
+The NCI Record I/O API is defined as a simple JSON-over-socket protocol. This makes it trivially consumable from any language (Rust, Python, C++, Go) without requiring WASM bindings.
+
+```typescript
+// ── Record Operations (same semantics as WASM CMI) ─────────────
+
+interface NativeRecordIO {
+  /**
+   * Read a decrypted record by ID. Must be listed in the session's
+   * allowed inputs (from $compute.inputs).
+   */
+  readRecord(params: {
+    recordId: string;
+  }): Promise<{ data: Uint8Array; descriptor: RecordDescriptor }>;
+
+  /**
+   * Query records matching a filter within allowed input paths.
+   */
+  queryRecords(params: {
+    filter: RecordFilter;
+  }): Promise<{ recordIds: string[] }>;
+
+  /**
+   * Write a result record. Must match the session's allowed
+   * output path (from $compute.outputPath).
+   */
+  writeResult(params: {
+    data     : Uint8Array;
+    metadata : ResultMetadata;
+  }): Promise<{ recordId: string }>;
+
+  /**
+   * Read a record's descriptor (metadata) without reading data.
+   */
+  readDescriptor(params: {
+    recordId: string;
+  }): Promise<{ descriptor: RecordDescriptor }>;
+
+  /**
+   * Get TEE attestation evidence for inclusion in results.
+   */
+  getEvidence(params: {
+    nonce: Uint8Array;
+  }): Promise<{ evidence: Uint8Array }>;
+
+  // ── NCI Extensions (not in WASM CMI) ──────────────────────────
+
+  /**
+   * Emit a streaming token. Used by LLM inference to stream
+   * generated text token-by-token back to the client.
+   * Tokens are buffered and encrypted in chunks for transit.
+   */
+  emitToken(params: {
+    token    : string;
+    metadata?: Record<string, unknown>;
+  }): Promise<void>;
+
+  /**
+   * Signal that the compute session is complete.
+   * Triggers receipt generation and result finalization.
+   */
+  endSession(params: {
+    status  : 'success' | 'error' | 'budget-exceeded';
+    message?: string;
+  }): Promise<{ receiptId: string }>;
+}
+```
+
+### 6A.4 Session Model
+
+Unlike the WASM CMI's single `run()` invocation, the NCI uses a **session model** that supports multi-step agentic workflows:
+
+```
+Client                   DWN Node              CPU TEE                Native Runtime
+  │                         │                     │                        │
+  │  NativeComputeInvoke    │                     │                        │
+  │────────────────────────▶│                     │                        │
+  │                         │  Create session     │                        │
+  │                         │────────────────────▶│                        │
+  │                         │                     │  Start runtime         │
+  │                         │                     │───────────────────────▶│
+  │                         │                     │                        │
+  │                         │                     │   readRecord(id1)      │
+  │                         │                     │◀───────────────────────│
+  │                         │                     │   { data: ... }        │
+  │                         │                     │───────────────────────▶│
+  │                         │                     │                        │
+  │                         │                     │   emitToken("The")     │
+  │  ◀─── streaming ────── (encrypted token chunk)│◀───────────────────────│
+  │                         │                     │   emitToken("answer")  │
+  │  ◀─── streaming ────── (encrypted token chunk)│◀───────────────────────│
+  │                         │                     │                        │
+  │                         │                     │   queryRecords(filter) │
+  │                         │                     │◀───────────────────────│
+  │                         │                     │   { recordIds: [...] } │
+  │                         │                     │───────────────────────▶│
+  │                         │                     │                        │
+  │                         │                     │   readRecord(id2)      │
+  │                         │                     │◀───────────────────────│
+  │                         │                     │   { data: ... }        │
+  │                         │                     │───────────────────────▶│
+  │                         │                     │                        │
+  │                         │                     │   emitToken("is 42")   │
+  │  ◀─── streaming ────── (encrypted token chunk)│◀───────────────────────│
+  │                         │                     │                        │
+  │                         │                     │   writeResult(data)    │
+  │                         │                     │◀───────────────────────│
+  │                         │                     │   { recordId: out1 }   │
+  │                         │                     │───────────────────────▶│
+  │                         │                     │                        │
+  │                         │                     │   endSession(success)  │
+  │                         │                     │◀───────────────────────│
+  │                         │                     │   Generate receipt     │
+  │                         │                     │───────────────────────▶│
+  │                         │                     │                        │
+  │  NativeComputeResult    │                     │                        │
+  │◀────────────────────────│                     │                        │
+```
+
+**Key properties of the session model:**
+
+1. **Multi-step record access**: The runtime can read records, reason, read more records — enabling agentic loops where an LLM decides what to read next based on previous results.
+
+2. **Streaming output**: `emitToken()` enables real-time token streaming for LLM inference. Tokens are encrypted inside the TEE and delivered to the client over an encrypted channel.
+
+3. **Bounded sessions**: Sessions have a maximum duration, maximum record reads, and maximum output tokens — all enforced by the TEE host (Section 6A.5).
+
+4. **Session receipts**: A single receipt covers the entire session, aggregating all record reads, writes, and token emissions.
+
+### 6A.5 Security Constraints on Native Compute
+
+Native compute runtimes operate under constraints analogous to WASM modules but adapted for the native execution model:
+
+| Constraint | WASM CMI | NCI (Native) | Rationale |
+|---|---|---|---|
+| **Network access** | None | None (TEE-enforced) | Prevents data exfiltration |
+| **Filesystem access** | None | TEE-scoped tmpfs only | Model weights loaded at TEE init; no persistent state |
+| **Record I/O** | WASM host imports | Local socket API | Same logical operations, different transport |
+| **Input scoping** | `$compute.inputs` paths | `$compute.inputs` paths | Same authorization model |
+| **Output scoping** | `$compute.outputPath` | `$compute.outputPath` | Same authorization model |
+| **Execution time** | `maxExecutionTime` | `maxSessionDuration` | Sessions may run longer than single WASM calls |
+| **Memory** | `maxMemory` (WASM linear) | TEE memory allocation | Includes GPU memory for GPU TEE workloads |
+| **Determinism** | Opt-in (default: true) | Default: false | LLM inference is inherently non-deterministic |
+| **Instruction counting** | WASM fuel | N/A | Not applicable to native code; use token counting instead |
+| **Token output** | N/A | `maxOutputTokens` | Bounds generation length for LLM workloads |
+| **Record read limit** | `maxInputRecords` | `maxSessionReads` | Bounds agentic record exploration |
+
+### 6A.6 Module Addressing for Native Compute
+
+WASM modules are addressed by content hash of their bytecode. Native compute modules have a more complex identity:
+
+```typescript
+type NativeComputeModuleIdentity = {
+  /**
+   * Hash of the container image or runtime binary.
+   * For OpenSecret-style deployments: hash of the NixOS-built
+   * enclave image that contains the inference engine.
+   */
+  runtimeHash: string;
+
+  /**
+   * Hash of the model weights (for inference workloads).
+   * SHA-256 over the serialized model file(s).
+   * Verified inside the GPU TEE after loading.
+   */
+  modelHash?: string;
+
+  /**
+   * Inference engine identifier and version.
+   * e.g., "vllm:0.4.1", "trt-llm:0.9.0", "llama-cpp:b2534"
+   */
+  engine: string;
+
+  /**
+   * Model identifier (human-readable).
+   * e.g., "meta-llama/Llama-3.3-70B-Instruct"
+   */
+  modelId?: string;
+
+  /**
+   * Quantization format (if applicable).
+   * e.g., "fp16", "int8", "int4-awq", "fp8"
+   */
+  quantization?: string;
+};
+```
+
+The `runtimeHash` and `modelHash` are both included in the compute receipt and verified against published reference values. This creates the same integrity chain as WASM: protocol definition → module identity → attestation → receipt → outputs.
+
+For providers like OpenSecret that use **reproducible NixOS builds**, the `runtimeHash` maps directly to the PCR0 measurement of the enclave image. A client verifying a receipt can:
+
+1. Check that the `runtimeHash` matches the PCR0 in the CPU TEE attestation
+2. Check that the `modelHash` matches the model hash in the GPU TEE attestation
+3. Verify both attestation reports against vendor certificate chains
+4. Confirm the model is a known, audited model (via `modelId` + `modelHash` cross-reference)
+
+### 6A.7 Provider Integration Pattern (OpenSecret Example)
+
+The NCI is designed so that existing confidential AI platforms can become DWN compute providers with minimal integration work. Here is the integration surface for an OpenSecret-style provider:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ OpenSecret-style Provider                                       │
+│                                                                 │
+│  Already has:                      Needs to add:                │
+│  ┌─────────────────────────┐      ┌─────────────────────────┐  │
+│  │ ✓ AWS Nitro Enclave     │      │ + DWN Record I/O shim   │  │
+│  │ ✓ GPU TEE (NVIDIA CC)   │      │   (NCI socket API)      │  │
+│  │ ✓ Enclave chaining      │      │                         │  │
+│  │ ✓ Model hosting         │      │ + EAT token generation  │  │
+│  │ ✓ Reproducible builds   │      │   (wrap Nitro attestation│  │
+│  │ ✓ Remote attestation    │      │    in EAT format)       │  │
+│  │ ✓ Encrypted storage     │      │                         │  │
+│  │ ✓ Key management        │      │ + DWN message handler   │  │
+│  └─────────────────────────┘      │   (NativeComputeInvoke  │  │
+│                                    │    → session lifecycle)  │  │
+│                                    │                         │  │
+│                                    │ + Receipt generation    │  │
+│                                    │   (COSE_Sign1 wrapper)  │  │
+│                                    │                         │  │
+│                                    │ + DID document with     │  │
+│                                    │   ConfidentialDwnService│  │
+│                                    └─────────────────────────┘  │
+│                                                                 │
+│  Integration effort: ~4 components (shim, EAT wrapper,         │
+│  message handler, receipt generator)                            │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**What the provider already has** (and does not need to change):
+
+- TEE infrastructure (Nitro enclaves, GPU TEE chaining)
+- Model hosting and inference engine
+- Reproducible builds and attestation
+- Key management inside enclaves
+- Encrypted data storage and transit
+
+**What the provider adds** (the NCI integration surface):
+
+1. **Record I/O shim** (~200 lines): A thin adapter that implements the NCI socket API (Section 6A.3) by mapping `readRecord`/`writeResult` calls to the provider's internal encrypted storage, with JWE decrypt/encrypt using the tenant's `#enc` key.
+
+2. **EAT wrapper** (~100 lines): Wraps the provider's existing attestation documents (e.g., Nitro CBOR attestation) in the standardized EAT format (Section 5.3), adding DWN-specific claims.
+
+3. **DWN message handler** (~300 lines): Receives `NativeComputeInvoke` messages, creates a compute session, wires up the Record I/O shim, and returns `NativeComputeResult` when done.
+
+4. **Receipt generator** (~150 lines): Generates COSE_Sign1 compute receipts (Section 7) capturing the session's inputs, outputs, attestation, and usage.
+
+5. **DID document publication**: Publish a DID with a `ConfidentialDwnService` endpoint advertising Level 2N capabilities.
+
+The provider's existing inference pipeline, TEE infrastructure, and security model remain unchanged. The NCI is a **thin protocol adapter**, not a rewrite.
+
+---
+
 ## 7. Compute Receipt Standard
 
 ### 7.1 Receipt Format
@@ -442,9 +848,18 @@ Every compute execution produces a **Compute Receipt** — a COSE_Sign1 structur
 
 ```cddl
 ComputeReceipt = COSE_Sign1<{
-  ; What ran
-  "module-hash"     : bstr,           ; SHA-256 of the WASM bytecode
-  "module-record"   : tstr,           ; DWN record ID of the module
+  ; What engine was used
+  "engine"          : tstr,           ; "wasm" or "native"
+
+  ; What ran (WASM engine)
+  ? "module-hash"   : bstr,           ; SHA-256 of the WASM bytecode
+  ? "module-record" : tstr,           ; DWN record ID of the module
+
+  ; What ran (native engine — present when engine == "native")
+  ? "runtime-hash"  : bstr,           ; SHA-256 of enclave image / container
+  ? "model-hash"    : bstr,           ; SHA-256 of model weights
+  ? "model-id"      : tstr,           ; human-readable model identifier
+  ? "engine-version": tstr,           ; inference engine version
 
   ; What it consumed
   "inputs"          : [* InputRef],   ; references to input records
@@ -486,26 +901,49 @@ OutputRef = {
 }
 
 UsageReport = {
-  ; WASM instruction counter (deterministic, reproducible)
-  "instructions"   : uint,
-
-  ; Peak WASM linear memory in bytes
-  "peak-memory"    : uint,
+  ; ── Common fields (all engines) ────────────────────────────
 
   ; Wall-clock execution time in milliseconds (measured inside TEE)
   "execution-ms"   : uint,
 
-  ; Number of host import calls by type
+  ; Number of host import / API calls by type
   "io-calls"       : {
     "read-record"     : uint,
     "query-records"   : uint,
     "write-result"    : uint,
     "read-descriptor" : uint,
+    ? "emit-token"    : uint,         ; NCI only: streaming token emissions
   },
 
   ; Total bytes processed
   "input-bytes"    : uint,            ; sum of decrypted input record data
   "output-bytes"   : uint,            ; sum of output record data (pre-encryption)
+
+  ; ── WASM engine fields (Level 2) ──────────────────────────
+
+  ; WASM instruction counter (deterministic, reproducible)
+  ? "instructions"  : uint,
+
+  ; Peak WASM linear memory in bytes
+  ? "peak-memory"   : uint,
+
+  ; ── Native engine fields (Level 2N) ───────────────────────
+
+  ; LLM token counts (present for inference workloads)
+  ? "input-tokens"  : uint,           ; tokens in prompt / context
+  ? "output-tokens" : uint,           ; tokens generated
+
+  ; Model identity (present for inference workloads)
+  ? "model-id"      : tstr,           ; e.g., "meta-llama/Llama-3.3-70B-Instruct"
+
+  ; GPU time in milliseconds (present when GPU TEE is used)
+  ? "gpu-ms"        : uint,
+
+  ; Peak GPU memory in bytes
+  ? "peak-gpu-memory" : uint,
+
+  ; Number of agentic steps (present for multi-step sessions)
+  ? "session-steps"  : uint,          ; number of read→reason→act cycles
 }
 ```
 
@@ -541,8 +979,21 @@ The `$compute` directive is added to `ProtocolRuleSet` to declare compute rules:
 ```typescript
 type ProtocolComputeRule = {
   /**
-   * Protocol path of the record type containing the WASM module.
-   * The module bytecode is stored as data of records at this path.
+   * Compute engine type.
+   * - 'wasm': WASM module executed via CMI (Section 6). Default.
+   * - 'native': Native runtime executed via NCI (Section 6A).
+   *   Use for GPU-accelerated workloads, LLM inference, and
+   *   agentic workflows that cannot run as WASM.
+   */
+  engine?: 'wasm' | 'native';
+
+  /**
+   * Protocol path of the record type containing the compute module.
+   *
+   * For engine 'wasm': WASM bytecode stored as record data.
+   * For engine 'native': A JSON record describing the native module
+   *   identity (runtimeHash, modelHash, engine, modelId).
+   *   See NativeComputeModuleIdentity in Section 6A.6.
    */
   module: string;
 
@@ -563,15 +1014,54 @@ type ProtocolComputeRule = {
   /**
    * Whether execution must be deterministic (no randomness, no timestamps).
    * When true, the result can be verified by re-execution.
-   * Default: true.
+   *
+   * Default for 'wasm': true.
+   * Default for 'native': false (LLM inference is inherently non-deterministic).
    */
   deterministic?: boolean;
+
+  /**
+   * Whether the compute output is streamed token-by-token.
+   * Only applicable for engine: 'native'.
+   * When true, the provider streams encrypted tokens to the client
+   * via emitToken() during execution. Default: false.
+   */
+  streaming?: boolean;
 
   /**
    * Minimum attestation requirements for the compute environment.
    * Provider-agnostic — specifies WHAT is required, not HOW.
    */
   attestation: ComputeAttestationRequirement;
+
+  /**
+   * Native compute-specific constraints (only when engine: 'native').
+   */
+  nativeConstraints?: NativeComputeConstraints;
+};
+
+type NativeComputeConstraints = {
+  /** Maximum session duration in milliseconds. Default: 120000 (2 min). */
+  maxSessionDuration?: number;
+
+  /** Maximum number of record reads per session. Default: 1000. */
+  maxSessionReads?: number;
+
+  /** Maximum output tokens for inference workloads. Default: 4096. */
+  maxOutputTokens?: number;
+
+  /** Required model characteristics. */
+  model?: {
+    /** Specific model ID required (e.g., "meta-llama/Llama-3.3-70B-Instruct"). */
+    modelId?: string;
+    /** Minimum model parameter count (e.g., 70_000_000_000 for 70B). */
+    minParameters?: number;
+    /** Required model hash for pinning a specific model version. */
+    modelHash?: string;
+  };
+
+  /** Whether GPU TEE is required (vs. CPU-only native compute). Default: false. */
+  requireGpuTee?: boolean;
 };
 
 type ComputeAttestationRequirement = {
@@ -709,12 +1199,97 @@ type ComputeReceiptFilter = {
 };
 ```
 
-### 8.4 Authorization Flow for Compute
+### 8.4 Native Compute Messages (Level 2N)
+
+```typescript
+// ── NativeComputeInvoke ────────────────────────────────────────
+// Requests execution of a native compute session over specified inputs.
+
+type NativeComputeInvokeDescriptor = {
+  interface        : 'Compute';
+  method           : 'NativeInvoke';
+  messageTimestamp : string;
+  protocol         : string;
+  protocolPath     : string;
+
+  /**
+   * Record ID of the native module identity record.
+   * The record data is a NativeComputeModuleIdentity JSON object
+   * describing the runtime hash, model hash, and engine version.
+   */
+  moduleRecordId   : string;
+  inputFilter      : RecordsFilter;
+
+  /**
+   * Parameters passed to the native runtime.
+   * For LLM inference: prompt, system message, temperature, etc.
+   * For agentic workflows: task description, tool configuration, etc.
+   */
+  params?          : Record<string, unknown>;
+
+  /**
+   * Whether to stream tokens back to the client during execution.
+   * When true, the client receives encrypted token chunks in real-time
+   * via the streaming channel before the final result is written.
+   */
+  streaming?       : boolean;
+
+  /** Resource budget. Session terminates if any limit is exceeded. */
+  budget?: {
+    /** Maximum session duration in milliseconds. */
+    maxSessionDuration? : number;
+    /** Maximum number of record reads during the session. */
+    maxSessionReads?    : number;
+    /** Maximum output tokens (for inference workloads). */
+    maxOutputTokens?    : number;
+    /** Maximum total GPU time in milliseconds. */
+    maxGpuMs?           : number;
+    /** Maximum input tokens (context window budget). */
+    maxInputTokens?     : number;
+  };
+};
+
+type NativeComputeInvokeMessage = {
+  descriptor    : NativeComputeInvokeDescriptor;
+  authorization : Authorization;
+};
+
+// ── NativeComputeResult ────────────────────────────────────────
+// Returned after a native compute session completes.
+
+type NativeComputeResultDescriptor = {
+  interface        : 'Compute';
+  method           : 'NativeResult';
+  messageTimestamp : string;
+  invokeMessageCid : string;
+  outputRecordIds  : string[];
+  receiptRecordId  : string;
+
+  /**
+   * Session status.
+   * - 'success': completed normally
+   * - 'budget-exceeded': terminated due to budget limit
+   * - 'error': terminated due to runtime error
+   */
+  status           : 'success' | 'budget-exceeded' | 'error';
+  statusDetail?    : string;
+};
+
+type NativeComputeResultMessage = {
+  descriptor    : NativeComputeResultDescriptor;
+  authorization : Authorization;
+};
+```
+
+### 8.5 Authorization Flow for Compute
+
+The authorization flow is identical for both WASM and native compute — the DWN protocol engine enforces the same `$compute` rules regardless of engine type. The only difference is what gets dispatched to the worker.
 
 ```
 Client                        DWN Node                    TEE Compute Worker
   │                              │                              │
-  │  1. ComputeInvoke            │                              │
+  │  1. ComputeInvoke or         │                              │
+  │     NativeComputeInvoke      │                              │
   │  (signed by tenant)          │                              │
   │─────────────────────────────▶│                              │
   │                              │                              │
@@ -723,31 +1298,36 @@ Client                        DWN Node                    TEE Compute Worker
   │                    - Check protocol rules                   │
   │                    - Verify $compute allows                 │
   │                      this module + inputs                   │
+  │                    - Verify $compute.engine                 │
+  │                      matches invoke type                    │
   │                    - Verify invoker has                     │
   │                      required role/actor                    │
   │                              │                              │
   │                              │  3. Dispatch to worker       │
   │                              │  (encrypted records +        │
-  │                              │   WASM module bytecode)      │
+  │                              │   module identity)           │
   │                              │─────────────────────────────▶│
   │                              │                              │
   │                              │           4. Inside TEE:     │
   │                              │           - Decrypt records  │
-  │                              │           - Load WASM module │
-  │                              │           - Execute run()    │
+  │                              │           - WASM: load + run │
+  │                              │           - Native: session  │
+  │                              │             lifecycle        │
   │                              │           - Encrypt outputs  │
   │                              │           - Generate receipt │
   │                              │                              │
   │                              │  5. Encrypted outputs +      │
   │                              │     compute receipt          │
-  │                              │◀─────────────────────────────│
+  │  ◀── (streaming tokens if    │◀─────────────────────────────│
+  │       native + streaming) ── │                              │
   │                              │                              │
   │                    6. Store outputs as                      │
   │                       DWN records                          │
   │                    7. Store receipt as                      │
   │                       DWN record                           │
   │                              │                              │
-  │  8. ComputeResult            │                              │
+  │  8. ComputeResult or         │                              │
+  │     NativeComputeResult      │                              │
   │  (output + receipt IDs)      │                              │
   │◀─────────────────────────────│                              │
   │                              │                              │
@@ -773,17 +1353,39 @@ A confidential compute provider registers itself by publishing a DID document wi
     "type": "ConfidentialDwnService",
     "serviceEndpoint": {
       "nodes": ["https://cc-dwn.provider.example"],
-      "conformanceLevel": 2,
+      "conformanceLevels": [1, 2, "2N"],
       "teePlatforms": ["aws-nitro"],
-      "wasiVersions": ["preview1", "preview2"],
       "attestationEndpoint": "https://cc-dwn.provider.example/.well-known/dwn-attestation",
       "referenceValues": "https://cc-dwn.provider.example/.well-known/dwn-reference-values",
-      "capabilities": {
+      "wasmCompute": {
+        "wasiVersions": ["preview1", "preview2"],
         "maxModuleSize": 10485760,
         "maxExecutionTime": 30000,
         "maxMemory": 268435456,
-        "maxInputRecords": 10000,
-        "supportedComputeFormats": ["application/wasm"]
+        "maxInputRecords": 10000
+      },
+      "nativeCompute": {
+        "gpuTeePlatforms": ["nvidia-cc-h100"],
+        "maxSessionDuration": 120000,
+        "maxSessionReads": 1000,
+        "maxOutputTokens": 16384,
+        "streaming": true,
+        "models": [
+          {
+            "modelId": "meta-llama/Llama-3.3-70B-Instruct",
+            "modelHash": "sha256:a1b2c3...",
+            "engine": "vllm:0.4.1",
+            "quantization": "fp16",
+            "maxContextTokens": 131072
+          },
+          {
+            "modelId": "mistralai/Mixtral-8x22B-Instruct-v0.1",
+            "modelHash": "sha256:d4e5f6...",
+            "engine": "vllm:0.4.1",
+            "quantization": "fp8",
+            "maxContextTokens": 65536
+          }
+        ]
       }
     }
   }]
@@ -867,15 +1469,32 @@ Traditional cloud metering is provider-reported — the client trusts the provid
 
 ### 10.2 Metering Dimensions
 
-Five natural dimensions of resource consumption are captured in the `UsageReport`:
+Resource consumption is captured in the `UsageReport`. Dimensions are split into common (all engines), WASM-specific, and native-specific:
+
+#### Common Dimensions (all engines)
+
+| Dimension | Field | Unit | How It's Measured |
+|---|---|---|---|
+| **Time** | `execution-ms` | Milliseconds | Wall-clock time measured inside the TEE |
+| **Record I/O** | `io-calls` | Count per call type | Incremented on each host import / API call |
+| **Data volume** | `input-bytes` / `output-bytes` | Bytes | Sum of record data sizes processed |
+
+#### WASM Engine Dimensions (Level 2)
 
 | Dimension | Field | Unit | How It's Measured |
 |---|---|---|---|
 | **Compute** | `instructions` | WASM instructions executed | Instruction counter in the WASM runtime (fuel mechanism) |
 | **Memory** | `peak-memory` | Bytes | High-water mark of WASM linear memory |
-| **Time** | `execution-ms` | Milliseconds | Wall-clock time measured inside the TEE |
-| **Record I/O** | `io-calls` | Count per call type | Incremented on each host import call |
-| **Data volume** | `input-bytes` / `output-bytes` | Bytes | Sum of record data sizes processed |
+
+#### Native Engine Dimensions (Level 2N)
+
+| Dimension | Field | Unit | How It's Measured |
+|---|---|---|---|
+| **Input tokens** | `input-tokens` | Tokens | Tokenizer count of prompt/context tokens processed |
+| **Output tokens** | `output-tokens` | Tokens | Count of tokens generated by the model |
+| **GPU time** | `gpu-ms` | Milliseconds | Wall-clock GPU execution time inside GPU TEE |
+| **GPU memory** | `peak-gpu-memory` | Bytes | High-water mark of GPU memory allocation |
+| **Session steps** | `session-steps` | Count | Number of read→reason→act cycles in agentic workflows |
 
 Storage metering (record count, data size, retention duration) is already a solved problem for DWN hosting and is orthogonal to compute metering.
 
@@ -943,14 +1562,22 @@ A provider publishes its pricing as part of its DID document service endpoint, e
   "type": "ConfidentialDwnService",
   "serviceEndpoint": {
     "nodes": ["https://cc-dwn.provider.example"],
-    "conformanceLevel": 2,
+    "conformanceLevels": [1, 2, "2N"],
     "pricing": {
       "currency": "USD",
-      "compute": {
+      "wasmCompute": {
         "perBillionInstructions": 0.10,
         "perGbMemorySecond": 0.01,
         "perRecordIoCall": 0.001,
         "perGbDataProcessed": 0.05
+      },
+      "nativeCompute": {
+        "perMillionInputTokens": 0.60,
+        "perMillionOutputTokens": 2.40,
+        "perGpuSecond": 0.001,
+        "perRecordIoCall": 0.001,
+        "perGbDataProcessed": 0.05,
+        "perSessionStep": 0.01
       },
       "storage": {
         "perGbMonth": 0.02
@@ -962,6 +1589,8 @@ A provider publishes its pricing as part of its DID document service endpoint, e
   }
 }
 ```
+
+Note: Native compute pricing is **token-based** for inference workloads, which aligns with industry-standard LLM pricing. Providers publish per-model pricing since different models have different compute costs. The `nativeCompute` pricing block above represents base rates; model-specific overrides can be published in the `nativeCompute.models` array of the capabilities block (Section 9.1).
 
 Because metering is standardized, pricing becomes directly comparable across providers. A client can compute the exact cost of any invocation from the receipt's `usage` block and the provider's published schedule. No surprises.
 
@@ -1095,30 +1724,40 @@ This is the most ambitious level of protection and is designated as future work 
 
 **No protocol changes.** Existing clients continue to work unchanged. Attestation-aware clients get additional assurance.
 
-### Phase 2: Protocol-Governed Compute (Level 2)
+### Phase 2: Protocol-Governed Compute (Level 2 + 2N)
 
-**Goal:** Protocols can declare compute rules; WASM modules execute over encrypted data inside TEEs.
+**Goal:** Protocols can declare compute rules; WASM modules and native runtimes execute over encrypted data inside TEEs.
 
-**Deliverables:**
+**Deliverables (Level 2 — WASM):**
 1. **Compute Module Interface** — `dwn:compute/v1` WIT definition and host implementation.
 2. **WASM Runtime in TEE** — integrate `wasmtime` (or `wasm-micro-runtime`) inside the enclave.
-3. **`$compute` Directive** — protocol definition parser, validator, and authorization handler in `dwn-sdk-js`.
+3. **`$compute` Directive** — protocol definition parser, validator, and authorization handler in `dwn-sdk-js`, including `engine` discriminator.
 4. **`Compute` Interface Messages** — `ComputeInvoke`, `ComputeResult`, `ComputeQuery` message types with handlers.
-5. **Compute Receipt** — COSE_Sign1 receipt generation and verification.
+5. **Compute Receipt** — COSE_Sign1 receipt generation and verification (with `engine` field).
 6. **Protocol Authorization** — compute invocation authorization checks (actor/role model).
 7. **Second TEE Platform** — Intel TDX adapter to prove the abstraction layer works across vendors.
 
+**Deliverables (Level 2N — Native Compute):**
+8. **Native Compute Interface** — NCI socket API specification (Section 6A.3) and reference implementation of the Record I/O shim.
+9. **NCI Session Manager** — session lifecycle management (create, enforce budgets, generate receipt on end).
+10. **`NativeComputeInvoke` / `NativeComputeResult` Messages** — message types with handlers in `dwn-sdk-js`.
+11. **Streaming Support** — encrypted token streaming from TEE to client via `emitToken()`.
+12. **GPU TEE Attestation** — NVIDIA CC attestation adapter; chained attestation evidence format.
+13. **Provider Integration SDK** — lightweight SDK (Rust/TypeScript) that providers embed to implement the NCI shim, EAT wrapper, and receipt generator. Target: an OpenSecret-style provider can integrate in <1 week.
+14. **Native Module Identity** — `NativeComputeModuleIdentity` record type, including `runtimeHash` and `modelHash` verification in receipts.
+
 ### Phase 3: Multi-Party Compute and Metadata Protection (Level 3)
 
-**Goal:** Cross-tenant computation and metadata confidentiality.
+**Goal:** Cross-tenant computation and metadata confidentiality — for both WASM and native engines.
 
 **Deliverables:**
-1. **Cross-Tenant Key Delivery** — extend `KeyDeliveryProtocol` for compute-context key sharing.
-2. **Multi-Tenant Input Aggregation** — compute worker handles records from multiple tenants inside a single TEE invocation.
+1. **Cross-Tenant Key Delivery** — extend `KeyDeliveryProtocol` for compute-context key sharing (both WASM and native sessions).
+2. **Multi-Tenant Input Aggregation** — compute worker handles records from multiple tenants inside a single TEE invocation or native session.
 3. **Consent Protocol** — each tenant's protocol rules must explicitly authorize cross-tenant compute.
 4. **Encrypted Indexes** — index structures sealed to enclave measurement.
 5. **Oblivious Query Processing** — encrypted query/response protocol between client and TEE.
-6. **Third TEE Platform** — AMD SEV-SNP adapter.
+6. **Third TEE Platform** — AMD SEV-SNP adapter (CPU + GPU for MI300X).
+7. **Multi-Tenant Agentic Workflows** — native compute sessions that aggregate data from multiple tenants for LLM-powered analysis (e.g., a financial advisor LLM that processes records from both a bank and a borrower).
 
 ### Phase 4: Ecosystem Maturity
 
@@ -1126,10 +1765,12 @@ This is the most ambitious level of protection and is designated as future work 
 
 **Deliverables:**
 1. **Compute Module SDK** — developer toolchain for writing, testing, and debugging WASM compute modules (Rust → WASM, AssemblyScript → WASM, etc.).
-2. **Module Registry** — a protocol for publishing and discovering audited compute modules (similar to npm for WASM compute tasks).
-3. **Multi-Provider Verification** — client SDK support for submitting deterministic computations to multiple providers and cross-checking results.
-4. **Formal Specification** — submit the protocol extensions and attestation format as a DIF (Decentralized Identity Foundation) or W3C specification.
-5. **Compliance Mapping** — document how each conformance level maps to regulatory requirements (GDPR, HIPAA, SOC 2, etc.).
+2. **NCI Provider SDK** — production-ready SDK for native compute providers, including reference implementations for OpenSecret-style (Nitro + NVIDIA CC) and Intel TDX + GPU deployments.
+3. **Module Registry** — a protocol for publishing and discovering audited compute modules — both WASM modules and native module identities (model hashes, runtime hashes).
+4. **Model Attestation Registry** — a community-maintained registry mapping model IDs to verified model hashes, enabling clients to verify that a provider is running the claimed model.
+5. **Multi-Provider Verification** — client SDK support for submitting deterministic WASM computations to multiple providers and cross-checking results. For native (non-deterministic) compute: support for submitting the same prompt to multiple providers and comparing outputs for consistency.
+6. **Formal Specification** — submit the protocol extensions and attestation format as a DIF (Decentralized Identity Foundation) or W3C specification.
+7. **Compliance Mapping** — document how each conformance level (including Level 2N) maps to regulatory requirements (GDPR, HIPAA, SOC 2, etc.). Special attention to AI-specific regulations (EU AI Act, NIST AI RMF) for Level 2N native compute.
 
 ---
 
@@ -1341,18 +1982,286 @@ The verifier now knows:
 - The verifier never saw the actual income amount ✓
 - A different provider (Intel TDX instead of AWS Nitro) would produce the same result ✓
 
+### Scenario: LLM Agent Over Private Health Records
+
+A patient wants an AI health assistant to analyze their encrypted medical records and provide personalized recommendations — without the provider, the model operator, or anyone else seeing the raw health data.
+
+**Step 1: Protocol Definition**
+
+The protocol author publishes a health AI assistant protocol:
+
+```typescript
+const HealthAiProtocol = {
+  protocol  : 'https://standards.example/health-ai/v1',
+  published : true,
+  types     : {
+    medicalRecord: {
+      schema             : 'https://standards.example/schemas/medical-record',
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+    },
+    aiModule: {
+      schema      : 'https://standards.example/schemas/native-module-identity',
+      dataFormats : ['application/json'],
+    },
+    assistantQuery: {
+      schema      : 'https://standards.example/schemas/assistant-query',
+      dataFormats : ['application/json'],
+    },
+    assistantResponse: {
+      schema             : 'https://standards.example/schemas/assistant-response',
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+    },
+    computeReceipt: {
+      schema      : 'https://standards.example/schemas/compute-receipt',
+      dataFormats : ['application/cbor'],
+    },
+  },
+  structure: {
+    medicalRecord: {
+      $actions: [
+        { who: 'author', of: 'medicalRecord', can: ['create', 'read', 'update'] },
+      ],
+    },
+    aiModule: {
+      $actions: [
+        { who: 'author', of: 'medicalRecord', can: ['create', 'read'] },
+      ],
+    },
+    assistantQuery: {
+      $actions: [
+        { who: 'author', of: 'medicalRecord', can: ['create'] },
+      ],
+      assistantResponse: {
+        $actions: [
+          { who: 'author', of: 'medicalRecord', can: ['read'] },
+        ],
+        $compute: {
+          engine        : 'native',
+          module        : 'aiModule',
+          inputs        : ['medicalRecord'],
+          outputPath    : 'assistantQuery/assistantResponse',
+          deterministic : false,
+          streaming     : true,
+          attestation   : {
+            conformanceLevel  : '2N',
+            reproducibleBuild : true,
+          },
+          nativeConstraints: {
+            maxSessionDuration : 60000,    // 60 seconds
+            maxSessionReads    : 100,      // up to 100 medical records
+            maxOutputTokens    : 4096,     // bounded response length
+            requireGpuTee      : true,     // require GPU TEE for model isolation
+            model: {
+              modelId : 'meta-llama/Llama-3.3-70B-Instruct',
+              // Pin to a specific audited model version:
+              modelHash : 'sha256:a1b2c3d4e5f6...',
+            },
+          },
+        },
+      },
+    },
+    computeReceipt: {
+      $actions: [
+        { who: 'author', of: 'medicalRecord', can: ['read'] },
+      ],
+    },
+  },
+};
+```
+
+**Step 2: Patient Stores Medical Records and AI Module Identity**
+
+```typescript
+// Install the protocol on the patient's DWN
+await agent.dwn.processRequest({
+  author        : patientDid,
+  target        : patientDid,
+  messageType   : DwnInterface.ProtocolsConfigure,
+  messageParams : { definition: HealthAiProtocol },
+});
+
+// Store encrypted medical records (already present from healthcare providers)
+// ... records are encrypted with the patient's #enc key ...
+
+// Store the approved AI module identity
+await agent.dwn.processRequest({
+  author        : patientDid,
+  target        : patientDid,
+  messageType   : DwnInterface.RecordsWrite,
+  messageParams : {
+    protocol     : 'https://standards.example/health-ai/v1',
+    protocolPath : 'aiModule',
+    schema       : 'https://standards.example/schemas/native-module-identity',
+    dataFormat   : 'application/json',
+  },
+  dataStream: new Blob([JSON.stringify({
+    runtimeHash  : 'sha256:abc123...',   // Hash of provider's NixOS enclave image
+    modelHash    : 'sha256:a1b2c3d4e5f6...', // Hash of Llama 3.3 70B weights
+    engine       : 'vllm:0.4.1',
+    modelId      : 'meta-llama/Llama-3.3-70B-Instruct',
+    quantization : 'fp16',
+  })]),
+});
+```
+
+**Step 3: Patient Queries the AI Assistant**
+
+```typescript
+// Verify the compute provider's attestation first
+const attestation = await agent.attestation.verify({
+  targetDid     : patientDid,   // the DWN hosting the records
+  requiredLevel : '2N',
+  requireReproducibleBuild : true,
+  requireGpuTee : true,
+});
+// attestation.verified === true
+// attestation.cpuTee === 'aws-nitro'
+// attestation.gpuTee === 'nvidia-cc-h100'
+
+// Write a query
+const query = await agent.dwn.processRequest({
+  author        : patientDid,
+  target        : patientDid,
+  messageType   : DwnInterface.RecordsWrite,
+  messageParams : {
+    protocol     : 'https://standards.example/health-ai/v1',
+    protocolPath : 'assistantQuery',
+    schema       : 'https://standards.example/schemas/assistant-query',
+    dataFormat   : 'application/json',
+  },
+  dataStream: new Blob([JSON.stringify({
+    question: 'Based on my recent lab results, are there any concerning trends I should discuss with my doctor?',
+  })]),
+});
+
+// Invoke the native compute session with streaming
+const session = await agent.dwn.processRequest({
+  author        : patientDid,
+  target        : patientDid,
+  messageType   : DwnInterface.NativeComputeInvoke,
+  messageParams : {
+    protocol       : 'https://standards.example/health-ai/v1',
+    protocolPath   : 'assistantQuery/assistantResponse',
+    moduleRecordId : aiModuleRecordId,
+    inputFilter    : { protocolPath: 'medicalRecord' },
+    streaming      : true,
+    params         : {
+      queryRecordId  : query.recordId,
+      systemMessage  : 'You are a health assistant. Analyze the patient\'s medical records and answer their question. Be specific but note you are not a doctor.',
+      temperature    : 0.3,
+    },
+    budget: {
+      maxSessionDuration : 60000,
+      maxSessionReads    : 100,
+      maxOutputTokens    : 4096,
+      maxInputTokens     : 65536,
+    },
+  },
+});
+```
+
+**Step 4: Inside the Chained TEE**
+
+This is what happens inside the provider's TEE infrastructure — none of it is visible to the operator:
+
+```
+┌─ AWS Nitro Enclave (CPU TEE) ─────────────────────────────────────┐
+│                                                                    │
+│  1. Receive NativeComputeInvoke message                           │
+│  2. Create compute session with budget limits                      │
+│  3. Start NCI Record I/O API on local socket                      │
+│                                                                    │
+│  ┌─ NVIDIA H100 GPU TEE ──────────────────────────────────────┐   │
+│  │                                                             │   │
+│  │  4. vLLM loads Llama 3.3 70B (weights verified: modelHash) │   │
+│  │                                                             │   │
+│  │  5. Agentic loop begins:                                    │   │
+│  │     a. Format system prompt + user question                 │   │
+│  │     b. Call readRecord() via NCI → decrypt lab results      │   │
+│  │     c. Inject relevant records into context                 │   │
+│  │     d. Run inference → model reads records, reasons         │   │
+│  │     e. Model decides it needs more context                  │   │
+│  │     f. Call queryRecords({tags: {type: "lab-result"}})      │   │
+│  │     g. Call readRecord() for additional records             │   │
+│  │     h. Continue inference with expanded context             │   │
+│  │     i. Stream tokens via emitToken() as they're generated  │   │
+│  │                                                             │   │
+│  │  6. Final response complete                                 │   │
+│  │     → writeResult(responseData)                             │   │
+│  │     → endSession('success')                                 │   │
+│  │                                                             │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                    │
+│  7. Encrypt response with patient's #enc key (JWE)                │
+│  8. Generate compute receipt:                                      │
+│     - engine: "native"                                             │
+│     - runtimeHash: sha256:abc123... (matches Nitro PCR0)          │
+│     - modelHash: sha256:a1b2c3... (verified in GPU TEE)           │
+│     - inputs: [lab-result-1, lab-result-2, ..., lab-result-7]     │
+│     - output: [response-record-id]                                 │
+│     - usage: { input-tokens: 12847, output-tokens: 523,           │
+│               gpu-ms: 4200, session-steps: 3,                      │
+│               io-calls: { read-record: 7, query-records: 1,       │
+│                           write-result: 1, emit-token: 523 } }    │
+│     - attestation: chained EAT (Nitro + NVIDIA CC)                │
+│  9. Sign receipt inside TEE (COSE_Sign1)                           │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+**Step 5: Patient Receives Streaming Response and Verifies**
+
+```typescript
+// During execution, the patient receives streaming tokens:
+session.onToken((token) => {
+  // Encrypted token chunks, decrypted client-side
+  process.stdout.write(token);
+});
+// Output streams: "Based on your recent lab results, I notice..."
+
+// After completion, verify the receipt
+const receipt = await agent.dwn.processRequest({
+  author        : patientDid,
+  target        : patientDid,
+  messageType   : DwnInterface.RecordsRead,
+  messageParams : { filter: { recordId: session.receiptRecordId } },
+});
+
+const verification = await agent.attestation.verifyReceipt(receipt.data);
+// verification.engineType === 'native'
+// verification.cpuAttestationValid === true (Nitro PCR0 matches runtimeHash)
+// verification.gpuAttestationValid === true (NVIDIA CC report matches modelHash)
+// verification.modelId === 'meta-llama/Llama-3.3-70B-Instruct'
+// verification.inputIntegrityValid === true (all 7 records verified)
+// verification.outputIntegrityValid === true
+// verification.budgetRespected === true (523 tokens < 4096 limit)
+```
+
+The patient now knows:
+- Their medical records were analyzed inside a hardware-isolated TEE
+- The specific audited model (Llama 3.3 70B) processed their data
+- The provider operator never saw their records or the AI's response
+- The response was generated within the declared resource budget
+- A different provider (e.g., Intel TDX + AMD MI300X) could run the same protocol
+
 ---
 
 ## 14. Comparison with Alternatives
 
-| Approach | Vendor Lock-in | Hardware Trust | Metadata Protection | Arbitrary Compute | Standard |
+| Approach | Vendor Lock-in | Hardware Trust | Metadata Protection | Compute Types | Standard |
 |---|---|---|---|---|---|
-| **This specification** | None (multi-TEE abstraction) | TEE vendor (mitigated by multi-provider) | Yes (Level 3) | Yes (WASM) | EAT, COSE, WASI |
+| **This spec (L2 — WASM)** | None (multi-TEE) | TEE vendor (mitigated by multi-provider) | Yes (Level 3) | Deterministic WASM | EAT, COSE, WASI |
+| **This spec (L2N — Native)** | None (multi-TEE) | TEE vendor (mitigated by multi-provider) | Yes (Level 3) | LLM inference, GPU, agentic | EAT, COSE, NCI |
+| **OpenSecret (standalone)** | AWS Nitro + NVIDIA | Nitro + NVIDIA CC | Partial (encrypted vaults) | LLM inference, general | Proprietary |
 | **FHE-only** | None | None needed | Inherent | Limited (very slow) | Emerging |
 | **MPC-only** | None | None needed | Partial | Limited (communication overhead) | Emerging |
-| **Single-vendor TEE** | High | Single vendor | Possible | Yes | Proprietary |
+| **Single-vendor TEE** | High | Single vendor | Possible | Any | Proprietary |
 | **ZK proofs only** | None | None needed | Inherent | Limited (circuit complexity) | Emerging |
-| **Hybrid (TEE + ZK)** | Low | Reduced | Yes | Yes + verifiable | Mixed |
+| **Hybrid (TEE + ZK)** | Low | Reduced | Yes | Any + verifiable | Mixed |
+
+Note the critical distinction: **OpenSecret standalone** provides excellent confidential AI inference but locks the data model and attestation format to its platform. **OpenSecret as a Level 2N provider** in this spec inherits multi-provider portability, standardized receipts, and DWN protocol-governed access control — while retaining its proven TEE infrastructure.
 
 The hybrid approach (TEE for performance + ZK for verification) is a promising future direction. This specification is designed to accommodate it: compute receipts could include ZK proofs alongside TEE attestation, providing both hardware-isolated execution and mathematically verifiable results.
 
@@ -1393,6 +2302,13 @@ All protocol extensions, attestation formats, and interface definitions in this 
 - [CCC Attestation Specifications](https://github.com/CCC-Attestation)
 - [Veraison — Verification of Attestation](https://github.com/veraison)
 - [Remote Attestation in Confidential Computing Explained](https://edera.dev/stories/remote-attestation-in-confidential-computing-explained)
+
+### Confidential AI Inference
+
+- [OpenSecret — Confidential Computing Platform](https://opensecret.cloud) — Production example of Nitro + GPU TEE chaining for confidential AI inference ([technicals](https://blog.opensecret.cloud/opensecret-technicals/), [source](https://github.com/OpenSecretCloud/opensecret))
+- [NVIDIA Confidential Computing](https://www.nvidia.com/en-us/data-center/solutions/confidential-computing/) — H100/Blackwell GPU TEE with hardware-encrypted GPU memory
+- [Edgeless Systems — Contrast](https://www.edgeless.systems/) — GPU TEE infrastructure provider (used by OpenSecret for NVIDIA CC deployment)
+- [Red Hat — Confidential AI Inference](https://next.redhat.com/2025/10/23/enhancing-ai-inference-security-with-confidential-computing-a-path-to-private-data-inference-with-proprietary-llms/) — Architecture patterns for confidential LLM inference
 
 ### Research
 
