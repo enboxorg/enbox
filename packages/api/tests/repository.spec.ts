@@ -208,7 +208,7 @@ describe('repository()', () => {
         data: { name: 'Groceries', description: 'Weekly shopping' },
       });
 
-      expect(result.code).toBe(202);
+      expect(result.status.code).toBe(202);
       expect(result.record).toBeDefined();
       expect(result.record).toBeInstanceOf(TypedRecord);
 
@@ -223,7 +223,7 @@ describe('repository()', () => {
 
       const result = await repo.list.query();
 
-      expect(result.code).toBe(200);
+      expect(result.status.code).toBe(200);
       expect(result.records.length).toBe(2);
       expect(result.records[0]).toBeInstanceOf(TypedRecord);
       expect(result.records[1]).toBeInstanceOf(TypedRecord);
@@ -284,7 +284,7 @@ describe('repository()', () => {
         data: { title: 'Review PR', completed: false },
       });
 
-      expect(result.code).toBe(202);
+      expect(result.status.code).toBe(202);
       expect(result.record).toBeInstanceOf(TypedRecord);
       expect(result.record.protocolPath).toBe('list/task');
 
@@ -307,7 +307,7 @@ describe('repository()', () => {
 
       const result = await repo.list.task.query(listRecord.contextId);
 
-      expect(result.code).toBe(200);
+      expect(result.status.code).toBe(200);
       expect(result.records.length).toBe(2);
       expect(result.records[0]).toBeInstanceOf(TypedRecord);
     });
@@ -381,7 +381,7 @@ describe('repository()', () => {
         data: blob,
       });
 
-      expect(result.code).toBe(202);
+      expect(result.status.code).toBe(202);
       expect(result.record).toBeInstanceOf(TypedRecord);
       expect(result.record.protocolPath).toBe('list/task/attachment');
     });
@@ -402,7 +402,7 @@ describe('repository()', () => {
         data: { displayName: 'Alice', bio: 'Hello world' },
       });
 
-      expect(result.code).toBe(202);
+      expect(result.status.code).toBe(202);
       expect(result.record).toBeInstanceOf(TypedRecord);
 
       const data = await result.record.data.json();
@@ -437,7 +437,7 @@ describe('repository()', () => {
         data: { displayName: 'Alice Updated', bio: 'v2' },
       });
 
-      expect(result.code).toBe(202);
+      expect(result.status.code).toBe(202);
 
       // Should still only have one record
       const record = await repo.profile.get();
@@ -479,7 +479,7 @@ describe('repository()', () => {
         data: { theme: 'dark', notifications: true },
       });
 
-      expect(result.code).toBe(202);
+      expect(result.status.code).toBe(202);
       expect(result.record).toBeInstanceOf(TypedRecord);
       expect(result.record.protocolPath).toBe('group/settings');
     });
