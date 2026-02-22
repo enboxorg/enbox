@@ -5,6 +5,9 @@
 .terraform/
 crash.log
 crash.*.log
+
+# Lock files in reusable modules (only commit in root configs like bootstrap/)
+modules/**/.terraform.lock.hcl
 override.tf
 override.tf.json
 *_override.tf
