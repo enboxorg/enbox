@@ -32,6 +32,15 @@ import {
   websocketSubscriptions,
 } from '../metrics.js';
 
+/** Parses a string to an integer, returning `defaultValue` when the input is null or non-numeric. */
+function parseIntOrDefault(value: string | null, defaultValue: number): number {
+  if (value === null) {
+    return defaultValue;
+  }
+  const parsed = parseInt(value, 10);
+  return Number.isNaN(parsed) ? defaultValue : parsed;
+}
+
 /**
  * Handles all `/admin/api/*` routes.
  * Requires bearer token authentication on every request.
@@ -366,7 +375,7 @@ export class AdminApi {
     }
 
     const cursor = url.searchParams.get('cursor') ?? undefined;
-    const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '20'), 100);
+    const limit = Math.min(parseIntOrDefault(url.searchParams.get('limit'), 20), 100);
 
     // Get tenant list from registration store if available, otherwise discover from messages.
     let tenantDids: string[];
@@ -462,8 +471,8 @@ export class AdminApi {
     if (this.#registrationStore) {
       const tenantQuota = await this.#registrationStore.getQuota(did);
       if (tenantQuota !== undefined) {
-        maxMessages = tenantQuota.maxMessages || maxMessages;
-        maxStorageBytes = tenantQuota.maxStorageBytes || maxStorageBytes;
+        maxMessages = tenantQuota.maxMessages ?? maxMessages;
+        maxStorageBytes = tenantQuota.maxStorageBytes ?? maxStorageBytes;
         quotaSource = 'tenant';
       }
     }
@@ -564,8 +573,8 @@ export class AdminApi {
       );
     }
 
-    const since = parseInt(url.searchParams.get('since') ?? '0');
-    const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '50'), 1000);
+    const since = parseIntOrDefault(url.searchParams.get('since'), 0);
+    const limit = Math.min(parseIntOrDefault(url.searchParams.get('limit'), 50), 1000);
 
     const { events, cursor } = this.#activityLog.getEvents({ since, limit });
 
@@ -606,8 +615,8 @@ export class AdminApi {
     if (this.#registrationStore) {
       const tenantQuota = await this.#registrationStore.getQuota(did);
       if (tenantQuota !== undefined) {
-        maxMessages = tenantQuota.maxMessages || maxMessages;
-        maxStorageBytes = tenantQuota.maxStorageBytes || maxStorageBytes;
+        maxMessages = tenantQuota.maxMessages ?? maxMessages;
+        maxStorageBytes = tenantQuota.maxStorageBytes ?? maxStorageBytes;
         source = 'tenant';
       }
     }
@@ -712,9 +721,9 @@ export class AdminApi {
     const since = url.searchParams.get('since') ?? undefined;
     const action = url.searchParams.get('action') ?? undefined;
     const target = url.searchParams.get('target') ?? undefined;
-    const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '50'), 1000);
+    const limit = Math.min(parseIntOrDefault(url.searchParams.get('limit'), 50), 1000);
     const cursorParam = url.searchParams.get('cursor');
-    const cursor = cursorParam !== null ? parseInt(cursorParam) : undefined;
+    const cursor = cursorParam !== null ? parseIntOrDefault(cursorParam, 0) : undefined;
 
     const result = await this.#auditLog.query({ since, action, target, limit, cursor });
     return Response.json(result);
@@ -751,6 +760,22 @@ export class AdminApi {
       body = await req.json() as RuntimeConfigPatch;
     } catch {
       return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+
+    // Validate types before applying any changes.
+    const validLogLevels = ['trace', 'debug', 'info', 'warn', 'error', 'silent'];
+    if (body.logLevel !== undefined && (typeof body.logLevel !== 'string' || !validLogLevels.includes(body.logLevel.toLowerCase()))) {
+      return Response.json({ error: `logLevel must be one of: ${validLogLevels.join(', ')}` }, { status: 400 });
+    }
+
+    const numericFields: (keyof RuntimeConfigPatch)[] = [
+      'maxRecordDataSize', 'maxInFlight', 'quotaMaxMessages', 'quotaMaxStorageBytes',
+      'rateLimitRequestsPerSecond', 'rateLimitBurst', 'rateLimitTenantRequestsPerSecond', 'rateLimitTenantBurst',
+    ];
+    for (const field of numericFields) {
+      if (body[field] !== undefined && (typeof body[field] !== 'number' || !Number.isFinite(body[field] as number) || (body[field] as number) < 0)) {
+        return Response.json({ error: `${field} must be a non-negative number` }, { status: 400 });
+      }
     }
 
     const changes: string[] = [];
@@ -828,9 +853,9 @@ export class AdminApi {
     const iface = url.searchParams.get('interface') ?? undefined;
     const method = url.searchParams.get('method') ?? undefined;
     const protocol = url.searchParams.get('protocol') ?? undefined;
-    const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '20'), 100);
+    const limit = Math.min(parseIntOrDefault(url.searchParams.get('limit'), 20), 100);
     const cursorParam = url.searchParams.get('cursor');
-    const cursor = cursorParam !== null ? parseInt(cursorParam) : undefined;
+    const cursor = cursorParam !== null ? parseIntOrDefault(cursorParam, 0) : undefined;
 
     const result = await this.#adminStore.getTenantMessages(did, {
       interface: iface,

@@ -59,6 +59,10 @@ export class DwnServer {
   config: DwnServerConfig;
   #httpApi: HttpApi;
   #wsApi: WsApi;
+  #adminApi: AdminApi | undefined;
+  #ipRateLimiter: RateLimiter | undefined;
+  #tenantRateLimiter: RateLimiter | undefined;
+  #auditLog: AuditLog | undefined;
 
   /**
    * @param options.dwn - Dwn instance to use as an override. Registration endpoint will not be enabled if this is provided.
@@ -187,6 +191,12 @@ export class DwnServer {
       log.info('Admin API enabled');
     }
 
+    // Store references for cleanup in stop().
+    this.#adminApi = adminApi;
+    this.#ipRateLimiter = ipRateLimiter;
+    this.#tenantRateLimiter = tenantRateLimiter;
+    this.#auditLog = auditLog;
+
     this.#httpApi = await HttpApi.create(
       this.config, this.dwn, registrationManager, adminApi, activityLog,
       { adminStore, registrationStore, ipRateLimiter, tenantRateLimiter },
@@ -223,9 +233,26 @@ export class DwnServer {
       return;
     }
 
+    // Stop admin metrics updater and record shutdown audit event.
+    if (this.#adminApi) {
+      this.#adminApi.stopMetricsUpdater();
+    }
+    if (this.#auditLog) {
+      await this.#auditLog.record({ actor: 'system', action: 'server.stop' });
+      await this.#auditLog.close();
+    }
+
+    // Clean up rate limiters (stops their interval timers).
+    if (this.#ipRateLimiter) {
+      this.#ipRateLimiter.destroy();
+    }
+    if (this.#tenantRateLimiter) {
+      this.#tenantRateLimiter.destroy();
+    }
+
     await this.dwn.close();
 
-    // close WebSocket server if it was initialized
+    // Close WebSocket server if it was initialized.
     if (this.#wsApi !== undefined) {
       await this.#wsApi.close();
     }

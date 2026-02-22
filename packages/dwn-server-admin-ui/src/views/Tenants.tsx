@@ -1,4 +1,3 @@
-import { h } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import { route } from 'preact-router';
 
@@ -107,7 +106,9 @@ function TenantList() {
               class="btn btn-sm"
               disabled={!nextCursor}
               onClick={() => {
-                setPrevCursors([...prevCursors, cursor as string]);
+                if (cursor !== undefined) {
+                  setPrevCursors([...prevCursors, cursor]);
+                }
                 setCursor(nextCursor);
               }}
             >

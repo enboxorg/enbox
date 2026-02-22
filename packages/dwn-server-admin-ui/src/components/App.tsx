@@ -1,4 +1,3 @@
-import { h } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import { getToken } from '../lib/api';
 import { Login } from './Login';

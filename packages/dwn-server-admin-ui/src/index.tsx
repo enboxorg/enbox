@@ -2,4 +2,6 @@ import { render } from 'preact';
 import './index.css';
 import { App } from './components/App';
 
-render(<App />, document.getElementById('app')!);
+const root = document.getElementById('app');
+if (!root) { throw new Error('Missing #app mount element'); }
+render(<App />, root);

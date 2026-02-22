@@ -1,4 +1,3 @@
-import { h } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import Router from 'preact-router';
 import { clearToken } from '../lib/api';
@@ -78,7 +77,7 @@ export function Layout({ onLogout }: LayoutProps) {
       <main class="main-content">
         <Router onChange={handleRouteChange}>
           <Overview path="/admin/" />
-          <Tenants path="/admin/tenants" />
+          <Tenants path="/admin/tenants/:did?" />
           <Connections path="/admin/connections" />
           <Events path="/admin/events" />
           <Configuration path="/admin/config" />
