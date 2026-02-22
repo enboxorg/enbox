@@ -693,6 +693,36 @@ describe('RateLimiter', () => {
       limiter.destroy();
     }
   });
+
+  it('should return current token count via getTokens', () => {
+    const limiter = new RateLimiter({ refillRate: 10, maxTokens: 5 });
+    try {
+      // Unknown key returns undefined.
+      expect(limiter.getTokens('unknown')).toBeUndefined();
+
+      // After consuming once from a fresh bucket (5 tokens), should have ~4.
+      limiter.consume('key');
+      const tokens = limiter.getTokens('key');
+      expect(tokens).toBeDefined();
+      expect(tokens).toBeLessThanOrEqual(5);
+      expect(tokens).toBeGreaterThanOrEqual(3); // allow for timing
+    } finally {
+      limiter.destroy();
+    }
+  });
+
+  it('should clear all state on destroy', () => {
+    const limiter = new RateLimiter({ refillRate: 10, maxTokens: 10 });
+    limiter.consume('a');
+    limiter.consume('b');
+    expect(limiter.size).toBe(2);
+
+    limiter.destroy();
+    expect(limiter.size).toBe(0);
+
+    // Calling destroy again is safe (no-op).
+    limiter.destroy();
+  });
 });
 
 describe('AdminApi — quota management', () => {

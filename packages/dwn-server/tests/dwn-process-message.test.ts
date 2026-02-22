@@ -2,11 +2,15 @@ import { v4 as uuidv4 } from 'uuid';
 import { DataStream, Jws, Message, MessagesRead, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { describe, expect, it, spyOn } from 'bun:test';
 
+import type { AdminStore } from '../src/admin/admin-store.js';
+import type { RegistrationStore } from '../src/registration/registration-store.js';
 import type { RequestContext } from '../src/lib/json-rpc-router.js';
 
 import { createRecordsWriteMessage } from './utils.js';
+import { DwnServerErrorCode } from '../src/dwn-error.js';
 import { getTestDwn } from './test-dwn.js';
 import { handleDwnProcessMessage } from '../src/json-rpc-handlers/dwn/process-message.js';
+import { RateLimiter } from '../src/rate-limiter.js';
 import { createJsonRpcRequest, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 
 describe('handleDwnProcessMessage', () => {
@@ -236,6 +240,198 @@ describe('handleDwnProcessMessage', () => {
     expect(jsonRpcResponse.error).toBeDefined();
     expect(jsonRpcResponse.error.code).toBe(JsonRpcErrorCodes.InternalError);
     expect(jsonRpcResponse.error.message).toBe('unexpected error');
+    await dwn.close();
+  });
+
+  it('should reject when per-tenant rate limit is exceeded', async () => {
+    const rateLimiter = new RateLimiter({ refillRate: 10, maxTokens: 1 });
+    try {
+      const dwn = await getTestDwn();
+      const context: RequestContext = {
+        dwn,
+        transport         : 'http',
+        tenantRateLimiter : rateLimiter,
+      };
+
+      // First request consumes the one available token.
+      const dwnRequest1 = createJsonRpcRequest(uuidv4(), 'dwn.processMessage', {
+        message : { descriptor: { interface: 'Records', method: 'Query', messageTimestamp: new Date().toISOString(), filter: {} } },
+        target  : 'did:key:rate-limited',
+      });
+      await handleDwnProcessMessage(dwnRequest1, context);
+
+      // Second request should be rate-limited.
+      const dwnRequest2 = createJsonRpcRequest(uuidv4(), 'dwn.processMessage', {
+        message : { descriptor: { interface: 'Records', method: 'Query', messageTimestamp: new Date().toISOString(), filter: {} } },
+        target  : 'did:key:rate-limited',
+      });
+      const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest2, context);
+
+      expect(jsonRpcResponse.error).toBeDefined();
+      expect(jsonRpcResponse.error.message).toContain(DwnServerErrorCode.RateLimitExceeded);
+      expect(jsonRpcResponse.error.message).toContain('retry after');
+      await dwn.close();
+    } finally {
+      rateLimiter.destroy();
+    }
+  });
+
+  it('should reject RecordsWrite when message quota is exceeded', async () => {
+    const dwn = await getTestDwn();
+
+    // Create a mock admin store that reports the tenant already has messages.
+    const mockAdminStore = {
+      getTenantMessageCount : async (): Promise<number> => 10,
+      getTenantStorageSize  : async (): Promise<number> => 0,
+    } as unknown as AdminStore;
+
+    const context: RequestContext = {
+      dwn,
+      transport  : 'http',
+      adminStore : mockAdminStore,
+      config     : { quotaMaxMessages: 5, quotaMaxStorageBytes: 0 } as any,
+    };
+
+    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.processMessage', {
+      message: {
+        descriptor: {
+          interface        : 'Records',
+          method           : 'Write',
+          messageTimestamp : new Date().toISOString(),
+          dataSize         : 100,
+          dataCid          : 'cid-test',
+          dataFormat       : 'application/octet-stream',
+        },
+      },
+      target: 'did:key:quota-test',
+    });
+
+    const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, context);
+
+    expect(jsonRpcResponse.error).toBeDefined();
+    expect(jsonRpcResponse.error.message).toContain(DwnServerErrorCode.TenantMessageQuotaExceeded);
+    await dwn.close();
+  });
+
+  it('should reject RecordsWrite when storage quota is exceeded', async () => {
+    const dwn = await getTestDwn();
+
+    const mockAdminStore = {
+      getTenantMessageCount : async (): Promise<number> => 0,
+      getTenantStorageSize  : async (): Promise<number> => 900,
+    } as unknown as AdminStore;
+
+    const context: RequestContext = {
+      dwn,
+      transport  : 'http',
+      adminStore : mockAdminStore,
+      config     : { quotaMaxMessages: 0, quotaMaxStorageBytes: 1000 } as any,
+    };
+
+    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.processMessage', {
+      message: {
+        descriptor: {
+          interface        : 'Records',
+          method           : 'Write',
+          messageTimestamp : new Date().toISOString(),
+          dataSize         : 200,
+          dataCid          : 'cid-storage',
+          dataFormat       : 'application/octet-stream',
+        },
+      },
+      target: 'did:key:storage-quota',
+    });
+
+    const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, context);
+
+    expect(jsonRpcResponse.error).toBeDefined();
+    expect(jsonRpcResponse.error.message).toContain(DwnServerErrorCode.TenantStorageQuotaExceeded);
+    await dwn.close();
+  });
+
+  it('should use per-tenant quota override when available', async () => {
+    const dwn = await getTestDwn();
+
+    const mockAdminStore = {
+      getTenantMessageCount : async (): Promise<number> => 3,
+      getTenantStorageSize  : async (): Promise<number> => 0,
+    } as unknown as AdminStore;
+
+    const mockRegistrationStore = {
+      getQuota: async (): Promise<{ did: string; maxMessages: number; maxStorageBytes: number }> => ({
+        did             : 'did:key:override',
+        maxMessages     : 2,
+        maxStorageBytes : 0,
+      }),
+    } as unknown as RegistrationStore;
+
+    const context: RequestContext = {
+      dwn,
+      transport         : 'http',
+      adminStore        : mockAdminStore,
+      registrationStore : mockRegistrationStore,
+      config            : { quotaMaxMessages: 100, quotaMaxStorageBytes: 0 } as any,
+    };
+
+    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.processMessage', {
+      message: {
+        descriptor: {
+          interface        : 'Records',
+          method           : 'Write',
+          messageTimestamp : new Date().toISOString(),
+          dataSize         : 10,
+          dataCid          : 'cid-override',
+          dataFormat       : 'application/octet-stream',
+        },
+      },
+      target: 'did:key:override',
+    });
+
+    const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, context);
+
+    // Per-tenant quota is 2, tenant has 3 messages -> should be rejected.
+    expect(jsonRpcResponse.error).toBeDefined();
+    expect(jsonRpcResponse.error.message).toContain(DwnServerErrorCode.TenantMessageQuotaExceeded);
+    await dwn.close();
+  });
+
+  it('should allow RecordsWrite when quota is not exceeded', async () => {
+    const dwn = await getTestDwn();
+
+    const mockAdminStore = {
+      getTenantMessageCount : async (): Promise<number> => 1,
+      getTenantStorageSize  : async (): Promise<number> => 100,
+    } as unknown as AdminStore;
+
+    const context: RequestContext = {
+      dwn,
+      transport  : 'http',
+      adminStore : mockAdminStore,
+      config     : { quotaMaxMessages: 100, quotaMaxStorageBytes: 10000 } as any,
+    };
+
+    // This request has invalid message format, so DWN will reject it with 400,
+    // but importantly the quota check should NOT reject it (quota allows it).
+    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.processMessage', {
+      message: {
+        descriptor: {
+          interface        : 'Records',
+          method           : 'Write',
+          messageTimestamp : new Date().toISOString(),
+          dataSize         : 10,
+          dataCid          : 'cid-ok',
+          dataFormat       : 'application/octet-stream',
+        },
+      },
+      target: 'did:key:quota-ok',
+    });
+
+    const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, context);
+
+    // Should NOT contain quota error — DWN will return its own error (400 for bad message).
+    if (jsonRpcResponse.error) {
+      expect(jsonRpcResponse.error.message).not.toContain('Quota');
+    }
     await dwn.close();
   });
 });
