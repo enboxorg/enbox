@@ -43,7 +43,9 @@ describe('RecordsWrite', () => {
 
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
 
-      await RecordsWriteHandler['authorizeRecordsWrite'](alice.did, recordsWrite, messageStoreStub);
+      // authorizeRecordsWrite is a private instance method; invoke via bracket notation on an instance
+      const handler = new RecordsWriteHandler({} as any, messageStoreStub, {} as any, {} as any, undefined as any);
+      await (handler as any).authorizeRecordsWrite(alice.did, recordsWrite, messageStoreStub);
     });
 
     it('should include permissionGrantId in the descriptor when provided', async () => {

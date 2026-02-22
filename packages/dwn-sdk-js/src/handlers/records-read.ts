@@ -1,3 +1,4 @@
+import type { CoreProtocolRegistry } from '../core/core-protocol.js';
 import type { DataStore } from '../types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
 import type { Filter } from '../types/query-types.js';
@@ -21,7 +22,12 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 
 export class RecordsReadHandler implements MethodHandler {
 
-  constructor(private didResolver: DidResolver, private messageStore: MessageStore, private dataStore: DataStore) { }
+  constructor(
+    private didResolver: DidResolver,
+    private messageStore: MessageStore,
+    private dataStore: DataStore,
+    private coreProtocols?: CoreProtocolRegistry,
+  ) { }
 
   public async handle({
     tenant,
@@ -89,7 +95,7 @@ export class RecordsReadHandler implements MethodHandler {
       const parsedNewestWrite = await RecordsWrite.parse(newestWrite);
 
       try {
-        await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedNewestWrite, this.messageStore);
+        await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedNewestWrite, this.messageStore, this.coreProtocols);
       } catch (error) {
         return messageReplyFromError(error, 401);
       }
@@ -107,7 +113,10 @@ export class RecordsReadHandler implements MethodHandler {
     const matchedRecordsWrite = matchedMessage as RecordsQueryReplyEntry;
 
     try {
-      await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, await RecordsWrite.parse(matchedRecordsWrite), this.messageStore);
+      const parsedWrite = await RecordsWrite.parse(matchedRecordsWrite);
+      await RecordsReadHandler.authorizeRecordsRead(
+        tenant, recordsRead, parsedWrite, this.messageStore, this.coreProtocols,
+      );
     } catch (error) {
       return messageReplyFromError(error, 401);
     }
@@ -156,7 +165,8 @@ export class RecordsReadHandler implements MethodHandler {
     tenant: string,
     recordsRead: RecordsRead,
     matchedRecordsWrite: RecordsWrite,
-    messageStore: MessageStore
+    messageStore: MessageStore,
+    coreProtocols?: CoreProtocolRegistry,
   ): Promise<void> {
     if (Message.isSignedByAuthorDelegate(recordsRead.message)) {
       await recordsRead.authorizeDelegate(matchedRecordsWrite.message, messageStore);
@@ -186,7 +196,7 @@ export class RecordsReadHandler implements MethodHandler {
         messageStore
       });
     } else {
-      await ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, messageStore);
+      await ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, messageStore, coreProtocols);
     }
   }
 }

@@ -1,3 +1,4 @@
+import type { CoreProtocolRegistry } from '../core/core-protocol.js';
 import type { DidResolver } from '@enbox/dids';
 import type { MessageSort } from '../types/message-types.js';
 import type { MessageStore } from '../types//message-store.js';
@@ -20,7 +21,12 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 
 export class RecordsSubscribeHandler implements MethodHandler {
 
-  constructor(private didResolver: DidResolver, private messageStore: MessageStore, private eventLog?: EventLog) { }
+  constructor(
+    private didResolver: DidResolver,
+    private messageStore: MessageStore,
+    private coreProtocols?: CoreProtocolRegistry,
+    private eventLog?: EventLog,
+  ) { }
 
   public async handle({
     tenant,
@@ -59,7 +65,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
       // authentication and authorization
       try {
         await authenticate(message.authorization!, this.didResolver);
-        await RecordsSubscribeHandler.authorizeRecordsSubscribe(tenant, recordsSubscribe, this.messageStore);
+        await RecordsSubscribeHandler.authorizeRecordsSubscribe(tenant, recordsSubscribe, this.messageStore, this.coreProtocols);
       } catch (error) {
         return messageReplyFromError(error, 401);
       }
@@ -320,7 +326,8 @@ export class RecordsSubscribeHandler implements MethodHandler {
   public static async authorizeRecordsSubscribe(
     tenant: string,
     recordsSubscribe: RecordsSubscribe,
-    messageStore: MessageStore
+    messageStore: MessageStore,
+    coreProtocols?: CoreProtocolRegistry,
   ): Promise<void> {
 
     if (Message.isSignedByAuthorDelegate(recordsSubscribe.message)) {
@@ -331,7 +338,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
     // this is because we dynamically filter out records that the caller is not authorized to see.
     // Currently only run protocol authorization if message deliberately invokes a protocol role.
     if (Records.shouldProtocolAuthorize(recordsSubscribe.signaturePayload!)) {
-      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsSubscribe, messageStore);
+      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsSubscribe, messageStore, coreProtocols);
     }
   }
 }

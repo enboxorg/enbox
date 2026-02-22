@@ -1,3 +1,4 @@
+import type { CoreProtocolRegistry } from './core-protocol.js';
 import type { Filter } from '../types/query-types.js';
 import type { MessageStore } from '../types/message-store.js';
 import type { RecordsCount } from '../interfaces/records-count.js';
@@ -10,7 +11,6 @@ import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage } from '../types/protocols-types.js';
 
 import { getRuleSetAtPath } from '../utils/protocols.js';
-import { PermissionsProtocol } from '../protocols/permissions.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -47,6 +47,7 @@ export class ProtocolAuthorization {
     tenant: string,
     incomingMessage: RecordsWrite,
     messageStore: MessageStore,
+    coreProtocols?: CoreProtocolRegistry,
   ): Promise<void> {
     // Determine the governing timestamp for protocol definition lookup.
     // For an initial write, this is the message's own timestamp.
@@ -61,19 +62,23 @@ export class ProtocolAuthorization {
       incomingMessage.message.descriptor.protocol!,
       messageStore,
       governingTimestamp,
+      coreProtocols,
     );
+
+    // Create a bound fetch function that captures the registry for downstream callbacks.
+    const boundFetchDefinition = ProtocolAuthorization.createBoundFetchDefinition(coreProtocols);
 
     // verify declared protocol type exists in protocol and that it conforms to type specification.
     // For cross-protocol composition, the type may be defined in a referenced protocol.
     await verifyTypeWithComposition(
       tenant, incomingMessage.message, protocolDefinition, messageStore,
-      ProtocolAuthorization.fetchProtocolDefinition, governingTimestamp
+      boundFetchDefinition, governingTimestamp
     );
 
     // validate `protocolPath`
     await verifyProtocolPathAndContextId(
       tenant, incomingMessage, messageStore,
-      ProtocolAuthorization.fetchProtocolDefinition, governingTimestamp,
+      boundFetchDefinition, governingTimestamp,
     );
 
     // get the rule set for the inbound message
@@ -108,6 +113,7 @@ export class ProtocolAuthorization {
     tenant: string,
     incomingMessage: RecordsWrite,
     messageStore: MessageStore,
+    coreProtocols?: CoreProtocolRegistry,
   ): Promise<void> {
     const existingInitialWrite = await fetchInitialWrite(tenant, incomingMessage.message.recordId, messageStore);
 
@@ -132,6 +138,7 @@ export class ProtocolAuthorization {
       incomingMessage.message.descriptor.protocol!,
       messageStore,
       governingTimestamp,
+      coreProtocols,
     );
 
     // get the rule set for the inbound message
@@ -139,6 +146,8 @@ export class ProtocolAuthorization {
       incomingMessage.message.descriptor.protocolPath!,
       protocolDefinition,
     );
+
+    const boundFetchDefinition = ProtocolAuthorization.createBoundFetchDefinition(coreProtocols);
 
     // If the incoming message has `protocolRole` in the descriptor, validate the invoked role
     await verifyInvokedRole(
@@ -148,7 +157,7 @@ export class ProtocolAuthorization {
       incomingMessage.message.contextId!,
       protocolDefinition,
       messageStore,
-      ProtocolAuthorization.fetchProtocolDefinition,
+      boundFetchDefinition,
       governingTimestamp,
     );
 
@@ -173,6 +182,7 @@ export class ProtocolAuthorization {
     incomingMessage: RecordsRead,
     newestRecordsWrite: RecordsWrite,
     messageStore: MessageStore,
+    coreProtocols?: CoreProtocolRegistry,
   ): Promise<void> {
     // fetch record chain
     const recordChain: RecordsWriteMessage[] =
@@ -193,6 +203,7 @@ export class ProtocolAuthorization {
       newestRecordsWrite.message.descriptor.protocol!,
       messageStore,
       governingTimestamp,
+      coreProtocols,
     );
 
     // get the rule set for the inbound message
@@ -200,6 +211,8 @@ export class ProtocolAuthorization {
       newestRecordsWrite.message.descriptor.protocolPath!,
       protocolDefinition,
     );
+
+    const boundFetchDefinition = ProtocolAuthorization.createBoundFetchDefinition(coreProtocols);
 
     // If the incoming message has `protocolRole` in the descriptor, validate the invoked role
     await verifyInvokedRole(
@@ -209,7 +222,7 @@ export class ProtocolAuthorization {
       newestRecordsWrite.message.contextId!,
       protocolDefinition,
       messageStore,
-      ProtocolAuthorization.fetchProtocolDefinition,
+      boundFetchDefinition,
       governingTimestamp,
     );
 
@@ -228,6 +241,7 @@ export class ProtocolAuthorization {
     tenant: string,
     incomingMessage: RecordsCount | RecordsQuery | RecordsSubscribe,
     messageStore: MessageStore,
+    coreProtocols?: CoreProtocolRegistry,
   ): Promise<void> {
     const { protocol, protocolPath, contextId } = incomingMessage.message.descriptor.filter;
 
@@ -236,6 +250,8 @@ export class ProtocolAuthorization {
       tenant,
       protocol!, // `authorizeQueryOrSubscribe` is only called if `protocol` is present
       messageStore,
+      undefined,
+      coreProtocols,
     );
 
     // get the rule set for the inbound message
@@ -243,6 +259,8 @@ export class ProtocolAuthorization {
       protocolPath!, // presence of `protocolPath` is verified in `parse()`
       protocolDefinition,
     );
+
+    const boundFetchDefinition = ProtocolAuthorization.createBoundFetchDefinition(coreProtocols);
 
     // If the incoming message has `protocolRole` in the descriptor, validate the invoked role
     await verifyInvokedRole(
@@ -252,7 +270,7 @@ export class ProtocolAuthorization {
       contextId,
       protocolDefinition,
       messageStore,
-      ProtocolAuthorization.fetchProtocolDefinition,
+      boundFetchDefinition,
     );
 
     // verify method invoked against the allowed actions in the rule set
@@ -275,6 +293,7 @@ export class ProtocolAuthorization {
     incomingMessage: RecordsDelete,
     recordsWrite: RecordsWrite,
     messageStore: MessageStore,
+    coreProtocols?: CoreProtocolRegistry,
   ): Promise<void> {
 
     // fetch record chain
@@ -295,6 +314,7 @@ export class ProtocolAuthorization {
       recordsWrite.message.descriptor.protocol!,
       messageStore,
       governingTimestamp,
+      coreProtocols,
     );
 
     // get the rule set for the inbound message
@@ -302,6 +322,8 @@ export class ProtocolAuthorization {
       recordsWrite.message.descriptor.protocolPath!,
       protocolDefinition,
     );
+
+    const boundFetchDefinition = ProtocolAuthorization.createBoundFetchDefinition(coreProtocols);
 
     // If the incoming message has `protocolRole` in the descriptor, validate the invoked role
     await verifyInvokedRole(
@@ -311,7 +333,7 @@ export class ProtocolAuthorization {
       recordsWrite.message.contextId!,
       protocolDefinition,
       messageStore,
-      ProtocolAuthorization.fetchProtocolDefinition,
+      boundFetchDefinition,
       governingTimestamp,
     );
 
@@ -331,16 +353,25 @@ export class ProtocolAuthorization {
    * When `messageTimestamp` is provided, returns the protocol definition that was active at that
    * point in time — i.e. the ProtocolsConfigure with the greatest `messageTimestamp` that is <= the
    * given timestamp. When not provided, returns the latest (current) protocol definition.
+   *
+   * When `coreProtocols` is provided, core protocol definitions are returned directly from the
+   * registry without a message store query. The extra parameter does not affect the
+   * `FetchProtocolDefinitionFn` callback type — callers that pass this function as a callback
+   * should bind the registry via a closure (see `createBoundFetchDefinition`).
    */
   public static async fetchProtocolDefinition(
     tenant: string,
     protocolUri: string,
     messageStore: MessageStore,
     messageTimestamp?: string,
+    coreProtocols?: CoreProtocolRegistry,
   ): Promise<ProtocolDefinition> {
-    // if first-class protocol, return the definition from const object directly without going to data store
-    if (protocolUri === PermissionsProtocol.uri) {
-      return PermissionsProtocol.definition;
+    // if the protocol is a registered core protocol, return the definition directly without a store query
+    if (coreProtocols !== undefined) {
+      const coreDefinition = coreProtocols.getDefinition(protocolUri);
+      if (coreDefinition !== undefined) {
+        return coreDefinition;
+      }
     }
 
     // fetch the corresponding protocol definition
@@ -371,6 +402,23 @@ export class ProtocolAuthorization {
 
     const protocolMessage = protocols[0] as ProtocolsConfigureMessage;
     return protocolMessage.descriptor.definition;
+  }
+
+  /**
+   * Creates a `FetchProtocolDefinitionFn` closure that binds the given `CoreProtocolRegistry`.
+   * This allows core protocol definitions to be resolved from the registry without changing
+   * the `FetchProtocolDefinitionFn` type signature — zero ripple to downstream consumers
+   * like `protocol-authorization-action.ts` and `protocol-authorization-validation.ts`.
+   */
+  private static createBoundFetchDefinition(coreProtocols?: CoreProtocolRegistry): FetchProtocolDefinitionFn {
+    return (
+      tenant: string,
+      protocolUri: string,
+      messageStore: MessageStore,
+      messageTimestamp?: string,
+    ): Promise<ProtocolDefinition> => {
+      return ProtocolAuthorization.fetchProtocolDefinition(tenant, protocolUri, messageStore, messageTimestamp, coreProtocols);
+    };
   }
 
   /**

@@ -1,3 +1,4 @@
+import type { CoreProtocolRegistry } from '../core/core-protocol.js';
 import type { DidResolver } from '@enbox/dids';
 import type { MessageStore } from '../types/message-store.js';
 import type { MethodHandler } from '../types/method-handler.js';
@@ -17,7 +18,8 @@ export class MessagesSubscribeHandler implements MethodHandler {
   constructor(
     private didResolver: DidResolver,
     private messageStore: MessageStore,
-    private eventLog?: EventLog
+    private coreProtocols?: CoreProtocolRegistry,
+    private eventLog?: EventLog,
   ) {}
 
   public async handle({
@@ -51,7 +53,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
     }
 
     const { filters, cursor: eventLogCursor } = message.descriptor;
-    const messagesFilters = Messages.convertFilters(filters);
+    const messagesFilters = Messages.convertFilters(filters, this.coreProtocols);
     const messageCid = await Message.getCid(message);
 
     try {

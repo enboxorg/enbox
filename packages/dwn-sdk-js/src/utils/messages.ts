@@ -1,10 +1,9 @@
+import type { CoreProtocolRegistry } from '../core/core-protocol.js';
 import type { Filter } from '../types/query-types.js';
 import type { MessagesFilter } from '../types/messages-types.js';
 
 import { FilterUtility } from './filter.js';
 import { normalizeProtocolUrl } from './url.js';
-import { PermissionsProtocol } from '../protocols/permissions.js';
-import { Records } from './records.js';
 import { isEmptyObject, removeUndefinedProperties } from './object.js';
 
 
@@ -42,54 +41,35 @@ export class Messages {
   /**
    *  Converts an incoming array of MessagesFilter into an array of Filter usable by MessageLog.
    *
+   * When a `CoreProtocolRegistry` is provided, each registered core protocol's
+   * `constructAdditionalMessageFilter` hook is invoked per filter. This replaces the previous
+   * hardcoded permission-records shadow filter with a generic loop over all core protocols.
+   *
    * @param filters An array of MessagesFilter
+   * @param coreProtocols Optional registry of core protocols whose additional filters are injected.
    * @returns {Filter[]} an array of generic Filter able to be used when querying.
    */
-  public static convertFilters(filters: MessagesFilter[]): Filter[] {
+  public static convertFilters(filters: MessagesFilter[], coreProtocols?: CoreProtocolRegistry): Filter[] {
 
     const messagesQueryFilters: Filter[] = [];
 
-    // convert each filter individually by the specific type of filter it is
-    // we must check for the type of filter in a specific order to make a reductive decision as to which filters need converting
-    // first we check for `MessagesRecordsFilter` fields for conversion
-    // otherwise it is `MessagesMessageFilter` fields for conversion
     for (const filter of filters) {
-      // extract the protocol tag filter from the incoming message record filter
-      // this filters for permission grants, requests and revocations associated with a targeted protocol
-      // since permissions are their own protocol, we added an additional tag index when writing the permission messages
-      // so that we can filter for permission records here
-      const permissionRecordsFilter = this.constructPermissionRecordsFilter(filter);
-      if (permissionRecordsFilter) {
-        messagesQueryFilters.push(permissionRecordsFilter);
+      // Ask each core protocol whether it needs an additional shadow filter for this query.
+      // For example, the Permissions protocol injects a filter for grants/requests/revocations
+      // tagged with the target protocol so they appear alongside that protocol's own records.
+      if (coreProtocols !== undefined) {
+        for (const coreProtocol of coreProtocols.all()) {
+          const additionalFilter = coreProtocol.constructAdditionalMessageFilter?.(filter);
+          if (additionalFilter !== undefined) {
+            messagesQueryFilters.push(additionalFilter);
+          }
+        }
       }
 
       messagesQueryFilters.push(this.convertFilter(filter));
     }
 
     return messagesQueryFilters;
-  }
-
-  /**
-   * Constructs a filter that gets associated permission records if protocol is in the given filter.
-   */
-  private static constructPermissionRecordsFilter(filter: MessagesFilter): Filter | undefined {
-    const { protocol, messageTimestamp } = filter;
-    if (protocol !== undefined) {
-      const taggedFilter = {
-        protocol: PermissionsProtocol.uri,
-        ...Records.convertTagsFilter({ protocol })
-      } as Filter;
-
-      if (messageTimestamp != undefined) {
-        // if we filter by message timestamp, we also want to filter the permission messages by the same timestamp range
-        const messageTimestampFilter = FilterUtility.convertRangeCriterion(messageTimestamp);
-        if (messageTimestampFilter) {
-          taggedFilter.messageTimestamp = messageTimestampFilter;
-        }
-      }
-
-      return taggedFilter;
-    }
   }
 
   /**
