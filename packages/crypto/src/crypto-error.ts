@@ -34,6 +34,12 @@ export enum CryptoErrorCode {
   /** The encoding operation (either encoding or decoding) failed. */
   EncodingError = 'encodingError',
 
+  /** The COSE_Sign1 message does not conform to valid structure. */
+  InvalidCoseSign1 = 'invalidCoseSign1',
+
+  /** The EAT (Entity Attestation Token) is malformed or failed verification. */
+  InvalidEat = 'invalidEat',
+
   /** The JWE supplied does not conform to valid syntax. */
   InvalidJwe = 'invalidJwe',
 
