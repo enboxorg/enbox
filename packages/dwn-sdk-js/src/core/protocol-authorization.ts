@@ -19,6 +19,7 @@ import { authorizeAgainstAllowedActions, verifyInvokedRole } from './protocol-au
 import { constructRecordChain, fetchInitialWrite, getGoverningTimestamp } from './record-chain.js';
 import {
   verifyAsRoleRecordIfNeeded,
+  verifyImmutability,
   verifyProtocolPathAndContextId,
   verifyRecordLimit,
   verifySizeLimit,
@@ -100,6 +101,9 @@ export class ProtocolAuthorization {
 
     // Verify protocol tags
     verifyTagsIfNeeded(incomingMessage, ruleSet);
+
+    // Verify immutability — reject updates to write-once records
+    await verifyImmutability(incomingMessage, ruleSet);
 
     // Verify record count limit
     await verifyRecordLimit(tenant, incomingMessage, ruleSet, messageStore);

@@ -458,3 +458,30 @@ export async function verifyRecordLimit(
     );
   }
 }
+
+/**
+ * Verifies that an update is not attempted on a record whose protocol path has `$immutable: true`.
+ *
+ * Only non-initial writes (updates) are rejected — initial writes are always allowed.
+ * `RecordsDelete` is not affected by this check; immutability prevents data mutation, not removal.
+ *
+ * @throws {DwnError} with `ProtocolAuthorizationImmutableRecord` if an update is attempted on an immutable record.
+ */
+export async function verifyImmutability(
+  incomingMessage: RecordsWrite,
+  ruleSet: ProtocolRuleSet,
+): Promise<void> {
+  if (ruleSet.$immutable !== true) {
+    return;
+  }
+
+  const isInitialWrite = await incomingMessage.isInitialWrite();
+  if (isInitialWrite) {
+    return;
+  }
+
+  throw new DwnError(
+    DwnErrorCode.ProtocolAuthorizationImmutableRecord,
+    `record at protocol path '${incomingMessage.message.descriptor.protocolPath}' is immutable: updates are not allowed.`
+  );
+}

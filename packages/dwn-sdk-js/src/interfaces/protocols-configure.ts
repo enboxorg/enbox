@@ -418,6 +418,22 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       }
     }
 
+    // Warn when `$immutable: true` is combined with `$actions` that include `update` or `co-update`.
+    // The `$immutable` directive overrides any update permission — updates are always rejected.
+    if (ruleSet.$immutable === true && actionRules.length > 0) {
+      const hasUpdateAction = actionRules.some(
+        (rule: ProtocolActionRule): boolean =>
+          rule.can.includes(ProtocolAction.Update) || rule.can.includes(ProtocolAction.CoUpdate)
+      );
+      if (hasUpdateAction) {
+        console.warn(
+          `ProtocolsConfigure: protocol path '${ruleSetProtocolPath}' has $immutable: true ` +
+          `but $actions include 'update' or 'co-update'. The $immutable directive takes ` +
+          `precedence — updates will always be rejected regardless of action rules.`
+        );
+      }
+    }
+
     // Validate nested rule sets
     for (const recordType in ruleSet) {
       if (recordType.startsWith('$')) {
@@ -478,7 +494,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
     }
 
     // validate that `$ref` nodes do not have other directives
-    const forbiddenDirectives = ['$actions', '$role', '$size', '$tags', '$encryption', '$recordLimit'] as const;
+    const forbiddenDirectives = ['$actions', '$role', '$size', '$tags', '$encryption', '$recordLimit', '$immutable'] as const;
     for (const directive of forbiddenDirectives) {
       if (ruleSet[directive] !== undefined) {
         throw new DwnError(

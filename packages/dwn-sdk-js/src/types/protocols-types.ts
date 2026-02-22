@@ -286,6 +286,14 @@ export type ProtocolRuleSet = {
   $recordLimit?: ProtocolRecordLimitDefinition;
 
   /**
+   * If `$immutable` is `true`, records at this protocol path are write-once: they can be
+   * created but never updated after the initial write. `RecordsDelete` is still governed
+   * by `$actions` — immutability means the record's data cannot change, not that it
+   * cannot be removed.
+   */
+  $immutable?: boolean;
+
+  /**
    * Non-`$`-prefixed keys are nested child `ProtocolRuleSet` entries.
    * At runtime, JSON Schema validation ensures only valid child rule sets appear here.
    */
