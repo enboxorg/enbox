@@ -1,5 +1,5 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
-import type { AdminMessageSummary, AdminProtocolSummary, GlobalStats, TenantStats } from './types.js';
+import type { AdminMessageSummary, AdminProtocolSummary, GlobalStats, TenantExport, TenantStats } from './types.js';
 
 import { Kysely } from 'kysely';
 
@@ -73,10 +73,13 @@ export class AdminStore {
 
   /**
    * Returns a paginated list of distinct tenant DIDs from the message store.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/390
    */
   public async getDistinctTenants(options?: {
     cursor? : string;
     limit? : number;
+    search? : string;
   }): Promise<{ tenants: string[]; cursor?: string }> {
     const limit = options?.limit ?? 20;
 
@@ -88,6 +91,10 @@ export class AdminStore {
 
     if (options?.cursor) {
       query = query.where('tenant', '>', options.cursor);
+    }
+
+    if (options?.search) {
+      query = query.where('tenant', 'like', `%${options.search}%`);
     }
 
     const results = await query.execute();
@@ -368,6 +375,47 @@ export class AdminStore {
       protocol     : row.protocol!,
       messageCount : Number(row.messageCount),
     }));
+  }
+
+  /**
+   * Exports all message metadata and data records for a tenant as an array.
+   * Returns `{ messages, data, metadata }` for streaming/serialization.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/391
+   */
+  public async exportTenantData(did: string): Promise<TenantExport> {
+    const messages = await this.db
+      .selectFrom('messageStoreMessages')
+      .select([
+        'messageCid', 'interface', 'method', 'recordId', 'protocol',
+        'protocolPath', 'schema', 'author', 'recipient', 'messageTimestamp',
+        'dateCreated', 'datePublished', 'published', 'dataFormat', 'dataCid', 'dataSize',
+      ])
+      .where('tenant', '=', did)
+      .orderBy('id', 'asc')
+      .execute();
+
+    const dataRecords = await this.db
+      .selectFrom('dataStore')
+      .select(['recordId', 'dataCid', 'dataSize'])
+      .where('tenant', '=', did)
+      .orderBy('id', 'asc')
+      .execute();
+
+    return {
+      metadata: {
+        tenant          : did,
+        exportedAt      : new Date().toISOString(),
+        messageCount    : messages.length,
+        dataRecordCount : dataRecords.length,
+      },
+      messages    : messages.map((m): Record<string, unknown> => ({ ...m })),
+      dataRecords : dataRecords.map((d): Record<string, unknown> => ({
+        recordId : d.recordId,
+        dataCid  : d.dataCid,
+        dataSize : Number(d.dataSize),
+      })),
+    };
   }
 
   /**

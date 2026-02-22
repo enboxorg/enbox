@@ -8,15 +8,18 @@ import type { DwnServerConfig } from '../config.js';
 import type { RateLimiter } from '../rate-limiter.js';
 import type { RegistrationManager } from '../registration/registration-manager.js';
 import type { RegistrationStore } from '../registration/registration-store.js';
+import type { WebhookManager } from './webhook-manager.js';
 import type {
   AdminConnectionSnapshot,
   AdminServerStats,
   AdminTenantDetail,
   AdminTenantSummary,
+  AdminWebhookInput,
   PaginatedResponse,
   RateLimitStatus,
   RuntimeConfig,
   RuntimeConfigPatch,
+  TenantListOptions,
   TenantQuotaInput,
   TenantQuotaStatus,
 } from './types.js';
@@ -56,9 +59,14 @@ export class AdminApi {
   #auditLog: AuditLog | undefined;
   #ipRateLimiter: RateLimiter | undefined;
   #tenantRateLimiter: RateLimiter | undefined;
+  #webhookManager: WebhookManager | undefined;
   #startTime: number;
   #packageInfo: { version?: string };
   #metricsInterval: ReturnType<typeof setInterval> | undefined;
+  /** Tracks last failed-auth audit timestamp per IP to rate-limit logging. */
+  #failedAuthLog: Map<string, number> = new Map();
+  /** Minimum interval between audit log entries for the same IP (60 seconds). */
+  static readonly #AUTH_AUDIT_INTERVAL_MS = 60_000;
 
   private constructor() {
     this.#startTime = Date.now();
@@ -78,6 +86,7 @@ export class AdminApi {
     auditLog? : AuditLog;
     ipRateLimiter? : RateLimiter;
     tenantRateLimiter? : RateLimiter;
+    webhookManager? : WebhookManager;
     packageInfo? : { version?: string };
   }): AdminApi {
     const api = new AdminApi();
@@ -91,6 +100,7 @@ export class AdminApi {
     api.#auditLog = options.auditLog;
     api.#ipRateLimiter = options.ipRateLimiter;
     api.#tenantRateLimiter = options.tenantRateLimiter;
+    api.#webhookManager = options.webhookManager;
     api.#packageInfo = options.packageInfo ?? {};
     return api;
   }
@@ -114,6 +124,12 @@ export class AdminApi {
     // Authenticate every request.
     const authError = validateAdminAuth(req, this.#config);
     if (authError) {
+      // Log failed authentication attempts (401 only, not 404 for disabled admin).
+      // Rate-limited to one audit entry per IP per 60 seconds.
+      // @see https://github.com/enboxorg/enbox/issues/392
+      if (authError.status === 401) {
+        this.#auditFailedAuth(req, path);
+      }
       return authError;
     }
 
@@ -134,6 +150,11 @@ export class AdminApi {
       // --- Tenant list ---
       if (method === 'GET' && subPath === '/tenants') {
         return this.#handleTenantList(url);
+      }
+
+      // --- Tenant creation ---
+      if (method === 'POST' && subPath === '/tenants') {
+        return this.#handleTenantCreate(req);
       }
 
       // --- Tenant detail / suspend / unsuspend / delete ---
@@ -204,6 +225,15 @@ export class AdminApi {
         }
       }
 
+      // --- Tenant data export ---
+      {
+        const match = subPath.match(/^\/tenants\/([^/]+)\/export$/);
+        if (match && method === 'POST') {
+          const did = decodeURIComponent(match[1]);
+          return this.#handleTenantExport(did);
+        }
+      }
+
       // --- Rate limits ---
       if (method === 'GET' && subPath === '/rate-limits') {
         return this.#handleRateLimits();
@@ -232,6 +262,24 @@ export class AdminApi {
       // --- WebSocket connections ---
       if (method === 'GET' && subPath === '/connections') {
         return this.#handleConnections();
+      }
+
+      // --- Webhooks ---
+      if (subPath === '/webhooks') {
+        if (method === 'GET') {
+          return this.#handleWebhookList();
+        }
+        if (method === 'POST') {
+          return this.#handleWebhookCreate(req);
+        }
+      }
+
+      // --- Webhook delete ---
+      {
+        const match = subPath.match(/^\/webhooks\/([^/]+)$/);
+        if (match && method === 'DELETE') {
+          return this.#handleWebhookDelete(match[1]);
+        }
       }
 
       // --- Info (smoke test) ---
@@ -364,7 +412,9 @@ export class AdminApi {
   }
 
   /**
-   * Paginated tenant list.
+   * Paginated tenant list with optional search, filter, and sort.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/390
    */
   async #handleTenantList(url: URL): Promise<Response> {
     if (!this.#adminStore) {
@@ -374,19 +424,45 @@ export class AdminApi {
       );
     }
 
-    const cursor = url.searchParams.get('cursor') ?? undefined;
-    const limit = Math.min(parseIntOrDefault(url.searchParams.get('limit'), 20), 100);
+    const listOptions: TenantListOptions = {
+      cursor : url.searchParams.get('cursor') ?? undefined,
+      limit  : Math.min(parseIntOrDefault(url.searchParams.get('limit'), 20), 100),
+      search : url.searchParams.get('search') ?? undefined,
+      status : (url.searchParams.get('status') as TenantListOptions['status']) ?? undefined,
+      sort   : (url.searchParams.get('sort') as TenantListOptions['sort']) ?? undefined,
+      order  : (url.searchParams.get('order') as TenantListOptions['order']) ?? undefined,
+    };
+
+    // Validate enum-style params.
+    if (listOptions.status !== undefined && listOptions.status !== 'active' && listOptions.status !== 'suspended') {
+      return Response.json({ error: 'status must be "active" or "suspended"' }, { status: 400 });
+    }
+    if (listOptions.sort !== undefined && !['did', 'storage', 'messages'].includes(listOptions.sort)) {
+      return Response.json({ error: 'sort must be "did", "storage", or "messages"' }, { status: 400 });
+    }
+    if (listOptions.order !== undefined && listOptions.order !== 'asc' && listOptions.order !== 'desc') {
+      return Response.json({ error: 'order must be "asc" or "desc"' }, { status: 400 });
+    }
 
     // Get tenant list from registration store if available, otherwise discover from messages.
     let tenantDids: string[];
     let nextCursor: string | undefined;
 
     if (this.#registrationStore) {
-      const result = await this.#registrationStore.listTenants({ cursor, limit });
+      const result = await this.#registrationStore.listTenants({
+        cursor : listOptions.cursor,
+        limit  : listOptions.limit,
+        search : listOptions.search,
+        status : listOptions.status,
+      });
       tenantDids = result.tenants.map((t): string => t.did);
       nextCursor = result.cursor;
     } else {
-      const result = await this.#adminStore.getDistinctTenants({ cursor, limit });
+      const result = await this.#adminStore.getDistinctTenants({
+        cursor : listOptions.cursor,
+        limit  : listOptions.limit,
+        search : listOptions.search,
+      });
       tenantDids = result.tenants;
       nextCursor = result.cursor;
     }
@@ -403,8 +479,17 @@ export class AdminApi {
       }),
     );
 
+    // Apply client-side sort when sorting by storage or messages (not supported in SQL cursor pagination).
+    if (listOptions.sort === 'storage') {
+      const dir = listOptions.order === 'desc' ? -1 : 1;
+      tenants.sort((a, b): number => (a.dataStorageBytes - b.dataStorageBytes) * dir);
+    } else if (listOptions.sort === 'messages') {
+      const dir = listOptions.order === 'desc' ? -1 : 1;
+      tenants.sort((a, b): number => (a.messageCount - b.messageCount) * dir);
+    }
+
     const totalCount = this.#registrationStore
-      ? await this.#registrationStore.getTenantCount()
+      ? await this.#registrationStore.getTenantCount({ search: listOptions.search, status: listOptions.status })
       : await this.#adminStore.getTenantCount();
 
     const response: PaginatedResponse<AdminTenantSummary> = {
@@ -560,6 +645,52 @@ export class AdminApi {
 
     await this.#audit('tenant.unsuspend', did);
     return Response.json({ success: true, did });
+  }
+
+  /**
+   * Pre-registers a tenant DID via the admin API. Optionally sets a quota.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/393
+   */
+  async #handleTenantCreate(req: Request): Promise<Response> {
+    if (!this.#registrationStore) {
+      return Response.json(
+        { error: 'Tenant creation requires registration to be enabled.' },
+        { status: 501 },
+      );
+    }
+
+    let body: { did?: string; maxMessages?: number; maxStorageBytes?: number };
+    try {
+      body = await req.json() as typeof body;
+    } catch {
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+
+    if (!body.did || typeof body.did !== 'string') {
+      return Response.json({ error: 'did is required and must be a string' }, { status: 400 });
+    }
+
+    const created = await this.#registrationStore.createTenant(body.did);
+    if (!created) {
+      return Response.json({ error: 'Tenant already exists' }, { status: 409 });
+    }
+
+    // Set quota if provided.
+    if (body.maxMessages !== undefined || body.maxStorageBytes !== undefined) {
+      await this.#registrationStore.setQuota({
+        did             : body.did,
+        maxMessages     : body.maxMessages ?? 0,
+        maxStorageBytes : body.maxStorageBytes ?? 0,
+      });
+    }
+
+    await this.#audit('tenant.create', body.did, JSON.stringify({
+      maxMessages     : body.maxMessages,
+      maxStorageBytes : body.maxStorageBytes,
+    }));
+
+    return Response.json({ success: true, did: body.did }, { status: 201 });
   }
 
   /**
@@ -830,6 +961,21 @@ export class AdminApi {
       return Response.json({ error: 'No valid configuration fields provided.' }, { status: 400 });
     }
 
+    // Reconfigure rate limiters if rate limit settings changed.
+    // @see https://github.com/enboxorg/enbox/issues/389
+    if (this.#ipRateLimiter && (body.rateLimitRequestsPerSecond !== undefined || body.rateLimitBurst !== undefined)) {
+      this.#ipRateLimiter.reconfigure({
+        refillRate : this.#config.rateLimitRequestsPerSecond,
+        maxTokens  : this.#config.rateLimitBurst,
+      });
+    }
+    if (this.#tenantRateLimiter && (body.rateLimitTenantRequestsPerSecond !== undefined || body.rateLimitTenantBurst !== undefined)) {
+      this.#tenantRateLimiter.reconfigure({
+        refillRate : this.#config.rateLimitTenantRequestsPerSecond,
+        maxTokens  : this.#config.rateLimitTenantBurst,
+      });
+    }
+
     await this.#audit('config.update', undefined, JSON.stringify({ changes, values: body }));
 
     return Response.json({ success: true, updated: changes });
@@ -883,6 +1029,37 @@ export class AdminApi {
     return Response.json({ protocols });
   }
 
+  /**
+   * Exports all message metadata and data records for a tenant as JSON.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/391
+   */
+  async #handleTenantExport(did: string): Promise<Response> {
+    if (!this.#adminStore) {
+      return Response.json(
+        { error: 'Admin store unavailable. Requires a SQL storage backend.' },
+        { status: 501 },
+      );
+    }
+
+    const exportData = await this.#adminStore.exportTenantData(did);
+
+    if (exportData.metadata.messageCount === 0 && exportData.metadata.dataRecordCount === 0) {
+      return Response.json({ error: 'Tenant not found or has no data' }, { status: 404 });
+    }
+
+    await this.#audit('tenant.export', did, JSON.stringify({
+      messageCount    : exportData.metadata.messageCount,
+      dataRecordCount : exportData.metadata.dataRecordCount,
+    }));
+
+    return Response.json(exportData, {
+      headers: {
+        'content-disposition': `attachment; filename="${did}-export.json"`,
+      },
+    });
+  }
+
   // ---------------------------------------------------------------------------
   // Rate limit handler
   // ---------------------------------------------------------------------------
@@ -911,6 +1088,99 @@ export class AdminApi {
     };
 
     return Response.json(status);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Webhook handlers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Lists all registered webhooks.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/395
+   */
+  async #handleWebhookList(): Promise<Response> {
+    if (!this.#webhookManager) {
+      return Response.json(
+        { error: 'Webhooks are not enabled. Requires a SQL storage backend.' },
+        { status: 501 },
+      );
+    }
+
+    const webhooks = await this.#webhookManager.list();
+    return Response.json({ webhooks });
+  }
+
+  /**
+   * Registers a new webhook endpoint.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/395
+   */
+  async #handleWebhookCreate(req: Request): Promise<Response> {
+    if (!this.#webhookManager) {
+      return Response.json(
+        { error: 'Webhooks are not enabled. Requires a SQL storage backend.' },
+        { status: 501 },
+      );
+    }
+
+    let body: AdminWebhookInput;
+    try {
+      body = await req.json() as AdminWebhookInput;
+    } catch {
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+
+    if (!body.url || typeof body.url !== 'string') {
+      return Response.json({ error: 'url is required and must be a string' }, { status: 400 });
+    }
+
+    if (!body.events || !Array.isArray(body.events) || body.events.length === 0) {
+      return Response.json({ error: 'events is required and must be a non-empty array' }, { status: 400 });
+    }
+
+    // Validate URL format.
+    try {
+      new URL(body.url);
+    } catch {
+      return Response.json({ error: 'url must be a valid URL' }, { status: 400 });
+    }
+
+    const webhook = await this.#webhookManager.register(body);
+    await this.#audit('webhook.create', webhook.id, JSON.stringify({ url: body.url, events: body.events }));
+
+    return Response.json(webhook, { status: 201 });
+  }
+
+  /**
+   * Deletes a webhook registration by ID.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/395
+   */
+  async #handleWebhookDelete(id: string): Promise<Response> {
+    if (!this.#webhookManager) {
+      return Response.json(
+        { error: 'Webhooks are not enabled. Requires a SQL storage backend.' },
+        { status: 501 },
+      );
+    }
+
+    const deleted = await this.#webhookManager.delete(id);
+    if (!deleted) {
+      return Response.json({ error: 'Webhook not found' }, { status: 404 });
+    }
+
+    await this.#audit('webhook.delete', id);
+    return Response.json({ success: true, id });
+  }
+
+  /**
+   * Public accessor to fire webhook events from other components.
+   */
+  public fireWebhook(event: string, target?: string, data?: Record<string, unknown>): void {
+    if (this.#webhookManager) {
+      this.#webhookManager.fire(event, target, data);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -970,6 +1240,37 @@ export class AdminApi {
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Logs failed admin authentication attempts, rate-limited to one entry per IP
+   * per 60 seconds to prevent audit log flooding.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/392
+   */
+  #auditFailedAuth(req: Request, path: string): void {
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
+    const now = Date.now();
+    const lastLogged = this.#failedAuthLog.get(ip);
+
+    if (lastLogged !== undefined && (now - lastLogged) < AdminApi.#AUTH_AUDIT_INTERVAL_MS) {
+      return; // Rate-limited — skip.
+    }
+
+    this.#failedAuthLog.set(ip, now);
+
+    // Fire-and-forget — never block the response for audit logging.
+    this.#audit('admin.auth.failure', ip, JSON.stringify({ path }));
+
+    // Periodically prune old entries to prevent unbounded Map growth.
+    if (this.#failedAuthLog.size > 1000) {
+      const threshold = now - AdminApi.#AUTH_AUDIT_INTERVAL_MS;
+      for (const [key, ts] of this.#failedAuthLog) {
+        if (ts < threshold) {
+          this.#failedAuthLog.delete(key);
+        }
+      }
+    }
+  }
 
   /**
    * Records an audit event if the audit log is available.

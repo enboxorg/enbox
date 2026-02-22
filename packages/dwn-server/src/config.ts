@@ -114,6 +114,26 @@ export const config = {
   quotaMaxStorageBytes: parseInt(process.env.DWN_QUOTA_MAX_STORAGE_BYTES || '0'),
 
   // ---------------------------------------------------------------------------
+  // Audit log retention
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Maximum age of audit log entries in days. Entries older than this are purged.
+   * 0 = no age limit (default: 90 days).
+   *
+   * @see https://github.com/enboxorg/enbox/issues/394
+   */
+  auditLogMaxAgeDays: parseInt(process.env.DWN_AUDIT_LOG_MAX_AGE_DAYS || '90'),
+
+  /**
+   * Maximum number of audit log rows to retain. Oldest entries are purged when exceeded.
+   * 0 = no row limit (default: 100000).
+   *
+   * @see https://github.com/enboxorg/enbox/issues/394
+   */
+  auditLogMaxRows: parseInt(process.env.DWN_AUDIT_LOG_MAX_ROWS || '100000'),
+
+  // ---------------------------------------------------------------------------
   // Rate limiting
   // ---------------------------------------------------------------------------
 

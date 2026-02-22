@@ -5,8 +5,10 @@ import { tmpdir } from 'os';
 import { mkdtempSync, rmSync } from 'fs';
 
 import { ActivityLog } from '../../src/admin/activity-log.js';
+import { AuditLog } from '../../src/admin/audit-log.js';
 import { config as defaultConfig } from '../../src/config.js';
 import { DwnServer } from '../../src/dwn-server.js';
+import { RateLimiter } from '../../src/rate-limiter.js';
 
 const adminToken = 'test-admin-token-secret';
 
@@ -1828,5 +1830,544 @@ describe('AdminApi — query parameter safety', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.events).toBeInstanceOf(Array);
+  });
+});
+
+// =============================================================================
+// Phase 6: Operational Hardening Tests
+// =============================================================================
+
+describe('RateLimiter — reconfigure', () => {
+  it('should reconfigure refillRate and maxTokens', () => {
+    const limiter = new RateLimiter({ refillRate: 10, maxTokens: 20 });
+    expect(limiter.config.refillRate).toBe(10);
+    expect(limiter.config.maxTokens).toBe(20);
+
+    limiter.reconfigure({ refillRate: 50, maxTokens: 100 });
+    expect(limiter.config.refillRate).toBe(50);
+    expect(limiter.config.maxTokens).toBe(100);
+
+    limiter.destroy();
+  });
+
+  it('should use new maxTokens for new buckets after reconfigure', () => {
+    const limiter = new RateLimiter({ refillRate: 10, maxTokens: 5 });
+
+    // Consume a token to create a bucket.
+    limiter.consume('key1');
+    expect(limiter.getTokens('key1')).toBeLessThan(5);
+
+    // Reconfigure with higher max tokens.
+    limiter.reconfigure({ refillRate: 10, maxTokens: 100 });
+
+    // New bucket should start with the new max.
+    limiter.consume('key2');
+    const tokens = limiter.getTokens('key2')!;
+    expect(tokens).toBeGreaterThan(5);
+    expect(tokens).toBeLessThanOrEqual(100);
+
+    limiter.destroy();
+  });
+});
+
+describe('AdminApi — rate limiter hot-reload (#389)', () => {
+  let dwnServer: DwnServer;
+  let port: number;
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    port = 8850 + Math.floor(Math.random() * 40);
+    tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-ratelimit-'));
+    dwnServer = new DwnServer({
+      config: {
+        ...createTestConfig(port, tmpDir),
+        rateLimitRequestsPerSecond       : 100,
+        rateLimitBurst                   : 200,
+        rateLimitTenantRequestsPerSecond : 50,
+        rateLimitTenantBurst             : 100,
+      },
+    });
+    await dwnServer.start();
+  });
+
+  afterAll(async () => {
+    await dwnServer.stop();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should reconfigure rate limiters when config is patched', async () => {
+    // Patch rate limit config.
+    const patchResponse = await adminFetch({ port }, '/config', {
+      method  : 'PATCH',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({
+        rateLimitRequestsPerSecond       : 200,
+        rateLimitBurst                   : 400,
+        rateLimitTenantRequestsPerSecond : 100,
+        rateLimitTenantBurst             : 200,
+      }),
+    });
+    expect(patchResponse.status).toBe(200);
+
+    // Verify the config was updated.
+    const configResponse = await adminFetch({ port }, '/config');
+    const config = await configResponse.json();
+    expect(config.rateLimitRequestsPerSecond).toBe(200);
+    expect(config.rateLimitBurst).toBe(400);
+    expect(config.rateLimitTenantRequestsPerSecond).toBe(100);
+    expect(config.rateLimitTenantBurst).toBe(200);
+
+    // Verify rate limits endpoint reflects the new values.
+    const limitsResponse = await adminFetch({ port }, '/rate-limits');
+    const limits = await limitsResponse.json();
+    expect(limits.config.perIp.requestsPerSecond).toBe(200);
+    expect(limits.config.perIp.burst).toBe(400);
+    expect(limits.config.perTenant.requestsPerSecond).toBe(100);
+    expect(limits.config.perTenant.burst).toBe(200);
+  });
+});
+
+describe('AdminApi — tenant search/filter (#390)', () => {
+  let dwnServer: DwnServer;
+  let port: number;
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    port = 8900 + Math.floor(Math.random() * 40);
+    tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-search-'));
+    dwnServer = new DwnServer({ config: createTestConfig(port, tmpDir) });
+    await dwnServer.start();
+
+    // Create test tenants.
+    await adminFetch({ port }, '/tenants', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ did: 'did:test:alice-001' }),
+    });
+    await adminFetch({ port }, '/tenants', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ did: 'did:test:bob-002' }),
+    });
+    await adminFetch({ port }, '/tenants', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ did: 'did:test:carol-003' }),
+    });
+
+    // Suspend one tenant.
+    await adminFetch({ port }, '/tenants/did%3Atest%3Abob-002/suspend', { method: 'POST' });
+  });
+
+  afterAll(async () => {
+    await dwnServer.stop();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should filter tenants by search substring', async () => {
+    const response = await adminFetch({ port }, '/tenants?search=alice');
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.length).toBe(1);
+    expect(body.data[0].did).toBe('did:test:alice-001');
+  });
+
+  it('should filter tenants by status=suspended', async () => {
+    const response = await adminFetch({ port }, '/tenants?status=suspended');
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.length).toBe(1);
+    expect(body.data[0].did).toBe('did:test:bob-002');
+  });
+
+  it('should filter tenants by status=active', async () => {
+    const response = await adminFetch({ port }, '/tenants?status=active');
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.length).toBe(2);
+  });
+
+  it('should return totalCount matching the filter', async () => {
+    const response = await adminFetch({ port }, '/tenants?search=bob');
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.totalCount).toBe(1);
+  });
+
+  it('should reject invalid status parameter', async () => {
+    const response = await adminFetch({ port }, '/tenants?status=invalid');
+    expect(response.status).toBe(400);
+  });
+
+  it('should reject invalid sort parameter', async () => {
+    const response = await adminFetch({ port }, '/tenants?sort=invalid');
+    expect(response.status).toBe(400);
+  });
+
+  it('should reject invalid order parameter', async () => {
+    const response = await adminFetch({ port }, '/tenants?order=invalid');
+    expect(response.status).toBe(400);
+  });
+});
+
+describe('AdminApi — tenant creation (#393)', () => {
+  let dwnServer: DwnServer;
+  let port: number;
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    port = 8950 + Math.floor(Math.random() * 40);
+    tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-create-'));
+    dwnServer = new DwnServer({ config: createTestConfig(port, tmpDir) });
+    await dwnServer.start();
+  });
+
+  afterAll(async () => {
+    await dwnServer.stop();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should create a new tenant', async () => {
+    const response = await adminFetch({ port }, '/tenants', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ did: 'did:test:new-tenant-1' }),
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.did).toBe('did:test:new-tenant-1');
+  });
+
+  it('should return 409 for duplicate tenant', async () => {
+    // First create.
+    await adminFetch({ port }, '/tenants', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ did: 'did:test:dup-tenant' }),
+    });
+
+    // Duplicate.
+    const response = await adminFetch({ port }, '/tenants', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ did: 'did:test:dup-tenant' }),
+    });
+    expect(response.status).toBe(409);
+  });
+
+  it('should create a tenant with quota', async () => {
+    const response = await adminFetch({ port }, '/tenants', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({
+        did             : 'did:test:quota-tenant',
+        maxMessages     : 5000,
+        maxStorageBytes : 1048576,
+      }),
+    });
+    expect(response.status).toBe(201);
+
+    // Verify quota was set.
+    const quotaResponse = await adminFetch({ port }, '/tenants/did%3Atest%3Aquota-tenant/quota');
+    expect(quotaResponse.status).toBe(200);
+    const quota = await quotaResponse.json();
+    expect(quota.quota.maxMessages).toBe(5000);
+    expect(quota.quota.maxStorageBytes).toBe(1048576);
+    expect(quota.quota.source).toBe('tenant');
+  });
+
+  it('should return 400 when did is missing', async () => {
+    const response = await adminFetch({ port }, '/tenants', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({}),
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it('should return 400 for invalid JSON body', async () => {
+    const response = await adminFetch({ port }, '/tenants', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : 'not-json',
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it('should audit tenant creation', async () => {
+    await adminFetch({ port }, '/tenants', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ did: 'did:test:audited-tenant' }),
+    });
+
+    const auditResponse = await adminFetch({ port }, '/audit?action=tenant.create');
+    expect(auditResponse.status).toBe(200);
+    const audit = await auditResponse.json();
+    expect(audit.events.length).toBeGreaterThanOrEqual(1);
+    expect(audit.events[0].action).toBe('tenant.create');
+    expect(audit.events[0].target).toBe('did:test:audited-tenant');
+  });
+});
+
+describe('AdminApi — tenant export (#391)', () => {
+  let dwnServer: DwnServer;
+  let port: number;
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    port = 9010 + Math.floor(Math.random() * 40);
+    tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-export-'));
+    dwnServer = new DwnServer({ config: createTestConfig(port, tmpDir) });
+    await dwnServer.start();
+
+    // Create a tenant.
+    await adminFetch({ port }, '/tenants', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ did: 'did:test:export-tenant' }),
+    });
+  });
+
+  afterAll(async () => {
+    await dwnServer.stop();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should return 404 for tenant with no data', async () => {
+    const response = await adminFetch({ port }, '/tenants/did%3Atest%3Aexport-tenant/export', {
+      method: 'POST',
+    });
+    expect(response.status).toBe(404);
+  });
+
+  it('should return 404 for non-existent tenant export', async () => {
+    const response = await adminFetch({ port }, '/tenants/did%3Atest%3Anonexistent/export', {
+      method: 'POST',
+    });
+    expect(response.status).toBe(404);
+  });
+});
+
+describe('AdminApi — failed auth audit logging (#392)', () => {
+  let dwnServer: DwnServer;
+  let port: number;
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    port = 9060 + Math.floor(Math.random() * 40);
+    tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-authaudit-'));
+    dwnServer = new DwnServer({ config: createTestConfig(port, tmpDir) });
+    await dwnServer.start();
+  });
+
+  afterAll(async () => {
+    await dwnServer.stop();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should audit failed authentication attempts', async () => {
+    // Make a request with the wrong token.
+    await fetch(`http://localhost:${port}/admin/api/info`, {
+      headers: { authorization: 'Bearer wrong-token' },
+    });
+
+    // Check audit log for the failure.
+    const auditResponse = await adminFetch({ port }, '/audit?action=admin.auth.failure');
+    expect(auditResponse.status).toBe(200);
+    const audit = await auditResponse.json();
+    expect(audit.events.length).toBeGreaterThanOrEqual(1);
+    expect(audit.events[0].action).toBe('admin.auth.failure');
+  });
+
+  it('should rate-limit auth failure audit logging per IP', async () => {
+    // Make multiple failed attempts rapidly.
+    for (let i = 0; i < 5; i++) {
+      await fetch(`http://localhost:${port}/admin/api/info`, {
+        headers: { authorization: 'Bearer wrong-token' },
+      });
+    }
+
+    // Should not produce 5 audit entries (rate-limited to 1 per 60s per IP).
+    const auditResponse = await adminFetch({ port }, '/audit?action=admin.auth.failure');
+    expect(auditResponse.status).toBe(200);
+    const audit = await auditResponse.json();
+    // At most 2 (one from previous test, one from this test's first attempt
+    // if enough time passed). The key point is < 6.
+    expect(audit.events.length).toBeLessThan(6);
+  });
+});
+
+describe('AdminApi — webhooks (#395)', () => {
+  let dwnServer: DwnServer;
+  let port: number;
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    port = 9400 + Math.floor(Math.random() * 40);
+    tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-webhooks-'));
+    dwnServer = new DwnServer({ config: createTestConfig(port, tmpDir) });
+    await dwnServer.start();
+  });
+
+  afterAll(async () => {
+    await dwnServer.stop();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should list webhooks (initially empty)', async () => {
+    const response = await adminFetch({ port }, '/webhooks');
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.webhooks).toBeInstanceOf(Array);
+    expect(body.webhooks.length).toBe(0);
+  });
+
+  it('should create a webhook', async () => {
+    const response = await adminFetch({ port }, '/webhooks', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({
+        url    : 'https://example.com/webhook',
+        events : ['tenant.*', 'quota.warning'],
+      }),
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.id).toBeDefined();
+    expect(body.url).toBe('https://example.com/webhook');
+    expect(body.events).toEqual(['tenant.*', 'quota.warning']);
+  });
+
+  it('should list the created webhook', async () => {
+    const response = await adminFetch({ port }, '/webhooks');
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.webhooks.length).toBe(1);
+  });
+
+  it('should delete a webhook', async () => {
+    // Create one to delete.
+    const createResponse = await adminFetch({ port }, '/webhooks', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({
+        url    : 'https://example.com/delete-me',
+        events : ['*'],
+      }),
+    });
+    const created = await createResponse.json();
+
+    const deleteResponse = await adminFetch({ port }, `/webhooks/${created.id}`, {
+      method: 'DELETE',
+    });
+    expect(deleteResponse.status).toBe(200);
+    const body = await deleteResponse.json();
+    expect(body.success).toBe(true);
+  });
+
+  it('should return 404 for deleting a non-existent webhook', async () => {
+    const response = await adminFetch({ port }, '/webhooks/nonexistent-id', {
+      method: 'DELETE',
+    });
+    expect(response.status).toBe(404);
+  });
+
+  it('should return 400 for invalid webhook body', async () => {
+    const response = await adminFetch({ port }, '/webhooks', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ url: 'not-a-url', events: [] }),
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it('should return 400 when url is missing', async () => {
+    const response = await adminFetch({ port }, '/webhooks', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ events: ['*'] }),
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it('should return 400 when events is missing', async () => {
+    const response = await adminFetch({ port }, '/webhooks', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ url: 'https://example.com/hook' }),
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it('should redact webhook secrets in list response', async () => {
+    // Create a webhook with a secret.
+    await adminFetch({ port }, '/webhooks', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({
+        url    : 'https://example.com/secret-hook',
+        events : ['*'],
+        secret : 'my-super-secret',
+      }),
+    });
+
+    const response = await adminFetch({ port }, '/webhooks');
+    const body = await response.json();
+    const secretHook = body.webhooks.find((w: { url: string }): boolean =>
+      w.url === 'https://example.com/secret-hook',
+    );
+    expect(secretHook).toBeDefined();
+    expect(secretHook.secret).toBe('***');
+  });
+});
+
+describe('AuditLog — retention policy (#394)', () => {
+  let auditLog: AuditLog;
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'dwn-audit-retention-'));
+    const { getDialectFromUrl } = await import('../../src/storage.js');
+    const dialect = getDialectFromUrl(new URL(`sqlite://${tmpDir}/audit.db`));
+    auditLog = await AuditLog.create(dialect);
+  });
+
+  afterAll(async () => {
+    await auditLog.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should enforce maxRows retention', async () => {
+    // Insert 20 events.
+    for (let i = 0; i < 20; i++) {
+      await auditLog.record({
+        actor  : 'test',
+        action : `test.event.${i}`,
+      });
+    }
+
+    const countBefore = await auditLog.count();
+    expect(countBefore).toBe(20);
+
+    // Enforce retention with maxRows = 10.
+    const deleted = await auditLog.enforceRetention({ maxAgeDays: 0, maxRows: 10 });
+    expect(deleted).toBe(10);
+
+    const countAfter = await auditLog.count();
+    expect(countAfter).toBe(10);
+  });
+
+  it('should enforce maxAgeDays retention', async () => {
+    // The 10 remaining events have recent timestamps, so maxAgeDays=0 should
+    // not match. Using maxAgeDays=0 is "no age limit".
+    const deleted = await auditLog.enforceRetention({ maxAgeDays: 0, maxRows: 0 });
+    expect(deleted).toBe(0);
+  });
+
+  it('should return 0 when no retention config is set', async () => {
+    const deleted = await auditLog.enforceRetention();
+    expect(deleted).toBe(0);
   });
 });

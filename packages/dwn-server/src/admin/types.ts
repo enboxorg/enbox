@@ -1,4 +1,24 @@
 /**
+ * Options for listing tenants with search, filter, and sort capabilities.
+ *
+ * @see https://github.com/enboxorg/enbox/issues/390
+ */
+export type TenantListOptions = {
+  /** Cursor for keyset pagination. */
+  cursor? : string;
+  /** Maximum number of results per page. */
+  limit? : number;
+  /** Substring search across tenant DIDs. */
+  search? : string;
+  /** Filter by suspension status. */
+  status? : 'active' | 'suspended';
+  /** Sort field. Default: `did`. */
+  sort? : 'did' | 'storage' | 'messages';
+  /** Sort direction. Default: `asc`. */
+  order? : 'asc' | 'desc';
+};
+
+/**
  * Summary of a tenant for list endpoints.
  */
 export type AdminTenantSummary = {
@@ -278,4 +298,55 @@ export type AdminMessageSummary = {
 export type AdminProtocolSummary = {
   protocol : string;
   messageCount : number;
+};
+
+// ---------------------------------------------------------------------------
+// Tenant data export
+// ---------------------------------------------------------------------------
+
+/**
+ * Complete tenant data export for backup/migration.
+ *
+ * @see https://github.com/enboxorg/enbox/issues/391
+ */
+export type TenantExport = {
+  metadata : {
+    tenant : string;
+    exportedAt : string;
+    messageCount : number;
+    dataRecordCount : number;
+  };
+  messages : Record<string, unknown>[];
+  dataRecords : Record<string, unknown>[];
+};
+
+// ---------------------------------------------------------------------------
+// Webhook / Alerting
+// ---------------------------------------------------------------------------
+
+/**
+ * A registered webhook endpoint for admin event notifications.
+ *
+ * @see https://github.com/enboxorg/enbox/issues/395
+ */
+export type AdminWebhook = {
+  /** Auto-generated webhook ID. */
+  id : string;
+  /** URL to POST events to. */
+  url : string;
+  /** Event patterns to subscribe to (e.g. `tenant.*`, `quota.warning`). Asterisk is wildcard. */
+  events : string[];
+  /** Optional shared secret for HMAC-SHA256 signature verification. */
+  secret? : string;
+  /** ISO-8601 timestamp of creation. */
+  createdAt : string;
+};
+
+/**
+ * Input for creating a webhook.
+ */
+export type AdminWebhookInput = {
+  url : string;
+  events : string[];
+  secret? : string;
 };
