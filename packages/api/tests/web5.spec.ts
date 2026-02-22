@@ -1085,6 +1085,293 @@ describe('web5 api', () => {
         expect(registerStub.notCalled).toBe(true); // not called
       });
 
+      describe('provider-auth', () => {
+        it('should use provider auth when server requires it and callback is provided', async () => {
+          sinon
+            .stub(Web5UserAgent, 'create')
+            .resolves(testHarness.agent as Web5UserAgent);
+          sinon
+            .stub(testHarness.agent.rpc, 'getServerInfo')
+            .resolves({
+              registrationRequirements : ['provider-auth-v0'],
+              maxFileSize              : 10000,
+              webSocketSupport         : true,
+              providerAuth             : {
+                authorizeUrl : 'https://auth.example.com/authorize',
+                tokenUrl     : 'https://auth.example.com/token',
+                refreshUrl   : 'https://auth.example.com/refresh',
+              },
+            });
+
+          const exchangeStub = sinon
+            .stub(DwnRegistrar, 'exchangeAuthCode')
+            .resolves({
+              registrationToken : 'reg-token-123',
+              refreshToken      : 'refresh-456',
+              expiresIn         : 3600,
+              tokenType         : 'bearer',
+            });
+
+          const registerTokenStub = sinon
+            .stub(DwnRegistrar, 'registerTenantWithToken')
+            .resolves();
+
+          const onProviderAuthRequired = sinon.stub().callsFake(
+            async (params: any): Promise<any> => ({
+              code  : 'auth-code-xyz',
+              state : params.state,
+            }),
+          );
+
+          const onRegistrationTokensSpy = sinon.spy();
+
+          const registration = {
+            onSuccess            : (): void => {},
+            onFailure            : (): void => {},
+            onProviderAuthRequired,
+            onRegistrationTokens : onRegistrationTokensSpy,
+          };
+
+          const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
+          const registerFailureSpy = sinon.spy(registration, 'onFailure');
+
+          const { web5, did } = await Web5.connect({
+            registration,
+            didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+            sync             : 'off',
+          });
+
+          expect(web5).toBeDefined();
+          expect(did).toBeDefined();
+          expect(registerSuccessSpy.calledOnce).toBe(true);
+          expect(registerFailureSpy.notCalled).toBe(true);
+
+          // Verify the auth flow was triggered.
+          expect(onProviderAuthRequired.calledOnce).toBe(true);
+          const authParams = onProviderAuthRequired.firstCall.args[0];
+          expect(authParams.authorizeUrl).toContain('https://auth.example.com/authorize');
+          expect(authParams.dwnEndpoint).toBe('https://dwn.example.com');
+          expect(authParams.state).toBeDefined();
+
+          // Verify code exchange was called.
+          expect(exchangeStub.calledOnce).toBe(true);
+          expect(exchangeStub.firstCall.args[0]).toBe('https://auth.example.com/token');
+          expect(exchangeStub.firstCall.args[1]).toBe('auth-code-xyz');
+
+          // Verify registration was called for both agent DID and connected DID.
+          expect(registerTokenStub.callCount).toBe(2);
+
+          // Verify tokens were reported back.
+          expect(onRegistrationTokensSpy.calledOnce).toBe(true);
+          const tokens = onRegistrationTokensSpy.firstCall.args[0];
+          expect(tokens['https://dwn.example.com']).toBeDefined();
+          expect(tokens['https://dwn.example.com'].registrationToken).toBe('reg-token-123');
+          expect(tokens['https://dwn.example.com'].refreshToken).toBe('refresh-456');
+        });
+
+        it('should reuse cached registration tokens from previous sessions', async () => {
+          sinon
+            .stub(Web5UserAgent, 'create')
+            .resolves(testHarness.agent as Web5UserAgent);
+          sinon
+            .stub(testHarness.agent.rpc, 'getServerInfo')
+            .resolves({
+              registrationRequirements : ['provider-auth-v0'],
+              maxFileSize              : 10000,
+              webSocketSupport         : true,
+              providerAuth             : {
+                authorizeUrl : 'https://auth.example.com/authorize',
+                tokenUrl     : 'https://auth.example.com/token',
+              },
+            });
+
+          const registerTokenStub = sinon
+            .stub(DwnRegistrar, 'registerTenantWithToken')
+            .resolves();
+
+          const onProviderAuthRequired = sinon.spy();
+
+          const registration = {
+            onSuccess          : (): void => {},
+            onFailure          : (): void => {},
+            onProviderAuthRequired,
+            registrationTokens : {
+              'https://dwn.example.com': {
+                registrationToken : 'cached-token',
+                tokenUrl          : 'https://auth.example.com/token',
+              },
+            },
+          };
+
+          const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
+
+          await Web5.connect({
+            registration,
+            didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+            sync             : 'off',
+          });
+
+          expect(registerSuccessSpy.calledOnce).toBe(true);
+
+          // The auth flow callback should NOT be called since we had a cached token.
+          expect(onProviderAuthRequired.notCalled).toBe(true);
+
+          // Registration should still be called with the cached token.
+          expect(registerTokenStub.callCount).toBe(2); // agent DID + connected DID
+          expect(registerTokenStub.firstCall.args[2]).toBe('cached-token');
+        });
+
+        it('should refresh expired tokens before registration', async () => {
+          sinon
+            .stub(Web5UserAgent, 'create')
+            .resolves(testHarness.agent as Web5UserAgent);
+          sinon
+            .stub(testHarness.agent.rpc, 'getServerInfo')
+            .resolves({
+              registrationRequirements : ['provider-auth-v0'],
+              maxFileSize              : 10000,
+              webSocketSupport         : true,
+              providerAuth             : {
+                authorizeUrl : 'https://auth.example.com/authorize',
+                tokenUrl     : 'https://auth.example.com/token',
+                refreshUrl   : 'https://auth.example.com/refresh',
+              },
+            });
+
+          const refreshStub = sinon
+            .stub(DwnRegistrar, 'refreshRegistrationToken')
+            .resolves({
+              registrationToken : 'refreshed-token',
+              refreshToken      : 'new-refresh',
+              expiresIn         : 7200,
+              tokenType         : 'bearer',
+            });
+
+          const registerTokenStub = sinon
+            .stub(DwnRegistrar, 'registerTenantWithToken')
+            .resolves();
+
+          const onProviderAuthRequired = sinon.spy();
+
+          const registration = {
+            onSuccess          : (): void => {},
+            onFailure          : (): void => {},
+            onProviderAuthRequired,
+            registrationTokens : {
+              'https://dwn.example.com': {
+                registrationToken : 'expired-token',
+                refreshToken      : 'old-refresh',
+                expiresAt         : Date.now() - 60000, // expired 1 minute ago
+                tokenUrl          : 'https://auth.example.com/token',
+                refreshUrl        : 'https://auth.example.com/refresh',
+              },
+            },
+          };
+
+          const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
+
+          await Web5.connect({
+            registration,
+            didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+            sync             : 'off',
+          });
+
+          expect(registerSuccessSpy.calledOnce).toBe(true);
+
+          // Token should have been refreshed.
+          expect(refreshStub.calledOnce).toBe(true);
+          expect(refreshStub.firstCall.args[0]).toBe('https://auth.example.com/refresh');
+          expect(refreshStub.firstCall.args[1]).toBe('old-refresh');
+
+          // Auth flow callback should NOT be called since refresh succeeded.
+          expect(onProviderAuthRequired.notCalled).toBe(true);
+
+          // Registration should use the refreshed token.
+          expect(registerTokenStub.firstCall.args[2]).toBe('refreshed-token');
+        });
+
+        it('should fall back to PoW when provider auth callback is not provided', async () => {
+          sinon
+            .stub(Web5UserAgent, 'create')
+            .resolves(testHarness.agent as Web5UserAgent);
+          sinon
+            .stub(testHarness.agent.rpc, 'getServerInfo')
+            .resolves({
+              registrationRequirements : ['provider-auth-v0', 'proof-of-work-sha256-v0'],
+              maxFileSize              : 10000,
+              webSocketSupport         : true,
+              providerAuth             : {
+                authorizeUrl : 'https://auth.example.com/authorize',
+                tokenUrl     : 'https://auth.example.com/token',
+              },
+            });
+
+          const registerStub = sinon
+            .stub(DwnRegistrar, 'registerTenant')
+            .resolves();
+
+          const registration = {
+            onSuccess : (): void => {},
+            onFailure : (): void => {},
+            // NOTE: no onProviderAuthRequired — should fall back to PoW.
+          };
+
+          const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
+
+          await Web5.connect({
+            registration,
+            didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+            sync             : 'off',
+          });
+
+          expect(registerSuccessSpy.calledOnce).toBe(true);
+          expect(registerStub.callCount).toBe(2); // PoW for both DIDs
+        });
+
+        it('should call onFailure when provider auth state mismatch occurs', async () => {
+          sinon
+            .stub(Web5UserAgent, 'create')
+            .resolves(testHarness.agent as Web5UserAgent);
+          sinon
+            .stub(testHarness.agent.rpc, 'getServerInfo')
+            .resolves({
+              registrationRequirements : ['provider-auth-v0'],
+              maxFileSize              : 10000,
+              webSocketSupport         : true,
+              providerAuth             : {
+                authorizeUrl : 'https://auth.example.com/authorize',
+                tokenUrl     : 'https://auth.example.com/token',
+              },
+            });
+
+          const onProviderAuthRequired = sinon.stub().resolves({
+            code  : 'auth-code',
+            state : 'wrong-state', // does not match the generated state
+          });
+
+          const registration = {
+            onSuccess : (): void => {},
+            onFailure : (): void => {},
+            onProviderAuthRequired,
+          };
+
+          const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
+          const registerFailureSpy = sinon.spy(registration, 'onFailure');
+
+          await Web5.connect({
+            registration,
+            didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+            sync             : 'off',
+          });
+
+          // Should fail due to state mismatch.
+          expect(registerSuccessSpy.notCalled).toBe(true);
+          expect(registerFailureSpy.calledOnce).toBe(true);
+          const failError = registerFailureSpy.firstCall.args[0];
+          expect(failError.message).toContain('state mismatch');
+        });
+      });
+
       it('techPreview.dwnEndpoints should take precedence over didCreateOptions.dwnEndpoints', async () => {
         sinon
           .stub(Web5UserAgent, 'create')

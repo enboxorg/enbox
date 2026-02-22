@@ -96,6 +96,38 @@ export type Web5AnonymousApi = {
   dwn: DwnReaderApi;
 };
 
+/** Parameters passed to the onProviderAuthRequired callback. */
+export type ProviderAuthParams = {
+  /** Full authorize URL to open in a browser (query params already appended). */
+  authorizeUrl: string;
+  /** The DWN endpoint URL this auth is for (informational). */
+  dwnEndpoint: string;
+  /** CSRF nonce — the provider will return this unchanged in the redirect. */
+  state: string;
+};
+
+/** Result returned by the app after the user completes provider auth. */
+export type ProviderAuthResult = {
+  /** Authorization code from the provider's redirect. */
+  code: string;
+  /** Must match the state from ProviderAuthParams (CSRF validation). */
+  state: string;
+};
+
+/** Persisted registration token data for a DWN endpoint. */
+export type RegistrationTokenData = {
+  /** Opaque registration token for POST /registration. */
+  registrationToken: string;
+  /** Refresh token for obtaining new registration tokens. */
+  refreshToken?: string;
+  /** Unix timestamp (ms) when the token expires. Undefined = never expires. */
+  expiresAt?: number;
+  /** Provider's token exchange URL (needed for code exchange). */
+  tokenUrl: string;
+  /** Provider's refresh URL (needed for token refresh). */
+  refreshUrl?: string;
+};
+
 /** Optional overrides that can be provided when calling {@link Web5.connect}. */
 export type Web5ConnectOptions = {
   /**
@@ -190,10 +222,29 @@ export type Web5ConnectOptions = {
    * If registration is successful, the `onSuccess` callback will be called.
    */
   registration? : {
-    /** Called when all of the DWN registrations are successful */
-    onSuccess: () => void;
-    /** Called when any of the DWN registrations fail */
-    onFailure: (error: any) => void;
+    /** Called when all of the DWN registrations are successful. */
+    onSuccess : () => void;
+    /** Called when any of the DWN registrations fail. */
+    onFailure : (error: any) => void;
+
+    /**
+     * Called when a DWN endpoint requires provider auth (`'provider-auth-v0'`).
+     * The app is responsible for opening the authorizeUrl in a browser,
+     * capturing the redirect back, and returning the auth code.
+     * If not provided, provider-auth endpoints fall back to PoW registration.
+     */
+    onProviderAuthRequired? : (params: ProviderAuthParams) => Promise<ProviderAuthResult>;
+
+    /**
+     * Pre-existing registration tokens from a previous session, keyed by DWN endpoint URL.
+     * If a valid (non-expired) token exists for an endpoint, it is used directly.
+     */
+    registrationTokens? : Record<string, RegistrationTokenData>;
+
+    /**
+     * Called when new registration tokens are obtained so the app can persist them.
+     */
+    onRegistrationTokens? : (tokens: Record<string, RegistrationTokenData>) => void;
   }
 };
 
@@ -500,27 +551,105 @@ export class Web5 {
       // If the stored identity has a connected DID, use the identity DID as the delegated DID, otherwise it is undefined.
       delegateDid = identity.metadata.connectedDid ? identity.did.uri : undefined;
       if (registration !== undefined) {
-        // If a registration object is passed, we attempt to register the AgentDID and the ConnectedDID with the DWN endpoints provided
+        const updatedTokens: Record<string, RegistrationTokenData> = {
+          ...(registration.registrationTokens ?? {}),
+        };
+
         try {
           for (const dwnEndpoint of serviceEndpointNodes) {
-            // check if endpoint needs registration
             const serverInfo = await userAgent.rpc.getServerInfo(dwnEndpoint);
+
             if (serverInfo.registrationRequirements.length === 0) {
-              // no registration required
               continue;
             }
 
-            // register the agent DID
-            await DwnRegistrar.registerTenant(dwnEndpoint, agent.agentDid.uri);
+            // Deduplicate DIDs to register.
+            const didsToRegister = [agent.agentDid.uri, connectedDid]
+              .filter((did, i, arr): did is string => arr.indexOf(did) === i);
 
-            // register the connected Identity DID
-            await DwnRegistrar.registerTenant(dwnEndpoint, connectedDid);
+            const hasProviderAuth = serverInfo.registrationRequirements.includes('provider-auth-v0')
+              && serverInfo.providerAuth !== undefined;
+
+            if (hasProviderAuth && registration.onProviderAuthRequired) {
+              // --- Provider Auth Path ---
+              let tokenData = updatedTokens[dwnEndpoint];
+
+              // Refresh expired tokens.
+              if (tokenData?.expiresAt !== undefined && tokenData.expiresAt < Date.now()) {
+                if (tokenData.refreshUrl && tokenData.refreshToken) {
+                  const refreshed = await DwnRegistrar.refreshRegistrationToken(
+                    tokenData.refreshUrl, tokenData.refreshToken,
+                  );
+                  tokenData = {
+                    registrationToken : refreshed.registrationToken,
+                    refreshToken      : refreshed.refreshToken,
+                    expiresAt         : refreshed.expiresIn !== undefined
+                      ? Date.now() + (refreshed.expiresIn * 1000) : undefined,
+                    tokenUrl   : tokenData.tokenUrl,
+                    refreshUrl : tokenData.refreshUrl,
+                  };
+                  updatedTokens[dwnEndpoint] = tokenData;
+                } else {
+                  tokenData = undefined;
+                }
+              }
+
+              // Run the auth flow if no valid token exists.
+              if (tokenData === undefined) {
+                const state = crypto.randomUUID();
+                const providerAuth = serverInfo.providerAuth!;
+                const separator = providerAuth.authorizeUrl.includes('?') ? '&' : '?';
+                const authorizeUrl = `${providerAuth.authorizeUrl}${separator}`
+                  + `redirect_uri=${encodeURIComponent(dwnEndpoint)}`
+                  + `&state=${encodeURIComponent(state)}`;
+
+                const authResult = await registration.onProviderAuthRequired({
+                  authorizeUrl,
+                  dwnEndpoint,
+                  state,
+                });
+
+                if (authResult.state !== state) {
+                  throw new Error('Provider auth state mismatch — possible CSRF attack.');
+                }
+
+                const tokenResponse = await DwnRegistrar.exchangeAuthCode(
+                  providerAuth.tokenUrl, authResult.code, dwnEndpoint,
+                );
+
+                tokenData = {
+                  registrationToken : tokenResponse.registrationToken,
+                  refreshToken      : tokenResponse.refreshToken,
+                  expiresAt         : tokenResponse.expiresIn !== undefined
+                    ? Date.now() + (tokenResponse.expiresIn * 1000) : undefined,
+                  tokenUrl   : providerAuth.tokenUrl,
+                  refreshUrl : providerAuth.refreshUrl,
+                };
+                updatedTokens[dwnEndpoint] = tokenData;
+              }
+
+              // Register each DID using the provider auth token.
+              for (const did of didsToRegister) {
+                await DwnRegistrar.registerTenantWithToken(
+                  dwnEndpoint, did, tokenData.registrationToken,
+                );
+              }
+
+            } else {
+              // --- Default Path (PoW / general registration) ---
+              for (const did of didsToRegister) {
+                await DwnRegistrar.registerTenant(dwnEndpoint, did);
+              }
+            }
           }
 
-          // If no failures occurred, call the onSuccess callback
+          // Notify app of updated tokens for persistence.
+          if (registration.onRegistrationTokens) {
+            registration.onRegistrationTokens(updatedTokens);
+          }
+
           registration.onSuccess();
         } catch (error) {
-          // for any failure, call the onFailure callback with the error
           registration.onFailure(error);
         }
       }
