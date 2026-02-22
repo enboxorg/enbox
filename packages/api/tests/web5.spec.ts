@@ -1328,6 +1328,93 @@ describe('web5 api', () => {
           expect(registerStub.callCount).toBe(2); // PoW for both DIDs
         });
 
+        it('should use default registration when server does not advertise provider-auth-v0', async () => {
+          sinon
+            .stub(Web5UserAgent, 'create')
+            .resolves(testHarness.agent as Web5UserAgent);
+          sinon
+            .stub(testHarness.agent.rpc, 'getServerInfo')
+            .resolves({
+              registrationRequirements : ['terms-of-service'],
+              maxFileSize              : 10000,
+              webSocketSupport         : true,
+            });
+
+          const registerStub = sinon
+            .stub(DwnRegistrar, 'registerTenant')
+            .resolves();
+
+          const onProviderAuthRequired = sinon.spy();
+
+          const registration = {
+            onSuccess : (): void => {},
+            onFailure : (): void => {},
+            onProviderAuthRequired,
+          };
+
+          const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
+          const registerFailureSpy = sinon.spy(registration, 'onFailure');
+
+          const { web5, did } = await Web5.connect({
+            registration,
+            didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+            sync             : 'off',
+          });
+
+          expect(web5).toBeDefined();
+          expect(did).toBeDefined();
+          expect(registerSuccessSpy.calledOnce).toBe(true);
+          expect(registerFailureSpy.notCalled).toBe(true);
+
+          // Provider auth callback should NOT be called — server did not advertise it.
+          expect(onProviderAuthRequired.notCalled).toBe(true);
+
+          // Default registration should be used for both DIDs.
+          expect(registerStub.callCount).toBe(2);
+        });
+
+        it('should use default registration when server advertises provider-auth-v0 but has no providerAuth info', async () => {
+          sinon
+            .stub(Web5UserAgent, 'create')
+            .resolves(testHarness.agent as Web5UserAgent);
+          sinon
+            .stub(testHarness.agent.rpc, 'getServerInfo')
+            .resolves({
+              registrationRequirements : ['provider-auth-v0'],
+              maxFileSize              : 10000,
+              webSocketSupport         : true,
+              // NOTE: no providerAuth field — hasProviderAuth will be false.
+            });
+
+          const registerStub = sinon
+            .stub(DwnRegistrar, 'registerTenant')
+            .resolves();
+
+          const onProviderAuthRequired = sinon.spy();
+
+          const registration = {
+            onSuccess : (): void => {},
+            onFailure : (): void => {},
+            onProviderAuthRequired,
+          };
+
+          const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
+
+          await Web5.connect({
+            registration,
+            didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+            sync             : 'off',
+          });
+
+          expect(registerSuccessSpy.calledOnce).toBe(true);
+
+          // Provider auth callback should NOT be called — providerAuth info missing.
+          expect(onProviderAuthRequired.notCalled).toBe(true);
+
+          // Default registration should be used.
+          expect(registerStub.callCount).toBe(2);
+        });
+
         it('should call onFailure when provider auth state mismatch occurs', async () => {
           sinon
             .stub(Web5UserAgent, 'create')
