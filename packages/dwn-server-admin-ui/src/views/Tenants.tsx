@@ -43,7 +43,7 @@ function TenantList() {
     return <div class="loading">Loading...</div>;
   }
 
-  const items = tenants?.tenants ?? [];
+  const items = tenants?.data ?? [];
   const nextCursor = tenants?.cursor;
 
   return (
@@ -78,7 +78,7 @@ function TenantList() {
                     </a>
                   </td>
                   <td>{formatNumber(t.messageCount ?? 0)}</td>
-                  <td>{formatBytes(t.storageBytes ?? 0)}</td>
+                  <td>{formatBytes(t.dataStorageBytes ?? 0)}</td>
                 </tr>
               ))}
             </tbody>
@@ -207,8 +207,8 @@ function TenantDetail({ did }: { did: string }) {
         <h2 style="margin-top:8px;word-break:break-all;font-family:var(--font-mono);font-size:14px">{did}</h2>
         {tenant && (
           <div style="display:flex;gap:8px;margin-top:8px">
-            <span class={`badge ${tenant.active !== false ? 'badge-success' : 'badge-muted'}`}>
-              {tenant.active !== false ? 'Active' : 'Inactive'}
+            <span class={`badge ${tenant.isActive !== false ? 'badge-success' : 'badge-muted'}`}>
+              {tenant.isActive !== false ? 'Active' : 'Inactive'}
             </span>
             <span class={`badge ${tenant.suspended ? 'badge-danger' : 'badge-success'}`}>
               {tenant.suspended ? 'Suspended' : 'Not Suspended'}
@@ -255,11 +255,11 @@ function TenantDetail({ did }: { did: string }) {
         <div class="stat-grid">
           <div class="stat-card">
             <div class="label">Messages</div>
-            <div class="value">{formatNumber(tenant?.messageCount ?? 0)}</div>
+            <div class="value">{formatNumber(tenant?.storage?.messageCount ?? 0)}</div>
           </div>
           <div class="stat-card">
             <div class="label">Data Storage</div>
-            <div class="value">{formatBytes(tenant?.storageBytes ?? 0)}</div>
+            <div class="value">{formatBytes(tenant?.storage?.dataStorageBytes ?? 0)}</div>
           </div>
           <div class="stat-card">
             <div class="label">Protocols</div>
@@ -296,24 +296,24 @@ function TenantDetail({ did }: { did: string }) {
         <div class="card">
           <div class="card-header">
             <h3>Quota</h3>
-            <span class={`badge ${quota.source === 'unlimited' ? 'badge-muted' : 'badge-info'}`}>
-              {quota.source ?? 'unknown'}
+            <span class={`badge ${quota.quota?.source === 'unlimited' ? 'badge-muted' : 'badge-info'}`}>
+              {quota.quota?.source ?? 'unknown'}
             </span>
           </div>
-          {quota.source !== 'unlimited' && (
+          {quota.quota?.source !== 'unlimited' && (
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-              {quota.limits?.maxMessages !== undefined && (
+              {quota.quota?.maxMessages !== undefined && (
                 <div>
                   <div style="font-size:12px;color:var(--color-text-muted);margin-bottom:4px">Messages</div>
                   <div style="font-size:13px">
-                    {formatNumber(quota.usage?.messages ?? 0)} / {formatNumber(quota.limits.maxMessages)}
+                    {formatNumber(quota.usage?.messageCount ?? 0)} / {formatNumber(quota.quota.maxMessages)}
                   </div>
                   <div style="background:var(--color-border);border-radius:4px;height:6px;margin-top:6px;overflow:hidden">
                     <div
                       style={{
-                        width      : `${Math.min(100, ((quota.usage?.messages ?? 0) / quota.limits.maxMessages) * 100)}%`,
+                        width      : `${Math.min(100, ((quota.usage?.messageCount ?? 0) / quota.quota.maxMessages) * 100)}%`,
                         height     : '100%',
-                        background : ((quota.usage?.messages ?? 0) / quota.limits.maxMessages) > 0.9
+                        background : ((quota.usage?.messageCount ?? 0) / quota.quota.maxMessages) > 0.9
                           ? 'var(--color-danger)'
                           : 'var(--color-primary)',
                         borderRadius: '4px',
@@ -322,18 +322,18 @@ function TenantDetail({ did }: { did: string }) {
                   </div>
                 </div>
               )}
-              {quota.limits?.maxStorageBytes !== undefined && (
+              {quota.quota?.maxStorageBytes !== undefined && (
                 <div>
                   <div style="font-size:12px;color:var(--color-text-muted);margin-bottom:4px">Storage</div>
                   <div style="font-size:13px">
-                    {formatBytes(quota.usage?.storageBytes ?? 0)} / {formatBytes(quota.limits.maxStorageBytes)}
+                    {formatBytes(quota.usage?.storageBytes ?? 0)} / {formatBytes(quota.quota.maxStorageBytes)}
                   </div>
                   <div style="background:var(--color-border);border-radius:4px;height:6px;margin-top:6px;overflow:hidden">
                     <div
                       style={{
-                        width      : `${Math.min(100, ((quota.usage?.storageBytes ?? 0) / quota.limits.maxStorageBytes) * 100)}%`,
+                        width      : `${Math.min(100, ((quota.usage?.storageBytes ?? 0) / quota.quota.maxStorageBytes) * 100)}%`,
                         height     : '100%',
-                        background : ((quota.usage?.storageBytes ?? 0) / quota.limits.maxStorageBytes) > 0.9
+                        background : ((quota.usage?.storageBytes ?? 0) / quota.quota.maxStorageBytes) > 0.9
                           ? 'var(--color-danger)'
                           : 'var(--color-primary)',
                         borderRadius: '4px',
