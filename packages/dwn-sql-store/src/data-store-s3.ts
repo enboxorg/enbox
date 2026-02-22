@@ -193,10 +193,14 @@ export class DataStoreS3 implements DataStore {
         ContinuationToken : continuationToken,
       }));
 
-      if (list.Contents && list.Contents.length > 0) {
+      const objects = (list.Contents ?? [])
+        .filter((obj): obj is { Key: string } => obj.Key !== undefined)
+        .map((obj): { Key: string } => ({ Key: obj.Key }));
+
+      if (objects.length > 0) {
         await this.#s3.send(new DeleteObjectsCommand({
           Bucket : this.#bucket,
-          Delete : { Objects: list.Contents.map((obj): { Key?: string } => ({ Key: obj.Key })) },
+          Delete : { Objects: objects },
         }));
       }
 
