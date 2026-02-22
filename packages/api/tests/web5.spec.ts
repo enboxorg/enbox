@@ -282,25 +282,21 @@ describe('web5 api', () => {
       expect(walletConnectSpy.called).toBe(false);
     });
 
-    it('defaults to the first identity if multiple identities exist', async () => {
-      // scenario: For some reason more than one identity exists when attempting to re-connect to `Web5`
-      // the first identity in the array should be the one selected
-      // TODO: this has happened due to a race condition somewhere. Dig into this issue
-      // and implement a better way to select/manage DIDs when using `Web5.connect()`
-
-      // create an identity by connecting
+    it('reconnects with the first identity when multiple identities exist', async () => {
+      // When additional identities are created via agent.identity.create() (e.g. for
+      // multi-persona use), connect() should still return the same DID on reconnect.
       sinon.stub(Web5UserAgent, 'create').resolves(testHarness.agent as Web5UserAgent);
       const { web5, did } = await Web5.connect({ techPreview: { dwnEndpoints: [ testDwnUrl ] }, sync: 'off' });
       expect(web5).toBeDefined();
       expect(did).toBeDefined();
 
-      // create a second identity
+      // Create a second identity outside of connect() (multi-persona scenario).
       await testHarness.agent.identity.create({
         didMethod : 'jwk',
         metadata  : { name: 'Second' }
       });
 
-      // connect again
+      // Reconnecting should return the same DID as the first connect().
       const { did: did2 } = await Web5.connect({ sync: 'off' });
       expect(did2).toBe(did);
     });

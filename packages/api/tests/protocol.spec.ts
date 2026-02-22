@@ -9,8 +9,7 @@ import emailProtocolDefinition from './fixtures/protocol-definitions/email.json'
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
 
-// TODO: Come up with a better way of resolving the TS errors.
-const testDwnUrls: string[] = [testDwnUrl];
+const testDwnUrls = [testDwnUrl];
 
 describe('Protocol', () => {
   let aliceDid: BearerDid;
