@@ -10,6 +10,7 @@ import type {
   JsonRpcHandler,
 } from '../../lib/json-rpc-router.js';
 
+import { requestDataBytesTotal } from '../../metrics.js';
 import {
   createJsonRpcErrorResponse,
   createJsonRpcSuccessResponse,
@@ -105,6 +106,27 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
     const responsePayload: HandlerResponse = { jsonRpcResponse };
     if (recordDataStream) {
       responsePayload.dataStream = recordDataStream;
+    }
+
+    // Capture activity event and per-request metrics.
+    const dwnInterface = message.descriptor.interface as string;
+    const dwnMethod = message.descriptor.method as string;
+    const statusCode = reply.status?.code ?? 0;
+    const dataSizeBytes = (message.descriptor as { dataSize?: number }).dataSize;
+
+    if (dataSizeBytes !== undefined && dataSizeBytes > 0) {
+      requestDataBytesTotal.inc({ interface: dwnInterface, method: dwnMethod }, dataSizeBytes);
+    }
+
+    if (context.activityLog) {
+      context.activityLog.record({
+        tenant    : target,
+        interface : dwnInterface,
+        method    : dwnMethod,
+        statusCode,
+        transport,
+        dataSizeBytes,
+      });
     }
 
     return responsePayload;

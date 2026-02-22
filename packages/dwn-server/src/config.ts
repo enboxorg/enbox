@@ -84,6 +84,18 @@ export const config = {
       ? readAdminTokenFromFile(process.env.DWN_ADMIN_TOKEN_FILE)
       : undefined
   ),
+
+  /**
+   * Maximum number of recent DWN activity events retained in the in-memory
+   * ring buffer for the admin `/events` endpoint. Defaults to 10,000.
+   */
+  adminActivityLogCapacity: parseInt(process.env.DWN_ADMIN_ACTIVITY_LOG_CAPACITY || '10000'),
+
+  /**
+   * Interval (in seconds) at which Prometheus gauge metrics are updated from
+   * the admin store. Defaults to 30 seconds.
+   */
+  adminMetricsUpdateIntervalSeconds: parseInt(process.env.DWN_ADMIN_METRICS_UPDATE_INTERVAL || '30'),
 };
 
 /**

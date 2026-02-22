@@ -10,6 +10,7 @@ import log from 'loglevel';
 import prefix from 'loglevel-plugin-prefix';
 import { Dwn, EventEmitterEventLog } from '@enbox/dwn-sdk-js';
 
+import { ActivityLog } from './admin/activity-log.js';
 import { AdminApi } from './admin/admin-api.js';
 import { AdminStore } from './admin/admin-store.js';
 import { config as defaultConfig } from './config.js';
@@ -122,9 +123,12 @@ export class DwnServer {
 
     // Initialize admin API if an admin token is configured.
     let adminApi: AdminApi | undefined;
+    let activityLog: ActivityLog | undefined;
+
     if (this.config.adminToken) {
       const storageUrl = this.config.messageStore;
       const adminStore = AdminStore.create(storageUrl);
+      activityLog = new ActivityLog(this.config.adminActivityLogCapacity);
 
       adminApi = AdminApi.create({
         config            : this.config,
@@ -132,18 +136,23 @@ export class DwnServer {
         adminStore,
         registrationManager,
         registrationStore : registrationManager?.getRegistrationStore(),
+        activityLog,
       });
 
       log.info('Admin API enabled');
     }
 
-    this.#httpApi = await HttpApi.create(this.config, this.dwn, registrationManager, adminApi);
+    this.#httpApi = await HttpApi.create(
+      this.config, this.dwn, registrationManager, adminApi, activityLog,
+    );
 
     await this.#httpApi.start(this.config.port);
     log.info(`HttpServer listening on port ${this.config.port}`);
 
     if (this.config.webSocketSupport) {
-      this.#wsApi = new WsApi(this.#httpApi, this.dwn, undefined, this.config.maxInFlight);
+      this.#wsApi = new WsApi(
+        this.#httpApi, this.dwn, undefined, this.config.maxInFlight, activityLog,
+      );
       this.#wsApi.start();
       log.info('WebSocketServer ready...');
 
@@ -151,6 +160,11 @@ export class DwnServer {
       if (adminApi) {
         adminApi.setConnectionManager(this.#wsApi.connectionManager);
       }
+    }
+
+    // Start periodic Prometheus gauge updates.
+    if (adminApi) {
+      adminApi.startMetricsUpdater();
     }
   }
 

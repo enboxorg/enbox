@@ -1,15 +1,23 @@
 import type { Dwn } from '@enbox/dwn-sdk-js';
 
+import type { ActivityLog } from './activity-log.js';
 import type { AdminStore } from './admin-store.js';
 import type { ConnectionManager } from '../connection/connection-manager.js';
 import type { DwnServerConfig } from '../config.js';
 import type { RegistrationManager } from '../registration/registration-manager.js';
 import type { RegistrationStore } from '../registration/registration-store.js';
-import type { AdminServerStats, AdminTenantDetail, AdminTenantSummary, PaginatedResponse } from './types.js';
+import type { AdminConnectionSnapshot, AdminServerStats, AdminTenantDetail, AdminTenantSummary, PaginatedResponse } from './types.js';
 
 import log from 'loglevel';
 
 import { validateAdminAuth } from './admin-auth.js';
+import {
+  activeTenants,
+  totalDataBytes,
+  totalMessages,
+  websocketConnections,
+  websocketSubscriptions,
+} from '../metrics.js';
 
 /**
  * Handles all `/admin/api/*` routes.
@@ -22,8 +30,10 @@ export class AdminApi {
   #registrationManager: RegistrationManager | undefined;
   #registrationStore: RegistrationStore | undefined;
   #connectionManager: ConnectionManager | undefined;
+  #activityLog: ActivityLog | undefined;
   #startTime: number;
   #packageInfo: { version?: string };
+  #metricsInterval: ReturnType<typeof setInterval> | undefined;
 
   private constructor() {
     this.#startTime = Date.now();
@@ -39,6 +49,7 @@ export class AdminApi {
     registrationManager?: RegistrationManager;
     registrationStore? : RegistrationStore;
     connectionManager? : ConnectionManager;
+    activityLog? : ActivityLog;
     packageInfo? : { version?: string };
   }): AdminApi {
     const api = new AdminApi();
@@ -48,6 +59,7 @@ export class AdminApi {
     api.#registrationManager = options.registrationManager;
     api.#registrationStore = options.registrationStore;
     api.#connectionManager = options.connectionManager;
+    api.#activityLog = options.activityLog;
     api.#packageInfo = options.packageInfo ?? {};
     return api;
   }
@@ -124,6 +136,16 @@ export class AdminApi {
           const did = decodeURIComponent(match[1]);
           return this.#handleTenantUnsuspend(did);
         }
+      }
+
+      // --- Activity events ---
+      if (method === 'GET' && subPath === '/events') {
+        return this.#handleEvents(url);
+      }
+
+      // --- WebSocket connections ---
+      if (method === 'GET' && subPath === '/connections') {
+        return this.#handleConnections();
       }
 
       // --- Info (smoke test) ---
@@ -430,26 +452,104 @@ export class AdminApi {
     return Response.json({ success: true, did });
   }
 
+  /**
+   * Returns recent DWN activity events from the in-memory ring buffer.
+   */
+  #handleEvents(url: URL): Response {
+    if (!this.#activityLog) {
+      return Response.json(
+        { error: 'Activity log is not enabled.' },
+        { status: 501 },
+      );
+    }
+
+    const since = parseInt(url.searchParams.get('since') ?? '0');
+    const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '50'), 1000);
+
+    const { events, cursor } = this.#activityLog.getEvents({ since, limit });
+
+    return Response.json({ events, cursor });
+  }
+
+  /**
+   * Returns snapshots of active WebSocket connections and their subscriptions.
+   */
+  #handleConnections(): Response {
+    const connections: AdminConnectionSnapshot[] = this.#connectionManager
+      ? this.#connectionManager.getConnectionSnapshots()
+      : [];
+
+    return Response.json({ connections });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Periodic metrics updater
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Starts a periodic timer that updates Prometheus gauge metrics from the
+   * admin store and connection manager. The interval is configured via
+   * `adminMetricsUpdateIntervalSeconds` (default 30s).
+   */
+  public startMetricsUpdater(): void {
+    if (this.#metricsInterval) {
+      return;
+    }
+
+    const intervalMs = (this.#config.adminMetricsUpdateIntervalSeconds ?? 30) * 1000;
+
+    // Run immediately, then on interval.
+    this.#updateMetrics();
+    this.#metricsInterval = setInterval(() => {
+      this.#updateMetrics();
+    }, intervalMs);
+  }
+
+  /**
+   * Stops the periodic metrics updater.
+   */
+  public stopMetricsUpdater(): void {
+    if (this.#metricsInterval) {
+      clearInterval(this.#metricsInterval);
+      this.#metricsInterval = undefined;
+    }
+  }
+
+  /**
+   * Fetches stats from the admin store and connection manager, and sets
+   * Prometheus gauge values accordingly.
+   */
+  #updateMetrics(): void {
+    // Connection gauges (synchronous).
+    websocketConnections.set(this.#getConnectionCount());
+    websocketSubscriptions.set(this.#getSubscriptionCount());
+
+    // Store-based gauges (async — fire and forget).
+    if (this.#adminStore) {
+      this.#adminStore.getGlobalStats({ refresh: true }).then((stats) => {
+        activeTenants.set(stats.tenantCount);
+        totalMessages.set(stats.totalMessages);
+        totalDataBytes.set(stats.totalDataBytes);
+      }).catch((err) => {
+        log.error('Failed to update Prometheus gauge metrics:', err);
+      });
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
 
   #getConnectionCount(): number {
-    if (this.#connectionManager && 'connections' in this.#connectionManager) {
-      return (this.#connectionManager as any).connections.size;
+    if (this.#connectionManager) {
+      return this.#connectionManager.getConnectionCount();
     }
     return 0;
   }
 
   #getSubscriptionCount(): number {
-    if (this.#connectionManager && 'connections' in this.#connectionManager) {
-      let count = 0;
-      (this.#connectionManager as any).connections.forEach((conn: any) => {
-        if (conn.subscriptions) {
-          count += conn.subscriptions.size;
-        }
-      });
-      return count;
+    if (this.#connectionManager) {
+      return this.#connectionManager.getSubscriptionCount();
     }
     return 0;
   }
