@@ -403,6 +403,9 @@ export class HttpApi {
     if (config.termsOfServiceFilePath !== undefined) {
       registrationRequirements.push('terms-of-service');
     }
+    if (config.providerAuthEnabled && !registrationRequirements.includes('provider-auth-v0')) {
+      registrationRequirements.push('provider-auth-v0');
+    }
 
     const serverInfo: ServerInfo = {
       maxFileSize              : config.maxRecordDataSize,
@@ -414,6 +417,15 @@ export class HttpApi {
       version                  : this.#packageInfo.version,
       webSocketSupport         : config.webSocketSupport,
     };
+
+    if (config.providerAuthEnabled) {
+      serverInfo.providerAuth = {
+        authorizeUrl  : config.providerAuthAuthorizeUrl,
+        tokenUrl      : config.providerAuthTokenUrl,
+        refreshUrl    : config.providerAuthRefreshUrl,
+        managementUrl : config.providerAuthManagementUrl,
+      };
+    }
 
     return Response.json(serverInfo);
   }

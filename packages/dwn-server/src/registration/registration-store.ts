@@ -1,5 +1,4 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
-import type { RegistrationData } from '@enbox/dwn-clients';
 import type { TenantQuota } from '../admin/types.js';
 
 import { Kysely, sql } from 'kysely';
@@ -49,6 +48,18 @@ export class RegistrationStore {
       // Column already exists — expected for new installations.
     }
 
+    // Add provider-auth columns (idempotent migration). https://github.com/enboxorg/enbox/issues/404
+    for (const col of ['accountId', 'registrationType', 'registeredAt', 'metadata']) {
+      try {
+        await this.db.schema
+          .alterTable(RegistrationStore.registeredTenantTableName)
+          .addColumn(col, 'text')
+          .execute();
+      } catch {
+        // Column already exists — expected.
+      }
+    }
+
     // Per-tenant storage quotas table.
     await this.db.schema
       .createTable(RegistrationStore.tenantQuotasTableName)
@@ -62,16 +73,51 @@ export class RegistrationStore {
   /**
    * Inserts or updates the tenant registration information.
    */
-  public async insertOrUpdateTenantRegistration(registrationData: RegistrationData): Promise<void> {
+  public async insertOrUpdateTenantRegistration(registrationData: {
+    did: string;
+    termsOfServiceHash?: string;
+    accountId?: string;
+    registrationType?: string;
+    metadata?: string;
+  }): Promise<void> {
+    const insertValues: Record<string, unknown> = {
+      did                : registrationData.did,
+      termsOfServiceHash : registrationData.termsOfServiceHash ?? '',
+      suspended          : 0,
+      registeredAt       : new Date().toISOString(),
+    };
+
+    if (registrationData.accountId !== undefined) {
+      insertValues.accountId = registrationData.accountId;
+    }
+    if (registrationData.registrationType !== undefined) {
+      insertValues.registrationType = registrationData.registrationType;
+    }
+    if (registrationData.metadata !== undefined) {
+      insertValues.metadata = registrationData.metadata;
+    }
+
     await this.db
       .insertInto(RegistrationStore.registeredTenantTableName)
-      .values({ ...registrationData, suspended: 0 })
+      .values(insertValues as any)
       .onConflict((oc) =>
-        oc.column('did').doUpdateSet((eb) => ({
-          termsOfServiceHash: eb.ref('excluded.termsOfServiceHash'),
-        })),
+        oc.column('did').doUpdateSet((eb) => {
+          const updateSet: Record<string, any> = {
+            termsOfServiceHash: eb.ref('excluded.termsOfServiceHash'),
+          };
+          // Do NOT overwrite registeredAt on update.
+          if (registrationData.accountId !== undefined) {
+            updateSet.accountId = registrationData.accountId;
+          }
+          if (registrationData.registrationType !== undefined) {
+            updateSet.registrationType = registrationData.registrationType;
+          }
+          if (registrationData.metadata !== undefined) {
+            updateSet.metadata = registrationData.metadata;
+          }
+          return updateSet;
+        }),
       )
-      // Executes the query. No error is thrown if the query doesn't affect any rows.
       .executeTakeFirst();
   }
 
@@ -81,9 +127,7 @@ export class RegistrationStore {
   public async getTenantRegistration(tenantDid: string): Promise<RegisteredTenantRow | undefined> {
     const result = await this.db
       .selectFrom(RegistrationStore.registeredTenantTableName)
-      .select('did')
-      .select('termsOfServiceHash')
-      .select('suspended')
+      .select(['did', 'termsOfServiceHash', 'suspended', 'accountId', 'registrationType', 'registeredAt', 'metadata'])
       .where('did', '=', tenantDid)
       .execute();
 
@@ -113,7 +157,7 @@ export class RegistrationStore {
 
     let query = this.db
       .selectFrom(RegistrationStore.registeredTenantTableName)
-      .select(['did', 'termsOfServiceHash', 'suspended'])
+      .select(['did', 'termsOfServiceHash', 'suspended', 'accountId', 'registrationType', 'registeredAt', 'metadata'])
       .orderBy('did', 'asc')
       .limit(limit + 1); // fetch one extra to detect next page
 
@@ -224,6 +268,20 @@ export class RegistrationStore {
   }
 
   /**
+   * Returns all tenant registrations associated with the given account ID.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/404
+   */
+  public async getTenantsForAccount(accountId: string): Promise<RegisteredTenantRow[]> {
+    return this.db
+      .selectFrom(RegistrationStore.registeredTenantTableName)
+      .select(['did', 'termsOfServiceHash', 'suspended', 'accountId', 'registrationType', 'registeredAt', 'metadata'])
+      .where('accountId', '=', accountId)
+      .orderBy('did', 'asc')
+      .execute();
+  }
+
+  /**
    * Returns the count of suspended tenants.
    */
   public async getSuspendedCount(): Promise<number> {
@@ -301,12 +359,20 @@ export interface RegisteredTenantRow {
   did : string;
   termsOfServiceHash : string;
   suspended? : number;
+  accountId? : string;
+  registrationType? : string;
+  registeredAt? : string;
+  metadata? : string;
 }
 
 interface RegisteredTenants {
   did : string;
   termsOfServiceHash : string;
   suspended : number;
+  accountId? : string;
+  registrationType? : string;
+  registeredAt? : string;
+  metadata? : string;
 }
 
 interface TenantQuotasRow {
