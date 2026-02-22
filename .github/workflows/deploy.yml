@@ -32,8 +32,16 @@ jobs:
           filters: |
             dwn-server:
               - 'packages/dwn-server/**'
+              - 'packages/dwn-sdk-js/**'
+              - 'packages/dwn-sql-store/**'
+              - 'packages/dwn-clients/**'
+              - 'packages/common/**'
+              - 'packages/crypto/**'
+              - 'packages/dids/**'
               - 'build/**'
               - 'fly.toml'
+              - '.dockerignore'
+              - 'bun.lock'
 
   deploy-dwn-server:
     name: Deploy DWN Server

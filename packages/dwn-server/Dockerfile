@@ -1,4 +1,4 @@
-# Stage 1: Builder - Build the entire monorepo
+# Stage 1: Builder - Build dwn-server and its dependencies
 FROM oven/bun:1 AS builder
 
 WORKDIR /app
@@ -21,8 +21,10 @@ COPY packages/ ./packages/
 # Install all dependencies
 RUN bun install --frozen-lockfile
 
-# Build all packages
-RUN bun run --filter '*' build
+# Build only packages needed by dwn-server (others have src/ excluded via .dockerignore)
+RUN bun run --filter '@enbox/common' --filter '@enbox/crypto' --filter '@enbox/dids' \
+    --filter '@enbox/dwn-sdk-js' --filter '@enbox/dwn-sql-store' --filter '@enbox/dwn-clients' \
+    --filter '@enbox/dwn-server-admin-ui' --filter '@enbox/dwn-server' build
 
 # Stage 2: Runner - Slim bun image
 FROM oven/bun:1-slim AS runner
