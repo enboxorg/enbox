@@ -1,0 +1,511 @@
+import type { JetStreamManager } from '@nats-io/jetstream';
+import type { NatsConnection } from '@nats-io/transport-node';
+import type { KeyValues, MessageEvent, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+
+import { connect } from '@nats-io/transport-node';
+import { jetstreamManager } from '@nats-io/jetstream';
+
+import NatsEventLog from '../src/plugins/event-log-nats.js';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const NATS_URL = process.env.NATS_URL || 'nats://localhost:4222';
+
+/** Single stream name for the entire test run. */
+const STREAM_NAME = `TEST_EVENTS_${Date.now()}`;
+
+function createEvent(message: Record<string, unknown> = { id: 'test' }): MessageEvent {
+  return { message: message as MessageEvent['message'] };
+}
+
+function createIndexes(overrides: Record<string, string | number | boolean> = {}): KeyValues {
+  return {
+    interface : 'Records',
+    method    : 'Write',
+    ...overrides,
+  };
+}
+
+/**
+ * Collect subscription messages into an array, returning a promise that
+ * resolves when `count` messages have been received (or times out).
+ */
+function collectMessages(
+  count: number,
+  timeoutMs = 5_000,
+): { messages: SubscriptionMessage[]; promise: Promise<SubscriptionMessage[]>; listener: (msg: SubscriptionMessage) => void } {
+  const messages: SubscriptionMessage[] = [];
+  let resolve: (value: SubscriptionMessage[]) => void;
+  let reject: (reason: Error) => void;
+  const promise = new Promise<SubscriptionMessage[]>((res, rej) => {
+    resolve = res; reject = rej;
+  });
+
+  const timer = setTimeout((): void => {
+    reject(new Error(`collectMessages timed out after ${timeoutMs}ms — received ${messages.length}/${count}`));
+  }, timeoutMs);
+
+  const listener = (msg: SubscriptionMessage): void => {
+    messages.push(msg);
+    if (messages.length >= count) {
+      clearTimeout(timer);
+      resolve(messages);
+    }
+  };
+
+  return { messages, promise, listener };
+}
+
+/**
+ * Wait for a predicate to become true, polling every `intervalMs`.
+ */
+async function waitUntil(predicate: () => boolean, timeoutMs = 3_000, intervalMs = 20): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`waitUntil timed out after ${timeoutMs}ms`);
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('NatsEventLog', () => {
+  let eventLog: NatsEventLog;
+
+  /** Direct NATS connection for administrative cleanup. */
+  let adminNc: NatsConnection;
+  let adminJsm: JetStreamManager;
+
+  beforeAll(async () => {
+    // Set env vars for the plugin constructor.
+    process.env.NATS_URL = NATS_URL;
+    process.env.NATS_STREAM_NAME = STREAM_NAME;
+    process.env.NATS_STREAM_REPLICAS = '1';
+
+    // Admin connection for stream purge between tests.
+    adminNc = await connect({ servers: [NATS_URL] });
+    adminJsm = await jetstreamManager(adminNc);
+
+    // Clean up any leftover streams from previous test runs to avoid
+    // "subjects overlap with an existing stream" errors.
+    const streams = adminJsm.streams.list();
+    for await (const stream of streams) {
+      try {
+        await adminJsm.streams.delete(stream.config.name);
+      } catch {
+        // Ignore deletion errors.
+      }
+    }
+
+    eventLog = new NatsEventLog();
+    await eventLog.open();
+  });
+
+  beforeEach(async () => {
+    // Purge all messages from the stream between tests for isolation.
+    // This is much faster and safer than deleting/recreating the stream.
+    try {
+      await adminJsm.streams.purge(STREAM_NAME);
+    } catch {
+      // Stream may not exist yet on first test.
+    }
+  });
+
+  afterAll(async () => {
+    await eventLog.close();
+
+    // Clean up the test stream entirely.
+    try {
+      await adminJsm.streams.delete(STREAM_NAME);
+    } catch {
+      // May not exist.
+    }
+
+    await adminNc.drain();
+  });
+
+  // ---- Lifecycle -----------------------------------------------------------
+
+  describe('lifecycle', () => {
+    it('should open and close without error', async () => {
+      // Use the same stream name to avoid subject overlap.
+      const log = new NatsEventLog();
+      await log.open();
+      await log.close();
+    });
+
+    it('should be idempotent on repeated open() calls', async () => {
+      await eventLog.open();
+      await eventLog.open();
+      // Should not throw or create duplicate connections.
+    });
+
+    it('should throw when used before open()', async () => {
+      // Temporarily set a different stream name to avoid #ensureStream side effects.
+      const origStream = process.env.NATS_STREAM_NAME;
+      process.env.NATS_STREAM_NAME = `UNUSED_${Date.now()}`;
+      const log = new NatsEventLog();
+      process.env.NATS_STREAM_NAME = origStream;
+
+      await expect(log.emit('did:test:tenant', createEvent(), createIndexes())).rejects.toThrow('not open');
+    });
+  });
+
+  // ---- emit ----------------------------------------------------------------
+
+  describe('emit', () => {
+    it('should emit an event and return a cursor string', async () => {
+      const cursor = await eventLog.emit('did:test:alice', createEvent(), createIndexes());
+      expect(cursor).toBeDefined();
+      expect(typeof cursor).toBe('string');
+      expect(Number(cursor)).toBeGreaterThan(0);
+    });
+
+    it('should return monotonically increasing cursors', async () => {
+      const c1 = await eventLog.emit('did:test:alice', createEvent(), createIndexes());
+      const c2 = await eventLog.emit('did:test:alice', createEvent(), createIndexes());
+      const c3 = await eventLog.emit('did:test:alice', createEvent(), createIndexes());
+
+      expect(Number(c1)).toBeLessThan(Number(c2));
+      expect(Number(c2)).toBeLessThan(Number(c3));
+    });
+  });
+
+  // ---- read ----------------------------------------------------------------
+
+  describe('read', () => {
+    it('should return an empty result when no events exist', async () => {
+      const result = await eventLog.read('did:test:empty');
+      expect(result.events).toHaveLength(0);
+      expect(result.cursor).toBeUndefined();
+    });
+
+    it('should return all events for a tenant', async () => {
+      const tenant = 'did:test:reader';
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes());
+
+      const result = await eventLog.read(tenant);
+      expect(result.events).toHaveLength(3);
+      expect(result.cursor).toBeDefined();
+    });
+
+    it('should resume from a cursor (exclusive)', async () => {
+      const tenant = 'did:test:cursor';
+      const c1 = await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes());
+
+      const result = await eventLog.read(tenant, { cursor: c1 });
+      expect(result.events).toHaveLength(2);
+      // Verify events are after c1.
+      for (const entry of result.events) {
+        expect(entry.seq).toBeGreaterThan(Number(c1));
+      }
+    });
+
+    it('should respect the limit parameter', async () => {
+      const tenant = 'did:test:limit';
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes());
+
+      const result = await eventLog.read(tenant, { limit: 2 });
+      expect(result.events).toHaveLength(2);
+    });
+
+    it('should filter events (OR semantics across filters)', async () => {
+      const tenant = 'did:test:filter';
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ method: 'Write' }));
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes({ method: 'Delete' }));
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes({ method: 'Query' }));
+
+      const result = await eventLog.read(tenant, {
+        filters: [{ method: 'Delete' }, { method: 'Query' }],
+      });
+      expect(result.events).toHaveLength(2);
+    });
+
+    it('should return input cursor when no new events exist', async () => {
+      const tenant = 'did:test:no-new';
+      const c1 = await eventLog.emit(tenant, createEvent(), createIndexes());
+
+      const result = await eventLog.read(tenant, { cursor: c1 });
+      expect(result.events).toHaveLength(0);
+      expect(result.cursor).toBe(c1);
+    });
+  });
+
+  // ---- subscribe -----------------------------------------------------------
+
+  describe('subscribe', () => {
+    it('should receive live events (no cursor)', async () => {
+      const tenant = 'did:test:live-sub';
+      const { promise, listener } = collectMessages(3);
+
+      const subscription = await eventLog.subscribe(tenant, 'sub-live', listener);
+
+      // Emit events after subscribing.
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes());
+
+      const msgs = await promise;
+      expect(msgs).toHaveLength(3);
+      for (const msg of msgs) {
+        expect(msg.type).toBe('event');
+      }
+
+      await subscription.close();
+    });
+
+    it('should catch up from cursor and deliver EOSE', async () => {
+      const tenant = 'did:test:catchup';
+
+      // Emit events before subscribing.
+      const c1 = await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes());
+
+      // Subscribe from cursor c1 — should get events 2, 3 then EOSE.
+      // That's 2 events + 1 EOSE = 3 messages.
+      const { promise, listener } = collectMessages(3);
+
+      const subscription = await eventLog.subscribe(tenant, 'sub-catchup', listener, { cursor: c1 });
+
+      const msgs = await promise;
+      // First two should be events.
+      expect(msgs[0].type).toBe('event');
+      expect(msgs[1].type).toBe('event');
+      // Last should be EOSE.
+      expect(msgs[2].type).toBe('eose');
+
+      await subscription.close();
+    });
+
+    it('should deliver EOSE when no stored events exist after cursor', async () => {
+      const tenant = 'did:test:eose-empty';
+      const c1 = await eventLog.emit(tenant, createEvent(), createIndexes());
+
+      // Subscribe from the last cursor — nothing new to catch up on.
+      const messages: SubscriptionMessage[] = [];
+      const subscription = await eventLog.subscribe(
+        tenant,
+        'sub-eose-empty',
+        (msg: SubscriptionMessage): void => {
+          messages.push(msg);
+        },
+        { cursor: c1 },
+      );
+
+      // Wait for the EOSE to arrive (async via setTimeout).
+      await waitUntil((): boolean => messages.some((m) => m.type === 'eose'));
+
+      const eose = messages.find((m) => m.type === 'eose')!;
+      expect(eose.type).toBe('eose');
+      expect(eose.cursor).toBe(c1);
+
+      await subscription.close();
+    });
+
+    it('should filter subscription events', async () => {
+      const tenant = 'did:test:sub-filter';
+      const messages: SubscriptionMessage[] = [];
+      const subscription = await eventLog.subscribe(
+        tenant,
+        'sub-filter',
+        (msg: SubscriptionMessage): void => {
+          messages.push(msg);
+        },
+        { filters: [{ method: 'Delete' }] },
+      );
+
+      // Emit events — only the Delete one should be delivered.
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ method: 'Write' }));
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes({ method: 'Delete' }));
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes({ method: 'Query' }));
+
+      await waitUntil((): boolean => messages.length >= 1);
+
+      // Give a little extra time to make sure no extra events leak through.
+      await new Promise((r) => setTimeout(r, 200));
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0].type).toBe('event');
+
+      await subscription.close();
+    });
+
+    it('should stop receiving events after close', async () => {
+      const tenant = 'did:test:sub-close';
+      const messages: SubscriptionMessage[] = [];
+      const subscription = await eventLog.subscribe(
+        tenant,
+        'sub-close',
+        (msg: SubscriptionMessage): void => {
+          messages.push(msg);
+        },
+      );
+
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
+      await waitUntil((): boolean => messages.length >= 1);
+
+      await subscription.close();
+      const countAfterClose = messages.length;
+
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
+      // Wait briefly to confirm no new messages arrive.
+      await new Promise((r) => setTimeout(r, 300));
+
+      expect(messages.length).toBe(countAfterClose);
+    });
+  });
+
+  // ---- trim ----------------------------------------------------------------
+
+  describe('trim', () => {
+    it('should trim events by sequence number', async () => {
+      const tenant = 'did:test:trim-seq';
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
+      const c2 = await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes());
+
+      // Trim events with seq < c2 (should remove event 1).
+      await eventLog.trim(tenant, Number(c2));
+
+      const result = await eventLog.read(tenant);
+      // After purging seq < c2, only events at seq >= c2 remain.
+      for (const entry of result.events) {
+        expect(entry.seq).toBeGreaterThanOrEqual(Number(c2));
+      }
+    });
+
+    it('should trim events by timestamp (full purge fallback)', async () => {
+      const tenant = 'did:test:trim-ts';
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
+
+      // Timestamp-based trim does a full purge of the tenant subject.
+      await eventLog.trim(tenant, new Date().toISOString());
+
+      const result = await eventLog.read(tenant);
+      expect(result.events).toHaveLength(0);
+    });
+  });
+
+  // ---- multi-tenant isolation ----------------------------------------------
+
+  describe('multi-tenant isolation', () => {
+    it('should isolate events between tenants', async () => {
+      const alice = 'did:test:alice-iso';
+      const bob = 'did:test:bob-iso';
+
+      await eventLog.emit(alice, createEvent({ id: 'a1' }), createIndexes());
+      await eventLog.emit(alice, createEvent({ id: 'a2' }), createIndexes());
+      await eventLog.emit(bob, createEvent({ id: 'b1' }), createIndexes());
+
+      const aliceResult = await eventLog.read(alice);
+      const bobResult = await eventLog.read(bob);
+
+      expect(aliceResult.events).toHaveLength(2);
+      expect(bobResult.events).toHaveLength(1);
+    });
+
+    it('should not deliver events from one tenant to another tenant subscription', async () => {
+      const alice = 'did:test:alice-sub-iso';
+      const bob = 'did:test:bob-sub-iso';
+
+      const aliceMessages: SubscriptionMessage[] = [];
+      const aliceSub = await eventLog.subscribe(
+        alice,
+        'sub-alice-iso',
+        (msg: SubscriptionMessage): void => {
+          aliceMessages.push(msg);
+        },
+      );
+
+      // Emit to both tenants — alice's subscription should only get alice's event.
+      await eventLog.emit(alice, createEvent({ id: 'a1' }), createIndexes());
+      await eventLog.emit(bob, createEvent({ id: 'b1' }), createIndexes());
+
+      await waitUntil((): boolean => aliceMessages.length >= 1);
+      await new Promise((r) => setTimeout(r, 200));
+
+      expect(aliceMessages).toHaveLength(1);
+      expect(aliceMessages[0].type).toBe('event');
+
+      await aliceSub.close();
+    });
+  });
+
+  // ---- filter matching (unit-level) ----------------------------------------
+
+  describe('filter matching', () => {
+    it('should match with EqualFilter', async () => {
+      const tenant = 'did:test:filter-eq';
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ protocol: 'http://proto.xyz' }));
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes({ protocol: 'http://other.xyz' }));
+
+      const result = await eventLog.read(tenant, {
+        filters: [{ protocol: 'http://proto.xyz' }],
+      });
+      expect(result.events).toHaveLength(1);
+    });
+
+    it('should match with OneOfFilter (array)', async () => {
+      const tenant = 'did:test:filter-oneof';
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ method: 'Write' }));
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes({ method: 'Delete' }));
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes({ method: 'Query' }));
+
+      const result = await eventLog.read(tenant, {
+        filters: [{ method: ['Write', 'Query'] }],
+      });
+      expect(result.events).toHaveLength(2);
+    });
+
+    it('should match with RangeFilter', async () => {
+      const tenant = 'did:test:filter-range';
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ dateCreated: '2024-01-01' }));
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes({ dateCreated: '2024-06-15' }));
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes({ dateCreated: '2025-01-01' }));
+
+      const result = await eventLog.read(tenant, {
+        filters: [{ dateCreated: { gte: '2024-06-01', lt: '2025-01-01' } }],
+      });
+      expect(result.events).toHaveLength(1);
+    });
+
+    it('should return all events when no filters are provided', async () => {
+      const tenant = 'did:test:filter-none';
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
+
+      const result = await eventLog.read(tenant);
+      expect(result.events).toHaveLength(2);
+    });
+  });
+
+  // ---- DID subject encoding ------------------------------------------------
+
+  describe('DID subject encoding', () => {
+    it('should handle DIDs with dots correctly', async () => {
+      // did:dht contains dots in the method-specific identifier.
+      const tenant = 'did:dht:abc123.def456';
+      const cursor = await eventLog.emit(tenant, createEvent(), createIndexes());
+      expect(cursor).toBeDefined();
+
+      const result = await eventLog.read(tenant);
+      expect(result.events).toHaveLength(1);
+    });
+  });
+});
