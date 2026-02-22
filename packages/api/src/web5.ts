@@ -569,7 +569,6 @@ export class Web5 {
 
             const hasProviderAuth = serverInfo.registrationRequirements.includes('provider-auth-v0')
               && serverInfo.providerAuth !== undefined;
-            const hasPoW = serverInfo.registrationRequirements.includes('proof-of-work-sha256-v0');
 
             if (hasProviderAuth && registration.onProviderAuthRequired) {
               // --- Provider Auth Path ---
@@ -636,16 +635,11 @@ export class Web5 {
                 );
               }
 
-            } else if (hasPoW) {
-              // --- Proof-of-Work Path (existing) ---
+            } else {
+              // --- Default Path (PoW / general registration) ---
               for (const did of didsToRegister) {
                 await DwnRegistrar.registerTenant(dwnEndpoint, did);
               }
-
-            } else {
-              console.warn(
-                `DWN endpoint ${dwnEndpoint} requires registration but no supported method is available.`,
-              );
             }
           }
 
