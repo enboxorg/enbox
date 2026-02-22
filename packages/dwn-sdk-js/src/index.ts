@@ -9,6 +9,8 @@ export { ProtocolRecordLimitStrategy } from './types/protocols-types.js';
 export type { DataEncodedRecordsWriteMessage, RecordsCountDescriptor, RecordsCountMessage, RecordsCountReply, RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsQueryReply, RecordsQueryReplyEntry, RecordsReadMessage, RecordsReadReply, RecordsSubscribeDescriptor, RecordsSubscribeMessage, RecordsSubscribeReply, RecordSubscriptionHandler, RecordsWriteDescriptor, RecordsWriteTags, RecordsWriteTagValue, RecordsWriteMessage, RecordsWriteSignaturePayload, RecordsDeleteDescriptor, RecordsQueryDescriptor, RecordsReadDescriptor, RecordsSubscribeMessageOptions, RecordsWriteMessageOptions, InternalRecordsWriteMessage, RecordEvent, RecordsWriteTagsFilter } from './types/records-types.js';
 export type { GeneralJws, SignatureEntry } from './types/jws-types.js';
 export { authenticate } from './core/auth.js';
+export { CoreProtocolRegistry, PERMISSIONS_REVOCATION_PATH } from './core/core-protocol.js';
+export type { CoreProtocol, CoreProtocolStores } from './core/core-protocol.js';
 export { AllowAllTenantGate } from './core/tenant-gate.js';
 export type { ActiveTenantCheckResult, TenantGate } from './core/tenant-gate.js';
 export { Cid } from './utils/cid.js';

@@ -13,11 +13,13 @@ import type { ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryRe
 import type { RecordsCountMessage, RecordsCountReply, RecordsDeleteMessage, RecordsQueryMessage, RecordsQueryReply, RecordsReadMessage, RecordsReadReply, RecordsSubscribeMessage, RecordsSubscribeMessageOptions, RecordsSubscribeReply, RecordsWriteMessage, RecordsWriteMessageOptions } from './types/records-types.js';
 
 import { AllowAllTenantGate } from './core/tenant-gate.js';
+import { CoreProtocolRegistry } from './core/core-protocol.js';
 import { Message } from './core/message.js';
 import { messageReplyFromError } from './core/message-reply.js';
 import { MessagesReadHandler } from './handlers/messages-read.js';
 import { MessagesSubscribeHandler } from './handlers/messages-subscribe.js';
 import { MessagesSyncHandler } from './handlers/messages-sync.js';
+import { PermissionsProtocol } from './protocols/permissions.js';
 import { ProtocolsConfigureHandler } from './handlers/protocols-configure.js';
 import { ProtocolsQueryHandler } from './handlers/protocols-query.js';
 import { RecordsCountHandler } from './handlers/records-count.js';
@@ -42,6 +44,7 @@ export class Dwn {
   private eventLog?: EventLog;
   private storageController: StorageController;
   private resumableTaskManager: ResumableTaskManager;
+  private _coreProtocols: CoreProtocolRegistry;
 
   private constructor(config: DwnConfig) {
     this.didResolver = config.didResolver!;
@@ -63,6 +66,10 @@ export class Dwn {
       config.resumableTaskStore,
       this.storageController
     );
+
+    // Initialize the core protocol registry with built-in system protocols.
+    this._coreProtocols = new CoreProtocolRegistry();
+    this._coreProtocols.register(new PermissionsProtocol());
 
     this.methodHandlers = {
       [DwnInterfaceName.Messages + DwnMethodName.Read]: new MessagesReadHandler(
@@ -159,6 +166,15 @@ export class Dwn {
     await this.dataStore.close();
     await this.resumableTaskStore.close();
     await this.stateIndex.close();
+  }
+
+  /**
+   * The registry of core protocols (hardcoded, immutable, always-installed).
+   * Used by handlers and utilities that need to check whether a protocol URI
+   * belongs to a core protocol or to dispatch lifecycle hooks.
+   */
+  public get coreProtocols(): CoreProtocolRegistry {
+    return this._coreProtocols;
   }
 
   /**
