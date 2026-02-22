@@ -1,3 +1,5 @@
+import type { TokenExchangeResponse } from '../src/registration-types.js';
+
 import sinon from 'sinon';
 
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -240,6 +242,172 @@ describe('DwnRegistrar', () => {
       expect(fetchStub.firstCall.args[0]).toBe('https://dwn.example.com/registration/terms-of-service');
       expect(fetchStub.secondCall.args[0]).toBe('https://dwn.example.com/registration/proof-of-work');
       expect(fetchStub.thirdCall.args[0]).toBe('https://dwn.example.com/registration');
+    });
+  });
+
+  describe('exchangeAuthCode', () => {
+    it('should POST to the token URL with correct body and return the response', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+
+      const tokenResponse: TokenExchangeResponse = {
+        registrationToken : 'reg-token-123',
+        refreshToken      : 'refresh-456',
+        expiresIn         : 3600,
+        tokenType         : 'bearer',
+      };
+      fetchStub.resolves(new Response(JSON.stringify(tokenResponse), {
+        status  : 200,
+        headers : { 'Content-Type': 'application/json' },
+      }));
+
+      const result = await DwnRegistrar.exchangeAuthCode(
+        'https://auth.example.com/token',
+        'auth-code-xyz',
+        'https://app.example.com/callback',
+      );
+
+      expect(fetchStub.callCount).toBe(1);
+      expect(fetchStub.firstCall.args[0]).toBe('https://auth.example.com/token');
+
+      const requestInit = fetchStub.firstCall.args[1]!;
+      expect(requestInit.method).toBe('POST');
+      expect(requestInit.headers).toEqual({ 'Content-Type': 'application/json' });
+
+      const body = JSON.parse(requestInit.body as string);
+      expect(body.grantType).toBe('authorization_code');
+      expect(body.code).toBe('auth-code-xyz');
+      expect(body.redirectUri).toBe('https://app.example.com/callback');
+
+      expect(result.registrationToken).toBe('reg-token-123');
+      expect(result.refreshToken).toBe('refresh-456');
+      expect(result.expiresIn).toBe(3600);
+      expect(result.tokenType).toBe('bearer');
+    });
+
+    it('should throw when the token endpoint returns non-200', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.resolves(new Response('invalid_grant', { status: 400 }));
+
+      await expect(
+        DwnRegistrar.exchangeAuthCode(
+          'https://auth.example.com/token',
+          'bad-code',
+          'https://app.example.com/callback',
+        )
+      ).rejects.toThrow('DwnRegistrar: Token exchange failed (400): invalid_grant');
+    });
+  });
+
+  describe('refreshRegistrationToken', () => {
+    it('should POST to the refresh URL with correct body and return the response', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+
+      const tokenResponse: TokenExchangeResponse = {
+        registrationToken : 'new-reg-token',
+        refreshToken      : 'new-refresh',
+        expiresIn         : 7200,
+        tokenType         : 'bearer',
+      };
+      fetchStub.resolves(new Response(JSON.stringify(tokenResponse), {
+        status  : 200,
+        headers : { 'Content-Type': 'application/json' },
+      }));
+
+      const result = await DwnRegistrar.refreshRegistrationToken(
+        'https://auth.example.com/refresh',
+        'old-refresh-token',
+      );
+
+      expect(fetchStub.callCount).toBe(1);
+      expect(fetchStub.firstCall.args[0]).toBe('https://auth.example.com/refresh');
+
+      const requestInit = fetchStub.firstCall.args[1]!;
+      expect(requestInit.method).toBe('POST');
+
+      const body = JSON.parse(requestInit.body as string);
+      expect(body.grantType).toBe('refresh_token');
+      expect(body.refreshToken).toBe('old-refresh-token');
+
+      expect(result.registrationToken).toBe('new-reg-token');
+      expect(result.refreshToken).toBe('new-refresh');
+      expect(result.expiresIn).toBe(7200);
+    });
+
+    it('should throw when the refresh endpoint returns non-200', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.resolves(new Response('token_expired', { status: 401 }));
+
+      await expect(
+        DwnRegistrar.refreshRegistrationToken(
+          'https://auth.example.com/refresh',
+          'expired-refresh',
+        )
+      ).rejects.toThrow('DwnRegistrar: Token refresh failed (401): token_expired');
+    });
+  });
+
+  describe('registerTenantWithToken', () => {
+    it('should POST to the registration endpoint with provider auth token', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.resolves(new Response(JSON.stringify({ success: true }), { status: 200 }));
+
+      await DwnRegistrar.registerTenantWithToken(
+        'https://dwn.example.com',
+        'did:key:z6Mk...',
+        'my-registration-token',
+      );
+
+      expect(fetchStub.callCount).toBe(1);
+      expect(fetchStub.firstCall.args[0]).toBe('https://dwn.example.com/registration');
+
+      const requestInit = fetchStub.firstCall.args[1]!;
+      expect(requestInit.method).toBe('POST');
+
+      const body = JSON.parse(requestInit.body as string);
+      expect(body.providerAuth.registrationToken).toBe('my-registration-token');
+      expect(body.registrationData.did).toBe('did:key:z6Mk...');
+      expect(body.registrationData.termsOfServiceHash).toBeUndefined();
+    });
+
+    it('should include termsOfServiceHash when provided', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.resolves(new Response(JSON.stringify({ success: true }), { status: 200 }));
+
+      await DwnRegistrar.registerTenantWithToken(
+        'https://dwn.example.com',
+        'did:key:z6Mk...',
+        'my-token',
+        'tos-hash-abc',
+      );
+
+      const body = JSON.parse(fetchStub.firstCall.args[1]!.body as string);
+      expect(body.registrationData.termsOfServiceHash).toBe('tos-hash-abc');
+    });
+
+    it('should throw when the registration endpoint returns non-200', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.resolves(new Response('Invalid token', { status: 400 }));
+
+      await expect(
+        DwnRegistrar.registerTenantWithToken(
+          'https://dwn.example.com',
+          'did:key:z6Mk...',
+          'bad-token',
+        )
+      ).rejects.toThrow('DwnRegistrar: Provider auth registration failed (400): Invalid token');
+    });
+
+    it('should handle endpoint URLs with trailing slashes', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.resolves(new Response(JSON.stringify({ success: true }), { status: 200 }));
+
+      await DwnRegistrar.registerTenantWithToken(
+        'https://dwn.example.com/',
+        'did:key:z6Mk...',
+        'token',
+      );
+
+      expect(fetchStub.firstCall.args[0]).toBe('https://dwn.example.com/registration');
     });
   });
 });
