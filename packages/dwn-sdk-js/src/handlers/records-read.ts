@@ -61,24 +61,35 @@ export class RecordsReadHandler implements MethodHandler {
 
     const matchedMessage = existingMessages[0];
 
-    // if the matched message is a RecordsDelete, we mark the record as not-found and return both the RecordsDelete and the initial RecordsWrite
-    // TODO: https://github.com/enboxorg/enbox/issues/222
-    // Consider performing authorization checks like when records exists before returning RecordsDelete and initial RecordsWrite of a deleted record
+    // If the matched message is a RecordsDelete, authorize against the newest RecordsWrite
+    // (for parity with the live-record path which authorizes against the latest write),
+    // then return 404 with both the RecordsDelete and the initial RecordsWrite.
     if (matchedMessage.descriptor.method === DwnMethodName.Delete) {
       const recordsDeleteMessage = matchedMessage as RecordsDeleteMessage;
-      const initialWrite = await RecordsWrite.fetchInitialRecordsWriteMessage(this.messageStore, tenant, recordsDeleteMessage.descriptor.recordId);
+      const recordId = recordsDeleteMessage.descriptor.recordId;
 
+      const initialWrite = await RecordsWrite.fetchInitialRecordsWriteMessage(this.messageStore, tenant, recordId);
       if (initialWrite === undefined) {
         return messageReplyFromError(new DwnError(
           DwnErrorCode.RecordsReadInitialWriteNotFound,
-          'Initial write for deleted record not found'
+          'initial write for deleted record not found'
         ), 400);
       }
 
-      // Perform authorization before returning the delete and initial write messages
-      const parsedInitialWrite = await RecordsWrite.parse(initialWrite);
+      // Authorize against the newest RecordsWrite so that mutable properties like `published`
+      // reflect the record's state at the time of deletion, not just the initial write.
+      let newestWrite;
       try {
-        await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedInitialWrite, this.messageStore);
+        newestWrite = await RecordsWrite.fetchNewestRecordsWrite(this.messageStore, tenant, recordId);
+      } catch {
+        // If newest write is not found (should not happen since initial write exists),
+        // fall back to the initial write for authorization.
+        newestWrite = initialWrite;
+      }
+      const parsedNewestWrite = await RecordsWrite.parse(newestWrite);
+
+      try {
+        await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedNewestWrite, this.messageStore);
       } catch (error) {
         return messageReplyFromError(error, 401);
       }
@@ -87,7 +98,7 @@ export class RecordsReadHandler implements MethodHandler {
         status : { code: 404, detail: 'Not Found' },
         entry  : {
           recordsDelete: recordsDeleteMessage,
-          initialWrite
+          initialWrite,
         }
       };
     }
