@@ -3064,7 +3064,9 @@ export function testRecordsWriteHandler(): void {
         // replace valid `encryption` property with a mismatching one — mutate the iv to cause CID mismatch
         message.encryption!.iv = Encoder.stringToBase64Url('any value which will result in a different CID');
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, new CoreProtocolRegistry(), eventLog);
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
         expect(writeReply.status.code).toBe(400);
@@ -4444,9 +4446,9 @@ export function testRecordsWriteHandler(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-        const recordsWriteHandler = new RecordsWriteHandler(
-          didResolver, messageStoreStub, dataStoreStub, stateIndex, new CoreProtocolRegistry(), eventLog,
-        );
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
         expect(reply.status.code).toBe(400);
@@ -4470,9 +4472,9 @@ export function testRecordsWriteHandler(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-        const recordsWriteHandler = new RecordsWriteHandler(
-          didResolver, messageStoreStub, dataStoreStub, stateIndex, new CoreProtocolRegistry(), eventLog,
-        );
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
         expect(reply.status.code).toBe(400);
@@ -4493,9 +4495,9 @@ export function testRecordsWriteHandler(): void {
         // stub protocol validation so the handler reaches authentication/authorization
         sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
 
-        const recordsWriteHandler = new RecordsWriteHandler(
-          didResolver, messageStoreStub, dataStoreStub, stateIndex, new CoreProtocolRegistry(), eventLog,
-        );
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
         expect(reply.status.code).toBe(401);
@@ -4513,9 +4515,9 @@ export function testRecordsWriteHandler(): void {
         // stub protocol validation so the handler reaches authentication/authorization
         sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
 
-        const recordsWriteHandler = new RecordsWriteHandler(
-          didResolver, messageStoreStub, dataStoreStub, stateIndex, new CoreProtocolRegistry(), eventLog,
-        );
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
 
         const tenant = await (await TestDataGenerator.generatePersona()).did; // unauthorized tenant
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
@@ -4548,9 +4550,9 @@ export function testRecordsWriteHandler(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-        const recordsWriteHandler = new RecordsWriteHandler(
-          didResolver, messageStoreStub, dataStoreStub, stateIndex, new CoreProtocolRegistry(), eventLog,
-        );
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
         expect(reply.status.code).toBe(400);
@@ -4562,7 +4564,9 @@ export function testRecordsWriteHandler(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, attesters: [alice, bob] });
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, new CoreProtocolRegistry(), eventLog);
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
         expect(writeReply.status.code).toBe(400);
@@ -4577,7 +4581,9 @@ export function testRecordsWriteHandler(): void {
         const anotherWrite = await TestDataGenerator.generateRecordsWrite({ attesters: [alice] });
         message.attestation = anotherWrite.message.attestation;
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, new CoreProtocolRegistry(), eventLog);
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
         expect(writeReply.status.code).toBe(400);
@@ -4594,7 +4600,9 @@ export function testRecordsWriteHandler(): void {
         const attestationNotReferencedByAuthorization = await RecordsWrite['createAttestation'](descriptorCid, Jws.createSigners([bob]));
         message.attestation = attestationNotReferencedByAuthorization;
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, new CoreProtocolRegistry(), eventLog);
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
         expect(writeReply.status.code).toBe(400);
@@ -4620,9 +4628,10 @@ export function testRecordsWriteHandler(): void {
         // stub protocol validation so the handler reaches the process methods
         sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
 
-        const recordsWriteHandler = new RecordsWriteHandler(
-          didResolverStub, messageStoreStub, dataStoreStub, stateIndex, new CoreProtocolRegistry(), eventLog,
-        );
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver   : didResolverStub, messageStore  : messageStoreStub,
+          dataStore     : dataStoreStub, stateIndex, coreProtocols : new CoreProtocolRegistry(), eventLog,
+        });
 
         // simulate throwing unexpected error
         sinon.stub(recordsWriteHandler as any, 'processMessageWithoutDataStream').throws(new Error('an unknown error in recordsWriteHandler.processMessageWithoutDataStream()'));

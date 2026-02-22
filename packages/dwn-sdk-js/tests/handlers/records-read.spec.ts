@@ -2161,7 +2161,9 @@ export function testRecordsReadHandler(): void {
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
       const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-      const recordsReadHandler = new RecordsReadHandler(didResolver, messageStoreStub, dataStoreStub);
+      const recordsReadHandler = new RecordsReadHandler({
+        didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub,
+      });
       const reply = await recordsReadHandler.handle({ tenant: alice.did, message: recordsRead.message });
       expect(reply.status.code).toBe(401);
     });
@@ -2179,7 +2181,9 @@ export function testRecordsReadHandler(): void {
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
       const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-      const recordsReadHandler = new RecordsReadHandler(didResolver, messageStoreStub, dataStoreStub);
+      const recordsReadHandler = new RecordsReadHandler({
+        didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub,
+      });
 
       // stub the `parse()` function to throw an error
       sinon.stub(RecordsRead, 'parse').throws('anyError');

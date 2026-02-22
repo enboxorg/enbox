@@ -904,7 +904,9 @@ export function testRecordsDeleteHandler(): void {
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
       const resumableTaskManagerStub = sinon.createStubInstance(ResumableTaskManager);
 
-      const recordsDeleteHandler = new RecordsDeleteHandler(didResolver, messageStoreStub, resumableTaskManagerStub);
+      const recordsDeleteHandler = new RecordsDeleteHandler({
+        didResolver, messageStore: messageStoreStub, resumableTaskManager: resumableTaskManagerStub,
+      });
       const reply = await recordsDeleteHandler.handle({ tenant, message });
       expect(reply.status.code).toBe(401);
     });
@@ -917,7 +919,9 @@ export function testRecordsDeleteHandler(): void {
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
       const resumableTaskManagerStub = sinon.createStubInstance(ResumableTaskManager);
 
-      const recordsDeleteHandler = new RecordsDeleteHandler(didResolver, messageStoreStub, resumableTaskManagerStub);
+      const recordsDeleteHandler = new RecordsDeleteHandler({
+        didResolver, messageStore: messageStoreStub, resumableTaskManager: resumableTaskManagerStub,
+      });
 
       // stub the `parse()` function to throw an error
       sinon.stub(RecordsDelete, 'parse').throws('anyError');

@@ -308,7 +308,7 @@ export function testMessagesSyncHandler(): void {
         });
         (message['descriptor'] as any)['troll'] = 'hehe';
 
-        const handler = new MessagesSyncHandler(didResolver, messageStore, stateIndex);
+        const handler = new MessagesSyncHandler({ didResolver, messageStore, stateIndex });
         const reply = await handler.handle({ tenant: alice.did, message });
         expect(reply.status.code).toBe(400);
       });
@@ -587,7 +587,7 @@ export function testMessagesSyncHandler(): void {
         // manually override to an invalid action
         (message.descriptor as any).action = 'invalid';
 
-        const handler = new MessagesSyncHandler(didResolver, messageStore, stateIndex);
+        const handler = new MessagesSyncHandler({ didResolver, messageStore, stateIndex });
         const reply = await handler.handle({ tenant: alice.did, message });
         expect(reply.status.code).toBe(400);
         // the JSON schema validator catches the invalid action before the handler switch/case
@@ -613,7 +613,7 @@ export function testMessagesSyncHandler(): void {
           // Override action to something that passes the stub but hits the default case
           (message.descriptor as any).action = 'bogusAction';
 
-          const handler = new MessagesSyncHandler(didResolver, messageStore, stateIndex);
+          const handler = new MessagesSyncHandler({ didResolver, messageStore, stateIndex });
           const reply = await handler.handle({ tenant: alice.did, message });
           expect(reply.status.code).toBe(400);
           expect(reply.status.detail).toContain('Unknown action');
@@ -642,7 +642,7 @@ export function testMessagesSyncHandler(): void {
           // Override prefix to contain invalid characters
           (message.descriptor as any).prefix = 'abc';
 
-          const handler = new MessagesSyncHandler(didResolver, messageStore, stateIndex);
+          const handler = new MessagesSyncHandler({ didResolver, messageStore, stateIndex });
           const reply = await handler.handle({ tenant: alice.did, message });
           expect(reply.status.code).toBe(500);
           expect(reply.status.detail).toContain('MessagesSyncInvalidPrefix');
@@ -671,7 +671,7 @@ export function testMessagesSyncHandler(): void {
           // Override prefix to be too long
           (message.descriptor as any).prefix = '0'.repeat(257);
 
-          const handler = new MessagesSyncHandler(didResolver, messageStore, stateIndex);
+          const handler = new MessagesSyncHandler({ didResolver, messageStore, stateIndex });
           const reply = await handler.handle({ tenant: alice.did, message });
           expect(reply.status.code).toBe(500);
           expect(reply.status.detail).toContain('MessagesSyncInvalidPrefix');
@@ -699,7 +699,7 @@ export function testMessagesSyncHandler(): void {
           getProtocolLeaves      : async (): Promise<any> => { throw new Error('Unexpected DB failure'); },
         };
 
-        const handler = new MessagesSyncHandler(didResolver, messageStore, failingStateIndex);
+        const handler = new MessagesSyncHandler({ didResolver, messageStore, stateIndex: failingStateIndex });
 
         const { message } = await MessagesSync.create({
           signer : Jws.createSigner(alice),
