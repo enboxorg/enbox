@@ -1,0 +1,16 @@
+# Terraform local state & working files
+*.tfstate
+*.tfstate.backup
+*.tfstate.*.backup
+.terraform/
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# tfvars may contain secrets — never commit
+*.auto.tfvars
+*.auto.tfvars.json
+terraform.tfvars
