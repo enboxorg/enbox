@@ -189,6 +189,45 @@ All packages are above 90% line coverage in CI. If local coverage numbers look l
 | `dwn-server` | 97.3% |
 | `dwn-sql-store` | 96.9% |
 
+## Releasing & Publishing Packages
+
+Packages are published to npm via **Changesets** and CI. **NEVER bump versions manually in `package.json`** — use the changeset workflow instead.
+
+### How it works
+
+1. **Create a changeset** describing the changes and the semver bump type:
+   ```bash
+   bun changeset
+   ```
+   This interactively creates a `.changeset/<random-name>.md` file. Select which packages are affected and whether the bump is `patch`, `minor`, or `major`.
+
+2. **Commit and push** the changeset file(s) to `main` (directly or via PR).
+
+3. **CI creates a "Version Packages" PR** — the `release.yml` workflow detects pending changesets and opens a PR that bumps all `package.json` versions, updates changelogs, and regenerates the lockfile.
+
+4. **Merge the Version Packages PR** — CI then runs `scripts/publish.sh` which resolves `workspace:*` deps to real versions, packs each package with `bun pm pack`, and publishes tarballs via `npm publish`.
+
+### Key details
+
+- **Changeset config** is in `.changeset/config.json`.
+- **`@enbox/dwn-server` is ignored** by changesets (in `config.json` `ignore` list) — it's deployed directly via Fly.io, not published to npm.
+- **`updateInternalDependencies: "patch"`** — when a dependency gets bumped, its dependents automatically get a patch bump too.
+- **`scripts/publish.sh`** handles the Bun `workspace:*` → real version resolution that changesets' built-in publish cannot do.
+- The publish script **skips already-published versions** (idempotent).
+- Git tags are created automatically in the format `@enbox/<package>@<version>`.
+- npm auth is handled via `NPM_TOKEN` secret in CI.
+
+### Example changeset file
+
+```markdown
+---
+"@enbox/dwn-clients": patch
+"@enbox/api": patch
+---
+
+feat: add provider-auth-v0 client methods and Web5.connect() integration
+```
+
 ## Coding Style
 
 Style is derived from `dwn-sdk-js` (gold standard). ESLint enforces most rules.
