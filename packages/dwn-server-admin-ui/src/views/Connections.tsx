@@ -1,4 +1,3 @@
-import { h } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import { api } from '../lib/api';
 import { formatTimestamp } from '../lib/format';

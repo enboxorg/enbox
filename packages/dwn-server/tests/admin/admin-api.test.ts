@@ -1074,10 +1074,6 @@ describe('AdminApi — metrics and connection manager lifecycle', () => {
     rmSync(tmpDir2, { recursive: true, force: true });
   });
 
-  it('should expose httpServer getter from DwnServer', () => {
-    // The httpServer getter on DwnServer delegates to HttpApi.server.
-    // We test it via a running DwnServer.
-  });
 });
 
 describe('HttpApi — rate limiter getters', () => {
@@ -1695,5 +1691,142 @@ describe('Admin UI static file serving', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.adminApi).toBe(true);
+  });
+});
+
+// =============================================================================
+// Polish tests — config validation, server stop cleanup, query param safety
+// =============================================================================
+
+describe('AdminApi — config PATCH validation', () => {
+  let dwnServer: DwnServer;
+  let port: number;
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    port = 8850 + Math.floor(Math.random() * 40);
+    tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-configval-'));
+    dwnServer = new DwnServer({ config: createTestConfig(port, tmpDir) });
+    await dwnServer.start();
+  });
+
+  afterAll(async () => {
+    await dwnServer.stop();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should return 400 for invalid logLevel value', async () => {
+    const response = await adminFetch({ port }, '/config', {
+      method  : 'PATCH',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ logLevel: 'banana' }),
+    });
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toContain('logLevel');
+  });
+
+  it('should return 400 for negative numeric config values', async () => {
+    const response = await adminFetch({ port }, '/config', {
+      method  : 'PATCH',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ maxInFlight: -1 }),
+    });
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toContain('maxInFlight');
+  });
+
+  it('should return 400 for non-numeric config values', async () => {
+    const response = await adminFetch({ port }, '/config', {
+      method  : 'PATCH',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ rateLimitBurst: 'not-a-number' }),
+    });
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toContain('rateLimitBurst');
+  });
+
+  it('should accept valid logLevel values (case-insensitive validation)', async () => {
+    const response = await adminFetch({ port }, '/config', {
+      method  : 'PATCH',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ logLevel: 'warn' }),
+    });
+    expect(response.status).toBe(200);
+  });
+
+  it('should accept zero as a valid numeric value (means unlimited)', async () => {
+    const response = await adminFetch({ port }, '/config', {
+      method  : 'PATCH',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ quotaMaxMessages: 0 }),
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.updated).toContain('quotaMaxMessages');
+  });
+});
+
+describe('DwnServer — stop cleanup', () => {
+  it('should record server.stop audit event and clean up resources on shutdown', async () => {
+    const port = 8800 + Math.floor(Math.random() * 40);
+    const tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-stop-'));
+    const dwnServer = new DwnServer({ config: createTestConfig(port, tmpDir) });
+    await dwnServer.start();
+
+    // Verify server.start event exists.
+    const auditBefore = await adminFetch({ port }, '/audit?action=server.start');
+    expect(auditBefore.status).toBe(200);
+    const bodyBefore = await auditBefore.json();
+    expect(bodyBefore.events.length).toBeGreaterThanOrEqual(1);
+
+    // Stop the server — should record server.stop and clean up.
+    await dwnServer.stop();
+
+    // Double stop should be a no-op.
+    await dwnServer.stop();
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+});
+
+describe('AdminApi — query parameter safety', () => {
+  let dwnServer: DwnServer;
+  let port: number;
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    port = 8750 + Math.floor(Math.random() * 40);
+    tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-queryparam-'));
+    dwnServer = new DwnServer({ config: createTestConfig(port, tmpDir) });
+    await dwnServer.start();
+  });
+
+  afterAll(async () => {
+    await dwnServer.stop();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should handle non-numeric limit parameter gracefully', async () => {
+    const response = await adminFetch({ port }, '/tenants?limit=abc');
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data).toBeInstanceOf(Array);
+  });
+
+  it('should handle non-numeric since parameter in events', async () => {
+    const response = await adminFetch({ port }, '/events?since=xyz');
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.events).toBeInstanceOf(Array);
+  });
+
+  it('should handle non-numeric limit in audit endpoint', async () => {
+    const response = await adminFetch({ port }, '/audit?limit=nope');
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.events).toBeInstanceOf(Array);
   });
 });

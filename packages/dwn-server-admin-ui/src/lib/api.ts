@@ -43,6 +43,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (response.status === 401) {
     clearToken();
+    window.dispatchEvent(new CustomEvent('auth-change'));
     throw new Error('Unauthorized');
   }
 

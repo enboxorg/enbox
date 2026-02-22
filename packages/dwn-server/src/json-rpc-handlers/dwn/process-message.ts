@@ -194,8 +194,8 @@ async function enforceQuota(
   if (registrationStore) {
     const tenantQuota = await registrationStore.getQuota(target);
     if (tenantQuota !== undefined) {
-      maxMessages = tenantQuota.maxMessages || maxMessages;
-      maxStorageBytes = tenantQuota.maxStorageBytes || maxStorageBytes;
+      maxMessages = tenantQuota.maxMessages ?? maxMessages;
+      maxStorageBytes = tenantQuota.maxStorageBytes ?? maxStorageBytes;
     }
   }
 

@@ -1,4 +1,3 @@
-import { h } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 
 import { api } from '../lib/api';
@@ -9,6 +8,7 @@ export function Overview() {
   const [stats, setStats] = useState<any>(null);
   const [rateLimits, setRateLimits] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -24,9 +24,11 @@ export function Overview() {
           setHealth(h);
           setStats(s);
           setRateLimits(r);
+          setError('');
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error('Overview fetch error:', err);
+        if (!cancelled) { setError(err.message || 'Failed to load overview data'); }
       } finally {
         if (!cancelled) { setLoading(false); }
       }
@@ -46,6 +48,12 @@ export function Overview() {
         <h2>Overview</h2>
         <p class="description">Server health and statistics</p>
       </div>
+
+      {error && (
+        <div class="card" style="color:var(--color-danger)">
+          {error}
+        </div>
+      )}
 
       {/* Health status card */}
       {health && (

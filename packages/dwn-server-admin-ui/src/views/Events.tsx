@@ -1,4 +1,3 @@
-import { h } from 'preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { api } from '../lib/api';
 import { formatBytes, formatTimestamp, truncateDid } from '../lib/format';
