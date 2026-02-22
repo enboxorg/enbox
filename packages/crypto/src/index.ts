@@ -2,6 +2,11 @@ export * from './crypto-error.js';
 export * from './local-key-manager.js';
 export * from './utils.js';
 
+export * from './cose/cbor.js';
+export * from './cose/cose-key.js';
+export * from './cose/cose-sign1.js';
+export * from './cose/eat.js';
+
 export * from './algorithms/aes-ctr.js';
 export * from './algorithms/aes-gcm.js';
 export * from './algorithms/aes-kw.js';
