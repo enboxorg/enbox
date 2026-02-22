@@ -1,5 +1,9 @@
 import type { ActivityLog } from '../admin/activity-log.js';
 import type { AdminConnectionSnapshot } from '../admin/types.js';
+import type { AdminStore } from '../admin/admin-store.js';
+import type { DwnServerConfig } from '../config.js';
+import type { RateLimiter } from '../rate-limiter.js';
+import type { RegistrationStore } from '../registration/registration-store.js';
 import type { RequestContext } from '../lib/json-rpc-router.js';
 import type { ServerWebSocket } from 'bun';
 import type { WsData } from '../http-api.js';
@@ -44,6 +48,10 @@ export class SocketConnection {
     private onCloseCallback?: () => void,
     private maxInFlight: number = DEFAULT_MAX_IN_FLIGHT,
     private activityLog?: ActivityLog,
+    private adminStore?: AdminStore,
+    private registrationStore?: RegistrationStore,
+    private serverConfig?: DwnServerConfig,
+    private tenantRateLimiter?: RateLimiter,
   ){
     // Bun handles ping/pong automatically at the protocol level, but we still
     // want an application-level heartbeat to detect dead connections.
@@ -261,10 +269,14 @@ export class SocketConnection {
     const { params, method, subscription } = request;
 
     const requestContext: RequestContext = {
-      transport        : 'ws',
-      dwn              : this.dwn,
-      socketConnection : this,
-      activityLog      : this.activityLog,
+      transport         : 'ws',
+      dwn               : this.dwn,
+      socketConnection  : this,
+      activityLog       : this.activityLog,
+      adminStore        : this.adminStore,
+      registrationStore : this.registrationStore,
+      config            : this.serverConfig,
+      tenantRateLimiter : this.tenantRateLimiter,
     };
 
     // methods that expect a long-running subscription begin with `rpc.subscribe.`

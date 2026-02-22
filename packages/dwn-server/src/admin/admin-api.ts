@@ -4,9 +4,19 @@ import type { ActivityLog } from './activity-log.js';
 import type { AdminStore } from './admin-store.js';
 import type { ConnectionManager } from '../connection/connection-manager.js';
 import type { DwnServerConfig } from '../config.js';
+import type { RateLimiter } from '../rate-limiter.js';
 import type { RegistrationManager } from '../registration/registration-manager.js';
 import type { RegistrationStore } from '../registration/registration-store.js';
-import type { AdminConnectionSnapshot, AdminServerStats, AdminTenantDetail, AdminTenantSummary, PaginatedResponse } from './types.js';
+import type {
+  AdminConnectionSnapshot,
+  AdminServerStats,
+  AdminTenantDetail,
+  AdminTenantSummary,
+  PaginatedResponse,
+  RateLimitStatus,
+  TenantQuotaInput,
+  TenantQuotaStatus,
+} from './types.js';
 
 import log from 'loglevel';
 
@@ -31,6 +41,8 @@ export class AdminApi {
   #registrationStore: RegistrationStore | undefined;
   #connectionManager: ConnectionManager | undefined;
   #activityLog: ActivityLog | undefined;
+  #ipRateLimiter: RateLimiter | undefined;
+  #tenantRateLimiter: RateLimiter | undefined;
   #startTime: number;
   #packageInfo: { version?: string };
   #metricsInterval: ReturnType<typeof setInterval> | undefined;
@@ -50,6 +62,8 @@ export class AdminApi {
     registrationStore? : RegistrationStore;
     connectionManager? : ConnectionManager;
     activityLog? : ActivityLog;
+    ipRateLimiter? : RateLimiter;
+    tenantRateLimiter? : RateLimiter;
     packageInfo? : { version?: string };
   }): AdminApi {
     const api = new AdminApi();
@@ -60,6 +74,8 @@ export class AdminApi {
     api.#registrationStore = options.registrationStore;
     api.#connectionManager = options.connectionManager;
     api.#activityLog = options.activityLog;
+    api.#ipRateLimiter = options.ipRateLimiter;
+    api.#tenantRateLimiter = options.tenantRateLimiter;
     api.#packageInfo = options.packageInfo ?? {};
     return api;
   }
@@ -136,6 +152,28 @@ export class AdminApi {
           const did = decodeURIComponent(match[1]);
           return this.#handleTenantUnsuspend(did);
         }
+      }
+
+      // --- Tenant quota ---
+      {
+        const match = subPath.match(/^\/tenants\/([^/]+)\/quota$/);
+        if (match) {
+          const did = decodeURIComponent(match[1]);
+          if (method === 'GET') {
+            return this.#handleQuotaGet(did);
+          }
+          if (method === 'PUT') {
+            return this.#handleQuotaSet(did, req);
+          }
+          if (method === 'DELETE') {
+            return this.#handleQuotaDelete(did);
+          }
+        }
+      }
+
+      // --- Rate limits ---
+      if (method === 'GET' && subPath === '/rate-limits') {
+        return this.#handleRateLimits();
       }
 
       // --- Activity events ---
@@ -375,6 +413,22 @@ export class AdminApi {
       }
     }
 
+    // Resolve quota info.
+    let quotaSource: 'tenant' | 'global' | 'unlimited' = 'unlimited';
+    let maxMessages = this.#config.quotaMaxMessages ?? 0;
+    let maxStorageBytes = this.#config.quotaMaxStorageBytes ?? 0;
+    if (maxMessages > 0 || maxStorageBytes > 0) {
+      quotaSource = 'global';
+    }
+    if (this.#registrationStore) {
+      const tenantQuota = await this.#registrationStore.getQuota(did);
+      if (tenantQuota !== undefined) {
+        maxMessages = tenantQuota.maxMessages || maxMessages;
+        maxStorageBytes = tenantQuota.maxStorageBytes || maxStorageBytes;
+        quotaSource = 'tenant';
+      }
+    }
+
     const detail: AdminTenantDetail = {
       did,
       isActive,
@@ -385,7 +439,12 @@ export class AdminApi {
         dataStorageBytes : stats.dataStorageBytes,
         protocolCount    : stats.protocolCount,
       },
-      protocols: stats.protocols,
+      protocols : stats.protocols,
+      quota     : {
+        maxMessages,
+        maxStorageBytes,
+        source: quotaSource,
+      },
     };
 
     return Response.json(detail);
@@ -480,6 +539,141 @@ export class AdminApi {
       : [];
 
     return Response.json({ connections });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Quota handlers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns the quota status for a tenant, including effective limits and current usage.
+   */
+  async #handleQuotaGet(did: string): Promise<Response> {
+    if (!this.#adminStore) {
+      return Response.json(
+        { error: 'Admin store unavailable. Quotas require a SQL storage backend.' },
+        { status: 501 },
+      );
+    }
+
+    // Resolve effective quota.
+    let maxMessages = this.#config.quotaMaxMessages ?? 0;
+    let maxStorageBytes = this.#config.quotaMaxStorageBytes ?? 0;
+    let source: 'tenant' | 'global' | 'unlimited' = maxMessages > 0 || maxStorageBytes > 0 ? 'global' : 'unlimited';
+
+    if (this.#registrationStore) {
+      const tenantQuota = await this.#registrationStore.getQuota(did);
+      if (tenantQuota !== undefined) {
+        maxMessages = tenantQuota.maxMessages || maxMessages;
+        maxStorageBytes = tenantQuota.maxStorageBytes || maxStorageBytes;
+        source = 'tenant';
+      }
+    }
+
+    const [messageCount, storageBytes] = await Promise.all([
+      this.#adminStore.getTenantMessageCount(did),
+      this.#adminStore.getTenantStorageSize(did),
+    ]);
+
+    const status: TenantQuotaStatus = {
+      quota: {
+        maxMessages,
+        maxStorageBytes,
+        source,
+      },
+      usage: {
+        messageCount,
+        storageBytes,
+      },
+    };
+
+    return Response.json(status);
+  }
+
+  /**
+   * Sets the per-tenant quota.
+   */
+  async #handleQuotaSet(did: string, req: Request): Promise<Response> {
+    if (!this.#registrationStore) {
+      return Response.json(
+        { error: 'Quotas require registration to be enabled.' },
+        { status: 501 },
+      );
+    }
+
+    let body: TenantQuotaInput;
+    try {
+      body = await req.json() as TenantQuotaInput;
+    } catch {
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+
+    if (body.maxMessages === undefined && body.maxStorageBytes === undefined) {
+      return Response.json(
+        { error: 'At least one of maxMessages or maxStorageBytes must be provided.' },
+        { status: 400 },
+      );
+    }
+
+    // Merge with existing quota if only one field is provided.
+    const existing = await this.#registrationStore.getQuota(did);
+
+    await this.#registrationStore.setQuota({
+      did,
+      maxMessages     : body.maxMessages ?? existing?.maxMessages ?? 0,
+      maxStorageBytes : body.maxStorageBytes ?? existing?.maxStorageBytes ?? 0,
+    });
+
+    return Response.json({ success: true, did });
+  }
+
+  /**
+   * Deletes the per-tenant quota, reverting to global defaults.
+   */
+  async #handleQuotaDelete(did: string): Promise<Response> {
+    if (!this.#registrationStore) {
+      return Response.json(
+        { error: 'Quotas require registration to be enabled.' },
+        { status: 501 },
+      );
+    }
+
+    const deleted = await this.#registrationStore.deleteQuota(did);
+    if (!deleted) {
+      return Response.json({ error: 'No per-tenant quota found' }, { status: 404 });
+    }
+
+    return Response.json({ success: true, did });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rate limit handler
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns the current rate limiting configuration and active entry counts.
+   */
+  #handleRateLimits(): Response {
+    const status: RateLimitStatus = {
+      config: {
+        perIp: {
+          requestsPerSecond : this.#config.rateLimitRequestsPerSecond ?? 0,
+          burst             : this.#config.rateLimitBurst ?? 50,
+          enabled           : (this.#config.rateLimitRequestsPerSecond ?? 0) > 0,
+        },
+        perTenant: {
+          requestsPerSecond : this.#config.rateLimitTenantRequestsPerSecond ?? 0,
+          burst             : this.#config.rateLimitTenantBurst ?? 50,
+          enabled           : (this.#config.rateLimitTenantRequestsPerSecond ?? 0) > 0,
+        },
+      },
+      activeEntries: {
+        ip     : this.#ipRateLimiter?.size ?? 0,
+        tenant : this.#tenantRateLimiter?.size ?? 0,
+      },
+    };
+
+    return Response.json(status);
   }
 
   // ---------------------------------------------------------------------------

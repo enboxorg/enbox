@@ -35,5 +35,8 @@ export enum DwnServerErrorCode {
   ProofOfWorkManagerResponseNonceReused = 'ProofOfWorkManagerResponseNonceReused',
   RegistrationManagerInvalidOrOutdatedTermsOfServiceHash = 'RegistrationManagerInvalidOrOutdatedTermsOfServiceHash',
   TenantRegistrationOutdatedTermsOfService = 'TenantRegistrationOutdatedTermsOfService',
+  TenantMessageQuotaExceeded = 'TenantMessageQuotaExceeded',
+  TenantStorageQuotaExceeded = 'TenantStorageQuotaExceeded',
   TenantSuspended = 'TenantSuspended',
+  RateLimitExceeded = 'RateLimitExceeded',
 }

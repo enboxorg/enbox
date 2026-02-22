@@ -17,6 +17,7 @@ import { config as defaultConfig } from './config.js';
 import { getDwnConfig } from './storage.js';
 import { HttpApi } from './http-api.js';
 import { PluginLoader } from './plugin-loader.js';
+import { RateLimiter } from './rate-limiter.js';
 import { RegistrationManager } from './registration/registration-manager.js';
 import { WsApi } from './ws-api.js';
 import { removeProcessHandlers, setProcessHandlers } from './process-handlers.js';
@@ -121,22 +122,47 @@ export class DwnServer {
       this.dwn = await Dwn.create(dwnConfig);
     }
 
+    // Create rate limiters when configured.
+    let ipRateLimiter: RateLimiter | undefined;
+    let tenantRateLimiter: RateLimiter | undefined;
+
+    if (this.config.rateLimitRequestsPerSecond > 0) {
+      ipRateLimiter = new RateLimiter({
+        refillRate : this.config.rateLimitRequestsPerSecond,
+        maxTokens  : this.config.rateLimitBurst,
+      });
+      log.info(`Per-IP rate limiting enabled: ${this.config.rateLimitRequestsPerSecond} req/s, burst ${this.config.rateLimitBurst}`);
+    }
+
+    if (this.config.rateLimitTenantRequestsPerSecond > 0) {
+      tenantRateLimiter = new RateLimiter({
+        refillRate : this.config.rateLimitTenantRequestsPerSecond,
+        maxTokens  : this.config.rateLimitTenantBurst,
+      });
+      log.info(`Per-tenant rate limiting enabled: ${this.config.rateLimitTenantRequestsPerSecond} req/s, burst ${this.config.rateLimitTenantBurst}`);
+    }
+
+    const registrationStore = registrationManager?.getRegistrationStore();
+
     // Initialize admin API if an admin token is configured.
     let adminApi: AdminApi | undefined;
     let activityLog: ActivityLog | undefined;
+    let adminStore: AdminStore | undefined;
 
     if (this.config.adminToken) {
       const storageUrl = this.config.messageStore;
-      const adminStore = AdminStore.create(storageUrl);
+      adminStore = AdminStore.create(storageUrl);
       activityLog = new ActivityLog(this.config.adminActivityLogCapacity);
 
       adminApi = AdminApi.create({
-        config            : this.config,
-        dwn               : this.dwn,
+        config : this.config,
+        dwn    : this.dwn,
         adminStore,
         registrationManager,
-        registrationStore : registrationManager?.getRegistrationStore(),
+        registrationStore,
         activityLog,
+        ipRateLimiter,
+        tenantRateLimiter,
       });
 
       log.info('Admin API enabled');
@@ -144,6 +170,7 @@ export class DwnServer {
 
     this.#httpApi = await HttpApi.create(
       this.config, this.dwn, registrationManager, adminApi, activityLog,
+      { adminStore, registrationStore, ipRateLimiter, tenantRateLimiter },
     );
 
     await this.#httpApi.start(this.config.port);
@@ -152,6 +179,7 @@ export class DwnServer {
     if (this.config.webSocketSupport) {
       this.#wsApi = new WsApi(
         this.#httpApi, this.dwn, undefined, this.config.maxInFlight, activityLog,
+        { adminStore, registrationStore, config: this.config, tenantRateLimiter },
       );
       this.#wsApi.start();
       log.info('WebSocketServer ready...');
