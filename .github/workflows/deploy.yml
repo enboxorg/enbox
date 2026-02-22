@@ -1,62 +1,173 @@
-name: Deploy to Fly.io
+# ---------------------------------------------------------------------------
+# Docker Build + ECR Push + ECS Deploy
+#
+# Triggered on merge to main when dwn-server or its dependencies change.
+# Uses GitHub OIDC to assume AWS IAM roles (no long-lived credentials).
+# ---------------------------------------------------------------------------
+
+name: Deploy
 
 on:
   push:
     branches: [main]
+    paths:
+      - 'packages/dwn-server/**'
+      - 'packages/dwn-sdk-js/**'
+      - 'packages/dwn-sql-store/**'
+      - 'packages/dwn-clients/**'
+      - 'packages/common/**'
+      - 'packages/crypto/**'
+      - 'packages/dids/**'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'bun.lock'
   workflow_dispatch:
 
 concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: false
 
+permissions:
+  id-token: write   # Required for OIDC federation
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+
 jobs:
+  # ---------------------------------------------------------------------------
+  # Gate: run the full CI suite before building
+  # ---------------------------------------------------------------------------
   test:
     name: Run CI
     uses: ./.github/workflows/ci.yml
 
-  # Determine which apps have changes that need deploying
-  changes:
-    name: Detect Changes
+  # ---------------------------------------------------------------------------
+  # Build + Push to ECR
+  # ---------------------------------------------------------------------------
+  build-push:
+    name: Build & Push to ECR
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    needs: test
     outputs:
-      dwn-server: ${{ steps.filter.outputs.dwn-server }}
+      image-tag: ${{ steps.meta.outputs.sha-tag }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Detect changed paths
-        uses: dorny/paths-filter@v3
-        id: filter
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          filters: |
-            dwn-server:
-              - 'packages/dwn-server/**'
-              - 'packages/dwn-sdk-js/**'
-              - 'packages/dwn-sql-store/**'
-              - 'packages/dwn-clients/**'
-              - 'packages/common/**'
-              - 'packages/crypto/**'
-              - 'packages/dids/**'
-              - 'build/**'
-              - 'fly.toml'
-              - '.dockerignore'
-              - 'bun.lock'
+          role-to-assume: ${{ vars.AWS_ECR_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-  deploy-dwn-server:
-    name: Deploy DWN Server
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Docker metadata (tags + labels)
+        id: meta
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          ECR_REPO: dwn-server
+        run: |
+          SHA_SHORT="${GITHUB_SHA::7}"
+          SHA_TAG="${ECR_REGISTRY}/${ECR_REPO}:sha-${SHA_SHORT}"
+          LATEST_TAG="${ECR_REGISTRY}/${ECR_REPO}:latest"
+          echo "sha-tag=${SHA_TAG}" >> "$GITHUB_OUTPUT"
+          echo "tags=${SHA_TAG},${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  # ---------------------------------------------------------------------------
+  # Deploy to Dev
+  # ---------------------------------------------------------------------------
+  deploy-dev:
+    name: Deploy to Dev
     runs-on: ubuntu-latest
-    needs: [test, changes]
-    if: github.ref == 'refs/heads/main' && (needs.changes.outputs.dwn-server == 'true' || github.event_name == 'workflow_dispatch')
+    needs: build-push
+    # Only deploy when ECS infrastructure exists (var is set after Terraform apply).
+    if: vars.ECS_CLUSTER_DEV != ''
+    environment: dev
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup Fly.io CLI
-        uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Update ECS services
+        run: |
+          for service in ${{ vars.ECS_SERVICES_DEV }}; do
+            echo "Deploying ${service} on cluster ${{ vars.ECS_CLUSTER_DEV }}..."
+            aws ecs update-service \
+              --cluster "${{ vars.ECS_CLUSTER_DEV }}" \
+              --service "${service}" \
+              --force-new-deployment \
+              --query 'service.serviceName' \
+              --output text
+          done
 
-      - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      - name: Wait for services to stabilize
+        run: |
+          for service in ${{ vars.ECS_SERVICES_DEV }}; do
+            echo "Waiting for ${service} to stabilize..."
+            aws ecs wait services-stable \
+              --cluster "${{ vars.ECS_CLUSTER_DEV }}" \
+              --services "${service}"
+          done
+          echo "All dev services are stable."
+
+  # ---------------------------------------------------------------------------
+  # Deploy to Prod (manual approval)
+  # ---------------------------------------------------------------------------
+  deploy-prod:
+    name: Deploy to Prod
+    runs-on: ubuntu-latest
+    needs: deploy-dev
+    if: vars.ECS_CLUSTER_PROD != ''
+    environment: production   # Requires manual approval via GitHub Environment protection rules
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update ECS services
+        run: |
+          for service in ${{ vars.ECS_SERVICES_PROD }}; do
+            echo "Deploying ${service} on cluster ${{ vars.ECS_CLUSTER_PROD }}..."
+            aws ecs update-service \
+              --cluster "${{ vars.ECS_CLUSTER_PROD }}" \
+              --service "${service}" \
+              --force-new-deployment \
+              --query 'service.serviceName' \
+              --output text
+          done
+
+      - name: Wait for services to stabilize
+        run: |
+          for service in ${{ vars.ECS_SERVICES_PROD }}; do
+            echo "Waiting for ${service} to stabilize..."
+            aws ecs wait services-stable \
+              --cluster "${{ vars.ECS_CLUSTER_PROD }}" \
+              --services "${service}"
+          done
+          echo "All prod services are stable."
