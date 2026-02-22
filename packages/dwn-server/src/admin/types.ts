@@ -23,6 +23,11 @@ export type AdminTenantDetail = {
     protocolCount : number;
   };
   protocols : string[];
+  quota? : {
+    maxMessages : number;
+    maxStorageBytes : number;
+    source : 'tenant' | 'global' | 'unlimited';
+  };
 };
 
 /**
@@ -144,4 +149,80 @@ export type AdminConnectionSnapshot = {
   subscriptionCount : number;
   /** Per-subscription flow control state. */
   subscriptions : AdminSubscriptionSnapshot[];
+};
+
+// ---------------------------------------------------------------------------
+// Per-tenant storage quotas
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-tenant storage quota limits.
+ * A value of 0 (or `undefined`) means the global default applies.
+ */
+export type TenantQuota = {
+  /** Tenant DID this quota applies to. */
+  did : string;
+  /** Maximum number of messages the tenant may store (0 = use global default). */
+  maxMessages : number;
+  /** Maximum data storage in bytes (0 = use global default). */
+  maxStorageBytes : number;
+};
+
+/**
+ * Request body for setting a tenant quota via the admin API.
+ */
+export type TenantQuotaInput = {
+  maxMessages? : number;
+  maxStorageBytes? : number;
+};
+
+/**
+ * Current tenant usage relative to their quota.
+ */
+export type TenantQuotaStatus = {
+  quota : {
+    maxMessages : number;
+    maxStorageBytes : number;
+    source : 'tenant' | 'global' | 'unlimited';
+  };
+  usage : {
+    messageCount : number;
+    storageBytes : number;
+  };
+};
+
+// ---------------------------------------------------------------------------
+// Rate limiting
+// ---------------------------------------------------------------------------
+
+/**
+ * Summary of rate limit state for a single key (IP or tenant DID).
+ */
+export type RateLimitEntry = {
+  key : string;
+  tokens : number;
+  maxTokens : number;
+  refillRate : number;
+};
+
+/**
+ * Admin response for the rate-limits endpoint.
+ */
+export type RateLimitStatus = {
+  config : {
+    perIp : {
+      requestsPerSecond : number;
+      burst : number;
+      enabled : boolean;
+    };
+    perTenant : {
+      requestsPerSecond : number;
+      burst : number;
+      enabled : boolean;
+    };
+  };
+  activeEntries : {
+    ip : number;
+    tenant : number;
+  };
 };

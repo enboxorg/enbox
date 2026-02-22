@@ -1,5 +1,6 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
 import type { RegistrationData } from '@enbox/dwn-clients';
+import type { TenantQuota } from '../admin/types.js';
 
 import { Kysely, sql } from 'kysely';
 
@@ -8,6 +9,7 @@ import { Kysely, sql } from 'kysely';
  */
 export class RegistrationStore {
   private static readonly registeredTenantTableName = 'registeredTenants';
+  private static readonly tenantQuotasTableName = 'tenantQuotas';
 
   private db: Kysely<RegistrationDatabase>;
 
@@ -46,6 +48,15 @@ export class RegistrationStore {
     } catch {
       // Column already exists — expected for new installations.
     }
+
+    // Per-tenant storage quotas table.
+    await this.db.schema
+      .createTable(RegistrationStore.tenantQuotasTableName)
+      .ifNotExists()
+      .addColumn('did', 'text', (column) => column.primaryKey())
+      .addColumn('maxMessages', 'integer', (column) => column.defaultTo(0))
+      .addColumn('maxStorageBytes', 'bigint', (column) => column.defaultTo(0))
+      .execute();
   }
 
   /**
@@ -179,6 +190,63 @@ export class RegistrationStore {
 
     return Number(result.count);
   }
+
+  // ---------------------------------------------------------------------------
+  // Tenant quota operations
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns the quota for a tenant, or `undefined` if no per-tenant quota is set.
+   */
+  public async getQuota(did: string): Promise<TenantQuota | undefined> {
+    const result = await this.db
+      .selectFrom(RegistrationStore.tenantQuotasTableName)
+      .select(['did', 'maxMessages', 'maxStorageBytes'])
+      .where('did', '=', did)
+      .executeTakeFirst();
+
+    if (result === undefined) {
+      return undefined;
+    }
+
+    return {
+      did             : result.did,
+      maxMessages     : Number(result.maxMessages),
+      maxStorageBytes : Number(result.maxStorageBytes),
+    };
+  }
+
+  /**
+   * Sets (inserts or updates) the quota for a tenant.
+   */
+  public async setQuota(quota: TenantQuota): Promise<void> {
+    await this.db
+      .insertInto(RegistrationStore.tenantQuotasTableName)
+      .values({
+        did             : quota.did,
+        maxMessages     : quota.maxMessages,
+        maxStorageBytes : quota.maxStorageBytes,
+      })
+      .onConflict((oc) =>
+        oc.column('did').doUpdateSet({
+          maxMessages     : quota.maxMessages,
+          maxStorageBytes : quota.maxStorageBytes,
+        }),
+      )
+      .executeTakeFirst();
+  }
+
+  /**
+   * Deletes the per-tenant quota. Returns `true` if a quota existed and was deleted.
+   */
+  public async deleteQuota(did: string): Promise<boolean> {
+    const result = await this.db
+      .deleteFrom(RegistrationStore.tenantQuotasTableName)
+      .where('did', '=', did)
+      .executeTakeFirst();
+
+    return Number(result.numDeletedRows) > 0;
+  }
 }
 
 /**
@@ -196,6 +264,13 @@ interface RegisteredTenants {
   suspended : number;
 }
 
+interface TenantQuotasRow {
+  did : string;
+  maxMessages : number;
+  maxStorageBytes : number;
+}
+
 interface RegistrationDatabase {
-  registeredTenants: RegisteredTenants;
+  registeredTenants : RegisteredTenants;
+  tenantQuotas : TenantQuotasRow;
 }

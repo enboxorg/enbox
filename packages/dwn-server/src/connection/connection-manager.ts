@@ -1,8 +1,12 @@
-import type { ActivityLog } from '../admin/activity-log.js';
-import type { AdminConnectionSnapshot } from '../admin/types.js';
 import type { Dwn } from '@enbox/dwn-sdk-js';
 import type { ServerWebSocket } from 'bun';
 
+import type { ActivityLog } from '../admin/activity-log.js';
+import type { AdminConnectionSnapshot } from '../admin/types.js';
+import type { AdminStore } from '../admin/admin-store.js';
+import type { DwnServerConfig } from '../config.js';
+import type { RateLimiter } from '../rate-limiter.js';
+import type { RegistrationStore } from '../registration/registration-store.js';
 import type { WsData } from '../http-api.js';
 
 import { SocketConnection } from './socket-connection.js';
@@ -33,13 +37,21 @@ export class InMemoryConnectionManager implements ConnectionManager {
     private connections: Map<ServerWebSocket<WsData>, SocketConnection> = new Map(),
     private maxInFlight?: number,
     private activityLog?: ActivityLog,
+    private adminStore?: AdminStore,
+    private registrationStore?: RegistrationStore,
+    private serverConfig?: DwnServerConfig,
+    private tenantRateLimiter?: RateLimiter,
   ) {}
 
   async connect(socket: ServerWebSocket<WsData>): Promise<void> {
-    const connection = new SocketConnection(socket, this.dwn, () => {
-      // this is the onClose handler to clean up any closed connections.
-      this.connections.delete(socket);
-    }, this.maxInFlight, this.activityLog);
+    const connection = new SocketConnection(
+      socket, this.dwn, () => {
+        // this is the onClose handler to clean up any closed connections.
+        this.connections.delete(socket);
+      },
+      this.maxInFlight, this.activityLog,
+      this.adminStore, this.registrationStore, this.serverConfig, this.tenantRateLimiter,
+    );
 
     // Attach the connection to the ws.data so Bun's websocket handlers can delegate to it.
     socket.data.connection = connection;

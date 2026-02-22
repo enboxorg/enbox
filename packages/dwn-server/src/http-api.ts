@@ -10,14 +10,18 @@ import { v4 as uuidv4 } from 'uuid';
 import { DataStream, DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
 
 
+import type { JsonRpcRequest } from '@enbox/dwn-clients';
+import type { ServerInfo } from '@enbox/dwn-clients';
+
 import type { ActivityLog } from './admin/activity-log.js';
 import type { AdminApi } from './admin/admin-api.js';
+import type { AdminStore } from './admin/admin-store.js';
 import type { DwnServerConfig } from './config.js';
 import type { DwnServerError } from './dwn-error.js';
-import type { JsonRpcRequest } from '@enbox/dwn-clients';
+import type { RateLimiter } from './rate-limiter.js';
 import type { RegistrationManager } from './registration/registration-manager.js';
+import type { RegistrationStore } from './registration/registration-store.js';
 import type { RequestContext } from './lib/json-rpc-router.js';
-import type { ServerInfo } from '@enbox/dwn-clients';
 import type { SocketConnection } from './connection/socket-connection.js';
 
 import { config } from './config.js';
@@ -37,6 +41,10 @@ export class HttpApi {
   #server!: Server<WsData>;
   #adminApi: AdminApi | undefined;
   #activityLog: ActivityLog | undefined;
+  #adminStore: AdminStore | undefined;
+  #registrationStore: RegistrationStore | undefined;
+  #ipRateLimiter: RateLimiter | undefined;
+  #tenantRateLimiter: RateLimiter | undefined;
   web5ConnectServer: Web5ConnectServer;
   registrationManager: RegistrationManager;
   dwn: Dwn;
@@ -49,6 +57,12 @@ export class HttpApi {
   public static async create(
     config: DwnServerConfig, dwn: Dwn, registrationManager?: RegistrationManager,
     adminApi?: AdminApi, activityLog?: ActivityLog,
+    options?: {
+      adminStore? : AdminStore;
+      registrationStore? : RegistrationStore;
+      ipRateLimiter? : RateLimiter;
+      tenantRateLimiter? : RateLimiter;
+    },
   ): Promise<HttpApi> {
     const httpApi = new HttpApi();
 
@@ -72,6 +86,10 @@ export class HttpApi {
     httpApi.dwn = dwn;
     httpApi.#adminApi = adminApi;
     httpApi.#activityLog = activityLog;
+    httpApi.#adminStore = options?.adminStore;
+    httpApi.#registrationStore = options?.registrationStore;
+    httpApi.#ipRateLimiter = options?.ipRateLimiter;
+    httpApi.#tenantRateLimiter = options?.tenantRateLimiter;
 
     if (registrationManager !== undefined) {
       httpApi.registrationManager = registrationManager;
@@ -87,6 +105,14 @@ export class HttpApi {
 
   get server(): Server<WsData> {
     return this.#server;
+  }
+
+  get ipRateLimiter(): RateLimiter | undefined {
+    return this.#ipRateLimiter;
+  }
+
+  get tenantRateLimiter(): RateLimiter | undefined {
+    return this.#tenantRateLimiter;
   }
 
   // ---------------------------------------------------------------------------
@@ -112,6 +138,25 @@ export class HttpApi {
             return undefined;
           }
           return new Response('WebSocket upgrade failed', { status: 400 });
+        }
+
+        // --- Per-IP rate limiting ---
+        if (self.#ipRateLimiter) {
+          const ip = server.requestIP(req)?.address ?? 'unknown';
+          const result = self.#ipRateLimiter.consume(ip);
+          if (result.allowed === false) {
+            const retryAfterSec = Math.ceil(result.retryAfterMs / 1000);
+            return new Response(
+              JSON.stringify({ error: 'Rate limit exceeded' }),
+              {
+                status  : 429,
+                headers : {
+                  'content-type' : 'application/json',
+                  'retry-after'  : String(retryAfterSec),
+                },
+              },
+            );
+          }
         }
 
         // --- Route matching ---
@@ -356,10 +401,14 @@ export class HttpApi {
     }
 
     const requestContext: RequestContext = {
-      dwn         : this.dwn,
-      transport   : 'http',
-      dataStream  : requestDataStream,
-      activityLog : this.#activityLog,
+      dwn               : this.dwn,
+      transport         : 'http',
+      dataStream        : requestDataStream,
+      activityLog       : this.#activityLog,
+      adminStore        : this.#adminStore,
+      registrationStore : this.#registrationStore,
+      config            : this.#config,
+      tenantRateLimiter : this.#tenantRateLimiter,
     };
     const { jsonRpcResponse, dataStream: responseDataStream } =
       await jsonRpcRouter.handle(dwnRpcRequest, requestContext);

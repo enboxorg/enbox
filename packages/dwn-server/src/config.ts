@@ -96,6 +96,46 @@ export const config = {
    * the admin store. Defaults to 30 seconds.
    */
   adminMetricsUpdateIntervalSeconds: parseInt(process.env.DWN_ADMIN_METRICS_UPDATE_INTERVAL || '30'),
+
+  // ---------------------------------------------------------------------------
+  // Per-tenant storage quotas
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Default maximum number of messages a tenant may store. 0 = unlimited (default).
+   * Per-tenant overrides are managed via the admin API.
+   */
+  quotaMaxMessages: parseInt(process.env.DWN_QUOTA_MAX_MESSAGES || '0'),
+
+  /**
+   * Default maximum data storage in bytes a tenant may use. 0 = unlimited (default).
+   * Per-tenant overrides are managed via the admin API.
+   */
+  quotaMaxStorageBytes: parseInt(process.env.DWN_QUOTA_MAX_STORAGE_BYTES || '0'),
+
+  // ---------------------------------------------------------------------------
+  // Rate limiting
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Maximum HTTP requests per second per IP address. 0 = unlimited (default).
+   */
+  rateLimitRequestsPerSecond: parseInt(process.env.DWN_RATE_LIMIT_REQUESTS_PER_SECOND || '0'),
+
+  /**
+   * Maximum burst size for per-IP rate limiting. Defaults to 50.
+   */
+  rateLimitBurst: parseInt(process.env.DWN_RATE_LIMIT_BURST || '50'),
+
+  /**
+   * Maximum DWN requests per second per tenant DID. 0 = unlimited (default).
+   */
+  rateLimitTenantRequestsPerSecond: parseInt(process.env.DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND || '0'),
+
+  /**
+   * Maximum burst size for per-tenant rate limiting. Defaults to 50.
+   */
+  rateLimitTenantBurst: parseInt(process.env.DWN_RATE_LIMIT_TENANT_BURST || '50'),
 };
 
 /**

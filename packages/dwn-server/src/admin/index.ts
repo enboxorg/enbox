@@ -13,5 +13,10 @@ export type {
   GlobalStats,
   HealthCheckResult,
   PaginatedResponse,
+  RateLimitEntry,
+  RateLimitStatus,
+  TenantQuota,
+  TenantQuotaInput,
+  TenantQuotaStatus,
   TenantStats,
 } from './types.js';
