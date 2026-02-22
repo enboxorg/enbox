@@ -134,6 +134,10 @@
         }
       }
     },
+    "$immutable": {
+      "$comment": "When true, records at this protocol path cannot be updated after initial write",
+      "type": "boolean"
+    },
     "$tags": {
       "type": "object",
       "minProperties": 1,
