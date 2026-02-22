@@ -318,6 +318,10 @@
       "dependencies": {
         "@enbox/dwn-sdk-js": "workspace:*",
         "@ipld/dag-cbor": "9.0.5",
+        "interface-blockstore": "5.2.3",
+        "interface-store": "5.1.2",
+        "ipfs-unixfs-exporter": "13.1.5",
+        "ipfs-unixfs-importer": "15.1.5",
         "kysely": "0.26.3",
         "multiformats": "12.0.1",
       },
