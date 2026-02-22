@@ -163,7 +163,7 @@ export class AdminStore {
    */
   public async getTenantStorageSize(did: string): Promise<number> {
     const result = await this.db
-      .selectFrom('dataStore')
+      .selectFrom('dataRefs')
       .select(this.db.fn.sum<number>('dataSize').as('totalBytes'))
       .where('tenant', '=', did)
       .executeTakeFirstOrThrow();
@@ -211,7 +211,7 @@ export class AdminStore {
         .select(this.db.fn.countAll<number>().as('count'))
         .executeTakeFirstOrThrow(),
       this.db
-        .selectFrom('dataStore')
+        .selectFrom('dataRefs')
         .select(this.db.fn.sum<number>('dataSize').as('totalBytes'))
         .executeTakeFirstOrThrow(),
       this.db
@@ -249,16 +249,38 @@ export class AdminStore {
       .where('tenant', '=', did)
       .executeTakeFirstOrThrow();
 
-    // Delete data store entries.
-    await this.db
-      .deleteFrom('dataStore')
+    // Delete data refs for this tenant and garbage-collect orphaned blocks.
+    const tenantRefs = await this.db
+      .selectFrom('dataRefs')
+      .select('dataCid')
       .where('tenant', '=', did)
       .execute();
 
+    await this.db
+      .deleteFrom('dataRefs')
+      .where('tenant', '=', did)
+      .execute();
+
+    // GC: delete blocks for dataCids that no longer have any refs.
+    for (const ref of tenantRefs) {
+      const remaining = await this.db
+        .selectFrom('dataRefs')
+        .select('dataCid')
+        .where('dataCid', '=', ref.dataCid)
+        .executeTakeFirst();
+
+      if (!remaining) {
+        await this.db
+          .deleteFrom('dataBlocks')
+          .where('rootDataCid', '=', ref.dataCid)
+          .execute();
+      }
+    }
+
     // Delete state index entries.
-    await this.db.deleteFrom('stateIndexNodes' as any).where('tenant', '=', did).execute();
-    await this.db.deleteFrom('stateIndexRoots' as any).where('tenant', '=', did).execute();
-    await this.db.deleteFrom('stateIndexMeta' as any).where('tenant', '=', did).execute();
+    await this.db.deleteFrom('stateIndexNodes').where('tenant', '=', did).execute();
+    await this.db.deleteFrom('stateIndexRoots').where('tenant', '=', did).execute();
+    await this.db.deleteFrom('stateIndexMeta').where('tenant', '=', did).execute();
 
     // Invalidate cache.
     this.cachedGlobalStats = undefined;
@@ -396,10 +418,9 @@ export class AdminStore {
       .execute();
 
     const dataRecords = await this.db
-      .selectFrom('dataStore')
+      .selectFrom('dataRefs')
       .select(['recordId', 'dataCid', 'dataSize'])
       .where('tenant', '=', did)
-      .orderBy('id', 'asc')
       .execute();
 
     return {
@@ -452,16 +473,42 @@ interface MessageStoreMessages {
   encodedMessageBytes : Uint8Array;
 }
 
-interface DataStoreRow {
-  id : number;
+interface DataRefsRow {
   tenant : string;
   recordId : string;
   dataCid : string;
-  data : Uint8Array;
   dataSize : number;
+}
+
+interface DataBlocksRow {
+  rootDataCid : string;
+  blockCid : string;
+  data : Uint8Array;
+}
+
+interface StateIndexNodes {
+  tenant : string;
+  scope : string;
+  nodeHash : string;
+}
+
+interface StateIndexRoots {
+  tenant : string;
+  scope : string;
+  rootHash : string;
+}
+
+interface StateIndexMeta {
+  tenant : string;
+  messageCid : string;
+  protocol : string | null;
 }
 
 interface AdminDatabase {
   messageStoreMessages : MessageStoreMessages;
-  dataStore : DataStoreRow;
+  dataRefs : DataRefsRow;
+  dataBlocks : DataBlocksRow;
+  stateIndexNodes : StateIndexNodes;
+  stateIndexRoots : StateIndexRoots;
+  stateIndexMeta : StateIndexMeta;
 }
