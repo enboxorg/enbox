@@ -78,7 +78,7 @@ export function Overview() {
               </div>
             )}
           </div>
-          {health.checks && health.checks.length > 0 && (
+          {health.checks && Object.keys(health.checks).length > 0 && (
             <div class="table-container">
               <table>
                 <thead>
@@ -89,14 +89,14 @@ export function Overview() {
                   </tr>
                 </thead>
                 <tbody>
-                  {health.checks.map((check: any) => (
-                    <tr key={check.name}>
-                      <td>{check.name}</td>
+                  {Object.entries(health.checks).map(([name, check]: [string, any]) => (
+                    <tr key={name}>
+                      <td>{name}</td>
                       <td>
                         <span class={`status-dot ${check.status === 'healthy' ? 'healthy' : check.status === 'unhealthy' ? 'unhealthy' : 'unknown'}`} />
                         {check.status}
                       </td>
-                      <td>{check.latency !== undefined ? `${check.latency}ms` : '—'}</td>
+                      <td>{check.latencyMs !== undefined ? `${check.latencyMs}ms` : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -116,20 +116,20 @@ export function Overview() {
           </div>
           <div class="stat-card">
             <div class="label">Messages</div>
-            <div class="value">{formatNumber(stats.messages?.total ?? 0)}</div>
+            <div class="value">{formatNumber(stats.storage?.totalMessages ?? 0)}</div>
           </div>
           <div class="stat-card">
             <div class="label">Storage</div>
-            <div class="value">{formatBytes(stats.storage?.totalBytes ?? 0)}</div>
+            <div class="value">{formatBytes(stats.storage?.totalDataBytes ?? 0)}</div>
           </div>
           <div class="stat-card">
             <div class="label">Protocols</div>
-            <div class="value">{formatNumber(stats.protocols?.count ?? 0)}</div>
+            <div class="value">{formatNumber(stats.storage?.totalProtocols ?? 0)}</div>
           </div>
           <div class="stat-card">
             <div class="label">WebSocket</div>
-            <div class="value">{formatNumber(stats.websocket?.active ?? 0)}</div>
-            <div class="sub">{formatNumber(stats.websocket?.subscriptions ?? 0)} subscriptions</div>
+            <div class="value">{formatNumber(stats.connections?.websocket?.active ?? 0)}</div>
+            <div class="sub">{formatNumber(stats.connections?.websocket?.subscriptions ?? 0)} subscriptions</div>
           </div>
           <div class="stat-card">
             <div class="label">Uptime</div>
@@ -149,18 +149,18 @@ export function Overview() {
             <div>
               <div style="font-size:12px;font-weight:600;color:var(--color-text-secondary);margin-bottom:8px">Per-IP</div>
               <div style="font-size:13px">
-                <span class={`badge ${rateLimits.perIp?.enabled ? 'badge-success' : 'badge-muted'}`}>
-                  {rateLimits.perIp?.enabled ? 'Enabled' : 'Disabled'}
+                <span class={`badge ${rateLimits.config?.perIp?.enabled ? 'badge-success' : 'badge-muted'}`}>
+                  {rateLimits.config?.perIp?.enabled ? 'Enabled' : 'Disabled'}
                 </span>
-                {rateLimits.perIp?.enabled && (
+                {rateLimits.config?.perIp?.enabled && (
                   <span style="margin-left:8px;color:var(--color-text-secondary)">
-                    {rateLimits.perIp.rps} rps / {rateLimits.perIp.burst} burst
+                    {rateLimits.config.perIp.requestsPerSecond} rps / {rateLimits.config.perIp.burst} burst
                   </span>
                 )}
               </div>
-              {rateLimits.perIp?.activeEntries !== undefined && (
+              {rateLimits.activeEntries?.ip !== undefined && (
                 <div style="font-size:12px;color:var(--color-text-muted);margin-top:4px">
-                  {formatNumber(rateLimits.perIp.activeEntries)} active entries
+                  {formatNumber(rateLimits.activeEntries.ip)} active entries
                 </div>
               )}
             </div>
@@ -168,18 +168,18 @@ export function Overview() {
             <div>
               <div style="font-size:12px;font-weight:600;color:var(--color-text-secondary);margin-bottom:8px">Per-Tenant</div>
               <div style="font-size:13px">
-                <span class={`badge ${rateLimits.perTenant?.enabled ? 'badge-success' : 'badge-muted'}`}>
-                  {rateLimits.perTenant?.enabled ? 'Enabled' : 'Disabled'}
+                <span class={`badge ${rateLimits.config?.perTenant?.enabled ? 'badge-success' : 'badge-muted'}`}>
+                  {rateLimits.config?.perTenant?.enabled ? 'Enabled' : 'Disabled'}
                 </span>
-                {rateLimits.perTenant?.enabled && (
+                {rateLimits.config?.perTenant?.enabled && (
                   <span style="margin-left:8px;color:var(--color-text-secondary)">
-                    {rateLimits.perTenant.rps} rps / {rateLimits.perTenant.burst} burst
+                    {rateLimits.config.perTenant.requestsPerSecond} rps / {rateLimits.config.perTenant.burst} burst
                   </span>
                 )}
               </div>
-              {rateLimits.perTenant?.activeEntries !== undefined && (
+              {rateLimits.activeEntries?.tenant !== undefined && (
                 <div style="font-size:12px;color:var(--color-text-muted);margin-top:4px">
-                  {formatNumber(rateLimits.perTenant.activeEntries)} active entries
+                  {formatNumber(rateLimits.activeEntries.tenant)} active entries
                 </div>
               )}
             </div>
