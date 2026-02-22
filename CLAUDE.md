@@ -114,11 +114,14 @@ Several packages (`dids`, `agent`, `api`, `dwn-server`, `dwn-sql-store`) require
 ### Quick start
 
 ```bash
-# Start all test services (Pkarr relay, Postgres, MySQL):
+# Start all test services (Pkarr relay, Postgres, MySQL, NATS):
 docker compose -f docker-compose.test.yaml up -d --wait
 
 # Set the Pkarr gateway env var (REQUIRED for did:dht tests):
 export DID_DHT_GATEWAY_URI=http://localhost:7527
+
+# Set the NATS URL (REQUIRED for dwn-server NatsEventLog tests):
+export NATS_URL=nats://localhost:4222
 ```
 
 Without `DID_DHT_GATEWAY_URI`, tests in `agent` (~115 tests), `api` (~23 tests), and `dids` (~1 test) will fail with `DidError: internalError: Failed to put Pkarr record`. These are NOT real test failures — the tests are correct, they just need the gateway.
@@ -131,6 +134,7 @@ Without `DID_DHT_GATEWAY_URI`, tests in `agent` (~115 tests), `api` (~23 tests),
 | PostgreSQL 15 | `enbox-test-postgres` | `localhost:5433` | `dwn-server`, `dwn-sql-store` |
 | PostgreSQL 13 | `enbox-test-postgres-sdk` | `localhost:5432` | `dwn-sql-store` (SDK test suite) |
 | MySQL 8 | `enbox-test-mysql` | `localhost:3306` | `dwn-sql-store` |
+| NATS JetStream | `enbox-test-nats` | `localhost:4222` | `dwn-server` (NatsEventLog plugin tests) |
 
 ### DWN server
 

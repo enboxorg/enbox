@@ -36,6 +36,8 @@
     "@enbox/dwn-sdk-js": "workspace:*",
     "@enbox/dwn-server-admin-ui": "workspace:*",
     "@enbox/dwn-sql-store": "workspace:*",
+    "@nats-io/jetstream": "^3.3.1",
+    "@nats-io/transport-node": "^3.3.1",
     "bytes": "3.1.2",
     "kysely": "^0.26.3",
     "loglevel": "^1.8.1",

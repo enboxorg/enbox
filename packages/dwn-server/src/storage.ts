@@ -51,6 +51,48 @@ export enum BackendTypes {
 
 export type DwnStore = DataStore | StateIndex | MessageStore | ResumableTaskStore;
 
+/**
+ * Cache of shared PostgreSQL dialects keyed by connection URL. When multiple
+ * DWN stores share the same Postgres URL, they reuse a single dialect (and
+ * thus a single `pg.Pool`) instead of each creating their own. This reduces
+ * connection count from 4 × pool_max to 1 × pool_max per DWN process.
+ */
+const sharedDialectCache: Map<string, Dialect> = new Map();
+
+/**
+ * Returns a (potentially cached) dialect for the given Postgres connection URL.
+ * Non-Postgres URLs always return a fresh dialect (no caching).
+ */
+function getOrCreateDialect(connectionUrl: URL, config: DwnServerConfig): Dialect {
+  const protocol = connectionUrl.protocol.slice(0, -1);
+
+  if (protocol !== BackendTypes.POSTGRES) {
+    return getDialectFromUrl(connectionUrl);
+  }
+
+  const key = connectionUrl.toString();
+  const cached = sharedDialectCache.get(key);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  // Create a single pg.Pool instance with configurable sizing.
+  const pool = new pg.Pool({
+    connectionString  : connectionUrl.toString(),
+    min               : config.pgPoolMin,
+    max               : config.pgPoolMax,
+    idleTimeoutMillis : config.pgPoolIdleTimeout,
+  });
+
+  const dialect = new PostgresDialect({
+    pool   : async (): Promise<pg.Pool> => pool,
+    cursor : Cursor,
+  });
+
+  sharedDialectCache.set(key, dialect);
+  return dialect;
+}
+
 export async function getDwnConfig(
   config : DwnServerConfig,
   options : {
@@ -60,10 +102,10 @@ export async function getDwnConfig(
   }
 ): Promise<DwnConfig> {
   const { tenantGate, eventLog, didResolver } = options;
-  const dataStore: DataStore = await getStore(config.dataStore, StoreType.DataStore);
-  const stateIndex: StateIndex = await getStore(config.stateIndex, StoreType.StateIndex);
-  const messageStore: MessageStore = await getStore(config.messageStore, StoreType.MessageStore);
-  const resumableTaskStore: ResumableTaskStore = await getStore(config.resumableTaskStore, StoreType.ResumableTaskStore);
+  const dataStore: DataStore = await getStore(config, config.dataStore, StoreType.DataStore);
+  const stateIndex: StateIndex = await getStore(config, config.stateIndex, StoreType.StateIndex);
+  const messageStore: MessageStore = await getStore(config, config.messageStore, StoreType.MessageStore);
+  const resumableTaskStore: ResumableTaskStore = await getStore(config, config.resumableTaskStore, StoreType.ResumableTaskStore);
 
   return { didResolver, eventLog, stateIndex, dataStore, messageStore, resumableTaskStore, tenantGate };
 }
@@ -96,10 +138,11 @@ function getLevelStore(
 }
 
 function getSqlStore(
+  config: DwnServerConfig,
   connectionUrl: URL,
   storeType: StoreType,
 ): DwnStore {
-  const dialect = getDialectFromUrl(connectionUrl);
+  const dialect = getOrCreateDialect(connectionUrl, config);
 
   switch (storeType) {
     case StoreType.DataStore:
@@ -123,11 +166,11 @@ function isFilePath(configString: string): boolean {
   return filePathPrefixes.some(prefix => configString.startsWith(prefix));
 }
 
-async function getStore(storeString: string, storeType: StoreType.DataStore): Promise<DataStore>;
-async function getStore(storeString: string, storeType: StoreType.StateIndex): Promise<StateIndex>;
-async function getStore(storeString: string, storeType: StoreType.MessageStore): Promise<MessageStore>;
-async function getStore(storeString: string, storeType: StoreType.ResumableTaskStore): Promise<ResumableTaskStore>;
-async function getStore(storeConfigString: string, storeType: StoreType): Promise<DwnStore> {
+async function getStore(config: DwnServerConfig, storeString: string, storeType: StoreType.DataStore): Promise<DataStore>;
+async function getStore(config: DwnServerConfig, storeString: string, storeType: StoreType.StateIndex): Promise<StateIndex>;
+async function getStore(config: DwnServerConfig, storeString: string, storeType: StoreType.MessageStore): Promise<MessageStore>;
+async function getStore(config: DwnServerConfig, storeString: string, storeType: StoreType.ResumableTaskStore): Promise<ResumableTaskStore>;
+async function getStore(config: DwnServerConfig, storeConfigString: string, storeType: StoreType): Promise<DwnStore> {
   if (isFilePath(storeConfigString)) {
     return await loadStoreFromFilePath(storeConfigString, storeType);
   }
@@ -142,7 +185,7 @@ async function getStore(storeConfigString: string, storeType: StoreType): Promis
     case BackendTypes.SQLITE:
     case BackendTypes.MYSQL:
     case BackendTypes.POSTGRES:
-      return getSqlStore(storeURI, storeType);
+      return getSqlStore(config, storeURI, storeType);
 
     default:
       throw invalidStorageSchemeMessage(storeURI.protocol);
