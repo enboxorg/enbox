@@ -851,8 +851,7 @@ describe('AgentDwnApi', () => {
         signAsOwnerDelegate : true,
         granteeDid          : aliceDeviceX.did.uri,
         messageParams       : {
-          dataFormat     : 'text/plain', // TODO: not necessary
-          delegatedGrant : recordsWriteDelegateGrant.message,
+          delegatedGrant: recordsWriteDelegateGrant.message,
         },
         dataStream,
       });
