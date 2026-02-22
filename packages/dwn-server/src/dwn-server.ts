@@ -10,12 +10,15 @@ import log from 'loglevel';
 import prefix from 'loglevel-plugin-prefix';
 import { Dwn, EventEmitterEventLog } from '@enbox/dwn-sdk-js';
 
+import type { ProviderAuthPlugin } from './registration/provider-auth-plugin.js';
+
 import { ActivityLog } from './admin/activity-log.js';
 import { AdminApi } from './admin/admin-api.js';
 import { AdminStore } from './admin/admin-store.js';
 import { AuditLog } from './admin/audit-log.js';
 import { config as defaultConfig } from './config.js';
 import { HttpApi } from './http-api.js';
+import { loadProviderAuthPlugin } from './registration/provider-auth-plugin.js';
 import { PluginLoader } from './plugin-loader.js';
 import { RateLimiter } from './rate-limiter.js';
 import { RegistrationManager } from './registration/registration-manager.js';
@@ -101,12 +104,20 @@ export class DwnServer {
 
     let registrationManager: RegistrationManager;
     if (!this.dwn) {
+      // Load provider auth plugin if configured.
+      let providerAuthPlugin: ProviderAuthPlugin | undefined;
+      if (this.config.providerAuthEnabled && this.config.providerAuthPluginPath) {
+        providerAuthPlugin = await loadProviderAuthPlugin(this.config.providerAuthPluginPath);
+        log.info('Provider auth plugin loaded');
+      }
+
       // undefined registrationStoreUrl is used as a signal that there is no need for tenant registration, DWN is open for all.
       registrationManager = await RegistrationManager.create({
         registrationStoreUrl                 : this.config.registrationStoreUrl,
         termsOfServiceFilePath               : this.config.termsOfServiceFilePath,
         proofOfWorkChallengeNonceSeed        : this.config.registrationProofOfWorkSeed,
         proofOfWorkInitialMaximumAllowedHash : this.config.registrationProofOfWorkInitialMaxHash,
+        providerAuthPlugin,
       });
 
       let eventLog: EventLog | undefined;

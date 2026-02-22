@@ -81,6 +81,16 @@ export const config = {
   registrationProofOfWorkInitialMaxHash : process.env.DWN_REGISTRATION_PROOF_OF_WORK_INITIAL_MAX_HASH,
   termsOfServiceFilePath                : process.env.DWN_TERMS_OF_SERVICE_FILE_PATH,
 
+  // Provider auth configuration for paid DWN registration
+  providerAuthEnabled       : process.env.DWN_PROVIDER_AUTH_ENABLED === 'true',
+  providerAuthAuthorizeUrl  : process.env.DWN_PROVIDER_AUTH_AUTHORIZE_URL,
+  providerAuthTokenUrl      : process.env.DWN_PROVIDER_AUTH_TOKEN_URL,
+  providerAuthRefreshUrl    : process.env.DWN_PROVIDER_AUTH_REFRESH_URL,
+  providerAuthManagementUrl : process.env.DWN_PROVIDER_AUTH_MANAGEMENT_URL,
+  providerAuthPluginPath    : process.env.DWN_PROVIDER_AUTH_PLUGIN_PATH,
+  providerAuthJwtSecret     : process.env.DWN_PROVIDER_AUTH_JWT_SECRET,
+  providerAuthJwtJwksUrl    : process.env.DWN_PROVIDER_AUTH_JWT_JWKS_URL,
+
   // log level - trace/debug/info/warn/error
   logLevel: process.env.DWN_SERVER_LOG_LEVEL || 'INFO',
 
