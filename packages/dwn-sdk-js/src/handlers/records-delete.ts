@@ -1,3 +1,4 @@
+import type { CoreProtocolRegistry } from '../core/core-protocol.js';
 import type { DidResolver } from '@enbox/dids';
 import type { GenericMessageReply } from '../types/message-types.js';
 import type { MessageStore } from '../types//message-store.js';
@@ -23,6 +24,7 @@ export class RecordsDeleteHandler implements MethodHandler {
     private didResolver: DidResolver,
     private messageStore: MessageStore,
     private resumableTaskManager: ResumableTaskManager,
+    private coreProtocols?: CoreProtocolRegistry,
   ) { }
 
   public async handle({
@@ -78,7 +80,8 @@ export class RecordsDeleteHandler implements MethodHandler {
         tenant,
         recordsDelete,
         initialWrite!,
-        this.messageStore
+        this.messageStore,
+        this.coreProtocols,
       );
     } catch (e) {
       return messageReplyFromError(e, 401);
@@ -104,7 +107,8 @@ export class RecordsDeleteHandler implements MethodHandler {
     tenant: string,
     recordsDelete: RecordsDelete,
     recordsWrite: RecordsWrite,
-    messageStore: MessageStore
+    messageStore: MessageStore,
+    coreProtocols?: CoreProtocolRegistry,
   ): Promise<void> {
 
     if (Message.isSignedByAuthorDelegate(recordsDelete.message)) {
@@ -124,7 +128,7 @@ export class RecordsDeleteHandler implements MethodHandler {
         messageStore,
       });
     } else {
-      await ProtocolAuthorization.authorizeDelete(tenant, recordsDelete, recordsWrite, messageStore);
+      await ProtocolAuthorization.authorizeDelete(tenant, recordsDelete, recordsWrite, messageStore, coreProtocols);
     }
   }
 };

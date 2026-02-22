@@ -24,7 +24,7 @@ import { RecordsWriteHandler } from '../../src/handlers/records-write.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
-import { DataStoreLevel, Dwn, MessageStoreLevel, ProtocolsConfigure, RecordsWrite, Time } from '../../src/index.js';
+import { CoreProtocolRegistry, DataStoreLevel, Dwn, MessageStoreLevel, ProtocolsConfigure, RecordsWrite, Time } from '../../src/index.js';
 import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
@@ -2332,7 +2332,7 @@ export function testRecordsQueryHandler(): void {
           ...aliceMessagesForBobPromise,
         ];
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, eventLog);
+        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, new CoreProtocolRegistry(), eventLog);
 
         const messages: GenericMessage[] = [];
         for await (const { recordsWrite, message, dataBytes } of messagePromises) {

@@ -1,3 +1,4 @@
+import type { CoreProtocolRegistry } from '../core/core-protocol.js';
 import type { DataStore } from '../types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../types/subscriptions.js';
@@ -31,6 +32,7 @@ export class RecordsWriteHandler implements MethodHandler {
     private messageStore: MessageStore,
     private dataStore: DataStore,
     private stateIndex: StateIndex,
+    private coreProtocols: CoreProtocolRegistry,
     private eventLog?: EventLog
   ) { }
 
@@ -43,7 +45,7 @@ export class RecordsWriteHandler implements MethodHandler {
     try {
       recordsWrite = await RecordsWrite.parse(message);
 
-      await ProtocolAuthorization.validateReferentialIntegrity(tenant, recordsWrite, this.messageStore);
+      await ProtocolAuthorization.validateReferentialIntegrity(tenant, recordsWrite, this.messageStore, this.coreProtocols);
     } catch (e) {
       return messageReplyFromError(e, 400);
     }
@@ -51,7 +53,7 @@ export class RecordsWriteHandler implements MethodHandler {
     // authentication & authorization
     try {
       await authenticate(message.authorization, this.didResolver, message.attestation);
-      await RecordsWriteHandler.authorizeRecordsWrite(tenant, recordsWrite, this.messageStore);
+      await this.authorizeRecordsWrite(tenant, recordsWrite, this.messageStore);
     } catch (e) {
       return messageReplyFromError(e, 401);
     }
@@ -92,6 +94,12 @@ export class RecordsWriteHandler implements MethodHandler {
       };
     }
 
+    // Look up the core protocol (if any) for the incoming message so that lifecycle hooks
+    // can be dispatched generically rather than checking for specific protocol URIs.
+    const coreProtocol = message.descriptor.protocol !== undefined
+      ? this.coreProtocols.get(message.descriptor.protocol)
+      : undefined;
+
     try {
       if (newestExistingMessage?.descriptor.method === DwnMethodName.Delete) {
         throw new DwnError(
@@ -100,11 +108,12 @@ export class RecordsWriteHandler implements MethodHandler {
         );
       }
 
-      // NOTE: We want to perform additional validation before storing the RecordsWrite.
-      // This is necessary for core DWN RecordsWrite that needs additional processing and allows us to fail before the storing and post processing.
-      //
-      // Example: Ensures that the protocol tag of a permission revocation RecordsWrite and the parent grant's scoped protocol match.
-      await this.preProcessingForCoreRecordsWrite(tenant, message);
+      // Dispatch pre-processing hooks to the core protocol, if applicable.
+      // This allows core protocols to perform cross-record validation before storage
+      // (e.g. ensuring revocation tag consistency with the parent grant's scoped protocol).
+      if (coreProtocol?.preProcessWrite !== undefined) {
+        await coreProtocol.preProcessWrite(tenant, message, this.messageStore);
+      }
 
       // NOTE: We allow isLatestBaseState to be true ONLY if the incoming message comes with data, or if the incoming message is NOT an initial write
       // This would allow an initial write to be written to the DB without data, but having it not queryable,
@@ -146,8 +155,8 @@ export class RecordsWriteHandler implements MethodHandler {
           error.code === DwnErrorCode.RecordsWriteNotAllowedAfterDelete ||
           error.code === DwnErrorCode.RecordsWriteDataCidMismatch ||
           error.code === DwnErrorCode.RecordsWriteDataSizeMismatch ||
-          error.code.startsWith('PermissionsProtocolValidate') ||
-          error.code.startsWith('SchemaValidator')) {
+          error.code.startsWith('SchemaValidator') ||
+          this.coreProtocols.mapErrorToStatusCode(error.code) !== undefined) {
           return messageReplyFromError(error, 400);
         }
       }
@@ -170,90 +179,19 @@ export class RecordsWriteHandler implements MethodHandler {
       tenant, existingMessages, newestMessage, this.messageStore, this.dataStore, this.stateIndex
     );
 
-    await this.postProcessingForCoreRecordsWrite(tenant, recordsWrite);
+    // Dispatch post-processing hooks to the core protocol, if applicable.
+    // This allows core protocols to perform cascading side effects after a successful write
+    // (e.g. deleting messages authorized by a revoked grant).
+    if (coreProtocol?.postProcessWrite !== undefined) {
+      await coreProtocol.postProcessWrite(tenant, recordsWrite, {
+        messageStore : this.messageStore,
+        dataStore    : this.dataStore,
+        stateIndex   : this.stateIndex,
+      });
+    }
 
     return messageReply;
   };
-
-  /**
-   * Performs additional necessary validation before storing the RecordsWrite if it is a core DWN RecordsWrite that needs additional processing.
-   * For instance: a Permission revocation RecordsWrite.
-   */
-  private async preProcessingForCoreRecordsWrite(tenant: string, recordsWriteMessage: RecordsWriteMessage): Promise<void> {
-
-    // we validate the protocol tag of the revocation message against the grant's scoped protocol
-    // to do this we will fetch the grant, and compare the the scoped protocol value to the protocol tag of the revocation message
-    if (recordsWriteMessage.descriptor.protocol === PermissionsProtocol.uri &&
-      recordsWriteMessage.descriptor.protocolPath === PermissionsProtocol.revocationPath) {
-
-      // get the parentId of the revocation message, which is the permissionGrantId
-      // fetch the grant in order to get the grant's protocol
-      const permissionGrantId = recordsWriteMessage.descriptor.parentId!;
-      const grant = await PermissionsProtocol.fetchGrant(tenant, this.messageStore, permissionGrantId);
-
-      // get the protocol values of the revocation message from the protocol tag and the protocol from the grant scope if they are defined
-      // compare the two values ensuring they must match
-      const revokeTagProtocol = recordsWriteMessage.descriptor.tags?.protocol;
-      const grantProtocol = 'protocol' in grant.scope ? grant.scope.protocol : undefined;
-      if (grantProtocol !== revokeTagProtocol) {
-        throw new DwnError(
-          DwnErrorCode.PermissionsProtocolValidateRevocationProtocolTagMismatch,
-          `Revocation protocol ${revokeTagProtocol} does not match grant protocol ${grantProtocol}`
-        );
-      }
-    }
-  }
-
-  private static validateSchemaForCoreRecordsWrite(recordsWriteMessage: RecordsWriteMessage, dataBytes: Uint8Array): void {
-    if (recordsWriteMessage.descriptor.protocol === PermissionsProtocol.uri) {
-      PermissionsProtocol.validateSchema(recordsWriteMessage, dataBytes);
-    }
-  }
-
-  /**
-   * Performs additional necessary tasks if the RecordsWrite handled is a core DWN RecordsWrite that need additional processing.
-   * For instance: when a Permission revocation is written, all messages authorized by the revoked grant
-   * that were created after the revocation timestamp are deleted from all stores.
-   */
-  private async postProcessingForCoreRecordsWrite(tenant: string, recordsWrite: RecordsWrite): Promise<void> {
-    if (recordsWrite.message.descriptor.protocol !== PermissionsProtocol.uri ||
-      recordsWrite.message.descriptor.protocolPath !== PermissionsProtocol.revocationPath) {
-      return;
-    }
-
-    // Delete all messages authorized by the revoked grant that were created after the revocation.
-    // `permissionGrantId` is indexed via the RecordsWriteDescriptor spread in constructIndexes().
-    const permissionGrantId = recordsWrite.message.descriptor.parentId!;
-    const grantAuthorizedMessagesQuery = {
-      permissionGrantId,
-      dateCreated: { gte: recordsWrite.message.descriptor.messageTimestamp },
-    };
-    const { messages: grantAuthorizedMessages } = await this.messageStore.query(tenant, [grantAuthorizedMessagesQuery]);
-
-    if (grantAuthorizedMessages.length === 0) {
-      return;
-    }
-
-    // Delete data from the data store first to avoid orphaned data blobs in case of crash.
-    // Only RecordsWrite messages with data larger than maxDataSizeAllowedToBeEncoded have data in the data store.
-    for (const message of grantAuthorizedMessages) {
-      if (message.descriptor.method === DwnMethodName.Write) {
-        const recordsWriteMessage = message as RecordsWriteMessage;
-        if (recordsWriteMessage.descriptor.dataSize > DwnConstant.maxDataSizeAllowedToBeEncoded) {
-          await this.dataStore.delete(tenant, recordsWriteMessage.recordId, recordsWriteMessage.descriptor.dataCid);
-        }
-      }
-    }
-
-    // Compute CIDs for all messages to delete.
-    const messageCids = await Promise.all(grantAuthorizedMessages.map((message): Promise<string> => Message.getCid(message)));
-
-    // Delete from state index before message store so we don't have orphaned state entries.
-    await this.stateIndex.delete(tenant, messageCids);
-
-    // Finally delete all messages from the message store.
-    await Promise.all(messageCids.map((cid): Promise<void> => this.messageStore.delete(tenant, cid)));
-  }
 
   /**
    * Returns a `RecordsQueryReplyEntry` with a copy of the incoming message and the incoming data encoded to `Base64URL`.
@@ -278,7 +216,13 @@ export class RecordsWriteHandler implements MethodHandler {
       const dataCid = await Cid.computeDagPbCidFromBytes(dataBytes);
       RecordsWriteHandler.validateDataIntegrity(message.descriptor.dataCid, message.descriptor.dataSize, dataCid, dataBytes.length);
 
-      RecordsWriteHandler.validateSchemaForCoreRecordsWrite(message, dataBytes);
+      // Dispatch schema validation to the core protocol, if applicable.
+      const coreProtocol = message.descriptor.protocol !== undefined
+        ? this.coreProtocols.get(message.descriptor.protocol)
+        : undefined;
+      if (coreProtocol?.validateRecord !== undefined) {
+        coreProtocol.validateRecord(message, dataBytes);
+      }
 
       messageWithOptionalEncodedData = await this.cloneAndAddEncodedData(message, dataBytes);
     } else {
@@ -374,7 +318,7 @@ export class RecordsWriteHandler implements MethodHandler {
     }
   }
 
-  private static async authorizeRecordsWrite(tenant: string, recordsWrite: RecordsWrite, messageStore: MessageStore): Promise<void> {
+  private async authorizeRecordsWrite(tenant: string, recordsWrite: RecordsWrite, messageStore: MessageStore): Promise<void> {
     // if owner signature is given (`owner` is not `undefined`), it must be the same as the tenant DID
     if (recordsWrite.owner !== undefined && recordsWrite.owner !== tenant) {
       throw new DwnError(
@@ -408,7 +352,7 @@ export class RecordsWriteHandler implements MethodHandler {
         messageStore
       });
     } else {
-      await ProtocolAuthorization.authorizeWrite(tenant, recordsWrite, messageStore);
+      await ProtocolAuthorization.authorizeWrite(tenant, recordsWrite, messageStore, this.coreProtocols);
     }
   }
 }

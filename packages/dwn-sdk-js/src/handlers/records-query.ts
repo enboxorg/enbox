@@ -1,3 +1,4 @@
+import type { CoreProtocolRegistry } from '../core/core-protocol.js';
 import type { DataStore } from '../types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
 import type { MessageStore } from '../types//message-store.js';
@@ -19,7 +20,12 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 
 export class RecordsQueryHandler implements MethodHandler {
 
-  constructor(private didResolver: DidResolver, private messageStore: MessageStore, private dataStore: DataStore) { }
+  constructor(
+    private didResolver: DidResolver,
+    private messageStore: MessageStore,
+    private dataStore: DataStore,
+    private coreProtocols?: CoreProtocolRegistry,
+  ) { }
 
   public async handle({
     tenant,
@@ -44,7 +50,7 @@ export class RecordsQueryHandler implements MethodHandler {
       try {
         await authenticate(message.authorization!, this.didResolver);
 
-        await RecordsQueryHandler.authorizeRecordsQuery(tenant, recordsQuery, this.messageStore);
+        await RecordsQueryHandler.authorizeRecordsQuery(tenant, recordsQuery, this.messageStore, this.coreProtocols);
       } catch (e) {
         return messageReplyFromError(e, 401);
       }
@@ -249,7 +255,8 @@ export class RecordsQueryHandler implements MethodHandler {
   private static async authorizeRecordsQuery(
     tenant: string,
     recordsQuery: RecordsQuery,
-    messageStore: MessageStore
+    messageStore: MessageStore,
+    coreProtocols?: CoreProtocolRegistry,
   ): Promise<void> {
 
     if (Message.isSignedByAuthorDelegate(recordsQuery.message)) {
@@ -260,7 +267,7 @@ export class RecordsQueryHandler implements MethodHandler {
     // this is because we dynamically filter out records that the caller is not authorized to see.
     // Currently only run protocol authorization if message deliberately invokes a protocol role.
     if (Records.shouldProtocolAuthorize(recordsQuery.signaturePayload!)) {
-      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsQuery, messageStore);
+      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsQuery, messageStore, coreProtocols);
     }
   }
 }

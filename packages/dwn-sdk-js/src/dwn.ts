@@ -80,6 +80,7 @@ export class Dwn {
       [DwnInterfaceName.Messages + DwnMethodName.Subscribe]: new MessagesSubscribeHandler(
         this.didResolver,
         this.messageStore,
+        this._coreProtocols,
         this.eventLog,
       ),
       [DwnInterfaceName.Messages + DwnMethodName.Sync]: new MessagesSyncHandler(
@@ -101,32 +102,38 @@ export class Dwn {
       [DwnInterfaceName.Records + DwnMethodName.Count]: new RecordsCountHandler(
         this.didResolver,
         this.messageStore,
+        this._coreProtocols,
       ),
       [DwnInterfaceName.Records + DwnMethodName.Delete]: new RecordsDeleteHandler(
         this.didResolver,
         this.messageStore,
-        this.resumableTaskManager
+        this.resumableTaskManager,
+        this._coreProtocols,
       ),
       [DwnInterfaceName.Records + DwnMethodName.Query]: new RecordsQueryHandler(
         this.didResolver,
         this.messageStore,
-        this.dataStore
+        this.dataStore,
+        this._coreProtocols,
       ),
       [DwnInterfaceName.Records + DwnMethodName.Read]: new RecordsReadHandler(
         this.didResolver,
         this.messageStore,
-        this.dataStore
+        this.dataStore,
+        this._coreProtocols,
       ),
       [DwnInterfaceName.Records + DwnMethodName.Subscribe]: new RecordsSubscribeHandler(
         this.didResolver,
         this.messageStore,
-        this.eventLog
+        this._coreProtocols,
+        this.eventLog,
       ),
       [DwnInterfaceName.Records + DwnMethodName.Write]: new RecordsWriteHandler(
         this.didResolver,
         this.messageStore,
         this.dataStore,
         this.stateIndex,
+        this._coreProtocols,
         this.eventLog
       )
     };

@@ -479,7 +479,7 @@ export function testRecordsSubscribeHandler(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
 
-        const recordsSubscribeHandler = new RecordsSubscribeHandler(didResolver, messageStoreStub, eventLogStub);
+        const recordsSubscribeHandler = new RecordsSubscribeHandler(didResolver, messageStoreStub, undefined, eventLogStub);
         const reply = await recordsSubscribeHandler.handle({ tenant, message, subscriptionHandler: () => {} });
 
         expect(reply.status.code).toBe(401);
@@ -493,7 +493,7 @@ export function testRecordsSubscribeHandler(): void {
         const didResolver = TestStubGenerator.createDidResolverStub(author!);
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
-        const recordsSubscribeHandler = new RecordsSubscribeHandler(didResolver, messageStoreStub, eventLogStub);
+        const recordsSubscribeHandler = new RecordsSubscribeHandler(didResolver, messageStoreStub, undefined, eventLogStub);
 
         // stub the `parse()` function to throw an error
         sinon.stub(RecordsSubscribe, 'parse').throws('anyError');

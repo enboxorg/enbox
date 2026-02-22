@@ -1,15 +1,23 @@
 import type { Filter } from '../../src/types/query-types.js';
 import type { MessagesFilter } from '../../src/types/messages-types.js';
 
+import { CoreProtocolRegistry } from '../../src/core/core-protocol.js';
 import { FilterUtility } from '../../src/utils/filter.js';
 import { Messages } from '../../src/utils/messages.js';
-import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, TestDataGenerator } from '../../src/index.js';
+import { PermissionsProtocol } from '../../src/protocols/permissions.js';
+import { DwnInterfaceName, DwnMethodName, TestDataGenerator } from '../../src/index.js';
 
 import sinon from 'sinon';
 
-import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 describe('Messages Utils', () => {
+  let coreProtocols: CoreProtocolRegistry;
+
+  beforeAll(() => {
+    coreProtocols = new CoreProtocolRegistry();
+    coreProtocols.register(new PermissionsProtocol());
+  });
 
   afterAll(() => {
     sinon.restore();
@@ -87,7 +95,7 @@ describe('Messages Utils', () => {
       // we should expect the MessagesFilter to be split into two MessageStore Filters
       // the first filter should be the protocol tag filter applied to the permissions protocol uri
       // the second filter should be the remaining filter, only containing a protocol filter to the protocol we are targeting
-      const protocolMessageFilter: Filter[] = Messages.convertFilters([protocolMessagesFilter]);
+      const protocolMessageFilter: Filter[] = Messages.convertFilters([protocolMessagesFilter], coreProtocols);
       expect(protocolMessageFilter.length).toBe(2);
 
       const permissionRecordsFilter = protocolMessageFilter[0];
@@ -109,7 +117,7 @@ describe('Messages Utils', () => {
         method    : DwnMethodName.Write
       };
 
-      const messageFilter: Filter[] = Messages.convertFilters([otherMessagesFilter]);
+      const messageFilter: Filter[] = Messages.convertFilters([otherMessagesFilter], coreProtocols);
       expect(messageFilter.length).toBe(2);
 
       const protocolTagFilter2 = messageFilter[0];
@@ -140,7 +148,7 @@ describe('Messages Utils', () => {
         messageTimestamp : { from: dateUpdatedTimestamp }
       };
 
-      const messageFilter: Filter[] = Messages.convertFilters([withDateUpdatedFilter]);
+      const messageFilter: Filter[] = Messages.convertFilters([withDateUpdatedFilter], coreProtocols);
       expect(messageFilter.length).toBe(2);
       expect(messageFilter[0].protocol).toBe(PermissionsProtocol.uri);
       expect(messageFilter[0]['tag.protocol']).toBe(exampleProtocol);

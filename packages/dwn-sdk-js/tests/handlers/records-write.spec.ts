@@ -38,14 +38,14 @@ import { ProtocolAuthorization } from '../../src/core/protocol-authorization.js'
 import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { RecordsWriteHandler } from '../../src/handlers/records-write.js';
-import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
 import { X25519 } from '@enbox/crypto';
 import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
-import { DataStoreLevel, DwnConstant, DwnInterfaceName, DwnMethodName, KeyDerivationScheme, MessageStoreLevel, PermissionsProtocol, RecordsDelete, RecordsQuery } from '../../src/index.js';
+import { CoreProtocolRegistry, DataStoreLevel, DwnConstant, DwnInterfaceName, DwnMethodName, KeyDerivationScheme, MessageStoreLevel, PermissionsProtocol, RecordsDelete, RecordsQuery } from '../../src/index.js';
+import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnError, DwnErrorCode } from '../../src/core/dwn-error.js';
 
@@ -93,27 +93,40 @@ export function testRecordsWriteHandler(): void {
         await dwn.close();
       });
 
-      it('should call preProcessingForCoreRecordsWrite after authorization and before storage', async () => {
-        // We create spy or stub for authorization, preProcessingForCoreRecordsWrite and processMessageWithDataStream methods
-        // When we trigger a failure for `preProcessingForCoreRecordsWrite`, we expect the `processMessageWithDataStream` method to not be called
-
-        const authorizationSpy = sinon.spy(RecordsWriteHandler as any, 'authorizeRecordsWrite');
-        const processDataStreamSpy = sinon.spy(RecordsWriteHandler.prototype as any, 'processMessageWithDataStream');
-        const preProcessingForCoreRecordsWriteSpy = sinon.stub(RecordsWriteHandler.prototype as any, 'preProcessingForCoreRecordsWrite')
-          .throws(new DwnError(DwnErrorCode.PermissionsProtocolValidateScopeProtocolMismatch, 'Some Error'));
-
+      it('should dispatch preProcessWrite hook via CoreProtocolRegistry and abort before storage on failure', async () => {
+        // Register a mock core protocol whose preProcessWrite hook throws.
+        // Verify that authorization completes but processMessageWithDataStream is never reached.
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const authorizationSpy = sinon.spy(RecordsWriteHandler.prototype as any, 'authorizeRecordsWrite');
+        const processDataStreamSpy = sinon.spy(RecordsWriteHandler.prototype as any, 'processMessageWithDataStream');
+
+        // Register a mock core protocol that matches the default test protocol's URI
+        const coreProtocols: CoreProtocolRegistry = (dwn as any)._coreProtocols;
+        const protocolUri = defaultTestProtocolDefinition.protocol;
+        coreProtocols.register({
+          uri             : protocolUri,
+          definition      : defaultTestProtocolDefinition,
+          preProcessWrite : (): Promise<void> => {
+            throw new DwnError(
+              DwnErrorCode.PermissionsProtocolValidateScopeProtocolMismatch, 'mock pre-process failure',
+            );
+          },
+          mapErrorToStatusCode: (code: string): number | undefined => {
+            return code.startsWith('PermissionsProtocolValidate') ? 400 : undefined;
+          },
+        });
+
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
         const reply = await dwn.processMessage(alice.did, message, { dataStream });
         expect(reply.status.code).toBe(400);
 
-        // expect that authorization and preProcessingForCoreRecordsWrite are both called once
         expect(authorizationSpy.calledOnce).toBe(true);
-        expect(preProcessingForCoreRecordsWriteSpy.calledOnce).toBe(true);
-
-        // expect that processMessageWithDataStream is NOT called since preProcessingForCoreRecordsWrite failed before reaching it
         expect(processDataStreamSpy.called).toBe(false);
+
+        // Cleanup: unregister the mock so it doesn't affect other tests
+        (coreProtocols as any)._protocols.delete(protocolUri);
       });
 
       it('should only be able to overwrite existing record if new record has a later `messageTimestamp` value', async () => {
@@ -3051,7 +3064,7 @@ export function testRecordsWriteHandler(): void {
         // replace valid `encryption` property with a mismatching one — mutate the iv to cause CID mismatch
         message.encryption!.iv = Encoder.stringToBase64Url('any value which will result in a different CID');
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, eventLog);
+        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, new CoreProtocolRegistry(), eventLog);
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
         expect(writeReply.status.code).toBe(400);
@@ -4431,7 +4444,9 @@ export function testRecordsWriteHandler(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStoreStub, dataStoreStub, stateIndex, eventLog);
+        const recordsWriteHandler = new RecordsWriteHandler(
+          didResolver, messageStoreStub, dataStoreStub, stateIndex, new CoreProtocolRegistry(), eventLog,
+        );
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
         expect(reply.status.code).toBe(400);
@@ -4455,7 +4470,9 @@ export function testRecordsWriteHandler(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStoreStub, dataStoreStub, stateIndex, eventLog);
+        const recordsWriteHandler = new RecordsWriteHandler(
+          didResolver, messageStoreStub, dataStoreStub, stateIndex, new CoreProtocolRegistry(), eventLog,
+        );
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
         expect(reply.status.code).toBe(400);
@@ -4476,7 +4493,9 @@ export function testRecordsWriteHandler(): void {
         // stub protocol validation so the handler reaches authentication/authorization
         sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStoreStub, dataStoreStub, stateIndex, eventLog);
+        const recordsWriteHandler = new RecordsWriteHandler(
+          didResolver, messageStoreStub, dataStoreStub, stateIndex, new CoreProtocolRegistry(), eventLog,
+        );
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
         expect(reply.status.code).toBe(401);
@@ -4494,7 +4513,9 @@ export function testRecordsWriteHandler(): void {
         // stub protocol validation so the handler reaches authentication/authorization
         sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStoreStub, dataStoreStub, stateIndex, eventLog);
+        const recordsWriteHandler = new RecordsWriteHandler(
+          didResolver, messageStoreStub, dataStoreStub, stateIndex, new CoreProtocolRegistry(), eventLog,
+        );
 
         const tenant = await (await TestDataGenerator.generatePersona()).did; // unauthorized tenant
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
@@ -4527,7 +4548,9 @@ export function testRecordsWriteHandler(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStoreStub, dataStoreStub, stateIndex, eventLog);
+        const recordsWriteHandler = new RecordsWriteHandler(
+          didResolver, messageStoreStub, dataStoreStub, stateIndex, new CoreProtocolRegistry(), eventLog,
+        );
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
         expect(reply.status.code).toBe(400);
@@ -4539,7 +4562,7 @@ export function testRecordsWriteHandler(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, attesters: [alice, bob] });
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, eventLog);
+        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, new CoreProtocolRegistry(), eventLog);
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
         expect(writeReply.status.code).toBe(400);
@@ -4554,7 +4577,7 @@ export function testRecordsWriteHandler(): void {
         const anotherWrite = await TestDataGenerator.generateRecordsWrite({ attesters: [alice] });
         message.attestation = anotherWrite.message.attestation;
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, eventLog);
+        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, new CoreProtocolRegistry(), eventLog);
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
         expect(writeReply.status.code).toBe(400);
@@ -4571,7 +4594,7 @@ export function testRecordsWriteHandler(): void {
         const attestationNotReferencedByAuthorization = await RecordsWrite['createAttestation'](descriptorCid, Jws.createSigners([bob]));
         message.attestation = attestationNotReferencedByAuthorization;
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, eventLog);
+        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, new CoreProtocolRegistry(), eventLog);
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
         expect(writeReply.status.code).toBe(400);
@@ -4597,7 +4620,9 @@ export function testRecordsWriteHandler(): void {
         // stub protocol validation so the handler reaches the process methods
         sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolverStub, messageStoreStub, dataStoreStub, stateIndex, eventLog);
+        const recordsWriteHandler = new RecordsWriteHandler(
+          didResolverStub, messageStoreStub, dataStoreStub, stateIndex, new CoreProtocolRegistry(), eventLog,
+        );
 
         // simulate throwing unexpected error
         sinon.stub(recordsWriteHandler as any, 'processMessageWithoutDataStream').throws(new Error('an unknown error in recordsWriteHandler.processMessageWithoutDataStream()'));
