@@ -13,13 +13,14 @@ import { Dwn, EventEmitterEventLog } from '@enbox/dwn-sdk-js';
 import { ActivityLog } from './admin/activity-log.js';
 import { AdminApi } from './admin/admin-api.js';
 import { AdminStore } from './admin/admin-store.js';
+import { AuditLog } from './admin/audit-log.js';
 import { config as defaultConfig } from './config.js';
-import { getDwnConfig } from './storage.js';
 import { HttpApi } from './http-api.js';
 import { PluginLoader } from './plugin-loader.js';
 import { RateLimiter } from './rate-limiter.js';
 import { RegistrationManager } from './registration/registration-manager.js';
 import { WsApi } from './ws-api.js';
+import { getDialectFromUrl, getDwnConfig } from './storage.js';
 import { removeProcessHandlers, setProcessHandlers } from './process-handlers.js';
 
 /**
@@ -148,11 +149,23 @@ export class DwnServer {
     let adminApi: AdminApi | undefined;
     let activityLog: ActivityLog | undefined;
     let adminStore: AdminStore | undefined;
+    let auditLog: AuditLog | undefined;
 
     if (this.config.adminToken) {
       const storageUrl = this.config.messageStore;
       adminStore = AdminStore.create(storageUrl);
       activityLog = new ActivityLog(this.config.adminActivityLogCapacity);
+
+      // Create the persistent audit log using the registration store's dialect
+      // (same DB) or the message store URL as fallback.
+      if (this.config.registrationStoreUrl) {
+        try {
+          const auditDialect = getDialectFromUrl(new URL(this.config.registrationStoreUrl));
+          auditLog = await AuditLog.create(auditDialect);
+        } catch (err) {
+          log.warn('Failed to create audit log:', err);
+        }
+      }
 
       adminApi = AdminApi.create({
         config : this.config,
@@ -161,9 +174,15 @@ export class DwnServer {
         registrationManager,
         registrationStore,
         activityLog,
+        auditLog,
         ipRateLimiter,
         tenantRateLimiter,
       });
+
+      // Record server start event in audit log.
+      if (auditLog) {
+        await auditLog.record({ actor: 'system', action: 'server.start' });
+      }
 
       log.info('Admin API enabled');
     }

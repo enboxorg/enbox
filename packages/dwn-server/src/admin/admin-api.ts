@@ -2,6 +2,7 @@ import type { Dwn } from '@enbox/dwn-sdk-js';
 
 import type { ActivityLog } from './activity-log.js';
 import type { AdminStore } from './admin-store.js';
+import type { AuditLog } from './audit-log.js';
 import type { ConnectionManager } from '../connection/connection-manager.js';
 import type { DwnServerConfig } from '../config.js';
 import type { RateLimiter } from '../rate-limiter.js';
@@ -14,6 +15,8 @@ import type {
   AdminTenantSummary,
   PaginatedResponse,
   RateLimitStatus,
+  RuntimeConfig,
+  RuntimeConfigPatch,
   TenantQuotaInput,
   TenantQuotaStatus,
 } from './types.js';
@@ -41,6 +44,7 @@ export class AdminApi {
   #registrationStore: RegistrationStore | undefined;
   #connectionManager: ConnectionManager | undefined;
   #activityLog: ActivityLog | undefined;
+  #auditLog: AuditLog | undefined;
   #ipRateLimiter: RateLimiter | undefined;
   #tenantRateLimiter: RateLimiter | undefined;
   #startTime: number;
@@ -62,6 +66,7 @@ export class AdminApi {
     registrationStore? : RegistrationStore;
     connectionManager? : ConnectionManager;
     activityLog? : ActivityLog;
+    auditLog? : AuditLog;
     ipRateLimiter? : RateLimiter;
     tenantRateLimiter? : RateLimiter;
     packageInfo? : { version?: string };
@@ -74,6 +79,7 @@ export class AdminApi {
     api.#registrationStore = options.registrationStore;
     api.#connectionManager = options.connectionManager;
     api.#activityLog = options.activityLog;
+    api.#auditLog = options.auditLog;
     api.#ipRateLimiter = options.ipRateLimiter;
     api.#tenantRateLimiter = options.tenantRateLimiter;
     api.#packageInfo = options.packageInfo ?? {};
@@ -171,9 +177,42 @@ export class AdminApi {
         }
       }
 
+      // --- Tenant messages browser ---
+      {
+        const match = subPath.match(/^\/tenants\/([^/]+)\/messages$/);
+        if (match && method === 'GET') {
+          const did = decodeURIComponent(match[1]);
+          return this.#handleTenantMessages(did, url);
+        }
+      }
+
+      // --- Tenant protocols ---
+      {
+        const match = subPath.match(/^\/tenants\/([^/]+)\/protocols$/);
+        if (match && method === 'GET') {
+          const did = decodeURIComponent(match[1]);
+          return this.#handleTenantProtocols(did);
+        }
+      }
+
       // --- Rate limits ---
       if (method === 'GET' && subPath === '/rate-limits') {
         return this.#handleRateLimits();
+      }
+
+      // --- Audit log ---
+      if (method === 'GET' && subPath === '/audit') {
+        return this.#handleAudit(url);
+      }
+
+      // --- Runtime config ---
+      if (subPath === '/config') {
+        if (method === 'GET') {
+          return this.#handleConfigGet();
+        }
+        if (method === 'PATCH') {
+          return this.#handleConfigPatch(req);
+        }
       }
 
       // --- Activity events ---
@@ -470,6 +509,7 @@ export class AdminApi {
       return Response.json({ error: 'Tenant not found' }, { status: 404 });
     }
 
+    await this.#audit('tenant.delete', did, JSON.stringify({ purged }));
     return Response.json({ success: true, did, purged });
   }
 
@@ -489,6 +529,7 @@ export class AdminApi {
       return Response.json({ error: 'Tenant not found' }, { status: 404 });
     }
 
+    await this.#audit('tenant.suspend', did);
     return Response.json({ success: true, did });
   }
 
@@ -508,6 +549,7 @@ export class AdminApi {
       return Response.json({ error: 'Tenant not found' }, { status: 404 });
     }
 
+    await this.#audit('tenant.unsuspend', did);
     return Response.json({ success: true, did });
   }
 
@@ -618,12 +660,17 @@ export class AdminApi {
     // Merge with existing quota if only one field is provided.
     const existing = await this.#registrationStore.getQuota(did);
 
-    await this.#registrationStore.setQuota({
+    const newQuota = {
       did,
       maxMessages     : body.maxMessages ?? existing?.maxMessages ?? 0,
       maxStorageBytes : body.maxStorageBytes ?? existing?.maxStorageBytes ?? 0,
-    });
+    };
+    await this.#registrationStore.setQuota(newQuota);
 
+    await this.#audit('quota.update', did, JSON.stringify({
+      maxMessages     : newQuota.maxMessages,
+      maxStorageBytes : newQuota.maxStorageBytes,
+    }));
     return Response.json({ success: true, did });
   }
 
@@ -643,7 +690,172 @@ export class AdminApi {
       return Response.json({ error: 'No per-tenant quota found' }, { status: 404 });
     }
 
+    await this.#audit('quota.delete', did);
     return Response.json({ success: true, did });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Audit log handler
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Queries the persistent audit log with optional filtering and pagination.
+   */
+  async #handleAudit(url: URL): Promise<Response> {
+    if (!this.#auditLog) {
+      return Response.json(
+        { error: 'Audit log is not enabled. Requires a SQL storage backend.' },
+        { status: 501 },
+      );
+    }
+
+    const since = url.searchParams.get('since') ?? undefined;
+    const action = url.searchParams.get('action') ?? undefined;
+    const target = url.searchParams.get('target') ?? undefined;
+    const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '50'), 1000);
+    const cursorParam = url.searchParams.get('cursor');
+    const cursor = cursorParam !== null ? parseInt(cursorParam) : undefined;
+
+    const result = await this.#auditLog.query({ since, action, target, limit, cursor });
+    return Response.json(result);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Runtime configuration handlers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns the current runtime-changeable configuration (non-secret values only).
+   */
+  #handleConfigGet(): Response {
+    const runtimeConfig: RuntimeConfig = {
+      logLevel                         : this.#config.logLevel,
+      maxRecordDataSize                : this.#config.maxRecordDataSize,
+      maxInFlight                      : this.#config.maxInFlight,
+      quotaMaxMessages                 : this.#config.quotaMaxMessages,
+      quotaMaxStorageBytes             : this.#config.quotaMaxStorageBytes,
+      rateLimitRequestsPerSecond       : this.#config.rateLimitRequestsPerSecond,
+      rateLimitBurst                   : this.#config.rateLimitBurst,
+      rateLimitTenantRequestsPerSecond : this.#config.rateLimitTenantRequestsPerSecond,
+      rateLimitTenantBurst             : this.#config.rateLimitTenantBurst,
+    };
+    return Response.json(runtimeConfig);
+  }
+
+  /**
+   * Patches runtime-changeable configuration values and applies them immediately.
+   */
+  async #handleConfigPatch(req: Request): Promise<Response> {
+    let body: RuntimeConfigPatch;
+    try {
+      body = await req.json() as RuntimeConfigPatch;
+    } catch {
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+
+    const changes: string[] = [];
+
+    if (body.logLevel !== undefined) {
+      this.#config.logLevel = body.logLevel;
+      log.setLevel(body.logLevel as log.LogLevelDesc);
+      changes.push('logLevel');
+    }
+
+    if (body.maxRecordDataSize !== undefined) {
+      this.#config.maxRecordDataSize = body.maxRecordDataSize;
+      changes.push('maxRecordDataSize');
+    }
+
+    if (body.maxInFlight !== undefined) {
+      this.#config.maxInFlight = body.maxInFlight;
+      changes.push('maxInFlight');
+    }
+
+    if (body.quotaMaxMessages !== undefined) {
+      this.#config.quotaMaxMessages = body.quotaMaxMessages;
+      changes.push('quotaMaxMessages');
+    }
+
+    if (body.quotaMaxStorageBytes !== undefined) {
+      this.#config.quotaMaxStorageBytes = body.quotaMaxStorageBytes;
+      changes.push('quotaMaxStorageBytes');
+    }
+
+    if (body.rateLimitRequestsPerSecond !== undefined) {
+      this.#config.rateLimitRequestsPerSecond = body.rateLimitRequestsPerSecond;
+      changes.push('rateLimitRequestsPerSecond');
+    }
+
+    if (body.rateLimitBurst !== undefined) {
+      this.#config.rateLimitBurst = body.rateLimitBurst;
+      changes.push('rateLimitBurst');
+    }
+
+    if (body.rateLimitTenantRequestsPerSecond !== undefined) {
+      this.#config.rateLimitTenantRequestsPerSecond = body.rateLimitTenantRequestsPerSecond;
+      changes.push('rateLimitTenantRequestsPerSecond');
+    }
+
+    if (body.rateLimitTenantBurst !== undefined) {
+      this.#config.rateLimitTenantBurst = body.rateLimitTenantBurst;
+      changes.push('rateLimitTenantBurst');
+    }
+
+    if (changes.length === 0) {
+      return Response.json({ error: 'No valid configuration fields provided.' }, { status: 400 });
+    }
+
+    await this.#audit('config.update', undefined, JSON.stringify({ changes, values: body }));
+
+    return Response.json({ success: true, updated: changes });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tenant data browser handlers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns paginated message metadata for a tenant (no content/encoded bytes).
+   */
+  async #handleTenantMessages(did: string, url: URL): Promise<Response> {
+    if (!this.#adminStore) {
+      return Response.json(
+        { error: 'Admin store unavailable. Requires a SQL storage backend.' },
+        { status: 501 },
+      );
+    }
+
+    const iface = url.searchParams.get('interface') ?? undefined;
+    const method = url.searchParams.get('method') ?? undefined;
+    const protocol = url.searchParams.get('protocol') ?? undefined;
+    const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '20'), 100);
+    const cursorParam = url.searchParams.get('cursor');
+    const cursor = cursorParam !== null ? parseInt(cursorParam) : undefined;
+
+    const result = await this.#adminStore.getTenantMessages(did, {
+      interface: iface,
+      method,
+      protocol,
+      limit,
+      cursor,
+    });
+
+    return Response.json(result);
+  }
+
+  /**
+   * Returns per-protocol message counts for a tenant.
+   */
+  async #handleTenantProtocols(did: string): Promise<Response> {
+    if (!this.#adminStore) {
+      return Response.json(
+        { error: 'Admin store unavailable. Requires a SQL storage backend.' },
+        { status: 501 },
+      );
+    }
+
+    const protocols = await this.#adminStore.getTenantProtocolCounts(did);
+    return Response.json({ protocols });
   }
 
   // ---------------------------------------------------------------------------
@@ -733,6 +945,26 @@ export class AdminApi {
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Records an audit event if the audit log is available.
+   * Errors are logged but never propagated — audit logging must not break operations.
+   */
+  async #audit(action: string, target?: string, detail?: string): Promise<void> {
+    if (!this.#auditLog) {
+      return;
+    }
+    try {
+      await this.#auditLog.record({
+        actor: 'admin',
+        action,
+        target,
+        detail,
+      });
+    } catch (err) {
+      log.error('Failed to record audit event:', err);
+    }
+  }
 
   #getConnectionCount(): number {
     if (this.#connectionManager) {
