@@ -1,5 +1,21 @@
 import type { KeyValueStore } from '@enbox/common';
 
+/**
+ * Configuration for provider-auth-v0 registration.
+ * Present in {@link ServerInfo} when `'provider-auth-v0'` is listed in
+ * {@link ServerInfo.registrationRequirements | registrationRequirements}.
+ */
+export type ProviderAuthInfo = {
+  /** URL to redirect user for authentication/signup/payment. Can be on the DWN server or an external domain. */
+  authorizeUrl : string;
+  /** URL where the wallet exchanges an authorization code for a registration token. */
+  tokenUrl : string;
+  /** URL to refresh an expired registration token. If absent, tokens do not support refresh. */
+  refreshUrl? : string;
+  /** URL for user-facing account management dashboard. If absent, no management UI is available. */
+  managementUrl? : string;
+};
+
 export type ServerInfo = {
   /** the maximum file size the user can request to store */
   maxFileSize: number,
@@ -9,6 +25,11 @@ export type ServerInfo = {
    * window. When absent, the server does not enforce backpressure.
    */
   maxInFlight?: number,
+  /**
+   * Provider-auth-v0 configuration. Present when `'provider-auth-v0'` is
+   * included in {@link registrationRequirements}.
+   */
+  providerAuth?: ProviderAuthInfo,
   /**
    * an array of strings representing the server's registration requirements.
    *
