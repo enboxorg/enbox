@@ -1,17 +1,7 @@
-import type { RecordsReadReply } from '@enbox/dwn-sdk-js';
-import type { Server, ServerWebSocket } from 'bun';
-
-import log from 'loglevel';
-
-import { Convert } from '@enbox/common';
-import { readFileSync } from 'fs';
-import { register } from 'prom-client';
-import { v4 as uuidv4 } from 'uuid';
-import { DataStream, DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
-
-
 import type { JsonRpcRequest } from '@enbox/dwn-clients';
+import type { RecordsReadReply } from '@enbox/dwn-sdk-js';
 import type { ServerInfo } from '@enbox/dwn-clients';
+import type { Server, ServerWebSocket } from 'bun';
 
 import type { ActivityLog } from './admin/activity-log.js';
 import type { AdminApi } from './admin/admin-api.js';
@@ -24,11 +14,30 @@ import type { RegistrationStore } from './registration/registration-store.js';
 import type { RequestContext } from './lib/json-rpc-router.js';
 import type { SocketConnection } from './connection/socket-connection.js';
 
+import log from 'loglevel';
+
+import { Convert } from '@enbox/common';
+import { join } from 'path';
+import { register } from 'prom-client';
+import { v4 as uuidv4 } from 'uuid';
+import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
+import { DataStream, DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
+import { existsSync, readFileSync } from 'fs';
+
 import { config } from './config.js';
 import { jsonRpcRouter } from './json-rpc-api.js';
 import { Web5ConnectServer } from './web5-connect/web5-connect-server.js';
-import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { requestCounter, responseHistogram } from './metrics.js';
+
+// Resolve admin UI dist path at module load time. Gracefully handle the case
+// where the admin UI package is not installed.
+let resolvedAdminUiPath: string | undefined;
+try {
+  const adminUiModule = require('@enbox/dwn-server-admin-ui');
+  resolvedAdminUiPath = adminUiModule.adminUiDistPath;
+} catch {
+  // Admin UI package not installed — static serving will be disabled.
+}
 
 /** Data attached to each Bun WebSocket via `ws.data`. */
 export interface WsData {
@@ -45,6 +54,7 @@ export class HttpApi {
   #registrationStore: RegistrationStore | undefined;
   #ipRateLimiter: RateLimiter | undefined;
   #tenantRateLimiter: RateLimiter | undefined;
+  #adminUiPath: string | undefined;
   web5ConnectServer: Web5ConnectServer;
   registrationManager: RegistrationManager;
   dwn: Dwn;
@@ -90,6 +100,7 @@ export class HttpApi {
     httpApi.#registrationStore = options?.registrationStore;
     httpApi.#ipRateLimiter = options?.ipRateLimiter;
     httpApi.#tenantRateLimiter = options?.tenantRateLimiter;
+    httpApi.#adminUiPath = resolvedAdminUiPath;
 
     if (registrationManager !== undefined) {
       httpApi.registrationManager = registrationManager;
@@ -221,6 +232,40 @@ export class HttpApi {
   }
 
   // ---------------------------------------------------------------------------
+  // Admin UI static file serving
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Serves static files from the admin UI dist directory. Returns `null` when
+   * the admin UI package is not installed or the requested file does not exist.
+   * All non-file paths under `/admin` fall back to `index.html` (SPA routing).
+   */
+  #serveAdminUi(path: string): Response | null {
+    if (!this.#adminUiPath) {
+      return null;
+    }
+
+    // Strip the `/admin` prefix to get the file path within the dist directory.
+    const relativePath = path.replace(/^\/admin\/?/, '');
+
+    // Map to a file on disk. Empty path or paths without an extension get
+    // the SPA index.html (client-side routing).
+    let filePath: string;
+    if (relativePath === '' || !relativePath.includes('.')) {
+      filePath = join(this.#adminUiPath, 'index.html');
+    } else {
+      filePath = join(this.#adminUiPath, relativePath);
+    }
+
+    if (!existsSync(filePath)) {
+      return null;
+    }
+
+    const file = Bun.file(filePath);
+    return new Response(file);
+  }
+
+  // ---------------------------------------------------------------------------
   // Router
   // ---------------------------------------------------------------------------
 
@@ -265,6 +310,14 @@ export class HttpApi {
     // --- Admin API routes ---
     if (path.startsWith('/admin/api/') && this.#adminApi) {
       return this.#adminApi.route(req, url, path, method);
+    }
+
+    // --- Admin UI static files (only when admin API is enabled) ---
+    if (method === 'GET' && path.startsWith('/admin') && this.#adminApi) {
+      const uiResponse = this.#serveAdminUi(path);
+      if (uiResponse) {
+        return uiResponse;
+      }
     }
 
     // --- Registration routes ---

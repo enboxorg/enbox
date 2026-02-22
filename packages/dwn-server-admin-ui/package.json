@@ -1,0 +1,26 @@
+{
+  "name": "@enbox/dwn-server-admin-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./dist/*": "./dist/*"
+  },
+  "scripts": {
+    "clean": "rimraf dist",
+    "build": "bun run clean && bun run build:bundle",
+    "build:bundle": "bun run scripts/build.ts",
+    "lint": "echo 'no lint configured'",
+    "test:node": "echo 'no tests configured'"
+  },
+  "dependencies": {
+    "preact": "^10.25.0",
+    "preact-router": "^4.1.2"
+  },
+  "devDependencies": {
+    "esbuild": "0.23.0",
+    "rimraf": "^5.0.5"
+  }
+}
