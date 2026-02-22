@@ -1,3 +1,4 @@
+import type { ActivityLog } from '../admin/activity-log.js';
 import type { SocketConnection } from '../connection/socket-connection.js';
 import type { Dwn, SubscriptionListener } from '@enbox/dwn-sdk-js';
 import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from '@enbox/dwn-clients';
@@ -15,6 +16,8 @@ export type RequestContext = {
   }
   /** The `ReadableStream` associated with a `RecordsWrite` request only used in `http` requests */
   dataStream?: ReadableStream<Uint8Array>;
+  /** The admin activity log for capturing DWN request events (optional). */
+  activityLog?: ActivityLog;
 };
 
 export type HandlerResponse = {

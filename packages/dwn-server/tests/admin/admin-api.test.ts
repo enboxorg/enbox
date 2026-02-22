@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { mkdtempSync, rmSync } from 'fs';
 
+import { ActivityLog } from '../../src/admin/activity-log.js';
 import { config as defaultConfig } from '../../src/config.js';
 import { DwnServer } from '../../src/dwn-server.js';
 
@@ -359,5 +360,272 @@ describe('validateAdminAuth', () => {
     });
     const result = validateAdminAuth(req, { ...defaultConfig, adminToken: 'secret' });
     expect(result).toBeNull();
+  });
+});
+
+// =============================================================================
+// Phase 2 tests
+// =============================================================================
+
+describe('ActivityLog', () => {
+  it('should record and retrieve events', () => {
+    const log = new ActivityLog(100);
+
+    log.record({
+      tenant     : 'did:test:a',
+      interface  : 'Records',
+      method     : 'Write',
+      statusCode : 202,
+      transport  : 'http',
+    });
+
+    log.record({
+      tenant        : 'did:test:b',
+      interface     : 'Records',
+      method        : 'Query',
+      statusCode    : 200,
+      transport     : 'ws',
+      dataSizeBytes : 1024,
+    });
+
+    expect(log.size).toBe(2);
+
+    const { events, cursor } = log.getEvents();
+    expect(events.length).toBe(2);
+    expect(events[0].tenant).toBe('did:test:a');
+    expect(events[0].interface).toBe('Records');
+    expect(events[0].method).toBe('Write');
+    expect(events[0].statusCode).toBe(202);
+    expect(events[0].transport).toBe('http');
+    expect(events[0].id).toBe(1);
+    expect(events[1].id).toBe(2);
+    expect(events[1].dataSizeBytes).toBe(1024);
+    expect(cursor).toBe(2);
+  });
+
+  it('should support cursor-based pagination with the since parameter', () => {
+    const log = new ActivityLog(100);
+
+    for (let i = 0; i < 10; i++) {
+      log.record({
+        tenant     : `did:test:t${i}`,
+        interface  : 'Records',
+        method     : 'Write',
+        statusCode : 202,
+        transport  : 'http',
+      });
+    }
+
+    // Get first 3.
+    const page1 = log.getEvents({ limit: 3 });
+    expect(page1.events.length).toBe(3);
+    expect(page1.cursor).toBe(3);
+
+    // Get next 3 using cursor.
+    const page2 = log.getEvents({ since: page1.cursor, limit: 3 });
+    expect(page2.events.length).toBe(3);
+    expect(page2.events[0].id).toBe(4);
+    expect(page2.cursor).toBe(6);
+  });
+
+  it('should evict oldest events when capacity is exceeded', () => {
+    const log = new ActivityLog(5);
+
+    for (let i = 0; i < 8; i++) {
+      log.record({
+        tenant     : `did:test:t${i}`,
+        interface  : 'Records',
+        method     : 'Write',
+        statusCode : 202,
+        transport  : 'http',
+      });
+    }
+
+    expect(log.size).toBe(5);
+    expect(log.capacity).toBe(5);
+
+    const { events } = log.getEvents({ limit: 100 });
+    // Should contain events 4-8 (ids 4, 5, 6, 7, 8).
+    expect(events[0].id).toBe(4);
+    expect(events[4].id).toBe(8);
+  });
+
+  it('should return empty results when no events match the cursor', () => {
+    const log = new ActivityLog(100);
+
+    log.record({
+      tenant     : 'did:test:a',
+      interface  : 'Records',
+      method     : 'Write',
+      statusCode : 202,
+      transport  : 'http',
+    });
+
+    const { events, cursor } = log.getEvents({ since: 999 });
+    expect(events.length).toBe(0);
+    expect(cursor).toBeUndefined();
+  });
+
+  it('should clear all events', () => {
+    const log = new ActivityLog(100);
+
+    log.record({
+      tenant     : 'did:test:a',
+      interface  : 'Records',
+      method     : 'Write',
+      statusCode : 202,
+      transport  : 'http',
+    });
+
+    expect(log.size).toBe(1);
+    log.clear();
+    expect(log.size).toBe(0);
+  });
+});
+
+describe('AdminApi — Phase 2 endpoints', () => {
+  let dwnServer: DwnServer;
+  let port: number;
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    port = 9400 + Math.floor(Math.random() * 900);
+    tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-phase2-'));
+    dwnServer = new DwnServer({ config: createTestConfig(port, tmpDir) });
+    await dwnServer.start();
+  });
+
+  afterAll(async () => {
+    await dwnServer.stop();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  describe('GET /admin/api/events', () => {
+    it('should return an events array (possibly empty)', async () => {
+      const response = await adminFetch({ port }, '/events');
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.events).toBeInstanceOf(Array);
+    });
+
+    it('should capture events after a DWN request', async () => {
+      // Send a DWN request to the server (RecordsQuery via JSON-RPC).
+      const dwnRequest = {
+        jsonrpc : '2.0',
+        id      : 'test-events-1',
+        method  : 'dwn.processMessage',
+        params  : {
+          target  : 'did:test:events',
+          message : {
+            descriptor: {
+              interface        : 'Records',
+              method           : 'Query',
+              messageTimestamp : new Date().toISOString(),
+              filter           : {},
+            },
+          },
+        },
+      };
+
+      await fetch(`http://localhost:${port}`, {
+        method  : 'POST',
+        headers : { 'dwn-request': JSON.stringify(dwnRequest) },
+      });
+
+      // Check events endpoint.
+      const response = await adminFetch({ port }, '/events');
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.events.length).toBeGreaterThanOrEqual(1);
+
+      const event = body.events.find((e: any): boolean => e.tenant === 'did:test:events');
+      expect(event).toBeDefined();
+      expect(event.interface).toBe('Records');
+      expect(event.method).toBe('Query');
+      expect(event.transport).toBe('http');
+      expect(typeof event.statusCode).toBe('number');
+      expect(typeof event.timestamp).toBe('string');
+    });
+
+    it('should support since and limit query parameters', async () => {
+      // Get current events to establish a baseline cursor.
+      const baseline = await adminFetch({ port }, '/events');
+      const baseBody = await baseline.json();
+      const cursor = baseBody.cursor ?? 0;
+
+      // Send another request to create a new event.
+      const dwnRequest = {
+        jsonrpc : '2.0',
+        id      : 'test-events-2',
+        method  : 'dwn.processMessage',
+        params  : {
+          target  : 'did:test:events2',
+          message : {
+            descriptor: {
+              interface        : 'Records',
+              method           : 'Query',
+              messageTimestamp : new Date().toISOString(),
+              filter           : {},
+            },
+          },
+        },
+      };
+
+      await fetch(`http://localhost:${port}`, {
+        method  : 'POST',
+        headers : { 'dwn-request': JSON.stringify(dwnRequest) },
+      });
+
+      // Fetch events since cursor.
+      const response = await adminFetch({ port }, `/events?since=${cursor}&limit=1`);
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.events.length).toBe(1);
+      expect(body.events[0].tenant).toBe('did:test:events2');
+    });
+  });
+
+  describe('GET /admin/api/connections', () => {
+    it('should return connections array (empty when no WS connections)', async () => {
+      const response = await adminFetch({ port }, '/connections');
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.connections).toBeInstanceOf(Array);
+      // No WS support in test config, so connections should be empty.
+      expect(body.connections.length).toBe(0);
+    });
+  });
+});
+
+describe('Enhanced Prometheus metrics', () => {
+  it('should expose new gauge metrics at the /metrics endpoint', async () => {
+    // Use an existing server with admin enabled.
+    const port = 9500 + Math.floor(Math.random() * 900);
+    const tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-metrics-'));
+    const dwnServer = new DwnServer({ config: createTestConfig(port, tmpDir) });
+    await dwnServer.start();
+
+    try {
+      const response = await fetch(`http://localhost:${port}/metrics`);
+      expect(response.status).toBe(200);
+      const metricsText = await response.text();
+
+      // Check new gauges exist.
+      expect(metricsText).toContain('dwn_active_tenants');
+      expect(metricsText).toContain('dwn_total_messages');
+      expect(metricsText).toContain('dwn_total_data_bytes');
+      expect(metricsText).toContain('dwn_websocket_connections');
+      expect(metricsText).toContain('dwn_websocket_subscriptions');
+
+      // Check new counter exists.
+      expect(metricsText).toContain('dwn_request_data_bytes_total');
+
+      // Original metrics should still be present.
+      expect(metricsText).toContain('dwn_requests_total');
+      expect(metricsText).toContain('http_response');
+    } finally {
+      await dwnServer.stop();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

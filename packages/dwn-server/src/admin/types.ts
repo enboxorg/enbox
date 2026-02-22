@@ -97,3 +97,51 @@ export type PaginatedResponse<T> = {
   cursor? : string;
   totalCount : number;
 };
+
+/**
+ * A single DWN activity event captured by the in-memory ring buffer.
+ */
+export type AdminActivityEvent = {
+  /** Monotonically increasing event ID (used as cursor). */
+  id : number;
+  /** ISO-8601 timestamp of the event. */
+  timestamp : string;
+  /** The tenant DID the request targeted. */
+  tenant : string;
+  /** DWN interface (e.g. `Records`, `Protocols`, `Events`). */
+  interface : string;
+  /** DWN method (e.g. `Write`, `Query`, `Read`, `Subscribe`). */
+  method : string;
+  /** DWN status code returned (e.g. 200, 202, 401). */
+  statusCode : number;
+  /** Transport used (`http` or `ws`). */
+  transport : 'http' | 'ws';
+  /** Data size in bytes (if applicable). */
+  dataSizeBytes? : number;
+};
+
+/**
+ * Snapshot of a single subscription's flow control state.
+ */
+export type AdminSubscriptionSnapshot = {
+  /** Subscription JSON-RPC ID. */
+  id : string | number;
+  /** Number of events sent but not yet acknowledged. */
+  inflight : number;
+  /** Number of events buffered waiting for the window to open. */
+  buffered : number;
+};
+
+/**
+ * Snapshot of a single WebSocket connection for the admin inspector.
+ */
+export type AdminConnectionSnapshot = {
+  /** Unique connection identifier. */
+  id : string;
+  /** ISO-8601 timestamp when the connection was established. */
+  connectedAt : string;
+  /** Number of active subscriptions on this connection. */
+  subscriptionCount : number;
+  /** Per-subscription flow control state. */
+  subscriptions : AdminSubscriptionSnapshot[];
+};

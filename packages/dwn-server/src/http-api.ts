@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { DataStream, DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
 
 
+import type { ActivityLog } from './admin/activity-log.js';
 import type { AdminApi } from './admin/admin-api.js';
 import type { DwnServerConfig } from './config.js';
 import type { DwnServerError } from './dwn-error.js';
@@ -35,6 +36,7 @@ export class HttpApi {
   #packageInfo: { version?: string, sdkVersion?: string, server: string };
   #server!: Server<WsData>;
   #adminApi: AdminApi | undefined;
+  #activityLog: ActivityLog | undefined;
   web5ConnectServer: Web5ConnectServer;
   registrationManager: RegistrationManager;
   dwn: Dwn;
@@ -45,7 +47,8 @@ export class HttpApi {
   private constructor() { }
 
   public static async create(
-    config: DwnServerConfig, dwn: Dwn, registrationManager?: RegistrationManager, adminApi?: AdminApi,
+    config: DwnServerConfig, dwn: Dwn, registrationManager?: RegistrationManager,
+    adminApi?: AdminApi, activityLog?: ActivityLog,
   ): Promise<HttpApi> {
     const httpApi = new HttpApi();
 
@@ -68,6 +71,7 @@ export class HttpApi {
     httpApi.#config = config;
     httpApi.dwn = dwn;
     httpApi.#adminApi = adminApi;
+    httpApi.#activityLog = activityLog;
 
     if (registrationManager !== undefined) {
       httpApi.registrationManager = registrationManager;
@@ -352,9 +356,10 @@ export class HttpApi {
     }
 
     const requestContext: RequestContext = {
-      dwn        : this.dwn,
-      transport  : 'http',
-      dataStream : requestDataStream,
+      dwn         : this.dwn,
+      transport   : 'http',
+      dataStream  : requestDataStream,
+      activityLog : this.#activityLog,
     };
     const { jsonRpcResponse, dataStream: responseDataStream } =
       await jsonRpcRouter.handle(dwnRpcRequest, requestContext);

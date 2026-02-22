@@ -1,3 +1,5 @@
+import type { ActivityLog } from '../admin/activity-log.js';
+import type { AdminConnectionSnapshot } from '../admin/types.js';
 import type { RequestContext } from '../lib/json-rpc-router.js';
 import type { ServerWebSocket } from 'bun';
 import type { WsData } from '../http-api.js';
@@ -25,6 +27,12 @@ const HEARTBEAT_INTERVAL = 30_000;
  * and `close()` methods on this class.
  */
 export class SocketConnection {
+  /** Unique identifier for this connection (for admin introspection). */
+  public readonly id: string = uuidv4();
+
+  /** Timestamp when the connection was established (for admin introspection). */
+  public readonly connectedAt: number = Date.now();
+
   private heartbeatInterval: ReturnType<typeof setInterval>;
   private subscriptions: Map<JsonRpcId, JsonRpcSubscription> = new Map();
   private flowControllers: Map<JsonRpcId, FlowController> = new Map();
@@ -35,6 +43,7 @@ export class SocketConnection {
     private dwn: Dwn,
     private onCloseCallback?: () => void,
     private maxInFlight: number = DEFAULT_MAX_IN_FLIGHT,
+    private activityLog?: ActivityLog,
   ){
     // Bun handles ping/pong automatically at the protocol level, but we still
     // want an application-level heartbeat to detect dead connections.
@@ -184,6 +193,33 @@ export class SocketConnection {
   }
 
   /**
+   * Returns the number of active subscriptions on this connection.
+   */
+  get subscriptionCount(): number {
+    return this.subscriptions.size;
+  }
+
+  /**
+   * Returns a serializable snapshot of this connection for the admin inspector.
+   */
+  toSnapshot(): AdminConnectionSnapshot {
+    const subscriptions = Array.from(this.flowControllers.entries()).map(
+      ([id, fc]): AdminConnectionSnapshot['subscriptions'][number] => ({
+        id       : id as string | number,
+        inflight : fc.inFlightCount,
+        buffered : fc.bufferCount,
+      }),
+    );
+
+    return {
+      id                : this.id,
+      connectedAt       : new Date(this.connectedAt).toISOString(),
+      subscriptionCount : this.subscriptions.size,
+      subscriptions,
+    };
+  }
+
+  /**
    * Sends a JSON encoded string through the WebSocket.
    */
   private send(response: JsonRpcResponse | JsonRpcErrorResponse): void {
@@ -228,6 +264,7 @@ export class SocketConnection {
       transport        : 'ws',
       dwn              : this.dwn,
       socketConnection : this,
+      activityLog      : this.activityLog,
     };
 
     // methods that expect a long-running subscription begin with `rpc.subscribe.`
