@@ -89,12 +89,12 @@ function buildRootCollectionMethods(
   return {
     async create(options: Record<string, unknown>): Promise<unknown> {
       const { status, record } = await typed.records.create(path, options as never);
-      return { status, record, ...status };
+      return { status, record };
     },
 
     async query(options?: Record<string, unknown>): Promise<unknown> {
       const { status, records, cursor } = await typed.records.query(path, options as never);
-      return { status, records, cursor, ...status };
+      return { status, records, cursor };
     },
 
     async get(recordId: string): Promise<unknown> {
@@ -132,11 +132,11 @@ function buildRootSingletonMethods(
           data: options.data,
           ...(options.tags !== undefined ? { tags: options.tags } : {}),
         } as never);
-        return { status, record, ...status };
+        return { status, record };
       }
       // Create new
       const { status, record } = await typed.records.create(path, options as never);
-      return { status, record, ...status };
+      return { status, record };
     },
 
     async get(): Promise<unknown> {
@@ -163,7 +163,7 @@ function buildNestedCollectionMethods(
         ...options,
         parentContextId,
       } as never);
-      return { status, record, ...status };
+      return { status, record };
     },
 
     async query(parentContextId: string, options?: Record<string, unknown>): Promise<unknown> {
@@ -174,7 +174,7 @@ function buildNestedCollectionMethods(
           contextId: parentContextId,
         },
       } as never);
-      return { status, records, cursor, ...status };
+      return { status, records, cursor };
     },
 
     async get(recordId: string): Promise<unknown> {
@@ -220,14 +220,14 @@ function buildNestedSingletonMethods(
           data: options.data,
           ...(options.tags !== undefined ? { tags: options.tags } : {}),
         } as never);
-        return { status, record, ...status };
+        return { status, record };
       }
 
       const { status, record } = await typed.records.create(path, {
         ...options,
         parentContextId,
       } as never);
-      return { status, record, ...status };
+      return { status, record };
     },
 
     async get(parentContextId: string): Promise<unknown> {

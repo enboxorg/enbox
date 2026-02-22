@@ -108,11 +108,11 @@ export type CollectionCRUD<
   M extends SchemaMap,
   Path extends string,
 > = {
-  create(options: CollectionCreateOptions<D, M, Path>): Promise<TypedRecord<DataAt<D, M, Path>> & DwnResponseStatus>;
-  query(options?: TypedQueryRequest): Promise<{ records: TypedRecord<DataAt<D, M, Path>>[]; cursor?: DwnPaginationCursor } & DwnResponseStatus>;
+  create(options: CollectionCreateOptions<D, M, Path>): Promise<DwnResponseStatus & { record: TypedRecord<DataAt<D, M, Path>> }>;
+  query(options?: TypedQueryRequest): Promise<DwnResponseStatus & { records: TypedRecord<DataAt<D, M, Path>>[]; cursor?: DwnPaginationCursor }>;
   get(recordId: string): Promise<TypedRecord<DataAt<D, M, Path>>>;
   delete(recordId: string): Promise<DwnResponseStatus>;
-  subscribe(options?: TypedSubscribeRequest): Promise<TypedLiveQuery<DataAt<D, M, Path>>>;
+  subscribe(options?: TypedSubscribeRequest): Promise<TypedLiveQuery<DataAt<D, M, Path>> | undefined>;
 };
 
 /** CRUD API for a root-level singleton ($recordLimit max: 1). */
@@ -121,7 +121,7 @@ export type SingletonCRUD<
   M extends SchemaMap,
   Path extends string,
 > = {
-  set(options: SingletonSetOptions<D, M, Path>): Promise<TypedRecord<DataAt<D, M, Path>> & DwnResponseStatus>;
+  set(options: SingletonSetOptions<D, M, Path>): Promise<DwnResponseStatus & { record: TypedRecord<DataAt<D, M, Path>> }>;
   get(): Promise<TypedRecord<DataAt<D, M, Path>> | undefined>;
   delete(recordId: string): Promise<DwnResponseStatus>;
 };
@@ -135,17 +135,17 @@ export type NestedCollectionCRUD<
   create(
     parentContextId: string,
     options: CollectionCreateOptions<D, M, Path>,
-  ): Promise<TypedRecord<DataAt<D, M, Path>> & DwnResponseStatus>;
+  ): Promise<DwnResponseStatus & { record: TypedRecord<DataAt<D, M, Path>> }>;
   query(
     parentContextId: string,
     options?: TypedQueryRequest,
-  ): Promise<{ records: TypedRecord<DataAt<D, M, Path>>[]; cursor?: DwnPaginationCursor } & DwnResponseStatus>;
+  ): Promise<DwnResponseStatus & { records: TypedRecord<DataAt<D, M, Path>>[]; cursor?: DwnPaginationCursor }>;
   get(recordId: string): Promise<TypedRecord<DataAt<D, M, Path>>>;
   delete(recordId: string): Promise<DwnResponseStatus>;
   subscribe(
     parentContextId: string,
     options?: TypedSubscribeRequest,
-  ): Promise<TypedLiveQuery<DataAt<D, M, Path>>>;
+  ): Promise<TypedLiveQuery<DataAt<D, M, Path>> | undefined>;
 };
 
 /** CRUD API for a nested singleton ($recordLimit max: 1). */
@@ -157,7 +157,7 @@ export type NestedSingletonCRUD<
   set(
     parentContextId: string,
     options: SingletonSetOptions<D, M, Path>,
-  ): Promise<TypedRecord<DataAt<D, M, Path>> & DwnResponseStatus>;
+  ): Promise<DwnResponseStatus & { record: TypedRecord<DataAt<D, M, Path>> }>;
   get(parentContextId: string): Promise<TypedRecord<DataAt<D, M, Path>> | undefined>;
   delete(recordId: string): Promise<DwnResponseStatus>;
 };
