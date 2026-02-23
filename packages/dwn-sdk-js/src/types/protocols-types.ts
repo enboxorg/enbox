@@ -75,6 +75,7 @@ export enum ProtocolAction {
   Delete = 'delete',
   Prune = 'prune',
   Read = 'read',
+  Squash = 'squash',
   Update = 'update'
 }
 
@@ -313,6 +314,15 @@ export type ProtocolRuleSet = {
    * - `'subscribe'` — Participant providers subscribe to the origin DWN via `RecordsSubscribe`.
    */
   $delivery?: ProtocolDeliveryStrategy;
+
+  /**
+   * If `$squash` is `true`, enables squash writes at this protocol path.
+   * A squash write is a `RecordsWrite` with `squash: true` in the descriptor that
+   * atomically creates a new record (the snapshot) and deletes all sibling records
+   * at the same protocol path within the same parent context that have a
+   * `messageTimestamp` strictly older than the squash record's `messageTimestamp`.
+   */
+  $squash?: boolean;
 
   /**
    * Non-`$`-prefixed keys are nested child `ProtocolRuleSet` entries.

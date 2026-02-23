@@ -23,6 +23,7 @@ import {
   verifyProtocolPathAndContextId,
   verifyRecordLimit,
   verifySizeLimit,
+  verifySquashEligibility,
   verifyTagsIfNeeded,
   verifyTypeWithComposition,
 } from './protocol-authorization-validation.js';
@@ -104,6 +105,9 @@ export class ProtocolAuthorization {
 
     // Verify immutability — reject updates to write-once records
     await verifyImmutability(incomingMessage, ruleSet);
+
+    // Verify squash eligibility — ensure squash writes are at $squash: true paths and are initial writes
+    await verifySquashEligibility(incomingMessage, ruleSet);
 
     // Verify record count limit
     await verifyRecordLimit(tenant, incomingMessage, ruleSet, messageStore);

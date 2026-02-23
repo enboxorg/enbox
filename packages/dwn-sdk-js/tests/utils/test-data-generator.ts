@@ -141,6 +141,7 @@ export type GenerateRecordsWriteInput = {
   datePublished?: string;
   encryptionInput?: EncryptionInput;
   permissionGrantId?: string;
+  squash?: true;
 };
 
 export type GenerateFromRecordsWriteInput = {
@@ -499,6 +500,7 @@ export class TestDataGenerator {
       attestationSigners,
       encryptionInput   : input?.encryptionInput,
       permissionGrantId : input?.permissionGrantId,
+      squash            : input?.squash,
     };
 
     const recordsWrite = await RecordsWrite.create(options);
