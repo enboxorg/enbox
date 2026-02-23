@@ -118,8 +118,13 @@ function encodePayload(payload: NatsEventPayload): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(payload));
 }
 
-function decodePayload(data: Uint8Array): NatsEventPayload {
-  return JSON.parse(new TextDecoder().decode(data)) as NatsEventPayload;
+function decodePayload(data: Uint8Array): NatsEventPayload | undefined {
+  try {
+    return JSON.parse(new TextDecoder().decode(data)) as NatsEventPayload;
+  } catch {
+    log.error('NatsEventLog: failed to decode payload, skipping corrupt message');
+    return undefined;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -247,6 +252,9 @@ export default class NatsEventLog implements EventLog {
 
       for await (const msg of iter) {
         const payload = decodePayload(msg.data);
+        if (payload === undefined) {
+          continue;
+        }
 
         if (!matchAnyFilter(payload.indexes, filters)) {
           continue;
@@ -328,6 +336,10 @@ export default class NatsEventLog implements EventLog {
           }
 
           const payload = decodePayload(msg.data);
+          if (payload === undefined) {
+            msg.ack();
+            continue;
+          }
 
           if (!matchAnyFilter(payload.indexes, filters)) {
             msg.ack();
