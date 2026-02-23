@@ -21,7 +21,8 @@ export class DwnRegistrar {
 
     // fetch the terms-of-service
     const termsOfServiceGetResponse = await fetch(termsOfUseEndpoint, {
-      method: 'GET',
+      method : 'GET',
+      signal : AbortSignal.timeout(30_000),
     });
 
     if (termsOfServiceGetResponse.status !== 200) {
@@ -34,7 +35,8 @@ export class DwnRegistrar {
 
     // fetch the proof-of-work challenge
     const proofOfWorkChallengeGetResponse = await fetch(proofOfWorkEndpoint, {
-      method: 'GET',
+      method : 'GET',
+      signal : AbortSignal.timeout(30_000),
     });
     const { challengeNonce, maximumAllowedHashValue }: ProofOfWorkChallengeModel =
       await proofOfWorkChallengeGetResponse.json();
@@ -65,6 +67,7 @@ export class DwnRegistrar {
       method  : 'POST',
       headers : { 'Content-Type': 'application/json' },
       body    : JSON.stringify(registrationRequest),
+      signal  : AbortSignal.timeout(30_000),
     });
 
     if (registrationResponse.status !== 200) {
@@ -149,6 +152,7 @@ export class DwnRegistrar {
         code,
         redirectUri,
       }),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (response.status !== 200) {
@@ -177,6 +181,7 @@ export class DwnRegistrar {
         grantType: 'refresh_token',
         refreshToken,
       }),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (response.status !== 200) {
@@ -216,6 +221,7 @@ export class DwnRegistrar {
       method  : 'POST',
       headers : { 'Content-Type': 'application/json' },
       body    : JSON.stringify(registrationRequest),
+      signal  : AbortSignal.timeout(30_000),
     });
 
     if (response.status !== 200) {

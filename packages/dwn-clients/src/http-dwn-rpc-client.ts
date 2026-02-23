@@ -44,6 +44,7 @@ export class HttpDwnRpcClient implements DwnRpc {
       (fetchOpts as Record<string, unknown>).duplex = 'half';
     }
 
+    fetchOpts.signal = AbortSignal.timeout(30_000);
     const resp = await fetch(request.dwnUrl, fetchOpts);
     let dwnRpcResponse: JsonRpcResponse;
 
@@ -108,7 +109,7 @@ export class HttpDwnRpcClient implements DwnRpc {
     url.pathname.endsWith('/') ? url.pathname += 'info' : url.pathname += '/info';
 
     try {
-      const response = await fetch(url.toString());
+      const response = await fetch(url.toString(), { signal: AbortSignal.timeout(30_000) });
       if (response.ok) {
         const results = await response.json() as ServerInfo;
 

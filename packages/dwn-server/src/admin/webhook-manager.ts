@@ -200,7 +200,7 @@ export class WebhookManager {
 
     for (let attempt = 0; attempt <= WebhookManager.#maxRetries; attempt++) {
       try {
-        const response = await fetch(url, { method: 'POST', headers, body });
+        const response = await fetch(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(10_000) });
         if (response.ok) {
           return;
         }

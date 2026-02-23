@@ -44,7 +44,7 @@ export async function pkarrGet({ gatewayUri, publicKeyBytes }: {
   // Transmit the Get request to the DID DHT Gateway or Pkarr Relay and get the response.
   let response: Response;
   try {
-    response = await fetch(url, { method: 'GET' });
+    response = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(30_000) });
 
     if (!response.ok) {
       throw new DidError(DidErrorCode.NotFound, `Pkarr record not found for: ${identifier}`);
@@ -113,7 +113,8 @@ export async function pkarrPut({ gatewayUri, bep44Message }: {
     response = await fetch(url, {
       method  : 'PUT',
       headers : { 'Content-Type': 'application/octet-stream' },
-      body
+      body,
+      signal  : AbortSignal.timeout(30_000),
     });
 
   } catch (error: any) {
