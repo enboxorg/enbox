@@ -38,6 +38,14 @@ export type RecordsWriteDescriptor = {
   datePublished?: string;
   dataFormat: string;
   permissionGrantId?: string;
+
+  /**
+   * When `true`, this record is a squash (snapshot) write. The protocol rule set at this record's
+   * `protocolPath` must have `$squash: true`; otherwise the message is rejected.
+   * A squash write must be an initial write (a new record, not an update).
+   * This is an immutable property.
+   */
+  squash?: true;
 };
 
 export type RecordsWriteMessageOptions = {

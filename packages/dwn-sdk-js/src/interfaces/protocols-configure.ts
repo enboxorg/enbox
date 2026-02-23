@@ -505,7 +505,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
     }
 
     // validate that `$ref` nodes do not have other directives
-    const forbiddenDirectives = ['$actions', '$role', '$size', '$tags', '$encryption', '$recordLimit', '$immutable', '$delivery'] as const;
+    const forbiddenDirectives = ['$actions', '$role', '$size', '$tags', '$encryption', '$recordLimit', '$immutable', '$delivery', '$squash'] as const;
     for (const directive of forbiddenDirectives) {
       if (ruleSet[directive] !== undefined) {
         throw new DwnError(

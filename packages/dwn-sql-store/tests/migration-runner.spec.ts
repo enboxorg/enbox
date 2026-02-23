@@ -86,6 +86,7 @@ describe('MigrationRunner', () => {
         expect(applied).toEqual([
           '001-initial-schema',
           '002-content-addressed-datastore',
+          '003-add-squash-column',
         ]);
 
         // Verify tables created by migration 001
@@ -112,12 +113,14 @@ describe('MigrationRunner', () => {
           .orderBy('name', 'asc')
           .execute();
 
-        expect(rows.length).toBe(2);
+        expect(rows.length).toBe(3);
         expect((rows[0] as any).name).toBe('001-initial-schema');
         expect((rows[1] as any).name).toBe('002-content-addressed-datastore');
+        expect((rows[2] as any).name).toBe('003-add-squash-column');
         // appliedAt should be a valid ISO date string
         expect((rows[0] as any).appliedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
         expect((rows[1] as any).appliedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+        expect((rows[2] as any).appliedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
       });
 
       // ─── Idempotency tests ──────────────────────────────────────────
@@ -126,7 +129,7 @@ describe('MigrationRunner', () => {
         const runner = new MigrationRunner(db, dialect, allMigrations);
 
         const firstRun = await runner.run();
-        expect(firstRun.length).toBe(2);
+        expect(firstRun.length).toBe(3);
 
         const secondRun = await runner.run();
         expect(secondRun.length).toBe(0);
@@ -138,10 +141,10 @@ describe('MigrationRunner', () => {
         const firstRun = await runner1.run();
         expect(firstRun).toEqual(['001-initial-schema']);
 
-        // Now run with all migrations — only 002 should be applied
+        // Now run with all migrations — only 002 and 003 should be applied
         const runner2 = new MigrationRunner(db, dialect, allMigrations);
         const secondRun = await runner2.run();
-        expect(secondRun).toEqual(['002-content-addressed-datastore']);
+        expect(secondRun).toEqual(['002-content-addressed-datastore', '003-add-squash-column']);
       });
 
       // ─── Data migration tests ───────────────────────────────────────
@@ -175,10 +178,10 @@ describe('MigrationRunner', () => {
           } as any)
           .execute();
 
-        // Step 3: Apply migration 002 which should migrate data
+        // Step 3: Apply remaining migrations which should migrate data
         const runner2 = new MigrationRunner(db, dialect, allMigrations);
         const applied = await runner2.run();
-        expect(applied).toEqual(['002-content-addressed-datastore']);
+        expect(applied).toEqual(['002-content-addressed-datastore', '003-add-squash-column']);
 
         // Step 4: Verify data was migrated to dataRefs
         const refs = await db
@@ -273,10 +276,10 @@ describe('MigrationRunner', () => {
         const runner1 = new MigrationRunner(db, dialect, [migration001InitialSchema]);
         await runner1.run();
 
-        // Apply migration 002 — should not fail on empty table
+        // Apply remaining migrations — should not fail on empty table
         const runner2 = new MigrationRunner(db, dialect, allMigrations);
         const applied = await runner2.run();
-        expect(applied).toEqual(['002-content-addressed-datastore']);
+        expect(applied).toEqual(['002-content-addressed-datastore', '003-add-squash-column']);
 
         // New tables exist, old one gone
         expect(await dialect.hasTable(db, 'dataRefs')).toBe(true);
@@ -312,7 +315,7 @@ describe('MigrationRunner', () => {
           .selectAll()
           .execute();
 
-        expect(rows.length).toBe(2); // only the 2 real migrations
+        expect(rows.length).toBe(3); // only the 3 real migrations
         const names = rows.map((r: any) => r.name);
         expect(names).not.toContain('999-failing-migration');
       });
@@ -334,19 +337,20 @@ describe('MigrationRunner', () => {
         const applied = await runner.run();
 
         // Migration 001 should run but be a no-op (tables already exist due to hasTable checks)
-        // Migration 002 should run and perform the actual schema change
+        // Migrations 002 and 003 should run and perform actual schema changes
         expect(applied).toEqual([
           '001-initial-schema',
           '002-content-addressed-datastore',
+          '003-add-squash-column',
         ]);
 
-        // Both should now be recorded
+        // All should now be recorded
         const rows = await db
           .selectFrom('dwn_migrations' as any)
           .selectAll()
           .execute();
 
-        expect(rows.length).toBe(2);
+        expect(rows.length).toBe(3);
       });
 
       // ─── Empty migrations list test ─────────────────────────────────

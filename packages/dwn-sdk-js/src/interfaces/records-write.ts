@@ -80,6 +80,13 @@ export type RecordsWriteOptions = {
   permissionGrantId?: string;
 
   /**
+   * When `true`, this record is a squash (snapshot) write that atomically creates a snapshot
+   * and deletes all older sibling records at the same protocol path within the same parent context.
+   * Only valid at protocol paths with `$squash: true`. Must be an initial write (new record).
+   */
+  squash?: true;
+
+  /**
    * The author's ProtocolPath-derived public key for key delivery.
    * When set, this is attached to the authorization model so the DWN owner
    * can encrypt context keys back to the author without querying the
@@ -325,6 +332,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       datePublished     : options.datePublished,
       dataFormat        : options.dataFormat,
       permissionGrantId : options.permissionGrantId,
+      squash            : options.squash,
     };
 
     // generate `datePublished` if the message is to be published but `datePublished` is not given
@@ -742,11 +750,13 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     // we want to process tags separately from the rest of descriptors as it is an object and not a primitive KeyValue type.
     const { tags, ...descriptor } = message.descriptor;
     delete descriptor.published; // handle `published` specifically further down
+    delete descriptor.squash; // handle `squash` specifically further down
 
     let indexes: KeyValues = {
       ...descriptor,
       isLatestBaseState,
       published : !!message.descriptor.published,
+      squash    : !!message.descriptor.squash,
       author    : this.author!, //author will not be undefined when indexes are constructed as it's been authorized
       recordId  : message.recordId,
       entryId   : await RecordsWrite.getEntryId(this.author, this.message.descriptor)

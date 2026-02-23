@@ -460,6 +460,43 @@ export async function verifyRecordLimit(
 }
 
 /**
+ * Verifies that a `RecordsWrite` with `squash: true` is eligible:
+ * 1. The protocol rule set at the record's `protocolPath` must have `$squash: true`.
+ * 2. The squash write must be an initial write (a new record, not an update).
+ *
+ * @throws {DwnError} with `ProtocolAuthorizationSquashNotEnabled` if `$squash` is not enabled.
+ * @throws {DwnError} with `ProtocolAuthorizationSquashNotInitialWrite` if the squash write is not an initial write.
+ */
+export async function verifySquashEligibility(
+  incomingMessage: RecordsWrite,
+  ruleSet: ProtocolRuleSet,
+): Promise<void> {
+  const squash = incomingMessage.message.descriptor.squash;
+
+  if (squash !== true) {
+    return;
+  }
+
+  // squash write must be at a protocol path with $squash: true
+  if (ruleSet.$squash !== true) {
+    throw new DwnError(
+      DwnErrorCode.ProtocolAuthorizationSquashNotEnabled,
+      `squash writes are not enabled at protocol path '${incomingMessage.message.descriptor.protocolPath}': ` +
+      `rule set must have $squash: true.`
+    );
+  }
+
+  // squash write must be an initial write (a new record, not an update)
+  const isInitialWrite = await incomingMessage.isInitialWrite();
+  if (!isInitialWrite) {
+    throw new DwnError(
+      DwnErrorCode.ProtocolAuthorizationSquashNotInitialWrite,
+      `squash write must be an initial write (a new record): updates cannot be squash writes.`
+    );
+  }
+}
+
+/**
  * Verifies that an update is not attempted on a record whose protocol path has `$immutable: true`.
  *
  * Only non-initial writes (updates) are rejected — initial writes are always allowed.

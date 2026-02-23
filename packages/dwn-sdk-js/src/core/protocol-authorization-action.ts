@@ -191,6 +191,11 @@ export async function getActionsSeekingARuleMatch(
     const incomingRecordsWrite = incomingMessage as RecordsWrite;
 
     if (await incomingRecordsWrite.isInitialWrite()) {
+      // A squash write seeks the `squash` action first, with fallback to `create`.
+      // This means any DID authorized to `create` can also squash when no explicit `squash` rule exists.
+      if (incomingRecordsWrite.message.descriptor.squash === true) {
+        return [ProtocolAction.Squash, ProtocolAction.Create];
+      }
       return [ProtocolAction.Create];
     } else {
       // else incoming RecordsWrite not an initial write

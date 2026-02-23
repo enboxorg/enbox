@@ -4633,6 +4633,10 @@ export function testRecordsWriteHandler(): void {
           dataStore     : dataStoreStub, stateIndex, coreProtocols : new CoreProtocolRegistry(), eventLog,
         });
 
+        // stub the squash backstop so the stubbed messageStore (which returns RecordsWrite messages
+        // for all queries) does not interfere with the flow reaching the process methods
+        sinon.stub(recordsWriteHandler as any, 'enforceSquashBackstop').resolves();
+
         // simulate throwing unexpected error
         sinon.stub(recordsWriteHandler as any, 'processMessageWithoutDataStream').throws(new Error('an unknown error in recordsWriteHandler.processMessageWithoutDataStream()'));
         sinon.stub(recordsWriteHandler as any, 'processMessageWithDataStream').throws(new Error('an unknown error in recordsWriteHandler.processMessageWithDataStream()'));
