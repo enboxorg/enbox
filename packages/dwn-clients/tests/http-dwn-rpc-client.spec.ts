@@ -374,6 +374,91 @@ describe('HttpDwnRpcClient', () => {
         message,
       })).rejects.toThrow('Failed to fetch');
     });
+
+    it('should exhaust retries and return last response on persistent retryable status', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+
+      // All calls return 503.
+      const body = JSON.stringify({
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { reply: { status: { code: 503, detail: 'Service Unavailable' }, entries: [] } },
+      });
+      fetchStub.resolves({
+        status  : 503,
+        headers : new Headers(),
+        text    : async (): Promise<string> => body,
+      } as any);
+
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' }
+      });
+
+      // After exhausting retries the last response is returned (not thrown).
+      const response = await retryClient.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      });
+
+      expect(response.status.code).toBe(503);
+      // 1 initial + 2 retries = 3 total calls.
+      expect(fetchStub.callCount).toBe(3);
+    });
+
+    it('should apply per-attempt timeout via AbortSignal', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+
+      // Verify that every fetch call receives a signal.
+      const jsonRpcResponse = {
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { reply: { status: { code: 200, detail: 'OK' }, entries: [] } },
+      };
+      fetchStub.callsFake(async (_url: string, init?: RequestInit): Promise<Response> => {
+        // The fetchWithRetry method should always attach a signal.
+        expect(init?.signal).toBeDefined();
+        expect(init!.signal!.aborted).toBe(false);
+        return {
+          status  : 200,
+          headers : new Headers(),
+          text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
+        } as any;
+      });
+
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 1, baseDelayMs: 10, maxDelayMs: 50 });
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' }
+      });
+
+      const response = await retryClient.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      });
+
+      expect(response.status.code).toBe(200);
+      expect(fetchStub.callCount).toBe(1);
+    });
+
+    it('should not retry on non-retryable errors (e.g. RangeError)', async () => {
+      sinon.stub(globalThis, 'fetch').rejects(new RangeError('Invalid argument'));
+
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 3, baseDelayMs: 10, maxDelayMs: 50 });
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' }
+      });
+
+      await expect(retryClient.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      })).rejects.toThrow('Invalid argument');
+    });
   });
 
   describe('getServerInfo', () => {
@@ -415,6 +500,37 @@ describe('HttpDwnRpcClient', () => {
         expect(error.message).toContain('Error encountered while processing response');
         expect(error.message).toContain('network error');
       }
+    });
+
+    it('retries on transient failure then succeeds for getServerInfo', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+
+      // First call: 503
+      fetchStub.onFirstCall().resolves({
+        status  : 503,
+        headers : new Headers(),
+      } as any);
+
+      // Second call: success
+      fetchStub.onSecondCall().resolves({
+        ok     : true,
+        status : 200,
+        json   : async (): Promise<any> => ({
+          maxFileSize              : 1_000_000,
+          registrationRequirements : [],
+          server                   : 'test-server',
+          sdkVersion               : '1.0.0',
+          url                      : 'http://localhost:9999',
+          version                  : '1.0.0',
+          webSocketSupport         : true,
+        }),
+      } as any);
+
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
+      const serverInfo = await retryClient.getServerInfo('http://localhost:9999');
+
+      expect(serverInfo.maxFileSize).toBe(1_000_000);
+      expect(fetchStub.callCount).toBe(2);
     });
 
     it('accepts a custom server info cache', async () => {

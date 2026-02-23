@@ -2779,6 +2779,115 @@ describe('SyncEngineLevel', () => {
         expect(options).toEqual({ protocols: [] });
       });
     });
+
+    describe('connectivity state transitions', () => {
+      it('should transition to online after a successful sync with registered targets', async () => {
+        // Reset connectivity state (shared syncEngine may have been set to 'online' by prior tests).
+        syncEngine['_connectivityState'] = 'unknown';
+        expect(syncEngine.connectivityState).toBe('unknown');
+
+        // Register Alice's DID to be synchronized.
+        await testHarness.agent.sync.registerIdentity({
+          did: alice.did.uri,
+        });
+
+        await syncEngine.sync();
+
+        expect(syncEngine.connectivityState).toBe('online');
+      });
+
+      it('should transition to offline after a sync failure', async () => {
+        syncEngine['_connectivityState'] = 'unknown';
+
+        // Register Alice's DID.
+        await testHarness.agent.sync.registerIdentity({
+          did: alice.did.uri,
+        });
+
+        // First sync to get to online state.
+        await syncEngine.sync();
+        expect(syncEngine.connectivityState).toBe('online');
+
+        // Now stub getLocalRoot to throw, simulating a failure.
+        const getLocalRootStub = sinon.stub(syncEngine as any, 'getLocalRoot').rejects(new Error('simulated failure'));
+
+        // Suppress console.error for the expected error.
+        const consoleErrorStub = sinon.stub(console, 'error');
+
+        await syncEngine.sync();
+        expect(syncEngine.connectivityState).toBe('offline');
+
+        getLocalRootStub.restore();
+        consoleErrorStub.restore();
+      });
+
+      it('should transition back to online after recovery from failures', async () => {
+        syncEngine['_connectivityState'] = 'unknown';
+
+        // Register Alice's DID.
+        await testHarness.agent.sync.registerIdentity({
+          did: alice.did.uri,
+        });
+
+        // Successful sync -> online.
+        await syncEngine.sync();
+        expect(syncEngine.connectivityState).toBe('online');
+
+        // Failing sync -> offline.
+        const getLocalRootStub = sinon.stub(syncEngine as any, 'getLocalRoot').rejects(new Error('simulated failure'));
+        const consoleErrorStub = sinon.stub(console, 'error');
+        await syncEngine.sync();
+        expect(syncEngine.connectivityState).toBe('offline');
+
+        // Restore and sync successfully -> back to online.
+        getLocalRootStub.restore();
+        consoleErrorStub.restore();
+        await syncEngine.sync();
+        expect(syncEngine.connectivityState).toBe('online');
+      });
+
+      it('should remain unknown when there are no sync targets', async () => {
+        // Reset connectivity state by reconstructing.
+        syncEngine['_connectivityState'] = 'unknown';
+
+        // No identities registered (stores already cleared in beforeEach).
+        await syncEngine.sync();
+
+        // Connectivity state should remain unknown when there are no targets.
+        expect(syncEngine.connectivityState).toBe('unknown');
+      });
+    });
+
+    describe('errored set behavior', () => {
+      it('should skip subsequent targets for the same DWN URL after a failure', async () => {
+        // Create two identities that share the same DWN URL.
+        const alice2 = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
+        const bob2 = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
+        await syncEngine.registerIdentity({ did: alice2.did.uri });
+        await syncEngine.registerIdentity({ did: bob2.did.uri });
+
+        // Stub getLocalRoot to fail for the first target.
+        const consoleErrorStub = sinon.stub(console, 'error');
+        const getLocalRootStub = sinon.stub(syncEngine as any, 'getLocalRoot');
+        getLocalRootStub.onFirstCall().rejects(new Error('DWN unreachable'));
+        getLocalRootStub.callThrough(); // subsequent calls succeed
+
+        await syncEngine.sync();
+
+        // The error should have been logged.
+        expect(consoleErrorStub.called).toBe(true);
+
+        // Since both identities share the same DWN URL, the first failure should
+        // add it to the errored set, and the second identity's sync for that URL
+        // should be skipped (no additional error for it).
+        // We can verify by checking the number of getLocalRoot calls:
+        // only 1 call (the first target), not 2.
+        expect(getLocalRootStub.callCount).toBe(1);
+
+        getLocalRootStub.restore();
+        consoleErrorStub.restore();
+      });
+    });
   });
 
   describe('topologicalSort', () => {

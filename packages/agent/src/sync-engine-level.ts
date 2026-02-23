@@ -1037,7 +1037,7 @@ export class SyncEngineLevel implements SyncEngine {
    * Delegate to the standalone `topologicalSort` function.
    * Tests call `SyncEngineLevel.topologicalSort(...)` so this static method must remain.
    */
-  static topologicalSort<T extends { message: GenericMessage }>(
+  public static topologicalSort<T extends { message: GenericMessage }>(
     messages: T[]
   ): T[] {
     return topologicalSort(messages);
@@ -1055,14 +1055,13 @@ export class SyncEngineLevel implements SyncEngine {
     const targets: { did: string; dwnUrl: string; delegateDid?: string; protocol?: string }[] = [];
 
     for await (const [did, options] of this._db.sublevel('registeredIdentities').iterator()) {
-      const { protocols, delegateDid } = await new Promise<SyncIdentityOptions>((resolve): void => {
-        try {
-          const parsed = JSON.parse(options) as SyncIdentityOptions;
-          resolve({ protocols: parsed.protocols, delegateDid: parsed.delegateDid });
-        } catch {
-          resolve({ protocols: [] });
-        }
-      });
+      let parsed: SyncIdentityOptions;
+      try {
+        parsed = JSON.parse(options) as SyncIdentityOptions;
+      } catch {
+        parsed = { protocols: [] };
+      }
+      const { protocols, delegateDid } = parsed;
 
       const dwnEndpointUrls = await getDwnServiceEndpointUrls(did, this.agent.did);
       if (dwnEndpointUrls.length === 0) {

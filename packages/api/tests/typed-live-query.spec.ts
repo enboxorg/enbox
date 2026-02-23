@@ -3,6 +3,16 @@ import { describe, expect, it } from 'bun:test';
 import { TypedLiveQuery } from '../src/typed-live-query.js';
 
 /**
+ * Creates a minimal mock Record for testing TypedLiveQuery record wrapping.
+ */
+function createMockRecord(id: string): any {
+  return {
+    id,
+    data: { json: async (): Promise<any> => ({ id }) },
+  };
+}
+
+/**
  * Creates a minimal mock LiveQuery for testing TypedLiveQuery delegation.
  */
 function createMockLiveQuery(overrides?: Partial<any>): any {
@@ -100,6 +110,51 @@ describe('TypedLiveQuery', () => {
       mock._emit('disconnected');
       expect(callCount).toBe(1); // Should not increment after unsub.
     });
+
+    it('should return unsubscribe function for reconnected event', () => {
+      const mock = createMockLiveQuery();
+      const typed = new TypedLiveQuery(mock);
+
+      let callCount = 0;
+      const unsub = typed.on('reconnected', () => { callCount++; });
+
+      mock._emit('reconnected');
+      expect(callCount).toBe(1);
+
+      unsub();
+      mock._emit('reconnected');
+      expect(callCount).toBe(1);
+    });
+
+    it('should return unsubscribe function for eose event', () => {
+      const mock = createMockLiveQuery();
+      const typed = new TypedLiveQuery(mock);
+
+      let callCount = 0;
+      const unsub = typed.on('eose', () => { callCount++; });
+
+      mock._emit('eose');
+      expect(callCount).toBe(1);
+
+      unsub();
+      mock._emit('eose');
+      expect(callCount).toBe(1);
+    });
+
+    it('should return unsubscribe function for reconnecting event', () => {
+      const mock = createMockLiveQuery();
+      const typed = new TypedLiveQuery(mock);
+
+      let callCount = 0;
+      const unsub = typed.on('reconnecting', () => { callCount++; });
+
+      mock._emit('reconnecting', { attempt: 1 });
+      expect(callCount).toBe(1);
+
+      unsub();
+      mock._emit('reconnecting', { attempt: 2 });
+      expect(callCount).toBe(1);
+    });
   });
 
   describe('isConnected', () => {
@@ -113,6 +168,150 @@ describe('TypedLiveQuery', () => {
       const mock = createMockLiveQuery({ isConnected: false });
       const typed = new TypedLiveQuery(mock);
       expect(typed.isConnected).toBe(false);
+    });
+  });
+
+  describe('records', () => {
+    it('should wrap underlying records as TypedRecord instances', () => {
+      const mockRecords = [createMockRecord('rec-1'), createMockRecord('rec-2')];
+      const mock = createMockLiveQuery({ records: mockRecords });
+      const typed = new TypedLiveQuery<{ id: string }>(mock);
+
+      const records = typed.records;
+      expect(records).toHaveLength(2);
+      // TypedRecord wraps the underlying Record; the original record is accessible.
+      expect(records[0]).toBeDefined();
+      expect(records[1]).toBeDefined();
+    });
+
+    it('should cache typed records on subsequent accesses', () => {
+      const mockRecords = [createMockRecord('rec-1')];
+      const mock = createMockLiveQuery({ records: mockRecords });
+      const typed = new TypedLiveQuery<{ id: string }>(mock);
+
+      const first = typed.records;
+      const second = typed.records;
+      expect(first).toBe(second); // Same array reference.
+    });
+
+    it('should return empty array when no records', () => {
+      const mock = createMockLiveQuery({ records: [] });
+      const typed = new TypedLiveQuery<{ id: string }>(mock);
+
+      expect(typed.records).toHaveLength(0);
+    });
+  });
+
+  describe('cursor', () => {
+    it('should delegate to underlying LiveQuery cursor', () => {
+      const mockCursor = { messageCid: 'cid-abc', value: '2024-01-01' };
+      const mock = createMockLiveQuery({ cursor: mockCursor });
+      const typed = new TypedLiveQuery(mock);
+
+      expect(typed.cursor).toBe(mockCursor);
+    });
+
+    it('should return undefined when no cursor', () => {
+      const mock = createMockLiveQuery({ cursor: undefined });
+      const typed = new TypedLiveQuery(mock);
+
+      expect(typed.cursor).toBeUndefined();
+    });
+  });
+
+  describe('rawLiveQuery', () => {
+    it('should return the underlying LiveQuery instance', () => {
+      const mock = createMockLiveQuery();
+      const typed = new TypedLiveQuery(mock);
+
+      expect(typed.rawLiveQuery).toBe(mock);
+    });
+  });
+
+  describe('record change events', () => {
+    it('should wrap change event records as TypedRecord', () => {
+      const mock = createMockLiveQuery();
+      const typed = new TypedLiveQuery<{ id: string }>(mock);
+
+      let receivedChange: any;
+      typed.on('change', (change) => { receivedChange = change; });
+
+      const mockRecord = createMockRecord('change-rec');
+      mock._emit('change', { type: 'create', record: mockRecord });
+
+      expect(receivedChange).toBeDefined();
+      expect(receivedChange.type).toBe('create');
+      // The record should be wrapped in a TypedRecord.
+      expect(receivedChange.record).toBeDefined();
+    });
+
+    it('should wrap create event records as TypedRecord', () => {
+      const mock = createMockLiveQuery();
+      const typed = new TypedLiveQuery<{ id: string }>(mock);
+
+      let receivedRecord: any;
+      typed.on('create', (record) => { receivedRecord = record; });
+
+      const mockRecord = createMockRecord('create-rec');
+      mock._emit('create', mockRecord);
+
+      expect(receivedRecord).toBeDefined();
+    });
+
+    it('should wrap update event records as TypedRecord', () => {
+      const mock = createMockLiveQuery();
+      const typed = new TypedLiveQuery<{ id: string }>(mock);
+
+      let receivedRecord: any;
+      typed.on('update', (record) => { receivedRecord = record; });
+
+      const mockRecord = createMockRecord('update-rec');
+      mock._emit('update', mockRecord);
+
+      expect(receivedRecord).toBeDefined();
+    });
+
+    it('should wrap delete event records as TypedRecord', () => {
+      const mock = createMockLiveQuery();
+      const typed = new TypedLiveQuery<{ id: string }>(mock);
+
+      let receivedRecord: any;
+      typed.on('delete', (record) => { receivedRecord = record; });
+
+      const mockRecord = createMockRecord('delete-rec');
+      mock._emit('delete', mockRecord);
+
+      expect(receivedRecord).toBeDefined();
+    });
+
+    it('should return unsubscribe function for change event', () => {
+      const mock = createMockLiveQuery();
+      const typed = new TypedLiveQuery<{ id: string }>(mock);
+
+      let callCount = 0;
+      const unsub = typed.on('change', () => { callCount++; });
+
+      mock._emit('change', { type: 'create', record: createMockRecord('r') });
+      expect(callCount).toBe(1);
+
+      unsub();
+      mock._emit('change', { type: 'create', record: createMockRecord('r') });
+      expect(callCount).toBe(1);
+    });
+
+    it('should return unsubscribe function for create event', () => {
+      const mock = createMockLiveQuery();
+      const typed = new TypedLiveQuery<{ id: string }>(mock);
+
+      let callCount = 0;
+      const unsub = typed.on('create', () => { callCount++; });
+
+      mock._emit('create', createMockRecord('r'));
+      expect(callCount).toBe(1);
+
+      unsub();
+      mock._emit('create', createMockRecord('r'));
+      expect(callCount).toBe(1);
     });
   });
 
