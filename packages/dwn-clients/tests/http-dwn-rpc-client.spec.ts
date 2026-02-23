@@ -113,6 +113,51 @@ describe('HttpDwnRpcClient', () => {
       expect(readResponse.entry?.recordsWrite?.recordId).toBe(writeMessage.recordId);
     });
 
+    it('sends RecordsRead and populates reply.entry.data when dwn-response header is present', async () => {
+      // Simulate a server response where the JSON-RPC envelope is in the
+      // dwn-response header and the body is raw data (reply.entry branch).
+      const entryReply = {
+        jsonrpc : '2.0',
+        id      : 'test-id',
+        result  : {
+          reply: {
+            status : { code: 200, detail: 'OK' },
+            entry  : {
+              recordsWrite: { recordId: 'rec-1', descriptor: { dataCid: 'cid-1' } },
+            },
+          },
+        },
+      };
+
+      const bodyBytes = new TextEncoder().encode('hello entry data');
+      const headers = new Headers({
+        'dwn-response': JSON.stringify(entryReply),
+      });
+
+      sinon.stub(globalThis, 'fetch').resolves({
+        headers,
+        arrayBuffer: async (): Promise<ArrayBuffer> => bodyBytes.buffer.slice(
+          bodyBytes.byteOffset, bodyBytes.byteOffset + bodyBytes.byteLength
+        ),
+      } as any);
+
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' }
+      });
+
+      const response = await client.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      });
+
+      // The entry.data should be populated with a DataStream
+      expect(response.status.code).toBe(200);
+      expect(response.entry).toBeDefined();
+      expect(response.entry!.data).toBeDefined();
+    });
+
     it('throws error if response body is not valid JSON', async () => {
       sinon.stub(globalThis, 'fetch').resolves({
         headers : new Headers(),

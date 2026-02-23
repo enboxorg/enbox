@@ -12,6 +12,43 @@ describe('JwtProviderAuthPlugin', () => {
       expect(plugin).toBeDefined();
     });
 
+    it('should create a plugin with a JWKS URL', async () => {
+      // Start a minimal JWKS server using Bun.serve.
+      const { privateKey, publicKey } = await jose.generateKeyPair('RS256');
+      const publicJwk = await jose.exportJWK(publicKey);
+      publicJwk.kid = 'test-key-1';
+      publicJwk.alg = 'RS256';
+      publicJwk.use = 'sig';
+      const jwks = { keys: [publicJwk] };
+
+      const jwksServer = Bun.serve({
+        port: 0,
+        fetch(): Response {
+          return Response.json(jwks);
+        },
+      });
+
+      try {
+        const jwksUrl = `http://localhost:${jwksServer.port}/.well-known/jwks.json`;
+        const plugin = await JwtProviderAuthPlugin.create({ jwksUrl });
+        expect(plugin).toBeDefined();
+
+        // Sign a JWT with the private key and verify it.
+        const token = await new jose.SignJWT({ purpose: 'registration' })
+          .setProtectedHeader({ alg: 'RS256', kid: 'test-key-1' })
+          .setSubject('jwks-account')
+          .setIssuedAt()
+          .setExpirationTime('1h')
+          .sign(privateKey);
+
+        const result = await plugin.validateRegistrationToken(token);
+        expect(result.isValid).toBe(true);
+        expect(result.accountId).toBe('jwks-account');
+      } finally {
+        jwksServer.stop(true);
+      }
+    });
+
     it('should throw when neither secret nor jwksUrl is provided', async () => {
       await expect(JwtProviderAuthPlugin.create({})).rejects.toThrow(
         'exactly one of `secret` or `jwksUrl`',

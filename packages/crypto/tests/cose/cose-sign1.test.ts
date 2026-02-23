@@ -266,6 +266,71 @@ describe('CoseSign1', () => {
       expect(() => CoseSign1.decode(fakeSign1)).toThrow('must contain an algorithm identifier');
     });
 
+    it('should throw when protected header bytes is not a byte string', () => {
+      // Create a COSE_Sign1-like array where protected header is a string instead of bytes.
+      const fakeSign1 = Cbor.encode([
+        'not-bytes',
+        new Map(),
+        new Uint8Array([1, 2, 3]),
+        new Uint8Array([4, 5, 6]),
+      ]);
+
+      expect(() => CoseSign1.decode(fakeSign1)).toThrow('protected header must be a byte string');
+    });
+
+    it('should throw when signature is not a byte string', () => {
+      const validProtected = Cbor.encode(new Map<number, unknown>([[1, -8]]));
+      const fakeSign1 = Cbor.encode([
+        validProtected,
+        new Map(),
+        new Uint8Array([1, 2, 3]),
+        'not-bytes-signature',
+      ]);
+
+      expect(() => CoseSign1.decode(fakeSign1)).toThrow('signature must be a byte string');
+    });
+
+    it('should throw when protected header contains invalid CBOR', () => {
+      // Create a COSE_Sign1-like array with garbled protected header bytes.
+      const invalidProtectedBytes = new Uint8Array([0xFF, 0xFE, 0xFD]);
+      const fakeSign1 = Cbor.encode([
+        invalidProtectedBytes,
+        new Map(),
+        new Uint8Array([1, 2, 3]),
+        new Uint8Array([4, 5, 6]),
+      ]);
+
+      expect(() => CoseSign1.decode(fakeSign1)).toThrow('failed to decode protected header CBOR');
+    });
+
+    it('should throw when protected header algorithm is not a number', () => {
+      // Create a protected header where alg (label 1) is a string instead of a number.
+      const badAlgProtected = Cbor.encode(new Map<number, unknown>([[1, 'EdDSA']]));
+      const fakeSign1 = Cbor.encode([
+        badAlgProtected,
+        new Map(),
+        new Uint8Array([1, 2, 3]),
+        new Uint8Array([4, 5, 6]),
+      ]);
+
+      expect(() => CoseSign1.decode(fakeSign1)).toThrow('must contain an algorithm identifier');
+    });
+
+    it('should extract kid from protected header', async () => {
+      const kid = new TextEncoder().encode('key-id-in-protected');
+      const coseSign1 = await CoseSign1.create({
+        key             : ed25519PrivateKey,
+        payload         : testPayload,
+        protectedHeader : {
+          alg: CoseAlgorithm.EdDSA,
+          kid,
+        },
+      });
+
+      const result = CoseSign1.decode(coseSign1);
+      expect(result.protectedHeader.kid).toEqual(kid);
+    });
+
     it('should extract content type from protected header', async () => {
       const coseSign1 = await CoseSign1.create({
         key             : ed25519PrivateKey,

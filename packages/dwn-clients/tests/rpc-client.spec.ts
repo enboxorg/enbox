@@ -1,4 +1,5 @@
 import type { Persona } from '@enbox/dwn-sdk-js';
+import type { Web5Rpc } from '../src/rpc-client.js';
 
 import sinon from 'sinon';
 
@@ -113,6 +114,18 @@ describe('RPC Clients', () => {
         }
       });
 
+      it('should throw for a completely invalid URL', async () => {
+        const client = new Web5RpcClient();
+        const request = { method: DidRpcMethod.Resolve, url: 'not a valid url at all', data: 'some-data' };
+        try {
+          await client.sendDidRequest(request);
+          throw new Error('Expected error to be thrown');
+        } catch (error: any) {
+          // URL constructor throws TypeError for invalid URLs
+          expect(error).toBeInstanceOf(TypeError);
+        }
+      });
+
       it('should throw if transport is sockets', async () => {
         const socketClientSpy = sinon.spy(WebSocketWeb5RpcClient.prototype, 'sendDidRequest');
         const client = new Web5RpcClient();
@@ -175,6 +188,59 @@ describe('RPC Clients', () => {
         } catch (error: any) {
           expect(error.message).toBe('no foo: transport client available');
         }
+      });
+
+      it('should throw for a completely invalid URL in sendDwnRequest', async () => {
+        const client = new Web5RpcClient();
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'foo/bar' }
+        });
+
+        try {
+          await client.sendDwnRequest({
+            dwnUrl    : 'not a valid url',
+            targetDid : alice.did,
+            message,
+          });
+          throw new Error('Expected error to be thrown');
+        } catch (error: any) {
+          expect(error).toBeInstanceOf(TypeError);
+        }
+      });
+    });
+
+    describe('custom client overrides', () => {
+      it('should allow custom client to override default protocol transport', async () => {
+        const customResponse = {
+          status  : { code: 200, detail: 'OK' },
+          entries : [{ mock: true }],
+        };
+
+        // Create a custom client that handles http: and returns a custom response
+        const customClient: Web5Rpc = {
+          get transportProtocols(): string[] { return ['http:', 'https:']; },
+          sendDwnRequest : sinon.stub().resolves(customResponse),
+          sendDidRequest : sinon.stub().resolves({ ok: true, status: { code: 200, message: 'OK' } }),
+          getServerInfo  : sinon.stub().resolves({ maxFileSize: 999 }),
+        };
+
+        // Custom clients override the defaults since they're appended after defaults
+        const rpcClient = new Web5RpcClient([customClient as any]);
+
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'foo/bar' }
+        });
+
+        const response = await rpcClient.sendDwnRequest({
+          dwnUrl    : 'http://127.0.0.1',
+          targetDid : alice.did,
+          message,
+        });
+
+        expect(response).toEqual(customResponse);
+        expect((customClient.sendDwnRequest as sinon.SinonStub).callCount).toBe(1);
       });
     });
 

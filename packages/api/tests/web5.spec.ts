@@ -939,6 +939,108 @@ describe('web5 api', () => {
       });
     });
 
+    describe('processConnectedGrants()', () => {
+      it('should return empty array when grants have no protocol in scope', async () => {
+        const alice = await testHarness.createIdentity({
+          name        : 'Alice',
+          testDwnUrls : [testDwnUrl],
+        });
+
+        // Create a grant with a scope that has NO protocol field (e.g. Messages.Read at the top level).
+        const noProtocolGrant = await testHarness.agent.permissions.createGrant({
+          delegated   : true,
+          author      : alice.did.uri,
+          grantedTo   : alice.did.uri,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+          scope       : {
+            interface : DwnInterfaceName.Messages,
+            method    : DwnMethodName.Read,
+            // No `protocol` field — triggers the `if (protocol)` guard (line 737).
+          },
+        });
+
+        const connectedProtocols = await Web5.processConnectedGrants({
+          grants      : [noProtocolGrant.message],
+          agent       : testHarness.agent,
+          delegateDid : alice.did.uri,
+        });
+
+        // The grant was stored but no protocol was added to the result set.
+        expect(connectedProtocols).toEqual([]);
+      });
+
+      it('should return protocols when grants have protocol in scope', async () => {
+        const alice = await testHarness.createIdentity({
+          name        : 'Alice',
+          testDwnUrls : [testDwnUrl],
+        });
+
+        const protocolUri = 'https://example.com/test-protocol';
+
+        const protocolGrant = await testHarness.agent.permissions.createGrant({
+          delegated   : true,
+          author      : alice.did.uri,
+          grantedTo   : alice.did.uri,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+          scope       : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Write,
+            protocol  : protocolUri,
+          },
+        });
+
+        const connectedProtocols = await Web5.processConnectedGrants({
+          grants      : [protocolGrant.message],
+          agent       : testHarness.agent,
+          delegateDid : alice.did.uri,
+        });
+
+        expect(connectedProtocols).toEqual([protocolUri]);
+      });
+
+      it('should deduplicate protocols across multiple grants', async () => {
+        const alice = await testHarness.createIdentity({
+          name        : 'Alice',
+          testDwnUrls : [testDwnUrl],
+        });
+
+        const protocolUri = 'https://example.com/dedup-protocol';
+
+        const grant1 = await testHarness.agent.permissions.createGrant({
+          delegated   : true,
+          author      : alice.did.uri,
+          grantedTo   : alice.did.uri,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+          scope       : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Write,
+            protocol  : protocolUri,
+          },
+        });
+
+        const grant2 = await testHarness.agent.permissions.createGrant({
+          delegated   : true,
+          author      : alice.did.uri,
+          grantedTo   : alice.did.uri,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+          scope       : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Read,
+            protocol  : protocolUri,
+          },
+        });
+
+        const connectedProtocols = await Web5.processConnectedGrants({
+          grants      : [grant1.message, grant2.message],
+          agent       : testHarness.agent,
+          delegateDid : alice.did.uri,
+        });
+
+        // Same protocol appears in both grants, should be deduplicated.
+        expect(connectedProtocols).toEqual([protocolUri]);
+      });
+    });
+
     describe('registration', () => {
       it('should call onSuccess if registration is successful', async () => {
         sinon
@@ -1453,6 +1555,75 @@ describe('web5 api', () => {
           const failError = registerFailureSpy.firstCall.args[0];
           expect(failError.message).toContain('state mismatch');
         });
+      });
+
+      it('should clear tokenData when expired and no refreshUrl/refreshToken are available', async () => {
+        sinon
+          .stub(Web5UserAgent, 'create')
+          .resolves(testHarness.agent as Web5UserAgent);
+        sinon
+          .stub(testHarness.agent.rpc, 'getServerInfo')
+          .resolves({
+            registrationRequirements : ['provider-auth-v0'],
+            maxFileSize              : 10000,
+            webSocketSupport         : true,
+            providerAuth             : {
+              authorizeUrl : 'https://auth.example.com/authorize',
+              tokenUrl     : 'https://auth.example.com/token',
+              refreshUrl   : 'https://auth.example.com/refresh',
+            },
+          });
+
+        // Stub the auth flow: simulates the provider auth callback.
+        const onProviderAuthRequired = sinon.stub().resolves({
+          code  : 'auth-code-123',
+          state : '', // We'll intercept the state to match it below.
+        });
+
+        // Stub exchangeAuthCode to return valid token data.
+        sinon.stub(DwnRegistrar, 'exchangeAuthCode').resolves({
+          registrationToken : 'new-token',
+          refreshToken      : 'new-refresh',
+          expiresIn         : 3600,
+          tokenType         : 'bearer',
+        });
+
+        sinon.stub(DwnRegistrar, 'registerTenantWithToken').resolves();
+
+        // Make onProviderAuthRequired resolve with matching state.
+        onProviderAuthRequired.callsFake(async ({ state }) => ({
+          code: 'auth-code-123',
+          state,
+        }));
+
+        const registration = {
+          onSuccess          : (): void => {},
+          onFailure          : (): void => {},
+          onProviderAuthRequired,
+          // Expired token WITHOUT refreshUrl/refreshToken — triggers the else branch (line 590-591).
+          registrationTokens : {
+            'https://dwn.example.com': {
+              registrationToken : 'expired-token',
+              expiresAt         : Date.now() - 60000, // expired 1 minute ago
+              tokenUrl          : 'https://auth.example.com/token',
+              // No refreshUrl or refreshToken — should clear tokenData.
+            },
+          },
+        };
+
+        const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
+        const registerFailureSpy = sinon.spy(registration, 'onFailure');
+
+        await Web5.connect({
+          registration,
+          didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+          sync             : 'off',
+        });
+
+        // onProviderAuthRequired should have been called because tokenData was cleared to undefined.
+        expect(onProviderAuthRequired.calledOnce).toBe(true);
+        expect(registerSuccessSpy.calledOnce).toBe(true);
+        expect(registerFailureSpy.notCalled).toBe(true);
       });
 
       it('techPreview.dwnEndpoints should take precedence over didCreateOptions.dwnEndpoints', async () => {

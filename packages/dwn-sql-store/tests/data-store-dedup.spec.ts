@@ -240,6 +240,54 @@ describe('DataStoreSql — content-addressed dedup', () => {
         await store.delete('did:example:nobody', 'no-record', 'bafkreinotfound');
       });
 
+      // ─── Orphaned blocks edge case ──────────────────────────────────
+
+      it('should handle orphaned blocks — blocks exist but no reference row', async () => {
+        // This tests the edge case at data-store-sql.ts lines 137-140:
+        // blocks exist for a dataCid but no ref row exists (e.g. interrupted previous put).
+        // The code path falls through to counting stream bytes.
+        const { dataCid, dataStream, bytes } = await prepareData('orphan test data');
+
+        // First, store the data normally to create both blocks and a ref.
+        await store.put('did:example:alice', 'rec-1', dataCid, dataStream);
+
+        // Now delete ONLY the ref, leaving blocks orphaned.
+        await db
+          .deleteFrom('dataRefs')
+          .where('dataCid', '=', dataCid)
+          .execute();
+
+        // Verify blocks still exist but refs are gone.
+        const blocksAfterDelete = await db
+          .selectFrom('dataBlocks')
+          .selectAll()
+          .where('rootDataCid', '=', dataCid)
+          .execute();
+        expect(blocksAfterDelete.length).toBeGreaterThan(0);
+
+        const refsAfterDelete = await db
+          .selectFrom('dataRefs')
+          .selectAll()
+          .where('dataCid', '=', dataCid)
+          .execute();
+        expect(refsAfterDelete.length).toBe(0);
+
+        // Now put again with same dataCid — should hit the orphaned blocks path.
+        // blocks exist (blocksExist=true) but no ref (otherRef=undefined),
+        // so it uses countStreamBytes to get the data size.
+        const result = await store.put('did:example:bob', 'rec-2', dataCid, streamFrom(bytes));
+        expect(result.dataSize).toBe(bytes.length);
+
+        // A new ref should have been created.
+        const newRefs = await db
+          .selectFrom('dataRefs')
+          .selectAll()
+          .where('dataCid', '=', dataCid)
+          .execute();
+        expect(newRefs.length).toBe(1);
+        expect(newRefs[0].recordId).toBe('rec-2');
+      });
+
       // ─── clear removes everything ──────────────────────────────────
 
       it('should remove all refs and blocks on clear', async () => {

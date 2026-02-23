@@ -1,4 +1,7 @@
-import type { Persona, ProtocolDefinition, RecordSubscriptionHandler, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { DwnSubscriptionMessage, ResubscribeFactory } from '../src/dwn-rpc-types.js';
+import type { GenericMessage, Persona, ProtocolDefinition, RecordSubscriptionHandler, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+
+import sinon from 'sinon';
 
 import { HttpDwnRpcClient } from '../src/http-dwn-rpc-client.js';
 import { JsonRpcSocket } from '../src/json-rpc-socket.js';
@@ -448,6 +451,311 @@ describe('WebSocketDwnRpcClient', () => {
         expect(typeof tracked.lastCursor).toBe('string');
 
         await subscribeResponse.subscription!.close();
+      });
+
+      it('should send rpc.ack when cursor events arrive', async () => {
+        // install the default test protocol so the DWN accepts the record
+        await installDefaultTestProtocolViaHttp(httpClient, testDwnUrl, alice);
+
+        const { message: subscribeMessage } = await TestDataGenerator.generateRecordsSubscribe({
+          author : alice,
+          filter : { schema: 'foo/bar' }
+        });
+
+        const handler: RecordSubscriptionHandler = (): void => {};
+
+        const subscribeResponse = await client.sendDwnRequest({
+          dwnUrl       : socketDwnUrl,
+          targetDid    : alice.did,
+          message      : subscribeMessage,
+          subscription : { handler },
+        });
+        expect(subscribeResponse.status.code).toBe(200);
+
+        // Get the connection's socket and spy on send
+        const host = new URL(socketDwnUrl).host;
+        const connection = (WebSocketDwnRpcClient as any)['connections'].get(host);
+        const sendSpy = spyOn(connection.socket, 'send');
+
+        // write a record to trigger a subscription event with a cursor
+        const { message: writeMessage, dataBytes } = await TestDataGenerator.generateRecordsWrite({
+          author : alice,
+          schema : 'foo/bar'
+        });
+
+        await httpClient.sendDwnRequest({
+          dwnUrl    : testDwnUrl,
+          targetDid : alice.did,
+          message   : writeMessage,
+          data      : dataBytes,
+        });
+
+        await sleepWhileWaitingForEvents(100);
+
+        // Verify that socket.send was called with an rpc.ack message
+        const ackCalls = sendSpy.mock.calls.filter((call: any[]) => {
+          const req = call[0];
+          return req && typeof req === 'object' && req.method === 'rpc.ack';
+        });
+        expect(ackCalls.length).toBeGreaterThanOrEqual(1);
+
+        // Verify the ack has the correct structure
+        const ackMsg = ackCalls[0][0];
+        expect(ackMsg.params).toBeDefined();
+        expect(ackMsg.params.cursor).toBeDefined();
+        expect(ackMsg.subscription).toBeDefined();
+
+        await subscribeResponse.subscription!.close();
+      });
+    });
+
+    describe('connection reuse', () => {
+      it('should reuse existing connection for same host', async () => {
+        const { message: msg1 } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'foo/bar' }
+        });
+
+        // First request — creates a connection
+        await client.sendDwnRequest({
+          dwnUrl    : socketDwnUrl,
+          targetDid : alice.did,
+          message   : msg1,
+        });
+
+        const host = new URL(socketDwnUrl).host;
+        const connections = (WebSocketDwnRpcClient as any)['connections'];
+        expect(connections.has(host)).toBe(true);
+        const firstConnection = connections.get(host);
+
+        // Second request to same host — should reuse the same connection
+        const { message: msg2 } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'baz/qux' }
+        });
+
+        await client.sendDwnRequest({
+          dwnUrl    : socketDwnUrl,
+          targetDid : alice.did,
+          message   : msg2,
+        });
+
+        const secondConnection = connections.get(host);
+        expect(secondConnection).toBe(firstConnection);
+      });
+    });
+
+    describe('createConnection lifecycle callbacks', () => {
+      it('should call onclose handler and delete connection from map on close', async () => {
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'foo/bar' }
+        });
+
+        // Make a request to establish a connection
+        await client.sendDwnRequest({
+          dwnUrl    : socketDwnUrl,
+          targetDid : alice.did,
+          message,
+        });
+
+        const host = new URL(socketDwnUrl).host;
+        const connections = (WebSocketDwnRpcClient as any)['connections'];
+        expect(connections.has(host)).toBe(true);
+
+        const connection = connections.get(host);
+
+        // Close the underlying socket — this triggers the onclose handler
+        connection.socket.close();
+        await sleepWhileWaitingForEvents(50);
+
+        // Connection should be removed from the map
+        expect(connections.has(host)).toBe(false);
+      });
+
+      it('should notify subscription handlers of disconnection on close', async () => {
+        // install the default test protocol
+        await installDefaultTestProtocolViaHttp(httpClient, testDwnUrl, alice);
+
+        const { message: subscribeMessage } = await TestDataGenerator.generateRecordsSubscribe({
+          author : alice,
+          filter : { schema: 'foo/bar' }
+        });
+
+        const receivedMessages: DwnSubscriptionMessage[] = [];
+        const handler = (msg: DwnSubscriptionMessage): void => {
+          receivedMessages.push(msg);
+        };
+
+        const subscribeResponse = await client.sendDwnRequest({
+          dwnUrl       : socketDwnUrl,
+          targetDid    : alice.did,
+          message      : subscribeMessage,
+          subscription : { handler },
+        });
+        expect(subscribeResponse.status.code).toBe(200);
+
+        // Close the underlying socket to trigger disconnection
+        const host = new URL(socketDwnUrl).host;
+        const connection = (WebSocketDwnRpcClient as any)['connections'].get(host);
+        connection.socket.close();
+        await sleepWhileWaitingForEvents(50);
+
+        // Handler should have received a 'disconnected' message
+        const disconnectMsgs = receivedMessages.filter((m) => m.type === 'disconnected');
+        expect(disconnectMsgs.length).toBeGreaterThanOrEqual(1);
+      });
+    });
+
+    describe('resubscribeAll', () => {
+      it('should resubscribe all tracked subscriptions after reconnection using resubscribeFactory', async () => {
+        // Use a mocked socket/connection to test resubscribeAll in isolation
+        const socket = await JsonRpcSocket.connect(socketDwnUrl);
+        const subscriptions = new Map();
+        const connection = { socket, subscriptions, url: socketDwnUrl };
+
+        const receivedMessages: DwnSubscriptionMessage[] = [];
+        const handler = (msg: DwnSubscriptionMessage): void => {
+          receivedMessages.push(msg);
+        };
+
+        const mockMessage = { descriptor: { interface: 'Records', method: 'Subscribe' } } as any;
+        const factoryMessage = { descriptor: { interface: 'Records', method: 'Subscribe', cursor: 'c1' } } as any;
+
+        const resubscribeFactory: ResubscribeFactory = async (cursor?: string): Promise<GenericMessage> => {
+          return { ...factoryMessage, cursor } as any;
+        };
+        const factorySpy = sinon.spy(resubscribeFactory as any);
+
+        // Set up a tracked subscription
+        subscriptions.set('sub-1', {
+          subscription       : { id: 'sub-1', close: async (): Promise<void> => {} },
+          target             : alice.did,
+          message            : mockMessage,
+          handler,
+          resubscribeFactory : factorySpy,
+          lastCursor         : 'cursor-123',
+        });
+
+        // Mock subscriptionRequest to succeed
+        const subscriptionRequestStub = sinon.stub(WebSocketDwnRpcClient as any, 'subscriptionRequest').resolves({
+          status       : { code: 200, detail: 'OK' },
+          subscription : { id: 'new-sub', close: async (): Promise<void> => {} },
+        });
+
+        await (WebSocketDwnRpcClient as any).resubscribeAll(connection);
+
+        // Factory should have been called with the lastCursor
+        expect(factorySpy.callCount).toBe(1);
+        expect(factorySpy.firstCall.args[0]).toBe('cursor-123');
+
+        // subscriptionRequest should have been called with the factory's returned message
+        expect(subscriptionRequestStub.callCount).toBe(1);
+
+        // Handler should have received a 'reconnected' message
+        const reconnectedMsgs = receivedMessages.filter((m) => m.type === 'reconnected');
+        expect(reconnectedMsgs.length).toBe(1);
+
+        subscriptionRequestStub.restore();
+        socket.close();
+      });
+
+      it('should use original message as fallback when no resubscribeFactory is provided', async () => {
+        const socket = await JsonRpcSocket.connect(socketDwnUrl);
+        const subscriptions = new Map();
+        const connection = { socket, subscriptions, url: socketDwnUrl };
+
+        const receivedMessages: DwnSubscriptionMessage[] = [];
+        const handler = (msg: DwnSubscriptionMessage): void => {
+          receivedMessages.push(msg);
+        };
+
+        const originalMessage = { descriptor: { interface: 'Records', method: 'Subscribe' } } as any;
+
+        subscriptions.set('sub-fallback', {
+          subscription : { id: 'sub-fallback', close: async (): Promise<void> => {} },
+          target       : alice.did,
+          message      : originalMessage,
+          handler,
+          // no resubscribeFactory
+        });
+
+        const subscriptionRequestStub = sinon.stub(WebSocketDwnRpcClient as any, 'subscriptionRequest').resolves({
+          status       : { code: 200, detail: 'OK' },
+          subscription : { id: 'new-sub', close: async (): Promise<void> => {} },
+        });
+
+        await (WebSocketDwnRpcClient as any).resubscribeAll(connection);
+
+        // subscriptionRequest should have been called with the original message
+        expect(subscriptionRequestStub.callCount).toBe(1);
+        const callArgs = subscriptionRequestStub.firstCall.args;
+        expect(callArgs[2]).toBe(originalMessage);
+
+        // Handler should have received 'reconnected' message
+        const reconnectedMsgs = receivedMessages.filter((m) => m.type === 'reconnected');
+        expect(reconnectedMsgs.length).toBe(1);
+
+        subscriptionRequestStub.restore();
+        socket.close();
+      });
+
+      it('should continue with remaining subscriptions when one fails during resubscription', async () => {
+        const socket = await JsonRpcSocket.connect(socketDwnUrl);
+        const subscriptions = new Map();
+        const connection = { socket, subscriptions, url: socketDwnUrl };
+
+        const messagesA: DwnSubscriptionMessage[] = [];
+        const handlerA = (msg: DwnSubscriptionMessage): void => { messagesA.push(msg); };
+
+        const messagesB: DwnSubscriptionMessage[] = [];
+        const handlerB = (msg: DwnSubscriptionMessage): void => { messagesB.push(msg); };
+
+        const msgA = { descriptor: { interface: 'Records', method: 'Subscribe' } } as any;
+        const msgB = { descriptor: { interface: 'Records', method: 'Subscribe' } } as any;
+
+        subscriptions.set('sub-fail', {
+          subscription : { id: 'sub-fail', close: async (): Promise<void> => {} },
+          target       : alice.did,
+          message      : msgA,
+          handler      : handlerA,
+        });
+
+        subscriptions.set('sub-succeed', {
+          subscription : { id: 'sub-succeed', close: async (): Promise<void> => {} },
+          target       : alice.did,
+          message      : msgB,
+          handler      : handlerB,
+        });
+
+        let callCount = 0;
+        const subscriptionRequestStub = sinon.stub(WebSocketDwnRpcClient as any, 'subscriptionRequest')
+          .callsFake(async (): Promise<any> => {
+            callCount++;
+            if (callCount === 1) {
+              throw new Error('resubscription failed');
+            }
+            return {
+              status       : { code: 200, detail: 'OK' },
+              subscription : { id: 'new-sub', close: async (): Promise<void> => {} },
+            };
+          });
+
+        await (WebSocketDwnRpcClient as any).resubscribeAll(connection);
+
+        // Both subscriptions should have been attempted
+        expect(subscriptionRequestStub.callCount).toBe(2);
+
+        // First handler should NOT have received 'reconnected' (it failed)
+        const reconnectedA = messagesA.filter((m) => m.type === 'reconnected');
+        expect(reconnectedA.length).toBe(0);
+
+        // Second handler SHOULD have received 'reconnected'
+        const reconnectedB = messagesB.filter((m) => m.type === 'reconnected');
+        expect(reconnectedB.length).toBe(1);
+
+        subscriptionRequestStub.restore();
+        socket.close();
       });
     });
   });
