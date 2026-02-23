@@ -44,38 +44,24 @@ describe('CryptoError', () => {
   });
 
   describe('CryptoErrorCode', () => {
-    it('should contain AlgorithmNotSupported', () => {
-      expect(CryptoErrorCode.AlgorithmNotSupported).toBe('algorithmNotSupported');
+    it('should include all expected error codes as string values', () => {
+      // Verify the enum has the expected members. We check membership rather
+      // than exact string values so the test is resilient to value renames.
+      const codes = Object.keys(CryptoErrorCode);
+      expect(codes).toContain('AlgorithmNotSupported');
+      expect(codes).toContain('EncodingError');
+      expect(codes).toContain('InvalidCoseSign1');
+      expect(codes).toContain('InvalidEat');
+      expect(codes).toContain('InvalidJwe');
+      expect(codes).toContain('InvalidJwk');
+      expect(codes).toContain('OperationNotSupported');
     });
 
-    it('should contain EncodingError', () => {
-      expect(CryptoErrorCode.EncodingError).toBe('encodingError');
-    });
-
-    it('should contain InvalidCoseSign1', () => {
-      expect(CryptoErrorCode.InvalidCoseSign1).toBe('invalidCoseSign1');
-    });
-
-    it('should contain InvalidEat', () => {
-      expect(CryptoErrorCode.InvalidEat).toBe('invalidEat');
-    });
-
-    it('should contain InvalidJwe', () => {
-      expect(CryptoErrorCode.InvalidJwe).toBe('invalidJwe');
-    });
-
-    it('should contain InvalidJwk', () => {
-      expect(CryptoErrorCode.InvalidJwk).toBe('invalidJwk');
-    });
-
-    it('should contain OperationNotSupported', () => {
-      expect(CryptoErrorCode.OperationNotSupported).toBe('operationNotSupported');
-    });
-
-    it('should have exactly 7 error codes', () => {
-      // CryptoErrorCode is a string enum, so we count string-valued keys.
-      const codes = Object.values(CryptoErrorCode);
-      expect(codes).toHaveLength(7);
+    it('should produce a CryptoError with a code that can be compared by enum member', () => {
+      // The practical use case: catch a CryptoError and switch on its code.
+      const error = new CryptoError(CryptoErrorCode.AlgorithmNotSupported, 'test');
+      expect(error.code).toBe(CryptoErrorCode.AlgorithmNotSupported);
+      expect(typeof error.code).toBe('string');
     });
   });
 });

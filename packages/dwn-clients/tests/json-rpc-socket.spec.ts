@@ -261,41 +261,81 @@ describe('JsonRpcSocket', () => {
   });
 
   describe('toText helper', () => {
-    it('should handle ArrayBuffer data', async () => {
+    // The `toText` helper is called inside `wireSocket` to convert WebSocket
+    // message data (string, ArrayBuffer, or Uint8Array) into a string before
+    // JSON parsing. We verify that messages delivered in each format are correctly
+    // parsed and dispatched to the registered handler.
+
+    it('should correctly parse a JSON-RPC response delivered as ArrayBuffer', async () => {
       const client = await JsonRpcSocket.connect(socketDwnUrl);
 
-      // Create a valid JSON-RPC response as ArrayBuffer
-      const responseObj = { jsonrpc: '2.0', id: 'ab-test', result: { reply: { status: { code: 200 } } } };
+      const requestId = 'ab-test';
+      // Register a handler that mimics what `request()` does internally:
+      // it receives the raw event and re-parses event.data via toText.
+      const responsePromise = new Promise<JsonRpcResponse>((resolve) => {
+        client['messageHandlers'].set(requestId, (event: { data: unknown }) => {
+          const parsed = JSON.parse(typeof event.data === 'string'
+            ? event.data
+            : new TextDecoder().decode(event.data as ArrayBuffer)) as JsonRpcResponse;
+          resolve(parsed);
+        });
+      });
+
+      const responseObj = { jsonrpc: '2.0', id: requestId, result: { reply: { status: { code: 200 } } } };
       const encoded = new TextEncoder().encode(JSON.stringify(responseObj));
       const arrayBuffer = encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength);
-
-      // Dispatch a message with ArrayBuffer data
       client['socket'].dispatchEvent(new MessageEvent('message', { data: arrayBuffer }));
-      await sleepWhileWaitingForEvents();
+
+      const response = await responsePromise;
+      expect(response.id).toBe(requestId);
+      expect(response.result.reply.status.code).toBe(200);
 
       client.close();
     });
 
-    it('should handle Uint8Array data', async () => {
+    it('should correctly parse a JSON-RPC response delivered as Uint8Array', async () => {
       const client = await JsonRpcSocket.connect(socketDwnUrl);
 
-      // Create a valid JSON-RPC response as Uint8Array
-      const responseObj = { jsonrpc: '2.0', id: 'u8-test', result: { reply: { status: { code: 200 } } } };
+      const requestId = 'u8-test';
+      const responsePromise = new Promise<JsonRpcResponse>((resolve) => {
+        client['messageHandlers'].set(requestId, (event: { data: unknown }) => {
+          const parsed = JSON.parse(typeof event.data === 'string'
+            ? event.data
+            : new TextDecoder().decode(event.data as ArrayBuffer)) as JsonRpcResponse;
+          resolve(parsed);
+        });
+      });
+
+      const responseObj = { jsonrpc: '2.0', id: requestId, result: { reply: { status: { code: 201 } } } };
       const uint8 = new TextEncoder().encode(JSON.stringify(responseObj));
-
-      // Dispatch a message with Uint8Array data
       client['socket'].dispatchEvent(new MessageEvent('message', { data: uint8 }));
-      await sleepWhileWaitingForEvents();
+
+      const response = await responsePromise;
+      expect(response.id).toBe(requestId);
+      expect(response.result.reply.status.code).toBe(201);
 
       client.close();
     });
 
-    it('should handle string data', async () => {
+    it('should correctly parse a JSON-RPC response delivered as string', async () => {
       const client = await JsonRpcSocket.connect(socketDwnUrl);
 
-      const responseObj = { jsonrpc: '2.0', id: 'str-test', result: null };
+      const requestId = 'str-test';
+      const responsePromise = new Promise<JsonRpcResponse>((resolve) => {
+        client['messageHandlers'].set(requestId, (event: { data: unknown }) => {
+          const parsed = JSON.parse(typeof event.data === 'string'
+            ? event.data
+            : new TextDecoder().decode(event.data as ArrayBuffer)) as JsonRpcResponse;
+          resolve(parsed);
+        });
+      });
+
+      const responseObj = { jsonrpc: '2.0', id: requestId, result: { reply: { status: { code: 202 } } } };
       client['socket'].dispatchEvent(new MessageEvent('message', { data: JSON.stringify(responseObj) }));
-      await sleepWhileWaitingForEvents();
+
+      const response = await responsePromise;
+      expect(response.id).toBe(requestId);
+      expect(response.result.reply.status.code).toBe(202);
 
       client.close();
     });
@@ -365,11 +405,15 @@ describe('JsonRpcSocket', () => {
       const listener2 = (_response: JsonRpcResponse): void => {};
       const sub2 = await client.subscribe(request2, listener2);
 
+      // The server should reject the duplicate subscription (empty params = invalid).
+      // Regardless of whether an error was returned, the original handler must survive.
+      expect(client['messageHandlers'].has(subscriptionId)).toBe(true);
+      const restoredHandler = client['messageHandlers'].get(subscriptionId);
+      expect(restoredHandler).toBe(originalHandler);
+
+      // If the server did return an error, verify the error structure too.
       if (sub2.response.error) {
-        // The original handler should be restored because the duplicate was rejected
-        expect(client['messageHandlers'].has(subscriptionId)).toBe(true);
-        const restoredHandler = client['messageHandlers'].get(subscriptionId);
-        expect(restoredHandler).toBe(originalHandler);
+        expect(sub2.response.error.code).toBeDefined();
       }
 
       // Clean up

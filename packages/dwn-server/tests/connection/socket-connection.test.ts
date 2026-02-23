@@ -216,22 +216,35 @@ describe('SocketConnection', () => {
     });
   });
 
-  describe('send() when socket is not OPEN', () => {
-    it('should throw or fail gracefully when socket readyState is CLOSED', async () => {
+  describe('message()', () => {
+    it('should return a BadRequest error response for an empty payload', async () => {
       const socket = createMockSocket();
-      // Override readyState to simulate a closed socket.
-      (socket as any).readyState = 3; // WebSocket.CLOSED
       const connection = new SocketConnection(socket, dwn);
 
-      // Send an empty message buffer — this exercises the `message()` -> `send()` path.
-      // The send stub will still be called; we verify the connection handles it.
       const sendStub = socket.send as sinon.SinonStub;
       await connection.message(Buffer.from(''));
 
-      // When readyState is not OPEN, the mock send is still called (since it's a stub).
-      // In real Bun, ws.send() would throw. We verify that the code path executes
-      // without crashing the process.
-      expect(sendStub.called).toBe(true);
+      // The empty-payload guard (line 170-176) should send back a JSON-RPC error.
+      expect(sendStub.calledOnce).toBe(true);
+      const sent = JSON.parse(sendStub.firstCall.args[0]);
+      expect(sent.error).toBeDefined();
+      expect(sent.error.code).toBe(-50400); // JsonRpcErrorCodes.BadRequest
+      expect(sent.error.message).toBe('request payload required.');
+
+      await connection.close();
+    });
+
+    it('should return a BadRequest error response for invalid JSON', async () => {
+      const socket = createMockSocket();
+      const connection = new SocketConnection(socket, dwn);
+
+      const sendStub = socket.send as sinon.SinonStub;
+      await connection.message(Buffer.from('not valid json!!!'));
+
+      expect(sendStub.calledOnce).toBe(true);
+      const sent = JSON.parse(sendStub.firstCall.args[0]);
+      expect(sent.error).toBeDefined();
+      expect(sent.error.code).toBe(-50400); // JsonRpcErrorCodes.BadRequest
 
       await connection.close();
     });

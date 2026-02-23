@@ -189,7 +189,7 @@ describe('Eat', () => {
       expect(result.claims.hwversion).toEqual([1, 0, 2]);
     });
 
-    it('should decode an EAT token with measres claim', async () => {
+    it('should decode an EAT token with measres claim and preserve its structure', async () => {
       const measurementResults = new Map<number, unknown>([
         [1, new Uint8Array([0x01, 0x02])],
         [2, 'sha-256'],
@@ -201,7 +201,12 @@ describe('Eat', () => {
       const token = await createEatToken(claims);
       const result = Eat.decode({ token });
 
-      expect(result.claims.measres).toBeDefined();
+      // measres is a CBOR map — after round-trip it should be a Map with the same keys.
+      expect(result.claims.measres).toBeInstanceOf(Map);
+      const decoded = result.claims.measres as Map<number, unknown>;
+      expect(decoded.size).toBe(2);
+      expect(decoded.has(1)).toBe(true);
+      expect(decoded.get(2)).toBe('sha-256');
     });
 
     it('should decode an EAT token with all untested claims together', async () => {
