@@ -137,10 +137,15 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
       responsePayload.dataStream = recordDataStream;
     }
 
+    // --- Fire-and-forget: forwarding / delivery ---
+    const statusCode = reply.status?.code ?? 0;
+    if (context.deliveryService) {
+      context.deliveryService.dispatchIfNeeded(target, message, statusCode);
+    }
+
     // Capture activity event and per-request metrics.
     const dwnInterface = message.descriptor.interface as string;
     const dwnMethod = message.descriptor.method as string;
-    const statusCode = reply.status?.code ?? 0;
     const dataSizeBytes = (message.descriptor as { dataSize?: number }).dataSize;
 
     if (dataSizeBytes !== undefined && dataSizeBytes > 0) {

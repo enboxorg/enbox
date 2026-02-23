@@ -1,5 +1,6 @@
 import type { ActivityLog } from '../admin/activity-log.js';
 import type { AdminStore } from '../admin/admin-store.js';
+import type { DeliveryService } from '../delivery-service.js';
 import type { DwnServerConfig } from '../config.js';
 import type { RateLimiter } from '../rate-limiter.js';
 import type { RegistrationStore } from '../registration/registration-store.js';
@@ -30,6 +31,8 @@ export type RequestContext = {
   config?: DwnServerConfig;
   /** Per-tenant rate limiter (optional). */
   tenantRateLimiter?: RateLimiter;
+  /** Delivery service for forwarding and protocol-aware delivery (optional). */
+  deliveryService?: DeliveryService;
 };
 
 export type HandlerResponse = {

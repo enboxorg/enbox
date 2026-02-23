@@ -8,6 +8,7 @@ import type { WsData } from './http-api.js';
 
 import log from 'loglevel';
 import prefix from 'loglevel-plugin-prefix';
+import { DidDht, DidJwk, DidKey, DidWeb, UniversalResolver } from '@enbox/dids';
 import { Dwn, EventEmitterEventLog } from '@enbox/dwn-sdk-js';
 
 import type { ProviderAuthPlugin } from './registration/provider-auth-plugin.js';
@@ -17,6 +18,7 @@ import { AdminApi } from './admin/admin-api.js';
 import { AdminStore } from './admin/admin-store.js';
 import { AuditLog } from './admin/audit-log.js';
 import { config as defaultConfig } from './config.js';
+import { DeliveryService } from './delivery-service.js';
 import { HttpApi } from './http-api.js';
 import { JwtProviderAuthPlugin } from './registration/jwt-provider-auth-plugin.js';
 import { loadProviderAuthPlugin } from './registration/provider-auth-plugin.js';
@@ -153,6 +155,17 @@ export class DwnServer {
       this.dwn = await Dwn.create(dwnConfig);
     }
 
+    // Create delivery service when forwarding or delivery is enabled.
+    let deliveryService: DeliveryService | undefined;
+    if (this.config.forwardingEnabled || this.config.deliveryEnabled) {
+      // Use the injected resolver or create one with standard DID methods.
+      const deliveryResolver = this.didResolver ?? new UniversalResolver({
+        didResolvers: [DidDht, DidJwk, DidKey, DidWeb],
+      });
+      deliveryService = DeliveryService.create(this.dwn, deliveryResolver, this.config);
+      log.info(`Delivery service enabled (forwarding: ${this.config.forwardingEnabled}, delivery: ${this.config.deliveryEnabled})`);
+    }
+
     // Create rate limiters when configured.
     let ipRateLimiter: RateLimiter | undefined;
     let tenantRateLimiter: RateLimiter | undefined;
@@ -262,7 +275,7 @@ export class DwnServer {
 
     this.#httpApi = await HttpApi.create(
       this.config, this.dwn, registrationManager, adminApi, activityLog,
-      { adminStore, registrationStore, ipRateLimiter, tenantRateLimiter, openAuthHandler },
+      { adminStore, registrationStore, ipRateLimiter, tenantRateLimiter, deliveryService, openAuthHandler },
     );
 
     await this.#httpApi.start(this.config.port);
@@ -271,7 +284,7 @@ export class DwnServer {
     if (this.config.webSocketSupport) {
       this.#wsApi = new WsApi(
         this.#httpApi, this.dwn, undefined, this.config.maxInFlight, activityLog,
-        { adminStore, registrationStore, config: this.config, tenantRateLimiter },
+        { adminStore, registrationStore, config: this.config, tenantRateLimiter, deliveryService },
       );
       this.#wsApi.start();
       log.info('WebSocketServer ready...');

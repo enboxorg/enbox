@@ -4,6 +4,7 @@ import type { ServerWebSocket } from 'bun';
 import type { ActivityLog } from './admin/activity-log.js';
 import type { AdminStore } from './admin/admin-store.js';
 import type { ConnectionManager } from './connection/connection-manager.js';
+import type { DeliveryService } from './delivery-service.js';
 import type { DwnServerConfig } from './config.js';
 import type { RateLimiter } from './rate-limiter.js';
 import type { RegistrationStore } from './registration/registration-store.js';
@@ -23,6 +24,7 @@ export class WsApi {
       registrationStore? : RegistrationStore;
       config? : DwnServerConfig;
       tenantRateLimiter? : RateLimiter;
+      deliveryService? : DeliveryService;
     },
   ) {
     this.dwn = dwn;
@@ -30,6 +32,7 @@ export class WsApi {
       new InMemoryConnectionManager(
         dwn, new Map(), maxInFlight, activityLog,
         options?.adminStore, options?.registrationStore, options?.config, options?.tenantRateLimiter,
+        options?.deliveryService,
       );
 
     // Wire up the WebSocket open event from Bun.serve() to the connection manager.
