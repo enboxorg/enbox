@@ -990,6 +990,8 @@ describe('AgentDwnApi', () => {
       alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
     });
 
+    afterAll(() => { sinon.restore(); });
+
     it('builds a resubscribe factory that reconstructs subscribe messages with a cursor', async () => {
       // Capture the resubscribeFactory by stubbing agent.rpc.sendDwnRequest.
       let capturedFactory: ((cursor?: string) => Promise<any>) | undefined;
