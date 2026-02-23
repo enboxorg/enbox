@@ -250,7 +250,8 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
         jwe        : cekJwe,
         key        : Convert.string(oldPassword).toUint8Array(),
         crypto     : this.crypto,
-        keyManager : new LocalKeyManager()
+        keyManager : new LocalKeyManager(),
+        options    : { minP2cCount: 1 }, // Vault decrypts its own JWEs; no external-input floor needed.
       }));
       contentEncryptionKey = Convert.uint8Array(contentEncryptionKeyBytes).toObject() as Jwk;
 
@@ -297,7 +298,8 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       jwe        : didJwe,
       key        : this._contentEncryptionKey!,
       crypto     : this.crypto,
-      keyManager : new LocalKeyManager()
+      keyManager : new LocalKeyManager(),
+      options    : { minP2cCount: 1 }, // Vault decrypts its own JWEs; no external-input floor needed.
     });
 
     // Convert the DID from a byte array to PortableDid format.
@@ -759,7 +761,8 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
         jwe        : cekJwe,
         key        : Convert.string(password).toUint8Array(),
         crypto     : this.crypto,
-        keyManager : new LocalKeyManager()
+        keyManager : new LocalKeyManager(),
+        options    : { minP2cCount: 1 }, // Vault decrypts its own JWEs; no external-input floor needed.
       });
       const contentEncryptionKey = Convert.uint8Array(contentEncryptionKeyBytes).toObject() as Jwk;
 

@@ -270,7 +270,10 @@ export class FlattenedJwe {
         ? Convert.base64Url(jwe.encrypted_key).toUint8Array()
         : undefined;
 
-      cek = await JweKeyManagement.decrypt({ key, encryptedKey, joseHeader, keyManager, crypto });
+      cek = await JweKeyManagement.decrypt(
+        { key, encryptedKey, joseHeader, keyManager, crypto },
+        { minP2cCount: options.minP2cCount }
+      );
 
     } catch (error: any) {
       // If the error is a CryptoError with code "InvalidJwe" or "AlgorithmNotSupported", re-throw.
