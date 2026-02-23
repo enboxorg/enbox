@@ -1,0 +1,145 @@
+name: 'E2E: Identity Lifecycle'
+
+on:
+  workflow_dispatch:
+    inputs:
+      dwn_url:
+        description: 'DWN server URL to test against'
+        required: false
+        default: 'https://dev.aws.dwn.enbox.id'
+      use_local_server:
+        description: 'Start a local DWN server instead of using a remote one'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: e2e-identity-lifecycle
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: 'Identity Lifecycle E2E'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: dwn
+          POSTGRES_USER: dwn_user
+          POSTGRES_PASSWORD: dwn_password
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Restore bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-store-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build
+
+      - name: Start Pkarr relay (local server only)
+        if: ${{ inputs.use_local_server }}
+        run: |
+          docker run -d --name pkarr-relay -p 7527:15411 synonymsoft/pkarr pkarr-relay --testnet
+          echo "Waiting for Pkarr relay..."
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:7527/ >/dev/null 2>&1 || [ $? -eq 22 ]; then
+              echo "Pkarr relay is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Start local DWN server
+        if: ${{ inputs.use_local_server }}
+        run: |
+          export DS_PORT=3000
+          export DWN_BASE_URL=http://localhost:3000
+          export DWN_TTL_CACHE_URL=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_STORAGE_STATE_INDEX=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DID_DHT_GATEWAY_URI=http://localhost:7527
+          export DWN_RATE_LIMIT_REQUESTS_PER_SECOND=0
+          export DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND=0
+
+          bun packages/dwn-server/dist/esm/src/main.js &
+
+          echo "Waiting for dwn-server..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/info >/dev/null 2>&1; then
+              echo "dwn-server is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Determine DWN URL
+        id: dwn
+        run: |
+          if [ "${{ inputs.use_local_server }}" = "true" ]; then
+            echo "url=http://localhost:3000" >> $GITHUB_OUTPUT
+          else
+            echo "url=${{ inputs.dwn_url }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Verify DWN server is reachable
+        run: |
+          echo "Testing DWN at ${{ steps.dwn.outputs.url }}..."
+          curl -sf "${{ steps.dwn.outputs.url }}/info" | head -c 200
+          echo ""
+
+      - name: Run E2E Identity Lifecycle test
+        run: |
+          export TEST_DWN_URL="${{ steps.dwn.outputs.url }}"
+
+          # For local server: use the local Pkarr relay for DID resolution.
+          # For remote server: use the production DHT gateway (default) so the
+          # remote DWN can resolve the DIDs we publish.
+          if [ "${{ inputs.use_local_server }}" = "true" ]; then
+            export DID_DHT_GATEWAY_URI=http://localhost:7527
+          fi
+
+          # Admin token is needed when the remote DWN has tenant registration
+          # enabled. It allows the test to register new DIDs as tenants.
+          if [ -n "${{ secrets.DWN_ADMIN_TOKEN }}" ]; then
+            export TEST_DWN_ADMIN_TOKEN="${{ secrets.DWN_ADMIN_TOKEN }}"
+          fi
+
+          bun run packages/api/tests/e2e-identity-lifecycle.ts
+        timeout-minutes: 5
+
+      - name: Show Pkarr relay logs on failure
+        if: ${{ failure() && inputs.use_local_server }}
+        run: docker logs pkarr-relay 2>&1 | tail -50
+
+      - name: Show DWN server logs on failure
+        if: ${{ failure() && inputs.use_local_server }}
+        run: |
+          echo "=== dwn-server stdout ==="
+          cat /tmp/dwn-server.log 2>/dev/null || echo "No log file found"

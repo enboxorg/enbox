@@ -18,12 +18,12 @@ import type { SocketConnection } from './connection/socket-connection.js';
 import log from 'loglevel';
 
 import { Convert } from '@enbox/common';
-import { join } from 'path';
 import { register } from 'prom-client';
 import { v4 as uuidv4 } from 'uuid';
 import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { DataStream, DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
 import { existsSync, readFileSync } from 'fs';
+import { join, resolve } from 'path';
 
 import { config } from './config.js';
 import { jsonRpcRouter } from './json-rpc-api.js';
@@ -211,6 +211,7 @@ export class HttpApi {
       },
 
       websocket: {
+        maxPayloadLength: self.#config.maxRecordDataSize,
         open(ws: ServerWebSocket<WsData>): void {
           if (self.onWebSocketConnection) {
             self.onWebSocketConnection(ws);
@@ -271,6 +272,12 @@ export class HttpApi {
       filePath = join(this.#adminUiPath, 'index.html');
     } else {
       filePath = join(this.#adminUiPath, relativePath);
+    }
+
+    // Prevent path traversal: resolved path must stay within the admin UI directory.
+    const resolvedBase = resolve(this.#adminUiPath);
+    if (!resolve(filePath).startsWith(resolvedBase)) {
+      return null;
     }
 
     if (!existsSync(filePath)) {
