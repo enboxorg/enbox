@@ -56,6 +56,111 @@ describe('JwtProviderAuthPlugin', () => {
     });
   });
 
+  describe('fromEnv()', () => {
+    it('should create a plugin from DWN_PROVIDER_AUTH_JWT_SECRET env var', async () => {
+      const original = process.env.DWN_PROVIDER_AUTH_JWT_SECRET;
+      try {
+        process.env.DWN_PROVIDER_AUTH_JWT_SECRET = secret;
+        delete process.env.DWN_PROVIDER_AUTH_JWT_JWKS_URL;
+
+        const plugin = await JwtProviderAuthPlugin.fromEnv();
+        expect(plugin).toBeDefined();
+
+        // Verify the plugin actually works with the secret from env.
+        const token = await new jose.SignJWT({ purpose: 'registration' })
+          .setProtectedHeader({ alg: 'HS256' })
+          .setSubject('env-account')
+          .setIssuedAt()
+          .setExpirationTime('1h')
+          .sign(new TextEncoder().encode(secret));
+
+        const result = await plugin.validateRegistrationToken(token);
+        expect(result.isValid).toBe(true);
+        expect(result.accountId).toBe('env-account');
+      } finally {
+        if (original !== undefined) {
+          process.env.DWN_PROVIDER_AUTH_JWT_SECRET = original;
+        } else {
+          delete process.env.DWN_PROVIDER_AUTH_JWT_SECRET;
+        }
+      }
+    });
+
+    it('should throw when no env vars are set', async () => {
+      const origSecret = process.env.DWN_PROVIDER_AUTH_JWT_SECRET;
+      const origJwks = process.env.DWN_PROVIDER_AUTH_JWT_JWKS_URL;
+      try {
+        delete process.env.DWN_PROVIDER_AUTH_JWT_SECRET;
+        delete process.env.DWN_PROVIDER_AUTH_JWT_JWKS_URL;
+
+        await expect(JwtProviderAuthPlugin.fromEnv()).rejects.toThrow(
+          'exactly one of `secret` or `jwksUrl`',
+        );
+      } finally {
+        if (origSecret !== undefined) {
+          process.env.DWN_PROVIDER_AUTH_JWT_SECRET = origSecret;
+        }
+        if (origJwks !== undefined) {
+          process.env.DWN_PROVIDER_AUTH_JWT_JWKS_URL = origJwks;
+        }
+      }
+    });
+
+    it('should pass issuer and audience from env vars', async () => {
+      const origSecret = process.env.DWN_PROVIDER_AUTH_JWT_SECRET;
+      const origIssuer = process.env.DWN_PROVIDER_AUTH_JWT_ISSUER;
+      const origAudience = process.env.DWN_PROVIDER_AUTH_JWT_AUDIENCE;
+      try {
+        process.env.DWN_PROVIDER_AUTH_JWT_SECRET = secret;
+        process.env.DWN_PROVIDER_AUTH_JWT_ISSUER = 'https://issuer.example.com';
+        process.env.DWN_PROVIDER_AUTH_JWT_AUDIENCE = 'https://audience.example.com';
+        delete process.env.DWN_PROVIDER_AUTH_JWT_JWKS_URL;
+
+        const plugin = await JwtProviderAuthPlugin.fromEnv();
+
+        // Token with correct issuer and audience should succeed.
+        const validToken = await new jose.SignJWT({})
+          .setProtectedHeader({ alg: 'HS256' })
+          .setIssuer('https://issuer.example.com')
+          .setAudience('https://audience.example.com')
+          .setIssuedAt()
+          .setExpirationTime('1h')
+          .sign(new TextEncoder().encode(secret));
+
+        const validResult = await plugin.validateRegistrationToken(validToken);
+        expect(validResult.isValid).toBe(true);
+
+        // Token with wrong issuer should fail.
+        const invalidToken = await new jose.SignJWT({})
+          .setProtectedHeader({ alg: 'HS256' })
+          .setIssuer('https://wrong.example.com')
+          .setAudience('https://audience.example.com')
+          .setIssuedAt()
+          .setExpirationTime('1h')
+          .sign(new TextEncoder().encode(secret));
+
+        const invalidResult = await plugin.validateRegistrationToken(invalidToken);
+        expect(invalidResult.isValid).toBe(false);
+      } finally {
+        if (origSecret !== undefined) {
+          process.env.DWN_PROVIDER_AUTH_JWT_SECRET = origSecret;
+        } else {
+          delete process.env.DWN_PROVIDER_AUTH_JWT_SECRET;
+        }
+        if (origIssuer !== undefined) {
+          process.env.DWN_PROVIDER_AUTH_JWT_ISSUER = origIssuer;
+        } else {
+          delete process.env.DWN_PROVIDER_AUTH_JWT_ISSUER;
+        }
+        if (origAudience !== undefined) {
+          process.env.DWN_PROVIDER_AUTH_JWT_AUDIENCE = origAudience;
+        } else {
+          delete process.env.DWN_PROVIDER_AUTH_JWT_AUDIENCE;
+        }
+      }
+    });
+  });
+
   describe('validateRegistrationToken()', () => {
     it('should validate a valid JWT signed with the correct secret', async () => {
       const plugin = await JwtProviderAuthPlugin.create({ secret });

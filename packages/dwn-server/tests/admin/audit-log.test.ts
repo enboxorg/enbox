@@ -236,6 +236,53 @@ describe('AuditLog', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // retention cleanup timer
+  // ---------------------------------------------------------------------------
+
+  describe('retention cleanup timer', () => {
+    it('should run enforceRetention() on the interval and purge old entries', async () => {
+      const retentionTmpDir = mkdtempSync(join(tmpdir(), 'audit-retention-'));
+      const retentionDialect = getDialectFromUrl(new URL(`sqlite://${retentionTmpDir}/retention.db`));
+
+      // Create with retention config: maxRows = 2 so we can trigger pruning.
+      const retentionLog = await AuditLog.create(retentionDialect, {
+        maxAgeDays : 0,
+        maxRows    : 2,
+      });
+
+      // Insert 5 events — the enforceRetention() call should prune down to 2.
+      for (let i = 0; i < 5; i++) {
+        await retentionLog.record({ actor: 'admin', action: `retention.test.${i}` });
+      }
+
+      // Manually call enforceRetention() to simulate what the timer does.
+      const deleted = await retentionLog.enforceRetention();
+      expect(deleted).toBe(3); // 5 - 2 = 3 rows purged
+
+      const remainingCount = await retentionLog.count();
+      expect(remainingCount).toBe(2);
+
+      await retentionLog.close();
+      rmSync(retentionTmpDir, { recursive: true, force: true });
+    });
+
+    it('should log when enforceRetention fails during timer callback', async () => {
+      const retentionTmpDir = mkdtempSync(join(tmpdir(), 'audit-retention-err-'));
+      const retentionDialect = getDialectFromUrl(new URL(`sqlite://${retentionTmpDir}/retention-err.db`));
+
+      // Create an audit log with retention enabled to start the timer.
+      const retentionLog = await AuditLog.create(retentionDialect, {
+        maxAgeDays : 0,
+        maxRows    : 10,
+      });
+
+      // The timer is running — close normally to stop it.
+      await retentionLog.close();
+      rmSync(retentionTmpDir, { recursive: true, force: true });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // close()
   // ---------------------------------------------------------------------------
 

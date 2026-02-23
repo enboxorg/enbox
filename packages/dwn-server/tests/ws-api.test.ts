@@ -49,6 +49,15 @@ describe('websocket api', function () {
     await dwn.close();
   });
 
+  it('should expose the connection manager via the getter', () => {
+    const cm = wsApi.connectionManager;
+    expect(cm).toBeDefined();
+    expect(typeof cm.connect).toBe('function');
+    expect(typeof cm.closeAll).toBe('function');
+    expect(typeof cm.getConnectionCount).toBe('function');
+    expect(typeof cm.getSubscriptionCount).toBe('function');
+  });
+
   it('returns an error response if no request payload is provided', async function () {
     const data = await sendWsMessage(wsUrl, Buffer.from(''));
 
