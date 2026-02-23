@@ -163,19 +163,24 @@ export const config = {
   // ---------------------------------------------------------------------------
 
   /**
-   * Maximum HTTP requests per second per IP address. 0 = unlimited (default).
+   * Maximum HTTP requests per second per IP address. Set to 0 to disable.
+   * Defaults to 30 req/s which is generous for normal usage while limiting abuse.
+   * Can be reconfigured at runtime via the admin `PATCH /config` endpoint.
    */
-  rateLimitRequestsPerSecond: parseInt(process.env.DWN_RATE_LIMIT_REQUESTS_PER_SECOND || '0'),
+  rateLimitRequestsPerSecond: parseInt(process.env.DWN_RATE_LIMIT_REQUESTS_PER_SECOND || '30'),
 
   /**
-   * Maximum burst size for per-IP rate limiting. Defaults to 50.
+   * Maximum burst size for per-IP rate limiting. Allows short spikes above the
+   * sustained rate without triggering 429s. Defaults to 50.
    */
   rateLimitBurst: parseInt(process.env.DWN_RATE_LIMIT_BURST || '50'),
 
   /**
-   * Maximum DWN requests per second per tenant DID. 0 = unlimited (default).
+   * Maximum DWN requests per second per tenant DID. Set to 0 to disable.
+   * Defaults to 20 req/s. Applies to both HTTP and WebSocket transports.
+   * Can be reconfigured at runtime via the admin `PATCH /config` endpoint.
    */
-  rateLimitTenantRequestsPerSecond: parseInt(process.env.DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND || '0'),
+  rateLimitTenantRequestsPerSecond: parseInt(process.env.DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND || '20'),
 
   /**
    * Maximum burst size for per-tenant rate limiting. Defaults to 50.

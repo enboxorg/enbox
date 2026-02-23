@@ -37,18 +37,21 @@ function createTestConfig(port: number, dbDir: string): typeof defaultConfig {
     ...defaultConfig,
     port,
     adminToken,
-    registrationStoreUrl   : sqliteUrl,
-    messageStore           : sqliteUrl,
-    dataStore              : sqliteUrl,
-    stateIndex             : sqliteUrl,
-    resumableTaskStore     : sqliteUrl,
-    ttlCacheUrl            : sqliteUrl,
-    webSocketSupport       : false,
-    logLevel               : 'error',
+    registrationStoreUrl             : sqliteUrl,
+    messageStore                     : sqliteUrl,
+    dataStore                        : sqliteUrl,
+    stateIndex                       : sqliteUrl,
+    resumableTaskStore               : sqliteUrl,
+    ttlCacheUrl                      : sqliteUrl,
+    webSocketSupport                 : false,
+    logLevel                         : 'error',
+    // Disable rate limiting in tests to avoid flaky 429s.
+    rateLimitRequestsPerSecond       : 0,
+    rateLimitTenantRequestsPerSecond : 0,
     // Explicitly unset termsOfServiceFilePath to avoid inheriting a mutated
     // value from other test files that modify the shared default config object.
     // See: https://github.com/enboxorg/enbox/issues/144
-    termsOfServiceFilePath : undefined,
+    termsOfServiceFilePath           : undefined,
   };
 }
 
