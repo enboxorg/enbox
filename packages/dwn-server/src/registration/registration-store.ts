@@ -3,6 +3,8 @@ import type { TenantQuota } from '../admin/types.js';
 
 import { Kysely, sql } from 'kysely';
 
+import { escapeLikeWildcards } from '../lib/sql-utils.js';
+
 /**
  * The RegistrationStore is responsible for storing and retrieving tenant registration information.
  */
@@ -166,7 +168,7 @@ export class RegistrationStore {
     }
 
     if (options?.search) {
-      query = query.where('did', 'like', `%${options.search}%`);
+      query = query.where('did', 'like', `%${escapeLikeWildcards(options.search)}%`);
     }
 
     if (options?.status === 'suspended') {
@@ -198,7 +200,7 @@ export class RegistrationStore {
       .select(sql<number>`count(*)`.as('count'));
 
     if (options?.search) {
-      query = query.where('did', 'like', `%${options.search}%`);
+      query = query.where('did', 'like', `%${escapeLikeWildcards(options.search)}%`);
     }
 
     if (options?.status === 'suspended') {

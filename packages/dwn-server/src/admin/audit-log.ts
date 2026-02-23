@@ -3,6 +3,8 @@ import type { Dialect } from '@enbox/dwn-sql-store';
 import { Kysely } from 'kysely';
 import log from 'loglevel';
 
+import { escapeLikeWildcards } from '../lib/sql-utils.js';
+
 /**
  * Input for recording a new audit event.
  */
@@ -182,7 +184,7 @@ export class AuditLog {
 
     if (options?.action !== undefined) {
       if (options.action.endsWith('*')) {
-        const prefix = options.action.slice(0, -1);
+        const prefix = escapeLikeWildcards(options.action.slice(0, -1));
         query = query.where('action', 'like', `${prefix}%`);
       } else {
         query = query.where('action', '=', options.action);

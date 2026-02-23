@@ -3,6 +3,7 @@ import type { AdminMessageSummary, AdminProtocolSummary, GlobalStats, TenantExpo
 
 import { Kysely } from 'kysely';
 
+import { escapeLikeWildcards } from '../lib/sql-utils.js';
 import { getDialectFromUrl } from '../storage.js';
 
 /**
@@ -94,7 +95,7 @@ export class AdminStore {
     }
 
     if (options?.search) {
-      query = query.where('tenant', 'like', `%${options.search}%`);
+      query = query.where('tenant', 'like', `%${escapeLikeWildcards(options.search)}%`);
     }
 
     const results = await query.execute();

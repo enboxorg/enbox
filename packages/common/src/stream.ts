@@ -198,8 +198,7 @@ export class Stream {
    * Generates a `ReadableStream` of `Uint8Array` chunks with customizable length and fill value.
    *
    * This method creates a `ReadableStream` that emits `Uint8Array` chunks. You can specify the
-   * total length of the stream, the length of individual chunks, and a fill value or range for the
-   * chunks. It's useful for testing or when specific binary data streams are required.
+   * total length of the stream, the length of individual chunks, and a fill value for the chunks.
    *
    * @example
    * ```ts
@@ -209,23 +208,17 @@ export class Stream {
    *   chunkLength: 100,
    *   fillValue: 0xAA
    * });
-   *
-   * // Create an unending stream of 100KB chunks filled with values that range from 1 to 99.
-   * const byteStream = Stream.generateByteStream({
-   *  chunkLength: 100 * 1024,
-   *  fillValue: [1, 99]
-   * });
    * ```
    *
    * @param streamLength - The total length of the stream in bytes. If omitted, the stream is infinite.
    * @param chunkLength - The length of each chunk. If omitted, each chunk is the size of `streamLength`.
-   * @param fillValue - A value or range to fill the chunks with. Can be a single number or a tuple [min, max].
+   * @param fillValue - A byte value to fill every position in each chunk. If omitted, chunks are zero-filled.
    * @returns A `ReadableStream` that emits `Uint8Array` chunks.
    */
   public static generateByteStream({ streamLength, chunkLength, fillValue }: {
     streamLength?: number,
     chunkLength?: number,
-    fillValue?: number | [number, number]
+    fillValue?: number
   }): ReadableStream<Uint8Array> {
     let bytesRemaining = streamLength ?? Infinity;
     let controller: ReadableStreamDefaultController<Uint8Array>;
@@ -238,15 +231,6 @@ export class Stream {
 
       if (typeof fillValue === 'number') {
         chunk = new Uint8Array(currentChunkLength).fill(fillValue);
-
-      } else if (Array.isArray(fillValue)) {
-        chunk = new Uint8Array(currentChunkLength);
-        const [min, max] = fillValue;
-        const range = max - min + 1;
-        for (let i = 0; i < currentChunkLength; i++) {
-          chunk[i] = Math.floor(Math.random() * range) + min;
-        }
-
       } else {
         chunk = new Uint8Array(currentChunkLength);
       }
