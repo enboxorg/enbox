@@ -608,7 +608,10 @@ describe('Enhanced Prometheus metrics', () => {
     await dwnServer.start();
 
     try {
-      const response = await fetch(`http://localhost:${port}/metrics`);
+      // Metrics now require admin auth when an admin token is configured.
+      const response = await fetch(`http://localhost:${port}/metrics`, {
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
       expect(response.status).toBe(200);
       const metricsText = await response.text();
 

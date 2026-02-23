@@ -27,8 +27,12 @@ import { existsSync, readFileSync } from 'fs';
 
 import { config } from './config.js';
 import { jsonRpcRouter } from './json-rpc-api.js';
+import { validateAdminAuth } from './admin/admin-auth.js';
 import { Web5ConnectServer } from './web5-connect/web5-connect-server.js';
 import { requestCounter, responseHistogram } from './metrics.js';
+
+/** Property names that must never be used as keys when building objects from user input. */
+const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 // Resolve admin UI dist path at module load time. Gracefully handle the case
 // where the admin UI package is not installed.
@@ -79,7 +83,7 @@ export class HttpApi {
   ): Promise<HttpApi> {
     const httpApi = new HttpApi();
 
-    log.info(config);
+    log.info(HttpApi.#redactConfig(config));
 
     httpApi.#packageInfo = {
       server: config.serverName,
@@ -184,10 +188,15 @@ export class HttpApi {
         }
 
         // --- CORS headers ---
-        response.headers.set('access-control-allow-origin', '*');
-        response.headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
-        response.headers.set('access-control-allow-headers', '*');
-        response.headers.set('access-control-expose-headers', 'dwn-response');
+        // Admin API and metrics endpoints do not receive wildcard CORS headers
+        // to limit cross-origin access when the admin token is configured.
+        const isAdminRoute = path.startsWith('/admin') || path === '/metrics';
+        if (!isAdminRoute) {
+          response.headers.set('access-control-allow-origin', '*');
+          response.headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
+          response.headers.set('access-control-allow-headers', '*');
+          response.headers.set('access-control-expose-headers', 'dwn-response');
+        }
 
         // --- Response-time metrics ---
         const elapsed = performance.now() - startTime;
@@ -285,6 +294,13 @@ export class HttpApi {
     }
 
     if (method === 'GET' && path === '/metrics') {
+      // Metrics require admin authentication when an admin token is configured.
+      if (this.#config.adminToken) {
+        const authError = validateAdminAuth(req, this.#config);
+        if (authError) {
+          return authError;
+        }
+      }
       try {
         const metricsBody = await register.metrics();
         return new Response(metricsBody, {
@@ -406,6 +422,38 @@ export class HttpApi {
     }
 
     return new Response('Not Found', { status: 404 });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Security helpers
+  // ---------------------------------------------------------------------------
+
+  /** Returns `true` if the given key is a prototype-pollution-dangerous property name. */
+  static #isDangerousKey(key: string | undefined): boolean {
+    return key !== undefined && DANGEROUS_KEYS.has(key);
+  }
+
+  /** Returns `true` if any element in `keys` is a dangerous property name. */
+  static #hasDangerousKey(keys: string[]): boolean {
+    return keys.some(k => DANGEROUS_KEYS.has(k));
+  }
+
+  /** Returns a shallow copy of the config with sensitive values redacted for logging. */
+  static #redactConfig(cfg: DwnServerConfig): Record<string, unknown> {
+    const redacted: Record<string, unknown> = { ...cfg };
+    const sensitiveKeys = ['adminToken', 'providerAuthJwtSecret'];
+    for (const key of sensitiveKeys) {
+      if (redacted[key]) {
+        redacted[key] = '[REDACTED]';
+      }
+    }
+    // Redact passwords in connection-string-like values.
+    for (const [key, value] of Object.entries(redacted)) {
+      if (typeof value === 'string' && /^(?:postgres|mysql|sqlite):\/\//.test(value) && value.includes('@')) {
+        redacted[key] = value.replace(/:\/\/([^:]+):([^@]+)@/, '://$1:****@');
+      }
+    }
+    return redacted;
   }
 
   // ---------------------------------------------------------------------------
@@ -557,6 +605,9 @@ export class HttpApi {
       for (const [param, value] of url.searchParams) {
         const keys = param.split('.');
         const lastKey = keys.pop();
+        if (HttpApi.#hasDangerousKey(keys) || HttpApi.#isDangerousKey(lastKey)) {
+          continue;
+        }
         const nestObj = (obj: Record<string, any>, key: string): Record<string, any> =>
           obj[key] = obj[key] || {};
         const lastLevelObject = keys.reduce(nestObj, queryOptions);
@@ -638,6 +689,9 @@ export class HttpApi {
       for (const [param, value] of url.searchParams) {
         const keys = param.split('.');
         const lastKey = keys.pop();
+        if (HttpApi.#hasDangerousKey(keys) || HttpApi.#isDangerousKey(lastKey)) {
+          continue;
+        }
         const nestObj = (obj: Record<string, any>, key: string): Record<string, any> =>
           obj[key] = obj[key] || {};
         const lastLevelObject = keys.reduce(nestObj, recordsQueryOptions);
