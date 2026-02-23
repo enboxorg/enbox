@@ -84,6 +84,7 @@ async function initClient({
     headers : {
       'Content-Type': 'application/x-www-form-urlencoded',
     },
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!parResponse.ok) {
@@ -112,7 +113,7 @@ async function initClient({
   });
 
   // subscribe to receiving a response from the wallet with default TTL. receive ciphertext of {@link Web5ConnectAuthResponse}
-  const authResponse = await pollWithTtl(() => fetch(tokenUrl));
+  const authResponse = await pollWithTtl(() => fetch(tokenUrl, { signal: AbortSignal.timeout(30_000) }));
 
   if (authResponse) {
     const jwe = await authResponse?.text();

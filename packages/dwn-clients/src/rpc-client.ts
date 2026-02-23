@@ -128,7 +128,7 @@ export class HttpWeb5RpcClient extends HttpDwnRpcClient implements Web5Rpc {
     let jsonRpcResponse: JsonRpcResponse;
 
     try {
-      const response = await fetch(httpRequest);
+      const response = await fetch(httpRequest, { signal: AbortSignal.timeout(30_000) });
 
       if (response.ok) {
         jsonRpcResponse = await response.json();

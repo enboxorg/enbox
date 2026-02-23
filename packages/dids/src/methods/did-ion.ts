@@ -600,7 +600,8 @@ export class DidIon extends DidMethod {
         method  : 'POST',
         mode    : 'cors',
         headers : { 'Content-Type': 'application/json' },
-        body    : JSON.stringify(createOperation)
+        body    : JSON.stringify(createOperation),
+        signal  : AbortSignal.timeout(30_000),
       });
 
       // Return the result of processing the Create operation, including the updated DID metadata
@@ -681,7 +682,7 @@ export class DidIon extends DidMethod {
       });
 
       // Attempt to retrieve the DID document and metadata from the Sidetree node.
-      const response = await fetch(resolutionUrl);
+      const response = await fetch(resolutionUrl, { signal: AbortSignal.timeout(30_000) });
 
       // If the DID document was not found, return an error.
       if (!response.ok) {
