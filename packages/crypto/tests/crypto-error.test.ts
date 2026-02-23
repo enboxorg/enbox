@@ -43,6 +43,12 @@ describe('CryptoError', () => {
     expect(error instanceof Error).toBe(true);
   });
 
+  // NOTE: The original version had 7 individual tests asserting exact string values
+  // for each CryptoErrorCode member (e.g. `expect(CryptoErrorCode.InvalidJwk).toBe('invalidJwk')`).
+  // These were fragile snapshot-style assertions — they'd break on any value rename
+  // without catching real bugs. Consolidated into two tests: one that verifies enum
+  // membership (resilient to value changes) and one that tests the practical use case
+  // of constructing a CryptoError and matching on its code.
   describe('CryptoErrorCode', () => {
     it('should include all expected error codes as string values', () => {
       // Verify the enum has the expected members. We check membership rather

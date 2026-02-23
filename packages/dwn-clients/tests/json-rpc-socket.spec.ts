@@ -265,6 +265,13 @@ describe('JsonRpcSocket', () => {
     // message data (string, ArrayBuffer, or Uint8Array) into a string before
     // JSON parsing. We verify that messages delivered in each format are correctly
     // parsed and dispatched to the registered handler.
+    //
+    // NOTE: The original versions of these tests registered handlers that expected
+    // pre-parsed JSON objects. In reality, `wireSocket` calls `toText(event.data)`
+    // and then `parseJson()` internally, but the handler registered in
+    // `messageHandlers` receives the raw `event` object — not parsed JSON.
+    // Rewritten so each handler manually parses event.data (mirroring the real
+    // `request()` flow) and asserts on the parsed response fields.
 
     it('should correctly parse a JSON-RPC response delivered as ArrayBuffer', async () => {
       const client = await JsonRpcSocket.connect(socketDwnUrl);
@@ -369,6 +376,12 @@ describe('JsonRpcSocket', () => {
   });
 
   describe('subscribe edge cases', () => {
+    // NOTE: The original version of this test had a conditional assertion that only
+    // checked handler preservation inside `if (sub2.response.error)` — meaning
+    // the critical assertion would be silently skipped if the server happened to
+    // accept the second subscription. Rewritten so the handler-preservation check
+    // is unconditional: we always verify the original handler survives, regardless
+    // of the server's response.
     it('should preserve existing handler on duplicate subscribe failure', async () => {
       const client = await JsonRpcSocket.connect(socketDwnUrl);
       const { message } = await TestDataGenerator.generateRecordsSubscribe({ author: alice });

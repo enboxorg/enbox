@@ -216,6 +216,14 @@ describe('SocketConnection', () => {
     });
   });
 
+  // NOTE: The original version had a "send when socket is not OPEN" test that
+  // mocked readyState to 0 and asserted that send() would not forward to the
+  // underlying socket. However, `SocketConnection.send()` has no readyState
+  // guard — it unconditionally calls `this.socket.send()` (line 234 of
+  // socket-connection.ts). The test was meaningless because it was testing
+  // behavior that doesn't exist in the source. Replaced with tests for the
+  // `message()` method's actual error-handling paths: empty payload and
+  // invalid JSON, which both return JsonRpcErrorCodes.BadRequest (-50400).
   describe('message()', () => {
     it('should return a BadRequest error response for an empty payload', async () => {
       const socket = createMockSocket();

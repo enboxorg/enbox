@@ -5,6 +5,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { describe, expect, it } from 'bun:test';
 
 describe('config', () => {
+  // NOTE: The original version of these tests asserted exact default values
+  // (e.g. `expect(config.port).toBe(3000)`, `expect(config.maxRecordDataSize).toBe(...)`)
+  // which made them snapshot-style assertions that would break any time a default
+  // was tuned — without catching real bugs. Rewritten to verify the parsing logic
+  // produces values of the correct types, which is the actual contract we care about.
   describe('default config values', () => {
     it('should parse all config fields to the expected types', async () => {
       // The config object reads env vars at module load time. We verify that

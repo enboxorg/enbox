@@ -189,6 +189,10 @@ describe('Eat', () => {
       expect(result.claims.hwversion).toEqual([1, 0, 2]);
     });
 
+    // NOTE: The original version of this test only asserted `toBeDefined()` on the
+    // decoded measres claim, which would pass even if the value was garbage. Rewritten
+    // to verify the CBOR map round-trips correctly: checks instance type, entry count,
+    // and individual key/value pairs.
     it('should decode an EAT token with measres claim and preserve its structure', async () => {
       const measurementResults = new Map<number, unknown>([
         [1, new Uint8Array([0x01, 0x02])],
