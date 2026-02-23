@@ -418,6 +418,17 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       }
     }
 
+    // Warn when `$delivery` is set without `$actions`.
+    // Delivery targets are determined from `$actions` role records and actor rules.
+    // Without `$actions`, the server cannot determine who to deliver records to.
+    if (ruleSet.$delivery !== undefined && (ruleSet.$actions === undefined || ruleSet.$actions.length === 0)) {
+      console.warn(
+        `ProtocolsConfigure: protocol path '${ruleSetProtocolPath}' has $delivery: '${ruleSet.$delivery}' ` +
+        `but no $actions rules. The server uses $actions to determine delivery targets — ` +
+        `without $actions, no participants can be resolved for delivery.`
+      );
+    }
+
     // Warn when `$immutable: true` is combined with `$actions` that include `update` or `co-update`.
     // The `$immutable` directive overrides any update permission — updates are always rejected.
     if (ruleSet.$immutable === true && actionRules.length > 0) {
@@ -494,7 +505,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
     }
 
     // validate that `$ref` nodes do not have other directives
-    const forbiddenDirectives = ['$actions', '$role', '$size', '$tags', '$encryption', '$recordLimit', '$immutable'] as const;
+    const forbiddenDirectives = ['$actions', '$role', '$size', '$tags', '$encryption', '$recordLimit', '$immutable', '$delivery'] as const;
     for (const directive of forbiddenDirectives) {
       if (ruleSet[directive] !== undefined) {
         throw new DwnError(

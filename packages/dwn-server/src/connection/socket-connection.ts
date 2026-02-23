@@ -1,6 +1,7 @@
 import type { ActivityLog } from '../admin/activity-log.js';
 import type { AdminConnectionSnapshot } from '../admin/types.js';
 import type { AdminStore } from '../admin/admin-store.js';
+import type { DeliveryService } from '../delivery-service.js';
 import type { DwnServerConfig } from '../config.js';
 import type { RateLimiter } from '../rate-limiter.js';
 import type { RegistrationStore } from '../registration/registration-store.js';
@@ -52,6 +53,7 @@ export class SocketConnection {
     private registrationStore?: RegistrationStore,
     private serverConfig?: DwnServerConfig,
     private tenantRateLimiter?: RateLimiter,
+    private deliveryService?: DeliveryService,
   ){
     // Bun handles ping/pong automatically at the protocol level, but we still
     // want an application-level heartbeat to detect dead connections.
@@ -277,6 +279,7 @@ export class SocketConnection {
       registrationStore : this.registrationStore,
       config            : this.serverConfig,
       tenantRateLimiter : this.tenantRateLimiter,
+      deliveryService   : this.deliveryService,
     };
 
     // methods that expect a long-running subscription begin with `rpc.subscribe.`

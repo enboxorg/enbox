@@ -185,6 +185,17 @@ export type ProtocolRecordLimitDefinition = {
 };
 
 /**
+ * Delivery strategy for records at a given protocol path.
+ * Controls how a DWN server proactively distributes records to participants' DWN endpoints.
+ *
+ * - `'direct'`    — The origin DWN pushes new records to all participants' DWN endpoints.
+ *                    Best for small participant sets (2–50).
+ * - `'subscribe'` — Participant providers establish `RecordsSubscribe` connections to the
+ *                    origin DWN. Best for asymmetric fan-out or unbounded audiences.
+ */
+export type ProtocolDeliveryStrategy = 'direct' | 'subscribe';
+
+/**
  * Tag rules for records at a given protocol path. Each non-`$`-prefixed property
  * is a JSON Schema object constraining that tag's value.
  */
@@ -222,7 +233,7 @@ export type ProtocolTagSchema = {
 /**
  * Union of all value types that can appear as properties of a `ProtocolRuleSet`.
  * This includes:
- * - `$`-prefixed directive values (`$encryption`, `$actions`, `$role`, `$ref`, `$size`, `$tags`)
+ * - `$`-prefixed directive values (`$encryption`, `$actions`, `$role`, `$ref`, `$size`, `$tags`, `$delivery`)
  * - Child `ProtocolRuleSet` entries (non-`$` keys)
  */
 type ProtocolRuleSetValue =
@@ -232,6 +243,7 @@ type ProtocolRuleSetValue =
   | ProtocolTagsDefinition
   | ProtocolSizeDefinition
   | ProtocolRecordLimitDefinition
+  | ProtocolDeliveryStrategy
   | boolean
   | string
   | undefined;
@@ -292,6 +304,15 @@ export type ProtocolRuleSet = {
    * cannot be removed.
    */
   $immutable?: boolean;
+
+  /**
+   * Delivery strategy hint for records at this protocol path.
+   * When set, the DWN server SHOULD proactively deliver records to participants' DWN endpoints.
+   *
+   * - `'direct'`    — Origin DWN pushes to all participant DWN endpoints upon receipt.
+   * - `'subscribe'` — Participant providers subscribe to the origin DWN via `RecordsSubscribe`.
+   */
+  $delivery?: ProtocolDeliveryStrategy;
 
   /**
    * Non-`$`-prefixed keys are nested child `ProtocolRuleSet` entries.

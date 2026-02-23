@@ -186,6 +186,44 @@ export const config = {
    * Maximum burst size for per-tenant rate limiting. Defaults to 50.
    */
   rateLimitTenantBurst: parseInt(process.env.DWN_RATE_LIMIT_TENANT_BURST || '50'),
+
+  // ---------------------------------------------------------------------------
+  // Record delivery & endpoint forwarding
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Enable endpoint forwarding: when a RecordsWrite/RecordsDelete is processed,
+   * forward the original signed message to the tenant's other DWN service
+   * endpoints (discovered via DID resolution). Disabled by default.
+   */
+  forwardingEnabled: process.env.DWN_FORWARDING_ENABLED === 'true',
+
+  /**
+   * Enable protocol-aware record delivery: when a RecordsWrite/RecordsDelete is
+   * processed at a protocol path with `$delivery`, proactively deliver to
+   * participants' DWN endpoints. Disabled by default.
+   */
+  deliveryEnabled: process.env.DWN_DELIVERY_ENABLED === 'true',
+
+  /**
+   * Maximum number of concurrent outbound delivery/forwarding requests.
+   * Prevents unbounded parallelism when delivering to many providers.
+   * Defaults to 10.
+   */
+  deliveryMaxConcurrency: parseInt(process.env.DWN_DELIVERY_MAX_CONCURRENCY || '10'),
+
+  /**
+   * TTL in seconds for caching DID document service endpoint resolution results.
+   * Avoids resolving the same DID document on every delivery. Defaults to 300 (5 min).
+   */
+  deliveryEndpointCacheTtlSeconds: parseInt(process.env.DWN_DELIVERY_ENDPOINT_CACHE_TTL || '300'),
+
+  /**
+   * TTL in seconds for the recently-forwarded messageCid deduplication cache.
+   * Messages with CIDs in this cache are not forwarded again, reducing redundant
+   * outbound requests between peer endpoints. Defaults to 60.
+   */
+  forwardingDeduplicationTtlSeconds: parseInt(process.env.DWN_FORWARDING_DEDUP_TTL || '60'),
 };
 
 /**
