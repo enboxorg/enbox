@@ -1,5 +1,13 @@
 # Project Instructions
 
+## Inviolable Rules
+
+### Never modify production code to satisfy tests
+
+Production code must NEVER be weakened, loosened, or given special-case handling to make a test pass. This includes adding defensive null/undefined checks, try/catch blocks, early returns, or any other logic whose sole purpose is to handle conditions that only arise in stubbed/mocked test environments. This is how security vulnerabilities are born.
+
+If a test fails because new production code interacts badly with a stubbed environment, the fix belongs **entirely in the test**: update the stubs to properly simulate reality, or stub the new production method directly on the handler/class instance. The production code path must remain exactly as strict as the real-world scenario demands.
+
 ## Monorepo Overview
 
 Bun workspace monorepo for decentralized web infrastructure. Runtime is **Bun** (>=1.0.0).
