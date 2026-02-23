@@ -283,6 +283,13 @@ describe('http api', function () {
       });
       expect(response.status).toBe(200);
     });
+
+    it('returns 200 with { ok: true } body', async function () {
+      const response = await fetch(`${baseUrl}/health`, { method: 'GET' });
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toEqual({ ok: true });
+    });
   });
 
   describe('default http get response', function () {

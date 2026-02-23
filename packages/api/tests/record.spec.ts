@@ -4719,4 +4719,105 @@ describe('Record', () => {
       expect(paginationCursor).toBeUndefined();
     });
   });
+
+  describe('readRecordData() error handling', () => {
+    it('should wrap errors thrown during data read with a descriptive message', async () => {
+      // Write a record.
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data         : 'Hello, world!',
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'thread',
+        schema       : protocolDefinition.types.thread.schema,
+        dataFormat   : 'text/plain',
+      });
+      expect(writeStatus.code).toBe(202);
+
+      // Clear the in-memory data so the next data access triggers readRecordData().
+      record['_encodedData'] = undefined;
+      record['_readableStream'] = undefined;
+
+      // Stub processDwnRequest to throw an error.
+      const stub = sinon.stub(testHarness.agent, 'processDwnRequest');
+      stub.rejects(new Error('simulated network failure'));
+
+      try {
+        await record.data.text();
+        throw new Error('Expected an exception to be thrown');
+      } catch (error: any) {
+        expect(error.message).toContain('Error encountered while attempting to read data');
+        expect(error.message).toContain('simulated network failure');
+      }
+
+      stub.restore();
+    });
+
+    it('should wrap non-200 status responses with error message', async () => {
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data         : 'Hello, world!',
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'thread',
+        schema       : protocolDefinition.types.thread.schema,
+        dataFormat   : 'text/plain',
+      });
+      expect(writeStatus.code).toBe(202);
+
+      // Clear in-memory data so readRecordData() is invoked.
+      record['_encodedData'] = undefined;
+      record['_readableStream'] = undefined;
+
+      // Stub processDwnRequest to return a non-200 status.
+      const stub = sinon.stub(testHarness.agent, 'processDwnRequest');
+      stub.resolves({
+        messageCid : 'test-cid',
+        message    : {},
+        reply      : { status: { code: 404, detail: 'Not Found' }, entry: undefined },
+      } as any);
+
+      try {
+        await record.data.text();
+        throw new Error('Expected an exception to be thrown');
+      } catch (error: any) {
+        expect(error.message).toContain('Error encountered while attempting to read data');
+        expect(error.message).toContain('404');
+      }
+
+      stub.restore();
+    });
+  });
+
+  describe('processRecord() deleted branch', () => {
+    it('should send a RecordsDelete when storing a deleted record', async () => {
+      // Create a record without storing it.
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        store        : false,
+        data         : 'Hello, world!',
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'thread',
+        schema       : protocolDefinition.types.thread.schema,
+        dataFormat   : 'text/plain',
+      });
+      expect(writeStatus.code).toBe(202);
+
+      // Delete the record without storing.
+      const { status: deleteStatus, record: deletedRecord } = await record.delete({ store: false });
+      expect(deleteStatus.code).toBe(202);
+      expect(deletedRecord.deleted).toBe(true);
+
+      // Spy on processDwnRequest to verify the deleted branch sends RecordsDelete.
+      const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
+
+      // Store the deleted record — this should invoke processRecord() which takes the deleted branch.
+      const { status: storeStatus } = await deletedRecord.store();
+      expect(storeStatus.code).toBe(202);
+
+      // The spy should have been called: once for the initial write and once for the delete.
+      // Find the RecordsDelete call.
+      const deleteCall = processSpy.getCalls().find(
+        (call) => call.args[0].messageType === DwnInterface.RecordsDelete
+      );
+      expect(deleteCall).toBeDefined();
+
+      processSpy.restore();
+    });
+  });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import {
-  createJsonRpcErrorResponse, createJsonRpcNotification, createJsonRpcRequest,
+  createJsonRpcAck, createJsonRpcErrorResponse, createJsonRpcNotification, createJsonRpcRequest,
   createJsonRpcSubscriptionRequest, createJsonRpcSuccessResponse, JsonRpcErrorCodes, parseJson,
 } from '../src/json-rpc.js';
 
@@ -97,6 +97,33 @@ describe('json-rpc', () => {
     it('creates a notification without params', () => {
       const notification = createJsonRpcNotification('server.ping');
       expect(notification.params).toBeUndefined();
+    });
+  });
+
+  describe('createJsonRpcAck', () => {
+    it('creates an ack notification with method rpc.ack, cursor in params, and subscription id', () => {
+      const ack = createJsonRpcAck('sub-1', 'cursor-abc');
+      expect(ack.jsonrpc).toBe('2.0');
+      expect(ack.method).toBe('rpc.ack');
+      expect(ack.params).toEqual({ cursor: 'cursor-abc' });
+      expect(ack.subscription).toEqual({ id: 'sub-1' });
+      // ack is a notification — no `id` field
+      expect(ack.id).toBeUndefined();
+    });
+
+    it('works with null subscription id', () => {
+      const ack = createJsonRpcAck(null, 'cursor-xyz');
+      expect(ack.subscription!.id).toBeNull();
+      expect(ack.params.cursor).toBe('cursor-xyz');
+    });
+  });
+
+  describe('createJsonRpcErrorResponse — null data', () => {
+    it('does not include data key when data is explicitly null', () => {
+      const response = createJsonRpcErrorResponse('req-null', JsonRpcErrorCodes.InternalError, 'fail', null);
+      // `null != undefined` is false (loose equality), so null is treated like undefined — data is omitted
+      expect(response.error.data).toBeUndefined();
+      expect('data' in response.error).toBe(false);
     });
   });
 

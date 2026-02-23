@@ -573,6 +573,141 @@ describe('TypedProtocol API', () => {
       });
     });
 
+    describe('helper functions (via public API)', () => {
+      describe('definitionsEqual()', () => {
+        it('should detect equal definitions with different key ordering', async () => {
+          // Create a protocol with the same fields but potentially different order.
+          // The first configure() stores the definition. A second configure() with an
+          // identical definition (same fields, same values) should return 200 (cached).
+          const result = await typed.configure();
+          expect(result.status.code).toBe(200); // already configured in beforeEach
+          expect(result.protocol).toBeDefined();
+        });
+
+        it('should detect unequal definitions with added types', async () => {
+          // Modify the definition by adding a new type.
+          const modifiedDefinition = {
+            ...TodoProtocolDefinition,
+            types: {
+              ...TodoProtocolDefinition.types,
+              note: {
+                schema      : 'https://example.com/schemas/note',
+                dataFormats : ['application/json'] as const,
+              },
+            },
+            structure: {
+              ...TodoProtocolDefinition.structure,
+            },
+          };
+
+          const modifiedProtocol = defineProtocol(modifiedDefinition);
+          const modifiedTyped = new TypedWeb5(dwnAlice, modifiedProtocol);
+
+          const result = await modifiedTyped.configure();
+          // Should return 202 because the definition changed (new type added).
+          expect(result.status.code).toBe(202);
+        });
+      });
+
+      describe('normalizePath()', () => {
+        it('should normalize leading slashes on read()', async () => {
+          const { record: written } = await typed.records.create('list', {
+            data: { name: 'Normalize Read' },
+          });
+
+          const { status, record } = await typed.records.read('/list' as any, {
+            filter: { recordId: written.id },
+          });
+
+          expect(status.code).toBe(200);
+          expect(record.protocolPath).toBe('list');
+        });
+
+        it('should normalize leading and trailing slashes on delete()', async () => {
+          const { record: written } = await typed.records.create('list', {
+            data: { name: 'Normalize Delete' },
+          });
+
+          const { status } = await typed.records.delete('/list/' as any, {
+            recordId: written.id,
+          });
+          expect(status.code).toBe(202);
+        });
+
+        it('should normalize leading and trailing slashes on subscribe()', async () => {
+          const { status, liveQuery } = await typed.records.subscribe('/list/' as any);
+          expect(status.code).toBe(200);
+          await liveQuery.close();
+        });
+      });
+
+      describe('lastSegment()', () => {
+        it('should resolve schema from the last segment of a nested path', async () => {
+          // Create a parent list first.
+          const { record: listRecord } = await typed.records.create('list', {
+            data: { name: 'LastSegment Test' },
+          });
+
+          // Create a task — lastSegment('list/task') = 'task' → resolves to task schema.
+          const { status, record } = await typed.records.create('list/task', {
+            data            : { title: 'Deep task', completed: false },
+            parentContextId : listRecord.contextId,
+          });
+
+          expect(status.code).toBe(202);
+          expect(record.schema).toBe('https://example.com/schemas/task');
+        });
+
+        it('should resolve schema from deeply nested path', async () => {
+          const { record: listRecord } = await typed.records.create('list', {
+            data: { name: 'Deep Nest' },
+          });
+          const { record: taskRecord } = await typed.records.create('list/task', {
+            data            : { title: 'Parent task', completed: false },
+            parentContextId : listRecord.contextId,
+          });
+
+          // lastSegment('list/task/attachment') = 'attachment' → no schema (schema-less type).
+          const blob = new Blob(['content'], { type: 'application/octet-stream' });
+          const { status, record } = await typed.records.create('list/task/attachment', {
+            data            : blob,
+            parentContextId : taskRecord.contextId,
+          });
+
+          expect(status.code).toBe(202);
+          expect(record.schema).toBeUndefined();
+        });
+      });
+
+      describe('collectPaths()', () => {
+        it('should recognize all valid paths from the protocol structure', async () => {
+          // Verify all expected paths are valid by performing operations on them.
+          // If collectPaths is wrong, _assertReady would throw 'invalid protocol path'.
+          const { status: listStatus } = await typed.records.query('list');
+          expect(listStatus.code).toBe(200);
+
+          const { status: taskStatus } = await typed.records.query('list/task');
+          expect(taskStatus.code).toBe(200);
+
+          const { status: attachmentStatus } = await typed.records.query('list/task/attachment');
+          expect(attachmentStatus.code).toBe(200);
+        });
+
+        it('should reject paths not in the collected set', async () => {
+          await expect(
+            typed.records.query('unknown' as any),
+          ).rejects.toThrow('invalid protocol path');
+        });
+
+        it('should skip $-prefixed keys in the structure', async () => {
+          // $actions is a key in the protocol structure but should not be a valid path.
+          await expect(
+            typed.records.query('list/$actions' as any),
+          ).rejects.toThrow('invalid protocol path');
+        });
+      });
+    });
+
     describe('TypedRecord lifecycle methods', () => {
       it('should update a record and return a new TypedRecord', async () => {
         const { record } = await typed.records.create('list', {

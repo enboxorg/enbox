@@ -142,6 +142,88 @@ describe('Eat', () => {
 
       expect(() => Eat.decode({ token })).toThrow('not a valid CBOR map');
     });
+
+    it('should decode an EAT token with aud claim', async () => {
+      const claims = new Map<number, unknown>([
+        [EatClaimKey.Aud, 'https://verifier.example.com'],
+      ]);
+
+      const token = await createEatToken(claims);
+      const result = Eat.decode({ token });
+
+      expect(result.claims.aud).toBe('https://verifier.example.com');
+    });
+
+    it('should decode an EAT token with nbf claim', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const claims = new Map<number, unknown>([
+        [EatClaimKey.Nbf, now - 60],
+      ]);
+
+      const token = await createEatToken(claims);
+      const result = Eat.decode({ token });
+
+      expect(result.claims.nbf).toBe(now - 60);
+    });
+
+    it('should decode an EAT token with cti claim', async () => {
+      const tokenId = new Uint8Array([0xAA, 0xBB, 0xCC, 0xDD]);
+      const claims = new Map<number, unknown>([
+        [EatClaimKey.Cti, tokenId],
+      ]);
+
+      const token = await createEatToken(claims);
+      const result = Eat.decode({ token });
+
+      expect(result.claims.cti).toEqual(tokenId);
+    });
+
+    it('should decode an EAT token with hwversion claim', async () => {
+      const claims = new Map<number, unknown>([
+        [EatClaimKey.Hwversion, [1, 0, 2]],
+      ]);
+
+      const token = await createEatToken(claims);
+      const result = Eat.decode({ token });
+
+      expect(result.claims.hwversion).toEqual([1, 0, 2]);
+    });
+
+    it('should decode an EAT token with measres claim', async () => {
+      const measurementResults = new Map<number, unknown>([
+        [1, new Uint8Array([0x01, 0x02])],
+        [2, 'sha-256'],
+      ]);
+      const claims = new Map<number, unknown>([
+        [EatClaimKey.Measres, measurementResults],
+      ]);
+
+      const token = await createEatToken(claims);
+      const result = Eat.decode({ token });
+
+      expect(result.claims.measres).toBeDefined();
+    });
+
+    it('should decode an EAT token with all untested claims together', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const tokenId = new Uint8Array([0x01, 0x02, 0x03]);
+      const claims = new Map<number, unknown>([
+        [EatClaimKey.Aud, 'audience-value'],
+        [EatClaimKey.Nbf, now],
+        [EatClaimKey.Cti, tokenId],
+        [EatClaimKey.Hwversion, '2.0.0'],
+        [EatClaimKey.Measres, [1, 2, 3]],
+      ]);
+
+      const token = await createEatToken(claims);
+      const result = Eat.decode({ token });
+
+      expect(result.claims.aud).toBe('audience-value');
+      expect(result.claims.nbf).toBe(now);
+      expect(result.claims.cti).toEqual(tokenId);
+      expect(result.claims.hwversion).toBe('2.0.0');
+      expect(result.claims.measres).toEqual([1, 2, 3]);
+    });
   });
 
   describe('verifyAndDecode()', () => {

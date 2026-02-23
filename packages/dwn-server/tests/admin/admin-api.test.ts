@@ -2326,6 +2326,137 @@ describe('AdminApi — webhooks (#395)', () => {
   });
 });
 
+describe('WebhookManager — delivery', () => {
+  it('should deliver an HTTP POST to a registered webhook URL when an event fires', async () => {
+    const { getDialectFromUrl } = await import('../../src/storage.js');
+    const { WebhookManager } = await import('../../src/admin/webhook-manager.js');
+
+    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const manager = await WebhookManager.create(dialect);
+
+    // Start a local HTTP server to receive the webhook POST.
+    let receivedBody: string | null = null;
+    let receivedHeaders: Record<string, string> = {};
+
+    const webhookServer = Bun.serve({
+      port: 0,
+      async fetch(req: Request): Promise<Response> {
+        receivedBody = await req.text();
+        receivedHeaders = Object.fromEntries(req.headers.entries());
+        return new Response('OK', { status: 200 });
+      },
+    });
+
+    try {
+      const webhookUrl = `http://localhost:${webhookServer.port}/hook`;
+
+      // Register a webhook that matches all events.
+      await manager.register({
+        url    : webhookUrl,
+        events : ['*'],
+      });
+
+      // Fire an event.
+      manager.fire('tenant.suspend', 'did:test:webhook-target', { reason: 'abuse' });
+
+      // Wait for async delivery.
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 500));
+
+      // Verify the webhook was called.
+      expect(receivedBody).not.toBeNull();
+      const payload = JSON.parse(receivedBody!);
+      expect(payload.event).toBe('tenant.suspend');
+      expect(payload.target).toBe('did:test:webhook-target');
+      expect(payload.data).toEqual({ reason: 'abuse' });
+      expect(payload.id).toBeDefined();
+      expect(payload.timestamp).toBeDefined();
+      expect(receivedHeaders['content-type']).toBe('application/json');
+    } finally {
+      webhookServer.stop(true);
+      await manager.close();
+    }
+  });
+
+  it('should include HMAC signature header when webhook has a secret', async () => {
+    const { createHmac } = await import('crypto');
+    const { getDialectFromUrl } = await import('../../src/storage.js');
+    const { WebhookManager } = await import('../../src/admin/webhook-manager.js');
+
+    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const manager = await WebhookManager.create(dialect);
+
+    let receivedBody: string | null = null;
+    let signatureHeader: string | null = null;
+
+    const webhookServer = Bun.serve({
+      port: 0,
+      async fetch(req: Request): Promise<Response> {
+        receivedBody = await req.text();
+        signatureHeader = req.headers.get('x-webhook-signature');
+        return new Response('OK', { status: 200 });
+      },
+    });
+
+    try {
+      const secret = 'test-webhook-secret';
+      await manager.register({
+        url    : `http://localhost:${webhookServer.port}/signed-hook`,
+        events : ['tenant.*'],
+        secret,
+      });
+
+      manager.fire('tenant.delete', 'did:test:signed');
+
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 500));
+
+      expect(receivedBody).not.toBeNull();
+      expect(signatureHeader).not.toBeNull();
+
+      // Verify the signature.
+      const expectedSignature = `sha256=${createHmac('sha256', secret).update(receivedBody!).digest('hex')}`;
+      expect(signatureHeader).toBe(expectedSignature);
+    } finally {
+      webhookServer.stop(true);
+      await manager.close();
+    }
+  });
+
+  it('should not deliver to webhooks that do not match the event pattern', async () => {
+    const { getDialectFromUrl } = await import('../../src/storage.js');
+    const { WebhookManager } = await import('../../src/admin/webhook-manager.js');
+
+    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const manager = await WebhookManager.create(dialect);
+
+    let received = false;
+
+    const webhookServer = Bun.serve({
+      port: 0,
+      fetch(): Response {
+        received = true;
+        return new Response('OK', { status: 200 });
+      },
+    });
+
+    try {
+      await manager.register({
+        url    : `http://localhost:${webhookServer.port}/no-match`,
+        events : ['quota.*'],
+      });
+
+      // Fire an event that does NOT match the pattern.
+      manager.fire('tenant.suspend', 'did:test:no-match');
+
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 300));
+
+      expect(received).toBe(false);
+    } finally {
+      webhookServer.stop(true);
+      await manager.close();
+    }
+  });
+});
+
 describe('AuditLog — retention policy (#394)', () => {
   let auditLog: AuditLog;
   let tmpDir: string;

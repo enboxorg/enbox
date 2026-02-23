@@ -418,6 +418,173 @@ describe('ReadOnlyRecord', () => {
     expect((record as any).store).toBeUndefined();
     expect((record as any).import).toBeUndefined();
   });
+
+  describe('author/creator fallback to unknown', () => {
+    it('should fall back to unknown when rawMessage authorization throws during getRecordAuthor', () => {
+      anonStub = createAnonymousDwnStub();
+
+      // Create a message with a malformed authorization that will cause getRecordAuthor to throw.
+      const msg = createMockRecordsWriteMessage({
+        authorization: {
+          signature: {
+            signatures: [{ protected: 'not-valid-base64url', signature: 'abc' }],
+          },
+        } as any,
+      });
+
+      const record = new ReadOnlyRecord({
+        rawMessage   : msg,
+        remoteOrigin : targetDid,
+        anonymousDwn : anonStub as unknown as AnonymousDwnApi,
+      });
+
+      expect(record.author).toBe('unknown');
+      expect(record.creator).toBe('unknown');
+    });
+
+    it('should fall back to author value when initialWrite authorization throws during getRecordAuthor', () => {
+      anonStub = createAnonymousDwnStub();
+
+      // Normal rawMessage with valid (enough) authorization — author will be extracted or fallback.
+      const msg = createMockRecordsWriteMessage();
+
+      // Malformed initialWrite that causes getRecordAuthor to throw.
+      const malformedInitialWrite = createMockRecordsWriteMessage({
+        authorization: {
+          signature: {
+            signatures: [{ protected: 'not-valid-base64url', signature: 'abc' }],
+          },
+        } as any,
+      });
+
+      const record = new ReadOnlyRecord({
+        rawMessage   : msg,
+        initialWrite : malformedInitialWrite,
+        remoteOrigin : targetDid,
+        anonymousDwn : anonStub as unknown as AnonymousDwnApi,
+      });
+
+      // Creator falls back to author (because initialWrite throw is caught).
+      expect(record.creator).toBe(record.author);
+    });
+  });
+
+  describe('readRecordData() error handling', () => {
+    it('should wrap errors from anonymous RecordsRead with a ReadOnlyRecord prefix', async () => {
+      anonStub = createAnonymousDwnStub();
+
+      const msg = createMockRecordsWriteMessage({ recordId: 'error-test-id' });
+      // No encodedData or data stream — will need to re-fetch via readRecordData().
+      const record = new ReadOnlyRecord({
+        rawMessage   : msg,
+        remoteOrigin : targetDid,
+        anonymousDwn : anonStub as unknown as AnonymousDwnApi,
+      });
+
+      // Stub recordsRead to reject with an error.
+      anonStub.recordsRead.rejects(new Error('network timeout'));
+
+      try {
+        await record.data.text();
+        throw new Error('Expected an exception to be thrown');
+      } catch (error: any) {
+        expect(error.message).toContain('ReadOnlyRecord:');
+        expect(error.message).toContain('error-test-id');
+        expect(error.message).toContain('network timeout');
+      }
+    });
+
+    it('should wrap non-200 status responses with a ReadOnlyRecord prefix', async () => {
+      anonStub = createAnonymousDwnStub();
+
+      const msg = createMockRecordsWriteMessage({ recordId: 'not-found-test' });
+      const record = new ReadOnlyRecord({
+        rawMessage   : msg,
+        remoteOrigin : targetDid,
+        anonymousDwn : anonStub as unknown as AnonymousDwnApi,
+      });
+
+      anonStub.recordsRead.resolves({
+        status : { code: 404, detail: 'Not Found' },
+        entry  : undefined,
+      } as RecordsReadReply);
+
+      try {
+        await record.data.text();
+        throw new Error('Expected an exception to be thrown');
+      } catch (error: any) {
+        expect(error.message).toContain('ReadOnlyRecord:');
+        expect(error.message).toContain('not-found-test');
+        expect(error.message).toContain('404');
+      }
+    });
+
+    it('should handle non-Error thrown values with Unknown error message', async () => {
+      anonStub = createAnonymousDwnStub();
+
+      const msg = createMockRecordsWriteMessage({ recordId: 'unknown-error-test' });
+      const record = new ReadOnlyRecord({
+        rawMessage   : msg,
+        remoteOrigin : targetDid,
+        anonymousDwn : anonStub as unknown as AnonymousDwnApi,
+      });
+
+      // Reject with a non-Error value.
+      anonStub.recordsRead.rejects('string-error');
+
+      try {
+        await record.data.text();
+        throw new Error('Expected an exception to be thrown');
+      } catch (error: any) {
+        expect(error.message).toContain('ReadOnlyRecord:');
+        expect(error.message).toContain('unknown-error-test');
+      }
+    });
+  });
+
+  describe('data.blob()', () => {
+    it('should return a Blob with the correct type from encodedData', async () => {
+      anonStub = createAnonymousDwnStub();
+
+      const msg = createMockRecordsWriteMessage({
+        descriptor: { dataFormat: 'text/plain' } as any,
+      });
+
+      const record = new ReadOnlyRecord({
+        rawMessage   : msg,
+        encodedData  : btoa('hello blob'),
+        remoteOrigin : targetDid,
+        anonymousDwn : anonStub as unknown as AnonymousDwnApi,
+      });
+
+      const blob = await record.data.blob();
+      expect(blob).toBeInstanceOf(Blob);
+      expect(blob.type).toContain('text/plain');
+    });
+
+    it('should return a Blob from a readable stream', async () => {
+      anonStub = createAnonymousDwnStub();
+
+      const msg = createMockRecordsWriteMessage();
+      const stream = new ReadableStream({
+        start(controller): void {
+          controller.enqueue(new TextEncoder().encode('blob from stream'));
+          controller.close();
+        },
+      });
+
+      const record = new ReadOnlyRecord({
+        rawMessage   : msg,
+        data         : stream,
+        remoteOrigin : targetDid,
+        anonymousDwn : anonStub as unknown as AnonymousDwnApi,
+      });
+
+      const blob = await record.data.blob();
+      expect(blob).toBeInstanceOf(Blob);
+      expect(blob.size).toBeGreaterThan(0);
+    });
+  });
 });
 
 describe('Web5.anonymous()', () => {

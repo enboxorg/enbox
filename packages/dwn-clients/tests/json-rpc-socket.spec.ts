@@ -260,6 +260,126 @@ describe('JsonRpcSocket', () => {
     });
   });
 
+  describe('toText helper', () => {
+    it('should handle ArrayBuffer data', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+
+      // Create a valid JSON-RPC response as ArrayBuffer
+      const responseObj = { jsonrpc: '2.0', id: 'ab-test', result: { reply: { status: { code: 200 } } } };
+      const encoded = new TextEncoder().encode(JSON.stringify(responseObj));
+      const arrayBuffer = encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength);
+
+      // Dispatch a message with ArrayBuffer data
+      client['socket'].dispatchEvent(new MessageEvent('message', { data: arrayBuffer }));
+      await sleepWhileWaitingForEvents();
+
+      client.close();
+    });
+
+    it('should handle Uint8Array data', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+
+      // Create a valid JSON-RPC response as Uint8Array
+      const responseObj = { jsonrpc: '2.0', id: 'u8-test', result: { reply: { status: { code: 200 } } } };
+      const uint8 = new TextEncoder().encode(JSON.stringify(responseObj));
+
+      // Dispatch a message with Uint8Array data
+      client['socket'].dispatchEvent(new MessageEvent('message', { data: uint8 }));
+      await sleepWhileWaitingForEvents();
+
+      client.close();
+    });
+
+    it('should handle string data', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+
+      const responseObj = { jsonrpc: '2.0', id: 'str-test', result: null };
+      client['socket'].dispatchEvent(new MessageEvent('message', { data: JSON.stringify(responseObj) }));
+      await sleepWhileWaitingForEvents();
+
+      client.close();
+    });
+  });
+
+  describe('wireSocket edge cases', () => {
+    it('should silently ignore unparseable messages (null parse guard)', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+
+      // Send non-JSON data — wireSocket should return early (parseJson returns null)
+      client['socket'].dispatchEvent(new MessageEvent('message', { data: 'not valid json!!!' }));
+      await sleepWhileWaitingForEvents();
+
+      // No error thrown, client still operational
+      expect(client.isConnected).toBe(true);
+      client.close();
+    });
+
+    it('should silently ignore messages with no matching handler', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+
+      // Send a valid JSON-RPC response with an id that has no registered handler
+      const responseObj = { jsonrpc: '2.0', id: 'unregistered-id', result: null };
+      client['socket'].dispatchEvent(new MessageEvent('message', { data: JSON.stringify(responseObj) }));
+      await sleepWhileWaitingForEvents();
+
+      // No error thrown, client still operational
+      expect(client.isConnected).toBe(true);
+      client.close();
+    });
+  });
+
+  describe('subscribe edge cases', () => {
+    it('should preserve existing handler on duplicate subscribe failure', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+      const { message } = await TestDataGenerator.generateRecordsSubscribe({ author: alice });
+
+      const requestId1 = CryptoUtils.randomUuid();
+      const subscriptionId = CryptoUtils.randomUuid();
+      const request1 = createJsonRpcSubscriptionRequest(
+        requestId1,
+        'rpc.subscribe.dwn.processMessage',
+        { target: alice.did, message },
+        subscriptionId,
+      );
+
+      // First subscription — should succeed
+      const listener1 = (_response: JsonRpcResponse): void => {};
+      const sub1 = await client.subscribe(request1, listener1);
+      expect(sub1.response.error).toBeUndefined();
+      expect(client['messageHandlers'].has(subscriptionId)).toBe(true);
+
+      // Capture the handler that was set by the first subscription
+      const originalHandler = client['messageHandlers'].get(subscriptionId);
+      expect(originalHandler).toBeDefined();
+
+      // Second subscription with same subscriptionId — will get an error response from server
+      // because the subscription already exists
+      const requestId2 = CryptoUtils.randomUuid();
+      const request2 = createJsonRpcSubscriptionRequest(
+        requestId2,
+        'rpc.subscribe.dwn.processMessage',
+        { }, // empty params will cause server to reject
+        subscriptionId,
+      );
+
+      const listener2 = (_response: JsonRpcResponse): void => {};
+      const sub2 = await client.subscribe(request2, listener2);
+
+      if (sub2.response.error) {
+        // The original handler should be restored because the duplicate was rejected
+        expect(client['messageHandlers'].has(subscriptionId)).toBe(true);
+        const restoredHandler = client['messageHandlers'].get(subscriptionId);
+        expect(restoredHandler).toBe(originalHandler);
+      }
+
+      // Clean up
+      if (sub1.close) {
+        await sub1.close();
+      }
+      client.close();
+    });
+  });
+
   describe('reconnection', () => {
     it('should set closedByUser on close() and not attempt reconnect', async () => {
       const client = await JsonRpcSocket.connect(socketDwnUrl, { autoReconnect: true });

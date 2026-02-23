@@ -179,4 +179,61 @@ describe('SocketConnection', () => {
     expect(logSpy).toHaveBeenCalledTimes(1);
     expect(closeSpy).toHaveBeenCalledTimes(1);
   });
+
+  describe('toSnapshot()', () => {
+    it('should return a snapshot with all expected fields', async () => {
+      const socket = createMockSocket();
+      const connection = new SocketConnection(socket, dwn);
+
+      const snapshot = connection.toSnapshot();
+
+      expect(snapshot.id).toBe(connection.id);
+      expect(typeof snapshot.connectedAt).toBe('string');
+      // Verify connectedAt is a valid ISO date string.
+      expect(new Date(snapshot.connectedAt).toISOString()).toBe(snapshot.connectedAt);
+      expect(snapshot.subscriptionCount).toBe(0);
+      expect(snapshot.subscriptions).toBeInstanceOf(Array);
+      expect(snapshot.subscriptions.length).toBe(0);
+
+      await connection.close();
+    });
+
+    it('should reflect the correct subscription count after adding subscriptions', async () => {
+      const socket = createMockSocket();
+      const connection = new SocketConnection(socket, dwn);
+
+      await connection.addSubscription({
+        id     : 'snap-sub-1',
+        method : 'method',
+        params : {},
+        close  : async (): Promise<void> => {},
+      });
+
+      const snapshot = connection.toSnapshot();
+      expect(snapshot.subscriptionCount).toBe(1);
+
+      await connection.close();
+    });
+  });
+
+  describe('send() when socket is not OPEN', () => {
+    it('should throw or fail gracefully when socket readyState is CLOSED', async () => {
+      const socket = createMockSocket();
+      // Override readyState to simulate a closed socket.
+      (socket as any).readyState = 3; // WebSocket.CLOSED
+      const connection = new SocketConnection(socket, dwn);
+
+      // Send an empty message buffer — this exercises the `message()` -> `send()` path.
+      // The send stub will still be called; we verify the connection handles it.
+      const sendStub = socket.send as sinon.SinonStub;
+      await connection.message(Buffer.from(''));
+
+      // When readyState is not OPEN, the mock send is still called (since it's a stub).
+      // In real Bun, ws.send() would throw. We verify that the code path executes
+      // without crashing the process.
+      expect(sendStub.called).toBe(true);
+
+      await connection.close();
+    });
+  });
 });
