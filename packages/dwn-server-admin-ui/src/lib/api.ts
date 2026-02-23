@@ -143,6 +143,26 @@ export const api = {
   // Rate limits
   getRateLimits: () => request<any>('/rate-limits'),
 
+  // Public profile (no auth — uses DWN convenience routes)
+  getProfile: async (did: string): Promise<{ displayName: string; bio?: string; tagline?: string; location?: string; website?: string; pronouns?: string } | null> => {
+    const protocol = 'aHR0cHM6Ly9pZGVudGl0eS5mb3VuZGF0aW9uL3Byb3RvY29scy9wcm9maWxl';
+    try {
+      const res = await fetch(`/${encodeURIComponent(did)}/read/protocols/${protocol}/profile`);
+      if (!res.ok) { return null; }
+      return res.json();
+    } catch {
+      return null;
+    }
+  },
+  getProfileAvatarUrl: (did: string): string => {
+    const protocol = 'aHR0cHM6Ly9pZGVudGl0eS5mb3VuZGF0aW9uL3Byb3RvY29scy9wcm9maWxl';
+    return `/${encodeURIComponent(did)}/read/protocols/${protocol}/profile/avatar`;
+  },
+  getProfileHeroUrl: (did: string): string => {
+    const protocol = 'aHR0cHM6Ly9pZGVudGl0eS5mb3VuZGF0aW9uL3Byb3RvY29scy9wcm9maWxl';
+    return `/${encodeURIComponent(did)}/read/protocols/${protocol}/profile/hero`;
+  },
+
   // Validate token — tries /info and returns true if 200.
   validateToken: async (t: string): Promise<boolean> => {
     try {

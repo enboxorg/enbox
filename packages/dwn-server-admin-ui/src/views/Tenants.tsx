@@ -13,6 +13,113 @@ type TenantsProps = {
 };
 
 // ---------------------------------------------------------------------------
+// Profile card (public DWN data)
+// ---------------------------------------------------------------------------
+
+function ProfileCard({ did }: { did: string }) {
+  const [profile, setProfile] = useState<any>(null);
+  const [avatarOk, setAvatarOk] = useState(false);
+  const [heroOk, setHeroOk] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    api.getProfile(did).then((data) => {
+      if (!cancelled) {
+        setProfile(data);
+        setLoaded(true);
+      }
+    });
+
+    // Probe avatar and hero URLs to check if they exist.
+    const avatarUrl = api.getProfileAvatarUrl(did);
+    const heroUrl = api.getProfileHeroUrl(did);
+
+    fetch(avatarUrl, { method: 'HEAD' }).then((res) => {
+      if (!cancelled && res.ok) { setAvatarOk(true); }
+    }).catch(() => {});
+
+    fetch(heroUrl, { method: 'HEAD' }).then((res) => {
+      if (!cancelled && res.ok) { setHeroOk(true); }
+    }).catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [did]);
+
+  if (!loaded || !profile) { return null; }
+
+  const avatarUrl = api.getProfileAvatarUrl(did);
+  const heroUrl = api.getProfileHeroUrl(did);
+
+  return (
+    <div class="card" style="overflow:hidden;padding:0">
+      {/* Hero banner */}
+      {heroOk && (
+        <div style="width:100%;height:120px;overflow:hidden;background:var(--color-bg)">
+          <img
+            src={heroUrl}
+            alt=""
+            style="width:100%;height:100%;object-fit:cover"
+          />
+        </div>
+      )}
+
+      <div style={`padding:20px;${heroOk ? 'padding-top:0' : ''}`}>
+        <div style="display:flex;align-items:center;gap:14px">
+          {/* Avatar */}
+          {avatarOk ? (
+            <img
+              src={avatarUrl}
+              alt=""
+              style={`width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid var(--color-border);flex-shrink:0;${heroOk ? 'margin-top:-28px;border-color:var(--color-surface)' : ''}`}
+            />
+          ) : (
+            <div style={`width:56px;height:56px;border-radius:50%;background:var(--color-primary);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:#fff;flex-shrink:0;${heroOk ? 'margin-top:-28px;border:2px solid var(--color-surface)' : ''}`}>
+              {(profile.displayName || '?')[0].toUpperCase()}
+            </div>
+          )}
+
+          <div style="min-width:0">
+            <div style="font-size:16px;font-weight:600;color:var(--color-text)">
+              {profile.displayName}
+            </div>
+            {profile.tagline && (
+              <div style="font-size:13px;color:var(--color-text-secondary);margin-top:1px">
+                {profile.tagline}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {profile.bio && (
+          <div style="font-size:13px;color:var(--color-text-secondary);margin-top:12px;line-height:1.5">
+            {profile.bio}
+          </div>
+        )}
+
+        {/* Metadata row */}
+        {(profile.location || profile.website || profile.pronouns) && (
+          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--color-text-muted)">
+            {profile.location && (
+              <span>{profile.location}</span>
+            )}
+            {profile.website && (
+              <a href={profile.website} target="_blank" rel="noopener noreferrer" style="font-size:12px">
+                {profile.website.replace(/^https?:\/\//, '')}
+              </a>
+            )}
+            {profile.pronouns && (
+              <span>{profile.pronouns}</span>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // List view
 // ---------------------------------------------------------------------------
 
@@ -519,6 +626,9 @@ function TenantDetail({ did }: { did: string }) {
           Delete
         </button>
       </div>
+
+      {/* Public profile card */}
+      <ProfileCard did={did} />
 
       {/* Storage card */}
       <div class="card">
