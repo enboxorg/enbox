@@ -138,6 +138,11 @@
       "$comment": "When true, records at this protocol path cannot be updated after initial write",
       "type": "boolean"
     },
+    "$delivery": {
+      "$comment": "Delivery strategy hint for records at this protocol path. 'direct' = origin pushes to all participant DWN endpoints; 'subscribe' = participant providers subscribe to the origin DWN.",
+      "type": "string",
+      "enum": ["direct", "subscribe"]
+    },
     "$tags": {
       "type": "object",
       "minProperties": 1,
