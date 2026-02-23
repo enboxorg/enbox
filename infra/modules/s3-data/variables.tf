@@ -8,6 +8,12 @@ variable "allowed_role_arns" {
   type        = list(string)
 }
 
+variable "admin_arns" {
+  description = "IAM ARNs (users/roles) allowed to manage the bucket. Prevents lockout from the explicit deny policy."
+  type        = list(string)
+  default     = []
+}
+
 variable "tags" {
   description = "Tags to apply to all resources."
   type        = map(string)

@@ -6,7 +6,7 @@ variable "name" {
 variable "engine_version" {
   description = "Aurora PostgreSQL engine version."
   type        = string
-  default     = "15.4"
+  default     = "15.8"
 }
 
 variable "instance_class" {

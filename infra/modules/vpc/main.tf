@@ -124,7 +124,7 @@ resource "aws_route_table_association" "data" {
 
 resource "aws_security_group" "alb" {
   name_prefix = "${var.name}-alb-"
-  description = "ALB — inbound HTTPS from internet"
+  description = "ALB - inbound HTTPS from internet"
   vpc_id      = aws_vpc.this.id
 
   tags = merge(var.tags, { Name = "${var.name}-sg-alb" })
@@ -159,7 +159,7 @@ resource "aws_vpc_security_group_egress_rule" "alb_all" {
 
 resource "aws_security_group" "dwn" {
   name_prefix = "${var.name}-dwn-"
-  description = "DWN ECS tasks — inbound from ALB on port 3000"
+  description = "DWN ECS tasks - inbound from ALB on port 3000"
   vpc_id      = aws_vpc.this.id
 
   tags = merge(var.tags, { Name = "${var.name}-sg-dwn" })
@@ -185,7 +185,7 @@ resource "aws_vpc_security_group_egress_rule" "dwn_all" {
 
 resource "aws_security_group" "nats" {
   name_prefix = "${var.name}-nats-"
-  description = "NATS JetStream — inbound from DWN tasks and self (cluster routing)"
+  description = "NATS JetStream - inbound from DWN tasks and self (cluster routing)"
   vpc_id      = aws_vpc.this.id
 
   tags = merge(var.tags, { Name = "${var.name}-sg-nats" })
@@ -220,7 +220,7 @@ resource "aws_vpc_security_group_egress_rule" "nats_all" {
 
 resource "aws_security_group" "aurora" {
   name_prefix = "${var.name}-aurora-"
-  description = "Aurora PostgreSQL — inbound 5432 from DWN tasks"
+  description = "Aurora PostgreSQL - inbound 5432 from DWN tasks"
   vpc_id      = aws_vpc.this.id
 
   tags = merge(var.tags, { Name = "${var.name}-sg-aurora" })
@@ -249,7 +249,7 @@ resource "aws_vpc_security_group_egress_rule" "aurora_all" {
 resource "aws_security_group" "vpc_endpoints" {
   count       = var.enable_vpc_endpoints ? 1 : 0
   name_prefix = "${var.name}-vpce-"
-  description = "VPC interface endpoints — HTTPS from private subnets"
+  description = "VPC interface endpoints - HTTPS from private subnets"
   vpc_id      = aws_vpc.this.id
 
   tags = merge(var.tags, { Name = "${var.name}-sg-vpce" })

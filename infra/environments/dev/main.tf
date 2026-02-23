@@ -6,7 +6,7 @@ locals {
   name        = "dwn-dev"
   environment = "dev"
 
-  s3_bucket_name = "${local.name}-data-${var.aws_region}"
+  s3_bucket_name = "${local.name}-store-${var.aws_region}"
 
   tags = {
     Project     = "dwn"
@@ -115,6 +115,7 @@ module "s3_data" {
 
   name              = local.s3_bucket_name
   allowed_role_arns = [module.dwn_http.task_role_arn, module.dwn_ws.task_role_arn]
+  admin_arns        = ["arn:aws:iam::387235730938:user/enbox-admin", "arn:aws:iam::387235730938:role/github-actions-terraform"]
 
   tags = local.tags
 }
@@ -167,7 +168,7 @@ module "dwn_http" {
     DWN_S3_DATA_BUCKET        = local.s3_bucket_name
     MAX_RECORD_DATA_SIZE      = "1gb"
     NATS_URL                  = module.nats.nats_url
-    DWN_EVENT_LOG_PLUGIN_PATH = "/app/dist/esm/src/plugins/event-log-nats.js"
+    DWN_EVENT_LOG_PLUGIN_PATH = "/app/packages/dwn-server/dist/esm/src/plugins/event-log-nats.js"
   }
 
   secrets = {
@@ -207,7 +208,7 @@ module "dwn_ws" {
     DWN_SERVER_LOG_LEVEL      = "INFO"
     DWN_MAX_IN_FLIGHT         = "64"
     NATS_URL                  = module.nats.nats_url
-    DWN_EVENT_LOG_PLUGIN_PATH = "/app/dist/esm/src/plugins/event-log-nats.js"
+    DWN_EVENT_LOG_PLUGIN_PATH = "/app/packages/dwn-server/dist/esm/src/plugins/event-log-nats.js"
   }
 
   secrets = {
@@ -273,11 +274,11 @@ resource "aws_iam_role_policy" "dwn_ws_s3" {
 module "monitoring" {
   source = "../../modules/monitoring"
 
-  name               = local.name
-  cluster_name       = module.ecs_cluster.cluster_name
-  service_name       = module.dwn_http.service_name
-  alb_arn_suffix     = module.alb.alb_arn_suffix
-  aurora_cluster_id  = local.name
+  name              = local.name
+  cluster_name      = module.ecs_cluster.cluster_name
+  service_name      = module.dwn_http.service_name
+  alb_arn_suffix    = module.alb.alb_arn_suffix
+  aurora_cluster_id = local.name
 
   tags = local.tags
 }

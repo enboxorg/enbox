@@ -94,7 +94,7 @@ data "aws_iam_policy_document" "bucket" {
     ]
   }
 
-  # Deny all other principals
+  # Deny all other principals (except admin/deployer ARNs)
   statement {
     sid    = "DenyOtherAccess"
     effect = "Deny"
@@ -114,7 +114,7 @@ data "aws_iam_policy_document" "bucket" {
     condition {
       test     = "StringNotLike"
       variable = "aws:PrincipalArn"
-      values   = var.allowed_role_arns
+      values   = concat(var.allowed_role_arns, var.admin_arns)
     }
   }
 }
