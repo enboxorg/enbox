@@ -503,26 +503,14 @@ describe('Stream', () => {
       expect(consumedBytes.length).toBe(streamByteLength);
     });
 
-    it('generates a stream with chunks having random bytes within a specified range', async () => {
-      const streamLength = 100;
-      const chunkLength = 10;
-      const fillValueRange: [number, number] = [50, 60]; // Range for random values
+    it('generates a stream with zero-filled chunks when fillValue is omitted', async () => {
+      const streamByteLength = 50;
+      const stream = Stream.generateByteStream({ streamLength: streamByteLength });
 
-      const readableStream = Stream.generateByteStream({ streamLength, chunkLength, fillValue: fillValueRange });
-      const reader = readableStream.getReader();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {break;}
-
-        expect(value).toBeInstanceOf(Uint8Array);
-        expect(value.length).toBeLessThanOrEqual(chunkLength);
-
-        // Check each byte in the chunk is within the specified range
-        for (const byte of value) {
-          expect(byte).toBeGreaterThanOrEqual(fillValueRange[0]);
-          expect(byte).toBeLessThanOrEqual(fillValueRange[1]);
-        }
+      const consumedBytes = await Stream.consumeToBytes({ readableStream: stream });
+      expect(consumedBytes.length).toBe(streamByteLength);
+      for (const byte of consumedBytes) {
+        expect(byte).toBe(0);
       }
     });
 
