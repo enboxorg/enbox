@@ -8,21 +8,21 @@ graph TB
 
     DNS[dev.aws.dwn.enbox.id<br/>CNAME -> ALB]
 
-    subgraph AWS Account 387235730938
+    subgraph AWS["AWS Account 387235730938"]
         subgraph VPC["VPC 10.0.0.0/16"]
-            subgraph Public Subnets
+            subgraph PubSub["Public Subnets"]
                 ALB[Application Load Balancer<br/>dwn-dev<br/>HTTPS :443 / HTTP :80 redirect]
             end
 
-            subgraph Private Subnets
-                subgraph ECS Cluster["ECS Cluster: dwn-dev"]
+            subgraph PrivSub["Private Subnets"]
+                subgraph ECSCluster["ECS Cluster: dwn-dev"]
                     HTTP[DWN HTTP Service<br/>Fargate<br/>:3000]
                     WS[DWN WebSocket Service<br/>Fargate<br/>:3000]
                     NATS[NATS JetStream<br/>Fargate<br/>:4222 client / :8222 monitor]
                 end
             end
 
-            subgraph Data Subnets
+            subgraph DataSub["Data Subnets"]
                 Aurora[(Aurora PostgreSQL 15.8<br/>db.t4g.medium<br/>dwn-dev.cluster-xxx.rds.amazonaws.com)]
             end
 
@@ -30,7 +30,7 @@ graph TB
             NAT[NAT Gateway]
         end
 
-        subgraph AWS Services
+        subgraph AWSServices["AWS Services"]
             ECR[ECR<br/>dwn-server repo]
             SM[Secrets Manager<br/>database-url / admin-token]
             S3[S3: dwn-dev-store-us-east-1<br/>DWN data storage]
@@ -56,8 +56,8 @@ graph TB
     HTTP -.->|logs| CW
     WS -.->|logs| CW
     NATS -.->|logs| CW
-    ECS Cluster -.->|image pull| ECR
-    Private Subnets -->|outbound| NAT
+    HTTP -.->|image pull| ECR
+    NAT -->|outbound| Internet
 
     classDef primary fill:#2563eb,stroke:#1e40af,color:#fff
     classDef data fill:#7c3aed,stroke:#5b21b6,color:#fff
