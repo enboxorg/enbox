@@ -2985,4 +2985,60 @@ describe('SyncEngineLevel', () => {
       expect(writeIdx).toBeLessThan(deleteIdx);
     });
   });
+
+  describe('connectivityState', () => {
+    it('should default to unknown', () => {
+      const engine = new SyncEngineLevel({ db: {} as any });
+      expect(engine.connectivityState).toBe('unknown');
+    });
+  });
+
+  describe('startSync with mode parameter', () => {
+    it('should accept poll mode with interval and default to poll', async () => {
+      // The existing `startSync({ interval })` signature should default to poll mode.
+      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
+      const syncSpy = sinon.spy(syncEngine as any, 'startPollSync');
+
+      // Call with only interval (no mode) — should default to poll mode.
+      try {
+        await syncEngine.startSync({ interval: '30s' });
+      } catch {
+        // May fail during sync — we only care that poll mode was selected.
+      }
+
+      expect(syncSpy.calledOnce).toBe(true);
+      await syncEngine.stopSync(5000);
+      syncSpy.restore();
+    });
+
+    it('should accept explicit poll mode', async () => {
+      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
+      const syncSpy = sinon.spy(syncEngine as any, 'startPollSync');
+
+      try {
+        await syncEngine.startSync({ mode: 'poll', interval: '30s' });
+      } catch {
+        // May fail during sync.
+      }
+
+      expect(syncSpy.calledOnce).toBe(true);
+      await syncEngine.stopSync(5000);
+      syncSpy.restore();
+    });
+
+    it('should accept explicit live mode', async () => {
+      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
+      const syncSpy = sinon.spy(syncEngine as any, 'startLiveSync');
+
+      try {
+        await syncEngine.startSync({ mode: 'live', interval: '5m' });
+      } catch {
+        // May fail during live setup (no remote DWN subscriptions).
+      }
+
+      expect(syncSpy.calledOnce).toBe(true);
+      await syncEngine.stopSync(5000);
+      syncSpy.restore();
+    });
+  });
 });

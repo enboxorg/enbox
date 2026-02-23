@@ -6,6 +6,8 @@
  * - `.records` returns `TypedRecord<T>[]` instead of `Record[]`.
  * - `.on('create', handler)` provides `TypedRecord<T>` in the callback.
  * - `.on('change', handler)` provides `TypedRecordChange<T>` in the callback.
+ * - `.on('disconnected' | 'reconnecting' | 'reconnected' | 'eose', handler)`
+ *   forwards transport lifecycle events from the underlying `LiveQuery`.
  *
  * @example
  * ```ts
@@ -19,6 +21,11 @@
  * liveQuery.on('create', async (record) => {
  *   const data = await record.data.json(); // FriendData
  * });
+ *
+ * // Connection lifecycle events
+ * liveQuery.on('disconnected', () => showOfflineIndicator());
+ * liveQuery.on('reconnected', () => hideOfflineIndicator());
+ * liveQuery.on('eose', () => console.log('catch-up complete'));
  * ```
  */
 
@@ -99,6 +106,14 @@ export class TypedLiveQuery<T> {
     return this._liveQuery.cursor;
   }
 
+  /**
+   * Whether the transport connection is currently active.
+   * Delegates to the underlying `LiveQuery.isConnected`.
+   */
+  public get isConnected(): boolean {
+    return this._liveQuery.isConnected;
+  }
+
   // -------------------------------------------------------------------------
   // Typed event handlers
   // -------------------------------------------------------------------------
@@ -106,8 +121,12 @@ export class TypedLiveQuery<T> {
   /**
    * Register a typed event handler. Returns an unsubscribe function.
    *
+   * Supports both record change events (`change`, `create`, `update`, `delete`)
+   * and transport lifecycle events (`disconnected`, `reconnecting`,
+   * `reconnected`, `eose`).
+   *
    * @param event - The event type to listen for.
-   * @param handler - The handler function with typed record(s).
+   * @param handler - The handler function with typed record(s) or lifecycle data.
    * @returns A function that removes the handler when called.
    *
    * @example
@@ -116,16 +135,41 @@ export class TypedLiveQuery<T> {
    *   // record is TypedRecord<T>
    * });
    * off(); // stop listening
+   *
+   * liveQuery.on('disconnected', () => showOfflineIndicator());
+   * liveQuery.on('reconnected', () => hideOfflineIndicator());
    * ```
    */
   public on(event: 'change', handler: (change: TypedRecordChange<T>) => void): () => void;
   public on(event: 'create', handler: (record: TypedRecord<T>) => void): () => void;
   public on(event: 'update', handler: (record: TypedRecord<T>) => void): () => void;
   public on(event: 'delete', handler: (record: TypedRecord<T>) => void): () => void;
+  public on(event: 'disconnected', handler: () => void): () => void;
+  public on(event: 'reconnecting', handler: (detail: { attempt: number }) => void): () => void;
+  public on(event: 'reconnected', handler: () => void): () => void;
+  public on(event: 'eose', handler: () => void): () => void;
   public on(
-    event: 'change' | 'create' | 'update' | 'delete',
-    handler: ((change: TypedRecordChange<T>) => void) | ((record: TypedRecord<T>) => void),
+    event: 'change' | 'create' | 'update' | 'delete' | 'disconnected' | 'reconnecting' | 'reconnected' | 'eose',
+    handler: ((change: TypedRecordChange<T>) => void)
+      | ((record: TypedRecord<T>) => void)
+      | ((detail: { attempt: number }) => void)
+      | (() => void),
   ): () => void {
+    // Lifecycle events: delegate directly to the underlying LiveQuery.
+    if (event === 'disconnected') {
+      return this._liveQuery.on('disconnected', handler as () => void);
+    }
+    if (event === 'reconnected') {
+      return this._liveQuery.on('reconnected', handler as () => void);
+    }
+    if (event === 'eose') {
+      return this._liveQuery.on('eose', handler as () => void);
+    }
+    if (event === 'reconnecting') {
+      return this._liveQuery.on('reconnecting', handler as (detail: { attempt: number }) => void);
+    }
+
+    // Record change events: wrap records in TypedRecord.
     if (event === 'change') {
       return this._liveQuery.on('change', (change: RecordChange): void => {
         (handler as (change: TypedRecordChange<T>) => void)({
