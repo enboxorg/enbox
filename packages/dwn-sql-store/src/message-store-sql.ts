@@ -69,6 +69,7 @@ export class MessageStoreSql implements MessageStore {
         .addColumn('isLatestBaseState', 'boolean')
         .addColumn('published', 'boolean')
         .addColumn('prune', 'boolean')
+        .addColumn('squash', 'boolean')
         .addColumn('dataFormat', 'varchar(30)')
         .addColumn('dataCid', 'varchar(60)')
         .addColumn('dataSize', 'integer')

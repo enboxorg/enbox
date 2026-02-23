@@ -32,6 +32,7 @@ type MessageStoreTable = {
   parentId: string | null;
   permissionGrantId: string | null;
   prune: boolean | null;
+  squash: boolean | null;
   // "indexes" end
 };
 
