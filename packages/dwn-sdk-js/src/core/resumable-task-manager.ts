@@ -3,6 +3,7 @@ import type { ManagedResumableTask, ResumableTaskStore } from '../types/resumabl
 
 export enum ResumableTaskName {
   RecordsDelete = 'RecordsDelete',
+  RecordsSquash = 'RecordsSquash',
 }
 
 export type ResumableTask = {
@@ -26,7 +27,8 @@ export class ResumableTaskManager {
     this.resumableTaskHandlers = {
       // NOTE: The arrow function is IMPORTANT here, else the `this` context will be lost within the invoked method.
       // e.g. code within performRecordsDelete() won't know `this` refers to the `storageController` instance.
-      [ResumableTaskName.RecordsDelete]: async (task): Promise<void> => await storageController.performRecordsDelete(task),
+      [ResumableTaskName.RecordsDelete] : async (task): Promise<void> => await storageController.performRecordsDelete(task),
+      [ResumableTaskName.RecordsSquash] : async (task): Promise<void> => await storageController.performRecordsSquash(task),
     };
   }
 
