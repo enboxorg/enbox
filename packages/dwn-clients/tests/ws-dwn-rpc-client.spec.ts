@@ -607,6 +607,124 @@ describe('WebSocketDwnRpcClient', () => {
       });
     });
 
+    describe('createConnection lifecycle callbacks via stub', () => {
+      it('should wire onclose, onreconnecting, and onreconnected callbacks', async () => {
+        // Stub JsonRpcSocket.connect to capture the options with lifecycle callbacks.
+        let capturedOptions: any;
+        const mockSocket = {
+          request   : sinon.stub().resolves({ result: { reply: { status: { code: 200 } } } }),
+          subscribe : sinon.stub(),
+          send      : sinon.stub(),
+          close     : sinon.stub(),
+        };
+
+        const connectStub = sinon.stub(JsonRpcSocket, 'connect').callsFake(
+          async (_url: string, options?: any): Promise<any> => {
+            capturedOptions = options;
+            return mockSocket;
+          }
+        );
+
+        // Clear any existing connection for this host.
+        const host = new URL(socketDwnUrl).host;
+        const connections = (WebSocketDwnRpcClient as any)['connections'] as Map<string, any>;
+        connections.delete(host);
+
+        // Trigger createConnection via sendDwnRequest.
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'foo/bar' },
+        });
+
+        await client.sendDwnRequest({
+          dwnUrl    : socketDwnUrl,
+          targetDid : alice.did,
+          message,
+        });
+
+        expect(capturedOptions).toBeDefined();
+        expect(typeof capturedOptions.onclose).toBe('function');
+        expect(typeof capturedOptions.onreconnecting).toBe('function');
+        expect(typeof capturedOptions.onreconnected).toBe('function');
+
+        // Verify the connection is in the map.
+        expect(connections.has(host)).toBe(true);
+
+        // Test onclose: should delete from connections map.
+        capturedOptions.onclose();
+        expect(connections.has(host)).toBe(false);
+
+        // Test onreconnected: should re-register in the map.
+        capturedOptions.onreconnected();
+        expect(connections.has(host)).toBe(true);
+
+        connectStub.restore();
+        connections.delete(host);
+      });
+
+      it('should notify subscription handlers during onclose and onreconnecting', async () => {
+        const receivedMessages: DwnSubscriptionMessage[] = [];
+        const handler = (msg: DwnSubscriptionMessage): void => {
+          receivedMessages.push(msg);
+        };
+
+        let capturedOptions: any;
+        const mockSocket = {
+          request   : sinon.stub().resolves({ result: { reply: { status: { code: 200 } } } }),
+          subscribe : sinon.stub(),
+          send      : sinon.stub(),
+          close     : sinon.stub(),
+        };
+
+        const connectStub = sinon.stub(JsonRpcSocket, 'connect').callsFake(
+          async (_url: string, options?: any): Promise<any> => {
+            capturedOptions = options;
+            return mockSocket;
+          }
+        );
+
+        const host = new URL(socketDwnUrl).host;
+        const connections = (WebSocketDwnRpcClient as any)['connections'] as Map<string, any>;
+        connections.delete(host);
+
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'foo/bar' },
+        });
+
+        await client.sendDwnRequest({
+          dwnUrl    : socketDwnUrl,
+          targetDid : alice.did,
+          message,
+        });
+
+        // Manually inject a tracked subscription into the connection's subscriptions map.
+        const conn = connections.get(host);
+        conn.subscriptions.set('test-sub-1', {
+          subscription : { id: 'test-sub-1', close: async (): Promise<void> => {} },
+          target       : alice.did,
+          message,
+          handler,
+        });
+
+        // Trigger onclose — handler should receive 'disconnected'.
+        capturedOptions.onclose();
+        const disconnectMsgs = receivedMessages.filter((m) => m.type === 'disconnected');
+        expect(disconnectMsgs.length).toBe(1);
+
+        // Trigger onreconnecting — handler should receive 'reconnecting' with attempt.
+        capturedOptions.onreconnecting(1);
+        const reconnectingMsgs = receivedMessages.filter(
+          (m) => m.type === 'reconnecting'
+        );
+        expect(reconnectingMsgs.length).toBe(1);
+        expect((reconnectingMsgs[0] as any).attempt).toBe(1);
+
+        connectStub.restore();
+        connections.delete(host);
+      });
+    });
+
     describe('resubscribeAll', () => {
       it('should resubscribe all tracked subscriptions after reconnection using resubscribeFactory', async () => {
         // Use a mocked socket/connection to test resubscribeAll in isolation

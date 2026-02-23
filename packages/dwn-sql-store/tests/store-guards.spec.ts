@@ -1,4 +1,5 @@
 import { createBunSqliteDatabase } from '../src/dialect/bun-sqlite-adapter.js';
+import { DataStoreS3 } from '../src/data-store-s3.js';
 import { DataStoreSql } from '../src/data-store-sql.js';
 import { MessageStoreSql } from '../src/message-store-sql.js';
 import { ResumableTaskStoreSql } from '../src/resumable-task-store-sql.js';
@@ -159,6 +160,47 @@ describe('Store guards — db not open', () => {
 
     it('should throw on delete() without open()', async () => {
       await expect(store.delete('task-1')).rejects.toThrow(
+        'Connection to database not open'
+      );
+    });
+
+    it('should throw on clear() without open()', async () => {
+      await expect(store.clear()).rejects.toThrow(
+        'Connection to database not open'
+      );
+    });
+  });
+
+  // ─── DataStoreS3 ──────────────────────────────────────────────────────
+
+  describe('DataStoreS3', () => {
+    // Construct with a stub S3Client — the guard fires before any S3 call.
+    const store = new DataStoreS3({
+      dialect  : dialect,
+      bucket   : 'test-bucket',
+      s3Client : {} as any,
+    });
+
+    it('should throw on get() without open()', async () => {
+      await expect(store.get('tenant', 'record-1', 'cid-1')).rejects.toThrow(
+        'Connection to database not open'
+      );
+    });
+
+    it('should throw on put() without open()', async () => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller): void {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        },
+      });
+      await expect(store.put('tenant', 'record-1', 'cid-1', stream)).rejects.toThrow(
+        'Connection to database not open'
+      );
+    });
+
+    it('should throw on delete() without open()', async () => {
+      await expect(store.delete('tenant', 'record-1', 'cid-1')).rejects.toThrow(
         'Connection to database not open'
       );
     });

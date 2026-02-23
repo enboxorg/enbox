@@ -597,4 +597,14 @@ describe('JsonRpcSocket', () => {
       expect(client.isConnected).toBe(false);
     });
   });
+
+  describe('connect timeout', () => {
+    it('should reject with "connect timed out" when the WebSocket never opens', async () => {
+      // Use a non-routable IP to cause the connection to hang without
+      // emitting open or error, then verify the connect timeout fires.
+      await expect(
+        JsonRpcSocket.connect('ws://10.255.255.1:9999', { connectTimeout: 100 })
+      ).rejects.toThrow('connect timed out');
+    }, 10_000);
+  });
 });

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it, spyOn } from 'bun:test';
 
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -2506,5 +2506,36 @@ describe('AuditLog — retention policy (#394)', () => {
   it('should return 0 when no retention config is set', async () => {
     const deleted = await auditLog.enforceRetention();
     expect(deleted).toBe(0);
+  });
+});
+
+// =============================================================================
+// AdminApi.fireWebhook pass-through
+// =============================================================================
+
+describe('AdminApi — fireWebhook', () => {
+  const { AdminApi } = require('../../src/admin/admin-api.js');
+
+  it('should not throw when fireWebhook is called without a webhook manager', () => {
+    const api = AdminApi.create({
+      config : { ...defaultConfig, adminToken },
+      dwn    : {} as any,
+    });
+    expect(() => api.fireWebhook('tenant.suspend', 'did:test:x')).not.toThrow();
+  });
+
+  it('should delegate to webhookManager.fire when present', () => {
+    const fireSpy = { fire: (): void => {} };
+    const spy = spyOn(fireSpy, 'fire');
+
+    const api = AdminApi.create({
+      config         : { ...defaultConfig, adminToken },
+      dwn            : {} as any,
+      webhookManager : fireSpy as any,
+    });
+    api.fireWebhook('tenant.suspend', 'did:test:x', { reason: 'test' });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith('tenant.suspend', 'did:test:x', { reason: 'test' });
   });
 });

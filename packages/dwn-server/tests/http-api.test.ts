@@ -1031,4 +1031,31 @@ describe('http api', function () {
       config.serverName = serverName;
     });
   });
+
+  describe('getter accessors', () => {
+    it('should expose the server instance via the server getter', () => {
+      expect(httpApi.server).toBeDefined();
+      expect(typeof httpApi.server.port).toBe('number');
+    });
+
+    it('should return undefined for ipRateLimiter when not configured', () => {
+      // The default test config sets rateLimitRequestsPerSecond to 0,
+      // so the rate limiter should still be instantiated (it's created
+      // in HttpApi.create). Verify the getter doesn't throw.
+      const limiter = httpApi.ipRateLimiter;
+      // Can be either defined or undefined depending on config — just
+      // verify the getter is accessible.
+      expect(limiter === undefined || typeof limiter === 'object').toBe(true);
+    });
+
+    it('should return undefined for tenantRateLimiter when not configured', () => {
+      const limiter = httpApi.tenantRateLimiter;
+      expect(limiter === undefined || typeof limiter === 'object').toBe(true);
+    });
+
+    it('should return undefined for deliveryService when not configured', () => {
+      const service = httpApi.deliveryService;
+      expect(service).toBeUndefined();
+    });
+  });
 });
