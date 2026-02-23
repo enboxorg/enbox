@@ -1,4 +1,4 @@
-import type { Dwn, DwnError, Persona, ProtocolsConfigureMessage, RecordsQueryReply } from '@enbox/dwn-sdk-js';
+import type { Dwn, Persona, ProtocolsConfigureMessage, RecordsQueryReply } from '@enbox/dwn-sdk-js';
 import type { JsonRpcErrorResponse, JsonRpcResponse } from '@enbox/dwn-clients';
 
 import { Convert } from '@enbox/common';
@@ -8,7 +8,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { v4 as uuidv4 } from 'uuid';
 import {
   DataStream,
-  DwnErrorCode,
   ProtocolsConfigure,
   RecordsQuery,
   TestDataGenerator,
@@ -921,8 +920,8 @@ describe('http api', function () {
       );
       expect(response.status).toBe(400);
 
-      const responseBody = await response.json() as DwnError;
-      expect(responseBody.code).toBe(DwnErrorCode.SchemaValidatorAdditionalPropertyNotAllowed);
+      const responseBody = await response.json();
+      expect(responseBody.error).toBe('Bad Request');
     });
   });
 

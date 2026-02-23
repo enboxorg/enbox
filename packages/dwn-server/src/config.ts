@@ -40,8 +40,14 @@ export const config = {
    * Otherwise we resort to the path within the docker server image, located at `/dwn-server/package.json`.
    */
   packageJsonPath   : process.env.DWN_SERVER_PACKAGE_JSON || '/dwn-server/package.json',
-  // max size of data that can be provided with a RecordsWrite
-  maxRecordDataSize : bytes(process.env.MAX_RECORD_DATA_SIZE || '1gb'),
+  /**
+   * Maximum size of data that can be provided with a RecordsWrite.
+   * Request bodies up to this size are buffered fully into memory, so the
+   * default should be conservative enough to prevent memory exhaustion from
+   * concurrent large uploads. Operators can raise the limit via the
+   * `MAX_RECORD_DATA_SIZE` env var (e.g. `'1gb'`).
+   */
+  maxRecordDataSize : bytes(process.env.MAX_RECORD_DATA_SIZE || '100mb'),
 
   /**
    * Maximum number of unacknowledged subscription events the server will send

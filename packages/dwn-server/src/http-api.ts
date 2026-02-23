@@ -239,6 +239,9 @@ export class HttpApi {
   }
 
   async close(): Promise<void> {
+    if (this.#openAuthHandler) {
+      this.#openAuthHandler.destroy();
+    }
     if (this.#server) {
       this.#server.stop(true); // close all connections immediately
     }
@@ -709,7 +712,8 @@ export class HttpApi {
         headers: { 'content-type': 'application/json' },
       });
     } catch (error) {
-      return Response.json(error, { status: 400 });
+      log.error('Error processing query records request', error);
+      return Response.json({ error: 'Bad Request' }, { status: 400 });
     }
   }
 
@@ -734,7 +738,7 @@ export class HttpApi {
     if (method === 'POST' && path === '/registration'
       && this.#config.registrationStoreUrl !== undefined) {
       const requestBody = await req.json();
-      log.info('Registration request:', requestBody);
+      log.info('Registration request received');
 
       try {
         await this.registrationManager.handleRegistrationRequest(requestBody);

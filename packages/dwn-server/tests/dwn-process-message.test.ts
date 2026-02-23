@@ -239,7 +239,8 @@ describe('handleDwnProcessMessage', () => {
 
     expect(jsonRpcResponse.error).toBeDefined();
     expect(jsonRpcResponse.error.code).toBe(JsonRpcErrorCodes.InternalError);
-    expect(jsonRpcResponse.error.message).toBe('unexpected error');
+    // The handler returns a generic message instead of the raw error to avoid leaking internals.
+    expect(jsonRpcResponse.error.message).toBe('an unexpected error occurred while processing the message');
     await dwn.close();
   });
 

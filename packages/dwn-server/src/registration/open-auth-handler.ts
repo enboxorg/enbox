@@ -18,6 +18,15 @@ import log from 'loglevel';
  * The JWTs issued here are verified by {@link JwtProviderAuthPlugin} using
  * the same shared secret (`DWN_PROVIDER_AUTH_JWT_SECRET`).
  */
+/**
+ * Maximum number of pending authorization codes held in memory.
+ * When the limit is reached, new authorize requests are rejected with 503.
+ */
+const MAX_PENDING_CODES = 10_000;
+
+/** Interval (ms) at which expired authorization codes are purged. */
+const CLEANUP_INTERVAL_MS = 60_000;
+
 export class OpenAuthHandler {
   #secret: Uint8Array;
   #issuer: string;
@@ -25,12 +34,22 @@ export class OpenAuthHandler {
   #pendingCodes: Map<string, { redirectUri: string; expiresAt: number }>;
   /** Registration token TTL in seconds. Default: 1 year. */
   #tokenTtlSeconds: number;
+  /** Periodic cleanup timer for expired codes. */
+  #cleanupTimer: ReturnType<typeof setInterval>;
 
   private constructor(secret: Uint8Array, issuer: string, tokenTtlSeconds: number) {
     this.#secret = secret;
     this.#issuer = issuer;
     this.#pendingCodes = new Map();
     this.#tokenTtlSeconds = tokenTtlSeconds;
+
+    // Periodically purge expired codes so memory does not grow unbounded
+    // even when no new authorize requests arrive.
+    this.#cleanupTimer = setInterval(() => this.#cleanExpiredCodes(), CLEANUP_INTERVAL_MS);
+    // Allow the process to exit even if the timer is still running.
+    if (this.#cleanupTimer.unref) {
+      this.#cleanupTimer.unref();
+    }
   }
 
   /**
@@ -63,6 +82,15 @@ export class OpenAuthHandler {
       return Response.json(
         { error: 'missing redirect_uri parameter' },
         { status: 400 },
+      );
+    }
+
+    // Reject new codes when the map is at capacity to prevent memory exhaustion.
+    if (this.#pendingCodes.size >= MAX_PENDING_CODES) {
+      log.warn(`OpenAuthHandler: pending codes map is full (${MAX_PENDING_CODES}), rejecting authorize request`);
+      return Response.json(
+        { error: 'server is busy, try again later' },
+        { status: 503 },
       );
     }
 
@@ -215,6 +243,12 @@ export class OpenAuthHandler {
       .setIssuedAt()
       .setExpirationTime(`${ttlSeconds}s`)
       .sign(this.#secret);
+  }
+
+  /** Stops the periodic cleanup timer and clears all pending codes. */
+  public destroy(): void {
+    clearInterval(this.#cleanupTimer);
+    this.#pendingCodes.clear();
   }
 
   /** Remove expired authorization codes from the pending map. */
