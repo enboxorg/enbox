@@ -7,8 +7,10 @@ import sinon from 'sinon';
 import { DataStream } from '../../src/utils/data-stream.js';
 import { DidKey } from '@enbox/dids';
 import { Dwn } from '../../src/dwn.js';
+import { DwnConstant } from '../../src/core/dwn-constant.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Jws } from '../../src/utils/jws.js';
+import { RecordsDelete } from '../../src/interfaces/records-delete.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
@@ -684,6 +686,500 @@ export function testRecordsSquash(): void {
 
         // verify the descriptor does not have squash
         expect(record.message.descriptor.squash).toBeUndefined();
+      });
+    });
+
+    describe('protocol definition validation — $squash: false', () => {
+      it('should reject a protocol definition with $squash: false at schema validation time', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const invalidProtocol: ProtocolDefinition = {
+          protocol  : 'http://squash-false-test.xyz',
+          published : true,
+          types     : { note: {} },
+          structure : {
+            note: {
+              $squash  : false as unknown as boolean,
+              $actions : [{ who: 'anyone', can: ['create', 'read'] }],
+            }
+          }
+        };
+
+        // $squash: false is rejected by JSON schema validation (enum: [true]) during message creation
+        await expect(TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : invalidProtocol,
+        })).rejects.toThrow('must be equal to one of the allowed values');
+      });
+    });
+
+    describe('root-level squash path', () => {
+      it('should squash records at a root-level protocol path (no parent context)', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // protocol with $squash at root level
+        const rootSquashProtocol: ProtocolDefinition = {
+          protocol  : 'http://root-squash.xyz',
+          published : true,
+          types     : { note: {} },
+          structure : {
+            note: {
+              $squash  : true,
+              $actions : [{ who: 'anyone', can: ['create', 'read'] }],
+            }
+          }
+        };
+
+        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : rootSquashProtocol,
+        });
+        const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+        expect(configReply.status.code).toBe(202);
+
+        // create several root-level records
+        const records = [];
+        for (let i = 0; i < 4; i++) {
+          const timestamp = Time.createOffsetTimestamp({ seconds: i + 1 });
+          const record = await TestDataGenerator.generateRecordsWrite({
+            author           : alice,
+            protocol         : rootSquashProtocol.protocol,
+            protocolPath     : 'note',
+            messageTimestamp : timestamp,
+            dateCreated      : timestamp,
+          });
+          const reply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
+          expect(reply.status.code).toBe(202);
+          records.push(record);
+        }
+
+        // squash all root-level records
+        const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
+        const squashRecord = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol         : rootSquashProtocol.protocol,
+          protocolPath     : 'note',
+          messageTimestamp : squashTimestamp,
+          dateCreated      : squashTimestamp,
+          squash           : true,
+        });
+        const squashReply = await dwn.processMessage(alice.did, squashRecord.message, { dataStream: squashRecord.dataStream });
+        expect(squashReply.status.code).toBe(202);
+
+        // query: only the squash record should remain
+        const query = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : {
+            protocol     : rootSquashProtocol.protocol,
+            protocolPath : 'note',
+          },
+        });
+        const queryReply = await dwn.processMessage(alice.did, query.message);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries!.length).toBe(1);
+        expect(queryReply.entries![0].recordId).toBe(squashRecord.message.recordId);
+      });
+
+      it('should enforce backstop at a root-level protocol path', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const rootSquashProtocol: ProtocolDefinition = {
+          protocol  : 'http://root-squash-backstop.xyz',
+          published : true,
+          types     : { note: {} },
+          structure : {
+            note: {
+              $squash  : true,
+              $actions : [{ who: 'anyone', can: ['create', 'read'] }],
+            }
+          }
+        };
+
+        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : rootSquashProtocol,
+        });
+        const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+        expect(configReply.status.code).toBe(202);
+
+        // create a squash
+        const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
+        const squashRecord = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol         : rootSquashProtocol.protocol,
+          protocolPath     : 'note',
+          messageTimestamp : squashTimestamp,
+          dateCreated      : squashTimestamp,
+          squash           : true,
+        });
+        const squashReply = await dwn.processMessage(alice.did, squashRecord.message, { dataStream: squashRecord.dataStream });
+        expect(squashReply.status.code).toBe(202);
+
+        // attempt a write older than the squash — should be rejected
+        const olderTimestamp = Time.createOffsetTimestamp({ seconds: 5 });
+        const olderRecord = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol         : rootSquashProtocol.protocol,
+          protocolPath     : 'note',
+          messageTimestamp : olderTimestamp,
+          dateCreated      : olderTimestamp,
+        });
+        const olderReply = await dwn.processMessage(alice.did, olderRecord.message, { dataStream: olderRecord.dataStream });
+        expect(olderReply.status.code).toBe(409);
+        expect(olderReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+      });
+    });
+
+    describe('cross-context isolation', () => {
+      it('should not delete records under a different parent context', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const { protocol, documentContextId: docAContextId } = await setupProtocolAndDocument(alice);
+
+        // create a second document (different parent context)
+        const docB = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol,
+          protocolPath : 'document',
+        });
+        const docBReply = await dwn.processMessage(alice.did, docB.message, { dataStream: docB.dataStream });
+        expect(docBReply.status.code).toBe(202);
+        const docBContextId = docB.message.contextId;
+
+        // create patches under document A
+        const patchTimestamp = Time.createOffsetTimestamp({ seconds: 1 });
+        const patchA = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol,
+          protocolPath     : 'document/patch',
+          parentContextId  : docAContextId,
+          messageTimestamp : patchTimestamp,
+          dateCreated      : patchTimestamp,
+        });
+        const patchAReply = await dwn.processMessage(alice.did, patchA.message, { dataStream: patchA.dataStream });
+        expect(patchAReply.status.code).toBe(202);
+
+        // create patches under document B
+        const patchB = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol,
+          protocolPath     : 'document/patch',
+          parentContextId  : docBContextId,
+          messageTimestamp : patchTimestamp,
+          dateCreated      : patchTimestamp,
+        });
+        const patchBReply = await dwn.processMessage(alice.did, patchB.message, { dataStream: patchB.dataStream });
+        expect(patchBReply.status.code).toBe(202);
+
+        // squash under document A
+        const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
+        const squashA = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol,
+          protocolPath     : 'document/patch',
+          parentContextId  : docAContextId,
+          messageTimestamp : squashTimestamp,
+          dateCreated      : squashTimestamp,
+          squash           : true,
+        });
+        const squashAReply = await dwn.processMessage(alice.did, squashA.message, { dataStream: squashA.dataStream });
+        expect(squashAReply.status.code).toBe(202);
+
+        // verify patchA was deleted (squash under doc A)
+        const queryA = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : {
+            protocol,
+            protocolPath : 'document/patch',
+            contextId    : docAContextId,
+          },
+        });
+        const queryAReply = await dwn.processMessage(alice.did, queryA.message);
+        expect(queryAReply.status.code).toBe(200);
+        expect(queryAReply.entries!.length).toBe(1);
+        expect(queryAReply.entries![0].recordId).toBe(squashA.message.recordId);
+
+        // verify patchB is still present (different parent context)
+        const queryB = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : {
+            protocol,
+            protocolPath : 'document/patch',
+            contextId    : docBContextId,
+          },
+        });
+        const queryBReply = await dwn.processMessage(alice.did, queryB.message);
+        expect(queryBReply.status.code).toBe(200);
+        expect(queryBReply.entries!.length).toBe(1);
+        expect(queryBReply.entries![0].recordId).toBe(patchB.message.recordId);
+      });
+    });
+
+    describe('squash with large data (data store cleanup)', () => {
+      it('should delete data from the data store for records with large data', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const { protocol, documentContextId } = await setupProtocolAndDocument(alice);
+
+        // create a patch with data larger than maxDataSizeAllowedToBeEncoded so it goes to the data store
+        const largeData = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
+        const patchTimestamp = Time.createOffsetTimestamp({ seconds: 1 });
+        const patch = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol,
+          protocolPath     : 'document/patch',
+          parentContextId  : documentContextId,
+          messageTimestamp : patchTimestamp,
+          dateCreated      : patchTimestamp,
+          data             : largeData,
+        });
+        const patchReply = await dwn.processMessage(alice.did, patch.message, { dataStream: DataStream.fromBytes(largeData) });
+        expect(patchReply.status.code).toBe(202);
+
+        // verify data exists in the data store
+        const dataBeforeSquash = await dataStore.get(alice.did, patch.message.recordId, patch.message.descriptor.dataCid);
+        expect(dataBeforeSquash).toBeDefined();
+
+        // squash
+        const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
+        const squashRecord = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol,
+          protocolPath     : 'document/patch',
+          parentContextId  : documentContextId,
+          messageTimestamp : squashTimestamp,
+          dateCreated      : squashTimestamp,
+          squash           : true,
+        });
+        const squashReply = await dwn.processMessage(alice.did, squashRecord.message, { dataStream: squashRecord.dataStream });
+        expect(squashReply.status.code).toBe(202);
+
+        // verify data was deleted from the data store
+        const dataAfterSquash = await dataStore.get(alice.did, patch.message.recordId, patch.message.descriptor.dataCid);
+        expect(dataAfterSquash).toBeUndefined();
+      });
+    });
+
+    describe('squash backstop — equal timestamps', () => {
+      it('should reject a write whose messageTimestamp equals the most recent squash timestamp', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const { protocol, documentContextId } = await setupProtocolAndDocument(alice);
+
+        // create a squash
+        const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
+        const squashRecord = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol,
+          protocolPath     : 'document/patch',
+          parentContextId  : documentContextId,
+          messageTimestamp : squashTimestamp,
+          dateCreated      : squashTimestamp,
+          squash           : true,
+        });
+        const squashReply = await dwn.processMessage(alice.did, squashRecord.message, { dataStream: squashRecord.dataStream });
+        expect(squashReply.status.code).toBe(202);
+
+        // attempt a write with the exact same timestamp as the squash — should be rejected
+        const equalTimestampRecord = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol,
+          protocolPath     : 'document/patch',
+          parentContextId  : documentContextId,
+          messageTimestamp : squashTimestamp,
+          dateCreated      : squashTimestamp,
+        });
+        const equalReply = await dwn.processMessage(
+          alice.did, equalTimestampRecord.message, { dataStream: equalTimestampRecord.dataStream }
+        );
+        expect(equalReply.status.code).toBe(409);
+        expect(equalReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+      });
+    });
+
+    describe('squash authorization — negative', () => {
+      it('should reject squash when the author has neither squash nor create permission', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        // protocol where only author of document can create patches and only editors can squash
+        // bob has no role at all
+        const restrictedProtocol: ProtocolDefinition = {
+          protocol  : 'http://restricted-squash.xyz',
+          published : true,
+          types     : {
+            document : {},
+            editor   : {},
+            patch    : {},
+          },
+          structure: {
+            document: {
+              $actions : [{ who: 'anyone', can: ['create', 'read'] }],
+              editor   : {
+                $role    : true,
+                $actions : [{ who: 'author', of: 'document', can: ['create', 'delete'] }],
+              },
+              patch: {
+                $squash  : true,
+                $actions : [
+                  { who: 'author', of: 'document', can: ['create', 'read'] },
+                  { role: 'document/editor', can: ['squash'] },
+                ],
+              }
+            }
+          }
+        };
+
+        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : restrictedProtocol,
+        });
+        const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+        expect(configReply.status.code).toBe(202);
+
+        // alice creates a document
+        const document = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol     : restrictedProtocol.protocol,
+          protocolPath : 'document',
+        });
+        const docReply = await dwn.processMessage(alice.did, document.message, { dataStream: document.dataStream });
+        expect(docReply.status.code).toBe(202);
+
+        const documentContextId = document.message.contextId;
+
+        // alice creates a patch (she is author of document, so she has 'create' permission)
+        const patchTimestamp = Time.createOffsetTimestamp({ seconds: 1 });
+        const patch = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol         : restrictedProtocol.protocol,
+          protocolPath     : 'document/patch',
+          parentContextId  : documentContextId,
+          messageTimestamp : patchTimestamp,
+          dateCreated      : patchTimestamp,
+        });
+        const patchReply = await dwn.processMessage(alice.did, patch.message, { dataStream: patch.dataStream });
+        expect(patchReply.status.code).toBe(202);
+
+        // bob tries to squash — bob is NOT author of document and has no editor role
+        // the squash action checks 'squash' first (no role), then falls back to 'create' (bob is not author of document)
+        const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
+        const bobSquash = await RecordsWrite.create({
+          signer           : Jws.createSigner(bob),
+          protocol         : restrictedProtocol.protocol,
+          protocolPath     : 'document/patch',
+          parentContextId  : documentContextId,
+          dataFormat       : 'application/json',
+          data             : TestDataGenerator.randomBytes(32),
+          messageTimestamp : squashTimestamp,
+          dateCreated      : squashTimestamp,
+          squash           : true,
+        });
+
+        const bobSquashReply = await dwn.processMessage(
+          alice.did, bobSquash.message, { dataStream: DataStream.fromBytes(TestDataGenerator.randomBytes(32)) }
+        );
+        // bob should be rejected — either 401 (authorization failure)
+        expect(bobSquashReply.status.code).toBe(401);
+      });
+    });
+
+    describe('squash purges RecordsDelete messages', () => {
+      it('should purge RecordsDelete tombstones for records that predate the squash', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // Use a protocol with $squash but without $immutable so records can be deleted
+        const deletableSquashProtocol: ProtocolDefinition = {
+          protocol  : 'http://deletable-squash.xyz',
+          published : true,
+          types     : {
+            document : {},
+            patch    : {},
+          },
+          structure: {
+            document: {
+              $actions : [{ who: 'anyone', can: ['create', 'read'] }],
+              patch    : {
+                $squash  : true,
+                $actions : [{ who: 'anyone', can: ['create', 'read', 'delete'] }],
+              }
+            }
+          }
+        };
+
+        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : deletableSquashProtocol,
+        });
+        const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+        expect(configReply.status.code).toBe(202);
+
+        // create parent document
+        const document = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol     : deletableSquashProtocol.protocol,
+          protocolPath : 'document',
+        });
+        const docReply = await dwn.processMessage(alice.did, document.message, { dataStream: document.dataStream });
+        expect(docReply.status.code).toBe(202);
+        const documentContextId = document.message.contextId;
+
+        // create a patch record
+        const patchTimestamp = Time.createOffsetTimestamp({ seconds: 1 });
+        const patch = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol         : deletableSquashProtocol.protocol,
+          protocolPath     : 'document/patch',
+          parentContextId  : documentContextId,
+          messageTimestamp : patchTimestamp,
+          dateCreated      : patchTimestamp,
+        });
+        const patchReply = await dwn.processMessage(alice.did, patch.message, { dataStream: patch.dataStream });
+        expect(patchReply.status.code).toBe(202);
+
+        // delete that patch record (messageTimestamp must be after the patch for the delete to be accepted)
+        const deleteTimestamp = Time.createOffsetTimestamp({ seconds: 2 });
+        const deleteRecord = await RecordsDelete.create({
+          recordId         : patch.message.recordId,
+          messageTimestamp : deleteTimestamp,
+          signer           : Jws.createSigner(alice),
+        });
+        const deleteReply = await dwn.processMessage(alice.did, deleteRecord.message);
+        expect(deleteReply.status.code).toBe(202);
+
+        // squash — this should purge patch1 (deleted, newest message timestamp is seconds: 2)
+        const squashTimestamp = Time.createOffsetTimestamp({ seconds: 5 });
+        const squashRecord = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol         : deletableSquashProtocol.protocol,
+          protocolPath     : 'document/patch',
+          parentContextId  : documentContextId,
+          messageTimestamp : squashTimestamp,
+          dateCreated      : squashTimestamp,
+          squash           : true,
+        });
+        const squashReply = await dwn.processMessage(alice.did, squashRecord.message, { dataStream: squashRecord.dataStream });
+        expect(squashReply.status.code).toBe(202);
+
+        // query for all records — should see only the squash record (deleted patch1 was fully purged)
+        const query = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : {
+            protocol     : deletableSquashProtocol.protocol,
+            protocolPath : 'document/patch',
+          },
+        });
+        const queryReply = await dwn.processMessage(alice.did, query.message);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries!.length).toBe(1);
+        expect(queryReply.entries![0].recordId).toBe(squashRecord.message.recordId);
+
+        // verify the deleted patch1's messages are fully purged from message store
+        // by querying for it directly — should not be found (both the initial write and the RecordsDelete tombstone should be gone)
+        const directQuery = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { recordId: patch.message.recordId },
+        });
+        const directReply = await dwn.processMessage(alice.did, directQuery.message);
+        expect(directReply.status.code).toBe(200);
+        expect(directReply.entries!.length).toBe(0);
       });
     });
   });

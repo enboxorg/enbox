@@ -147,7 +147,8 @@
     },
     "$squash": {
       "$comment": "When true, enables squash writes at this protocol path — a RecordsWrite with squash: true atomically creates a snapshot and deletes all older sibling records",
-      "type": "boolean"
+      "type": "boolean",
+      "enum": [true]
     },
     "$tags": {
       "type": "object",

@@ -1,6 +1,6 @@
 import type { Filter } from '../types/query-types.js';
+import type { GenericMessageReply } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
-import type { GenericMessage, GenericMessageReply } from '../types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsQueryReplyEntry, RecordsWriteMessage } from '../types/records-types.js';
 
@@ -17,6 +17,7 @@ import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
+import { ResumableTaskName } from '../core/resumable-task-manager.js';
 import { SortDirection } from '../types/query-types.js';
 import { StorageController } from '../store/storage-controller.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
@@ -181,9 +182,12 @@ export class RecordsWriteHandler implements MethodHandler {
     );
 
     // Squash processing: if the incoming write is a squash, delete all older sibling records
-    // at the same protocol path and parent context.
+    // at the same protocol path and parent context. Uses the resumable task system for crash safety.
     if (message.descriptor.squash === true) {
-      await this.processSquash(tenant, message);
+      await this.deps.resumableTaskManager!.run({
+        name : ResumableTaskName.RecordsSquash,
+        data : { tenant, message }
+      });
     }
 
     // Dispatch post-processing hooks to the core protocol, if applicable.
@@ -349,9 +353,10 @@ export class RecordsWriteHandler implements MethodHandler {
         undefined,
         this.deps.coreProtocols,
       );
-    } catch {
+    } catch (error) {
       // If the protocol definition can't be found, skip the backstop check.
       // Authorization will handle the missing protocol error later.
+      console.warn(`enforceSquashBackstop: failed to fetch protocol definition for '${message.descriptor.protocol}':`, error);
       return;
     }
 
@@ -405,91 +410,6 @@ export class RecordsWriteHandler implements MethodHandler {
         `at protocol path '${message.descriptor.protocolPath}'.`
       );
     }
-  }
-
-  /**
-   * Processes a squash write: deletes all sibling records at the same protocol path and parent
-   * context whose `messageTimestamp` is strictly older than the squash record's `messageTimestamp`.
-   * Unlike normal `RecordsDelete` tombstones, squash targets are fully purged — no initial writes
-   * are retained.
-   */
-  private async processSquash(tenant: string, squashMessage: RecordsWriteMessage): Promise<void> {
-    const { protocol, protocolPath, messageTimestamp } = squashMessage.descriptor;
-
-    // Build a filter to find all sibling records at the same protocol path and parent context
-    const filter: Filter = {
-      interface    : DwnInterfaceName.Records,
-      method       : DwnMethodName.Write,
-      protocol,
-      protocolPath : protocolPath,
-    };
-
-    // Scope by parent context for nested records
-    const parentContextId = Records.getParentContextFromOfContextId(squashMessage.contextId);
-    if (parentContextId !== undefined && parentContextId !== '') {
-      const prefixFilter = FilterUtility.constructPrefixFilterAsRangeFilter(parentContextId);
-      filter.contextId = prefixFilter;
-    }
-
-    // Query for all records at this path and context
-    const { messages: siblingMessages } = await this.deps.messageStore.query(tenant, [filter]);
-
-    // Group messages by recordId
-    const recordIdToMessages = new Map<string, GenericMessage[]>();
-    for (const msg of siblingMessages) {
-      const recordId = (msg as RecordsWriteMessage).recordId;
-      const existing = recordIdToMessages.get(recordId);
-      if (existing !== undefined) {
-        existing.push(msg);
-      } else {
-        recordIdToMessages.set(recordId, [msg]);
-      }
-    }
-
-    // Delete all records whose messageTimestamp is strictly older than the squash record's timestamp.
-    // Skip the squash record itself.
-    for (const [recordId, messages] of recordIdToMessages) {
-      if (recordId === squashMessage.recordId) {
-        continue;
-      }
-
-      // Check if ALL messages for this recordId are older than the squash timestamp.
-      // We use the newest message's timestamp to determine if the record predates the squash.
-      const newestMessage = await Message.getNewestMessage(messages);
-      if (newestMessage === undefined) {
-        continue;
-      }
-
-      const newestTimestamp = (newestMessage as RecordsWriteMessage).descriptor.messageTimestamp;
-      if (newestTimestamp < messageTimestamp) {
-        // Fully purge this record — all messages (including initial write) and their data
-        await this.purgeRecord(tenant, messages);
-      }
-    }
-  }
-
-  /**
-   * Fully purges all messages of a single record — deletes data, state index entries,
-   * and message store entries. Unlike normal record deletion, no initial write is retained.
-   */
-  private async purgeRecord(tenant: string, recordMessages: GenericMessage[]): Promise<void> {
-    // Delete data from the data store for any RecordsWrite messages that have large data
-    const recordsWrites = recordMessages.filter(
-      (msg: GenericMessage): boolean => msg.descriptor.method === DwnMethodName.Write
-    );
-    if (recordsWrites.length > 0) {
-      const newestWrite = (await Message.getNewestMessage(recordsWrites)) as RecordsWriteMessage;
-      await this.deps.dataStore!.delete(tenant, newestWrite.recordId, newestWrite.descriptor.dataCid);
-    }
-
-    // Delete state index entries and message store entries
-    const messageCids = await Promise.all(
-      recordMessages.map((msg: GenericMessage): Promise<string> => Message.getCid(msg))
-    );
-    await this.deps.stateIndex!.delete(tenant, messageCids);
-    await Promise.all(
-      messageCids.map((cid: string): Promise<void> => this.deps.messageStore.delete(tenant, cid))
-    );
   }
 
   private async authorizeRecordsWrite(tenant: string, recordsWrite: RecordsWrite, messageStore: MessageStore): Promise<void> {
