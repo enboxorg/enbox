@@ -82,8 +82,9 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
         const retryAfterSec = Math.ceil(result.retryAfterMs / 1000);
         const jsonRpcResponse = createJsonRpcErrorResponse(
           requestId,
-          JsonRpcErrorCodes.InvalidRequest,
+          JsonRpcErrorCodes.TooManyRequests,
           `${DwnServerErrorCode.RateLimitExceeded}: tenant rate limit exceeded, retry after ${retryAfterSec}s`,
+          { retryAfterSec },
         );
         return { jsonRpcResponse };
       }

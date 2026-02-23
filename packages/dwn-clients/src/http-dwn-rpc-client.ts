@@ -5,7 +5,8 @@ import type { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
 import { CryptoUtils } from '@enbox/crypto';
 import { DataStream } from '@enbox/dwn-sdk-js';
 import { DwnServerInfoCacheMemory } from './dwn-server-info-cache-memory.js';
-import { createJsonRpcRequest, parseJson } from './json-rpc.js';
+import { RateLimitError } from './rate-limit-error.js';
+import { createJsonRpcRequest, JsonRpcErrorCodes, parseJson } from './json-rpc.js';
 
 // ---------------------------------------------------------------------------
 // Retry configuration
@@ -139,6 +140,15 @@ export class HttpDwnRpcClient implements DwnRpc {
     }
 
     const resp = await this.fetchWithRetry(request.dwnUrl, fetchOpts);
+
+    // After retries are exhausted, a 429 means we're still rate-limited.
+    // Per-IP 429s return plain JSON (not a JSON-RPC envelope), so we must
+    // check the status before attempting JSON-RPC parsing.
+    if (resp.status === 429) {
+      const retryAfter = parseInt(resp.headers.get('retry-after') ?? '1', 10);
+      throw new RateLimitError(retryAfter);
+    }
+
     let dwnRpcResponse: JsonRpcResponse;
 
     // When the server streams record data back, the JSON-RPC envelope is in the
@@ -167,6 +177,10 @@ export class HttpDwnRpcClient implements DwnRpc {
 
     if (dwnRpcResponse.error) {
       const { code, message } = dwnRpcResponse.error;
+      if (code === JsonRpcErrorCodes.TooManyRequests) {
+        const retryAfter = dwnRpcResponse.error.data?.retryAfterSec ?? 1;
+        throw new RateLimitError(retryAfter);
+      }
       throw new Error(`(${code}) - ${message}`);
     }
 
@@ -203,6 +217,10 @@ export class HttpDwnRpcClient implements DwnRpc {
 
     try {
       const response = await this.fetchWithRetry(url.toString());
+      if (response.status === 429) {
+        const retryAfter = parseInt(response.headers.get('retry-after') ?? '1', 10);
+        throw new RateLimitError(retryAfter);
+      }
       if (response.ok) {
         const results = await response.json() as ServerInfo;
 
