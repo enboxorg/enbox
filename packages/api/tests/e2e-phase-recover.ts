@@ -17,10 +17,10 @@
  *   E2E_ORIGINAL_DID    — Identity DID from Phase A (for comparison)
  */
 
-import { Web5UserAgent } from '@enbox/agent';
-import { repository, TypedWeb5 } from '../src/index.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { ProfileProtocol } from '@enbox/protocols';
+import { Web5UserAgent } from '@enbox/agent';
+import { repository, TypedWeb5 } from '../src/index.js';
 
 const DWN_URL = process.env.E2E_DWN_URL!;
 const persona = JSON.parse(process.env.E2E_PERSONA!);

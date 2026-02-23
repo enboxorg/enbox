@@ -145,6 +145,9 @@ export class Did {
     // Return null if the input string is empty or not provided.
     if (!didUri) {return null;}
 
+    // Guard against ReDoS: reject unreasonably long URIs before executing the regex.
+    if (didUri.length > 2048) {return null;}
+
     // Execute the regex pattern on the input string to extract URI components.
     const match = Did.DID_URI_PATTERN.exec(didUri);
 

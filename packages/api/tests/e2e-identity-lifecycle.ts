@@ -30,9 +30,10 @@
  * @module
  */
 
-import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+
+import { randomUUID } from 'node:crypto';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -169,16 +170,15 @@ async function run(): Promise<void> {
   const phaseBResult = await runPhase(
     path.join(import.meta.dir, 'e2e-phase-recover.ts'),
     {
-      E2E_DWN_URL          : DWN_URL,
-      E2E_PERSONA          : persona,
-      E2E_PASSWORD         : 'e2e-test-password-phase2-new',
-      E2E_RECOVERY_PHRASE  : recoveryPhrase,
-      E2E_ORIGINAL_DID     : originalDid,
+      E2E_DWN_URL         : DWN_URL,
+      E2E_PERSONA         : persona,
+      E2E_PASSWORD        : 'e2e-test-password-phase2-new',
+      E2E_RECOVERY_PHRASE : recoveryPhrase,
+      E2E_ORIGINAL_DID    : originalDid,
     },
   );
 
   const verified = phaseBResult.verified as boolean;
-  const recoveredDid = phaseBResult.did as string;
 
   if (!verified) {
     throw new Error('Phase B: profile verification failed');

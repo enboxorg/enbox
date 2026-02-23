@@ -10,8 +10,8 @@
  *   E2E_ADMIN_TOKEN — (Optional) DWN admin token for tenant registration
  */
 
-import { Web5, repository } from '../src/index.js';
 import { ProfileProtocol, SocialGraphProtocol } from '@enbox/protocols';
+import { repository, Web5 } from '../src/index.js';
 
 const DWN_URL = process.env.E2E_DWN_URL!;
 const persona = JSON.parse(process.env.E2E_PERSONA!);
