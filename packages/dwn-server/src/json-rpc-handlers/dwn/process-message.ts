@@ -159,14 +159,16 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
 
     return responsePayload;
   } catch (error) {
+    // Log the full error internally but return a generic message to the client
+    // to avoid leaking implementation details (SQL errors, file paths, etc.).
+    log.error('handleDwnProcessMessage error', error);
+
     const jsonRpcResponse = createJsonRpcErrorResponse(
       requestId,
       JsonRpcErrorCodes.InternalError,
-      error.message,
+      'an unexpected error occurred while processing the message',
     );
 
-    // log the unhandled error response
-    log.error('handleDwnProcessMessage error', jsonRpcResponse, dwnRequest, error);
     return { jsonRpcResponse } as HandlerResponse;
   }
 };
