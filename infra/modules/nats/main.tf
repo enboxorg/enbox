@@ -12,8 +12,6 @@ locals {
       "-n", "nats-${i}",
       "-js",
       "-sd", "/data",
-      "-ms", var.jetstream_max_mem,
-      "-fs", var.jetstream_max_file,
       "-p", "4222",
       "-m", "8222",
     ],
@@ -65,7 +63,7 @@ resource "aws_service_discovery_service" "nats" {
 
 resource "aws_efs_file_system" "nats" {
   encrypted        = true
-  throughput_mode   = var.efs_throughput_mode
+  throughput_mode  = var.efs_throughput_mode
   performance_mode = "generalPurpose"
 
   tags = merge(var.tags, {
@@ -279,8 +277,8 @@ resource "aws_ecs_task_definition" "nats" {
     name = "nats-data"
 
     efs_volume_configuration {
-      file_system_id          = aws_efs_file_system.nats.id
-      transit_encryption      = "ENABLED"
+      file_system_id     = aws_efs_file_system.nats.id
+      transit_encryption = "ENABLED"
 
       authorization_config {
         access_point_id = aws_efs_access_point.nats[count.index].id
