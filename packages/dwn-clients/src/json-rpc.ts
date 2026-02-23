@@ -37,6 +37,7 @@ export enum JsonRpcErrorCodes {
   Unauthorized = -50401, // equivalent to HTTP Status 401
   Forbidden = -50403, // equivalent to HTTP Status 403
   Conflict = -50409, // equivalent to HTTP Status 409
+  TooManyRequests = -50429, // equivalent to HTTP Status 429
 }
 
 export type JsonRpcResponse = JsonRpcSuccessResponse | JsonRpcErrorResponse;

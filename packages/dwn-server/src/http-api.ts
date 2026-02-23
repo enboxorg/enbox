@@ -548,6 +548,16 @@ export class HttpApi {
 
     if (jsonRpcResponse.error) {
       requestCounter.inc({ method: dwnRpcRequest.method, error: 1 });
+
+      // Return HTTP 429 with Retry-After header for rate-limit rejections.
+      if (jsonRpcResponse.error.code === JsonRpcErrorCodes.TooManyRequests) {
+        const retryAfterSec = jsonRpcResponse.error.data?.retryAfterSec ?? 1;
+        return Response.json(jsonRpcResponse, {
+          status  : 429,
+          headers : { 'retry-after': String(retryAfterSec) },
+        });
+      }
+
       return Response.json(jsonRpcResponse, { status: 500 });
     }
 

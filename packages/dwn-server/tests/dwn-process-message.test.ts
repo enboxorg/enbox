@@ -269,8 +269,11 @@ describe('handleDwnProcessMessage', () => {
       const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest2, context);
 
       expect(jsonRpcResponse.error).toBeDefined();
+      expect(jsonRpcResponse.error.code).toBe(JsonRpcErrorCodes.TooManyRequests);
       expect(jsonRpcResponse.error.message).toContain(DwnServerErrorCode.RateLimitExceeded);
       expect(jsonRpcResponse.error.message).toContain('retry after');
+      expect(jsonRpcResponse.error.data).toHaveProperty('retryAfterSec');
+      expect(jsonRpcResponse.error.data.retryAfterSec).toBeGreaterThan(0);
       await dwn.close();
     } finally {
       rateLimiter.destroy();
