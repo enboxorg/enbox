@@ -11,7 +11,7 @@ export type SyncIdentityOptions = {
   /**
    * The protocols that should be synced for this identity, if an empty array is provided, all messages for all protocols will be synced.
    */
-  protocols: string[]
+  protocols: string[];
 };
 
 /**
