@@ -197,8 +197,13 @@ export type Web5ConnectOptions = {
 
   /**
    * Enable synchronization of DWN records between local and remote DWNs.
-   * Sync defaults to running every 2 minutes and can be set to any value accepted by `ms()`.
-   * To disable sync set to 'off'.
+   *
+   * - **Omitted / `undefined`**: Live sync mode (default). Opens real-time
+   *   `MessagesSubscribe` WebSocket subscriptions for instant pull and
+   *   push-on-write, with a background SMT integrity check every 5 minutes.
+   * - **Interval string** (e.g. `'2m'`, `'30s'`): Poll mode. Performs a full
+   *   SMT set-reconciliation sync at the specified interval.
+   * - **`'off'`**: Sync is disabled entirely.
    */
   sync?: string;
 
@@ -673,8 +678,11 @@ export class Web5 {
         }
 
         // Enable sync using the specified interval or default.
-        sync ??= '2m';
-        userAgent.sync.startSync({ interval: sync })
+        // When sync is unset (undefined), default to live mode.
+        // When sync is an interval string (e.g. '2m', '30s'), use poll mode with that interval.
+        const syncMode = sync === undefined ? 'live' : 'poll';
+        const syncInterval = sync ?? (syncMode === 'live' ? '5m' : '2m');
+        userAgent.sync.startSync({ mode: syncMode, interval: syncInterval })
           .catch((error: any) => {
             console.error(`Sync failed: ${error}`);
           });

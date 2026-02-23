@@ -201,6 +201,181 @@ describe('HttpDwnRpcClient', () => {
     });
   });
 
+  describe('retry with exponential backoff', () => {
+    it('should retry on 503 and succeed on subsequent attempt', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+
+      // First call: 503 Service Unavailable
+      fetchStub.onFirstCall().resolves({
+        status  : 503,
+        headers : new Headers(),
+        text    : async (): Promise<string> => '',
+      } as any);
+
+      // Second call: success
+      const jsonRpcResponse = {
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { reply: { status: { code: 200, detail: 'OK' }, entries: [] } },
+      };
+      fetchStub.onSecondCall().resolves({
+        status  : 200,
+        headers : new Headers(),
+        text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
+      } as any);
+
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' }
+      });
+
+      const response = await retryClient.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      });
+
+      expect(response.status.code).toBe(200);
+      expect(fetchStub.callCount).toBe(2);
+    });
+
+    it('should retry on network TypeError and succeed', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+
+      // First call: network error
+      fetchStub.onFirstCall().rejects(new TypeError('Failed to fetch'));
+
+      // Second call: success
+      const jsonRpcResponse = {
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { reply: { status: { code: 200, detail: 'OK' }, entries: [] } },
+      };
+      fetchStub.onSecondCall().resolves({
+        status  : 200,
+        headers : new Headers(),
+        text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
+      } as any);
+
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' }
+      });
+
+      const response = await retryClient.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      });
+
+      expect(response.status.code).toBe(200);
+      expect(fetchStub.callCount).toBe(2);
+    });
+
+    it('should exhaust retries and throw on persistent network error', async () => {
+      sinon.stub(globalThis, 'fetch').rejects(new TypeError('Failed to fetch'));
+
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' }
+      });
+
+      await expect(retryClient.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      })).rejects.toThrow('Failed to fetch');
+    });
+
+    it('should not retry on non-retryable status codes', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+
+      // 400 Bad Request is not retryable
+      const jsonRpcResponse = {
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { reply: { status: { code: 200, detail: 'OK' }, entries: [] } },
+      };
+      fetchStub.resolves({
+        status  : 200,
+        headers : new Headers(),
+        text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
+      } as any);
+
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' }
+      });
+
+      await retryClient.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      });
+
+      // Should only be called once — no retry needed.
+      expect(fetchStub.callCount).toBe(1);
+    });
+
+    it('should respect retry-after header on 429', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+
+      // First call: 429 with retry-after: 0 (minimal delay for testing)
+      fetchStub.onFirstCall().resolves({
+        status  : 429,
+        headers : new Headers({ 'retry-after': '0' }),
+        text    : async (): Promise<string> => '',
+      } as any);
+
+      // Second call: success
+      const jsonRpcResponse = {
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { reply: { status: { code: 200, detail: 'OK' }, entries: [] } },
+      };
+      fetchStub.onSecondCall().resolves({
+        status  : 200,
+        headers : new Headers(),
+        text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
+      } as any);
+
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' }
+      });
+
+      const response = await retryClient.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      });
+
+      expect(response.status.code).toBe(200);
+      expect(fetchStub.callCount).toBe(2);
+    });
+
+    it('should not retry when maxRetries is 0', async () => {
+      sinon.stub(globalThis, 'fetch').rejects(new TypeError('Failed to fetch'));
+
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 0 });
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' }
+      });
+
+      await expect(retryClient.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      })).rejects.toThrow('Failed to fetch');
+    });
+  });
+
   describe('getServerInfo', () => {
     it('fetches server info from a DWN server', async () => {
       const serverInfo = await client.getServerInfo(testDwnUrl);
