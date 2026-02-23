@@ -95,6 +95,13 @@ describe('Store guards — db not open', () => {
         'Connection to database not open'
       );
     });
+
+    it('should be idempotent — calling open() twice does not throw', async () => {
+      const freshStore = new DataStoreSql(dialect);
+      await freshStore.open();
+      await freshStore.open(); // second call should be a no-op
+      await freshStore.close();
+    });
   });
 
   // ─── StateIndexSql ────────────────────────────────────────────────────

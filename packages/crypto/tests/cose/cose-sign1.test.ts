@@ -346,6 +346,53 @@ describe('CoseSign1', () => {
     });
   });
 
+  describe('create() — unsupported algorithm', () => {
+    it('should throw when creating with an unsupported signing algorithm', async () => {
+      await expect(
+        CoseSign1.create({
+          key             : ed25519PrivateKey,
+          payload         : testPayload,
+          protectedHeader : { alg: 9999 as CoseAlgorithm },
+        })
+      ).rejects.toThrow('signing algorithm 9999 is not supported');
+    });
+  });
+
+  describe('verify() — unsupported algorithm', () => {
+    it('should throw when verifying a message with an unsupported algorithm in the protected header', () => {
+      // Manually construct a COSE_Sign1 array with an unsupported algorithm.
+      const unsupportedAlgProtected = Cbor.encode(new Map<number, unknown>([[1, 9999]]));
+      const fakeSign1 = Cbor.encode([
+        unsupportedAlgProtected,
+        new Map(),
+        testPayload,
+        new Uint8Array(64),
+      ]);
+
+      expect(
+        CoseSign1.verify({
+          coseSign1 : fakeSign1,
+          key       : ed25519PublicKey,
+        })
+      ).rejects.toThrow('verification algorithm 9999 is not supported');
+    });
+  });
+
+  describe('decode() — empty protected header', () => {
+    it('should throw when protected header bytes are empty (no algorithm)', () => {
+      // A COSE_Sign1 with zero-length protected header bytes triggers the empty-header branch.
+      const fakeSign1 = Cbor.encode([
+        new Uint8Array(0),
+        new Map(),
+        new Uint8Array([1]),
+        new Uint8Array(64),
+      ]);
+
+      // Empty protected header map has no alg, so it should throw.
+      expect(() => CoseSign1.decode(fakeSign1)).toThrow('must contain an algorithm identifier');
+    });
+  });
+
   describe('round-trip', () => {
     it('should create and verify with the same key pair (Ed25519)', async () => {
       const payload = new TextEncoder().encode('round-trip test');
