@@ -23,6 +23,7 @@ jobs:
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       src: ${{ steps.filter.outputs.src }}
     steps:
@@ -46,8 +47,9 @@ jobs:
             src:
               - '**'
               - '!**/*.md'
+              - '!**/LICENSE'
+              - '!**/CODE_OF_CONDUCT*'
               - '!docs/**'
-              - '!LICENSE'
               - '!.changeset/**'
               - '!scripts/**'
 
@@ -58,6 +60,7 @@ jobs:
   setup:
     name: Lint & Build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: changes
     if: needs.changes.outputs.src == 'true'
 
@@ -100,6 +103,7 @@ jobs:
   test-lightweight:
     name: 'Test: common / crypto'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: setup
 
     steps:
@@ -155,6 +159,7 @@ jobs:
   test-dwn-sdk:
     name: 'Test: dwn-sdk-js'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: setup
 
     steps:

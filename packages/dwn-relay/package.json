@@ -3,6 +3,7 @@
   "type": "module",
   "version": "0.0.1",
   "description": "Storage-constrained DWN relay/cache server",
+  "license": "Apache-2.0",
   "files": [
     "dist",
     "src"
