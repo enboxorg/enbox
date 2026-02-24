@@ -47,6 +47,20 @@ resource "aws_secretsmanager_secret_version" "admin_token" {
   }
 }
 
+resource "aws_secretsmanager_secret" "provider_auth_jwt_secret" {
+  name = "dwn/${local.environment}/provider-auth-jwt-secret"
+  tags = local.tags
+}
+
+resource "aws_secretsmanager_secret_version" "provider_auth_jwt_secret" {
+  secret_id     = aws_secretsmanager_secret.provider_auth_jwt_secret.id
+  secret_string = "CHANGE_ME"
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
 ################################################################################
 # VPC — 2 AZs, single NAT gateway
 ################################################################################
@@ -169,13 +183,16 @@ module "dwn_http" {
     MAX_RECORD_DATA_SIZE      = "1gb"
     NATS_URL                  = module.nats.nats_url
     DWN_EVENT_LOG_PLUGIN_PATH = "/app/packages/dwn-server/dist/esm/src/plugins/event-log-nats.js"
+    DWN_BASE_URL              = "https://dev.aws.dwn.enbox.id"
+    DWN_PROVIDER_AUTH_ENABLED = "true"
   }
 
   secrets = {
-    DWN_STORAGE                = aws_secretsmanager_secret.database_url.arn
-    DWN_TTL_CACHE_URL          = aws_secretsmanager_secret.database_url.arn
-    DWN_REGISTRATION_STORE_URL = aws_secretsmanager_secret.database_url.arn
-    DWN_ADMIN_TOKEN            = aws_secretsmanager_secret.admin_token.arn
+    DWN_STORAGE                  = aws_secretsmanager_secret.database_url.arn
+    DWN_TTL_CACHE_URL            = aws_secretsmanager_secret.database_url.arn
+    DWN_REGISTRATION_STORE_URL   = aws_secretsmanager_secret.database_url.arn
+    DWN_ADMIN_TOKEN              = aws_secretsmanager_secret.admin_token.arn
+    DWN_PROVIDER_AUTH_JWT_SECRET = aws_secretsmanager_secret.provider_auth_jwt_secret.arn
   }
 
   tags = local.tags
@@ -209,13 +226,16 @@ module "dwn_ws" {
     DWN_MAX_IN_FLIGHT         = "64"
     NATS_URL                  = module.nats.nats_url
     DWN_EVENT_LOG_PLUGIN_PATH = "/app/packages/dwn-server/dist/esm/src/plugins/event-log-nats.js"
+    DWN_BASE_URL              = "https://dev.aws.dwn.enbox.id"
+    DWN_PROVIDER_AUTH_ENABLED = "true"
   }
 
   secrets = {
-    DWN_STORAGE                = aws_secretsmanager_secret.database_url.arn
-    DWN_TTL_CACHE_URL          = aws_secretsmanager_secret.database_url.arn
-    DWN_REGISTRATION_STORE_URL = aws_secretsmanager_secret.database_url.arn
-    DWN_ADMIN_TOKEN            = aws_secretsmanager_secret.admin_token.arn
+    DWN_STORAGE                  = aws_secretsmanager_secret.database_url.arn
+    DWN_TTL_CACHE_URL            = aws_secretsmanager_secret.database_url.arn
+    DWN_REGISTRATION_STORE_URL   = aws_secretsmanager_secret.database_url.arn
+    DWN_ADMIN_TOKEN              = aws_secretsmanager_secret.admin_token.arn
+    DWN_PROVIDER_AUTH_JWT_SECRET = aws_secretsmanager_secret.provider_auth_jwt_secret.arn
   }
 
   tags = local.tags
