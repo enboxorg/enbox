@@ -46,8 +46,9 @@ jobs:
             src:
               - '**'
               - '!**/*.md'
+              - '!**/LICENSE'
+              - '!**/CODE_OF_CONDUCT*'
               - '!docs/**'
-              - '!LICENSE'
               - '!.changeset/**'
               - '!scripts/**'
 
