@@ -3,6 +3,7 @@ import type { IpfsResolver } from '../proxy/ipfs-resolver.js';
 import log from 'loglevel';
 import type { MetadataStore } from './metadata-store.js';
 import type { RelayConfig } from '../config.js';
+import { requestContext } from '../request-context.js';
 import { resolveEndpoints } from '../endpoint-resolver.js';
 import { Cid, DataStream, Time } from '@enbox/dwn-sdk-js';
 import type { DataStore, DataStoreGetResult, DataStorePutResult } from '@enbox/dwn-sdk-js';
@@ -220,8 +221,14 @@ export class RelayDataStore implements DataStore {
       return undefined;
     }
 
-    // Build a minimal RecordsRead message for the peer
-    const readMessage = {
+    // Use the original signed RecordsRead message if available (threaded via
+    // AsyncLocalStorage from the request handler). This forwards the client's
+    // authorization to the peer, enabling proxy reads of non-published records.
+    // Falls back to an anonymous (unsigned) RecordsRead for background operations
+    // (sync, eviction) where no client request is in-flight — only works for
+    // published records.
+    const originalMessage = requestContext.getStore();
+    const readMessage = originalMessage ?? {
       descriptor: {
         interface        : 'Records',
         method           : 'Read',

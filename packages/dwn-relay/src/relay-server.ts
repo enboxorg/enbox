@@ -9,6 +9,7 @@ import { getRelayConfig } from './config.js';
 import { IpfsResolver } from './proxy/ipfs-resolver.js';
 import { MetadataStore } from './stores/metadata-store.js';
 import { RelayDataStore } from './stores/relay-data-store.js';
+import { requestContext } from './request-context.js';
 import { ServerSyncEngine } from './sync/server-sync-engine.js';
 import { defaultDwnServerConfig, DwnServer, getDwnConfig } from '@enbox/dwn-server';
 import { Dwn, DwnInterfaceName, DwnMethodName, EventEmitterEventLog } from '@enbox/dwn-sdk-js';
@@ -98,6 +99,23 @@ export class RelayServer {
       dataStore: relayDataStore,
       eventLog,
     });
+
+    // Wrap dwn.processMessage to thread the original signed message through
+    // AsyncLocalStorage for RecordsRead requests. This lets RelayDataStore.get()
+    // forward the client's authorization when proxying to a peer DWN, enabling
+    // proxy reads of non-published records.
+    const originalProcessMessage = dwn.processMessage.bind(dwn);
+    (dwn as any).processMessage = (tenant: string, rawMessage: any, options?: any): Promise<any> => {
+      const descriptor = rawMessage?.descriptor;
+      if (
+        descriptor?.interface === DwnInterfaceName.Records &&
+        descriptor?.method === DwnMethodName.Read &&
+        rawMessage?.authorization !== undefined
+      ) {
+        return requestContext.run(rawMessage, () => originalProcessMessage(tenant, rawMessage, options));
+      }
+      return originalProcessMessage(tenant, rawMessage, options);
+    };
 
     // Create the connection pool (shared between sync engine and read proxy).
     const connectionPool = new ConnectionPool();
