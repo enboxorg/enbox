@@ -218,7 +218,7 @@ Packages are published to npm via **Changesets** and CI. **NEVER bump versions m
 ### Key details
 
 - **Changeset config** is in `.changeset/config.json`.
-- **`@enbox/dwn-server` and `@enbox/dwn-relay` are ignored** by changesets (in `config.json` `ignore` list) — `dwn-server` is deployed directly via Fly.io, not published to npm; `dwn-relay` depends on the ignored `dwn-server`.
+- **`@enbox/dwn-relay`** has been moved to its own repository at https://github.com/enboxorg/dwn-relay.
 - **`updateInternalDependencies: "patch"`** — when a dependency gets bumped, its dependents automatically get a patch bump too. For example, bumping `@enbox/dwn-sdk-js` as `minor` will auto-bump `@enbox/agent`, `@enbox/api`, `@enbox/protocols`, `@enbox/crypto`, etc. as `patch`.
 - **`scripts/publish.sh`** handles the Bun `workspace:*` → real version resolution that changesets' built-in publish cannot do.
 - The publish script **skips already-published versions** (idempotent).
