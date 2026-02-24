@@ -47,6 +47,8 @@
     "@typescript-eslint/parser": "8.32.1",
     "esbuild": "0.16.17",
     "eslint": "9.7.0",
+    "sinon": "^17.0.1",
+    "@types/sinon": "^17.0.3",
     "rimraf": "^5.0.0",
     "typescript": "5.5.4"
   },

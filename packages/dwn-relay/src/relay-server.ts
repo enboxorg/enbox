@@ -205,11 +205,15 @@ export class RelayServer {
   }
 
   #getDefaultServerConfig(): DwnServerConfig {
-    // Import the default config from dwn-server and override relay-specific defaults
-    // We need to access it at runtime since it's module-level state
+    // Override relay-specific defaults. The DwnServer constructor uses
+    // `options.config ?? defaultConfig` — if we pass a config object it
+    // replaces the defaults entirely. We must include logLevel (accessed
+    // in the constructor) and cast for the remaining fields that the DWN
+    // only reads during start().
     return {
+      logLevel          : process.env.DWN_SERVER_LOG_LEVEL || 'INFO',
       forwardingEnabled : true,  // Relay nodes should forward by default
       deliveryEnabled   : false, // Delivery is a separate concern
-    } as DwnServerConfig;
+    } as unknown as DwnServerConfig;
   }
 }
