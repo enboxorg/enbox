@@ -511,6 +511,42 @@ describe('web5 connect', () => {
     });
   });
 
+  describe('initClient — error paths', () => {
+    it('should throw when signJwt returns undefined', async () => {
+      sinon.stub(Oidc, 'signJwt').resolves(undefined as any);
+
+      await expect(
+        WalletConnect.initClient({
+          displayName        : 'Sample App',
+          walletUri          : 'http://localhost:3000/',
+          connectServerUrl   : 'http://localhost:3000/connect',
+          permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: {} as any }],
+          onWalletUriReady   : () => {},
+          validatePin        : async () => '1234',
+        })
+      ).rejects.toThrow('Unable to sign requestObject');
+    });
+
+    it('should throw when PAR response is not ok', async () => {
+      sinon.stub(Oidc, 'signJwt').resolves('signed.jwt.value');
+      sinon.stub(Oidc, 'encryptAuthRequest').resolves('encrypted-jwe');
+      sinon.stub(globalThis, 'fetch').resolves(
+        new Response('Bad Request', { status: 400, statusText: 'Bad Request' })
+      );
+
+      await expect(
+        WalletConnect.initClient({
+          displayName        : 'Sample App',
+          walletUri          : 'http://localhost:3000/',
+          connectServerUrl   : 'http://localhost:3000/connect',
+          permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: {} as any }],
+          onWalletUriReady   : () => {},
+          validatePin        : async () => '1234',
+        })
+      ).rejects.toThrow('400: Bad Request');
+    });
+  });
+
   describe('submitAuthResponse', () => {
     it('should not attempt to configure the protocol if it already exists', async () => {
       // scenario: the wallet gets a request for a protocol that it already has configured

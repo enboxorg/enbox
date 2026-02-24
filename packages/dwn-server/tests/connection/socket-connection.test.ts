@@ -216,6 +216,33 @@ describe('SocketConnection', () => {
     });
   });
 
+  describe('toSnapshot() with active flow controllers', () => {
+    it('should include flow controller stats in subscription snapshots', async () => {
+      const socket = createMockSocket();
+      const connection = new SocketConnection(socket, dwn, undefined, 10);
+
+      // Populate the flowControllers map directly to simulate an active subscription.
+      const { FlowController } = await import('../../src/connection/flow-controller.js');
+      const fc = new FlowController('fc-sub-1', 10, () => {}, () => {});
+      (connection as any).flowControllers.set('fc-sub-1', fc);
+
+      // Also add a matching subscription entry so subscriptionCount is correct.
+      (connection as any).subscriptions.set('fc-sub-1', {
+        id    : 'fc-sub-1',
+        close : async (): Promise<void> => {},
+      });
+
+      const snapshot = connection.toSnapshot();
+      expect(snapshot.subscriptionCount).toBe(1);
+      expect(snapshot.subscriptions.length).toBe(1);
+      expect(snapshot.subscriptions[0].id).toBe('fc-sub-1');
+      expect(snapshot.subscriptions[0].inflight).toBe(0);
+      expect(snapshot.subscriptions[0].buffered).toBe(0);
+
+      await connection.close();
+    });
+  });
+
   // NOTE: The original version had a "send when socket is not OPEN" test that
   // mocked readyState to 0 and asserted that send() would not forward to the
   // underlying socket. However, `SocketConnection.send()` has no readyState

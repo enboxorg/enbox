@@ -1,7 +1,16 @@
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import {
+  concatenateUrl,
+  getDwnServiceEndpointUrls,
+  getPaginationCursor,
+  getRecordAuthor,
+  getRecordMessageCid,
+  getRecordProtocolRole,
+  isRecordsWrite,
+  pollWithTtl,
+} from '../src/utils.js';
 
-import { DateSort, Jws, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
-import { getPaginationCursor, getRecordAuthor, getRecordMessageCid, getRecordProtocolRole } from '../src/utils.js';
+import { DateSort, DwnInterfaceName, DwnMethodName, Jws, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 describe('Utils', () => {
   beforeEach(() => {
@@ -121,6 +130,200 @@ describe('Utils', () => {
       const recordsWrite = await TestDataGenerator.generateRecordsWrite();
       const writeRole = getRecordProtocolRole(recordsWrite.message);
       expect(writeRole).toBeUndefined();
+    });
+  });
+
+  describe('isRecordsWrite', () => {
+    it('should return true for a valid RecordsWrite object', () => {
+      const obj = {
+        message: {
+          descriptor: {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Write,
+          },
+        },
+      };
+      expect(isRecordsWrite(obj)).toBe(true);
+    });
+
+    it('should return false for null', () => {
+      expect(isRecordsWrite(null)).toBe(false);
+    });
+
+    it('should return false for undefined', () => {
+      expect(isRecordsWrite(undefined)).toBe(false);
+    });
+
+    it('should return false for a non-object', () => {
+      expect(isRecordsWrite('string')).toBe(false);
+      expect(isRecordsWrite(42)).toBe(false);
+    });
+
+    it('should return false for an object without message', () => {
+      expect(isRecordsWrite({})).toBe(false);
+    });
+
+    it('should return false for an object with non-object message', () => {
+      expect(isRecordsWrite({ message: 'not-object' })).toBe(false);
+    });
+
+    it('should return false for RecordsDelete', () => {
+      const obj = {
+        message: {
+          descriptor: {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Delete,
+          },
+        },
+      };
+      expect(isRecordsWrite(obj)).toBe(false);
+    });
+
+    it('should return false for ProtocolsConfigure', () => {
+      const obj = {
+        message: {
+          descriptor: {
+            interface : DwnInterfaceName.Protocols,
+            method    : DwnMethodName.Configure,
+          },
+        },
+      };
+      expect(isRecordsWrite(obj)).toBe(false);
+    });
+  });
+
+  describe('concatenateUrl', () => {
+    it('should concatenate base URL and path with single slash', () => {
+      expect(concatenateUrl('https://example.com', 'api/v1')).toBe('https://example.com/api/v1');
+    });
+
+    it('should handle trailing slash on base URL', () => {
+      expect(concatenateUrl('https://example.com/', 'api/v1')).toBe('https://example.com/api/v1');
+    });
+
+    it('should handle leading slash on path', () => {
+      expect(concatenateUrl('https://example.com', '/api/v1')).toBe('https://example.com/api/v1');
+    });
+
+    it('should handle both trailing and leading slashes', () => {
+      expect(concatenateUrl('https://example.com/', '/api/v1')).toBe('https://example.com/api/v1');
+    });
+  });
+
+  describe('pollWithTtl', () => {
+    it('should resolve with response when fetch returns ok', async () => {
+      const mockResponse = new Response('ok', { status: 200 });
+      const fetchFn = mock(() => Promise.resolve(mockResponse));
+
+      const result = await pollWithTtl(fetchFn, 100, 5000);
+      expect(result).toBe(mockResponse);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    });
+
+    it('should resolve with null when TTL is reached', async () => {
+      const mockResponse = new Response('not ok', { status: 404 });
+      const fetchFn = mock(() => Promise.resolve(mockResponse));
+
+      // Very short TTL so it expires quickly.
+      const result = await pollWithTtl(fetchFn, 50, 1);
+      expect(result).toBeNull();
+    });
+
+    it('should resolve with null when aborted', async () => {
+      const mockResponse = new Response('not ok', { status: 404 });
+      const fetchFn = mock(() => Promise.resolve(mockResponse));
+      const abortController = new AbortController();
+
+      // Abort immediately.
+      setTimeout(() => abortController.abort(), 10);
+
+      const result = await pollWithTtl(fetchFn, 100, 30000, abortController.signal);
+      expect(result).toBeNull();
+    });
+
+    it('should reject when fetch function throws', async () => {
+      const fetchFn = mock(() => Promise.reject(new Error('network error')));
+
+      await expect(pollWithTtl(fetchFn, 100, 5000)).rejects.toThrow('network error');
+    });
+  });
+
+  describe('getDwnServiceEndpointUrls', () => {
+    it('should return service endpoint URLs from a DID document', async () => {
+      const mockDereferencer = {
+        dereference: mock(() => Promise.resolve({
+          dereferencingMetadata : {},
+          contentStream         : {
+            id              : 'did:example:alice#dwn',
+            type            : 'DecentralizedWebNode',
+            serviceEndpoint : ['https://dwn.example.com'],
+          },
+        })),
+      };
+
+      const urls = await getDwnServiceEndpointUrls('did:example:alice', mockDereferencer as any);
+      expect(urls).toEqual(['https://dwn.example.com']);
+    });
+
+    it('should return empty array when service endpoint is empty', async () => {
+      const mockDereferencer = {
+        dereference: mock(() => Promise.resolve({
+          dereferencingMetadata : {},
+          contentStream         : {
+            id              : 'did:example:alice#dwn',
+            type            : 'DecentralizedWebNode',
+            serviceEndpoint : [],
+          },
+        })),
+      };
+
+      const urls = await getDwnServiceEndpointUrls('did:example:alice', mockDereferencer as any);
+      expect(urls).toEqual([]);
+    });
+
+    it('should throw when dereferencing fails', async () => {
+      const mockDereferencer = {
+        dereference: mock(() => Promise.resolve({
+          dereferencingMetadata : { error: 'notFound' },
+          contentStream         : null,
+        })),
+      };
+
+      await expect(
+        getDwnServiceEndpointUrls('did:example:alice', mockDereferencer as any)
+      ).rejects.toThrow('Failed to dereference');
+    });
+
+    it('should return empty array for non-DWN service', async () => {
+      const mockDereferencer = {
+        dereference: mock(() => Promise.resolve({
+          dereferencingMetadata : {},
+          contentStream         : {
+            id              : 'did:example:alice#other',
+            type            : 'OtherService',
+            serviceEndpoint : 'https://other.example.com',
+          },
+        })),
+      };
+
+      const urls = await getDwnServiceEndpointUrls('did:example:alice', mockDereferencer as any);
+      expect(urls).toEqual([]);
+    });
+
+    it('should handle string service endpoint', async () => {
+      const mockDereferencer = {
+        dereference: mock(() => Promise.resolve({
+          dereferencingMetadata : {},
+          contentStream         : {
+            id              : 'did:example:alice#dwn',
+            type            : 'DecentralizedWebNode',
+            serviceEndpoint : 'https://dwn.example.com',
+          },
+        })),
+      };
+
+      const urls = await getDwnServiceEndpointUrls('did:example:alice', mockDereferencer as any);
+      expect(urls).toEqual(['https://dwn.example.com']);
     });
   });
 });

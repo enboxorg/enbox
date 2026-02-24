@@ -981,6 +981,53 @@ describe('AgentDwnApi', () => {
     });
   });
 
+  describe('sendRequest() — resubscribe factory', () => {
+    let alice: BearerIdentity;
+
+    beforeAll(async () => {
+      await testHarness.clearStorage();
+      await testHarness.createAgentDid();
+      alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
+    });
+
+    afterAll(() => { sinon.restore(); });
+
+    it('builds a resubscribe factory that reconstructs subscribe messages with a cursor', async () => {
+      // Capture the resubscribeFactory by stubbing agent.rpc.sendDwnRequest.
+      let capturedFactory: ((cursor?: string) => Promise<any>) | undefined;
+      sinon.stub(testHarness.agent.rpc, 'sendDwnRequest')
+        .callsFake(async (params: any): Promise<any> => {
+          if (params.subscription?.resubscribeFactory) {
+            capturedFactory = params.subscription.resubscribeFactory;
+          }
+          return { status: { code: 200, detail: 'OK' }, subscription: { close: async (): Promise<void> => {} } };
+        });
+      sinon.stub(testHarness.agent.rpc, 'getServerInfo').resolves({ webSocketSupport: true } as any);
+
+      const subscriptionHandler = (_msg: any): void => { /* no-op */ };
+
+      await testHarness.agent.dwn.sendRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsSubscribe,
+        messageParams : { filter: { schema: 'https://schemas.xyz/resubscribe-test' } },
+        subscriptionHandler,
+      });
+
+      expect(capturedFactory).toBeDefined();
+
+      // Invoke the factory without a cursor — should use original messageParams.
+      const resumeMessage = await capturedFactory!();
+      expect(resumeMessage).toBeDefined();
+      expect(resumeMessage.descriptor).toBeDefined();
+
+      // Invoke the factory with a cursor — should merge cursor into messageParams.
+      const resumeMessageWithCursor = await capturedFactory!('cursor-abc');
+      expect(resumeMessageWithCursor).toBeDefined();
+      expect(resumeMessageWithCursor.descriptor).toBeDefined();
+    });
+  });
+
   describe('sendRequest()', () => {
     let alice: BearerIdentity;
 
@@ -2144,6 +2191,58 @@ describe('Encryption Callback Factories', () => {
       );
 
       expect(def).toBeUndefined();
+    });
+  });
+
+  describe('fetchRemoteProtocolDefinition()', () => {
+    afterEach(() => { sinon.restore(); });
+
+    it('should delegate to the standalone function and return the definition', async () => {
+      // Install a protocol locally so we can simulate a successful remote fetch.
+      const { reply: { status: configureStatus } } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: emailProtocolDefinition }
+      });
+      expect(configureStatus.code).toBe(202);
+
+      // Stub sendDwnRpcRequest to route to the local DWN instead of making a remote call.
+      const dwnApi = testHarness.agent.dwn;
+      sinon.stub(dwnApi as any, 'sendDwnRpcRequest')
+        .callsFake(async (params: any): Promise<any> => {
+          return dwnApi['_dwn'].processMessage(params.targetDid, params.message);
+        });
+
+      const def = await dwnApi['fetchRemoteProtocolDefinition'](
+        alice.did.uri,
+        emailProtocolDefinition.protocol,
+      );
+
+      expect(def).toBeDefined();
+      expect(def.protocol).toBe(emailProtocolDefinition.protocol);
+    });
+  });
+
+  describe('extractDerivedPublicKey()', () => {
+    afterEach(() => { sinon.restore(); });
+
+    it('should delegate to the standalone function and return undefined when no records exist', async () => {
+      // Stub sendDwnRpcRequest to route to the local DWN.
+      const dwnApi = testHarness.agent.dwn;
+      sinon.stub(dwnApi as any, 'sendDwnRpcRequest')
+        .callsFake(async (params: any): Promise<any> => {
+          return dwnApi['_dwn'].processMessage(params.targetDid, params.message);
+        });
+
+      const result = await dwnApi['extractDerivedPublicKey'](
+        alice.did.uri,
+        'https://protocol.xyz/nonexistent',
+        'root-context-id-abc',
+        alice.did.uri,
+      );
+
+      expect(result).toBeUndefined();
     });
   });
 
