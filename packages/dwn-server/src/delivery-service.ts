@@ -209,6 +209,7 @@ export class DeliveryService implements MessageProcessedHook {
       protocol?: string;
       protocolPath?: string;
       contextId?: string;
+      recipient?: string;
     };
 
     // Only protocol-governed records can have $delivery.
@@ -230,7 +231,7 @@ export class DeliveryService implements MessageProcessedHook {
     // For 'direct' strategy: resolve targets and push.
     if (ruleSet.$delivery === 'direct') {
       const targets = await this.#resolveDeliveryTargets(
-        tenant, protocolDefinition, ruleSet, descriptor.protocolPath, descriptor.contextId,
+        tenant, protocolDefinition, ruleSet, descriptor.protocolPath, descriptor.contextId, descriptor.recipient,
       );
 
       if (targets.length === 0) {
@@ -296,9 +297,16 @@ export class DeliveryService implements MessageProcessedHook {
     ruleSet: ProtocolRuleSet,
     protocolPath: string,
     contextId?: string,
+    recipient?: string,
   ): Promise<DeliveryTarget[]> {
     const targetDids = new Set<string>();
 
+    // Method 1: Explicit recipient on the record itself.
+    if (recipient) {
+      targetDids.add(recipient);
+    }
+
+    // Method 2: Role-based discovery from $actions rules.
     const actionRules = ruleSet.$actions ?? [];
 
     for (const rule of actionRules) {
