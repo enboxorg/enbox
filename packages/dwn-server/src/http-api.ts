@@ -6,9 +6,9 @@ import type { Server, ServerWebSocket } from 'bun';
 import type { ActivityLog } from './admin/activity-log.js';
 import type { AdminApi } from './admin/admin-api.js';
 import type { AdminStore } from './admin/admin-store.js';
-import type { DeliveryService } from './delivery-service.js';
 import type { DwnServerConfig } from './config.js';
 import type { DwnServerError } from './dwn-error.js';
+import type { MessageProcessedHook } from './message-processed-hook.js';
 import type { OpenAuthHandler } from './registration/open-auth-handler.js';
 import type { RateLimiter } from './rate-limiter.js';
 import type { RegistrationManager } from './registration/registration-manager.js';
@@ -60,7 +60,7 @@ export class HttpApi {
   #registrationStore: RegistrationStore | undefined;
   #ipRateLimiter: RateLimiter | undefined;
   #tenantRateLimiter: RateLimiter | undefined;
-  #deliveryService: DeliveryService | undefined;
+  #messageProcessedHooks: MessageProcessedHook[];
   #openAuthHandler: OpenAuthHandler | undefined;
   #adminUiPath: string | undefined;
   web5ConnectServer: Web5ConnectServer;
@@ -80,7 +80,7 @@ export class HttpApi {
       registrationStore? : RegistrationStore;
       ipRateLimiter? : RateLimiter;
       tenantRateLimiter? : RateLimiter;
-      deliveryService? : DeliveryService;
+      messageProcessedHooks? : MessageProcessedHook[];
       openAuthHandler? : OpenAuthHandler;
     },
   ): Promise<HttpApi> {
@@ -110,7 +110,7 @@ export class HttpApi {
     httpApi.#registrationStore = options?.registrationStore;
     httpApi.#ipRateLimiter = options?.ipRateLimiter;
     httpApi.#tenantRateLimiter = options?.tenantRateLimiter;
-    httpApi.#deliveryService = options?.deliveryService;
+    httpApi.#messageProcessedHooks = options?.messageProcessedHooks ?? [];
     httpApi.#openAuthHandler = options?.openAuthHandler;
     httpApi.#adminUiPath = resolvedAdminUiPath;
 
@@ -138,8 +138,8 @@ export class HttpApi {
     return this.#tenantRateLimiter;
   }
 
-  get deliveryService(): DeliveryService | undefined {
-    return this.#deliveryService;
+  get messageProcessedHooks(): MessageProcessedHook[] {
+    return this.#messageProcessedHooks;
   }
 
   // ---------------------------------------------------------------------------
@@ -549,15 +549,15 @@ export class HttpApi {
     }
 
     const requestContext: RequestContext = {
-      dwn               : this.dwn,
-      transport         : 'http',
-      dataStream        : requestDataStream,
-      activityLog       : this.#activityLog,
-      adminStore        : this.#adminStore,
-      registrationStore : this.#registrationStore,
-      config            : this.#config,
-      tenantRateLimiter : this.#tenantRateLimiter,
-      deliveryService   : this.#deliveryService,
+      dwn                   : this.dwn,
+      transport             : 'http',
+      dataStream            : requestDataStream,
+      activityLog           : this.#activityLog,
+      adminStore            : this.#adminStore,
+      registrationStore     : this.#registrationStore,
+      config                : this.#config,
+      tenantRateLimiter     : this.#tenantRateLimiter,
+      messageProcessedHooks : this.#messageProcessedHooks,
     };
     const { jsonRpcResponse, dataStream: responseDataStream } =
       await jsonRpcRouter.handle(dwnRpcRequest, requestContext);

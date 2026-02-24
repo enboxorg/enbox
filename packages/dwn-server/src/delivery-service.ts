@@ -1,6 +1,7 @@
 import type { DwnServerConfig } from './config.js';
 import type { DidDocument, DidResolver } from '@enbox/dids';
 import type { Dwn, GenericMessage, ProtocolDefinition, ProtocolRuleSet } from '@enbox/dwn-sdk-js';
+import type { MessageProcessedContext, MessageProcessedHook } from './message-processed-hook.js';
 
 import log from 'loglevel';
 
@@ -17,6 +18,8 @@ import { DwnInterfaceName, DwnMethodName, getRuleSetAtPath } from '@enbox/dwn-sd
 type DwnEndpoint = {
   /** The full URL of the DWN service endpoint. */
   url: string;
+  /** Whether this endpoint is a full node (retains all data). Cache nodes have `isFull: false`. */
+  isFull: boolean;
 };
 
 /**
@@ -46,7 +49,7 @@ type DeliveryTarget = {
  * Both operations are fire-and-forget: failures are logged but never propagate
  * to the original request handler.
  */
-export class DeliveryService {
+export class DeliveryService implements MessageProcessedHook {
 
   static readonly #maxRetries = 2;
   static readonly #retryDelaysMs = [1_000, 5_000] as const;
@@ -82,6 +85,17 @@ export class DeliveryService {
    */
   public static create(dwn: Dwn, didResolver: DidResolver, config: DwnServerConfig): DeliveryService {
     return new DeliveryService(dwn, didResolver, config);
+  }
+
+  // -------------------------------------------------------------------------
+  // MessageProcessedHook implementation
+  // -------------------------------------------------------------------------
+
+  /**
+   * Hook entry point invoked by the hooks runner after `dwn.processMessage()`.
+   */
+  public onMessageProcessed(context: MessageProcessedContext): void {
+    this.dispatchIfNeeded(context.tenant, context.message, context.status.code);
   }
 
   // -------------------------------------------------------------------------
@@ -166,6 +180,17 @@ export class DeliveryService {
       return;
     }
     this.#markForwarded(dedupKey);
+
+    // Sort full endpoints first — ensure full nodes receive writes before cache nodes.
+    peerEndpoints.sort((a: DwnEndpoint, b: DwnEndpoint): number => {
+      if (a.isFull && !b.isFull) {
+        return -1;
+      }
+      if (!a.isFull && b.isFull) {
+        return 1;
+      }
+      return 0;
+    });
 
     // Send to each peer endpoint with bounded concurrency.
     await this.#sendToEndpoints(peerEndpoints, tenant, message, concurrency);
@@ -404,6 +429,12 @@ export class DeliveryService {
   /**
    * Extracts DWN service endpoints from a DID document.
    * Looks for services of type `DecentralizedWebNode` with `serviceEndpoint` entries.
+   *
+   * Supports all endpoint formats:
+   * - `"https://example.com"` — bare string, implicitly full
+   * - `["https://a.com", "https://b.com"]` — string array, implicitly full
+   * - `{ nodes: ["https://a.com"] }` — legacy object format, implicitly full
+   * - `{ url: "https://a.com", dataRetention: "cache" }` — map format with explicit retention
    */
   static #extractDwnEndpoints(didDocument: DidDocument): DwnEndpoint[] {
     const endpoints: DwnEndpoint[] = [];
@@ -417,24 +448,46 @@ export class DeliveryService {
         continue;
       }
 
-      // serviceEndpoint can be a string, string[], or object with nodes.
+      // serviceEndpoint can be a string, string[], object with nodes, or map with url.
       const epValue = service.serviceEndpoint;
 
       if (typeof epValue === 'string') {
-        endpoints.push({ url: epValue.replace(/\/+$/, '') });
+        endpoints.push({ url: epValue.replace(/\/+$/, ''), isFull: true });
       } else if (Array.isArray(epValue)) {
         for (const entry of epValue) {
           if (typeof entry === 'string') {
-            endpoints.push({ url: entry.replace(/\/+$/, '') });
+            endpoints.push({ url: entry.replace(/\/+$/, ''), isFull: true });
+          } else if (entry && typeof entry === 'object') {
+            // Map entry: { url: "...", dataRetention?: "full" | "cache" }
+            const mapEntry = entry as { url?: string; dataRetention?: string };
+            if (typeof mapEntry.url === 'string') {
+              endpoints.push({
+                url    : mapEntry.url.replace(/\/+$/, ''),
+                isFull : mapEntry.dataRetention !== 'cache',
+              });
+            }
           }
         }
-      } else if (epValue && typeof epValue === 'object' && 'nodes' in epValue) {
-        const nodes = (epValue as { nodes: string[] }).nodes;
-        if (Array.isArray(nodes)) {
-          for (const node of nodes) {
-            if (typeof node === 'string') {
-              endpoints.push({ url: node.replace(/\/+$/, '') });
+      } else if (epValue && typeof epValue === 'object') {
+        // Legacy object format: { nodes: [...] }
+        if ('nodes' in epValue) {
+          const nodes = (epValue as { nodes: string[] }).nodes;
+          if (Array.isArray(nodes)) {
+            for (const node of nodes) {
+              if (typeof node === 'string') {
+                endpoints.push({ url: node.replace(/\/+$/, ''), isFull: true });
+              }
             }
+          }
+        }
+        // Map format at top level: { url: "...", dataRetention?: "..." }
+        if ('url' in epValue) {
+          const mapEntry = epValue as { url?: string; dataRetention?: string };
+          if (typeof mapEntry.url === 'string') {
+            endpoints.push({
+              url    : mapEntry.url.replace(/\/+$/, ''),
+              isFull : mapEntry.dataRetention !== 'cache',
+            });
           }
         }
       }

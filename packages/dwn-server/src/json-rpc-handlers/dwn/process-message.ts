@@ -137,10 +137,22 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
       responsePayload.dataStream = recordDataStream;
     }
 
-    // --- Fire-and-forget: forwarding / delivery ---
+    // --- Fire-and-forget: post-processing hooks ---
     const statusCode = reply.status?.code ?? 0;
-    if (context.deliveryService) {
-      context.deliveryService.dispatchIfNeeded(target, message, statusCode);
+    if (context.messageProcessedHooks) {
+      const hookContext = { tenant: target, message, status: reply.status, transport };
+      for (const hook of context.messageProcessedHooks) {
+        try {
+          const result = hook.onMessageProcessed(hookContext);
+          if (result instanceof Promise) {
+            result.catch((err: unknown): void => {
+              log.error('MessageProcessedHook error', err);
+            });
+          }
+        } catch (err) {
+          log.error('MessageProcessedHook error', err);
+        }
+      }
     }
 
     // Capture activity event and per-request metrics.

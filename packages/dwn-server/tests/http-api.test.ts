@@ -1053,9 +1053,9 @@ describe('http api', function () {
       expect(limiter === undefined || typeof limiter === 'object').toBe(true);
     });
 
-    it('should return undefined for deliveryService when not configured', () => {
-      const service = httpApi.deliveryService;
-      expect(service).toBeUndefined();
+    it('should return empty array for messageProcessedHooks when not configured', () => {
+      const hooks = httpApi.messageProcessedHooks;
+      expect(hooks).toEqual([]);
     });
   });
 });

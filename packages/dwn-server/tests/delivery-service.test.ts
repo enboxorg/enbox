@@ -133,7 +133,7 @@ describe('DeliveryService', () => {
   });
 
   describe('processMessage integration', () => {
-    it('should invoke dispatchIfNeeded on successful RecordsWrite when delivery service is in context', async () => {
+    it('should invoke onMessageProcessed on successful RecordsWrite when hooks are in context', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice);
@@ -154,28 +154,28 @@ describe('DeliveryService', () => {
 
       const didResolver = new UniversalResolver({ didResolvers: [DidKey] });
       const deliveryService = DeliveryService.create(testDwn, didResolver, testConfig);
-      const dispatchSpy = sinon.spy(deliveryService, 'dispatchIfNeeded');
+      const hookSpy = sinon.spy(deliveryService, 'onMessageProcessed');
 
       const context: RequestContext = {
-        dwn       : testDwn,
-        transport : 'http',
+        dwn                   : testDwn,
+        transport             : 'http',
         dataStream,
-        deliveryService,
+        messageProcessedHooks : [deliveryService],
       };
 
       const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, context);
       expect(jsonRpcResponse.error).toBeUndefined();
       expect(jsonRpcResponse.result.reply.status.code).toBe(202);
 
-      // Verify dispatchIfNeeded was called with correct args
-      expect(dispatchSpy.calledOnce).toBe(true);
-      expect(dispatchSpy.firstCall.args[0]).toBe(alice.did);
-      expect(dispatchSpy.firstCall.args[2]).toBe(202);
+      // Verify onMessageProcessed was called with correct context
+      expect(hookSpy.calledOnce).toBe(true);
+      expect(hookSpy.firstCall.args[0].tenant).toBe(alice.did);
+      expect(hookSpy.firstCall.args[0].status.code).toBe(202);
 
       await testDwn.close();
     });
 
-    it('should invoke dispatchIfNeeded even on non-202 status (it filters internally)', async () => {
+    it('should invoke onMessageProcessed even on non-202 status (hooks filter internally)', async () => {
       const requestId = uuidv4();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message: {
@@ -194,26 +194,26 @@ describe('DeliveryService', () => {
 
       const didResolver = new UniversalResolver({ didResolvers: [DidKey] });
       const deliveryService = DeliveryService.create(testDwn, didResolver, testConfig);
-      const dispatchSpy = sinon.spy(deliveryService, 'dispatchIfNeeded');
+      const hookSpy = sinon.spy(deliveryService, 'onMessageProcessed');
 
       const context: RequestContext = {
-        dwn       : testDwn,
-        transport : 'http',
-        deliveryService,
+        dwn                   : testDwn,
+        transport             : 'http',
+        messageProcessedHooks : [deliveryService],
       };
 
       const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, context);
       expect(jsonRpcResponse.error).toBeUndefined();
       expect(jsonRpcResponse.result.reply.status.code).toBe(400);
 
-      // dispatchIfNeeded is still called — it filters internally by status code
-      expect(dispatchSpy.calledOnce).toBe(true);
-      expect(dispatchSpy.firstCall.args[2]).toBe(400);
+      // onMessageProcessed is still called — it filters internally by status code
+      expect(hookSpy.calledOnce).toBe(true);
+      expect(hookSpy.firstCall.args[0].status.code).toBe(400);
 
       await testDwn.close();
     });
 
-    it('should not invoke dispatchIfNeeded when no delivery service in context', async () => {
+    it('should not invoke hooks when no hooks are in context', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice);
@@ -230,7 +230,7 @@ describe('DeliveryService', () => {
         dwn       : testDwn,
         transport : 'http',
         dataStream,
-        // No deliveryService in context
+        // No messageProcessedHooks in context
       };
 
       const { jsonRpcResponse } = await handleDwnProcessMessage(dwnRequest, context);

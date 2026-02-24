@@ -21,7 +21,7 @@ log.setLevel(logLevel);
 async function main(): Promise<void> {
   log.info('Starting DWN Relay Server...');
 
-  const relay = new RelayServer();
+  const relay = await RelayServer.create();
 
   // Handle graceful shutdown
   const shutdown = async (): Promise<void> => {
