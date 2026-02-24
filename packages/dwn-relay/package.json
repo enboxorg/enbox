@@ -36,7 +36,9 @@
     "@enbox/dwn-clients": "workspace:*",
     "@enbox/dwn-sdk-js": "workspace:*",
     "@enbox/dwn-server": "workspace:*",
-    "@enbox/dwn-sql-store": "workspace:*"
+    "@enbox/dwn-sql-store": "workspace:*",
+    "loglevel": "^1.9.1",
+    "loglevel-plugin-prefix": "^0.8.4"
   },
   "devDependencies": {
     "@types/bun": "^1.3.9",

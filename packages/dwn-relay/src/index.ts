@@ -1,8 +1,33 @@
+// Main server
 export { RelayServer } from './relay-server.js';
-export { RelayConfig, getRelayConfig } from './config.js';
+export type { RelayServerOptions } from './relay-server.js';
+
+// Configuration
+export { RelayConfig, getRelayConfig, parseDuration } from './config.js';
+
+// Stores
+export { RelayDataStore } from './stores/relay-data-store.js';
+export type { DataMetadataEntry } from './stores/relay-data-store.js';
+
+// Eviction
 export { EvictionManager } from './eviction/eviction-manager.js';
+export { parsePolicies, getRetentionMs } from './eviction/storage-policies.js';
+export type { StoragePolicy } from './eviction/storage-policies.js';
+
+// Read proxy
 export { ReadProxy } from './proxy/read-proxy.js';
 export { IpfsResolver } from './proxy/ipfs-resolver.js';
+
+// Write forwarding
 export { WriteForwarder } from './forwarding/write-forwarder.js';
+
+// Sync
 export { ServerSyncEngine } from './sync/server-sync-engine.js';
-export { RelayDataStore } from './stores/relay-data-store.js';
+export type { PeerSyncState } from './sync/server-sync-engine.js';
+export { SyncPriorityQueue } from './sync/priority-queue.js';
+export type { SyncWorkItem } from './sync/priority-queue.js';
+export { ConnectionPool } from './sync/connection-pool.js';
+
+// Endpoint resolution
+export { resolveEndpoints, extractDwnEndpoints, clearEndpointCache } from './endpoint-resolver.js';
+export type { DwnEndpointInfo } from './endpoint-resolver.js';
