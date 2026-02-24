@@ -12,7 +12,10 @@ import { UniversalResolver } from '../../src/resolver/universal-resolver.js';
 describe('UniversalResolver', () => {
   describe('open()', () => {
     it('delegates to the cache open()', async () => {
-      const cache = { open: mock(() => Promise.resolve()), close: mock(() => Promise.resolve()), get: mock(), set: mock(), delete: mock(), clear: mock() };
+      const cache = {
+        open: mock(() => Promise.resolve()), close: mock(() => Promise.resolve()),
+        get: mock(), set: mock(), delete: mock(), clear: mock(),
+      };
       const resolver = new UniversalResolver({ didResolvers: [DidJwk], cache });
       await resolver.open();
       expect(cache.open).toHaveBeenCalledTimes(1);
@@ -21,7 +24,10 @@ describe('UniversalResolver', () => {
 
   describe('close()', () => {
     it('delegates to the cache close()', async () => {
-      const cache = { open: mock(() => Promise.resolve()), close: mock(() => Promise.resolve()), get: mock(), set: mock(), delete: mock(), clear: mock() };
+      const cache = {
+        open: mock(() => Promise.resolve()), close: mock(() => Promise.resolve()),
+        get: mock(), set: mock(), delete: mock(), clear: mock(),
+      };
       const resolver = new UniversalResolver({ didResolvers: [DidJwk], cache });
       await resolver.close();
       expect(cache.close).toHaveBeenCalledTimes(1);
