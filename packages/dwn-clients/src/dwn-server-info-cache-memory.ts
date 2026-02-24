@@ -74,6 +74,16 @@ export class DwnServerInfoCacheMemory implements DwnServerInfoCache {
    *
    * @returns A promise that resolves immediately.
    */
+  public async open(): Promise<void> {
+    // No-op since there is no underlying store to open.
+  }
+
+  /**
+   * This method is a no-op but exists to be consistent with other DWN ServerInfo Cache
+   * implementations.
+   *
+   * @returns A promise that resolves immediately.
+   */
   public async close(): Promise<void> {
     // No-op since there is no underlying store to close.
   }

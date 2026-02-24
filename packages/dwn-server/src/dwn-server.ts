@@ -9,7 +9,7 @@ import type { WsData } from './http-api.js';
 
 import log from 'loglevel';
 import prefix from 'loglevel-plugin-prefix';
-import { DidDht, DidJwk, DidKey, DidWeb, UniversalResolver } from '@enbox/dids';
+import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 import { Dwn, EventEmitterEventLog } from '@enbox/dwn-sdk-js';
 
 import type { ProviderAuthPlugin } from './registration/provider-auth-plugin.js';
@@ -171,15 +171,13 @@ export class DwnServer {
 
       }
 
-      // Create a DID resolver explicitly without LevelDB cache. The default
-      // Dwn.create() uses DidResolverCacheLevel which requires exclusive file
-      // locks and is not managed by the DWN's open()/close() lifecycle. In
-      // containerized deployments this causes "Database is not open" errors
-      // when the LevelDB lock file persists across restarts or when concurrent
-      // async operations (e.g. DeliveryService) race with the deferred open.
-      // UniversalResolver defaults to DidResolverCacheNoop when no cache is provided.
+      // Use an in-memory DID resolver cache for the server. The Dwn class now
+      // properly manages the resolver cache lifecycle via open()/close(), so
+      // LevelDB would also work, but in-memory is simpler for server deployments
+      // (no lock files, no filesystem state to manage across container restarts).
       const didResolver = this.didResolver ?? new UniversalResolver({
-        didResolvers: [DidDht, DidJwk, DidKey, DidWeb],
+        didResolvers : [DidDht, DidJwk, DidKey, DidWeb],
+        cache        : new DidResolverCacheMemory(),
       });
 
       const dwnConfig = await getDwnConfig(this.config, {
