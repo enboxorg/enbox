@@ -15,6 +15,19 @@ describe('DidResolverCacheLevel', () => {
     await cache.close();
   });
 
+  describe('open()', () => {
+    it('opens the underlying LevelDB store', async () => {
+      cache = new DidResolverCacheLevel({ location: cacheStoreLocation });
+      await expect(cache.open()).resolves.toBeUndefined();
+    });
+
+    it('is a safe no-op when called on an already-open store', async () => {
+      cache = new DidResolverCacheLevel({ location: cacheStoreLocation });
+      await cache.open();
+      await expect(cache.open()).resolves.toBeUndefined();
+    });
+  });
+
   describe('constructor', () => {
     it('uses default options if none are specified', async () => {
       cache = new DidResolverCacheLevel();

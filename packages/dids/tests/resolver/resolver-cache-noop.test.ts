@@ -27,6 +27,11 @@ describe('DidResolverCacheNoop', () => {
     expect(result).toBeUndefined();
   });
 
+  it('returns undefined for open method', async () => {
+    const result = await DidResolverCacheNoop.open();
+    expect(result).toBeUndefined();
+  });
+
   it('returns undefined for close method', async () => {
     const result = await DidResolverCacheNoop.close();
     expect(result).toBeUndefined();

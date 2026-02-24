@@ -13,6 +13,13 @@ function sleep(ms: number): Promise<void> {
 describe('DidResolverCacheMemory', () => {
   let cache: DidResolverCacheMemory;
 
+  describe('open()', () => {
+    it('is a no-op and resolves without error', async () => {
+      cache = new DidResolverCacheMemory();
+      await expect(cache.open()).resolves.toBeUndefined();
+    });
+  });
+
   describe('constructor', () => {
     it('uses default options if none are specified', async () => {
       cache = new DidResolverCacheMemory();
