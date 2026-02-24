@@ -95,11 +95,18 @@ export class HttpApi {
     try {
       const packageJson = JSON.parse(readFileSync(config.packageJsonPath).toString());
       httpApi.#packageInfo.version = packageJson.version;
-      httpApi.#packageInfo.sdkVersion = packageJson.dependencies
-        ? packageJson.dependencies['@enbox/dwn-sdk-js']
-        : undefined;
     } catch (error: any) {
       log.info('could not read `package.json` for version info', error);
+    }
+
+    // Resolve the SDK version from the actual installed package rather than
+    // the dependency specifier (which may be `workspace:*` in a monorepo).
+    try {
+      const sdkPackageJsonPath = require.resolve('@enbox/dwn-sdk-js/package.json');
+      const sdkPackageJson = JSON.parse(readFileSync(sdkPackageJsonPath).toString());
+      httpApi.#packageInfo.sdkVersion = sdkPackageJson.version;
+    } catch (error: any) {
+      log.info('could not resolve @enbox/dwn-sdk-js version', error);
     }
 
     httpApi.#config = config;

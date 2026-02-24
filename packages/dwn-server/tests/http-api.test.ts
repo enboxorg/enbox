@@ -994,8 +994,9 @@ describe('http api', function () {
       // check that server name exists in the info object
       expect(info['server']).toBe('@enbox/dwn-server');
 
-      // check that `sdkVersion` and `version` are undefined as they were not abel to be retrieved from the invalid file.
-      expect(info['sdkVersion']).toBeUndefined();
+      // `version` is undefined because the server's own package.json was not found.
+      // `sdkVersion` is still defined because it is resolved from the installed SDK package.
+      expect(info['sdkVersion']).toBeDefined();
       expect(info['version']).toBeUndefined();
 
       // check the logSpy was called
