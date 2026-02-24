@@ -1,5 +1,3 @@
-//@ts-nocheck
-
 /*
   This file is run in dual environments to make installation of the Service Worker code easier.
   Be mindful that code placed in any open excution space may be evaluated multiple times in different contexts,
@@ -8,18 +6,59 @@
 
 import { DidDht, DidWeb, UniversalResolver } from '@enbox/dids';
 
+/**
+ * Result returned by the `onCacheCheck` callback.
+ * When returned, it signals that the response for the given DRL should be cached.
+ */
+export type CacheCheckResult = {
+  /** Time-to-live for the cached DRL response, in milliseconds. */
+  ttl?: number;
+};
+
+/**
+ * Callback invoked to determine whether a DRL response should be cached and for how long.
+ * Returning a truthy `CacheCheckResult` opts in to caching; returning a falsy value skips it.
+ */
+export type CacheCheckCallback = (
+  event: FetchEvent | Event,
+  drl: string,
+) => CacheCheckResult | undefined | null | Promise<CacheCheckResult | undefined | null>;
+
+/**
+ * Configuration options for {@link activatePolyfills}.
+ */
+export type ActivatePolyfillsOptions = {
+  /** Path to the script to register as a Service Worker. Falls back to `document.currentScript.src` or `import.meta.url`. */
+  path?: string;
+  /** Set to `false` to skip Service Worker installation. Defaults to `true`. */
+  serviceWorker?: boolean;
+  /** Set to `false` to skip injection of DRL loading-overlay styles. Defaults to `true`. */
+  injectStyles?: boolean;
+  /** Set to `false` to skip activation of DRL anchor/link click handling. Defaults to `true`. */
+  links?: boolean;
+  /** Callback to control per-request caching behaviour. */
+  onCacheCheck?: CacheCheckCallback;
+};
+
+/**
+ * An `HTMLElement` that has a `src` property (e.g., `<img>`, `<video>`, `<audio>`).
+ * Extended with `__src__` to stash the original DRL src during context-menu swaps.
+ */
+interface DrlMediaElement extends HTMLElement {
+  src: string;
+  __src__?: string;
+}
+
 // This is in place to prevent our `bundler-bonanza` repo from failing for Node CJS builds
 // Not sure if this is working as expected in all environments, crated an issue
 // TODO: https://github.com/enboxorg/enbox/issues/767
-function importMetaIfSupported(): any {
+function importMetaIfSupported(): { url: string } | undefined {
   try {
-    return new Function('return import.meta')();
+    return new Function('return import.meta')() as { url: string };
   } catch {
     return undefined;
   }
 }
-
-declare const ServiceWorkerGlobalScope: any;
 
 const DidResolver = new UniversalResolver({ didResolvers: [DidDht, DidWeb] });
 const didUrlRegex = /^https?:\/\/dweb\/([^/]+)\/?(.*)?$/;
@@ -27,7 +66,7 @@ const httpToHttpsRegex = /^http:/;
 const trailingSlashRegex = /\/$/;
 
 /** @internal Exported for testing. Resolves DWN service endpoints from a DID. */
-export async function getDwnEndpoints(did: any): Promise<string[]> {
+export async function getDwnEndpoints(did: string): Promise<string[]> {
   const { didDocument } = await DidResolver.resolve(did);
   const endpoints = didDocument?.service?.find(
     (service) => service.type === 'DecentralizedWebNode'
@@ -39,7 +78,9 @@ export async function getDwnEndpoints(did: any): Promise<string[]> {
 }
 
 /** @internal Exported for testing. Handles a DRL fetch event. */
-export async function handleEvent(event: any, did: any, path: any, options: any): Promise<Response> {
+export async function handleEvent(
+  event: FetchEvent, did: string, path: string, options?: ActivatePolyfillsOptions
+): Promise<Response> {
   const drl = event.request.url
     .replace(httpToHttpsRegex, 'https:')
     .replace(trailingSlashRegex, '');
@@ -79,7 +120,9 @@ export async function handleEvent(event: any, did: any, path: any, options: any)
 }
 
 /** @internal Exported for testing. Fetches a resource from DWN endpoints. */
-export async function fetchResource(event: any, did: any, drl: any, path: any, responseCache: any, options: any): Promise<Response> {
+export async function fetchResource(
+  event: FetchEvent, did: string, drl: string, path: string, responseCache: Cache, options?: ActivatePolyfillsOptions
+): Promise<Response> {
   const endpoints = await getDwnEndpoints(did);
   if (!endpoints?.length) {
     throw new Response(
@@ -114,7 +157,7 @@ export async function fetchResource(event: any, did: any, drl: any, path: any, r
 }
 
 /** @internal Exported for testing. Caches a DRL response with metadata headers. */
-export async function cacheResponse(drl: any, url: any, response: any, cache: any): Promise<void> {
+export async function cacheResponse(drl: string, url: string, response: Response, cache: Cache): Promise<void> {
   try {
     const clonedResponse = response.clone();
     const headers = new Headers(clonedResponse.headers);
@@ -129,7 +172,7 @@ export async function cacheResponse(drl: any, url: any, response: any, cache: an
 
 /* Service Worker-based features */
 
-async function installWorker(options: any = {}): Promise<void> {
+async function installWorker(options: ActivatePolyfillsOptions = {}): Promise<void> {
   try {
     // Check to see if we are in a Service Worker already, if so, proceed
     // You can call the activatePolyfills() function in your own worker, or standalone as a root worker
@@ -137,13 +180,13 @@ async function installWorker(options: any = {}): Promise<void> {
       typeof ServiceWorkerGlobalScope !== 'undefined' &&
       self instanceof ServiceWorkerGlobalScope
     ) {
-      const workerSelf = self as ServiceWorkerGlobalScope;
+      const workerSelf = self as unknown as ServiceWorkerGlobalScope;
       workerSelf.skipWaiting();
-      workerSelf.addEventListener('activate', (event) => {
+      workerSelf.addEventListener('activate', (event: ExtendableEvent) => {
         // Claim clients to make the service worker take control immediately
         event.waitUntil(workerSelf.clients.claim());
       });
-      workerSelf.addEventListener('fetch', (event) => {
+      workerSelf.addEventListener('fetch', (event: FetchEvent) => {
         const match = event.request.url.match(didUrlRegex);
         if (match) {
           event.respondWith(handleEvent(event, match[1], match[2], options));
@@ -155,16 +198,15 @@ async function installWorker(options: any = {}): Promise<void> {
       const registration = await navigator.serviceWorker.getRegistration('/');
       // You can only have one worker per path, so check to see if one is already registered
       if (!registration) {
-        // @ts-ignore
-        const installUrl =
+        const installUrl: string | undefined =
         options.path ||
         (globalThis.document
-          ? document?.currentScript?.src
+          ? (document?.currentScript as HTMLScriptElement | null)?.src
           : importMetaIfSupported()?.url);
         if (installUrl)
         {navigator.serviceWorker
           .register(installUrl, { type: 'module' })
-          .catch((error) => {
+          .catch((error: unknown) => {
             console.error(
               'DWeb networking feature installation failed: ',
               error
@@ -349,7 +391,7 @@ function injectElements(): void {
     </div> 
     <span tabindex='0'></span>
   `;
-  overlay.lastElementChild.addEventListener('click', cancelNavigation);
+  overlay.lastElementChild!.addEventListener('click', cancelNavigation);
   document.body.prepend(overlay);
   elementsInjected = true;
 }
@@ -359,12 +401,12 @@ function cancelNavigation(): void {
   activeNavigation = null;
 }
 
-let activeNavigation;
+let activeNavigation: string | null = null;
 let linkFeaturesActive = false;
 function addLinkFeatures(): void {
   if (!linkFeaturesActive) {
-    document.addEventListener('click', async (event: any) => {
-      const anchor = event.target.closest('a');
+    document.addEventListener('click', async (event: MouseEvent) => {
+      const anchor = (event.target as Element)?.closest('a');
       if (anchor) {
         const href = anchor.href;
         const match = href.match(didUrlRegex);
@@ -374,7 +416,7 @@ function addLinkFeatures(): void {
           const openAsTab = anchor.target === '_blank';
           event.preventDefault();
           try {
-            let tab;
+            let tab: Window | null = null;
             if (openAsTab) {
               tab = window.open('', '_blank');
               if (tab) {tab.document.write(tabContent);}
@@ -413,14 +455,14 @@ function addLinkFeatures(): void {
     });
 
     document.addEventListener('pointercancel', resetContextMenuTarget);
-    document.addEventListener('pointerdown', async (event: any) => {
-      const target = event.composedPath()[0];
+    document.addEventListener('pointerdown', async (event: PointerEvent) => {
+      const target = event.composedPath()[0] as DrlMediaElement | undefined;
       if (
         (event.pointerType === 'mouse' && event.button === 2) ||
         (event.pointerType === 'touch' && event.isPrimary)
       ) {
         resetContextMenuTarget();
-        if (target && target?.src?.match(didUrlRegex)) {
+        if (target?.src?.match(didUrlRegex)) {
           contextMenuTarget = target;
           target.__src__ = target.src;
           const drl = target.src
@@ -445,13 +487,13 @@ function addLinkFeatures(): void {
   }
 }
 
-let contextMenuTarget;
-async function resetContextMenuTarget(e?: any): Promise<void> {
+let contextMenuTarget: DrlMediaElement | null = null;
+async function resetContextMenuTarget(e?: Event): Promise<void> {
   if (e?.type === 'pointerup') {
-    await new Promise((r) => requestAnimationFrame(r));
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
   }
   if (contextMenuTarget) {
-    contextMenuTarget.src = contextMenuTarget.__src__;
+    contextMenuTarget.src = contextMenuTarget.__src__!;
     delete contextMenuTarget.__src__;
     contextMenuTarget = null;
   }
@@ -460,19 +502,7 @@ async function resetContextMenuTarget(e?: any): Promise<void> {
 /**
  * Activates various polyfills to enable Web5 features in Web environments.
  *
- * @param {object} [options={}] - Configuration options to control the activation of polyfills.
- * @param {boolean} [options.serviceWorker=true] - Option to avoid installation of the Service Worker.
- * Defaults to true, installing the Service Worker.
- * @param {boolean} [options.injectStyles=true] - Option to skip injection of styles for UI related UX polyfills. Defaults to true, injecting styles.
- * @param {boolean} [options.links=true] - Option to skip activation of DRL link features. Defaults to true, activating link features.
- * @param {function} [options.onCacheCheck] - Callback function to handle cache check events,
- * allowing fine-grained control over what DRL request to cache, and for how long.
- * @param {object} [options.onCacheCheck.event] - The event object passed to the callback.
- * @param {object} [options.onCacheCheck.route] - The route object passed to the callback.
- * @returns {object} [options.onCacheCheck.return] - The return object from the callback.
- * @returns {number} [options.onCacheCheck.return.ttl] - Time-to-live for the cached DRL response, in milliseconds.
- *
- * @returns {void}
+ * @param options - Configuration options to control the activation of polyfills.
  *
  * @example
  * // Activate all polyfills with default options, and cache every DRL for 1 minute
@@ -488,7 +518,7 @@ async function resetContextMenuTarget(e?: any): Promise<void> {
  * // Activate polyfills, but without Service Worker activation
  * activatePolyfills({ serviceWorker: false });
  */
-export function activatePolyfills(options: any = {}): void {
+export function activatePolyfills(options: ActivatePolyfillsOptions = {}): void {
   if (options.serviceWorker !== false) {
     installWorker(options);
   }
