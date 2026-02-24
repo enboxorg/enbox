@@ -37,6 +37,7 @@ COPY packages/api/package.json               packages/api/
 COPY packages/browser/package.json           packages/browser/
 COPY packages/protocols/package.json         packages/protocols/
 COPY packages/protocol-codegen/package.json  packages/protocol-codegen/
+COPY packages/dwn-relay/package.json         packages/dwn-relay/
 
 RUN bun install --frozen-lockfile
 
@@ -80,6 +81,7 @@ COPY packages/api/package.json               packages/api/
 COPY packages/browser/package.json           packages/browser/
 COPY packages/protocols/package.json         packages/protocols/
 COPY packages/protocol-codegen/package.json  packages/protocol-codegen/
+COPY packages/dwn-relay/package.json         packages/dwn-relay/
 
 # Build packages in dependency order.
 # common -> crypto -> dids -> dwn-sdk-js -> dwn-sql-store, dwn-clients, admin-ui -> dwn-server
