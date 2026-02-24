@@ -1,6 +1,7 @@
 import type { DidResolver } from '@enbox/dids';
 import type { DwnServerConfig } from './config.js';
 import type { EventLog } from '@enbox/dwn-sdk-js';
+import type { MessageProcessedHook } from './message-processed-hook.js';
 import type { ProcessHandlers } from './process-handlers.js';
 import type { Server } from 'bun';
 
@@ -44,6 +45,13 @@ export type DwnServerOptions = {
   didResolver?: DidResolver;
   dwn?: Dwn;
   config?: DwnServerConfig;
+  /**
+   * Hooks invoked after every `dwn.processMessage()` call.
+   * The built-in DeliveryService hook is always prepended automatically
+   * when forwarding or delivery is enabled. Additional hooks provided here
+   * are appended after the DeliveryService hook.
+   */
+  messageProcessedHooks?: MessageProcessedHook[];
 };
 
 /**
@@ -71,6 +79,7 @@ export class DwnServer {
   #ipRateLimiter: RateLimiter | undefined;
   #tenantRateLimiter: RateLimiter | undefined;
   #auditLog: AuditLog | undefined;
+  #externalHooks: MessageProcessedHook[];
 
   /**
    * @param options.dwn - Dwn instance to use as an override. Registration endpoint will not be enabled if this is provided.
@@ -80,6 +89,7 @@ export class DwnServer {
 
     this.didResolver = options.didResolver;
     this.dwn = options.dwn;
+    this.#externalHooks = options.messageProcessedHooks ?? [];
 
     log.setLevel(this.config.logLevel as log.LogLevelDesc);
 
@@ -155,16 +165,21 @@ export class DwnServer {
       this.dwn = await Dwn.create(dwnConfig);
     }
 
-    // Create delivery service when forwarding or delivery is enabled.
-    let deliveryService: DeliveryService | undefined;
+    // Assemble message-processed hooks.
+    const messageProcessedHooks: MessageProcessedHook[] = [];
+
+    // Add the built-in DeliveryService hook when forwarding or delivery is enabled.
     if (this.config.forwardingEnabled || this.config.deliveryEnabled) {
-      // Use the injected resolver or create one with standard DID methods.
       const deliveryResolver = this.didResolver ?? new UniversalResolver({
         didResolvers: [DidDht, DidJwk, DidKey, DidWeb],
       });
-      deliveryService = DeliveryService.create(this.dwn, deliveryResolver, this.config);
+      const deliveryService = DeliveryService.create(this.dwn, deliveryResolver, this.config);
+      messageProcessedHooks.push(deliveryService);
       log.info(`Delivery service enabled (forwarding: ${this.config.forwardingEnabled}, delivery: ${this.config.deliveryEnabled})`);
     }
+
+    // Append externally provided hooks.
+    messageProcessedHooks.push(...this.#externalHooks);
 
     // Create rate limiters when configured.
     let ipRateLimiter: RateLimiter | undefined;
@@ -275,7 +290,7 @@ export class DwnServer {
 
     this.#httpApi = await HttpApi.create(
       this.config, this.dwn, registrationManager, adminApi, activityLog,
-      { adminStore, registrationStore, ipRateLimiter, tenantRateLimiter, deliveryService, openAuthHandler },
+      { adminStore, registrationStore, ipRateLimiter, tenantRateLimiter, messageProcessedHooks, openAuthHandler },
     );
 
     await this.#httpApi.start(this.config.port);
@@ -284,7 +299,7 @@ export class DwnServer {
     if (this.config.webSocketSupport) {
       this.#wsApi = new WsApi(
         this.#httpApi, this.dwn, undefined, this.config.maxInFlight, activityLog,
-        { adminStore, registrationStore, config: this.config, tenantRateLimiter, deliveryService },
+        { adminStore, registrationStore, config: this.config, tenantRateLimiter, messageProcessedHooks },
       );
       this.#wsApi.start();
       log.info('WebSocketServer ready...');

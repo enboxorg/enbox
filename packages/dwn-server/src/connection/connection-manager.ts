@@ -4,8 +4,8 @@ import type { ServerWebSocket } from 'bun';
 import type { ActivityLog } from '../admin/activity-log.js';
 import type { AdminConnectionSnapshot } from '../admin/types.js';
 import type { AdminStore } from '../admin/admin-store.js';
-import type { DeliveryService } from '../delivery-service.js';
 import type { DwnServerConfig } from '../config.js';
+import type { MessageProcessedHook } from '../message-processed-hook.js';
 import type { RateLimiter } from '../rate-limiter.js';
 import type { RegistrationStore } from '../registration/registration-store.js';
 import type { WsData } from '../http-api.js';
@@ -42,7 +42,7 @@ export class InMemoryConnectionManager implements ConnectionManager {
     private registrationStore?: RegistrationStore,
     private serverConfig?: DwnServerConfig,
     private tenantRateLimiter?: RateLimiter,
-    private deliveryService?: DeliveryService,
+    private messageProcessedHooks?: MessageProcessedHook[],
   ) {}
 
   async connect(socket: ServerWebSocket<WsData>): Promise<void> {
@@ -52,7 +52,7 @@ export class InMemoryConnectionManager implements ConnectionManager {
         this.connections.delete(socket);
       },
       this.maxInFlight, this.activityLog,
-      this.adminStore, this.registrationStore, this.serverConfig, this.tenantRateLimiter, this.deliveryService,
+      this.adminStore, this.registrationStore, this.serverConfig, this.tenantRateLimiter, this.messageProcessedHooks,
     );
 
     // Attach the connection to the ws.data so Bun's websocket handlers can delegate to it.

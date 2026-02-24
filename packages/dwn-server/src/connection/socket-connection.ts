@@ -1,8 +1,8 @@
 import type { ActivityLog } from '../admin/activity-log.js';
 import type { AdminConnectionSnapshot } from '../admin/types.js';
 import type { AdminStore } from '../admin/admin-store.js';
-import type { DeliveryService } from '../delivery-service.js';
 import type { DwnServerConfig } from '../config.js';
+import type { MessageProcessedHook } from '../message-processed-hook.js';
 import type { RateLimiter } from '../rate-limiter.js';
 import type { RegistrationStore } from '../registration/registration-store.js';
 import type { RequestContext } from '../lib/json-rpc-router.js';
@@ -53,7 +53,7 @@ export class SocketConnection {
     private registrationStore?: RegistrationStore,
     private serverConfig?: DwnServerConfig,
     private tenantRateLimiter?: RateLimiter,
-    private deliveryService?: DeliveryService,
+    private messageProcessedHooks?: MessageProcessedHook[],
   ){
     // Bun handles ping/pong automatically at the protocol level, but we still
     // want an application-level heartbeat to detect dead connections.
@@ -271,15 +271,15 @@ export class SocketConnection {
     const { params, method, subscription } = request;
 
     const requestContext: RequestContext = {
-      transport         : 'ws',
-      dwn               : this.dwn,
-      socketConnection  : this,
-      activityLog       : this.activityLog,
-      adminStore        : this.adminStore,
-      registrationStore : this.registrationStore,
-      config            : this.serverConfig,
-      tenantRateLimiter : this.tenantRateLimiter,
-      deliveryService   : this.deliveryService,
+      transport             : 'ws',
+      dwn                   : this.dwn,
+      socketConnection      : this,
+      activityLog           : this.activityLog,
+      adminStore            : this.adminStore,
+      registrationStore     : this.registrationStore,
+      config                : this.serverConfig,
+      tenantRateLimiter     : this.tenantRateLimiter,
+      messageProcessedHooks : this.messageProcessedHooks,
     };
 
     // methods that expect a long-running subscription begin with `rpc.subscribe.`
