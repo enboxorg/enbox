@@ -114,29 +114,29 @@ See the [`@enbox/api` README](./packages/api/README.md) for the repository patte
 
 | Package | Version | Description |
 |---|---|---|
-| [`@enbox/api`](./packages/api) | [![npm](https://img.shields.io/npm/v/@enbox/api)](https://www.npmjs.com/package/@enbox/api) | High-level SDK -- `Web5.connect()`, typed protocols, repository pattern |
-| [`@enbox/protocols`](./packages/protocols) | [![npm](https://img.shields.io/npm/v/@enbox/protocols)](https://www.npmjs.com/package/@enbox/protocols) | Pre-built protocol definitions with JSON Schemas |
-| [`@enbox/protocol-codegen`](./packages/protocol-codegen) | [![npm](https://img.shields.io/npm/v/@enbox/protocol-codegen)](https://www.npmjs.com/package/@enbox/protocol-codegen) | CLI: generate TypeScript types from protocol definitions |
+| [`@enbox/api`](./packages/api) | [![npm](https://img.shields.io/npm/v/@enbox/api?color=357ec7)](https://www.npmjs.com/package/@enbox/api) | High-level SDK -- `Web5.connect()`, typed protocols, repository pattern |
+| [`@enbox/protocols`](./packages/protocols) | [![npm](https://img.shields.io/npm/v/@enbox/protocols?color=357ec7)](https://www.npmjs.com/package/@enbox/protocols) | Pre-built protocol definitions with JSON Schemas |
+| [`@enbox/protocol-codegen`](./packages/protocol-codegen) | [![npm](https://img.shields.io/npm/v/@enbox/protocol-codegen?color=357ec7)](https://www.npmjs.com/package/@enbox/protocol-codegen) | CLI: generate TypeScript types from protocol definitions |
 
 ### Agent & Identity
 
 | Package | Version | Description |
 |---|---|---|
-| [`@enbox/agent`](./packages/agent) | [![npm](https://img.shields.io/npm/v/@enbox/agent)](https://www.npmjs.com/package/@enbox/agent) | Agent framework: identity vault, key management, sync engine |
-| [`@enbox/dids`](./packages/dids) | [![npm](https://img.shields.io/npm/v/@enbox/dids)](https://www.npmjs.com/package/@enbox/dids) | DID methods (`did:dht`, `did:jwk`), resolution |
-| [`@enbox/crypto`](./packages/crypto) | [![npm](https://img.shields.io/npm/v/@enbox/crypto)](https://www.npmjs.com/package/@enbox/crypto) | Ed25519, X25519, secp256k1, AES, PBKDF2, JWE |
-| [`@enbox/common`](./packages/common) | [![npm](https://img.shields.io/npm/v/@enbox/common)](https://www.npmjs.com/package/@enbox/common) | Shared utilities: `TtlCache`, `LevelStore`, data conversion |
-| [`@enbox/browser`](./packages/browser) | [![npm](https://img.shields.io/npm/v/@enbox/browser)](https://www.npmjs.com/package/@enbox/browser) | Browser polyfills and DRL resolution |
+| [`@enbox/agent`](./packages/agent) | [![npm](https://img.shields.io/npm/v/@enbox/agent?color=357ec7)](https://www.npmjs.com/package/@enbox/agent) | Agent framework: identity vault, key management, sync engine |
+| [`@enbox/dids`](./packages/dids) | [![npm](https://img.shields.io/npm/v/@enbox/dids?color=357ec7)](https://www.npmjs.com/package/@enbox/dids) | DID methods (`did:dht`, `did:jwk`), resolution |
+| [`@enbox/crypto`](./packages/crypto) | [![npm](https://img.shields.io/npm/v/@enbox/crypto?color=357ec7)](https://www.npmjs.com/package/@enbox/crypto) | Ed25519, X25519, secp256k1, AES, PBKDF2, JWE |
+| [`@enbox/common`](./packages/common) | [![npm](https://img.shields.io/npm/v/@enbox/common?color=357ec7)](https://www.npmjs.com/package/@enbox/common) | Shared utilities: `TtlCache`, `LevelStore`, data conversion |
+| [`@enbox/browser`](./packages/browser) | [![npm](https://img.shields.io/npm/v/@enbox/browser?color=357ec7)](https://www.npmjs.com/package/@enbox/browser) | Browser polyfills and DRL resolution |
 
 ### DWN Infrastructure
 
 | Package | Version | Description |
 |---|---|---|
-| [`@enbox/dwn-sdk-js`](./packages/dwn-sdk-js) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-sdk-js)](https://www.npmjs.com/package/@enbox/dwn-sdk-js) | DWN protocol engine, message handlers, storage interfaces |
-| [`@enbox/dwn-clients`](./packages/dwn-clients) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-clients)](https://www.npmjs.com/package/@enbox/dwn-clients) | DWN client libraries, JSON-RPC transport |
-| [`@enbox/dwn-server`](./packages/dwn-server) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-server)](https://www.npmjs.com/package/@enbox/dwn-server) | Multi-tenant remote DWN server (HTTP/WS via Bun.serve) |
+| [`@enbox/dwn-sdk-js`](./packages/dwn-sdk-js) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-sdk-js?color=357ec7)](https://www.npmjs.com/package/@enbox/dwn-sdk-js) | DWN protocol engine, message handlers, storage interfaces |
+| [`@enbox/dwn-clients`](./packages/dwn-clients) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-clients?color=357ec7)](https://www.npmjs.com/package/@enbox/dwn-clients) | DWN client libraries, JSON-RPC transport |
+| [`@enbox/dwn-server`](./packages/dwn-server) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-server?color=357ec7)](https://www.npmjs.com/package/@enbox/dwn-server) | Multi-tenant remote DWN server (HTTP/WS via Bun.serve) |
 | [`@enbox/dwn-relay`](./packages/dwn-relay) | -- | DWN relay for tenant data synchronization |
-| [`@enbox/dwn-sql-store`](./packages/dwn-sql-store) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-sql-store)](https://www.npmjs.com/package/@enbox/dwn-sql-store) | SQL-backed DWN storage (PostgreSQL, SQLite, MySQL) |
+| [`@enbox/dwn-sql-store`](./packages/dwn-sql-store) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-sql-store?color=357ec7)](https://www.npmjs.com/package/@enbox/dwn-sql-store) | SQL-backed DWN storage (PostgreSQL, SQLite, MySQL) |
 | [`@enbox/dwn-server-admin-ui`](./packages/dwn-server-admin-ui) | -- | Admin dashboard for DWN server |
 
 ### Build Order
@@ -151,15 +151,15 @@ See the [`@enbox/api` README](./packages/api/README.md) for the repository patte
 
 | Package | Coverage |
 |---|---|
-| `@enbox/api` | [![api](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/api.json)](packages/api) |
-| `@enbox/agent` | [![agent](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/agent.json)](packages/agent) |
-| `@enbox/common` | [![common](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/common.json)](packages/common) |
-| `@enbox/crypto` | [![crypto](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/crypto.json)](packages/crypto) |
-| `@enbox/dids` | [![dids](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dids.json)](packages/dids) |
-| `@enbox/dwn-clients` | [![dwn-clients](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-clients.json)](packages/dwn-clients) |
-| `@enbox/dwn-sdk-js` | [![dwn-sdk-js](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-sdk-js.json)](packages/dwn-sdk-js) |
-| `@enbox/dwn-server` | [![dwn-server](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-server.json)](packages/dwn-server) |
-| `@enbox/dwn-sql-store` | [![dwn-sql-store](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-sql-store.json)](packages/dwn-sql-store) |
+| `@enbox/api` | [![api](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/api.json&color=2ea043)](packages/api) |
+| `@enbox/agent` | [![agent](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/agent.json&color=2ea043)](packages/agent) |
+| `@enbox/common` | [![common](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/common.json&color=2ea043)](packages/common) |
+| `@enbox/crypto` | [![crypto](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/crypto.json&color=2ea043)](packages/crypto) |
+| `@enbox/dids` | [![dids](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dids.json&color=2ea043)](packages/dids) |
+| `@enbox/dwn-clients` | [![dwn-clients](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-clients.json&color=2ea043)](packages/dwn-clients) |
+| `@enbox/dwn-sdk-js` | [![dwn-sdk-js](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-sdk-js.json&color=2ea043)](packages/dwn-sdk-js) |
+| `@enbox/dwn-server` | [![dwn-server](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-server.json&color=2ea043)](packages/dwn-server) |
+| `@enbox/dwn-sql-store` | [![dwn-sql-store](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-sql-store.json&color=2ea043)](packages/dwn-sql-store) |
 
 ### Browser Support
 
