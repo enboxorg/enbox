@@ -122,8 +122,12 @@ export class RecordsReadHandler implements MethodHandler {
     } else {
       const result = await this.deps.dataStore!.get(tenant, matchedRecordsWrite.recordId, matchedRecordsWrite.descriptor.dataCid);
       if (result?.dataStream === undefined) {
+        // The message envelope exists but the record data is unavailable (e.g., evicted
+        // by a storage-constrained node, or read proxying to peer endpoints failed).
+        // Return 410 with the recordsWrite so the requester can try an alternative endpoint.
         return {
-          status: { code: 404, detail: 'Not Found' }
+          status : { code: 410, detail: 'Record data not available' },
+          entry  : { recordsWrite: matchedRecordsWrite },
         };
       }
       data = result.dataStream;

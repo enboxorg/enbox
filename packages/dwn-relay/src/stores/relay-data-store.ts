@@ -151,7 +151,7 @@ export class RelayDataStore implements DataStore {
       return local;
     }
 
-    // If no proxy configured, return undefined (standard 404 behavior)
+    // If no proxy configured, return undefined (DWN returns 410 to the requester)
     if (!this.#proxy) {
       return undefined;
     }
