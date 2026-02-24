@@ -1,5 +1,12 @@
 # @enbox/crypto
 
+## 0.0.6
+
+### Patch Changes
+
+- Updated dependencies [[`0eb40d4`](https://github.com/enboxorg/enbox/commit/0eb40d4d111732262de01258c0f7f8c727466714)]:
+  - @enbox/common@0.0.5
+
 ## 0.0.5
 
 ### Patch Changes
