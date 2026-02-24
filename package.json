@@ -15,7 +15,8 @@
     "packages/dwn-sdk-js",
     "packages/dwn-sql-store",
     "packages/dwn-server",
-    "packages/dwn-server-admin-ui"
+    "packages/dwn-server-admin-ui",
+    "packages/dwn-relay"
   ],
   "scripts": {
     "clean": "bun run clean:modules && bun run clean:data && bun run --filter '*' clean",
