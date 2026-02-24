@@ -311,7 +311,7 @@ spec:
               mountPath: /tls-config
       containers:
         - name: dwn-server
-          image: registry.ovh.enbox.org/dwn-server:main
+          image: registry.ovh.enbox.id/dwn-server:main
           ports:
             - containerPort: 3000
           env:
