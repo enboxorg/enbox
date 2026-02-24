@@ -171,8 +171,19 @@ export class DwnServer {
 
       }
 
+      // Create a DID resolver explicitly without LevelDB cache. The default
+      // Dwn.create() uses DidResolverCacheLevel which requires exclusive file
+      // locks and is not managed by the DWN's open()/close() lifecycle. In
+      // containerized deployments this causes "Database is not open" errors
+      // when the LevelDB lock file persists across restarts or when concurrent
+      // async operations (e.g. DeliveryService) race with the deferred open.
+      // UniversalResolver defaults to DidResolverCacheNoop when no cache is provided.
+      const didResolver = this.didResolver ?? new UniversalResolver({
+        didResolvers: [DidDht, DidJwk, DidKey, DidWeb],
+      });
+
       const dwnConfig = await getDwnConfig(this.config, {
-        didResolver : this.didResolver,
+        didResolver,
         tenantGate  : registrationManager,
         eventLog,
       });
