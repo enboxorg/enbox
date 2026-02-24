@@ -135,7 +135,7 @@ See the [`@enbox/api` README](./packages/api/README.md) for the repository patte
 | [`@enbox/dwn-sdk-js`](./packages/dwn-sdk-js) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-sdk-js?color=357ec7)](https://www.npmjs.com/package/@enbox/dwn-sdk-js) | DWN protocol engine, message handlers, storage interfaces |
 | [`@enbox/dwn-clients`](./packages/dwn-clients) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-clients?color=357ec7)](https://www.npmjs.com/package/@enbox/dwn-clients) | DWN client libraries, JSON-RPC transport |
 | [`@enbox/dwn-server`](./packages/dwn-server) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-server?color=357ec7)](https://www.npmjs.com/package/@enbox/dwn-server) | Multi-tenant remote DWN server (HTTP/WS via Bun.serve) |
-| [`@enbox/dwn-relay`](./packages/dwn-relay) | -- | DWN relay for tenant data synchronization |
+| [`@enbox/dwn-relay`](https://github.com/enboxorg/dwn-relay) | -- | DWN relay/cache node (standalone repo) |
 | [`@enbox/dwn-sql-store`](./packages/dwn-sql-store) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-sql-store?color=357ec7)](https://www.npmjs.com/package/@enbox/dwn-sql-store) | SQL-backed DWN storage (PostgreSQL, SQLite, MySQL) |
 | [`@enbox/dwn-server-admin-ui`](./packages/dwn-server-admin-ui) | -- | Admin dashboard for DWN server |
 

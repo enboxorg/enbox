@@ -257,7 +257,7 @@ Event-driven triggers add work items: new `RecordsWrite` → queue that tenant (
 
 ## Implementation: `@enbox/dwn-relay`
 
-The relay/cache behavior is implemented as a new package in the enbox monorepo that extends `@enbox/dwn-server`. See the [package README](../packages/dwn-relay/README.md) for architecture and implementation details.
+The relay/cache behavior is implemented as a standalone package that extends `@enbox/dwn-server`. See the [dwn-relay repository](https://github.com/enboxorg/dwn-relay) for architecture and implementation details.
 
 ---
 
