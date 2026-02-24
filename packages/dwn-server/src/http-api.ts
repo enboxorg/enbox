@@ -501,6 +501,10 @@ export class HttpApi {
       webSocketSupport         : config.webSocketSupport,
     };
 
+    if (config.dataRetention) {
+      serverInfo.dataRetention = config.dataRetention;
+    }
+
     if (config.providerAuthEnabled) {
       serverInfo.providerAuth = {
         authorizeUrl  : config.providerAuthAuthorizeUrl,

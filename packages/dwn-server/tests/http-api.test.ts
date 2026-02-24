@@ -1030,6 +1030,33 @@ describe('http api', function () {
       // restore server name config
       config.serverName = serverName;
     });
+
+    it('verify /info omits dataRetention by default (full node)', async function () {
+      const resp = await fetch(`${baseUrl}/info`);
+      expect(resp.status).toBe(200);
+
+      const info = await resp.json();
+      expect(info['dataRetention']).toBeUndefined();
+    });
+
+    it('verify /info returns dataRetention when configured as cache', async function () {
+      await httpApi.close();
+
+      const originalDataRetention = config.dataRetention;
+      (config as any).dataRetention = 'cache';
+      httpApi = await HttpApi.create(config, dwn, registrationManager);
+      await httpApi.start(0);
+      baseUrl = `http://localhost:${httpApi.server.port}`;
+
+      const resp = await fetch(`${baseUrl}/info`);
+      expect(resp.status).toBe(200);
+
+      const info = await resp.json();
+      expect(info['dataRetention']).toBe('cache');
+
+      // restore
+      (config as any).dataRetention = originalDataRetention;
+    });
   });
 
   describe('getter accessors', () => {

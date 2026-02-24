@@ -17,6 +17,11 @@ export type ProviderAuthInfo = {
 };
 
 export type ServerInfo = {
+  /**
+   * Indicates whether the server retains all record data (`"full"`, the default
+   * when absent) or operates as a best-effort relay/cache (`"cache"`).
+   */
+  dataRetention?: 'full' | 'cache',
   /** the maximum file size the user can request to store */
   maxFileSize: number,
   /**

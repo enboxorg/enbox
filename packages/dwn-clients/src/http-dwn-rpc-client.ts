@@ -225,6 +225,7 @@ export class HttpDwnRpcClient implements DwnRpc {
         const results = await response.json() as ServerInfo;
 
         const serverInfo: ServerInfo = {
+          dataRetention            : results.dataRetention,
           maxFileSize              : results.maxFileSize,
           registrationRequirements : results.registrationRequirements,
           server                   : results.server,

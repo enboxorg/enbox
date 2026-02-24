@@ -56,6 +56,14 @@ export const config = {
    */
   maxInFlight: parseInt(process.env.DWN_MAX_IN_FLIGHT || '32'),
 
+  /**
+   * Data retention mode advertised in the `/info` response.
+   * `"full"` (default) means the server retains all record data indefinitely.
+   * `"cache"` means the server is a best-effort relay/cache that may evict data.
+   * When absent from the response, clients assume `"full"`.
+   */
+  dataRetention: (process.env.DWN_DATA_RETENTION as 'full' | 'cache' | undefined) || undefined,
+
   // whether to enable 'ws:'
   webSocketSupport: { on: true, off: false }[process.env.DS_WEBSOCKET_SERVER] ?? true,
 
