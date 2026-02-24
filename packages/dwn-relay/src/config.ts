@@ -40,6 +40,9 @@ export interface RelayConfig {
 
   /** This node's own base URL, used to filter self from peer endpoint lists. */
   selfUrl?: string;
+
+  /** Path for the SQLite metadata database. Undefined = in-memory only (not recommended for production). */
+  metadataPath?: string;
 }
 
 /**
@@ -87,5 +90,6 @@ export function getRelayConfig(): RelayConfig {
     readProxyTimeoutMs      : parseInt(process.env.DWN_RELAY_READ_PROXY_TIMEOUT_MS || '15000'),
     readProxyCacheLocally   : process.env.DWN_RELAY_READ_PROXY_CACHE !== 'false',
     selfUrl                 : process.env.DWN_BASE_URL || undefined,
+    metadataPath            : process.env.DWN_RELAY_METADATA_PATH || undefined,
   };
 }

@@ -1,5 +1,9 @@
+import { join } from 'path';
+import { tmpdir } from 'os';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { mkdtempSync, rmSync } from 'fs';
 
+import { MetadataStore } from '../src/stores/metadata-store.js';
 import { RelayDataStore } from '../src/stores/relay-data-store.js';
 import { createMockDataStore, randomBytes, streamFromBytes } from './test-utils.js';
 
@@ -239,6 +243,133 @@ describe('RelayDataStore', () => {
       await store.put('t1', 'r2', 'c2', streamFromBytes(randomBytes(300)));
       await store.evict('t1', 'r1', 'c1');
       expect(store.getTenantStorageBytes('t1')).toBe(300);
+    });
+  });
+
+  // ─── markTenantSynced ─────────────────────────────────────────────
+
+  describe('markTenantSynced', () => {
+    it('should mark all entries for a tenant as synced', async () => {
+      await store.put('t1', 'r1', 'c1', streamFromBytes(randomBytes(100)));
+      await store.put('t1', 'r2', 'c2', streamFromBytes(randomBytes(200)));
+      await store.put('t2', 'r3', 'c3', streamFromBytes(randomBytes(300)));
+
+      store.markTenantSynced('t1');
+
+      // All t1 entries should be eviction candidates (synced = true)
+      const candidates = store.getEvictionCandidates(Infinity);
+      expect(candidates).toHaveLength(2);
+      expect(candidates[0].tenant).toBe('t1');
+      expect(candidates[1].tenant).toBe('t1');
+    });
+
+    it('should not affect entries of other tenants', async () => {
+      await store.put('t1', 'r1', 'c1', streamFromBytes(randomBytes(100)));
+      await store.put('t2', 'r2', 'c2', streamFromBytes(randomBytes(200)));
+
+      store.markTenantSynced('t1');
+
+      // Only t1's entry should be an eviction candidate
+      const candidates = store.getEvictionCandidates(Infinity);
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0].tenant).toBe('t1');
+    });
+  });
+
+  // ─── Persistent metadata store integration ─────────────────────────
+
+  describe('persistent metadata', () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(join(tmpdir(), 'relay-data-persist-'));
+    });
+
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should seed metadata from SQLite on open', async () => {
+      const metaStore = new MetadataStore(join(tmpDir, 'meta.sqlite'));
+      const inner = createMockDataStore();
+      const storeA = new RelayDataStore(inner, metaStore);
+      await storeA.open();
+
+      // Put some data
+      await storeA.put('t1', 'r1', 'c1', streamFromBytes(randomBytes(1000)));
+      await storeA.put('t1', 'r2', 'c2', streamFromBytes(randomBytes(2000)));
+      storeA.markSynced('t1', 'r1', 'c1');
+      storeA.setProtocol('t1', 'r2', 'c2', 'https://example.com/chat');
+
+      expect(storeA.getTotalStorageBytes()).toBe(3000);
+      expect(storeA.getEntryCount()).toBe(2);
+
+      await storeA.close();
+
+      // Create a new RelayDataStore with the same metadata path — simulates restart
+      const metaStore2 = new MetadataStore(join(tmpDir, 'meta.sqlite'));
+      const storeB = new RelayDataStore(inner, metaStore2);
+      await storeB.open();
+
+      expect(storeB.getTotalStorageBytes()).toBe(3000);
+      expect(storeB.getTenantStorageBytes('t1')).toBe(3000);
+      expect(storeB.getEntryCount()).toBe(2);
+
+      // Check synced and protocol metadata survived
+      const candidates = storeB.getEvictionCandidates(Infinity);
+      expect(candidates).toHaveLength(1); // Only r1 is synced
+      expect(candidates[0].recordId).toBe('r1');
+      expect(candidates[0].synced).toBe(true);
+
+      await storeB.close();
+    });
+
+    it('should persist eviction through restart', async () => {
+      const metaStore = new MetadataStore(join(tmpDir, 'meta.sqlite'));
+      const inner = createMockDataStore();
+      const storeA = new RelayDataStore(inner, metaStore);
+      await storeA.open();
+
+      await storeA.put('t1', 'r1', 'c1', streamFromBytes(randomBytes(1000)));
+      await storeA.put('t1', 'r2', 'c2', streamFromBytes(randomBytes(2000)));
+      await storeA.evict('t1', 'r1', 'c1');
+
+      expect(storeA.getTotalStorageBytes()).toBe(2000);
+      expect(storeA.getEntryCount()).toBe(1);
+
+      await storeA.close();
+
+      const metaStore2 = new MetadataStore(join(tmpDir, 'meta.sqlite'));
+      const storeB = new RelayDataStore(inner, metaStore2);
+      await storeB.open();
+
+      expect(storeB.getTotalStorageBytes()).toBe(2000);
+      expect(storeB.getEntryCount()).toBe(1);
+
+      await storeB.close();
+    });
+
+    it('should persist markTenantSynced through restart', async () => {
+      const metaStore = new MetadataStore(join(tmpDir, 'meta.sqlite'));
+      const inner = createMockDataStore();
+      const storeA = new RelayDataStore(inner, metaStore);
+      await storeA.open();
+
+      await storeA.put('t1', 'r1', 'c1', streamFromBytes(randomBytes(100)));
+      await storeA.put('t1', 'r2', 'c2', streamFromBytes(randomBytes(200)));
+      storeA.markTenantSynced('t1');
+
+      await storeA.close();
+
+      const metaStore2 = new MetadataStore(join(tmpDir, 'meta.sqlite'));
+      const storeB = new RelayDataStore(inner, metaStore2);
+      await storeB.open();
+
+      const candidates = storeB.getEvictionCandidates(Infinity);
+      expect(candidates).toHaveLength(2);
+      expect(candidates.every(c => c.synced)).toBe(true);
+
+      await storeB.close();
     });
   });
 });
