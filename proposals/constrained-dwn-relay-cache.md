@@ -118,16 +118,6 @@ Read proxying is transparent to the requesting party.
 
 > Since record data is content-addressed using IPFS-compatible CIDs (DAG-PB/UnixFS), nodes MAY resolve record data from any source that can provide content matching the `dataCid`, including IPFS, BitTorrent, or other content-addressed networks. The authenticity of the data is verified by recomputing the CID from the received content and comparing it to the `dataCid` in the signed message descriptor.
 
-### 5. Server-Info Capabilities (Transport Spec)
-
-Extend the ServerInfo object with an optional `dataRetention` field:
-
-| Property | Type | Required | Description |
-|----------|------|----------|-------------|
-| `dataRetention` | `string` | No | `"full"` (default if absent) or `"cache"`. Indicates whether the server retains all record data or operates as a best-effort relay/cache. |
-
-This allows nodes to discover peer capabilities at runtime. A cache node querying peer endpoints can determine which peers are full nodes (safe to proxy reads to, safe to treat as sync confirmation targets).
-
 ---
 
 ## Design: Operational Model
@@ -292,7 +282,6 @@ The relay/cache behavior is implemented as a new package in the enbox monorepo t
 | Read proxy semantics | Delivery spec | ~5 lines normative |
 | Sync correctness clarification (SMT operates on envelopes, not data) | DWN spec (Sync section) | ~3 lines normative |
 | Content-addressed data availability | DWN spec | ~3 lines non-normative note |
-| ServerInfo `dataRetention` field | Transport spec | ~2 lines |
-| **Total** | | **~23 lines** |
+| **Total** | | **~21 lines** |
 
 Everything else — eviction policies, ServerSyncEngine, storage management, IPFS integration, resource protection — is implementation-level and does not require spec changes.
