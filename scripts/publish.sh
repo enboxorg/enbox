@@ -31,6 +31,7 @@ PACKAGES=(
   "packages/protocols"
   "packages/browser"
   "packages/dwn-sql-store"
+  "packages/dwn-server-admin-ui"
   "packages/dwn-server"
 )
 
