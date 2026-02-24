@@ -1,8 +1,8 @@
 # Enbox
 
-[![CI](https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/ci.yml?branch=main&label=ci)](https://github.com/enboxorg/enbox/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
-[![Bun](https://img.shields.io/badge/runtime-Bun-%23fbf0df?logo=bun)](https://bun.sh)
+[![CI](https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/ci.yml?branch=main&label=ci&color=2ea043)](https://github.com/enboxorg/enbox/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-357ec7)](./LICENSE)
+[![Bun](https://img.shields.io/badge/runtime-Bun-%23e8d5b7?logo=bun&logoColor=f9f1e1)](https://bun.sh)
 
 > **Research Preview** -- Enbox is under heavy development. Expect breaking changes. Not yet accepting external contributions. See [Status & Contributing](#status--contributing).
 
