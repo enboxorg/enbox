@@ -6,7 +6,7 @@ import type { MessageProcessedContext, MessageProcessedHook } from './message-pr
 import log from 'loglevel';
 
 import { createJsonRpcRequest } from '@enbox/dwn-clients';
-import { DwnInterfaceName, DwnMethodName, getRuleSetAtPath } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, getRuleSetAtPath, Message } from '@enbox/dwn-sdk-js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -320,10 +320,20 @@ export class DeliveryService implements MessageProcessedHook {
         }
       }
 
-      // Actor-based rules with `of` (author/recipient of ancestor records).
-      // These require walking the record chain which is complex — for the initial
-      // implementation we focus on role-based targets which cover the primary
-      // multi-party use case.
+      // Method 3: Actor-based discovery — `who: "author"/"recipient"` + `of` path.
+      // Find the ancestor record at the `of` protocol path within the same context,
+      // then extract its author or recipient as a delivery target.
+      if (rule.who !== undefined && rule.of !== undefined && rule.who !== 'anyone') {
+        // Skip cross-protocol `of` references (e.g., "threads:thread") for now.
+        if (!rule.of.includes(':')) {
+          const actorDid = await this.#queryActorFromAncestor(
+            tenant, protocolDefinition.protocol, rule.of, rule.who as string, contextId,
+          );
+          if (actorDid) {
+            targetDids.add(actorDid);
+          }
+        }
+      }
     }
 
     // Resolve endpoints for each target DID.
@@ -397,6 +407,72 @@ export class DeliveryService implements MessageProcessedHook {
     } catch (err) {
       log.warn(`DeliveryService: failed to query role recipients for ${rolePath}`, err);
       return [];
+    }
+  }
+
+  /**
+   * Queries the tenant's DWN for the ancestor record at the given protocol path
+   * (within the same context) and extracts the author or recipient DID.
+   *
+   * This is the delivery-side inverse of `checkActor()` in protocol authorization:
+   * instead of "is this DID the author/recipient?", we ask "who IS the author/recipient?".
+   *
+   * @param actorType - `"author"` or `"recipient"`.
+   * @returns The DID of the actor, or `undefined` if the ancestor cannot be found.
+   */
+  async #queryActorFromAncestor(
+    tenant: string,
+    protocolUri: string,
+    ofPath: string,
+    actorType: string,
+    contextId?: string,
+  ): Promise<string | undefined> {
+    try {
+      const filter: Record<string, unknown> = {
+        protocol     : protocolUri,
+        protocolPath : ofPath,
+      };
+
+      // Scope to the record's context. The `of` path identifies an ancestor,
+      // so the ancestor's contextId is a prefix of (or equal to) the current
+      // record's contextId. For a top-level `of` path (no slashes), the ancestor
+      // IS the context root — its recordId equals the first contextId segment.
+      if (contextId !== undefined) {
+        const ofDepth = ofPath.split('/').length;
+        const contextSegments = contextId.split('/');
+        // The ancestor at depth N has a contextId formed by the first N segments.
+        if (contextSegments.length >= ofDepth) {
+          filter.contextId = contextSegments.slice(0, ofDepth).join('/');
+        }
+      }
+
+      const queryMessage = {
+        descriptor: {
+          interface        : DwnInterfaceName.Records,
+          method           : DwnMethodName.Query,
+          messageTimestamp : new Date().toISOString(),
+          filter,
+        },
+      };
+
+      const reply = await this.#dwn.processMessage(tenant, queryMessage as GenericMessage);
+
+      if (reply.status.code !== 200 || !reply.entries || reply.entries.length === 0) {
+        return undefined;
+      }
+
+      const ancestor = reply.entries[0] as GenericMessage;
+
+      if (actorType === 'author') {
+        return Message.getAuthor(ancestor);
+      } else if (actorType === 'recipient') {
+        return (ancestor as { descriptor?: { recipient?: string } }).descriptor?.recipient;
+      }
+
+      return undefined;
+    } catch (err) {
+      log.warn(`DeliveryService: failed to query ancestor at ${ofPath} for actor resolution`, err);
+      return undefined;
     }
   }
 
