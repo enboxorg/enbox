@@ -1,3 +1,5 @@
+import type { GenericMessage } from '@enbox/dwn-sdk-js';
+
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -5,7 +7,8 @@ import { mkdtempSync, rmSync } from 'fs';
 
 import { MetadataStore } from '../src/stores/metadata-store.js';
 import { RelayDataStore } from '../src/stores/relay-data-store.js';
-import { createMockDataStore, randomBytes, streamFromBytes } from './test-utils.js';
+import { requestContext } from '../src/request-context.js';
+import { createDidDocument, createMockDataStore, createMockDidResolver, createMockRpcClient, getTestRelayConfig, randomBytes, streamFromBytes } from './test-utils.js';
 
 describe('RelayDataStore', () => {
   let innerStore: ReturnType<typeof createMockDataStore>;
@@ -370,6 +373,116 @@ describe('RelayDataStore', () => {
       expect(candidates.every(c => c.synced)).toBe(true);
 
       await storeB.close();
+    });
+  });
+
+  // ─── Read proxy auth forwarding ───────────────────────────────────
+
+  describe('read proxy auth forwarding', () => {
+    it('should forward the original signed RecordsRead message when available in request context', async () => {
+      const rpcClient = createMockRpcClient();
+      const tenant = 'did:test:alice';
+
+      // The peer returns 404 (no data) — we're testing what message gets sent, not the response.
+      rpcClient.pushResponse({ status: { code: 404, detail: 'Not Found' } });
+
+      const proxyStore = new RelayDataStore(createMockDataStore());
+      await proxyStore.open();
+
+      proxyStore.setProxy({
+        didResolver: createMockDidResolver({
+          [tenant]: createDidDocument(tenant, ['https://peer.example.com']),
+        }),
+        rpcClient,
+        config       : getTestRelayConfig(),
+        ipfsResolver : undefined,
+      });
+
+      const signedMessage = {
+        descriptor: {
+          interface        : 'Records',
+          method           : 'Read',
+          messageTimestamp : '2026-01-01T00:00:00.000000Z',
+          filter           : { recordId: 'rec-private' },
+        },
+        authorization: {
+          signature: {
+            signatures: [{ protected: 'signed-header', signature: 'signed-sig' }],
+          },
+        },
+      } as unknown as GenericMessage;
+
+      // Run within request context — the proxy should forward the signed message.
+      await requestContext.run(signedMessage, async () => {
+        await proxyStore.get(tenant, 'rec-private', 'cid-private');
+      });
+
+      // Verify the RPC request used the original signed message, not an anonymous one.
+      expect(rpcClient.requests).toHaveLength(1);
+      const sentMessage = rpcClient.requests[0].message as any;
+      expect(sentMessage.authorization).toBeDefined();
+      expect(sentMessage.authorization.signature.signatures[0].protected).toBe('signed-header');
+
+      await proxyStore.close();
+    });
+
+    it('should use an anonymous RecordsRead when no request context is available', async () => {
+      const rpcClient = createMockRpcClient();
+      const tenant = 'did:test:alice';
+
+      rpcClient.pushResponse({ status: { code: 404, detail: 'Not Found' } });
+
+      const proxyStore = new RelayDataStore(createMockDataStore());
+      await proxyStore.open();
+
+      proxyStore.setProxy({
+        didResolver: createMockDidResolver({
+          [tenant]: createDidDocument(tenant, ['https://peer.example.com']),
+        }),
+        rpcClient,
+        config       : getTestRelayConfig(),
+        ipfsResolver : undefined,
+      });
+
+      // No requestContext.run() — simulates a background operation.
+      await proxyStore.get(tenant, 'rec-published', 'cid-published');
+
+      // Verify the RPC request used an anonymous message (no authorization).
+      expect(rpcClient.requests).toHaveLength(1);
+      const sentMessage = rpcClient.requests[0].message as any;
+      expect(sentMessage.authorization).toBeUndefined();
+      expect(sentMessage.descriptor.filter.recordId).toBe('rec-published');
+
+      await proxyStore.close();
+    });
+
+    it('should not forward auth for non-RecordsRead contexts', async () => {
+      const rpcClient = createMockRpcClient();
+      const tenant = 'did:test:alice';
+
+      rpcClient.pushResponse({ status: { code: 404, detail: 'Not Found' } });
+
+      const proxyStore = new RelayDataStore(createMockDataStore());
+      await proxyStore.open();
+
+      proxyStore.setProxy({
+        didResolver: createMockDidResolver({
+          [tenant]: createDidDocument(tenant, ['https://peer.example.com']),
+        }),
+        rpcClient,
+        config       : getTestRelayConfig(),
+        ipfsResolver : undefined,
+      });
+
+      // No requestContext — the relay server wrapper only stores RecordsRead
+      // messages in the context, so background calls get anonymous reads.
+      await proxyStore.get(tenant, 'rec-test', 'cid-test');
+
+      expect(rpcClient.requests).toHaveLength(1);
+      const sentMessage = rpcClient.requests[0].message as any;
+      expect(sentMessage.authorization).toBeUndefined();
+
+      await proxyStore.close();
     });
   });
 });
