@@ -51,6 +51,7 @@ export default defineConfig({
     include: [
       // --- CJS packages imported directly from src/ or tests/ ---
       'abstract-level',
+      'browser-level',
       'ajv',
       'ajv/dist/2020.js',
       'ajv/dist/runtime/ucs2length.js',
@@ -104,11 +105,9 @@ export default defineConfig({
     // another, producing intermittent 400s and missing results — especially in
     // Firefox where IndexedDB transaction scheduling differs from Chromium.
     fileParallelism: false,
-    // Browser-compatible tests. Most are pure-logic; a few use TestStores which
-    // resolve to IndexedDB-backed stores in browser mode (via level's browser
-    // field). The 29 function-wrapped handler/feature/scenario tests are excluded
-    // because they require the TestSuite orchestrator and would add ~978 tests.
-    // See https://github.com/enboxorg/enbox/issues/236 for the full plan.
+    // Browser-compatible tests. Pure-logic tests run individually; the 29
+    // store-dependent handler/feature/scenario tests run via the TestSuite
+    // orchestrator which injects IndexedDB-backed stores (via level's browser field).
     include: [
       'tests/utils/cid.spec.ts',
       // data-stream.spec.ts excluded: its 500KB×3 stream duplication test exceeds
@@ -150,8 +149,13 @@ export default defineConfig({
       'tests/protocols/permissions.spec.ts',
 
       'tests/scenarios/aggregator.spec.ts',
+
+      // Store-dependent tests: 29 handler/feature/scenario test functions run via
+      // the TestSuite orchestrator. Stores resolve to IndexedDB (browser-level)
+      // automatically through level's "browser" package.json field.
+      'tests/store-dependent-tests.spec.ts',
     ],
-    testTimeout : 15_000,
+    testTimeout : 30_000,
     // Retry failed tests once in CI. Firefox's ESM loader can occasionally
     // crash on dynamic module imports even with noDiscovery enabled — a
     // single retry is enough to recover from transient loader failures
