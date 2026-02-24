@@ -194,6 +194,37 @@ A single relay instance serving 100K tenants:
 - 24–72 hour data retention window
 - Tenants' full nodes sync before the window expires
 
+## Docker
+
+Build and run from the monorepo root:
+
+```bash
+# Build
+docker build -f Dockerfile.relay -t enbox-dwn-relay .
+
+# Run with defaults (LevelDB storage, port 3000)
+docker run -p 3000:3000 enbox-dwn-relay
+
+# Run with persistent storage
+docker run -p 3000:3000 \
+  -v dwn-relay-data:/app/data \
+  -e DWN_RELAY_DATA_RETENTION=72h \
+  -e DWN_RELAY_STORAGE_MAX_BYTES=50000000000 \
+  enbox-dwn-relay
+
+# Run with PostgreSQL message store and IPFS gateway
+docker run -p 3000:3000 \
+  -v dwn-relay-data:/app/data \
+  -e DWN_STORAGE_MESSAGES=postgres://user:pass@host:5432/dwn \
+  -e DWN_STORAGE_STATE_INDEX=postgres://user:pass@host:5432/dwn \
+  -e DWN_RELAY_IPFS_GATEWAY=http://ipfs-gateway:8080 \
+  enbox-dwn-relay
+```
+
+The image uses `tini` for proper signal handling, runs as a non-root `dwn` user, and includes a health check on `/health`.
+
+Data is stored in `/app/data` (LevelDB stores + SQLite metadata). Mount a volume for persistence.
+
 ## Related
 
 - [Proposal: Storage-Constrained DWN Nodes](../../proposals/constrained-dwn-relay-cache.md)
