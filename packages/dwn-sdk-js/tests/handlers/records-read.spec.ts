@@ -1752,7 +1752,7 @@ export function testRecordsReadHandler(): void {
         expect(readReply.status.code).toBe(404);
       });
 
-      it('should return 404 underlying data store cannot locate the data when data is above threshold', async () => {
+      it('should return 410 with recordsWrite when data store cannot locate the data for large records', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
@@ -1775,7 +1775,11 @@ export function testRecordsReadHandler(): void {
         });
 
         const readReply = await dwn.processMessage(alice.did, recordsRead.message);
-        expect(readReply.status.code).toBe(404);
+        expect(readReply.status.code).toBe(410);
+        expect(readReply.status.detail).toBe('Record data not available');
+        // The reply should include the recordsWrite envelope so the client can try another endpoint
+        expect((readReply as any).entry?.recordsWrite).toBeDefined();
+        expect((readReply as any).entry?.recordsWrite.recordId).toBe(message.recordId);
       });
 
       describe('data from encodedData', () => {
