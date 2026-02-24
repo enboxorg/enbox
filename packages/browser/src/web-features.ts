@@ -32,8 +32,9 @@ export async function getDwnEndpoints(did: any): Promise<string[]> {
   const endpoints = didDocument?.service?.find(
     (service) => service.type === 'DecentralizedWebNode'
   )?.serviceEndpoint;
-  return (Array.isArray(endpoints) ? endpoints : [endpoints]).filter((url) =>
-    url.startsWith('http')
+  if (!endpoints) {return [];}
+  return (Array.isArray(endpoints) ? endpoints : [endpoints]).filter(
+    (url) => typeof url === 'string' && url.startsWith('http')
   );
 }
 
@@ -46,7 +47,7 @@ export async function handleEvent(event: any, did: any, path: any, options: any)
   const cachedResponse = await responseCache.match(drl);
   if (cachedResponse) {
     if (!navigator.onLine) {return cachedResponse;}
-    const match = await options?.onCacheCheck(event, drl);
+    const match = await options?.onCacheCheck?.(event, drl);
     if (match) {
       const cacheTime = cachedResponse.headers.get('dwn-cache-time');
       if (
@@ -78,7 +79,7 @@ export async function handleEvent(event: any, did: any, path: any, options: any)
 }
 
 /** @internal Exported for testing. Fetches a resource from DWN endpoints. */
-export async function fetchResource(event: any, did: any, drl: any, path: any, responseCache: any, options: any): Promise<Response | undefined> {
+export async function fetchResource(event: any, did: any, drl: any, path: any, responseCache: any, options: any): Promise<Response> {
   const endpoints = await getDwnEndpoints(did);
   if (!endpoints?.length) {
     throw new Response(
@@ -86,38 +87,44 @@ export async function fetchResource(event: any, did: any, drl: any, path: any, r
       { status: 530 }
     );
   }
+  let lastError: Response | undefined;
   for (const endpoint of endpoints) {
     try {
       const url = `${endpoint.replace(trailingSlashRegex, '')}/${did}/${path}`;
       const response = await fetch(url, { headers: event.request.headers });
       if (response.ok) {
-        const match = await options?.onCacheCheck(event, drl);
+        const match = await options?.onCacheCheck?.(event, drl);
         if (match) {
           cacheResponse(drl, url, response, responseCache);
         }
         return response;
       }
       console.log(`DWN endpoint error: ${response.status}`);
-      return new Response('DWeb Node request failed', {
+      lastError = new Response('DWeb Node request failed', {
         status: response.status,
       });
     } catch (error) {
       console.log(`DWN endpoint error: ${error}`);
-      return new Response('DWeb Node request failed: ' + error, {
+      lastError = new Response('DWeb Node request failed', {
         status: 500,
       });
     }
   }
+  return lastError!;
 }
 
 /** @internal Exported for testing. Caches a DRL response with metadata headers. */
 export async function cacheResponse(drl: any, url: any, response: any, cache: any): Promise<void> {
-  const clonedResponse = response.clone();
-  const headers = new Headers(clonedResponse.headers);
-  headers.append('dwn-cache-time', Date.now().toString());
-  headers.append('dwn-composed-url', url);
-  const modifiedResponse = new Response(clonedResponse.body, { headers });
-  cache.put(drl, modifiedResponse);
+  try {
+    const clonedResponse = response.clone();
+    const headers = new Headers(clonedResponse.headers);
+    headers.append('dwn-cache-time', Date.now().toString());
+    headers.append('dwn-composed-url', url);
+    const modifiedResponse = new Response(clonedResponse.body, { headers });
+    await cache.put(drl, modifiedResponse);
+  } catch (error) {
+    console.log(`Failed to cache DRL response: ${error}`);
+  }
 }
 
 /* Service Worker-based features */
@@ -370,7 +377,7 @@ function addLinkFeatures(): void {
             let tab;
             if (openAsTab) {
               tab = window.open('', '_blank');
-              tab.document.write(tabContent);
+              if (tab) {tab.document.write(tabContent);}
             } else {
               activeNavigation = path;
               // this is to allow for cached DIDs to instantly load without any flash of loading UI
@@ -381,13 +388,15 @@ function addLinkFeatures(): void {
               );
             }
             const endpoints = await getDwnEndpoints(did);
-            if (!endpoints.length) {throw null;}
+            if (!endpoints.length) {
+              throw new Error('no valid DWN endpoints found');
+            }
             const url = `${endpoints[0].replace(
               trailingSlashRegex,
               ''
             )}/${did}/${path}`;
             if (openAsTab) {
-              if (!tab.closed) {tab.location.href = url;}
+              if (tab && !tab.closed) {tab.location.href = url;}
             } else if (activeNavigation === path) {
               window.location.href = url;
             }
@@ -419,8 +428,10 @@ function addLinkFeatures(): void {
             .replace(trailingSlashRegex, '');
           const responseCache = await caches.open('drl');
           const response = await responseCache.match(drl);
-          const url = response.headers.get('dwn-composed-url');
-          if (url) {target.src = url;}
+          if (response) {
+            const url = response.headers.get('dwn-composed-url');
+            if (url) {target.src = url;}
+          }
           target.addEventListener('pointerup', resetContextMenuTarget, {
             once: true,
           });
