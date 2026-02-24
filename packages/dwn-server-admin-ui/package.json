@@ -1,9 +1,19 @@
 {
   "name": "@enbox/dwn-server-admin-ui",
   "version": "0.1.0",
-  "private": true,
   "license": "Apache-2.0",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/enboxorg/enbox.git",
+    "directory": "packages/dwn-server-admin-ui"
+  },
+  "files": [
+    "dist"
+  ],
   "main": "./dist/index.js",
   "exports": {
     ".": "./dist/index.js",
