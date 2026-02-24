@@ -4,6 +4,8 @@
   so take care to gate additions to only activate code in the right env, such as a Service Worker scope or page window.
 */
 
+import type { DidMethodResolver } from '@enbox/dids';
+
 import { DidDht, DidWeb, UniversalResolver } from '@enbox/dids';
 
 /**
@@ -28,7 +30,13 @@ export type CacheCheckCallback = (
  * Configuration options for {@link activatePolyfills}.
  */
 export type ActivatePolyfillsOptions = {
-  /** Path to the script to register as a Service Worker. Falls back to `document.currentScript.src` or `import.meta.url`. */
+  /**
+   * Path to the script to register as a Service Worker.
+   * Falls back to `document.currentScript.src` or `import.meta.url`.
+   *
+   * **Required in strict CSP environments** where `new Function()` is blocked and `import.meta`
+   * cannot be evaluated dynamically.
+   */
   path?: string;
   /** Set to `false` to skip Service Worker installation. Defaults to `true`. */
   serviceWorker?: boolean;
@@ -38,6 +46,11 @@ export type ActivatePolyfillsOptions = {
   links?: boolean;
   /** Callback to control per-request caching behaviour. */
   onCacheCheck?: CacheCheckCallback;
+  /**
+   * DID method resolvers to use for DRL resolution. Defaults to `[DidDht, DidWeb]`.
+   * Pass a custom array to add or replace DID methods (e.g., `[DidDht, DidWeb, DidJwk]`).
+   */
+  didResolvers?: DidMethodResolver[];
 };
 
 /**
@@ -60,14 +73,15 @@ function importMetaIfSupported(): { url: string } | undefined {
   }
 }
 
-const DidResolver = new UniversalResolver({ didResolvers: [DidDht, DidWeb] });
+let didResolver = new UniversalResolver({ didResolvers: [DidDht, DidWeb] });
 const didUrlRegex = /^https?:\/\/dweb\/([^/]+)\/?(.*)?$/;
 const httpToHttpsRegex = /^http:/;
 const trailingSlashRegex = /\/$/;
+const DRL_CACHE_NAME = 'drl';
 
 /** @internal Exported for testing. Resolves DWN service endpoints from a DID. */
 export async function getDwnEndpoints(did: string): Promise<string[]> {
-  const { didDocument } = await DidResolver.resolve(did);
+  const { didDocument } = await didResolver.resolve(did);
   const endpoints = didDocument?.service?.find(
     (service) => service.type === 'DecentralizedWebNode'
   )?.serviceEndpoint;
@@ -77,6 +91,12 @@ export async function getDwnEndpoints(did: string): Promise<string[]> {
   );
 }
 
+/** Returns an open DRL cache, or `undefined` if the Cache API is unavailable. */
+async function openDrlCache(): Promise<Cache | undefined> {
+  if (typeof caches === 'undefined') {return undefined;}
+  return caches.open(DRL_CACHE_NAME);
+}
+
 /** @internal Exported for testing. Handles a DRL fetch event. */
 export async function handleEvent(
   event: FetchEvent, did: string, path: string, options?: ActivatePolyfillsOptions
@@ -84,8 +104,8 @@ export async function handleEvent(
   const drl = event.request.url
     .replace(httpToHttpsRegex, 'https:')
     .replace(trailingSlashRegex, '');
-  const responseCache = await caches.open('drl');
-  const cachedResponse = await responseCache.match(drl);
+  const responseCache = await openDrlCache();
+  const cachedResponse = await responseCache?.match(drl);
   if (cachedResponse) {
     if (!navigator.onLine) {return cachedResponse;}
     const match = await options?.onCacheCheck?.(event, drl);
@@ -101,7 +121,7 @@ export async function handleEvent(
   }
   try {
     if (!path) {
-      const response = await DidResolver.resolve(did);
+      const response = await didResolver.resolve(did);
       return new Response(JSON.stringify(response), {
         status  : 200,
         headers : {
@@ -121,7 +141,8 @@ export async function handleEvent(
 
 /** @internal Exported for testing. Fetches a resource from DWN endpoints. */
 export async function fetchResource(
-  event: FetchEvent, did: string, drl: string, path: string, responseCache: Cache, options?: ActivatePolyfillsOptions
+  event: FetchEvent, did: string, drl: string, path: string,
+  responseCache: Cache | undefined, options?: ActivatePolyfillsOptions
 ): Promise<Response> {
   const endpoints = await getDwnEndpoints(did);
   if (!endpoints?.length) {
@@ -137,7 +158,7 @@ export async function fetchResource(
       const response = await fetch(url, { headers: event.request.headers });
       if (response.ok) {
         const match = await options?.onCacheCheck?.(event, drl);
-        if (match) {
+        if (match && responseCache) {
           cacheResponse(drl, url, response, responseCache);
         }
         return response;
@@ -363,10 +384,13 @@ const tabContent = `
 `;
 
 let elementsInjected = false;
+let overlayElement: HTMLDivElement | null = null;
+let styleElement: HTMLStyleElement | null = null;
+
 function injectElements(): void {
   if (elementsInjected) {return;}
-  const style = document.createElement('style');
-  style.innerHTML = `
+  styleElement = document.createElement('style');
+  styleElement.innerHTML = `
     ${loaderStyles}
 
     .drl-loading-overlay {
@@ -380,20 +404,29 @@ function injectElements(): void {
       pointer-events: all;
     }
   `;
-  document.head.append(style);
+  document.head.append(styleElement);
 
-  const overlay = document.createElement('div');
-  overlay.classList.add('drl-loading-overlay');
-  overlay.innerHTML = `
+  overlayElement = document.createElement('div');
+  overlayElement.classList.add('drl-loading-overlay');
+  overlayElement.innerHTML = `
     <div class='drl-loading-spinner'>
       <div></div>
       Loading DRL
     </div> 
     <span tabindex='0'></span>
   `;
-  overlay.lastElementChild!.addEventListener('click', cancelNavigation);
-  document.body.prepend(overlay);
+  overlayElement.lastElementChild!.addEventListener('click', cancelNavigation);
+  document.body.prepend(overlayElement);
   elementsInjected = true;
+}
+
+function removeElements(): void {
+  if (!elementsInjected) {return;}
+  styleElement?.remove();
+  styleElement = null;
+  overlayElement?.remove();
+  overlayElement = null;
+  elementsInjected = false;
 }
 
 function cancelNavigation(): void {
@@ -403,9 +436,14 @@ function cancelNavigation(): void {
 
 let activeNavigation: string | null = null;
 let linkFeaturesActive = false;
+
+// Stored references for listener cleanup in deactivatePolyfills()
+let clickHandler: ((event: MouseEvent) => Promise<void>) | null = null;
+let pointerdownHandler: ((event: PointerEvent) => Promise<void>) | null = null;
+
 function addLinkFeatures(): void {
   if (!linkFeaturesActive) {
-    document.addEventListener('click', async (event: MouseEvent) => {
+    clickHandler = async (event: MouseEvent): Promise<void> => {
       const anchor = (event.target as Element)?.closest('a');
       if (anchor) {
         const href = anchor.href;
@@ -452,10 +490,9 @@ function addLinkFeatures(): void {
           }
         }
       }
-    });
+    };
 
-    document.addEventListener('pointercancel', resetContextMenuTarget);
-    document.addEventListener('pointerdown', async (event: PointerEvent) => {
+    pointerdownHandler = async (event: PointerEvent): Promise<void> => {
       const target = event.composedPath()[0] as DrlMediaElement | undefined;
       if (
         (event.pointerType === 'mouse' && event.button === 2) ||
@@ -468,8 +505,8 @@ function addLinkFeatures(): void {
           const drl = target.src
             .replace(httpToHttpsRegex, 'https:')
             .replace(trailingSlashRegex, '');
-          const responseCache = await caches.open('drl');
-          const response = await responseCache.match(drl);
+          const responseCache = await openDrlCache();
+          const response = await responseCache?.match(drl);
           if (response) {
             const url = response.headers.get('dwn-composed-url');
             if (url) {target.src = url;}
@@ -481,10 +518,30 @@ function addLinkFeatures(): void {
       } else if (target === contextMenuTarget) {
         resetContextMenuTarget();
       }
-    });
+    };
+
+    document.addEventListener('click', clickHandler);
+    document.addEventListener('pointercancel', resetContextMenuTarget);
+    document.addEventListener('pointerdown', pointerdownHandler);
 
     linkFeaturesActive = true;
   }
+}
+
+function removeLinkFeatures(): void {
+  if (!linkFeaturesActive) {return;}
+  if (clickHandler) {
+    document.removeEventListener('click', clickHandler);
+    clickHandler = null;
+  }
+  if (pointerdownHandler) {
+    document.removeEventListener('pointerdown', pointerdownHandler);
+    pointerdownHandler = null;
+  }
+  document.removeEventListener('pointercancel', resetContextMenuTarget);
+  resetContextMenuTarget();
+  cancelNavigation();
+  linkFeaturesActive = false;
 }
 
 let contextMenuTarget: DrlMediaElement | null = null;
@@ -517,8 +574,15 @@ async function resetContextMenuTarget(e?: Event): Promise<void> {
  * @example
  * // Activate polyfills, but without Service Worker activation
  * activatePolyfills({ serviceWorker: false });
+ *
+ * @example
+ * // Use custom DID resolvers
+ * activatePolyfills({ didResolvers: [DidDht, DidWeb, DidJwk] });
  */
 export function activatePolyfills(options: ActivatePolyfillsOptions = {}): void {
+  if (options.didResolvers) {
+    didResolver = new UniversalResolver({ didResolvers: options.didResolvers });
+  }
   if (options.serviceWorker !== false) {
     installWorker(options);
   }
@@ -533,4 +597,30 @@ export function activatePolyfills(options: ActivatePolyfillsOptions = {}): void 
     }
     if (options.links !== false) {addLinkFeatures();}
   }
+}
+
+/**
+ * Removes all polyfill event listeners, injected DOM elements, and resets internal state.
+ * Call this to fully clean up after {@link activatePolyfills}.
+ *
+ * Does **not** unregister an installed Service Worker — use
+ * `navigator.serviceWorker.getRegistration('/').then(r => r?.unregister())` for that.
+ */
+export function deactivatePolyfills(): void {
+  if (typeof window !== 'undefined' && typeof window.document !== 'undefined') {
+    removeLinkFeatures();
+    removeElements();
+  }
+}
+
+/**
+ * Deletes the entire DRL response cache.
+ * Useful for clearing stale cached DWN responses.
+ *
+ * @returns `true` if the cache existed and was deleted, `false` otherwise.
+ *          Returns `false` if the Cache API is unavailable.
+ */
+export async function clearDrlCache(): Promise<boolean> {
+  if (typeof caches === 'undefined') {return false;}
+  return caches.delete(DRL_CACHE_NAME);
 }
