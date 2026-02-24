@@ -10,8 +10,5 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": [
-    "@enbox/dwn-server",
-    "@enbox/dwn-relay"
-  ]
+  "ignore": []
 }
