@@ -3,6 +3,15 @@
  */
 export interface KeyValueStore<K, V> {
   /**
+   * Opens the store, acquiring any resources needed (e.g., database connections, file locks).
+   * Must be called before any other operations. Calling `open()` on an already-open store
+   * should be a safe no-op.
+   *
+   * @returns A promise that resolves when the store is ready for use.
+   */
+  open(): Promise<void>;
+
+  /**
    * Clears the store, removing all key-value pairs.
    *
    * @returns A promise that resolves when the store has been cleared.

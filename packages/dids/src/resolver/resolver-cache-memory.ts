@@ -27,6 +27,13 @@ export class DidResolverCacheMemory implements DidResolverCache {
   }
 
   /**
+   * This method is a no-op since in-memory stores are always ready.
+   */
+  public async open(): Promise<void> {
+    // No-op since there is no underlying store to open.
+  }
+
+  /**
    * Retrieves a DID resolution result from the cache.
    *
    * If the cached item has exceeded its TTL, it's scheduled for deletion and undefined is returned.

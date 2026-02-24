@@ -88,6 +88,16 @@ export class DidResolverCacheLevel implements DidResolverCache {
   }
 
   /**
+   * Opens the underlying LevelDB store.
+   * Calling `open()` on an already-open store is a safe no-op.
+   *
+   * @returns A promise that resolves when the store is ready for use.
+   */
+  open(): Promise<void> {
+    return this.cache.open();
+  }
+
+  /**
    * Retrieves a DID resolution result from the cache.
    *
    * If the cached item has exceeded its TTL, it's scheduled for deletion and undefined is returned.

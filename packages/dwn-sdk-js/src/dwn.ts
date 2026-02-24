@@ -30,7 +30,7 @@ import { RecordsSubscribeHandler } from './handlers/records-subscribe.js';
 import { RecordsWriteHandler } from './handlers/records-write.js';
 import { ResumableTaskManager } from './core/resumable-task-manager.js';
 import { StorageController } from './store/storage-controller.js';
-import { DidDht, DidJwk, DidKey, DidResolverCacheLevel, DidWeb, UniversalResolver } from '@enbox/dids';
+import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from './enums/dwn-interface-method.js';
 
 export class Dwn {
@@ -46,8 +46,12 @@ export class Dwn {
   private resumableTaskManager: ResumableTaskManager;
   private _coreProtocols: CoreProtocolRegistry;
 
+  /** Whether the DWN owns the resolver's lifecycle (i.e., created it via defaults). */
+  private ownsResolver: boolean;
+
   private constructor(config: DwnConfig) {
     this.didResolver = config.didResolver!;
+    this.ownsResolver = config.ownsResolver ?? false;
     this.tenantGate = config.tenantGate!;
     this.messageStore = config.messageStore;
     this.dataStore = config.dataStore;
@@ -102,10 +106,13 @@ export class Dwn {
    * Creates an instance of the DWN.
    */
   public static async create(config: DwnConfig): Promise<Dwn> {
-    config.didResolver ??= new UniversalResolver({
-      didResolvers : [ DidDht, DidJwk, DidKey, DidWeb ],
-      cache        : new DidResolverCacheLevel({ location: 'RESOLVERCACHE' }),
-    });
+    if (!config.didResolver) {
+      config.didResolver = new UniversalResolver({
+        didResolvers : [ DidDht, DidJwk, DidKey, DidWeb ],
+        cache        : new DidResolverCacheMemory(),
+      });
+      config.ownsResolver = true;
+    }
     config.tenantGate ??= new AllowAllTenantGate();
 
     const dwn = new Dwn(config);
@@ -117,6 +124,11 @@ export class Dwn {
    * Initializes the DWN instance and opens the connection to it.
    */
   public async open(): Promise<void> {
+    // Open the resolver's cache if the DWN owns it (created via defaults).
+    if (this.ownsResolver && typeof (this.didResolver as any).open === 'function') {
+      await (this.didResolver as any).open();
+    }
+
     await this.messageStore.open();
     await this.dataStore.open();
     await this.resumableTaskStore.open();
@@ -132,6 +144,11 @@ export class Dwn {
     await this.dataStore.close();
     await this.resumableTaskStore.close();
     await this.stateIndex.close();
+
+    // Close the resolver's cache if the DWN owns it.
+    if (this.ownsResolver && typeof (this.didResolver as any).close === 'function') {
+      await (this.didResolver as any).close();
+    }
   }
 
   /**
@@ -255,6 +272,14 @@ export interface MessageOptions {
 export type DwnConfig = {
   didResolver?: DidResolver;
   tenantGate?: TenantGate;
+
+  /**
+   * Internal flag indicating the DWN created and owns the resolver's lifecycle.
+   * When true, the DWN will call open()/close() on the resolver during its own lifecycle.
+   * Set automatically by `Dwn.create()` when it creates a default resolver.
+   * @internal
+   */
+  ownsResolver?: boolean;
 
   /**
    * Persistent event log with cursor-based reads and in-process subscriptions.
