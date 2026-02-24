@@ -184,7 +184,7 @@ export class DwnServer {
 
       const dwnConfig = await getDwnConfig(this.config, {
         didResolver,
-        tenantGate  : registrationManager,
+        tenantGate: registrationManager,
         eventLog,
       });
       this.dwn = await Dwn.create(dwnConfig);
