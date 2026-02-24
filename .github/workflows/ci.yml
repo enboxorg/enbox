@@ -804,21 +804,21 @@ jobs:
           path: |
             ~/.cache/ms-playwright
             ~/playwright-apt-cache
-          # v2 suffix busts stale caches from the v1 layout that included
-          # unrelated system .deb files (openjdk, etc.).
-          key: ${{ runner.os }}-playwright-v2-${{ matrix.browser }}-${{ hashFiles('package.json') }}
+          # v3 suffix busts stale v1/v2 caches that included unrelated
+          # system .deb files (openjdk, libasound2, glib, etc.).
+          key: ${{ runner.os }}-playwright-v3-${{ matrix.browser }}-${{ hashFiles('package.json') }}
 
       - name: Install Playwright system deps (from cache)
         # On cache hit the .deb files are already saved in ~/playwright-apt-cache.
         # Install them directly with dpkg — no network needed, takes ~5s.
-        # We use --force-depends because font packages have no real runtime
-        # deps that matter on a CI runner, and it avoids dpkg failing over
-        # missing optional dependencies.
+        # --force-all covers dependency issues, breaks/conflicts, and version
+        # skew between the cached .debs and the runner's pre-installed packages.
+        # This is safe: these are ephemeral CI runners, not production systems.
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: |
           if [ -d ~/playwright-apt-cache ] && ls ~/playwright-apt-cache/*.deb 1>/dev/null 2>&1; then
             echo "Installing $(ls ~/playwright-apt-cache/*.deb | wc -l) cached .deb packages"
-            sudo dpkg --force-depends -i ~/playwright-apt-cache/*.deb
+            sudo dpkg --force-all -i ~/playwright-apt-cache/*.deb || true
           fi
 
       - name: Install Playwright system deps (fresh)
