@@ -146,6 +146,20 @@ export class DwnServer {
         providerAuthPlugin,
       });
 
+      // Warn if the tenant gate is active but no registration method is enabled.
+      // This is almost certainly a misconfiguration — new tenants will be rejected
+      // with 401 and have no way to register.
+      if (this.config.registrationStoreUrl
+        && !this.config.registrationProofOfWorkEnabled
+        && !providerAuthPlugin) {
+        log.warn(
+          '*** WARNING: DWN_REGISTRATION_STORE_URL is set (tenant gate active) but neither ' +
+          'proof-of-work (DWN_REGISTRATION_PROOF_OF_WORK_ENABLED) nor provider auth ' +
+          '(DWN_PROVIDER_AUTH_ENABLED + secret/plugin) is configured. ' +
+          'New tenants will be unable to register. ***',
+        );
+      }
+
       let eventLog: EventLog | undefined;
       if (this.config.webSocketSupport) {
         // If EventLog plugin is not specified, use `EventEmitterEventLog` implementation as default.
