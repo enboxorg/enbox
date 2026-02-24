@@ -23,6 +23,7 @@ jobs:
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     outputs:
       src: ${{ steps.filter.outputs.src }}
     steps:
@@ -59,6 +60,7 @@ jobs:
   setup:
     name: Lint & Build
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: changes
     if: needs.changes.outputs.src == 'true'
 
@@ -101,6 +103,7 @@ jobs:
   test-lightweight:
     name: 'Test: common / crypto'
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     needs: setup
 
     steps:
@@ -156,6 +159,7 @@ jobs:
   test-dwn-sdk:
     name: 'Test: dwn-sdk-js'
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     needs: setup
 
     steps:
@@ -208,6 +212,7 @@ jobs:
   test-agent-api:
     name: 'Test: dids / agent / api'
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     needs: setup
 
     services:
@@ -328,6 +333,7 @@ jobs:
   test-sql-store:
     name: 'Test: dwn-sql-store'
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     needs: setup
 
     services:
@@ -425,6 +431,7 @@ jobs:
   test-dwn-server:
     name: 'Test: dwn-server'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: setup
 
     steps:
@@ -490,6 +497,7 @@ jobs:
   coverage:
     name: Coverage Check
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server, test-browser]
     if: always() && !cancelled() && needs.changes.outputs.src == 'true'
 
@@ -744,6 +752,7 @@ jobs:
   test-browser:
     name: 'Test: Browser (${{ matrix.shard.name }} / ${{ matrix.browser }})'
     runs-on: ubuntu-latest
+    timeout-minutes: 21
     needs: setup
     strategy:
       fail-fast: false
@@ -789,11 +798,57 @@ jobs:
           name: workspace-build
           path: packages
 
+      - name: Cache Playwright browser & system deps
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/playwright-apt-cache
+          # v3 suffix busts stale v1/v2 caches that included unrelated
+          # system .deb files (openjdk, libasound2, glib, etc.).
+          key: ${{ runner.os }}-playwright-v3-${{ matrix.browser }}-${{ hashFiles('package.json') }}
+
+      - name: Install Playwright system deps (from cache)
+        # On cache hit the .deb files are already saved in ~/playwright-apt-cache.
+        # Install them directly with dpkg — no network needed, takes ~5s.
+        # --force-all covers dependency issues, breaks/conflicts, and version
+        # skew between the cached .debs and the runner's pre-installed packages.
+        # This is safe: these are ephemeral CI runners, not production systems.
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: |
+          if [ -d ~/playwright-apt-cache ] && ls ~/playwright-apt-cache/*.deb 1>/dev/null 2>&1; then
+            echo "Installing $(ls ~/playwright-apt-cache/*.deb | wc -l) cached .deb packages"
+            sudo dpkg --force-all -i ~/playwright-apt-cache/*.deb || true
+          fi
+
+      - name: Install Playwright system deps (fresh)
+        # Most Playwright deps are already on the runner image. Firefox/WebKit
+        # need a handful of extra font packages (fonts-ipafont-gothic,
+        # fonts-wqy-zenhei, etc.) that are 3-7 MB each and download at
+        # ~50 KB/s from Azure apt mirrors — often stalling for minutes.
+        #
+        # We snapshot /var/cache/apt/archives before and after so we only
+        # cache the .deb files that Playwright actually installed — not the
+        # hundreds of pre-existing system packages.
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: |
+          ls /var/cache/apt/archives/*.deb 2>/dev/null | sort > /tmp/apt-before.txt || true
+          sudo apt-get update -qq
+          bunx playwright install-deps ${{ matrix.browser }}
+          mkdir -p ~/playwright-apt-cache
+          comm -13 /tmp/apt-before.txt <(ls /var/cache/apt/archives/*.deb 2>/dev/null | sort) \
+            | xargs -I{} cp {} ~/playwright-apt-cache/ 2>/dev/null || true
+          echo "Cached $(ls ~/playwright-apt-cache/*.deb 2>/dev/null | wc -l) Playwright .deb packages"
+        timeout-minutes: 15
+
       - name: Install Playwright browser
-        # Only install the single browser needed for this matrix cell.
         # playwright@1.45.3 is pinned in root devDependencies to match the
         # version resolved for @vitest/browser-playwright's peer dependency.
-        run: bunx playwright install --with-deps ${{ matrix.browser }}
+        # On cache hit the binary is already present — this is a no-op.
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 3
+        run: bunx playwright install ${{ matrix.browser }}
 
       - name: Run browser tests with coverage
         id: browser-tests
@@ -840,6 +895,7 @@ jobs:
   ci-passed:
     name: CI Passed
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server, test-browser, coverage]
     if: always()
     steps:
