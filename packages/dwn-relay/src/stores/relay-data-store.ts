@@ -1,5 +1,5 @@
-import type { DataStore, DataStoreGetResult, DataStorePutResult } from '@enbox/dwn-sdk-js';
 import log from 'loglevel';
+import type { DataStore, DataStoreGetResult, DataStorePutResult } from '@enbox/dwn-sdk-js';
 
 /**
  * Metadata tracked for each piece of stored record data.
@@ -10,9 +10,9 @@ export interface DataMetadataEntry {
   recordId: string;
   dataCid: string;
   dataSize: number;
-  storedAt: number;     // epoch ms
-  protocol?: string;    // protocol URI from the RecordsWrite, for per-protocol eviction
-  synced: boolean;      // true if confirmed synced to at least one full peer
+  storedAt: number; // epoch ms
+  protocol?: string; // protocol URI from the RecordsWrite, for per-protocol eviction
+  synced: boolean; // true if confirmed synced to at least one full peer
 }
 
 /**
@@ -187,9 +187,13 @@ export class RelayDataStore implements DataStore {
 
     // Sort: synced first, then by age descending, then by size descending
     candidates.sort((a, b) => {
-      if (a.synced !== b.synced) return a.synced ? -1 : 1;
+      if (a.synced !== b.synced) {
+        return a.synced ? -1 : 1;
+      }
       const ageDiff = a.storedAt - b.storedAt; // older first
-      if (ageDiff !== 0) return ageDiff;
+      if (ageDiff !== 0) {
+        return ageDiff;
+      }
       return b.dataSize - a.dataSize; // larger first
     });
 
@@ -203,7 +207,9 @@ export class RelayDataStore implements DataStore {
   async evict(tenant: string, recordId: string, dataCid: string): Promise<number> {
     const key = RelayDataStore.#key(tenant, recordId, dataCid);
     const entry = this.#metadata.get(key);
-    if (!entry) return 0;
+    if (!entry) {
+      return 0;
+    }
 
     try {
       await this.#inner.delete(tenant, recordId, dataCid);

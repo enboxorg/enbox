@@ -135,7 +135,9 @@ export class SyncPriorityQueue {
   complete(tenant: string, peerEndpoint: string, success: boolean): void {
     const key = SyncPriorityQueue.#key(tenant, peerEndpoint);
     const idx = this.#index.get(key);
-    if (idx === undefined) return;
+    if (idx === undefined) {
+      return;
+    }
 
     const item = this.#heap[idx];
     item.inProgress = false;
@@ -158,7 +160,9 @@ export class SyncPriorityQueue {
   remove(tenant: string, peerEndpoint: string): void {
     const key = SyncPriorityQueue.#key(tenant, peerEndpoint);
     const idx = this.#index.get(key);
-    if (idx === undefined) return;
+    if (idx === undefined) {
+      return;
+    }
 
     // Swap with last element and remove
     const lastIdx = this.#heap.length - 1;
@@ -238,7 +242,9 @@ export class SyncPriorityQueue {
   #bubbleUp(idx: number): void {
     while (idx > 0) {
       const parentIdx = Math.floor((idx - 1) / 2);
-      if (this.#heap[idx].priority <= this.#heap[parentIdx].priority) break;
+      if (this.#heap[idx].priority <= this.#heap[parentIdx].priority) {
+        break;
+      }
       this.#swap(idx, parentIdx);
       idx = parentIdx;
     }
@@ -258,7 +264,9 @@ export class SyncPriorityQueue {
         largest = right;
       }
 
-      if (largest === idx) break;
+      if (largest === idx) {
+        break;
+      }
       this.#swap(idx, largest);
       idx = largest;
     }

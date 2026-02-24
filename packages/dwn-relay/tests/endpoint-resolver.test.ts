@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import { extractDwnEndpoints, resolveEndpoints, clearEndpointCache } from '../src/endpoint-resolver.js';
-import { createMockDidResolver, createDidDocument } from './test-utils.js';
+import { clearEndpointCache, extractDwnEndpoints, resolveEndpoints } from '../src/endpoint-resolver.js';
+import { createDidDocument, createMockDidResolver } from './test-utils.js';
 
 describe('extractDwnEndpoints', () => {
   it('should extract bare string endpoint as full node', () => {
@@ -51,11 +51,11 @@ describe('extractDwnEndpoints', () => {
 
   it('should handle single string serviceEndpoint (not array)', () => {
     const doc = {
-      id: 'did:test:1',
-      service: [{
-        id: '#dwn',
-        type: 'DecentralizedWebNode',
-        serviceEndpoint: 'https://single.example.com',
+      id      : 'did:test:1',
+      service : [{
+        id              : '#dwn',
+        type            : 'DecentralizedWebNode',
+        serviceEndpoint : 'https://single.example.com',
       }],
     } as any;
     const eps = extractDwnEndpoints(doc);
@@ -65,11 +65,11 @@ describe('extractDwnEndpoints', () => {
 
   it('should handle single map serviceEndpoint (not array)', () => {
     const doc = {
-      id: 'did:test:1',
-      service: [{
-        id: '#dwn',
-        type: 'DecentralizedWebNode',
-        serviceEndpoint: { url: 'https://map.example.com', dataRetention: 'cache' },
+      id      : 'did:test:1',
+      service : [{
+        id              : '#dwn',
+        type            : 'DecentralizedWebNode',
+        serviceEndpoint : { url: 'https://map.example.com', dataRetention: 'cache' },
       }],
     } as any;
     const eps = extractDwnEndpoints(doc);
@@ -79,11 +79,11 @@ describe('extractDwnEndpoints', () => {
 
   it('should handle legacy nodes array format', () => {
     const doc = {
-      id: 'did:test:1',
-      service: [{
-        id: '#dwn',
-        type: 'DecentralizedWebNode',
-        serviceEndpoint: { nodes: ['https://node1.example.com', 'https://node2.example.com'] },
+      id      : 'did:test:1',
+      service : [{
+        id              : '#dwn',
+        type            : 'DecentralizedWebNode',
+        serviceEndpoint : { nodes: ['https://node1.example.com', 'https://node2.example.com'] },
       }],
     } as any;
     const eps = extractDwnEndpoints(doc);
@@ -94,8 +94,8 @@ describe('extractDwnEndpoints', () => {
 
   it('should skip non-DWN services', () => {
     const doc = {
-      id: 'did:test:1',
-      service: [
+      id      : 'did:test:1',
+      service : [
         { id: '#messaging', type: 'DIDCommMessaging', serviceEndpoint: 'https://msg.example.com' },
         { id: '#dwn', type: 'DecentralizedWebNode', serviceEndpoint: ['https://dwn.example.com'] },
       ],
@@ -158,12 +158,16 @@ describe('resolveEndpoints', () => {
   it('should cache resolved endpoints', async () => {
     let resolveCount = 0;
     const resolver = {
-      async resolve(didUri: string) {
+      async resolve(didUri: string): Promise<{
+        didResolutionMetadata: object;
+        didDocument: ReturnType<typeof createDidDocument>;
+        didDocumentMetadata: object;
+      }> {
         resolveCount++;
         return {
-          didResolutionMetadata: {},
-          didDocument: createDidDocument(didUri, ['https://cached.example.com']),
-          didDocumentMetadata: {},
+          didResolutionMetadata : {},
+          didDocument           : createDidDocument(didUri, ['https://cached.example.com']),
+          didDocumentMetadata   : {},
         };
       },
     };
@@ -175,7 +179,7 @@ describe('resolveEndpoints', () => {
 
   it('should handle resolver errors gracefully', async () => {
     const resolver = {
-      async resolve() {
+      async resolve(): Promise<never> {
         throw new Error('network error');
       },
     };

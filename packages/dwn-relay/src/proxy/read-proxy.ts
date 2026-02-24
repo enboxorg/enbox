@@ -1,12 +1,11 @@
-import type { DataStore, DataStoreGetResult, GenericMessage } from '@enbox/dwn-sdk-js';
 import type { DidResolver } from '@enbox/dids';
-import type { DwnRpc, DwnRpcRequest } from '@enbox/dwn-clients';
-import { Cid, DataStream, DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
-import log from 'loglevel';
-
-import type { RelayConfig } from '../config.js';
 import type { IpfsResolver } from './ipfs-resolver.js';
-import { resolveEndpoints, type DwnEndpointInfo } from '../endpoint-resolver.js';
+import log from 'loglevel';
+import type { RelayConfig } from '../config.js';
+import { resolveEndpoints } from '../endpoint-resolver.js';
+import { Cid, DataStream } from '@enbox/dwn-sdk-js';
+import type { DataStore, DataStoreGetResult, GenericMessage } from '@enbox/dwn-sdk-js';
+import type { DwnRpc, DwnRpcRequest } from '@enbox/dwn-clients';
 
 /**
  * ReadProxy handles cache-miss reads by fetching record data from
@@ -75,7 +74,9 @@ export class ReadProxy {
           await this.#recache(tenant, recordId, dataCid, ipfsResult.dataStream, ipfsResult.dataSize);
           // Re-fetch from local store since we consumed the stream
           const localResult = await this.#dataStore.get(tenant, recordId, dataCid);
-          if (localResult) return localResult;
+          if (localResult) {
+            return localResult;
+          }
         }
 
         return {
@@ -93,7 +94,9 @@ export class ReadProxy {
       if (this.#config.readProxyCacheLocally) {
         await this.#recache(tenant, recordId, dataCid, peerResult.dataStream, peerResult.dataSize);
         const localResult = await this.#dataStore.get(tenant, recordId, dataCid);
-        if (localResult) return localResult;
+        if (localResult) {
+          return localResult;
+        }
       }
 
       return peerResult;
@@ -113,14 +116,20 @@ export class ReadProxy {
     originalMessage: GenericMessage,
   ): Promise<DataStoreGetResult | undefined> {
     const endpoints = await resolveEndpoints(tenant, this.#didResolver);
-    if (endpoints.length === 0) return undefined;
+    if (endpoints.length === 0) {
+      return undefined;
+    }
 
     // Sort: full endpoints first, then cache endpoints
     const sorted = [...endpoints]
       .filter(ep => ep.url !== this.#config.selfUrl)
       .sort((a, b) => {
-        if (a.isFull && !b.isFull) return -1;
-        if (!a.isFull && b.isFull) return 1;
+        if (a.isFull && !b.isFull) {
+          return -1;
+        }
+        if (!a.isFull && b.isFull) {
+          return 1;
+        }
         return 0;
       });
 

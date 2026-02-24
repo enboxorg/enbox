@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { parsePolicies, getRetentionMs } from '../src/eviction/storage-policies.js';
+import { getRetentionMs, parsePolicies } from '../src/eviction/storage-policies.js';
 
 describe('parsePolicies', () => {
   it('should create a global default policy', () => {

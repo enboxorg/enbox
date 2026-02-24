@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import { WriteForwarder } from '../src/forwarding/write-forwarder.js';
 import { clearEndpointCache } from '../src/endpoint-resolver.js';
-import { createMockDidResolver, createDidDocument, createMockRpcClient, getTestRelayConfig } from './test-utils.js';
+import { WriteForwarder } from '../src/forwarding/write-forwarder.js';
+import { createDidDocument, createMockDidResolver, createMockRpcClient, getTestRelayConfig } from './test-utils.js';
 
 describe('WriteForwarder', () => {
   afterEach(() => {
@@ -12,7 +12,7 @@ describe('WriteForwarder', () => {
   function createForwarder(options: {
     endpoints?: (string | Record<string, unknown>)[];
     onTenantWrite?: (tenant: string) => void;
-  } = {}) {
+  } = {}): { forwarder: WriteForwarder; rpcClient: ReturnType<typeof createMockRpcClient> } {
     const endpoints = options.endpoints ?? [
       'https://full-peer.example.com',
       { url: 'https://cache-peer.example.com', dataRetention: 'cache' },
@@ -134,8 +134,8 @@ describe('WriteForwarder', () => {
     });
 
     const rpcClient = {
-      get transportProtocols() { return ['http:', 'https:']; },
-      async sendDwnRequest() { throw new Error('connection refused'); },
+      get transportProtocols(): string[] { return ['http:', 'https:']; },
+      async sendDwnRequest(): Promise<never> { throw new Error('connection refused'); },
     };
 
     const forwarder = new WriteForwarder({

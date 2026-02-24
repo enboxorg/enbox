@@ -1,13 +1,13 @@
-import type { Dwn, GenericMessage, MessageStore } from '@enbox/dwn-sdk-js';
+import { ConnectionPool } from './connection-pool.js';
 import type { DidResolver } from '@enbox/dids';
-import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 import log from 'loglevel';
-
 import type { RelayConfig } from '../config.js';
 import type { RelayDataStore } from '../stores/relay-data-store.js';
-import { resolveEndpoints, type DwnEndpointInfo } from '../endpoint-resolver.js';
-import { ConnectionPool } from './connection-pool.js';
-import { SyncPriorityQueue, type SyncWorkItem } from './priority-queue.js';
+import { resolveEndpoints } from '../endpoint-resolver.js';
+import { SyncPriorityQueue } from './priority-queue.js';
+import type { SyncWorkItem } from './priority-queue.js';
+import type { Dwn, GenericMessage } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 /**
  * Tracks the last confirmed sync state between a (tenant, peer) pair.
@@ -86,7 +86,9 @@ export class ServerSyncEngine {
    * Start the sync engine. Spawns worker coroutines and a periodic scan.
    */
   start(): void {
-    if (this.#running) return;
+    if (this.#running) {
+      return;
+    }
     this.#running = true;
 
     // Start workers
@@ -108,7 +110,9 @@ export class ServerSyncEngine {
    * Stop the sync engine. Waits for in-progress workers to complete.
    */
   async stop(): Promise<void> {
-    if (!this.#running) return;
+    if (!this.#running) {
+      return;
+    }
     this.#running = false;
 
     if (this.#scanIntervalHandle !== undefined) {
@@ -325,7 +329,10 @@ export class ServerSyncEngine {
         return false;
       }
 
-      if (localHash === remoteHash) return true; // Subtrees match
+      // Subtrees match
+      if (localHash === remoteHash) {
+        return true;
+      }
 
       // At max depth, enumerate and diff leaf sets
       if (currentPrefix.length >= ServerSyncEngine.MAX_DIFF_DEPTH) {
@@ -339,10 +346,14 @@ export class ServerSyncEngine {
           const remoteSet = new Set(remoteLeaves ?? []);
 
           for (const cid of localSet) {
-            if (!remoteSet.has(cid)) onlyLocal.push(cid);
+            if (!remoteSet.has(cid)) {
+              onlyLocal.push(cid);
+            }
           }
           for (const cid of remoteSet) {
-            if (!localSet.has(cid)) onlyRemote.push(cid);
+            if (!localSet.has(cid)) {
+              onlyRemote.push(cid);
+            }
           }
 
           return true;
@@ -522,8 +533,10 @@ export class ServerSyncEngine {
    */
   #markTenantDataSynced(tenant: string): void {
     // Find the peer we just synced with — check if any is a full node
-    for (const [key, state] of this.#peerSyncState) {
-      if (!key.startsWith(`${tenant}|`)) continue;
+    for (const [key, _state] of this.#peerSyncState) {
+      if (!key.startsWith(`${tenant}|`)) {
+        continue;
+      }
       // We don't track whether the peer is full here — that's determined by
       // the endpoint resolver. For now, mark data as synced whenever we have
       // root convergence with any peer. The EvictionManager uses this as a signal.
@@ -533,6 +546,7 @@ export class ServerSyncEngine {
     // convergence means ALL messages are synced. A more granular approach
     // would track which specific messageCids were pushed.
     // For now, this is a best-effort signal to the eviction system.
+    void this.#dataStore;
   }
 
   async #queueTenantPeers(tenant: string, lastWriteTimestamp?: number): Promise<void> {

@@ -1,11 +1,10 @@
-import type { GenericMessage } from '@enbox/dwn-sdk-js';
 import type { DidResolver } from '@enbox/dids';
-import type { DwnRpc, DwnRpcRequest } from '@enbox/dwn-clients';
-import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
+import type { DwnEndpointInfo } from '../endpoint-resolver.js';
+import type { GenericMessage } from '@enbox/dwn-sdk-js';
 import log from 'loglevel';
-
 import type { RelayConfig } from '../config.js';
-import { resolveEndpoints, type DwnEndpointInfo } from '../endpoint-resolver.js';
+import { resolveEndpoints } from '../endpoint-resolver.js';
+import type { DwnRpc, DwnRpcRequest } from '@enbox/dwn-clients';
 
 /**
  * WriteForwarder forwards incoming RecordsWrite and RecordsDelete messages
@@ -86,8 +85,12 @@ export class WriteForwarder {
 
     // Forward to all peers in parallel, full endpoints first
     const sorted = [...peers].sort((a, b) => {
-      if (a.isFull && !b.isFull) return -1;
-      if (!a.isFull && b.isFull) return 1;
+      if (a.isFull && !b.isFull) {
+        return -1;
+      }
+      if (!a.isFull && b.isFull) {
+        return 1;
+      }
       return 0;
     });
 
@@ -149,7 +152,9 @@ export class WriteForwarder {
 
   #isRecentlyForwarded(messageCid: string): boolean {
     const timestamp = this.#forwardedCids.get(messageCid);
-    if (timestamp === undefined) return false;
+    if (timestamp === undefined) {
+      return false;
+    }
     if (Date.now() - timestamp > WriteForwarder.DEDUP_TTL_MS) {
       this.#forwardedCids.delete(messageCid);
       return false;

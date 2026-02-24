@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from 'bun:test';
 import sinon from 'sinon';
+import { afterEach, describe, expect, it } from 'bun:test';
 
-import { RelayServer } from '../src/relay-server.js';
 import { RelayDataStore } from '../src/stores/relay-data-store.js';
+import { RelayServer } from '../src/relay-server.js';
 import { createMockDataStore, getTestRelayConfig } from './test-utils.js';
 
 describe('RelayServer', () => {

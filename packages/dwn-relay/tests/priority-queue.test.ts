@@ -84,7 +84,7 @@ describe('SyncPriorityQueue', () => {
       const q = new SyncPriorityQueue();
       q.upsert({ tenant: 't', peerEndpoint: 'p', consecutiveFailures: 3 });
 
-      const item = q.dequeue()!;
+      const _item = q.dequeue()!;
       q.complete('t', 'p', true);
 
       const items = q.getAll();
@@ -141,9 +141,9 @@ describe('SyncPriorityQueue', () => {
       q.upsert({ tenant: 't1', peerEndpoint: 'p1', lastWriteTimestamp: now });
       q.upsert({ tenant: 't2', peerEndpoint: 'p2', lastSyncTimestamp: now - 7_200_000 }); // 2 hours stale
 
-      const beforePriorities = q.getAll().map(i => ({ tenant: i.tenant, priority: i.priority }));
+      const _beforePriorities = q.getAll().map(i => ({ tenant: i.tenant, priority: i.priority }));
       q.recalculateAll();
-      const afterPriorities = q.getAll().map(i => ({ tenant: i.tenant, priority: i.priority }));
+      const _afterPriorities = q.getAll().map(i => ({ tenant: i.tenant, priority: i.priority }));
 
       // Priorities should be recalculated (may be same or different depending on timing)
       // At minimum, verify it doesn't throw and heap is still valid
@@ -186,10 +186,10 @@ describe('SyncPriorityQueue', () => {
       // Insert 100 items with varying priorities
       for (let i = 0; i < 100; i++) {
         q.upsert({
-          tenant             : `t${i}`,
-          peerEndpoint       : `p${i % 10}`,
-          lastWriteTimestamp : now - Math.random() * 3_600_000,
-          consecutiveFailures: Math.floor(Math.random() * 5),
+          tenant              : `t${i}`,
+          peerEndpoint        : `p${i % 10}`,
+          lastWriteTimestamp  : now - Math.random() * 3_600_000,
+          consecutiveFailures : Math.floor(Math.random() * 5),
         });
       }
 
@@ -199,7 +199,7 @@ describe('SyncPriorityQueue', () => {
       let dequeuedCount = 0;
       while (q.size > 0) {
         const item = q.dequeue();
-        if (!item) break;
+        if (!item) {break;}
         expect(item.priority).toBeLessThanOrEqual(lastPriority);
         lastPriority = item.priority;
         dequeuedCount++;

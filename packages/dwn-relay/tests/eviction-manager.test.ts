@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { EvictionManager } from '../src/eviction/eviction-manager.js';
-import { RelayDataStore } from '../src/stores/relay-data-store.js';
 import type { RelayConfig } from '../src/config.js';
+import { RelayDataStore } from '../src/stores/relay-data-store.js';
 import { createMockDataStore, getTestRelayConfig, randomBytes, streamFromBytes } from './test-utils.js';
 
 describe('EvictionManager', () => {

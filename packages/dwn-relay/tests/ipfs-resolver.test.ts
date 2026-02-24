@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Cid, DataStream } from '@enbox/dwn-sdk-js';
 
 import { IpfsResolver } from '../src/proxy/ipfs-resolver.js';
@@ -64,10 +64,10 @@ describe('IpfsResolver', () => {
   });
 
   it('should return undefined on timeout (abort)', async () => {
-    globalThis.fetch = (async (_url: any, opts: any) => {
+    globalThis.fetch = (async (_url: any, _opts: any) => {
       // Simulate a slow response by checking if signal is already aborted
       // Use a very short timeout resolver
-      const shortResolver = new IpfsResolver(gatewayUrl, 1);
+      const _shortResolver = new IpfsResolver(gatewayUrl, 1);
       // We need to actually abort, so let's trigger it manually
       throw new DOMException('The operation was aborted', 'AbortError');
     }) as any;

@@ -1,5 +1,5 @@
-import type { DidResolver, DidDocument, DidService } from '@enbox/dids';
 import log from 'loglevel';
+import type { DidDocument, DidResolver } from '@enbox/dids';
 
 /**
  * Parsed DWN endpoint info from a DID document's #dwn service entry.

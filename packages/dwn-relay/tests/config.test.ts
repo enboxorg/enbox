@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import { parseDuration, getRelayConfig } from '../src/config.js';
+import { getRelayConfig, parseDuration } from '../src/config.js';
 
 describe('parseDuration', () => {
   it('should parse milliseconds (no suffix)', () => {
@@ -117,14 +117,14 @@ describe('getRelayConfig', () => {
 
   it('should parse protocol policies from JSON', () => {
     process.env.DWN_RELAY_PROTOCOL_POLICIES = JSON.stringify({
-      'https://example.com/chat' : '7d',
-      'https://example.com/media': '24h',
+      'https://example.com/chat'  : '7d',
+      'https://example.com/media' : '24h',
     });
 
     const config = getRelayConfig();
     expect(config.protocolPolicies).toEqual({
-      'https://example.com/chat' : '7d',
-      'https://example.com/media': '24h',
+      'https://example.com/chat'  : '7d',
+      'https://example.com/media' : '24h',
     });
   });
 

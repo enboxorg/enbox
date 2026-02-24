@@ -1,21 +1,21 @@
-import type { DataStore, DataStoreGetResult, DataStorePutResult } from '@enbox/dwn-sdk-js';
-import type { DidResolver, DidDocument } from '@enbox/dids';
-import type { DwnRpc, DwnRpcRequest, DwnRpcResponse } from '@enbox/dwn-clients';
 import { DataStream } from '@enbox/dwn-sdk-js';
+import type { DataStore, DataStoreGetResult, DataStorePutResult } from '@enbox/dwn-sdk-js';
+import type { DidDocument, DidResolver } from '@enbox/dids';
+import type { DwnRpc, DwnRpcRequest, DwnRpcResponse } from '@enbox/dwn-clients';
 
 /**
  * Creates a mock DataStore that stores data in memory.
  */
 export function createMockDataStore(): DataStore & {
   storage: Map<string, { data: Uint8Array; dataSize: number }>;
-} {
+  } {
   const storage = new Map<string, { data: Uint8Array; dataSize: number }>();
 
   return {
     storage,
-    async open() {},
-    async close() {},
-    async clear() { storage.clear(); },
+    async open(): Promise<void> {},
+    async close(): Promise<void> {},
+    async clear(): Promise<void> { storage.clear(); },
 
     async put(tenant: string, recordId: string, dataCid: string, dataStream: ReadableStream<Uint8Array>): Promise<DataStorePutResult> {
       const bytes = await DataStream.toBytes(dataStream);
@@ -27,7 +27,7 @@ export function createMockDataStore(): DataStore & {
     async get(tenant: string, recordId: string, dataCid: string): Promise<DataStoreGetResult | undefined> {
       const key = `${tenant}|${recordId}|${dataCid}`;
       const entry = storage.get(key);
-      if (!entry) return undefined;
+      if (!entry) {return undefined;}
       return {
         dataSize   : entry.dataSize,
         dataStream : DataStream.fromBytes(entry.data),
@@ -46,7 +46,7 @@ export function createMockDataStore(): DataStore & {
  */
 export function createMockDidResolver(documents: Record<string, DidDocument>): DidResolver {
   return {
-    async resolve(didUri: string) {
+    async resolve(didUri: string): Promise<{ didResolutionMetadata: object; didDocument: DidDocument | null; didDocumentMetadata: object }> {
       const doc = documents[didUri];
       if (doc) {
         return {
@@ -85,7 +85,7 @@ export function createMockRpcClient(): DwnRpc & {
   requests: DwnRpcRequest[];
   nextResponses: DwnRpcResponse[];
   pushResponse(response: DwnRpcResponse): void;
-} {
+  } {
   const requests: DwnRpcRequest[] = [];
   const nextResponses: DwnRpcResponse[] = [];
 
@@ -93,18 +93,18 @@ export function createMockRpcClient(): DwnRpc & {
     requests,
     nextResponses,
 
-    pushResponse(response: DwnRpcResponse) {
+    pushResponse(response: DwnRpcResponse): void {
       nextResponses.push(response);
     },
 
-    get transportProtocols() {
+    get transportProtocols(): string[] {
       return ['http:', 'https:'];
     },
 
     async sendDwnRequest(request: DwnRpcRequest): Promise<DwnRpcResponse> {
       requests.push(request);
       const response = nextResponses.shift();
-      if (response) return response;
+      if (response) {return response;}
       return { status: { code: 200, detail: 'OK' } };
     },
   };
@@ -136,7 +136,20 @@ export function randomBytes(length: number): Uint8Array {
 /**
  * Default relay config for testing.
  */
-export function getTestRelayConfig() {
+export function getTestRelayConfig(): {
+  dataRetention: string;
+  storageMaxBytes: number;
+  ipfsGatewayUrl: undefined;
+  syncWorkers: number;
+  syncIntervalSeconds: number;
+  protocolPolicies: Record<string, string>;
+  evictionIntervalSeconds: number;
+  evictionHighWaterMark: number;
+  evictionLowWaterMark: number;
+  readProxyTimeoutMs: number;
+  readProxyCacheLocally: boolean;
+  selfUrl: string;
+  } {
   return {
     dataRetention           : '72h',
     storageMaxBytes         : 100_000,

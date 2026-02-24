@@ -1,30 +1,36 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import sinon from 'sinon';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
-import { ServerSyncEngine, type PeerSyncState } from '../src/sync/server-sync-engine.js';
-import { ConnectionPool } from '../src/sync/connection-pool.js';
-import { RelayDataStore } from '../src/stores/relay-data-store.js';
-import type { RelayConfig } from '../src/config.js';
 import { clearEndpointCache } from '../src/endpoint-resolver.js';
-import { createMockDataStore, createMockDidResolver, createDidDocument, getTestRelayConfig } from './test-utils.js';
+import { ConnectionPool } from '../src/sync/connection-pool.js';
+import type { RelayConfig } from '../src/config.js';
+import { RelayDataStore } from '../src/stores/relay-data-store.js';
+import { ServerSyncEngine } from '../src/sync/server-sync-engine.js';
+import { createDidDocument, createMockDataStore, createMockDidResolver, getTestRelayConfig } from './test-utils.js';
 
 /**
  * Creates a mock Dwn object for testing the sync engine.
  */
-function createMockDwn() {
+function createMockDwn(): {
+  processedMessages: { tenant: string; message: any; opts?: any }[];
+  setRootHash(hash: string): void;
+  setSubtreeHash(prefix: string, hash: string): void;
+  setLeaves(prefix: string, entries: string[]): void;
+  processMessage(tenant: string, message: any, opts?: any): Promise<any>;
+  } {
   const processedMessages: { tenant: string; message: any; opts?: any }[] = [];
   let rootHash = 'root-hash-abc';
-  let subtreeHashes: Record<string, string> = {};
-  let leaves: Record<string, string[]> = {};
+  const subtreeHashes: Record<string, string> = {};
+  const leaves: Record<string, string[]> = {};
 
   return {
     processedMessages,
 
-    setRootHash(hash: string) { rootHash = hash; },
-    setSubtreeHash(prefix: string, hash: string) { subtreeHashes[prefix] = hash; },
-    setLeaves(prefix: string, entries: string[]) { leaves[prefix] = entries; },
+    setRootHash(hash: string): void { rootHash = hash; },
+    setSubtreeHash(prefix: string, hash: string): void { subtreeHashes[prefix] = hash; },
+    setLeaves(prefix: string, entries: string[]): void { leaves[prefix] = entries; },
 
-    async processMessage(tenant: string, message: any, opts?: any) {
+    async processMessage(tenant: string, message: any, opts?: any): Promise<any> {
       processedMessages.push({ tenant, message, opts });
 
       const action = message?.descriptor?.action;
@@ -267,7 +273,7 @@ describe('ServerSyncEngine', () => {
 
       // Use setTimeout-based yield to prevent microtask starvation
       let callCount = 0;
-      sendStub.callsFake(async (request: any) => {
+      sendStub.callsFake(async (_request: any) => {
         callCount++;
         // Yield to macrotask queue to let setTimeout-based stop() fire
         await new Promise(r => setTimeout(r, 0));

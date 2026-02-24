@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { Cid, DataStream } from '@enbox/dwn-sdk-js';
 
-import { ReadProxy } from '../src/proxy/read-proxy.js';
-import { IpfsResolver } from '../src/proxy/ipfs-resolver.js';
 import { clearEndpointCache } from '../src/endpoint-resolver.js';
+import { IpfsResolver } from '../src/proxy/ipfs-resolver.js';
+import { ReadProxy } from '../src/proxy/read-proxy.js';
 import {
-  createMockDataStore, createMockDidResolver, createDidDocument,
+  createDidDocument, createMockDataStore, createMockDidResolver,
   createMockRpcClient, getTestRelayConfig, randomBytes,
 } from './test-utils.js';
 
@@ -22,7 +22,7 @@ describe('ReadProxy', () => {
   function createProxy(options: {
     ipfsGateway?: string;
     endpoints?: (string | Record<string, unknown>)[];
-  } = {}) {
+  } = {}): { proxy: ReadProxy; rpcClient: ReturnType<typeof createMockRpcClient>; mockDataStore: ReturnType<typeof createMockDataStore> } {
     const mockDataStore = createMockDataStore();
     const rpcClient = createMockRpcClient();
     const config = {
@@ -102,8 +102,8 @@ describe('ReadProxy', () => {
       } as any);
 
       const result = await proxy.resolveData({
-        tenant: 'did:test:tenant', recordId: 'rec1', dataCid, dataSize: 50,
-        originalMessage: { descriptor: { interface: 'Records', method: 'Read', messageTimestamp: '' } } as any,
+        tenant          : 'did:test:tenant', recordId        : 'rec1', dataCid, dataSize        : 50,
+        originalMessage : { descriptor: { interface: 'Records', method: 'Read', messageTimestamp: '' } } as any,
       });
 
       expect(result).toBeDefined();
@@ -116,9 +116,9 @@ describe('ReadProxy', () => {
       rpcClient.pushResponse({ status: { code: 404, detail: 'Not Found' } });
 
       const result = await proxy.resolveData({
-        tenant: 'did:test:tenant', recordId: 'rec1',
-        dataCid: 'some-cid', dataSize: 100,
-        originalMessage: { descriptor: { interface: 'Records', method: 'Read', messageTimestamp: '' } } as any,
+        tenant          : 'did:test:tenant', recordId        : 'rec1',
+        dataCid         : 'some-cid', dataSize        : 100,
+        originalMessage : { descriptor: { interface: 'Records', method: 'Read', messageTimestamp: '' } } as any,
       });
 
       expect(result).toBeUndefined();
@@ -141,8 +141,8 @@ describe('ReadProxy', () => {
       } as any);
 
       const result = await proxy.resolveData({
-        tenant: 'did:test:tenant', recordId: 'rec1', dataCid, dataSize: 50,
-        originalMessage: { descriptor: { interface: 'Records', method: 'Read', messageTimestamp: '' } } as any,
+        tenant          : 'did:test:tenant', recordId        : 'rec1', dataCid, dataSize        : 50,
+        originalMessage : { descriptor: { interface: 'Records', method: 'Read', messageTimestamp: '' } } as any,
       });
 
       expect(result).toBeDefined();
@@ -165,8 +165,8 @@ describe('ReadProxy', () => {
       } as any);
 
       const result = await proxy.resolveData({
-        tenant: 'did:test:tenant', recordId: 'rec1', dataCid: goodCid, dataSize: 50,
-        originalMessage: { descriptor: { interface: 'Records', method: 'Read', messageTimestamp: '' } } as any,
+        tenant          : 'did:test:tenant', recordId        : 'rec1', dataCid         : goodCid, dataSize        : 50,
+        originalMessage : { descriptor: { interface: 'Records', method: 'Read', messageTimestamp: '' } } as any,
       });
 
       expect(result).toBeUndefined();
@@ -187,9 +187,9 @@ describe('ReadProxy', () => {
       const { proxy, rpcClient } = createProxy({ ipfsGateway: 'http://localhost:8080' });
 
       const result = await proxy.resolveData({
-        tenant: 'did:test:tenant', recordId: 'rec1', dataCid, dataSize: 30,
-        published: true,
-        originalMessage: { descriptor: { interface: 'Records', method: 'Read', messageTimestamp: '' } } as any,
+        tenant          : 'did:test:tenant', recordId        : 'rec1', dataCid, dataSize        : 30,
+        published       : true,
+        originalMessage : { descriptor: { interface: 'Records', method: 'Read', messageTimestamp: '' } } as any,
       });
 
       expect(result).toBeDefined();
@@ -211,10 +211,10 @@ describe('ReadProxy', () => {
       rpcClient.pushResponse({ status: { code: 404, detail: 'Not Found' } });
 
       await proxy.resolveData({
-        tenant: 'did:test:tenant', recordId: 'rec1',
-        dataCid: 'some-cid', dataSize: 100,
-        published: false,
-        originalMessage: { descriptor: { interface: 'Records', method: 'Read', messageTimestamp: '' } } as any,
+        tenant          : 'did:test:tenant', recordId        : 'rec1',
+        dataCid         : 'some-cid', dataSize        : 100,
+        published       : false,
+        originalMessage : { descriptor: { interface: 'Records', method: 'Read', messageTimestamp: '' } } as any,
       });
 
       expect(ipfsCalled).toBe(false);
@@ -231,8 +231,8 @@ describe('ReadProxy', () => {
       }) as any;
 
       const { proxy, rpcClient } = createProxy({
-        ipfsGateway: 'http://localhost:8080',
-        endpoints: ['https://full-peer.example.com'],
+        ipfsGateway : 'http://localhost:8080',
+        endpoints   : ['https://full-peer.example.com'],
       });
 
       rpcClient.pushResponse({
@@ -241,9 +241,9 @@ describe('ReadProxy', () => {
       } as any);
 
       const result = await proxy.resolveData({
-        tenant: 'did:test:tenant', recordId: 'rec1', dataCid, dataSize: 30,
-        published: true,
-        originalMessage: { descriptor: { interface: 'Records', method: 'Read', messageTimestamp: '' } } as any,
+        tenant          : 'did:test:tenant', recordId        : 'rec1', dataCid, dataSize        : 30,
+        published       : true,
+        originalMessage : { descriptor: { interface: 'Records', method: 'Read', messageTimestamp: '' } } as any,
       });
 
       expect(result).toBeDefined();
@@ -263,8 +263,8 @@ describe('ReadProxy', () => {
       } as any);
 
       await proxy.resolveData({
-        tenant: 'did:test:tenant', recordId: 'rec1', dataCid, dataSize: 100,
-        originalMessage: { descriptor: { interface: 'Records', method: 'Read', messageTimestamp: '' } } as any,
+        tenant          : 'did:test:tenant', recordId        : 'rec1', dataCid, dataSize        : 100,
+        originalMessage : { descriptor: { interface: 'Records', method: 'Read', messageTimestamp: '' } } as any,
       });
 
       // Data should be stored in the mock data store

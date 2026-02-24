@@ -1,10 +1,9 @@
 import log from 'loglevel';
-
-import type { RelayConfig } from '../config.js';
 import { parseDuration } from '../config.js';
+import type { RelayConfig } from '../config.js';
 import type { RelayDataStore } from '../stores/relay-data-store.js';
-import { parsePolicies, getRetentionMs } from './storage-policies.js';
 import type { StoragePolicy } from './storage-policies.js';
+import { getRetentionMs, parsePolicies } from './storage-policies.js';
 
 /**
  * EvictionManager monitors storage usage and evicts record data from the
@@ -37,7 +36,9 @@ export class EvictionManager {
    * Start the eviction manager. Runs a periodic scan at the configured interval.
    */
   start(): void {
-    if (this.#running) return;
+    if (this.#running) {
+      return;
+    }
     this.#running = true;
 
     const intervalMs = this.#config.evictionIntervalSeconds * 1_000;
@@ -53,7 +54,9 @@ export class EvictionManager {
    * Stop the eviction manager.
    */
   stop(): void {
-    if (!this.#running) return;
+    if (!this.#running) {
+      return;
+    }
     this.#running = false;
 
     if (this.#intervalHandle !== undefined) {
@@ -104,7 +107,9 @@ export class EvictionManager {
       }
 
       for (const candidate of candidates) {
-        if (freedBytes >= bytesToFree) break;
+        if (freedBytes >= bytesToFree) {
+          break;
+        }
 
         const freed = await this.#dataStore.evict(
           candidate.tenant,
@@ -145,7 +150,9 @@ export class EvictionManager {
       // Only evict truly expired entries, not just synced ones
       const age = Date.now() - candidate.storedAt;
       const effectiveMaxAge = getRetentionMs(this.#policies, candidate.protocol);
-      if (age <= effectiveMaxAge && !candidate.synced) continue;
+      if (age <= effectiveMaxAge && !candidate.synced) {
+        continue;
+      }
 
       const freed = await this.#dataStore.evict(
         candidate.tenant,

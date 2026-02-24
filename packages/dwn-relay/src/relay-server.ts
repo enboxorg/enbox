@@ -1,20 +1,17 @@
-import type { DataStore, Dwn, GenericMessage, MessageStore } from '@enbox/dwn-sdk-js';
-import type { DidResolver } from '@enbox/dids';
-import { DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
-import { DwnServer } from '@enbox/dwn-server';
-import type { DwnServerOptions, DwnServerConfig } from '@enbox/dwn-server';
-import { HttpDwnRpcClient } from '@enbox/dwn-clients';
-import log from 'loglevel';
-
-import { getRelayConfig } from './config.js';
-import type { RelayConfig } from './config.js';
-import { EvictionManager } from './eviction/eviction-manager.js';
-import { IpfsResolver } from './proxy/ipfs-resolver.js';
-import { ReadProxy } from './proxy/read-proxy.js';
-import { WriteForwarder } from './forwarding/write-forwarder.js';
-import { ServerSyncEngine } from './sync/server-sync-engine.js';
 import { ConnectionPool } from './sync/connection-pool.js';
+import { DwnServer } from '@enbox/dwn-server';
+import { EvictionManager } from './eviction/eviction-manager.js';
+import { getRelayConfig } from './config.js';
+import { IpfsResolver } from './proxy/ipfs-resolver.js';
+import log from 'loglevel';
+import type { ReadProxy } from './proxy/read-proxy.js';
+import type { RelayConfig } from './config.js';
 import { RelayDataStore } from './stores/relay-data-store.js';
+import { ServerSyncEngine } from './sync/server-sync-engine.js';
+import { WriteForwarder } from './forwarding/write-forwarder.js';
+import type { DataStore, GenericMessage } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
+import type { DwnServerConfig, DwnServerOptions } from '@enbox/dwn-server';
 
 export interface RelayServerOptions extends DwnServerOptions {
   /** Override relay-specific config (defaults to env-var-based config). */
@@ -114,9 +111,9 @@ export class RelayServer {
     }
 
     // Create IPFS resolver if configured
-    let ipfsResolver: IpfsResolver | undefined;
+    let _ipfsResolver: IpfsResolver | undefined;
     if (this.#relayConfig.ipfsGatewayUrl) {
-      ipfsResolver = new IpfsResolver(
+      _ipfsResolver = new IpfsResolver(
         this.#relayConfig.ipfsGatewayUrl,
         this.#relayConfig.readProxyTimeoutMs,
       );
@@ -136,7 +133,7 @@ export class RelayServer {
       didResolver,
       rpcClient     : this.#connectionPool,
       config        : this.#relayConfig,
-      onTenantWrite : (tenant) => this.#syncEngine?.notifyTenantWrite(tenant),
+      onTenantWrite : (tenant: string): void => { this.#syncEngine?.notifyTenantWrite(tenant); },
     });
 
     // Start background services
@@ -191,13 +188,19 @@ export class RelayServer {
     data?: ReadableStream<Uint8Array>,
   ): Promise<void> {
     // Only forward on successful writes/deletes
-    if (statusCode !== 202) return;
+    if (statusCode !== 202) {
+      return;
+    }
 
     const iface = message.descriptor.interface;
     const method = message.descriptor.method;
 
-    if (iface !== DwnInterfaceName.Records) return;
-    if (method !== DwnMethodName.Write && method !== DwnMethodName.Delete) return;
+    if (iface !== DwnInterfaceName.Records) {
+      return;
+    }
+    if (method !== DwnMethodName.Write && method !== DwnMethodName.Delete) {
+      return;
+    }
 
     // Forward asynchronously (fire-and-forget)
     const messageCid = await Message.getCid(message);
@@ -212,7 +215,7 @@ export class RelayServer {
     // only reads during start().
     return {
       logLevel          : process.env.DWN_SERVER_LOG_LEVEL || 'INFO',
-      forwardingEnabled : true,  // Relay nodes should forward by default
+      forwardingEnabled : true, // Relay nodes should forward by default
       deliveryEnabled   : false, // Delivery is a separate concern
     } as unknown as DwnServerConfig;
   }

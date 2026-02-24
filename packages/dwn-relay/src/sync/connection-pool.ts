@@ -1,6 +1,6 @@
-import type { DwnRpc, DwnRpcRequest, DwnRpcResponse } from '@enbox/dwn-clients';
 import { HttpDwnRpcClient } from '@enbox/dwn-clients';
 import log from 'loglevel';
+import type { DwnRpc, DwnRpcRequest, DwnRpcResponse } from '@enbox/dwn-clients';
 
 /**
  * Health status for a host.
@@ -72,7 +72,9 @@ export class ConnectionPool implements DwnRpc {
   isHostHealthy(url: string): boolean {
     const origin = new URL(url).origin;
     const health = this.#health.get(origin);
-    if (!health) return true;
+    if (!health) {
+      return true;
+    }
     return health.retryAfter <= Date.now();
   }
 

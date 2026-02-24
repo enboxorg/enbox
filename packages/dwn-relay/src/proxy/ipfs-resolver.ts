@@ -1,5 +1,5 @@
-import { Cid, DataStream } from '@enbox/dwn-sdk-js';
 import log from 'loglevel';
+import { Cid, DataStream } from '@enbox/dwn-sdk-js';
 
 /**
  * IpfsResolver fetches record data from an IPFS HTTP gateway by dataCid.

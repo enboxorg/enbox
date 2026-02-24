@@ -123,8 +123,8 @@ describe('ConnectionPool', () => {
       // Record one failure to put host in backoff
       try {
         await pool.sendDwnRequest({
-          dwnUrl: url, targetDid: 'did:test:1',
-          message: { descriptor: { interface: 'Messages', method: 'Sync', messageTimestamp: '', action: 'root' } },
+          dwnUrl    : url, targetDid : 'did:test:1',
+          message   : { descriptor: { interface: 'Messages', method: 'Sync', messageTimestamp: '', action: 'root' } },
         });
       } catch { /* expected — connection refused */ }
 
@@ -135,8 +135,8 @@ describe('ConnectionPool', () => {
       let rejected = false;
       try {
         await pool.sendDwnRequest({
-          dwnUrl: url, targetDid: 'did:test:1',
-          message: { descriptor: { interface: 'Messages', method: 'Sync', messageTimestamp: '', action: 'root' } },
+          dwnUrl    : url, targetDid : 'did:test:1',
+          message   : { descriptor: { interface: 'Messages', method: 'Sync', messageTimestamp: '', action: 'root' } },
         });
       } catch (err: any) {
         rejected = err.message.includes('backoff');
