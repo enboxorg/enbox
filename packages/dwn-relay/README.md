@@ -22,14 +22,12 @@ This works because the DWN sync protocol (SMT-based set reconciliation) operates
 │  ┌──────────────────────▼─────────────────────────┐  │
 │  │              Relay Layer                        │  │
 │  │                                                │  │
-│  │  ┌─────────────┐  ┌──────────────────────────┐ │  │
-│  │  │ Write       │  │ Read Proxy               │ │  │
-│  │  │ Forwarder   │  │  1. Local cache           │ │  │
-│  │  │             │  │  2. IPFS (published data)  │ │  │
-│  │  │ Forwards    │  │  3. Peer DWN endpoint     │ │  │
-│  │  │ to peer     │  │                           │ │  │
-│  │  │ endpoints   │  │ Transparent to requester  │ │  │
-│  │  └─────────────┘  └──────────────────────────┘ │  │
+│  │  ┌────────────────────────────────────────────┐ │  │
+│  │  │ RelayDataStore (wraps DataStore)           │ │  │
+│  │  │  • Eviction metadata tracking              │ │  │
+│  │  │  • Transparent read-proxy on cache miss:   │ │  │
+│  │  │    1. Local cache  2. IPFS  3. Peer DWN    │ │  │
+│  │  └────────────────────────────────────────────┘ │  │
 │  │                                                │  │
 │  │  ┌─────────────┐  ┌──────────────────────────┐ │  │
 │  │  │ Eviction    │  │ ServerSyncEngine         │ │  │
@@ -58,7 +56,7 @@ When an external author sends a `RecordsWrite` to the relay:
 
 1. **Standard processing**: The message is validated, authenticated, authorized, and stored — message envelope to MessageStore, record data to DataStore.
 2. **Standard response**: The author receives a normal success response. The relay is transparent.
-3. **Async forwarding**: The Write Forwarder resolves the tenant's other DWN endpoints from their DID document and forwards the original signed message + data. `409` (duplicate) from a peer is treated as success.
+3. **Async forwarding**: The DeliveryService (from `@enbox/dwn-server`) resolves the tenant's other DWN endpoints from their DID document and forwards the original signed message + data. `409` (duplicate) from a peer is treated as success.
 4. **Async sync**: The ServerSyncEngine queues the tenant for the next sync cycle as a backstop.
 
 ### Read Path (Cache)
@@ -100,10 +98,7 @@ packages/dwn-relay/
       eviction-manager.ts         Background eviction process
       storage-policies.ts         Per-protocol retention policy types
     proxy/
-      read-proxy.ts               Cache-miss → IPFS or peer DWN
       ipfs-resolver.ts            Optional IPFS data fetching + CID verification
-    forwarding/
-      write-forwarder.ts          Forward writes to peer endpoints
     sync/
       server-sync-engine.ts       Multi-tenant sync orchestrator
       priority-queue.ts           Urgency-ordered work queue
@@ -147,6 +142,11 @@ DWN_RELAY_SYNC_INTERVAL=30
 # to retention duration. Protocols not listed use DWN_RELAY_DATA_RETENTION.
 # Example: {"https://example.com/chat":"7d","https://example.com/media":"24h"}
 DWN_RELAY_PROTOCOL_POLICIES={}
+
+# Path for the persistent eviction metadata SQLite database.
+# Omit to use in-memory only (not recommended for production — metadata
+# is lost on restart). Uses bun:sqlite.
+DWN_RELAY_METADATA_PATH=./data/relay-metadata.sqlite
 ```
 
 ## Comparison with `dwn-server`
@@ -159,7 +159,7 @@ DWN_RELAY_PROTOCOL_POLICIES={}
 | SMT sync | Agent-initiated | Agent-initiated + ServerSyncEngine |
 | Read for local data | Returns it | Returns it (identical) |
 | Read for missing data | Not found | Proxies to IPFS or peer |
-| Write forwarding | No | Yes, to peer endpoints |
+| Write forwarding | No | Yes, via DeliveryService |
 | Storage growth | Unbounded | Bounded by eviction policy |
 
 ## Example Topologies

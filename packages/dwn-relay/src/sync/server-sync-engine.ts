@@ -529,24 +529,15 @@ export class ServerSyncEngine {
 
   /**
    * Mark all data entries for a tenant as synced in the RelayDataStore.
-   * Called when we confirm convergence with a full peer.
+   * Called when we confirm SMT root convergence with a peer.
+   *
+   * Root convergence means ALL messages (and therefore all associated record data)
+   * are present on the peer. We mark the entire tenant's data as synced so the
+   * EvictionManager can safely prioritize it for eviction.
    */
   #markTenantDataSynced(tenant: string): void {
-    // Find the peer we just synced with — check if any is a full node
-    for (const [key, _state] of this.#peerSyncState) {
-      if (!key.startsWith(`${tenant}|`)) {
-        continue;
-      }
-      // We don't track whether the peer is full here — that's determined by
-      // the endpoint resolver. For now, mark data as synced whenever we have
-      // root convergence with any peer. The EvictionManager uses this as a signal.
-    }
-    // The RelayDataStore's markSynced operates per-record, but we don't have
-    // per-record granularity here. Instead, we rely on the fact that root
-    // convergence means ALL messages are synced. A more granular approach
-    // would track which specific messageCids were pushed.
-    // For now, this is a best-effort signal to the eviction system.
-    void this.#dataStore;
+    this.#dataStore.markTenantSynced(tenant);
+    log.debug(`ServerSyncEngine: marked tenant ${tenant} data as synced`);
   }
 
   async #queueTenantPeers(tenant: string, lastWriteTimestamp?: number): Promise<void> {

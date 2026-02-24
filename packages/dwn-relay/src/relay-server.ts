@@ -7,6 +7,7 @@ import { ConnectionPool } from './sync/connection-pool.js';
 import { EvictionManager } from './eviction/eviction-manager.js';
 import { getRelayConfig } from './config.js';
 import { IpfsResolver } from './proxy/ipfs-resolver.js';
+import { MetadataStore } from './stores/metadata-store.js';
 import { RelayDataStore } from './stores/relay-data-store.js';
 import { ServerSyncEngine } from './sync/server-sync-engine.js';
 import { defaultDwnServerConfig, DwnServer, getDwnConfig } from '@enbox/dwn-server';
@@ -77,8 +78,13 @@ export class RelayServer {
     // Build the standard stores using dwn-server's config-driven factory.
     const dwnConfig = await getDwnConfig(serverConfig, {});
 
+    // Create persistent metadata store if configured.
+    const metadataStore = relayConfig.metadataPath
+      ? new MetadataStore(relayConfig.metadataPath)
+      : undefined;
+
     // Wrap the DataStore with our eviction-tracking relay store.
-    const relayDataStore = new RelayDataStore(dwnConfig.dataStore);
+    const relayDataStore = new RelayDataStore(dwnConfig.dataStore, metadataStore);
 
     // Create EventLog for WebSocket subscription support.
     let eventLog = dwnConfig.eventLog;

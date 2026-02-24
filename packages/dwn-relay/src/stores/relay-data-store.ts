@@ -1,6 +1,7 @@
 import type { DidResolver } from '@enbox/dids';
 import type { IpfsResolver } from '../proxy/ipfs-resolver.js';
 import log from 'loglevel';
+import type { MetadataStore } from './metadata-store.js';
 import type { RelayConfig } from '../config.js';
 import { resolveEndpoints } from '../endpoint-resolver.js';
 import { Cid, DataStream } from '@enbox/dwn-sdk-js';
@@ -50,9 +51,11 @@ export class RelayDataStore implements DataStore {
   #totalBytes = 0;
   #tenantBytes: Map<string, number> = new Map();
   #proxy?: RelayDataStoreProxyOptions;
+  #metadataStore?: MetadataStore;
 
-  constructor(innerStore: DataStore) {
+  constructor(innerStore: DataStore, metadataStore?: MetadataStore) {
     this.#inner = innerStore;
+    this.#metadataStore = metadataStore;
   }
 
   /**
@@ -69,10 +72,38 @@ export class RelayDataStore implements DataStore {
 
   async open(): Promise<void> {
     await this.#inner.open();
+
+    // Seed in-memory caches from persistent metadata if available.
+    if (this.#metadataStore) {
+      this.#metadataStore.open();
+      this.#seedFromStore();
+    }
   }
 
   async close(): Promise<void> {
     await this.#inner.close();
+    this.#metadataStore?.close();
+  }
+
+  /**
+   * Seed the in-memory metadata map and byte counters from the persistent store.
+   */
+  #seedFromStore(): void {
+    const store = this.#metadataStore!;
+    const entries = store.getAll();
+
+    this.#metadata.clear();
+    this.#tenantBytes.clear();
+    this.#totalBytes = 0;
+
+    for (const entry of entries) {
+      const key = RelayDataStore.#key(entry.tenant, entry.recordId, entry.dataCid);
+      this.#metadata.set(key, entry);
+      this.#totalBytes += entry.dataSize;
+      this.#tenantBytes.set(entry.tenant, (this.#tenantBytes.get(entry.tenant) ?? 0) + entry.dataSize);
+    }
+
+    log.info(`RelayDataStore: seeded ${entries.length} metadata entries (${this.#totalBytes} bytes) from persistent store`);
   }
 
   async put(
@@ -92,14 +123,16 @@ export class RelayDataStore implements DataStore {
       this.#tenantBytes.set(tenant, (this.#tenantBytes.get(tenant) ?? 0) - existing.dataSize);
     }
 
-    this.#metadata.set(key, {
+    const entry: DataMetadataEntry = {
       tenant,
       recordId,
       dataCid,
       dataSize : result.dataSize,
       storedAt : Date.now(),
       synced   : false,
-    });
+    };
+    this.#metadata.set(key, entry);
+    this.#metadataStore?.put(entry);
 
     this.#totalBytes += result.dataSize;
     this.#tenantBytes.set(tenant, (this.#tenantBytes.get(tenant) ?? 0) + result.dataSize);
@@ -245,14 +278,16 @@ export class RelayDataStore implements DataStore {
 
       // Update metadata tracking
       const key = RelayDataStore.#key(tenant, recordId, dataCid);
-      this.#metadata.set(key, {
+      const entry: DataMetadataEntry = {
         tenant,
         recordId,
         dataCid,
         dataSize : dataBytes.length,
         storedAt : Date.now(),
         synced   : false,
-      });
+      };
+      this.#metadata.set(key, entry);
+      this.#metadataStore?.put(entry);
       this.#totalBytes += dataBytes.length;
       this.#tenantBytes.set(tenant, (this.#tenantBytes.get(tenant) ?? 0) + dataBytes.length);
 
@@ -279,6 +314,7 @@ export class RelayDataStore implements DataStore {
         this.#tenantBytes.set(tenant, tenantTotal);
       }
       this.#metadata.delete(key);
+      this.#metadataStore?.delete(tenant, recordId, dataCid);
     }
   }
 
@@ -287,6 +323,7 @@ export class RelayDataStore implements DataStore {
     this.#metadata.clear();
     this.#totalBytes = 0;
     this.#tenantBytes.clear();
+    this.#metadataStore?.clear();
   }
 
   // ─── Eviction-aware query methods ───────────────────────────────────
@@ -315,7 +352,21 @@ export class RelayDataStore implements DataStore {
     const entry = this.#metadata.get(key);
     if (entry) {
       entry.synced = true;
+      this.#metadataStore?.markSynced(tenant, recordId, dataCid);
     }
+  }
+
+  /**
+   * Mark ALL data entries for a tenant as synced.
+   * Called by the ServerSyncEngine when SMT root convergence is confirmed with a peer.
+   */
+  markTenantSynced(tenant: string): void {
+    for (const entry of this.#metadata.values()) {
+      if (entry.tenant === tenant) {
+        entry.synced = true;
+      }
+    }
+    this.#metadataStore?.markTenantSynced(tenant);
   }
 
   /**
@@ -327,6 +378,7 @@ export class RelayDataStore implements DataStore {
     const entry = this.#metadata.get(key);
     if (entry) {
       entry.protocol = protocol;
+      this.#metadataStore?.setProtocol(tenant, recordId, dataCid, protocol);
     }
   }
 
@@ -402,6 +454,7 @@ export class RelayDataStore implements DataStore {
       this.#tenantBytes.set(tenant, tenantTotal);
     }
     this.#metadata.delete(key);
+    this.#metadataStore?.delete(tenant, recordId, dataCid);
 
     return freed;
   }

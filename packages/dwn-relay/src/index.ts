@@ -6,6 +6,7 @@ export type { RelayServerOptions } from './relay-server.js';
 export { RelayConfig, getRelayConfig, parseDuration } from './config.js';
 
 // Stores
+export { MetadataStore } from './stores/metadata-store.js';
 export { RelayDataStore } from './stores/relay-data-store.js';
 export type { DataMetadataEntry, RelayDataStoreProxyOptions } from './stores/relay-data-store.js';
 
@@ -14,8 +15,7 @@ export { EvictionManager } from './eviction/eviction-manager.js';
 export { parsePolicies, getRetentionMs } from './eviction/storage-policies.js';
 export type { StoragePolicy } from './eviction/storage-policies.js';
 
-// Read proxy (standalone class for direct use; also integrated into RelayDataStore.get())
-export { ReadProxy } from './proxy/read-proxy.js';
+// IPFS resolution (used by RelayDataStore read-proxy)
 export { IpfsResolver } from './proxy/ipfs-resolver.js';
 
 // Sync
