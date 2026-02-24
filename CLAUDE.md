@@ -218,12 +218,48 @@ Packages are published to npm via **Changesets** and CI. **NEVER bump versions m
 ### Key details
 
 - **Changeset config** is in `.changeset/config.json`.
-- **`@enbox/dwn-server` is ignored** by changesets (in `config.json` `ignore` list) — it's deployed directly via Fly.io, not published to npm.
-- **`updateInternalDependencies: "patch"`** — when a dependency gets bumped, its dependents automatically get a patch bump too.
+- **`@enbox/dwn-server` and `@enbox/dwn-relay` are ignored** by changesets (in `config.json` `ignore` list) — `dwn-server` is deployed directly via Fly.io, not published to npm; `dwn-relay` depends on the ignored `dwn-server`.
+- **`updateInternalDependencies: "patch"`** — when a dependency gets bumped, its dependents automatically get a patch bump too. For example, bumping `@enbox/dwn-sdk-js` as `minor` will auto-bump `@enbox/agent`, `@enbox/api`, `@enbox/protocols`, `@enbox/crypto`, etc. as `patch`.
 - **`scripts/publish.sh`** handles the Bun `workspace:*` → real version resolution that changesets' built-in publish cannot do.
 - The publish script **skips already-published versions** (idempotent).
 - Git tags are created automatically in the format `@enbox/<package>@<version>`.
 - npm auth is handled via `NPM_TOKEN` secret in CI.
+
+### IMPORTANT: Do NOT run `changeset version` locally
+
+**Never run `bunx changeset version` locally.** This command consumes the changeset files, bumps `package.json` versions, and updates changelogs — that is CI's job. If you accidentally run it, revert with `git checkout -- packages/ .changeset/`.
+
+The correct local workflow is:
+1. Create the `.changeset/<name>.md` file (manually or via `bun changeset`)
+2. Commit the changeset file
+3. Push to `main`
+4. CI handles the rest
+
+### Agent-friendly changeset creation
+
+Since `bun changeset` is interactive (not supported in agents), create the changeset file directly:
+
+```bash
+cat > .changeset/my-changeset.md << 'EOF'
+---
+"@enbox/dwn-sdk-js": minor
+"@enbox/agent": patch
+---
+
+feat: add new protocol feature and update agent to use it
+EOF
+```
+
+Use `bunx changeset status` to verify the changeset is valid before committing.
+
+### Semver guidelines for this project
+
+| Change type | Bump | Examples |
+|---|---|---|
+| New feature / new API | `minor` | New protocol directive, new sync engine, new public method |
+| Bug fix / security fix | `patch` | SSRF protection, escape LIKE wildcards, crash fix |
+| Breaking change | `major` | Removed public API, changed wire format, renamed exports |
+| Test-only changes | No bump needed | Don't include test-only packages in the changeset |
 
 ### Example changeset file
 
