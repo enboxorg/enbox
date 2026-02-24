@@ -107,6 +107,7 @@ function protocolWriteMessage(opts: {
   protocolPath?: string;
   contextId?: string;
   recordId?: string;
+  recipient?: string;
 }): GenericMessage {
   return {
     descriptor: {
@@ -116,6 +117,7 @@ function protocolWriteMessage(opts: {
       protocol         : opts.protocol,
       protocolPath     : opts.protocolPath,
       contextId        : opts.contextId,
+      recipient        : opts.recipient,
     },
     recordId: opts.recordId ?? 'test-record-id',
   } as unknown as GenericMessage;
@@ -650,6 +652,130 @@ describe('DeliveryService — coverage', () => {
       // Should have sent to bob's DWN endpoint.
       expect(fetchStub.callCount).toBe(1);
       expect(fetchStub.firstCall.args[0]).toBe('http://bob-dwn.example.com');
+    });
+
+    it('should deliver to explicit recipient on the record', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+        new Response(null, { status: 200 }),
+      );
+
+      const tenant = 'did:test:alice';
+      const recipient = 'did:test:carol';
+
+      // Protocol with $delivery: "direct" but NO role-based $actions rules.
+      // The only delivery target should come from the record's recipient field.
+      const protocolDef: ProtocolDefinition = {
+        protocol  : 'http://example.com/dm',
+        published : true,
+        types     : { message: {} },
+        structure : {
+          message: {
+            $delivery : 'direct',
+            $actions  : [
+              { who: 'recipient', of: 'message', can: ['read'] },
+            ],
+          },
+        },
+      };
+
+      // First call: ProtocolsQuery returns definition.
+      // No second call needed — the recipient comes from the record, not a role query.
+      const processStub = sinon.stub();
+      processStub.onFirstCall().resolves({
+        status  : { code: 200 },
+        entries : [{ descriptor: { definition: protocolDef } }],
+      });
+
+      const dwn = mockDwn(processStub);
+      const resolver = fakeResolver({
+        [recipient]: didDocWithDwnService(recipient, ['http://carol-dwn.example.com']),
+      });
+
+      const svc = DeliveryService.create(dwn, resolver, testConfig({
+        forwardingEnabled : false,
+        deliveryEnabled   : true,
+      }));
+
+      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
+        protocol     : 'http://example.com/dm',
+        protocolPath : 'message',
+        recordId     : 'deliver-recipient-1',
+        recipient    : recipient,
+      }), 202);
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
+
+      // Should have sent to carol's DWN endpoint via the explicit recipient.
+      expect(fetchStub.callCount).toBe(1);
+      expect(fetchStub.firstCall.args[0]).toBe('http://carol-dwn.example.com');
+    });
+
+    it('should deliver to both explicit recipient and role-based targets without duplicates', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+        new Response(null, { status: 200 }),
+      );
+
+      const tenant = 'did:test:alice';
+      const recipient = 'did:test:bob'; // explicit recipient
+      const roleMember = 'did:test:carol'; // discovered via role
+
+      const protocolDef: ProtocolDefinition = {
+        protocol  : 'http://example.com/chat',
+        published : true,
+        types     : {
+          thread      : {},
+          participant : {},
+          message     : {},
+        },
+        structure: {
+          thread: {
+            participant : { $actions: [{ role: 'thread/participant', can: ['read'] }] },
+            message     : {
+              $delivery : 'direct',
+              $actions  : [{ role: 'thread/participant', can: ['create', 'read'] }],
+            },
+          },
+        },
+      };
+
+      // First call: ProtocolsQuery returns definition.
+      // Second call: RecordsQuery for role records returns carol (and bob is NOT a role member).
+      const processStub = sinon.stub();
+      processStub.onFirstCall().resolves({
+        status  : { code: 200 },
+        entries : [{ descriptor: { definition: protocolDef } }],
+      });
+      processStub.onSecondCall().resolves({
+        status  : { code: 200 },
+        entries : [
+          { descriptor: { recipient: roleMember } },
+        ],
+      });
+
+      const dwn = mockDwn(processStub);
+      const resolver = fakeResolver({
+        [recipient]  : didDocWithDwnService(recipient, ['http://bob-dwn.example.com']),
+        [roleMember] : didDocWithDwnService(roleMember, ['http://carol-dwn.example.com']),
+      });
+
+      const svc = DeliveryService.create(dwn, resolver, testConfig({
+        forwardingEnabled : false,
+        deliveryEnabled   : true,
+      }));
+
+      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
+        protocol     : 'http://example.com/chat',
+        protocolPath : 'thread/message',
+        contextId    : 'ctx-1',
+        recordId     : 'deliver-combined-1',
+        recipient    : recipient,
+      }), 202);
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
+
+      // Should have sent to BOTH bob (explicit recipient) and carol (role-based).
+      expect(fetchStub.callCount).toBe(2);
+      const calledUrls = [fetchStub.firstCall.args[0], fetchStub.secondCall.args[0]];
+      expect(calledUrls).toContain('http://bob-dwn.example.com');
+      expect(calledUrls).toContain('http://carol-dwn.example.com');
     });
 
     it('should not deliver to the tenant itself', async () => {
