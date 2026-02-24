@@ -4,7 +4,7 @@ import log from 'loglevel';
 import type { MetadataStore } from './metadata-store.js';
 import type { RelayConfig } from '../config.js';
 import { resolveEndpoints } from '../endpoint-resolver.js';
-import { Cid, DataStream } from '@enbox/dwn-sdk-js';
+import { Cid, DataStream, Time } from '@enbox/dwn-sdk-js';
 import type { DataStore, DataStoreGetResult, DataStorePutResult } from '@enbox/dwn-sdk-js';
 import type { DwnRpc, DwnRpcRequest } from '@enbox/dwn-clients';
 
@@ -184,7 +184,7 @@ export class RelayDataStore implements DataStore {
     }
 
     // Strategy 2: Peer DWN proxy (prefer full endpoints)
-    const peerResult = await this.#proxyFromPeer(tenant, dataCid);
+    const peerResult = await this.#proxyFromPeer(tenant, recordId, dataCid);
     if (peerResult) {
       log.debug(`RelayDataStore: resolved ${dataCid} via peer proxy for tenant ${tenant}`);
       if (proxy.config.readProxyCacheLocally) {
@@ -202,6 +202,7 @@ export class RelayDataStore implements DataStore {
    */
   async #proxyFromPeer(
     tenant: string,
+    recordId: string,
     dataCid: string,
   ): Promise<DataStoreGetResult | undefined> {
     const proxy = this.#proxy!;
@@ -224,8 +225,8 @@ export class RelayDataStore implements DataStore {
       descriptor: {
         interface        : 'Records',
         method           : 'Read',
-        messageTimestamp : new Date().toISOString(),
-        filter           : { recordId: tenant }, // placeholder — peer resolves by recordId in target context
+        messageTimestamp : Time.getCurrentTimestamp(),
+        filter           : { recordId },
       },
     };
 
