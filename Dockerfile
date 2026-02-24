@@ -29,6 +29,7 @@ COPY packages/dwn-sql-store/package.json   packages/dwn-sql-store/
 COPY packages/dwn-clients/package.json     packages/dwn-clients/
 COPY packages/dwn-server-admin-ui/package.json packages/dwn-server-admin-ui/
 COPY packages/dwn-server/package.json      packages/dwn-server/
+COPY packages/dwn-relay/package.json       packages/dwn-relay/
 
 # Also copy package.json for excluded packages so bun workspace resolution
 # and lockfile integrity checks succeed. Only source is excluded via .dockerignore.
@@ -79,6 +80,7 @@ COPY packages/dwn-server/      packages/dwn-server/
 COPY packages/agent/package.json             packages/agent/
 COPY packages/api/package.json               packages/api/
 COPY packages/browser/package.json           packages/browser/
+COPY packages/dwn-relay/package.json         packages/dwn-relay/
 COPY packages/protocols/package.json         packages/protocols/
 COPY packages/protocol-codegen/package.json  packages/protocol-codegen/
 COPY packages/dwn-relay/package.json         packages/dwn-relay/
