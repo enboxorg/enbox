@@ -13,8 +13,12 @@ describe('UniversalResolver', () => {
   describe('open()', () => {
     it('delegates to the cache open()', async () => {
       const cache = {
-        open: mock(() => Promise.resolve()), close: mock(() => Promise.resolve()),
-        get: mock(), set: mock(), delete: mock(), clear: mock(),
+        open   : mock(() => Promise.resolve()),
+        close  : mock(() => Promise.resolve()),
+        get    : mock(),
+        set    : mock(),
+        delete : mock(),
+        clear  : mock(),
       };
       const resolver = new UniversalResolver({ didResolvers: [DidJwk], cache });
       await resolver.open();
@@ -25,8 +29,12 @@ describe('UniversalResolver', () => {
   describe('close()', () => {
     it('delegates to the cache close()', async () => {
       const cache = {
-        open: mock(() => Promise.resolve()), close: mock(() => Promise.resolve()),
-        get: mock(), set: mock(), delete: mock(), clear: mock(),
+        open   : mock(() => Promise.resolve()),
+        close  : mock(() => Promise.resolve()),
+        get    : mock(),
+        set    : mock(),
+        delete : mock(),
+        clear  : mock(),
       };
       const resolver = new UniversalResolver({ didResolvers: [DidJwk], cache });
       await resolver.close();
