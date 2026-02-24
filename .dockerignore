@@ -29,6 +29,7 @@ packages/dids/tests/
 packages/dwn-sql-store/tests/
 packages/dwn-clients/tests/
 packages/dwn-server/tests/
+packages/dwn-relay/tests/
 
 # Packages not needed for dwn-server (exclude source, keep package.json for workspace resolution)
 packages/agent/src/
