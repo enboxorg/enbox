@@ -804,16 +804,21 @@ jobs:
           path: |
             ~/.cache/ms-playwright
             ~/playwright-apt-cache
-          key: ${{ runner.os }}-playwright-${{ matrix.browser }}-${{ hashFiles('package.json') }}
+          # v2 suffix busts stale caches from the v1 layout that included
+          # unrelated system .deb files (openjdk, etc.).
+          key: ${{ runner.os }}-playwright-v2-${{ matrix.browser }}-${{ hashFiles('package.json') }}
 
       - name: Install Playwright system deps (from cache)
         # On cache hit the .deb files are already saved in ~/playwright-apt-cache.
         # Install them directly with dpkg — no network needed, takes ~5s.
+        # We use --force-depends because font packages have no real runtime
+        # deps that matter on a CI runner, and it avoids dpkg failing over
+        # missing optional dependencies.
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: |
           if [ -d ~/playwright-apt-cache ] && ls ~/playwright-apt-cache/*.deb 1>/dev/null 2>&1; then
             echo "Installing $(ls ~/playwright-apt-cache/*.deb | wc -l) cached .deb packages"
-            sudo dpkg -i ~/playwright-apt-cache/*.deb 2>/dev/null || sudo apt-get install -f -y -qq
+            sudo dpkg --force-depends -i ~/playwright-apt-cache/*.deb
           fi
 
       - name: Install Playwright system deps (fresh)
@@ -822,14 +827,18 @@ jobs:
         # fonts-wqy-zenhei, etc.) that are 3-7 MB each and download at
         # ~50 KB/s from Azure apt mirrors — often stalling for minutes.
         #
-        # We cache /var/cache/apt/archives so the .deb files are only
-        # downloaded once; subsequent runs install from the local cache.
+        # We snapshot /var/cache/apt/archives before and after so we only
+        # cache the .deb files that Playwright actually installed — not the
+        # hundreds of pre-existing system packages.
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: |
+          ls /var/cache/apt/archives/*.deb 2>/dev/null | sort > /tmp/apt-before.txt || true
           sudo apt-get update -qq
           bunx playwright install-deps ${{ matrix.browser }}
           mkdir -p ~/playwright-apt-cache
-          cp /var/cache/apt/archives/*.deb ~/playwright-apt-cache/ 2>/dev/null || true
+          comm -13 /tmp/apt-before.txt <(ls /var/cache/apt/archives/*.deb 2>/dev/null | sort) \
+            | xargs -I{} cp {} ~/playwright-apt-cache/ 2>/dev/null || true
+          echo "Cached $(ls ~/playwright-apt-cache/*.deb 2>/dev/null | wc -l) Playwright .deb packages"
         timeout-minutes: 15
 
       - name: Install Playwright browser
