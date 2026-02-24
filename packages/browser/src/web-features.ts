@@ -62,17 +62,6 @@ interface DrlMediaElement extends HTMLElement {
   __src__?: string;
 }
 
-// This is in place to prevent our `bundler-bonanza` repo from failing for Node CJS builds
-// Not sure if this is working as expected in all environments, crated an issue
-// TODO: https://github.com/enboxorg/enbox/issues/767
-function importMetaIfSupported(): { url: string } | undefined {
-  try {
-    return new Function('return import.meta')() as { url: string };
-  } catch {
-    return undefined;
-  }
-}
-
 let didResolver = new UniversalResolver({ didResolvers: [DidDht, DidWeb] });
 const didUrlRegex = /^https?:\/\/dweb\/([^/]+)\/?(.*)?$/;
 const httpToHttpsRegex = /^http:/;
@@ -221,9 +210,8 @@ async function installWorker(options: ActivatePolyfillsOptions = {}): Promise<vo
       if (!registration) {
         const installUrl: string | undefined =
         options.path ||
-        (globalThis.document
-          ? (document?.currentScript as HTMLScriptElement | null)?.src
-          : importMetaIfSupported()?.url);
+        (document?.currentScript as HTMLScriptElement | null)?.src ||
+        import.meta.url;
         if (installUrl)
         {navigator.serviceWorker
           .register(installUrl, { type: 'module' })
