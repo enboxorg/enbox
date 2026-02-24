@@ -26,7 +26,8 @@ const didUrlRegex = /^https?:\/\/dweb\/([^/]+)\/?(.*)?$/;
 const httpToHttpsRegex = /^http:/;
 const trailingSlashRegex = /\/$/;
 
-async function getDwnEndpoints(did: any): Promise<string[]> {
+/** @internal Exported for testing. Resolves DWN service endpoints from a DID. */
+export async function getDwnEndpoints(did: any): Promise<string[]> {
   const { didDocument } = await DidResolver.resolve(did);
   const endpoints = didDocument?.service?.find(
     (service) => service.type === 'DecentralizedWebNode'
@@ -36,7 +37,8 @@ async function getDwnEndpoints(did: any): Promise<string[]> {
   );
 }
 
-async function handleEvent(event: any, did: any, path: any, options: any): Promise<Response> {
+/** @internal Exported for testing. Handles a DRL fetch event. */
+export async function handleEvent(event: any, did: any, path: any, options: any): Promise<Response> {
   const drl = event.request.url
     .replace(httpToHttpsRegex, 'https:')
     .replace(trailingSlashRegex, '');
@@ -75,7 +77,8 @@ async function handleEvent(event: any, did: any, path: any, options: any): Promi
   }
 }
 
-async function fetchResource(event: any, did: any, drl: any, path: any, responseCache: any, options: any): Promise<Response | undefined> {
+/** @internal Exported for testing. Fetches a resource from DWN endpoints. */
+export async function fetchResource(event: any, did: any, drl: any, path: any, responseCache: any, options: any): Promise<Response | undefined> {
   const endpoints = await getDwnEndpoints(did);
   if (!endpoints?.length) {
     throw new Response(
@@ -107,7 +110,8 @@ async function fetchResource(event: any, did: any, drl: any, path: any, response
   }
 }
 
-async function cacheResponse(drl: any, url: any, response: any, cache: any): Promise<void> {
+/** @internal Exported for testing. Caches a DRL response with metadata headers. */
+export async function cacheResponse(drl: any, url: any, response: any, cache: any): Promise<void> {
   const clonedResponse = response.clone();
   const headers = new Headers(clonedResponse.headers);
   headers.append('dwn-cache-time', Date.now().toString());
