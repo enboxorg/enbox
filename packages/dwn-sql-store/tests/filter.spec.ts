@@ -37,6 +37,7 @@ describe('filterSelectQuery', () => {
       .addColumn('messageTimestamp', 'varchar(30)')
       .addColumn('dateCreated', 'varchar(30)')
       .addColumn('dataFormat', 'varchar(30)')
+      .addColumn('contextId', 'varchar(600)')
       .execute();
 
     await db.schema
@@ -73,6 +74,7 @@ describe('filterSelectQuery', () => {
     dataFormat?: string;
     messageTimestamp?: string;
     dateCreated?: string;
+    contextId?: string;
   }): Promise<number> {
     const result = await db
       .insertInto('messageStoreMessages')
@@ -88,6 +90,7 @@ describe('filterSelectQuery', () => {
         dataFormat          : values.dataFormat ?? null,
         messageTimestamp    : values.messageTimestamp ?? null,
         dateCreated         : values.dateCreated ?? null,
+        contextId           : values.contextId ?? null,
       })
       .returning('id as insertId')
       .executeTakeFirstOrThrow();
@@ -230,6 +233,63 @@ describe('filterSelectQuery', () => {
       await insertMessage({ tenant: 't1', messageCid: 'cid-3', dateCreated: '2024-12-01' });
 
       const filters: Filter[] = [{ dateCreated: { lte: '2024-06-01' } }];
+
+      let query = db
+        .selectFrom('messageStoreMessages')
+        .leftJoin('messageStoreRecordsTags', 'messageStoreRecordsTags.messageInsertId', 'messageStoreMessages.id')
+        .select('messageCid')
+        .distinct()
+        .where('tenant', '=', 't1');
+
+      query = filterSelectQuery(filters, query);
+      const results = await query.execute();
+
+      expect(results.length).toBe(2);
+      const cids = results.map((r) => r.messageCid).sort();
+      expect(cids).toEqual(['cid-1', 'cid-2']);
+    });
+  });
+
+  // ─── PrefixRangeFilter (collation-safe LIKE) ───────────────────────────
+
+  describe('PrefixRangeFilter (contextId prefix matching)', () => {
+    it('should match records whose contextId starts with the given prefix', async () => {
+      // Simulate a nested protocol: root record `bafkA` with children `bafkA/bafkB` and `bafkA/bafkC`
+      const rootContextId = 'bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      const childContextId1 = rootContextId + '/bafkreibbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      const childContextId2 = rootContextId + '/bafkreicccccccccccccccccccccccccccccccccccccccccccccccccc';
+      const unrelatedContextId = 'bafkreidddddddddddddddddddddddddddddddddddddddddddddddddd/bafkreieeee';
+
+      await insertMessage({ tenant: 't1', messageCid: 'cid-root', contextId: rootContextId });
+      await insertMessage({ tenant: 't1', messageCid: 'cid-child-1', contextId: childContextId1 });
+      await insertMessage({ tenant: 't1', messageCid: 'cid-child-2', contextId: childContextId2 });
+      await insertMessage({ tenant: 't1', messageCid: 'cid-unrelated', contextId: unrelatedContextId });
+
+      // This is the exact filter shape produced by constructPrefixFilterAsRangeFilter
+      const filters: Filter[] = [{ contextId: { gte: rootContextId, lt: rootContextId + '\uffff' } }];
+
+      let query = db
+        .selectFrom('messageStoreMessages')
+        .leftJoin('messageStoreRecordsTags', 'messageStoreRecordsTags.messageInsertId', 'messageStoreMessages.id')
+        .select('messageCid')
+        .distinct()
+        .where('tenant', '=', 't1');
+
+      query = filterSelectQuery(filters, query);
+      const results = await query.execute();
+
+      expect(results.length).toBe(3); // root + 2 children
+      const cids = results.map((r) => r.messageCid).sort();
+      expect(cids).toEqual(['cid-child-1', 'cid-child-2', 'cid-root']);
+    });
+
+    it('should NOT convert a range filter that does not use the \\uffff sentinel', async () => {
+      await insertMessage({ tenant: 't1', messageCid: 'cid-1', dateCreated: '2024-01-01' });
+      await insertMessage({ tenant: 't1', messageCid: 'cid-2', dateCreated: '2024-06-01' });
+      await insertMessage({ tenant: 't1', messageCid: 'cid-3', dateCreated: '2024-12-01' });
+
+      // Normal range filter (not a prefix filter) — should still work as gte + lt
+      const filters: Filter[] = [{ dateCreated: { gte: '2024-01-01', lt: '2024-12-01' } }];
 
       let query = db
         .selectFrom('messageStoreMessages')
