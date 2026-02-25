@@ -1,9 +1,10 @@
-import type { Dwn } from '@enbox/dwn-sdk-js';
-
 import type { ActivityLog } from './activity-log.js';
+import type { AdminPasskeyStore } from './admin-passkey-store.js';
+import type { AdminSessionManager } from './admin-session.js';
 import type { AdminStore } from './admin-store.js';
 import type { AuditLog } from './audit-log.js';
 import type { ConnectionManager } from '../connection/connection-manager.js';
+import type { Dwn } from '@enbox/dwn-sdk-js';
 import type { DwnServerConfig } from '../config.js';
 import type { RateLimiter } from '../rate-limiter.js';
 import type { RegistrationManager } from '../registration/registration-manager.js';
@@ -11,6 +12,7 @@ import type { RegistrationStore } from '../registration/registration-store.js';
 import type { WebhookManager } from './webhook-manager.js';
 import type {
   AdminConnectionSnapshot,
+  AdminPasskeySummary,
   AdminServerStats,
   AdminTenantDetail,
   AdminTenantSummary,
@@ -23,8 +25,15 @@ import type {
   TenantQuotaInput,
   TenantQuotaStatus,
 } from './types.js';
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 
 import log from 'loglevel';
+import {
+  generateAuthenticationOptions,
+  generateRegistrationOptions,
+  verifyAuthenticationResponse,
+  verifyRegistrationResponse,
+} from '@simplewebauthn/server';
 
 import { validateAdminAuth } from './admin-auth.js';
 import {
@@ -60,6 +69,12 @@ export class AdminApi {
   #ipRateLimiter: RateLimiter | undefined;
   #tenantRateLimiter: RateLimiter | undefined;
   #webhookManager: WebhookManager | undefined;
+  #passkeyStore: AdminPasskeyStore | undefined;
+  #sessionManager: AdminSessionManager | undefined;
+  /** In-memory challenge store: maps challenge → expiry timestamp. */
+  #challenges: Map<string, number> = new Map();
+  /** Challenge TTL: 60 seconds. */
+  static readonly #CHALLENGE_TTL_MS = 60_000;
   #startTime: number;
   #packageInfo: { version?: string };
   #metricsInterval: ReturnType<typeof setInterval> | undefined;
@@ -87,6 +102,8 @@ export class AdminApi {
     ipRateLimiter? : RateLimiter;
     tenantRateLimiter? : RateLimiter;
     webhookManager? : WebhookManager;
+    passkeyStore? : AdminPasskeyStore;
+    sessionManager? : AdminSessionManager;
     packageInfo? : { version?: string };
   }): AdminApi {
     const api = new AdminApi();
@@ -101,6 +118,8 @@ export class AdminApi {
     api.#ipRateLimiter = options.ipRateLimiter;
     api.#tenantRateLimiter = options.tenantRateLimiter;
     api.#webhookManager = options.webhookManager;
+    api.#passkeyStore = options.passkeyStore;
+    api.#sessionManager = options.sessionManager;
     api.#packageInfo = options.packageInfo ?? {};
     return api;
   }
@@ -121,22 +140,62 @@ export class AdminApi {
    * @returns A `Response` to send to the client.
    */
   public async route(req: Request, url: URL, path: string, method: string): Promise<Response> {
-    // Authenticate every request.
-    const authError = validateAdminAuth(req, this.#config);
-    if (authError) {
-      // Log failed authentication attempts (401 only, not 404 for disabled admin).
-      // Rate-limited to one audit entry per IP per 60 seconds.
-      // @see https://github.com/enboxorg/enbox/issues/392
-      if (authError.status === 401) {
-        this.#auditFailedAuth(req, path);
-      }
-      return authError;
-    }
-
     // Strip the `/admin/api` prefix for cleaner matching.
     const subPath = path.slice('/admin/api'.length);
 
+    // Passkey login routes are unauthenticated (challenge-gated instead).
+    // They must be checked before the auth gate.
+    if (subPath === '/passkeys/login/options' && method === 'POST') {
+      return this.#handlePasskeyLoginOptions(req);
+    }
+    if (subPath === '/passkeys/login/verify' && method === 'POST') {
+      return this.#handlePasskeyLoginVerify(req);
+    }
+    // Allow checking if passkeys exist (for the login screen to decide what to show).
+    if (subPath === '/passkeys/status' && method === 'GET') {
+      return this.#handlePasskeyStatus();
+    }
+
+    // Authenticate every request (except the passkey login routes above).
+    const authResult = validateAdminAuth(req, this.#config, this.#sessionManager);
+    if (authResult.error) {
+      // Log failed authentication attempts (401 only, not 404 for disabled admin).
+      // Rate-limited to one audit entry per IP per 60 seconds.
+      // @see https://github.com/enboxorg/enbox/issues/392
+      if (authResult.error.status === 401) {
+        this.#auditFailedAuth(req, path);
+      }
+      return authResult.error;
+    }
+
     try {
+      // --- Passkey management (authenticated) ---
+      // Registration requires static token auth (not session auth).
+      if (subPath === '/passkeys/register/options' && method === 'POST') {
+        if (authResult.authMethod !== 'token') {
+          return Response.json({ error: 'Passkey registration requires static token authentication.' }, { status: 403 });
+        }
+        return this.#handlePasskeyRegisterOptions(req);
+      }
+      if (subPath === '/passkeys/register/verify' && method === 'POST') {
+        if (authResult.authMethod !== 'token') {
+          return Response.json({ error: 'Passkey registration requires static token authentication.' }, { status: 403 });
+        }
+        return this.#handlePasskeyRegisterVerify(req);
+      }
+      if (subPath === '/passkeys' && method === 'GET') {
+        return this.#handlePasskeyList();
+      }
+      {
+        const match = subPath.match(/^\/passkeys\/([^/]+)$/);
+        if (match && method === 'DELETE') {
+          if (authResult.authMethod !== 'token') {
+            return Response.json({ error: 'Passkey deletion requires static token authentication.' }, { status: 403 });
+          }
+          return this.#handlePasskeyDelete(match[1]);
+        }
+      }
+
       // --- Health ---
       if (method === 'GET' && subPath === '/health') {
         return this.#handleHealth();
@@ -1235,6 +1294,340 @@ export class AdminApi {
         log.error('Failed to update Prometheus gauge metrics:', err);
       });
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Passkey (WebAuthn) handlers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns whether any passkeys are registered. This is an unauthenticated
+   * endpoint so the login screen can decide whether to show the passkey option.
+   */
+  async #handlePasskeyStatus(): Promise<Response> {
+    if (!this.#config.adminToken) {
+      return new Response('Not Found', { status: 404 });
+    }
+
+    const count = this.#passkeyStore ? await this.#passkeyStore.count() : 0;
+    return Response.json({ hasPasskeys: count > 0 });
+  }
+
+  /**
+   * Generates WebAuthn registration options. Requires static token auth.
+   */
+  async #handlePasskeyRegisterOptions(req: Request): Promise<Response> {
+    if (!this.#passkeyStore) {
+      return Response.json(
+        { error: 'Passkey storage is not enabled. Requires a SQL storage backend.' },
+        { status: 501 },
+      );
+    }
+
+    let body: { name?: string };
+    try {
+      body = await req.json() as { name?: string };
+    } catch {
+      body = {};
+    }
+
+    const rpId = this.#getWebAuthnRpId(req);
+    const rpName = this.#config.adminWebAuthnRpName ?? 'DWN Admin';
+
+    // Get existing credentials to exclude during registration.
+    const existing = await this.#passkeyStore.list();
+    const excludeCredentials = existing.map((cred): { id: string; transports?: AuthenticatorTransport[] } => ({
+      id         : cred.id,
+      transports : JSON.parse(cred.transports) as AuthenticatorTransport[],
+    }));
+
+    const options = await generateRegistrationOptions({
+      rpName,
+      rpID                   : rpId,
+      userName               : 'admin',
+      userDisplayName        : body.name ?? 'DWN Admin',
+      attestationType        : 'none',
+      excludeCredentials,
+      authenticatorSelection : {
+        residentKey      : 'preferred',
+        userVerification : 'preferred',
+      },
+    });
+
+    // Store the challenge for verification.
+    this.#storeChallenge(options.challenge);
+
+    return Response.json(options);
+  }
+
+  /**
+   * Verifies a WebAuthn registration response and stores the credential.
+   * Requires static token auth.
+   */
+  async #handlePasskeyRegisterVerify(req: Request): Promise<Response> {
+    if (!this.#passkeyStore) {
+      return Response.json(
+        { error: 'Passkey storage is not enabled. Requires a SQL storage backend.' },
+        { status: 501 },
+      );
+    }
+
+    let body: { credential: RegistrationResponseJSON; name?: string };
+    try {
+      body = await req.json() as typeof body;
+    } catch {
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+
+    if (!body.credential) {
+      return Response.json({ error: 'credential is required' }, { status: 400 });
+    }
+
+    const rpId = this.#getWebAuthnRpId(req);
+    const expectedOrigin = this.#getWebAuthnOrigin(req);
+
+    let verification;
+    try {
+      verification = await verifyRegistrationResponse({
+        response          : body.credential,
+        expectedChallenge : (challenge: string): boolean => this.#consumeChallenge(challenge),
+        expectedOrigin,
+        expectedRPID      : rpId,
+      });
+    } catch (err) {
+      log.warn('Passkey registration verification failed:', err);
+      return Response.json({ error: 'Registration verification failed.' }, { status: 400 });
+    }
+
+    if (!verification.verified || !verification.registrationInfo) {
+      return Response.json({ error: 'Registration verification failed.' }, { status: 400 });
+    }
+
+    const { credential } = verification.registrationInfo;
+
+    await this.#passkeyStore.save({
+      id         : credential.id,
+      name       : body.name || 'Passkey',
+      publicKey  : Buffer.from(credential.publicKey).toString('base64url'),
+      counter    : credential.counter,
+      transports : JSON.stringify(credential.transports ?? []),
+      createdAt  : new Date().toISOString(),
+      lastUsedAt : null,
+    });
+
+    await this.#audit('passkey.register', credential.id, JSON.stringify({ name: body.name || 'Passkey' }));
+
+    return Response.json({ verified: true, id: credential.id }, { status: 201 });
+  }
+
+  /**
+   * Generates WebAuthn authentication options. Unauthenticated.
+   */
+  async #handlePasskeyLoginOptions(_req: Request): Promise<Response> {
+    if (!this.#config.adminToken) {
+      return new Response('Not Found', { status: 404 });
+    }
+
+    if (!this.#passkeyStore) {
+      return Response.json({ error: 'Passkeys are not enabled.' }, { status: 501 });
+    }
+
+    const existing = await this.#passkeyStore.list();
+    if (existing.length === 0) {
+      return Response.json({ error: 'No passkeys registered.' }, { status: 404 });
+    }
+
+    const rpId = this.#getWebAuthnRpId(_req);
+
+    const allowCredentials = existing.map((cred): { id: string; transports?: AuthenticatorTransport[] } => ({
+      id         : cred.id,
+      transports : JSON.parse(cred.transports) as AuthenticatorTransport[],
+    }));
+
+    const options = await generateAuthenticationOptions({
+      rpID             : rpId,
+      allowCredentials,
+      userVerification : 'preferred',
+    });
+
+    this.#storeChallenge(options.challenge);
+
+    return Response.json(options);
+  }
+
+  /**
+   * Verifies a WebAuthn authentication response and issues a session token.
+   * Unauthenticated.
+   */
+  async #handlePasskeyLoginVerify(req: Request): Promise<Response> {
+    if (!this.#config.adminToken) {
+      return new Response('Not Found', { status: 404 });
+    }
+
+    if (!this.#passkeyStore || !this.#sessionManager) {
+      return Response.json({ error: 'Passkeys are not enabled.' }, { status: 501 });
+    }
+
+    let body: { credential: AuthenticationResponseJSON };
+    try {
+      body = await req.json() as typeof body;
+    } catch {
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+
+    if (!body.credential) {
+      return Response.json({ error: 'credential is required' }, { status: 400 });
+    }
+
+    const credentialId = body.credential.id;
+    const storedCredential = await this.#passkeyStore.getById(credentialId);
+    if (!storedCredential) {
+      return Response.json({ error: 'Unknown credential.' }, { status: 400 });
+    }
+
+    const rpId = this.#getWebAuthnRpId(req);
+    const expectedOrigin = this.#getWebAuthnOrigin(req);
+
+    let verification;
+    try {
+      verification = await verifyAuthenticationResponse({
+        response          : body.credential,
+        expectedChallenge : (challenge: string): boolean => this.#consumeChallenge(challenge),
+        expectedOrigin,
+        expectedRPID      : rpId,
+        credential        : {
+          id         : storedCredential.id,
+          publicKey  : new Uint8Array(Buffer.from(storedCredential.publicKey, 'base64url')),
+          counter    : storedCredential.counter,
+          transports : JSON.parse(storedCredential.transports) as AuthenticatorTransport[],
+        },
+      });
+    } catch (err) {
+      log.warn('Passkey authentication verification failed:', err);
+      this.#auditFailedAuth(req, '/passkeys/login/verify');
+      return Response.json({ error: 'Authentication verification failed.' }, { status: 401 });
+    }
+
+    if (!verification.verified) {
+      this.#auditFailedAuth(req, '/passkeys/login/verify');
+      return Response.json({ error: 'Authentication verification failed.' }, { status: 401 });
+    }
+
+    // Update counter for replay protection.
+    await this.#passkeyStore.updateCounter(credentialId, verification.authenticationInfo.newCounter);
+
+    // Issue a session token.
+    const sessionToken = this.#sessionManager.create();
+
+    await this.#audit('passkey.login', credentialId);
+
+    return Response.json({ verified: true, token: sessionToken });
+  }
+
+  /**
+   * Lists all registered passkeys.
+   */
+  async #handlePasskeyList(): Promise<Response> {
+    if (!this.#passkeyStore) {
+      return Response.json(
+        { error: 'Passkey storage is not enabled. Requires a SQL storage backend.' },
+        { status: 501 },
+      );
+    }
+
+    const records = await this.#passkeyStore.list();
+    const passkeys: AdminPasskeySummary[] = records.map((r): AdminPasskeySummary => ({
+      id         : r.id,
+      name       : r.name,
+      createdAt  : r.createdAt,
+      lastUsedAt : r.lastUsedAt,
+    }));
+
+    return Response.json({ passkeys });
+  }
+
+  /**
+   * Deletes a passkey by ID. Requires static token auth.
+   */
+  async #handlePasskeyDelete(id: string): Promise<Response> {
+    if (!this.#passkeyStore) {
+      return Response.json(
+        { error: 'Passkey storage is not enabled. Requires a SQL storage backend.' },
+        { status: 501 },
+      );
+    }
+
+    const deleted = await this.#passkeyStore.delete(id);
+    if (!deleted) {
+      return Response.json({ error: 'Passkey not found' }, { status: 404 });
+    }
+
+    await this.#audit('passkey.delete', id);
+    return Response.json({ success: true, id });
+  }
+
+  /**
+   * Resolves the WebAuthn Relying Party ID from config or the request Host header.
+   */
+  #getWebAuthnRpId(req: Request): string {
+    if (this.#config.adminWebAuthnRpId) {
+      return this.#config.adminWebAuthnRpId;
+    }
+
+    // Extract hostname from request Host header or fall back to baseUrl.
+    const host = req.headers.get('host');
+    if (host) {
+      // Strip port if present.
+      return host.split(':')[0];
+    }
+
+    try {
+      return new URL(this.#config.baseUrl).hostname;
+    } catch {
+      return 'localhost';
+    }
+  }
+
+  /**
+   * Resolves the expected WebAuthn origin from the request.
+   */
+  #getWebAuthnOrigin(req: Request): string {
+    const origin = req.headers.get('origin');
+    if (origin) {
+      return origin;
+    }
+
+    // Fall back to baseUrl.
+    return this.#config.baseUrl;
+  }
+
+  /**
+   * Stores a WebAuthn challenge for later verification.
+   */
+  #storeChallenge(challenge: string): void {
+    // Prune expired challenges first.
+    const now = Date.now();
+    for (const [c, expiry] of this.#challenges) {
+      if (now >= expiry) {
+        this.#challenges.delete(c);
+      }
+    }
+
+    this.#challenges.set(challenge, now + AdminApi.#CHALLENGE_TTL_MS);
+  }
+
+  /**
+   * Consumes a WebAuthn challenge (one-time use). Returns `true` if the
+   * challenge was found and not expired.
+   */
+  #consumeChallenge(challenge: string): boolean {
+    const expiry = this.#challenges.get(challenge);
+    if (expiry === undefined) {
+      return false;
+    }
+
+    this.#challenges.delete(challenge);
+    return Date.now() < expiry;
   }
 
   // ---------------------------------------------------------------------------

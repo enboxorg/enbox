@@ -6,6 +6,7 @@ import { Tenants } from '../views/Tenants';
 import { Connections } from '../views/Connections';
 import { Events } from '../views/Events';
 import { Configuration } from '../views/Configuration';
+import { Passkeys } from '../views/Passkeys';
 import { AuditLog } from '../views/AuditLog';
 
 type LayoutProps = {
@@ -23,6 +24,7 @@ const navItems: NavItem[] = [
   { path: '/admin/connections', label: 'Connections' },
   { path: '/admin/events',      label: 'Events' },
   { path: '/admin/config',      label: 'Configuration' },
+  { path: '/admin/passkeys',   label: 'Passkeys' },
   { path: '/admin/audit',       label: 'Audit Log' },
 ];
 
@@ -81,6 +83,7 @@ export function Layout({ onLogout }: LayoutProps) {
           <Connections path="/admin/connections" />
           <Events path="/admin/events" />
           <Configuration path="/admin/config" />
+          <Passkeys path="/admin/passkeys" />
           <AuditLog path="/admin/audit" />
         </Router>
       </main>

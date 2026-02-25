@@ -122,6 +122,27 @@ export const config = {
    */
   adminMetricsUpdateIntervalSeconds: parseInt(process.env.DWN_ADMIN_METRICS_UPDATE_INTERVAL || '30'),
 
+  /**
+   * WebAuthn Relying Party ID for admin passkey authentication. Typically
+   * the hostname of the DWN server (e.g. `dev.aws.dwn.enbox.id`). When not
+   * set, the hostname is extracted from `DWN_BASE_URL` at runtime.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/546
+   */
+  adminWebAuthnRpId: process.env.DWN_ADMIN_WEBAUTHN_RP_ID || undefined,
+
+  /**
+   * Human-readable Relying Party name shown during passkey registration.
+   * Defaults to `"DWN Admin"`.
+   */
+  adminWebAuthnRpName: process.env.DWN_ADMIN_WEBAUTHN_RP_NAME || 'DWN Admin',
+
+  /**
+   * Session time-to-live (in seconds) for passkey-authenticated sessions.
+   * Defaults to 86400 (24 hours).
+   */
+  adminSessionTtlSeconds: parseInt(process.env.DWN_ADMIN_SESSION_TTL || '86400'),
+
   // ---------------------------------------------------------------------------
   // Per-tenant storage quotas
   // ---------------------------------------------------------------------------

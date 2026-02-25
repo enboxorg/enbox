@@ -16,6 +16,8 @@ import type { ProviderAuthPlugin } from './registration/provider-auth-plugin.js'
 
 import { ActivityLog } from './admin/activity-log.js';
 import { AdminApi } from './admin/admin-api.js';
+import { AdminPasskeyStore } from './admin/admin-passkey-store.js';
+import { AdminSessionManager } from './admin/admin-session.js';
 import { AdminStore } from './admin/admin-store.js';
 import { AuditLog } from './admin/audit-log.js';
 import { config as defaultConfig } from './config.js';
@@ -97,6 +99,8 @@ export class DwnServer {
   #ipRateLimiter: RateLimiter | undefined;
   #tenantRateLimiter: RateLimiter | undefined;
   #auditLog: AuditLog | undefined;
+  #passkeyStore: AdminPasskeyStore | undefined;
+  #sessionManager: AdminSessionManager | undefined;
   #externalHooks: MessageProcessedHook[];
   #externalRegistrationManager: RegistrationManager | undefined;
   #externalOpenAuthHandler: OpenAuthHandler | undefined;
@@ -223,6 +227,8 @@ export class DwnServer {
     let adminStore: AdminStore | undefined;
     let auditLog: AuditLog | undefined;
     let webhookManager: WebhookManager | undefined;
+    let passkeyStore: AdminPasskeyStore | undefined;
+    let sessionManager: AdminSessionManager | undefined;
 
     if (this.config.adminToken) {
       const storageUrl = this.config.messageStore;
@@ -253,6 +259,19 @@ export class DwnServer {
         }
       }
 
+      // Create passkey store and session manager for WebAuthn admin auth.
+      // @see https://github.com/enboxorg/enbox/issues/546
+      if (this.config.registrationStoreUrl) {
+        try {
+          const passkeyDialect = getDialectFromUrl(new URL(this.config.registrationStoreUrl));
+          passkeyStore = await AdminPasskeyStore.create(passkeyDialect);
+          sessionManager = new AdminSessionManager(this.config.adminSessionTtlSeconds);
+          log.info('Admin passkey authentication enabled');
+        } catch (err) {
+          log.warn('Failed to create passkey store:', err);
+        }
+      }
+
       adminApi = AdminApi.create({
         config : this.config,
         dwn    : this.dwn,
@@ -264,6 +283,8 @@ export class DwnServer {
         ipRateLimiter,
         tenantRateLimiter,
         webhookManager,
+        passkeyStore,
+        sessionManager,
       });
 
       // Record server start event in audit log.
@@ -279,6 +300,8 @@ export class DwnServer {
     this.#ipRateLimiter = ipRateLimiter;
     this.#tenantRateLimiter = tenantRateLimiter;
     this.#auditLog = auditLog;
+    this.#passkeyStore = passkeyStore;
+    this.#sessionManager = sessionManager;
 
     // Create open-auth handler if provider auth is enabled with a JWT secret
     // and authorize/token URLs point to this server (or are not set — defaulting to built-in).
@@ -307,7 +330,7 @@ export class DwnServer {
 
     this.#httpApi = await HttpApi.create(
       this.config, this.dwn, registrationManager, adminApi, activityLog,
-      { adminStore, registrationStore, ipRateLimiter, tenantRateLimiter, messageProcessedHooks, openAuthHandler },
+      { adminStore, registrationStore, ipRateLimiter, tenantRateLimiter, messageProcessedHooks, openAuthHandler, sessionManager },
     );
 
     await this.#httpApi.start(this.config.port);
@@ -398,6 +421,14 @@ export class DwnServer {
     if (this.#auditLog) {
       await this.#auditLog.record({ actor: 'system', action: 'server.stop' });
       await this.#auditLog.close();
+    }
+
+    // Clean up passkey store and session manager.
+    if (this.#passkeyStore) {
+      await this.#passkeyStore.close();
+    }
+    if (this.#sessionManager) {
+      this.#sessionManager.destroy();
     }
 
     // Clean up rate limiters (stops their interval timers).

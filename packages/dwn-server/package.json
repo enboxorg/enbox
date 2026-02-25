@@ -38,6 +38,7 @@
     "@enbox/dwn-sql-store": "workspace:*",
     "@nats-io/jetstream": "^3.3.1",
     "@nats-io/transport-node": "^3.3.1",
+    "@simplewebauthn/server": "^13.2.3",
     "bytes": "3.1.2",
     "jose": "^6.1.3",
     "kysely": "^0.26.3",
