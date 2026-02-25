@@ -1,5 +1,16 @@
 # @enbox/agent
 
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies [[`4c74a79`](https://github.com/enboxorg/enbox/commit/4c74a794ca9b05fd063371661c0ac45867c6daf2)]:
+  - @enbox/common@0.0.6
+  - @enbox/dids@0.0.8
+  - @enbox/dwn-sdk-js@0.1.1
+  - @enbox/dwn-clients@0.0.8
+  - @enbox/crypto@0.0.7
+
 ## 0.2.0
 
 ### Minor Changes

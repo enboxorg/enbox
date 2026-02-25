@@ -1,5 +1,21 @@
 # @enbox/dwn-sdk-js
 
+## 0.1.1
+
+### Patch Changes
+
+- [#539](https://github.com/enboxorg/enbox/pull/539) [`4c74a79`](https://github.com/enboxorg/enbox/commit/4c74a794ca9b05fd063371661c0ac45867c6daf2) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: publish unpublished fixes across packages
+
+  - `@enbox/common`: `open()` in KeyValueStore interface
+  - `@enbox/dids`: `DidResolverCacheMemory`, resolver lifecycle management
+  - `@enbox/dwn-sdk-js`: `DidResolverCacheMemory` default in `Dwn.create()` (fixes "Database is not open" in containers)
+  - `@enbox/dwn-clients`: `DwnServerInfoCacheMemory`
+  - `@enbox/dwn-server`: Actor delivery, noop resolver cache, registration gate fix
+
+- Updated dependencies [[`4c74a79`](https://github.com/enboxorg/enbox/commit/4c74a794ca9b05fd063371661c0ac45867c6daf2)]:
+  - @enbox/dids@0.0.8
+  - @enbox/crypto@0.0.7
+
 ## 0.1.0
 
 ### Minor Changes
