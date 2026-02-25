@@ -1,6 +1,5 @@
-import type { Dialect } from '../dialect/dialect.js';
-import type { Kysely } from 'kysely';
-import type { Migration } from '../migration-runner.js';
+import type { DwnMigrationFactory } from '../migration-provider.js';
+import type { Kysely, Migration } from 'kysely';
 
 /**
  * Migration 003: Add `squash` boolean column to `messageStoreMessages`.
@@ -9,13 +8,12 @@ import type { Migration } from '../migration-runner.js';
  * introduced in the DWN spec. It follows the same pattern as `published`
  * and `prune` — a nullable boolean column used for query filtering.
  */
-export const migration003AddSquashColumn: Migration = {
-  name: '003-add-squash-column',
+export const migration003AddSquashColumn: DwnMigrationFactory = (): Migration => ({
 
-  async up(db: Kysely<any>, _dialect: Dialect): Promise<void> {
+  async up(db: Kysely<any>): Promise<void> {
     await db.schema
       .alterTable('messageStoreMessages')
       .addColumn('squash', 'boolean')
       .execute();
   },
-};
+});

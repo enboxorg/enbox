@@ -1,3 +1,4 @@
+import type { Dialect } from '@enbox/dwn-sql-store';
 import type { Dwn, Persona, ProtocolsConfigureMessage, RecordsQueryReply } from '@enbox/dwn-sdk-js';
 import type { JsonRpcErrorResponse, JsonRpcResponse } from '@enbox/dwn-clients';
 
@@ -20,6 +21,7 @@ import { config } from '../src/config.js';
 import { getTestDwn } from './test-dwn.js';
 import { HttpApi } from '../src/http-api.js';
 import { RegistrationManager } from '../src/registration/registration-manager.js';
+import { runServerMigrationsIfNeeded } from '../src/storage.js';
 import { createJsonRpcRequest, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import {
   createRecordsWriteMessage,
@@ -32,6 +34,7 @@ describe('http api', function () {
   let alice: Persona;
   let registrationManager: RegistrationManager;
   let dwn: Dwn;
+  let dialect: Dialect;
   let clock;
   let baseUrl: string;
 
@@ -44,15 +47,19 @@ describe('http api', function () {
     config.termsOfServiceFilePath = './tests/fixtures/terms-of-service.txt';
     config.registrationProofOfWorkInitialMaxHash = '0FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF'; // 1 in 16 chance of solving
 
+    // Run server migrations before creating the RegistrationManager so that
+    // the RegistrationStore health check finds the required tables.
+    await runServerMigrationsIfNeeded(config);
+
     // RegistrationManager creation
     const registrationStoreUrl = config.registrationStoreUrl;
     const termsOfServiceFilePath = config.termsOfServiceFilePath;
     const proofOfWorkInitialMaximumAllowedHash = config.registrationProofOfWorkInitialMaxHash;
     registrationManager = await RegistrationManager.create({ registrationStoreUrl, termsOfServiceFilePath, proofOfWorkInitialMaximumAllowedHash });
 
-    dwn = await getTestDwn({ tenantGate: registrationManager });
+    ({ dwn, dialect } = await getTestDwn({ tenantGate: registrationManager }));
 
-    httpApi = await HttpApi.create(config, dwn, registrationManager);
+    httpApi = await HttpApi.create(config, dwn, registrationManager, undefined, undefined, { ttlCacheDialect: dialect });
 
   });
 
@@ -959,7 +966,7 @@ describe('http api', function () {
       await httpApi.close();
 
       config.webSocketSupport = false;
-      httpApi = await HttpApi.create(config, dwn, registrationManager);
+      httpApi = await HttpApi.create(config, dwn, registrationManager, undefined, undefined, { ttlCacheDialect: dialect });
       await httpApi.start(0);
       baseUrl = `http://localhost:${httpApi.server.port}`;
 
@@ -983,7 +990,7 @@ describe('http api', function () {
       // set the config to an invalid file path
       const packageJsonConfig = config.packageJsonPath;
       config.packageJsonPath = '/some/invalid/file.json';
-      httpApi = await HttpApi.create(config, dwn, registrationManager);
+      httpApi = await HttpApi.create(config, dwn, registrationManager, undefined, undefined, { ttlCacheDialect: dialect });
       await httpApi.start(0);
       baseUrl = `http://localhost:${httpApi.server.port}`;
 
@@ -1013,7 +1020,7 @@ describe('http api', function () {
       // set a custom name for the `serverName`
       const serverName = config.serverName;
       config.serverName = '@enbox/dwn-server-2';
-      httpApi = await HttpApi.create(config, dwn, registrationManager);
+      httpApi = await HttpApi.create(config, dwn, registrationManager, undefined, undefined, { ttlCacheDialect: dialect });
       await httpApi.start(0);
       baseUrl = `http://localhost:${httpApi.server.port}`;
 

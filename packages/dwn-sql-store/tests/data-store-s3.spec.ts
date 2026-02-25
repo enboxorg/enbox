@@ -1,8 +1,11 @@
 /* eslint-disable mocha/no-top-level-hooks -- describe.skipIf() is not recognised by eslint-plugin-mocha */
 import type { DataStoreGetResult } from '@enbox/dwn-sdk-js';
+import type { DwnDatabaseType } from '../src/types.js';
 
 import { DataStoreS3 } from '../src/data-store-s3.js';
 import { getTestSqliteDialect } from './test-dialects.js';
+import { Kysely } from 'kysely';
+import { runDwnStoreMigrations } from '../src/migration-runner.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { Cid, DataStream, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { CreateBucketCommand, ListBucketsCommand, S3Client } from '@aws-sdk/client-s3';
@@ -68,6 +71,10 @@ describe.skipIf(!s3Available)('DataStoreS3', () => {
     }
 
     const dialect = getTestSqliteDialect();
+
+    // Run migrations before opening the store — the dataRefs table must exist.
+    const db = new Kysely<DwnDatabaseType>({ dialect });
+    await runDwnStoreMigrations(db, dialect);
 
     store = new DataStoreS3({
       dialect,

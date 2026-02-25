@@ -1,3 +1,4 @@
+import type { Dialect } from '@enbox/dwn-sql-store';
 import type { Dwn } from '@enbox/dwn-sdk-js';
 
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
@@ -11,15 +12,16 @@ import { WsApi } from '../../src/ws-api.js';
 
 describe('InMemoryConnectionManager', () => {
   let dwn: Dwn;
+  let dialect: Dialect;
   let connectionManager: InMemoryConnectionManager;
   let httpApi: HttpApi;
   let wsApi: WsApi;
   let wsUrl: string;
 
   beforeEach(async () => {
-    dwn = await getTestDwn({ withEvents: true });
+    ({ dwn, dialect } = await getTestDwn({ withEvents: true }));
     connectionManager = new InMemoryConnectionManager(dwn);
-    httpApi = await HttpApi.create(config, dwn);
+    httpApi = await HttpApi.create(config, dwn, undefined, undefined, undefined, { ttlCacheDialect: dialect });
     await httpApi.start(0);
     wsUrl = `ws://127.0.0.1:${httpApi.server.port}`;
     wsApi = new WsApi(httpApi, dwn, connectionManager);

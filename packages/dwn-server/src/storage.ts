@@ -20,6 +20,7 @@ import { Kysely } from 'kysely';
 
 import { createBunSqliteDatabase } from '@enbox/dwn-sql-store';
 import { PluginLoader } from './plugin-loader.js';
+import { runServerMigrations } from './server-migration-runner.js';
 
 import {
   DataStoreLevel,
@@ -55,26 +56,27 @@ export enum BackendTypes {
 export type DwnStore = DataStore | StateIndex | MessageStore | ResumableTaskStore;
 
 /**
- * Cache of shared PostgreSQL dialects keyed by connection URL. When multiple
- * DWN stores share the same Postgres URL, they reuse a single dialect (and
- * thus a single `pg.Pool`) instead of each creating their own. This reduces
- * connection count from 4 × pool_max to 1 × pool_max per DWN process.
+ * Returns a (potentially cached) dialect for the given connection URL. For
+ * Postgres, creates a pool with configurable sizing from the server config.
+ * For other backends, delegates to `getDialectFromUrl()` which handles its
+ * own caching (critical for in-memory SQLite).
+ *
+ * All Postgres dialects are cached in a separate map keyed by URL so that
+ * multiple DWN stores sharing the same Postgres URL reuse a single
+ * `pg.Pool`, reducing connection count from 4 × pool_max to 1 × pool_max.
  */
-const sharedDialectCache: Map<string, Dialect> = new Map();
+const postgresDialectCache: Map<string, Dialect> = new Map();
 
-/**
- * Returns a (potentially cached) dialect for the given Postgres connection URL.
- * Non-Postgres URLs always return a fresh dialect (no caching).
- */
 function getOrCreateDialect(connectionUrl: URL, config: DwnServerConfig): Dialect {
   const protocol = connectionUrl.protocol.slice(0, -1);
 
   if (protocol !== BackendTypes.POSTGRES) {
+    // getDialectFromUrl handles its own caching for SQLite/MySQL.
     return getDialectFromUrl(connectionUrl);
   }
 
   const key = connectionUrl.toString();
-  const cached = sharedDialectCache.get(key);
+  const cached = postgresDialectCache.get(key);
   if (cached !== undefined) {
     return cached;
   }
@@ -92,7 +94,7 @@ function getOrCreateDialect(connectionUrl: URL, config: DwnServerConfig): Dialec
     cursor : Cursor,
   });
 
-  sharedDialectCache.set(key, dialect);
+  postgresDialectCache.set(key, dialect);
   return dialect;
 }
 
@@ -152,13 +154,99 @@ async function runSqlMigrationsIfNeeded(config: DwnServerConfig): Promise<void> 
       console.log(`DWN migrations applied: ${applied.join(', ')}`);
     }
   } finally {
-    // Don't destroy the Kysely instance if using a shared Postgres pool —
-    // the pool is cached in sharedDialectCache and will be reused by stores.
-    // Only destroy for non-cached dialects (SQLite, MySQL).
-    if (protocol !== BackendTypes.POSTGRES) {
-      await db.destroy();
+    // Do NOT destroy the Kysely instance — the dialect is cached and will be
+    // reused by stores. For in-memory SQLite, destroying would close the
+    // database and lose all migrated schema. For Postgres, the pool is shared.
+  }
+}
+
+/**
+ * Runs DWN server schema migrations (admin stores, registration, TTL cache)
+ * if the given URL points to a SQL backend. Uses the `registrationStoreUrl`
+ * (or the TTL cache URL) as the target database.
+ *
+ * Server migrations use a separate tracking table (`dwn_server_migration`)
+ * so they do not conflict with the DWN store migrations.
+ *
+ * Call this once during server startup, before creating admin stores.
+ *
+ * @returns The dialect used for the target database (so the caller can reuse
+ *          it for the TTL cache and admin stores), or `undefined` if no SQL
+ *          backend was configured or needed.
+ */
+export async function runServerMigrationsIfNeeded(config: DwnServerConfig): Promise<Dialect | undefined> {
+  const sqlBackends: string[] = [BackendTypes.SQLITE, BackendTypes.MYSQL, BackendTypes.POSTGRES];
+
+  // Determine the target URL for server migrations. Prefer registrationStoreUrl
+  // since admin stores and the TTL cache share that database. Fall back to
+  // ttlCacheUrl when no registration store is configured (the cacheEntries
+  // table still needs a schema).
+  const targetUrl = config.registrationStoreUrl ?? config.ttlCacheUrl;
+  if (!targetUrl) {
+    return undefined;
+  }
+
+  if (isFilePath(targetUrl)) {
+    return undefined;
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(targetUrl);
+  } catch {
+    return undefined;
+  }
+
+  const protocol = parsedUrl.protocol.slice(0, -1);
+  if (!sqlBackends.includes(protocol)) {
+    return undefined;
+  }
+
+  // When both registrationStoreUrl and ttlCacheUrl are set and differ,
+  // validate they point at the same database — the cacheEntries table is
+  // included in the server migration so it must live alongside the other
+  // server tables.
+  if (config.registrationStoreUrl && config.ttlCacheUrl
+    && config.ttlCacheUrl !== config.registrationStoreUrl) {
+    let ttlUrl: URL | undefined;
+    try {
+      ttlUrl = new URL(config.ttlCacheUrl);
+    } catch { /* not a URL */ }
+
+    if (ttlUrl) {
+      const ttlProtocol = ttlUrl.protocol.slice(0, -1);
+      if (sqlBackends.includes(ttlProtocol)) {
+        throw new Error(
+          'DWN server misconfiguration: DWN_TTL_CACHE_URL must point to the same database as ' +
+          'DWN_REGISTRATION_STORE_URL (or DWN_STORAGE) because the cacheEntries table is managed ' +
+          'by the server migration system. ' +
+          `Got registrationStoreUrl="${config.registrationStoreUrl}", ttlCacheUrl="${config.ttlCacheUrl}".`
+        );
+      }
     }
   }
+
+  const dialect = getOrCreateDialect(parsedUrl, config);
+  const db = new Kysely<Record<string, unknown>>({ dialect });
+  try {
+    const applied = await runServerMigrations(db);
+    if (applied.length > 0) {
+      console.log(`Server migrations applied: ${applied.join(', ')}`);
+    }
+  } finally {
+    // For Postgres, don't destroy — the pool is cached in sharedDialectCache.
+    // For SQLite/MySQL, we also keep the Kysely instance alive so the caller
+    // can reuse the same dialect (critical for in-memory SQLite).
+    if (protocol === BackendTypes.POSTGRES) {
+      // Pool stays alive via sharedDialectCache.
+    }
+    // NOTE: We intentionally do NOT destroy the Kysely instance for any
+    // backend. The dialect is returned to the caller for reuse (e.g. by the
+    // TTL cache and admin stores). For in-memory SQLite, destroying would
+    // lose the database.
+  }
+
+  return dialect;
 }
 
 function getLevelStore(
@@ -264,6 +352,21 @@ async function loadStoreFromFilePath(
   }
 }
 
+/**
+ * Cache for the in-memory SQLite dialect. Since every call to
+ * `createBunSqliteDatabase(':memory:')` creates a separate, empty database,
+ * we must ensure that `getDialectFromUrl(new URL('sqlite://'))` always
+ * returns the same dialect (and thus the same underlying database) within a
+ * process. This is critical for the DWN server startup flow where migrations,
+ * the registration store, and the TTL cache all need to share the same
+ * in-memory database.
+ *
+ * File-based SQLite and other backends are NOT cached here — file-based SQLite
+ * connections naturally share state through the filesystem, and caching would
+ * break test isolation when multiple test files run in the same process.
+ */
+let inMemorySqliteDialect: Dialect | undefined;
+
 export function getDialectFromUrl(connectionUrl: URL): Dialect {
   switch (connectionUrl.protocol.slice(0, -1)) {
     case BackendTypes.SQLITE: {
@@ -275,8 +378,31 @@ export function getDialectFromUrl(connectionUrl: URL): Dialect {
         fs.mkdirSync(connectionUrl.host, { recursive: true });
       }
 
-      // Use in-memory database if no path is provided (for tests)
+      // Use in-memory database if no path is provided (for tests).
       const dbPath = path || ':memory:';
+
+      // For in-memory SQLite, return a cached dialect so that all callers
+      // (migrations, registration store, TTL cache) share the same database.
+      // The wrapper makes close() a no-op so that individual consumers (e.g.
+      // DwnServer.stop() → Dwn.close() → store.close()) cannot destroy the
+      // shared database out from under other consumers.
+      if (dbPath === ':memory:') {
+        if (inMemorySqliteDialect === undefined) {
+          const sharedDb = createBunSqliteDatabase(':memory:');
+          const nonCloseableDb = {
+            close(): void {
+              // no-op — shared instance must survive the process
+            },
+            prepare(sql: string): ReturnType<typeof sharedDb.prepare> {
+              return sharedDb.prepare(sql);
+            },
+          };
+          inMemorySqliteDialect = new SqliteDialect({
+            database: async (): Promise<typeof nonCloseableDb> => nonCloseableDb,
+          });
+        }
+        return inMemorySqliteDialect;
+      }
 
       return new SqliteDialect({
         database: async () => createBunSqliteDatabase(dbPath),
@@ -291,6 +417,8 @@ export function getDialectFromUrl(connectionUrl: URL): Dialect {
         pool   : async () => new pg.Pool({ connectionString: connectionUrl.toString() }),
         cursor : Cursor,
       });
+    default:
+      throw new Error(`Unsupported database protocol: ${connectionUrl.protocol}`);
   }
 }
 

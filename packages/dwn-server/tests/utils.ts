@@ -1,15 +1,19 @@
-import { Cid, DataStream, RecordsWrite } from '@enbox/dwn-sdk-js';
+import type { Dialect } from '@enbox/dwn-sql-store';
+import type { JsonRpcResponse } from '@enbox/dwn-clients';
 import type { GenericMessage, Persona, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
+import { createJsonRpcRequest } from '@enbox/dwn-clients';
 import { fileURLToPath } from 'url';
 import fs from 'node:fs';
+import { Kysely } from 'kysely';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
+import { Cid, DataStream, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { createBunSqliteDatabase, SqliteDialect } from '@enbox/dwn-sql-store';
 
-import type { JsonRpcResponse } from '@enbox/dwn-clients';
-
-import { createJsonRpcRequest } from '@enbox/dwn-clients';
+import { getDialectFromUrl } from '../src/storage.js';
+import { runServerMigrations } from '../src/server-migration-runner.js';
 
 // __filename and __dirname are not defined in ES module scope
 const __filename = fileURLToPath(import.meta.url);
@@ -186,4 +190,41 @@ export async function sendWsMessage(
       socket.send(message);
     };
   });
+}
+
+/**
+ * Creates an in-memory SQLite dialect with server migrations already applied.
+ *
+ * For in-memory SQLite, every call to `createBunSqliteDatabase(':memory:')`
+ * creates a NEW, independent database. To ensure migrations and store instances
+ * share the same database, this helper shares a single underlying database
+ * instance via `async () => sharedDb`.
+ *
+ * @returns A Dialect that can be passed directly to store `.create()` methods.
+ */
+export async function createMigratedInMemoryDialect(): Promise<Dialect> {
+  const sharedDb = createBunSqliteDatabase(':memory:');
+  const dialect = new SqliteDialect({ database: async (): Promise<typeof sharedDb> => sharedDb });
+
+  const db = new Kysely<Record<string, unknown>>({ dialect });
+  await runServerMigrations(db);
+
+  return dialect;
+}
+
+/**
+ * Creates a file-based SQLite dialect with server migrations already applied.
+ *
+ * Unlike in-memory SQLite, file-based SQLite naturally shares state across
+ * connections to the same file, so a plain `getDialectFromUrl` works fine.
+ *
+ * @param sqliteUrl - A `sqlite://<dir>/<file>.db` URL string.
+ * @returns A Dialect that can be passed directly to store `.create()` methods.
+ */
+export async function createMigratedFileDialect(sqliteUrl: string): Promise<Dialect> {
+  const dialect = getDialectFromUrl(new URL(sqliteUrl));
+  const db = new Kysely<Record<string, unknown>>({ dialect });
+  await runServerMigrations(db);
+
+  return dialect;
 }

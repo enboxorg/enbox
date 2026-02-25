@@ -1,6 +1,6 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
 
-import { Kysely } from 'kysely';
+import { Kysely, sql } from 'kysely';
 
 /**
  * A registered WebAuthn credential (passkey) for admin access.
@@ -51,20 +51,17 @@ export class AdminPasskeyStore {
   }
 
   /**
-   * Creates the passkey table and indices if they do not exist.
+   * Verifies that the required table exists. Throws a clear error directing
+   * the caller to run server migrations first.
    */
   async #initialize(): Promise<void> {
-    await this.#db.schema
-      .createTable(AdminPasskeyStore.#tableName)
-      .ifNotExists()
-      .addColumn('id', 'text', (col) => col.primaryKey())
-      .addColumn('name', 'text', (col) => col.notNull())
-      .addColumn('publicKey', 'text', (col) => col.notNull())
-      .addColumn('counter', 'integer', (col) => col.notNull().defaultTo(0))
-      .addColumn('transports', 'text', (col) => col.notNull().defaultTo('[]'))
-      .addColumn('createdAt', 'text', (col) => col.notNull())
-      .addColumn('lastUsedAt', 'text')
-      .execute();
+    try {
+      await sql`SELECT 1 FROM ${sql.table(AdminPasskeyStore.#tableName)} LIMIT 0`.execute(this.#db);
+    } catch {
+      throw new Error(
+        `AdminPasskeyStore: table '${AdminPasskeyStore.#tableName}' does not exist. Run server migrations before starting.`
+      );
+    }
   }
 
   /**

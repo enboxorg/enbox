@@ -1,7 +1,7 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
 
-import { Kysely } from 'kysely';
 import log from 'loglevel';
+import { Kysely, sql } from 'kysely';
 
 import { escapeLikeWildcards } from '../lib/sql-utils.js';
 
@@ -96,53 +96,16 @@ export class AuditLog {
   }
 
   /**
-   * Creates the audit log table and indices if they do not exist.
+   * Verifies that the required table exists. Throws a clear error directing
+   * the caller to run server migrations first.
    */
   async #initialize(): Promise<void> {
-    await this.#db.schema
-      .createTable(AuditLog.#tableName)
-      .ifNotExists()
-      .addColumn('id', 'integer', (col) => col.primaryKey().autoIncrement())
-      .addColumn('timestamp', 'text', (col) => col.notNull())
-      .addColumn('actor', 'text', (col) => col.notNull())
-      .addColumn('action', 'text', (col) => col.notNull())
-      .addColumn('target', 'text')
-      .addColumn('detail', 'text')
-      .execute();
-
-    // Indices for common query patterns. Wrapped in try/catch because
-    // `CREATE INDEX IF NOT EXISTS` syntax varies across dialects.
     try {
-      await this.#db.schema
-        .createIndex('index_audit_timestamp')
-        .ifNotExists()
-        .on(AuditLog.#tableName)
-        .column('timestamp')
-        .execute();
+      await sql`SELECT 1 FROM ${sql.table(AuditLog.#tableName)} LIMIT 0`.execute(this.#db);
     } catch {
-      // Index already exists.
-    }
-
-    try {
-      await this.#db.schema
-        .createIndex('index_audit_target')
-        .ifNotExists()
-        .on(AuditLog.#tableName)
-        .column('target')
-        .execute();
-    } catch {
-      // Index already exists.
-    }
-
-    try {
-      await this.#db.schema
-        .createIndex('index_audit_action')
-        .ifNotExists()
-        .on(AuditLog.#tableName)
-        .column('action')
-        .execute();
-    } catch {
-      // Index already exists.
+      throw new Error(
+        `AuditLog: table '${AuditLog.#tableName}' does not exist. Run server migrations before starting.`
+      );
     }
   }
 

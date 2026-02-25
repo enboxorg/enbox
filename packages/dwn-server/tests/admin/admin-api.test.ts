@@ -9,6 +9,7 @@ import { AuditLog } from '../../src/admin/audit-log.js';
 import { config as defaultConfig } from '../../src/config.js';
 import { DwnServer } from '../../src/dwn-server.js';
 import { RateLimiter } from '../../src/rate-limiter.js';
+import { createMigratedFileDialect, createMigratedInMemoryDialect } from '../utils.js';
 
 const adminToken = 'test-admin-token-secret';
 
@@ -2332,10 +2333,9 @@ describe('AdminApi — webhooks (#395)', () => {
 
 describe('WebhookManager — delivery', () => {
   it('should deliver an HTTP POST to a registered webhook URL when an event fires', async () => {
-    const { getDialectFromUrl } = await import('../../src/storage.js');
     const { WebhookManager } = await import('../../src/admin/webhook-manager.js');
 
-    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const dialect = await createMigratedInMemoryDialect();
     const manager = await WebhookManager.create(dialect);
 
     // Start a local HTTP server to receive the webhook POST.
@@ -2383,10 +2383,9 @@ describe('WebhookManager — delivery', () => {
 
   it('should include HMAC signature header when webhook has a secret', async () => {
     const { createHmac } = await import('crypto');
-    const { getDialectFromUrl } = await import('../../src/storage.js');
     const { WebhookManager } = await import('../../src/admin/webhook-manager.js');
 
-    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const dialect = await createMigratedInMemoryDialect();
     const manager = await WebhookManager.create(dialect);
 
     let receivedBody: string | null = null;
@@ -2426,10 +2425,9 @@ describe('WebhookManager — delivery', () => {
   });
 
   it('should not deliver to webhooks that do not match the event pattern', async () => {
-    const { getDialectFromUrl } = await import('../../src/storage.js');
     const { WebhookManager } = await import('../../src/admin/webhook-manager.js');
 
-    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const dialect = await createMigratedInMemoryDialect();
     const manager = await WebhookManager.create(dialect);
 
     let received = false;
@@ -2467,8 +2465,7 @@ describe('AuditLog — retention policy (#394)', () => {
 
   beforeAll(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'dwn-audit-retention-'));
-    const { getDialectFromUrl } = await import('../../src/storage.js');
-    const dialect = getDialectFromUrl(new URL(`sqlite://${tmpDir}/audit.db`));
+    const dialect = await createMigratedFileDialect(`sqlite://${tmpDir}/audit.db`);
     auditLog = await AuditLog.create(dialect);
   });
 
@@ -2616,8 +2613,7 @@ describe('AdminPasskeyStore', () => {
   const { AdminPasskeyStore } = require('../../src/admin/admin-passkey-store.js');
 
   it('should create a store and persist credentials', async () => {
-    const { getDialectFromUrl } = await import('../../src/storage.js');
-    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const dialect = await createMigratedInMemoryDialect();
     const store = await AdminPasskeyStore.create(dialect);
 
     const record = {
@@ -2644,8 +2640,7 @@ describe('AdminPasskeyStore', () => {
   });
 
   it('should return undefined for unknown credential IDs', async () => {
-    const { getDialectFromUrl } = await import('../../src/storage.js');
-    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const dialect = await createMigratedInMemoryDialect();
     const store = await AdminPasskeyStore.create(dialect);
 
     const retrieved = await store.getById('nonexistent');
@@ -2655,8 +2650,7 @@ describe('AdminPasskeyStore', () => {
   });
 
   it('should list credentials ordered by createdAt desc', async () => {
-    const { getDialectFromUrl } = await import('../../src/storage.js');
-    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const dialect = await createMigratedInMemoryDialect();
     const store = await AdminPasskeyStore.create(dialect);
 
     await store.save({
@@ -2689,8 +2683,7 @@ describe('AdminPasskeyStore', () => {
   });
 
   it('should count credentials', async () => {
-    const { getDialectFromUrl } = await import('../../src/storage.js');
-    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const dialect = await createMigratedInMemoryDialect();
     const store = await AdminPasskeyStore.create(dialect);
 
     expect(await store.count()).toBe(0);
@@ -2711,8 +2704,7 @@ describe('AdminPasskeyStore', () => {
   });
 
   it('should update counter and lastUsedAt', async () => {
-    const { getDialectFromUrl } = await import('../../src/storage.js');
-    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const dialect = await createMigratedInMemoryDialect();
     const store = await AdminPasskeyStore.create(dialect);
 
     await store.save({
@@ -2735,8 +2727,7 @@ describe('AdminPasskeyStore', () => {
   });
 
   it('should delete a credential and return true', async () => {
-    const { getDialectFromUrl } = await import('../../src/storage.js');
-    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const dialect = await createMigratedInMemoryDialect();
     const store = await AdminPasskeyStore.create(dialect);
 
     await store.save({
@@ -2758,8 +2749,7 @@ describe('AdminPasskeyStore', () => {
   });
 
   it('should return false when deleting a nonexistent credential', async () => {
-    const { getDialectFromUrl } = await import('../../src/storage.js');
-    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const dialect = await createMigratedInMemoryDialect();
     const store = await AdminPasskeyStore.create(dialect);
 
     const deleted = await store.delete('nonexistent');
@@ -3043,8 +3033,7 @@ describe('Passkey routes', () => {
       const mgr = new AdminSessionManager();
       const sessionToken = mgr.create();
 
-      const { getDialectFromUrl } = await import('../../src/storage.js');
-      const dialect = getDialectFromUrl(new URL('sqlite://'));
+      const dialect = await createMigratedInMemoryDialect();
       const passkeyStore = await AdminPasskeyStore.create(dialect);
 
       const api = AdminApi.create({
@@ -3139,8 +3128,7 @@ describe('Passkey routes — unit coverage', () => {
     store: InstanceType<typeof AdminPasskeyStore>;
     sessionManager: InstanceType<typeof AdminSessionManager>;
   }> {
-    const { getDialectFromUrl } = await import('../../src/storage.js');
-    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const dialect = await createMigratedInMemoryDialect();
     const store = await AdminPasskeyStore.create(dialect);
     const sessionManager = new AdminSessionManager();
 
@@ -3516,8 +3504,7 @@ describe('Passkey routes — unit coverage', () => {
   // --- RP ID fallback from baseUrl ---
 
   it('should derive RP ID from baseUrl when Host header is missing', async () => {
-    const { getDialectFromUrl } = await import('../../src/storage.js');
-    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const dialect = await createMigratedInMemoryDialect();
     const store = await AdminPasskeyStore.create(dialect);
     const sessionManager = new AdminSessionManager();
     await store.save(testRecord);

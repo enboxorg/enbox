@@ -2,6 +2,7 @@ import type { DwnDatabaseType } from '../src/types.js';
 
 import { DataStoreSql } from '../src/data-store-sql.js';
 import { Kysely } from 'kysely';
+import { runDwnStoreMigrations } from '../src/migration-runner.js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { Cid, DataStream } from '@enbox/dwn-sdk-js';
 import { testMysqlDialect, testPostgresDialect, testSqliteDialect } from './test-dialects.js';
@@ -15,9 +16,11 @@ describe('DataStoreSql — content-addressed dedup', () => {
       let db: Kysely<DwnDatabaseType>;
 
       beforeAll(async () => {
+        db = new Kysely<DwnDatabaseType>({ dialect });
+        await runDwnStoreMigrations(db, dialect);
+
         store = new DataStoreSql(dialect);
         await store.open();
-        db = new Kysely<DwnDatabaseType>({ dialect });
       });
 
       afterEach(async () => {

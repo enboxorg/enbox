@@ -1,5 +1,5 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
-import { Kysely } from 'kysely';
+import { Kysely, sql } from 'kysely';
 
 /**
  * The SqlTtlCache is responsible for storing and retrieving cache data with TTL (Time-to-Live).
@@ -8,13 +8,11 @@ export class SqlTtlCache {
   private static readonly cacheTableName = 'cacheEntries';
   private static readonly cleanupIntervalInSeconds = 60;
 
-  private sqlDialect: Dialect;
   private db: Kysely<CacheDatabase>;
   private cleanupTimer: NodeJS.Timeout;
 
   private constructor(sqlDialect: Dialect) {
     this.db = new Kysely<CacheDatabase>({ dialect: sqlDialect });
-    this.sqlDialect = sqlDialect;
   }
 
   /**
@@ -28,26 +26,17 @@ export class SqlTtlCache {
     return cacheManager;
   }
 
+  /**
+   * Verifies that the required table exists and starts the cleanup timer.
+   * Throws a clear error directing the caller to run server migrations first.
+   */
   private async initialize(): Promise<void> {
-
-    // create table if it doesn't exist
-    const tableExists = await this.sqlDialect.hasTable(this.db, SqlTtlCache.cacheTableName);
-    if (!tableExists) {
-      await this.db.schema
-        .createTable(SqlTtlCache.cacheTableName)
-        .ifNotExists() // kept to show supported by all dialects in contrast to ifNotExists() below, though not needed due to tableExists check above
-        // 512 chars to accommodate potentially large `state` in Web5 Connect flow
-        .addColumn('key', 'varchar(512)', (column) => column.primaryKey())
-        .addColumn('value', 'text', (column) => column.notNull())
-        .addColumn('expiry', 'bigint', (column) => column.notNull())
-        .execute();
-
-      await this.db.schema
-        .createIndex('index_expiry')
-        // .ifNotExists() // intentionally kept commented out code to show that it is not supported by all dialects (ie. MySQL)
-        .on(SqlTtlCache.cacheTableName)
-        .column('expiry')
-        .execute();
+    try {
+      await sql`SELECT 1 FROM ${sql.table(SqlTtlCache.cacheTableName)} LIMIT 0`.execute(this.db);
+    } catch {
+      throw new Error(
+        `SqlTtlCache: table '${SqlTtlCache.cacheTableName}' does not exist. Run server migrations before starting.`
+      );
     }
 
     // Start the cleanup timer
@@ -130,6 +119,16 @@ export class SqlTtlCache {
       .deleteFrom(SqlTtlCache.cacheTableName)
       .where('expiry', '<', Date.now())
       .execute();
+  }
+
+  /**
+   * Stops the background cleanup timer. The underlying database connection is
+   * NOT destroyed here because the dialect is shared with other components
+   * (e.g. DWN stores, registration store) and its lifecycle is managed by the
+   * dialect owner.
+   */
+  public close(): void {
+    clearInterval(this.cleanupTimer);
   }
 }
 

@@ -1,7 +1,7 @@
 import type { StateIndex } from '@enbox/dwn-sdk-js';
 
-import { getDialectFromUrl } from '../../src/storage.js';
-import { StateIndexSql } from '@enbox/dwn-sql-store';
+import { Kysely } from 'kysely';
+import { createBunSqliteDatabase, runDwnStoreMigrations, SqliteDialect, StateIndexSql } from '@enbox/dwn-sql-store';
 
 /**
  * An example of a plugin. Used for testing.
@@ -10,12 +10,22 @@ import { StateIndexSql } from '@enbox/dwn-sql-store';
  * - The constructor must not take any arguments.
  */
 export default class StateIndexSqlite extends StateIndexSql implements StateIndex {
+  #dialect: SqliteDialect;
+
   constructor() {
-    const sqliteDialect = getDialectFromUrl(new URL('sqlite://'));
-    super(sqliteDialect);
+    const sharedDb = createBunSqliteDatabase(':memory:');
+    const dialect = new SqliteDialect({ database: async (): Promise<typeof sharedDb> => sharedDb });
+    super(dialect);
+    this.#dialect = dialect;
 
     // NOTE: the following line is added purely to test the constructor invocation.
     StateIndexSqlite.spyingTheConstructor();
+  }
+
+  public override async open(): Promise<void> {
+    const db = new Kysely<Record<string, unknown>>({ dialect: this.#dialect });
+    await runDwnStoreMigrations(db, this.#dialect);
+    await super.open();
   }
 
   /**

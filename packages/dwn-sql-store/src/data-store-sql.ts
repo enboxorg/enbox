@@ -8,7 +8,7 @@ import { CID } from 'multiformats';
 import { DataStream } from '@enbox/dwn-sdk-js';
 import { exporter } from 'ipfs-unixfs-exporter';
 import { importer } from 'ipfs-unixfs-importer';
-import { Kysely } from 'kysely';
+import { Kysely, sql } from 'kysely';
 
 /**
  * SQL-backed implementation of {@link DataStore} with content-addressed
@@ -37,10 +37,8 @@ export class DataStoreSql implements DataStore {
 
     this.#db = new Kysely<DwnDatabaseType>({ dialect: this.#dialect });
 
-    // Create tables if they don't exist. In production the MigrationRunner
-    // creates these before open() is called; this fallback handles standalone
-    // usage (tests, plugins) that bypass the migration runner.
-    await this.#ensureTables();
+    // Fail fast if migrations have not been run — tables must already exist.
+    await this.#assertTablesExist();
   }
 
   public async close(): Promise<void> {
@@ -218,46 +216,19 @@ export class DataStoreSql implements DataStore {
   }
 
   /**
-   * Creates the `dataRefs` and `dataBlocks` tables if they don't already exist.
-   * This is a fallback for standalone usage without the MigrationRunner.
+   * Verifies that the required tables exist by executing a zero-row SELECT.
+   * Throws a clear error directing the caller to run migrations first.
    */
-  async #ensureTables(): Promise<void> {
-    const db = this.#db!;
-
-    // ─── dataRefs ─────────────────────────────────────────────────────
-    if (!(await this.#dialect.hasTable(db, 'dataRefs'))) {
-      await db.schema
-        .createTable('dataRefs')
-        .ifNotExists()
-        .addColumn('tenant', 'varchar(255)', (col) => col.notNull())
-        .addColumn('recordId', 'varchar(60)', (col) => col.notNull())
-        .addColumn('dataCid', 'varchar(60)', (col) => col.notNull())
-        .addColumn('dataSize', 'bigint', (col) => col.notNull())
-        .execute();
-
-      await db.schema.createIndex('index_dataRefs_tenant_recordId_dataCid')
-        .on('dataRefs').columns(['tenant', 'recordId', 'dataCid']).unique().execute();
-
-      await db.schema.createIndex('index_dataRefs_dataCid')
-        .on('dataRefs').column('dataCid').execute();
-
-      await db.schema.createIndex('index_dataRefs_tenant')
-        .on('dataRefs').column('tenant').execute();
-    }
-
-    // ─── dataBlocks ───────────────────────────────────────────────────
-    if (!(await this.#dialect.hasTable(db, 'dataBlocks'))) {
-      let table = db.schema
-        .createTable('dataBlocks')
-        .ifNotExists()
-        .addColumn('rootDataCid', 'varchar(60)', (col) => col.notNull())
-        .addColumn('blockCid', 'varchar(60)', (col) => col.notNull());
-
-      table = this.#dialect.addBlobColumn(table, 'data', (col) => col.notNull());
-      await table.execute();
-
-      await db.schema.createIndex('index_dataBlocks_rootDataCid_blockCid')
-        .on('dataBlocks').columns(['rootDataCid', 'blockCid']).unique().execute();
+  async #assertTablesExist(): Promise<void> {
+    const tables = ['dataRefs', 'dataBlocks'] as const;
+    for (const table of tables) {
+      try {
+        await sql`SELECT 1 FROM ${sql.table(table)} LIMIT 0`.execute(this.#db!);
+      } catch {
+        throw new Error(
+          `DataStoreSql: table '${table}' does not exist. Run DWN store migrations before opening stores.`
+        );
+      }
     }
   }
 

@@ -1,13 +1,14 @@
 import type { DwnDatabaseType } from '../src/types.js';
+import type { Migration } from 'kysely';
 
-import { allMigrations } from '../src/migrations/index.js';
+import { allDwnMigrations } from '../src/migrations/index.js';
 import { Kysely } from 'kysely';
 import { migration001InitialSchema } from '../src/migrations/001-initial-schema.js';
-import { MigrationRunner } from '../src/migration-runner.js';
+import { runDwnStoreMigrations } from '../src/migration-runner.js';
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 import { testMysqlDialect, testPostgresDialect, testSqliteDialect } from './test-dialects.js';
 
-describe('MigrationRunner', () => {
+describe('runDwnStoreMigrations (Kysely Migrator)', () => {
   const databaseDialects = [testMysqlDialect, testPostgresDialect, testSqliteDialect];
 
   for (const dialect of databaseDialects) {
@@ -17,7 +18,7 @@ describe('MigrationRunner', () => {
       beforeEach(async () => {
         db = new Kysely<DwnDatabaseType>({ dialect });
 
-        // Clean up all tables that migrations might create, plus the tracking table.
+        // Clean up all tables that migrations might create, plus Kysely's tracking tables.
         // Order matters for foreign key constraints.
         const tablesToDrop = [
           'messageStoreRecordsTags',
@@ -29,7 +30,8 @@ describe('MigrationRunner', () => {
           'stateIndexNodes',
           'stateIndexRoots',
           'stateIndexMeta',
-          'dwn_migrations',
+          'kysely_migration',
+          'kysely_migration_lock',
         ];
 
         for (const table of tablesToDrop) {
@@ -52,7 +54,8 @@ describe('MigrationRunner', () => {
           'stateIndexNodes',
           'stateIndexRoots',
           'stateIndexMeta',
-          'dwn_migrations',
+          'kysely_migration',
+          'kysely_migration_lock',
         ];
 
         const cleanupDb = new Kysely<DwnDatabaseType>({ dialect });
@@ -67,21 +70,21 @@ describe('MigrationRunner', () => {
 
       // ─── Fresh database tests ───────────────────────────────────────
 
-      it('should create dwn_migrations tracking table on first run', async () => {
-        const runner = new MigrationRunner(db, dialect, []);
-
-        let exists = await dialect.hasTable(db, 'dwn_migrations');
+      it('should create Kysely migration tracking tables on first run', async () => {
+        let exists = await dialect.hasTable(db, 'kysely_migration');
         expect(exists).toBe(false);
 
-        await runner.run();
+        await runDwnStoreMigrations(db, dialect);
 
-        exists = await dialect.hasTable(db, 'dwn_migrations');
+        exists = await dialect.hasTable(db, 'kysely_migration');
+        expect(exists).toBe(true);
+
+        exists = await dialect.hasTable(db, 'kysely_migration_lock');
         expect(exists).toBe(true);
       });
 
       it('should apply all migrations on a fresh database', async () => {
-        const runner = new MigrationRunner(db, dialect, allMigrations);
-        const applied = await runner.run();
+        const applied = await runDwnStoreMigrations(db, dialect);
 
         expect(applied).toEqual([
           '001-initial-schema',
@@ -103,12 +106,11 @@ describe('MigrationRunner', () => {
         expect(await dialect.hasTable(db, 'dataStore')).toBe(false);
       });
 
-      it('should record applied migrations in the dwn_migrations table', async () => {
-        const runner = new MigrationRunner(db, dialect, allMigrations);
-        await runner.run();
+      it('should record applied migrations in the kysely_migration table', async () => {
+        await runDwnStoreMigrations(db, dialect);
 
         const rows = await db
-          .selectFrom('dwn_migrations' as any)
+          .selectFrom('kysely_migration' as any)
           .selectAll()
           .orderBy('name', 'asc')
           .execute();
@@ -117,33 +119,27 @@ describe('MigrationRunner', () => {
         expect((rows[0] as any).name).toBe('001-initial-schema');
         expect((rows[1] as any).name).toBe('002-content-addressed-datastore');
         expect((rows[2] as any).name).toBe('003-add-squash-column');
-        // appliedAt should be a valid ISO date string
-        expect((rows[0] as any).appliedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-        expect((rows[1] as any).appliedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-        expect((rows[2] as any).appliedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+        // Kysely uses `timestamp` column for when migration was applied
+        expect((rows[0] as any).timestamp).toBeDefined();
       });
 
       // ─── Idempotency tests ──────────────────────────────────────────
 
       it('should be idempotent — second run returns no new migrations', async () => {
-        const runner = new MigrationRunner(db, dialect, allMigrations);
-
-        const firstRun = await runner.run();
+        const firstRun = await runDwnStoreMigrations(db, dialect);
         expect(firstRun.length).toBe(3);
 
-        const secondRun = await runner.run();
+        const secondRun = await runDwnStoreMigrations(db, dialect);
         expect(secondRun.length).toBe(0);
       });
 
       it('should apply only pending migrations when some are already applied', async () => {
         // Run only migration 001
-        const runner1 = new MigrationRunner(db, dialect, [migration001InitialSchema]);
-        const firstRun = await runner1.run();
+        const firstRun = await runDwnStoreMigrations(db, dialect, [allDwnMigrations[0]]);
         expect(firstRun).toEqual(['001-initial-schema']);
 
         // Now run with all migrations — only 002 and 003 should be applied
-        const runner2 = new MigrationRunner(db, dialect, allMigrations);
-        const secondRun = await runner2.run();
+        const secondRun = await runDwnStoreMigrations(db, dialect);
         expect(secondRun).toEqual(['002-content-addressed-datastore', '003-add-squash-column']);
       });
 
@@ -151,8 +147,7 @@ describe('MigrationRunner', () => {
 
       it('should migrate data from old dataStore to dataRefs + dataBlocks', async () => {
         // Step 1: Apply only migration 001 to create the old schema
-        const runner1 = new MigrationRunner(db, dialect, [migration001InitialSchema]);
-        await runner1.run();
+        await runDwnStoreMigrations(db, dialect, [allDwnMigrations[0]]);
 
         // Step 2: Insert test data into old dataStore table
         const testData1 = Buffer.from('hello world');
@@ -179,8 +174,7 @@ describe('MigrationRunner', () => {
           .execute();
 
         // Step 3: Apply remaining migrations which should migrate data
-        const runner2 = new MigrationRunner(db, dialect, allMigrations);
-        const applied = await runner2.run();
+        const applied = await runDwnStoreMigrations(db, dialect);
         expect(applied).toEqual(['002-content-addressed-datastore', '003-add-squash-column']);
 
         // Step 4: Verify data was migrated to dataRefs
@@ -223,8 +217,7 @@ describe('MigrationRunner', () => {
 
       it('should deduplicate blocks when multiple records share the same dataCid', async () => {
         // Step 1: Apply only migration 001
-        const runner1 = new MigrationRunner(db, dialect, [migration001InitialSchema]);
-        await runner1.run();
+        await runDwnStoreMigrations(db, dialect, [allDwnMigrations[0]]);
 
         // Step 2: Insert two records with the same dataCid
         const sharedData = Buffer.from('shared content');
@@ -249,9 +242,8 @@ describe('MigrationRunner', () => {
           } as any)
           .execute();
 
-        // Step 3: Apply migration 002
-        const runner2 = new MigrationRunner(db, dialect, allMigrations);
-        await runner2.run();
+        // Step 3: Apply remaining migrations
+        await runDwnStoreMigrations(db, dialect);
 
         // Step 4: Verify two refs but only one block
         const refs = await db
@@ -273,12 +265,10 @@ describe('MigrationRunner', () => {
 
       it('should handle empty dataStore table gracefully', async () => {
         // Apply migration 001 (creates empty dataStore)
-        const runner1 = new MigrationRunner(db, dialect, [migration001InitialSchema]);
-        await runner1.run();
+        await runDwnStoreMigrations(db, dialect, [allDwnMigrations[0]]);
 
         // Apply remaining migrations — should not fail on empty table
-        const runner2 = new MigrationRunner(db, dialect, allMigrations);
-        const applied = await runner2.run();
+        const applied = await runDwnStoreMigrations(db, dialect);
         expect(applied).toEqual(['002-content-addressed-datastore', '003-add-squash-column']);
 
         // New tables exist, old one gone
@@ -290,28 +280,26 @@ describe('MigrationRunner', () => {
       // ─── Failure / rollback tests ───────────────────────────────────
 
       it('should leave database in last known-good state on migration failure', async () => {
-        const failingMigration = {
-          name: '999-failing-migration',
-          async up(): Promise<void> {
-            throw new Error('intentional migration failure');
-          },
-        };
-
         // Apply the real migrations first
-        const runner1 = new MigrationRunner(db, dialect, allMigrations);
-        await runner1.run();
+        await runDwnStoreMigrations(db, dialect);
 
-        // Try to apply a failing migration
-        const runner2 = new MigrationRunner(db, dialect, [
-          ...allMigrations,
-          failingMigration,
-        ]);
+        // Try to apply with an additional failing migration
+        const failingMigrationList: typeof allDwnMigrations = [
+          ...allDwnMigrations,
+          ['999-failing-migration', (): Migration => ({
+            async up(): Promise<void> {
+              throw new Error('intentional migration failure');
+            },
+          })],
+        ];
 
-        await expect(runner2.run()).rejects.toThrow('intentional migration failure');
+        await expect(
+          runDwnStoreMigrations(db, dialect, failingMigrationList)
+        ).rejects.toThrow('intentional migration failure');
 
         // The failing migration should NOT be recorded
         const rows = await db
-          .selectFrom('dwn_migrations' as any)
+          .selectFrom('kysely_migration' as any)
           .selectAll()
           .execute();
 
@@ -322,19 +310,19 @@ describe('MigrationRunner', () => {
 
       // ─── Existing database adoption tests ───────────────────────────
 
-      it('should adopt an existing database that already has tables but no dwn_migrations', async () => {
+      it('should adopt an existing database that already has tables but no kysely_migration', async () => {
         // Simulate a pre-migration database: manually create the old schema
-        // by running migration 001 directly (not through the runner)
-        await migration001InitialSchema.up(db, dialect);
+        // by running migration 001's up() directly (not through the runner)
+        const migration001 = migration001InitialSchema(dialect);
+        await migration001.up(db);
 
-        // Verify tables exist but dwn_migrations does not
+        // Verify tables exist but kysely_migration does not
         expect(await dialect.hasTable(db, 'messageStoreMessages')).toBe(true);
         expect(await dialect.hasTable(db, 'dataStore')).toBe(true);
-        expect(await dialect.hasTable(db, 'dwn_migrations')).toBe(false);
+        expect(await dialect.hasTable(db, 'kysely_migration')).toBe(false);
 
         // Now run all migrations through the runner
-        const runner = new MigrationRunner(db, dialect, allMigrations);
-        const applied = await runner.run();
+        const applied = await runDwnStoreMigrations(db, dialect);
 
         // Migration 001 should run but be a no-op (tables already exist due to hasTable checks)
         // Migrations 002 and 003 should run and perform actual schema changes
@@ -346,7 +334,7 @@ describe('MigrationRunner', () => {
 
         // All should now be recorded
         const rows = await db
-          .selectFrom('dwn_migrations' as any)
+          .selectFrom('kysely_migration' as any)
           .selectAll()
           .execute();
 
@@ -356,12 +344,11 @@ describe('MigrationRunner', () => {
       // ─── Empty migrations list test ─────────────────────────────────
 
       it('should handle empty migrations list gracefully', async () => {
-        const runner = new MigrationRunner(db, dialect, []);
-        const applied = await runner.run();
+        const applied = await runDwnStoreMigrations(db, dialect, []);
         expect(applied).toEqual([]);
 
-        // Only the tracking table should exist
-        expect(await dialect.hasTable(db, 'dwn_migrations')).toBe(true);
+        // Kysely creates the tracking tables even with no migrations
+        expect(await dialect.hasTable(db, 'kysely_migration')).toBe(true);
       });
     });
   }

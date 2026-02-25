@@ -1,6 +1,7 @@
 import type { DataStore } from '@enbox/dwn-sdk-js';
-import { DataStoreSql } from '@enbox/dwn-sql-store';
-import { getDialectFromUrl } from '../../src/storage.js';
+
+import { Kysely } from 'kysely';
+import { createBunSqliteDatabase, DataStoreSql, runDwnStoreMigrations, SqliteDialect } from '@enbox/dwn-sql-store';
 
 /**
  * An example of a plugin that is used for testing.
@@ -9,12 +10,29 @@ import { getDialectFromUrl } from '../../src/storage.js';
  * - The constructor must not take any arguments.
  */
 export default class DataStoreSqlite extends DataStoreSql implements DataStore {
+  #dialect: SqliteDialect;
+
   constructor() {
-    const sqliteDialect = getDialectFromUrl(new URL('sqlite://'));
-    super(sqliteDialect);
+    // Share a single in-memory database via a stable reference so that
+    // migrations and store operations target the same `:memory:` DB.
+    const sharedDb = createBunSqliteDatabase(':memory:');
+    const dialect = new SqliteDialect({ database: async (): Promise<typeof sharedDb> => sharedDb });
+    super(dialect);
+    this.#dialect = dialect;
 
     // NOTE: the following line is added purely to test the constructor invocation.
     DataStoreSqlite.spyingTheConstructor();
+  }
+
+  /**
+   * Runs DWN store migrations before delegating to the parent `open()`.
+   * Plugin-based stores manage their own isolated DB, so they must
+   * bootstrap the schema themselves.
+   */
+  public override async open(): Promise<void> {
+    const db = new Kysely<Record<string, unknown>>({ dialect: this.#dialect });
+    await runDwnStoreMigrations(db, this.#dialect);
+    await super.open();
   }
 
   /**

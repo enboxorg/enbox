@@ -9,6 +9,7 @@ import {
   DataStoreSql,
   MessageStoreSql,
   ResumableTaskStoreSql,
+  runDwnStoreMigrations,
   StateIndexSql,
 } from '@enbox/dwn-sql-store';
 import { DidKey, UniversalResolver } from '@enbox/dids';
@@ -18,6 +19,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { AdminStore } from '../../src/admin/admin-store.js';
 import { getDialectFromUrl } from '../../src/storage.js';
 import { RegistrationStore } from '../../src/registration/registration-store.js';
+import { runServerMigrations } from '../../src/server-migration-runner.js';
 
 /**
  * Minimal Kysely type for direct SQL verification queries.
@@ -43,6 +45,11 @@ describe('AdminStore', () => {
     // All stores MUST share the same dialect instance so they share the same
     // underlying SQLite database connection (file-based SQLite).
     const sharedDialect: Dialect = getDialectFromUrl(sqliteUrl);
+
+    // Run both DWN and server migrations before creating stores.
+    const migrationDb = new Kysely<Record<string, unknown>>({ dialect: sharedDialect });
+    await runDwnStoreMigrations(migrationDb, sharedDialect);
+    await runServerMigrations(migrationDb);
 
     const dataStore = new DataStoreSql(sharedDialect);
     const messageStore = new MessageStoreSql(sharedDialect);

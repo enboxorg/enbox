@@ -1,6 +1,6 @@
 import type { Dialect } from '../dialect/dialect.js';
-import type { Kysely } from 'kysely';
-import type { Migration } from '../migration-runner.js';
+import type { DwnMigrationFactory } from '../migration-provider.js';
+import type { Kysely, Migration } from 'kysely';
 
 import { sql } from 'kysely';
 
@@ -29,10 +29,9 @@ import { sql } from 'kysely';
  * NOTE: For large databases, the data migration may take significant time.
  * The migration runs in a single transaction for atomicity.
  */
-export const migration002ContentAddressedDatastore: Migration = {
-  name: '002-content-addressed-datastore',
+export const migration002ContentAddressedDatastore: DwnMigrationFactory = (dialect: Dialect): Migration => ({
 
-  async up(db: Kysely<any>, dialect: Dialect): Promise<void> {
+  async up(db: Kysely<any>): Promise<void> {
 
     // ─── Create dataRefs table ──────────────────────────────────────────
     if (!(await dialect.hasTable(db, 'dataRefs'))) {
@@ -137,4 +136,4 @@ export const migration002ContentAddressedDatastore: Migration = {
       await db.schema.dropTable('dataStore').execute();
     }
   },
-};
+});

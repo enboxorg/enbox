@@ -43,123 +43,24 @@ export class MessageStoreSql implements MessageStore {
 
     this.#db = new Kysely<DwnDatabaseType>({ dialect: this.#dialect });
 
-    // create messages table if it does not exist
-    const messagesTableName = 'messageStoreMessages';
-    const messagesTableExists = await this.#dialect.hasTable(this.#db, messagesTableName);
-    if (!messagesTableExists) {
-      let createMessagesTable = this.#db.schema
-        .createTable(messagesTableName)
-        .ifNotExists()
-        .addColumn('tenant', 'varchar(255)', (col) => col.notNull())
-        .addColumn('messageCid', 'varchar(60)', (col) => col.notNull())
-        .addColumn('interface', 'varchar(20)')
-        .addColumn('method', 'varchar(20)')
-        .addColumn('recordId', 'varchar(60)')
-        .addColumn('entryId','varchar(60)')
-        .addColumn('parentId', 'varchar(60)')
-        .addColumn('protocol', 'varchar(200)')
-        .addColumn('protocolPath', 'varchar(200)')
-        .addColumn('contextId', 'varchar(600)')
-        .addColumn('schema', 'varchar(200)')
-        .addColumn('author', 'varchar(255)')
-        .addColumn('recipient', 'varchar(255)')
-        .addColumn('messageTimestamp', 'varchar(30)')
-        .addColumn('dateCreated', 'varchar(30)')
-        .addColumn('datePublished', 'varchar(30)')
-        .addColumn('isLatestBaseState', 'boolean')
-        .addColumn('published', 'boolean')
-        .addColumn('prune', 'boolean')
-        .addColumn('squash', 'boolean')
-        .addColumn('dataFormat', 'varchar(30)')
-        .addColumn('dataCid', 'varchar(60)')
-        .addColumn('dataSize', 'integer')
-        .addColumn('encodedData', 'text') // we optionally store encoded data if it is below a threshold
-        .addColumn('attester', 'text')
-        .addColumn('permissionGrantId', 'varchar(60)');
-
-      // Add columns that have dialect-specific constraints
-      createMessagesTable = this.#dialect.addAutoIncrementingColumn(createMessagesTable, 'id', (col) => col.primaryKey());
-      createMessagesTable = this.#dialect.addBlobColumn(createMessagesTable, 'encodedMessageBytes', (col) => col.notNull());
-      await createMessagesTable.execute();
-
-      // add unique index for get() and delete() by messageCid — the most fundamental lookup path
-      await this.#db.schema
-        .createIndex('index_tenant_messageCid')
-        .on(messagesTableName)
-        .columns(['tenant', 'messageCid'])
-        .unique()
-        .execute();
-
-      // add indexes to the table
-      await this.createIndexes(this.#db, messagesTableName, [
-        ['tenant', 'recordId'], // multiple uses, notably heavily depended by record chain construction for protocol authorization
-        ['tenant', 'entryId'], // used by fetchInitialRecordsWriteMessage in RecordsRead, RecordsQuery, and RecordsDelete
-        ['tenant', 'parentId'], // used to walk down hierarchy of records, use cases include purging of records
-        ['tenant', 'protocol', 'published', 'messageTimestamp'], // index used for basically every external query
-        ['tenant', 'interface'], // mainly for fast fetch of ProtocolsConfigure for authorization, not needed if protocol was a DWN Record
-        ['tenant', 'permissionGrantId'], // for deleting grant-authorized messages though pending https://github.com/enboxorg/enbox/issues/716
-        ['tenant', 'dateCreated'], // sort optimization for RecordsQuery with DateSort.CreatedAscending/Descending
-        ['tenant', 'datePublished'], // sort optimization for RecordsQuery with DateSort.PublishedAscending/Descending
-      ]);
-
-      // contextId index created separately because MySQL requires a prefix length to fit within
-      // the 3072-byte InnoDB index key limit. contextId is varchar(600) × 4 bytes (utf8mb4) = 2400 bytes,
-      // which combined with tenant (255 × 4 = 1020) and messageTimestamp (30 × 4 = 120) = 3540 bytes,
-      // exceeding the limit. A prefix of 480 chars (1920 bytes) brings the total to 3060 bytes.
-      // contextId values only contain ASCII chars [a-zA-Z0-9/], so a 480-char prefix is sufficient
-      // to distinguish most records (covers ~8 nesting levels of 59-char CID segments).
-      if (this.#dialect.name === 'MySQL') {
-        await sql`CREATE INDEX index_tenant_contextId_messageTimestamp
-          ON ${sql.table(messagesTableName)} (tenant, contextId(480), messageTimestamp)`
-          .execute(this.#db);
-      } else {
-        await this.createIndexes(this.#db, messagesTableName, [
-          ['tenant', 'contextId', 'messageTimestamp'], // expected to be used for common query pattern
-        ]);
-      }
-    }
-
-    // create tags table
-    const tagsTableName = 'messageStoreRecordsTags';
-    const tagsTableExists = await this.#dialect.hasTable(this.#db, tagsTableName);
-    if (!tagsTableExists) {
-      let createRecordsTagsTable = this.#db.schema
-        .createTable(tagsTableName)
-        .ifNotExists()
-        .addColumn('tag', 'varchar(30)', (col) => col.notNull())
-        .addColumn('valueString', 'varchar(200)')
-        .addColumn('valueNumber', 'decimal');
-
-      // Add columns that have dialect-specific constraints
-      const foreignMessageInsertId = 'messageInsertId';
-      createRecordsTagsTable = this.#dialect.addAutoIncrementingColumn(createRecordsTagsTable, 'id', (col) => col.primaryKey());
-      createRecordsTagsTable = this.#dialect.addReferencedColumn(createRecordsTagsTable, tagsTableName, foreignMessageInsertId, 'integer', 'messageStoreMessages', 'id', 'cascade');
-      await createRecordsTagsTable.execute();
-
-      // add indexes to the table
-      await this.createIndexes(this.#db, tagsTableName, [
-        [foreignMessageInsertId],
-        ['tag', 'valueString'],
-        ['tag', 'valueNumber']
-      ]);
-    }
+    // Fail fast if migrations have not been run — tables must already exist.
+    await this.#assertTablesExist();
   }
 
   /**
-   *  Creates indexes on the given table.
-   * @param tableName The name of the table to create the indexes on.
-   * @param indexes Each inner array represents a single index and contains the column names to be indexed as a composite index.
-   *                If the inner array contains only one element, it will be treated as a single column index.
+   * Verifies that the required tables exist by executing a zero-row SELECT.
+   * Throws a clear error directing the caller to run migrations first.
    */
-  async createIndexes<T>(database: Kysely<T>, tableName: string, indexes: string[][]): Promise<void> {
-    for (const columnNames of indexes) {
-      const indexName = 'index_' + columnNames.join('_'); // e.g. index_tenant_protocol
-      await database.schema
-        .createIndex(indexName)
-        // .ifNotExists() // intentionally kept commented out code to show that it is not supported by all dialects (ie. MySQL)
-        .on(tableName)
-        .columns(columnNames)
-        .execute();
+  async #assertTablesExist(): Promise<void> {
+    const tables = ['messageStoreMessages', 'messageStoreRecordsTags'] as const;
+    for (const table of tables) {
+      try {
+        await sql`SELECT 1 FROM ${sql.table(table)} LIMIT 0`.execute(this.#db!);
+      } catch {
+        throw new Error(
+          `MessageStoreSql: table '${table}' does not exist. Run DWN store migrations before opening stores.`
+        );
+      }
     }
   }
 

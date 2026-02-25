@@ -20,7 +20,7 @@ describe('DeliveryService', () => {
   let dwn: Dwn;
 
   beforeAll(async () => {
-    dwn = await getTestDwn();
+    ({ dwn } = await getTestDwn());
   });
 
   afterEach(() => {
@@ -143,7 +143,7 @@ describe('DeliveryService', () => {
         target  : alice.did,
       });
 
-      const testDwn = await getTestDwn();
+      const { dwn: testDwn } = await getTestDwn();
       await TestDataGenerator.installDefaultTestProtocol(testDwn, alice);
 
       const testConfig: DwnServerConfig = {
@@ -184,7 +184,7 @@ describe('DeliveryService', () => {
         target: 'did:key:abc1234',
       });
 
-      const testDwn = await getTestDwn();
+      const { dwn: testDwn } = await getTestDwn();
 
       const testConfig: DwnServerConfig = {
         ...config,
@@ -223,7 +223,7 @@ describe('DeliveryService', () => {
         target  : alice.did,
       });
 
-      const testDwn = await getTestDwn();
+      const { dwn: testDwn } = await getTestDwn();
       await TestDataGenerator.installDefaultTestProtocol(testDwn, alice);
 
       const context: RequestContext = {
@@ -291,7 +291,7 @@ describe('DeliveryService', () => {
         packageJsonPath    : './package.json',
       };
 
-      const testDwn = await getTestDwn();
+      const { dwn: testDwn } = await getTestDwn();
       const server = new DwnServer({ config: testConfig, dwn: testDwn });
       await server.start();
 
@@ -316,7 +316,7 @@ describe('DeliveryService', () => {
         packageJsonPath    : './package.json',
       };
 
-      const testDwn = await getTestDwn();
+      const { dwn: testDwn } = await getTestDwn();
       const server = new DwnServer({ config: testConfig, dwn: testDwn });
       await server.start();
 
@@ -339,7 +339,7 @@ describe('DeliveryService', () => {
         packageJsonPath    : './package.json',
       };
 
-      const testDwn = await getTestDwn();
+      const { dwn: testDwn } = await getTestDwn();
       const server = new DwnServer({ config: testConfig, dwn: testDwn });
       await server.start();
 

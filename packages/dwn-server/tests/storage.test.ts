@@ -19,9 +19,8 @@ describe('storage', () => {
       expect(dialect).toBeDefined();
     });
 
-    it('should return undefined for an unsupported protocol', () => {
-      const dialect = getDialectFromUrl(new URL('redis://localhost:6379'));
-      expect(dialect).toBeUndefined();
+    it('should throw for an unsupported protocol', () => {
+      expect(() => getDialectFromUrl(new URL('redis://localhost:6379'))).toThrow('Unsupported database protocol');
     });
   });
 

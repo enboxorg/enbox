@@ -3,6 +3,8 @@ import type { RecordsReadReply } from '@enbox/dwn-sdk-js';
 import type { ServerInfo } from '@enbox/dwn-clients';
 import type { Server, ServerWebSocket } from 'bun';
 
+import type { Dialect } from '@enbox/dwn-sql-store';
+
 import type { ActivityLog } from './admin/activity-log.js';
 import type { AdminApi } from './admin/admin-api.js';
 import type { AdminSessionManager } from './admin/admin-session.js';
@@ -28,6 +30,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
 
 import { config } from './config.js';
+import { getDialectFromUrl } from './storage.js';
 import { jsonRpcRouter } from './json-rpc-api.js';
 import { validateAdminAuth } from './admin/admin-auth.js';
 import { Web5ConnectServer } from './web5-connect/web5-connect-server.js';
@@ -85,6 +88,7 @@ export class HttpApi {
       messageProcessedHooks? : MessageProcessedHook[];
       openAuthHandler? : OpenAuthHandler;
       sessionManager? : AdminSessionManager;
+      ttlCacheDialect? : Dialect;
     },
   ): Promise<HttpApi> {
     const httpApi = new HttpApi();
@@ -129,9 +133,13 @@ export class HttpApi {
       httpApi.registrationManager = registrationManager;
     }
 
+    // Use an externally provided dialect when available (required for
+    // in-memory SQLite so that migrations and the TTL cache share the same
+    // database instance). Falls back to creating a dialect from the URL.
+    const ttlDialect = options?.ttlCacheDialect ?? getDialectFromUrl(new URL(config.ttlCacheUrl));
     httpApi.web5ConnectServer = await Web5ConnectServer.create({
-      baseUrl        : config.baseUrl,
-      sqlTtlCacheUrl : config.ttlCacheUrl,
+      baseUrl    : config.baseUrl,
+      sqlDialect : ttlDialect,
     });
 
     return httpApi;
@@ -261,6 +269,9 @@ export class HttpApi {
   async close(): Promise<void> {
     if (this.#openAuthHandler) {
       this.#openAuthHandler.destroy();
+    }
+    if (this.web5ConnectServer) {
+      this.web5ConnectServer.close();
     }
     if (this.#server) {
       this.#server.stop(true); // close all connections immediately

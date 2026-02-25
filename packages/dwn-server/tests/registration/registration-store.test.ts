@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { mkdtempSync, rmSync } from 'fs';
 
-import { getDialectFromUrl } from '../../src/storage.js';
+import { createMigratedFileDialect } from '../utils.js';
 import { RegistrationStore } from '../../src/registration/registration-store.js';
 
 describe('RegistrationStore', () => {
@@ -13,7 +13,7 @@ describe('RegistrationStore', () => {
 
   beforeAll(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'reg-store-test-'));
-    const dialect = getDialectFromUrl(new URL(`sqlite://${tmpDir}/reg.db`));
+    const dialect = await createMigratedFileDialect(`sqlite://${tmpDir}/reg.db`);
     store = await RegistrationStore.create(dialect);
   });
 

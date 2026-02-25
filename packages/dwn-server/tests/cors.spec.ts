@@ -23,7 +23,7 @@ class CorsProxySetup {
   proxyPort = 9875;
 
   public async start(): Promise<void> {
-    const testDwn = await getTestDwn();
+    const { dwn: testDwn } = await getTestDwn();
     const dwnServer = new DwnServer({
       dwn: testDwn,
       config: {
