@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://identity.foundation/schemas/preferences/privacy",
+  "title": "PrivacyData",
+  "description": "Data shape for privacy preferences.",
+  "type": "object",
+  "properties": {
+    "cookieConsent": {
+      "type": "object",
+      "description": "Cookie consent preferences.",
+      "properties": {
+        "analytics": {
+          "type": "boolean",
+          "description": "Whether analytics cookies are consented to."
+        },
+        "marketing": {
+          "type": "boolean",
+          "description": "Whether marketing cookies are consented to."
+        },
+        "functional": {
+          "type": "boolean",
+          "description": "Whether functional cookies are consented to."
+        }
+      },
+      "required": ["analytics", "marketing", "functional"],
+      "additionalProperties": false
+    },
+    "shareUsageData": {
+      "type": "boolean",
+      "description": "Whether usage data sharing is enabled."
+    }
+  },
+  "required": ["cookieConsent", "shareUsageData"],
+  "additionalProperties": false
+}

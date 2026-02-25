@@ -86,6 +86,44 @@ describe('Multicodec', () => {
     });
   });
 
+  describe('getCodeFromName()', () => {
+    it('returns the codec code for a registered name', () => {
+      const code = Multicodec.getCodeFromName({ name: 'ed25519-pub' });
+      expect(code).toBe(0xed);
+    });
+
+    it('returns the codec code for other registered names', () => {
+      expect(Multicodec.getCodeFromName({ name: 'x25519-pub' })).toBe(0xec);
+      expect(Multicodec.getCodeFromName({ name: 'secp256k1-pub' })).toBe(0xe7);
+      expect(Multicodec.getCodeFromName({ name: 'ed25519-priv' })).toBe(0x1300);
+    });
+
+    it('throws an error when codec name is not registered', () => {
+      expect(
+        () => Multicodec.getCodeFromName({ name: 'non-existent-codec' })
+      ).toThrow('Unsupported multicodec: non-existent-codec');
+    });
+  });
+
+  describe('getNameFromCode()', () => {
+    it('returns the codec name for a registered code', () => {
+      const name = Multicodec.getNameFromCode({ code: 0xed });
+      expect(name).toBe('ed25519-pub');
+    });
+
+    it('returns the codec name for other registered codes', () => {
+      expect(Multicodec.getNameFromCode({ code: 0xec })).toBe('x25519-pub');
+      expect(Multicodec.getNameFromCode({ code: 0xe7 })).toBe('secp256k1-pub');
+      expect(Multicodec.getNameFromCode({ code: 0x1300 })).toBe('ed25519-priv');
+    });
+
+    it('throws an error when codec code is not registered', () => {
+      expect(
+        () => Multicodec.getNameFromCode({ code: 0x99999 })
+      ).toThrow('Unsupported multicodec: 629145');
+    });
+  });
+
   describe('removePrefix()', () => {
     it('returns code, name, and data', () => {
       const input = new Uint8Array([0xed, 0x01, 0, 1, 2, 3]);

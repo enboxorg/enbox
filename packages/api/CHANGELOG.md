@@ -1,5 +1,80 @@
 # @enbox/api
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies [[`4c74a79`](https://github.com/enboxorg/enbox/commit/4c74a794ca9b05fd063371661c0ac45867c6daf2)]:
+  - @enbox/common@0.0.6
+  - @enbox/dwn-clients@0.0.8
+  - @enbox/agent@0.2.1
+
+## 0.3.0
+
+### Minor Changes
+
+- [#514](https://github.com/enboxorg/enbox/pull/514) [`0eb40d4`](https://github.com/enboxorg/enbox/commit/0eb40d4d111732262de01258c0f7f8c727466714) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: $squash protocol directive, live sync engine, record delivery, security hardening
+
+  - dwn-sdk-js: add $squash protocol directive for RecordsWrite, record delivery and endpoint forwarding
+  - agent: live sync engine with real-time subscriptions and connectivity awareness
+  - api: live sync engine integration
+  - common: escape LIKE wildcards, remove Math.random from public API
+  - dids: add fetch timeouts and SSRF protection for did:web resolution
+  - browser: add deactivatePolyfills, clearDrlCache, configurable resolvers, strict TypeScript mode
+  - dwn-clients: properly signal rate limiting to clients
+  - dwn-sql-store: add squash column migration and message store adjustments
+
+### Patch Changes
+
+- Updated dependencies [[`0eb40d4`](https://github.com/enboxorg/enbox/commit/0eb40d4d111732262de01258c0f7f8c727466714)]:
+  - @enbox/agent@0.2.0
+  - @enbox/common@0.0.5
+  - @enbox/dwn-clients@0.0.7
+
+## 0.2.4
+
+### Patch Changes
+
+- [`255ea66`](https://github.com/enboxorg/enbox/commit/255ea668007d728a59899b06f1897b0b933e6bf3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: provider-auth-v0 tenant registration, immutable records, content-addressed data stores, and admin dashboard
+
+- Updated dependencies [[`255ea66`](https://github.com/enboxorg/enbox/commit/255ea668007d728a59899b06f1897b0b933e6bf3)]:
+  - @enbox/dwn-clients@0.0.6
+  - @enbox/agent@0.1.9
+  - @enbox/common@0.0.4
+
+## 0.2.3
+
+### Patch Changes
+
+- [#279](https://github.com/enboxorg/enbox/pull/279) [`c36ffb2`](https://github.com/enboxorg/enbox/commit/c36ffb203d8b5eaefffc698f053be6262f1b4ca6) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Fix TypedWeb5 injecting `schema: undefined` into DWN filters for protocol types that only define `dataFormats` (no `schema`). This caused the DWN SDK's RecordsFilter validation to fail silently, hanging wallet loading for protocols like ProfileProtocol whose `avatar`/`hero` types have no schema.
+
+## 0.2.2
+
+### Patch Changes
+
+- Updated dependencies [[`a111281`](https://github.com/enboxorg/enbox/commit/a111281ad3fb209680073154a95d97d26fc3edf8)]:
+  - @enbox/dwn-clients@0.0.5
+  - @enbox/agent@0.1.8
+
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies [[`8a2f650`](https://github.com/enboxorg/enbox/commit/8a2f650c88f4b78f415dcacc23d7f4c82bc9a67b)]:
+  - @enbox/agent@0.1.7
+
+## 0.2.0
+
+### Minor Changes
+
+- [#242](https://github.com/enboxorg/enbox/pull/242) [`bb0bfa3`](https://github.com/enboxorg/enbox/commit/bb0bfa31917d296968d3e6f2a41daa9ce5d603b1) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Protocol-first Web5 API surface: `web5.using(protocol)` replaces `web5.dwn`, `TypedWeb5` replaces `TypedDwnApi`, `DwnApi` moved to `@enbox/api/advanced` sub-path. Flat request shapes, `records.create()`/`createFrom()` removed, `Record.update()`/`delete()` return new immutable records, `dateModified` renamed to `timestamp`. Smart `configure()` skips redundant re-installation when definition is unchanged.
+
+### Patch Changes
+
+- Updated dependencies [[`bb0bfa3`](https://github.com/enboxorg/enbox/commit/bb0bfa31917d296968d3e6f2a41daa9ce5d603b1)]:
+  - @enbox/agent@0.1.6
+  - @enbox/dwn-clients@0.0.4
+
 ## 0.1.1
 
 ### Patch Changes

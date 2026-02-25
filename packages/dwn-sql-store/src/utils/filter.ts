@@ -2,7 +2,7 @@ import type { DwnDatabaseType } from '../types.js';
 import type { Filter } from '@enbox/dwn-sdk-js';
 import type { ExpressionBuilder, OperandExpression, SelectQueryBuilder, SqlBool } from 'kysely';
 
-import { DynamicModule } from 'kysely';
+import { DynamicModule, sql } from 'kysely';
 import { sanitizedValue, sanitizeFiltersAndSeparateTags } from './sanitize.js';
 
 /**
@@ -52,6 +52,16 @@ function processFilter<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
     if (Array.isArray(value)) { // OneOfFilter
       andOperands.push(eb(column, 'in', value));
     } else if (typeof value === 'object') { // RangeFilter
+      // Detect prefix-style range filters created by `constructPrefixFilterAsRangeFilter`
+      // which uses `{ gte: prefix, lt: prefix + '\uffff' }`. The U+FFFF sentinel does not
+      // sort correctly under ICU/libc collation rules (e.g. PostgreSQL's en_US.UTF-8),
+      // so we convert these to a collation-safe SQL LIKE expression.
+      if (isPrefixRangeFilter(value)) {
+        const prefix = escapeLikePattern(value.gte as string);
+        andOperands.push(sql`${sql.ref(property)} LIKE ${prefix + '%'}`);
+        continue;
+      }
+
       if (value.gt) {
         andOperands.push(eb(column, '>', sanitizedValue(value.gt)));
       }
@@ -68,6 +78,30 @@ function processFilter<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
       andOperands.push(eb(column, '=', sanitizedValue(value)));
     }
   }
+}
+
+/**
+ * Returns `true` if the given RangeFilter matches the pattern produced by
+ * `constructPrefixFilterAsRangeFilter`: `{ gte: <prefix>, lt: <prefix> + '\uffff' }`.
+ */
+function isPrefixRangeFilter(value: Record<string, unknown>): boolean {
+  if (typeof value.gte !== 'string' || typeof value.lt !== 'string') {
+    return false;
+  }
+  // Only two keys: gte and lt (no gt, lte, or other properties)
+  const keys = Object.keys(value);
+  if (keys.length !== 2 || !keys.includes('gte') || !keys.includes('lt')) {
+    return false;
+  }
+  return value.lt === value.gte + '\uffff';
+}
+
+/**
+ * Escapes SQL LIKE meta-characters (`%`, `_`) in the given string so that
+ * they are matched literally.
+ */
+function escapeLikePattern(input: string): string {
+  return input.replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
 /**

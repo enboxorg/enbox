@@ -23,6 +23,7 @@ jobs:
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     outputs:
       src: ${{ steps.filter.outputs.src }}
     steps:
@@ -33,12 +34,22 @@ jobs:
         uses: dorny/paths-filter@v3
         id: filter
         with:
+          # With the default predicate-quantifier ('some'), a file only needs
+          # to match ONE pattern to be considered changed.  Since '**' matches
+          # everything, the negation patterns were silently ignored and the
+          # filter always returned true.
+          #
+          # With 'every', a file must match ALL patterns.  A .md file matches
+          # '**' but fails '!**/*.md', so it's excluded — which is the
+          # intended behavior.
+          predicate-quantifier: 'every'
           filters: |
             src:
               - '**'
               - '!**/*.md'
+              - '!**/LICENSE'
+              - '!**/CODE_OF_CONDUCT*'
               - '!docs/**'
-              - '!LICENSE'
               - '!.changeset/**'
               - '!scripts/**'
 
@@ -49,6 +60,7 @@ jobs:
   setup:
     name: Lint & Build
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: changes
     if: needs.changes.outputs.src == 'true'
 
@@ -91,6 +103,7 @@ jobs:
   test-lightweight:
     name: 'Test: common / crypto'
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     needs: setup
 
     steps:
@@ -146,6 +159,7 @@ jobs:
   test-dwn-sdk:
     name: 'Test: dwn-sdk-js'
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     needs: setup
 
     steps:
@@ -198,6 +212,7 @@ jobs:
   test-agent-api:
     name: 'Test: dids / agent / api'
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     needs: setup
 
     services:
@@ -263,6 +278,8 @@ jobs:
           export DWN_STORAGE_STATE_INDEX=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DID_DHT_GATEWAY_URI=http://localhost:7527
+          export DWN_RATE_LIMIT_REQUESTS_PER_SECOND=0
+          export DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND=0
 
           bun packages/dwn-server/dist/esm/src/main.js &
           echo "DWN_SERVER_PID=$!" >> $GITHUB_ENV
@@ -316,6 +333,7 @@ jobs:
   test-sql-store:
     name: 'Test: dwn-sql-store'
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     needs: setup
 
     services:
@@ -374,7 +392,22 @@ jobs:
           name: workspace-build
           path: packages
 
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+          # Wait for MinIO to be ready.
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 1
+          done
+
       - name: Run tests with coverage
+        env:
+          S3_ENDPOINT: http://localhost:9000
         run: bun run --filter @enbox/dwn-sql-store test:node:coverage
 
       - name: Stage coverage
@@ -398,6 +431,7 @@ jobs:
   test-dwn-server:
     name: 'Test: dwn-server'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: setup
 
     steps:
@@ -426,8 +460,21 @@ jobs:
           name: workspace-build
           path: packages
 
+      - name: Start NATS with JetStream
+        run: |
+          docker run -d --name nats -p 4222:4222 -p 8222:8222 nats:2.10-alpine -js -m 8222
+          for i in $(seq 1 30); do
+            if wget -q --spider http://localhost:8222/healthz 2>/dev/null; then
+              echo "NATS is ready"
+              break
+            fi
+            sleep 1
+          done
+
       - name: Run tests with coverage
         run: bun run --filter @enbox/dwn-server test:node:coverage
+        env:
+          NATS_URL: nats://localhost:4222
 
       - name: Stage coverage
         if: always()
@@ -450,8 +497,9 @@ jobs:
   coverage:
     name: Coverage Check
     runs-on: ubuntu-latest
-    needs: [test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server, test-browser]
-    if: always() && !cancelled()
+    timeout-minutes: 3
+    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server, test-browser]
+    if: always() && !cancelled() && needs.changes.outputs.src == 'true'
 
     steps:
       - name: Download coverage artifacts
@@ -463,38 +511,12 @@ jobs:
 
       - name: Check coverage thresholds
         id: coverage-check
+        shell: bash
         run: |
-          echo "## Coverage Report" > coverage-report.md
-          echo "" >> coverage-report.md
-          echo "| Package | Environment | Line Coverage | Status |" >> coverage-report.md
-          echo "|---------|-------------|---------------|--------|" >> coverage-report.md
-
-          failed=false
-          found_any=false
-          threshold=90
-
-          for lcov_file in coverage-artifacts/*/lcov.info; do
-            [ -f "$lcov_file" ] || continue
-            found_any=true
-
-            dir_name=$(echo "$lcov_file" | sed 's|coverage-artifacts/\([^/]*\)/.*|\1|')
-
-            # Detect browser coverage directories (named *-browser)
-            if echo "$dir_name" | grep -q '\-browser$'; then
-              pkg=$(echo "$dir_name" | sed 's/-browser$//')
-              env_label="Browser"
-              is_browser=true
-            else
-              pkg="$dir_name"
-              env_label="Node"
-              is_browser=false
-            fi
-
-            # Filter lcov to only count the package's own src/ files, skip
-            # transitive dependency coverage (e.g. ../common/dist/...).
-            total_lf=0
-            total_lh=0
-            in_src=false
+          # ── helper: parse an lcov file and print the line-coverage % ──
+          parse_lcov() {
+            local lcov_file="$1"
+            local total_lf=0 total_lh=0 in_src=false
             while IFS= read -r line; do
               case "$line" in
                 SF:src/*) in_src=true ;;
@@ -503,61 +525,132 @@ jobs:
                 LH:*)     $in_src && total_lh=$((total_lh + ${line#LH:})) ;;
               esac
             done < "$lcov_file"
-
             if [ "$total_lf" -gt 0 ]; then
-              coverage=$(awk "BEGIN { printf \"%.1f\", ($total_lh / $total_lf) * 100 }")
+              awk "BEGIN { printf \"%.1f\", ($total_lh / $total_lf) * 100 }"
             else
-              coverage="0.0"
+              echo "0.0"
             fi
+          }
 
-            # Determine badge color
-            if [ "$(echo "$coverage >= 90" | bc -l)" = "1" ]; then
-              badge_color="brightgreen"
-            elif [ "$(echo "$coverage >= 80" | bc -l)" = "1" ]; then
-              badge_color="green"
-            elif [ "$(echo "$coverage >= 70" | bc -l)" = "1" ]; then
-              badge_color="yellowgreen"
-            elif [ "$(echo "$coverage >= 60" | bc -l)" = "1" ]; then
-              badge_color="yellow"
-            else
-              badge_color="red"
+          badge_color_for() {
+            local cov="$1"
+            if   [ "$(echo "$cov >= 90" | bc -l)" = "1" ]; then echo "brightgreen"
+            elif [ "$(echo "$cov >= 80" | bc -l)" = "1" ]; then echo "green"
+            elif [ "$(echo "$cov >= 70" | bc -l)" = "1" ]; then echo "yellowgreen"
+            elif [ "$(echo "$cov >= 60" | bc -l)" = "1" ]; then echo "yellow"
+            else echo "red"
             fi
+          }
 
-            # Write shields.io endpoint JSON for this package
-            mkdir -p coverage-badges
-            printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$coverage" "$badge_color" > "coverage-badges/${dir_name}.json"
+          browsers="chromium firefox webkit"
+          failed=false
+          found_any=false
+          threshold=98
+          mkdir -p coverage-badges
 
-            # Browser coverage is informational — no threshold enforcement.
-            # Browser test suites are intentionally smaller subsets.
-            if [ "$is_browser" = true ]; then
-              echo "| $pkg | $env_label | ${coverage}% | :information_source: |" >> coverage-report.md
-            elif [ "$(echo "$coverage < $threshold" | bc -l)" = "1" ]; then
-              echo "| $pkg | $env_label | ${coverage}% | :x: Below ${threshold}% |" >> coverage-report.md
-              echo "::error::Coverage for $pkg is ${coverage}%, below ${threshold}% threshold"
-              failed=true
+          # Temp files: node rows and a TSV of (pkg, browser, coverage) for
+          # browser results that we pivot into a single table at the end.
+          node_file=$(mktemp)
+          browser_tsv=$(mktemp)
+
+          for lcov_file in coverage-artifacts/*/lcov.info; do
+            [ -f "$lcov_file" ] || continue
+            found_any=true
+
+            dir_name=$(echo "$lcov_file" | sed 's|coverage-artifacts/\([^/]*\)/.*|\1|')
+            coverage=$(parse_lcov "$lcov_file")
+            badge_color=$(badge_color_for "$coverage")
+
+            printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' \
+              "$coverage" "$badge_color" > "coverage-badges/${dir_name}.json"
+
+            # Classify: is this a per-browser directory (e.g. common-chromium)?
+            matched_browser=""
+            for b in $browsers; do
+              case "$dir_name" in *-"$b") matched_browser="$b" ;; esac
+            done
+
+            if [ -n "$matched_browser" ]; then
+              pkg=$(echo "$dir_name" | sed "s/-${matched_browser}\$//")
+              printf '%s\t%s\t%s\n' "$pkg" "$matched_browser" "$coverage" >> "$browser_tsv"
             else
-              echo "| $pkg | $env_label | ${coverage}% | :white_check_mark: |" >> coverage-report.md
+              pkg="$dir_name"
+              if [ "$(echo "$coverage < $threshold" | bc -l)" = "1" ]; then
+                echo "| $pkg | ${coverage}% | :x: Below ${threshold}% |" >> "$node_file"
+                echo "::error::Coverage for $pkg is ${coverage}%, below ${threshold}% threshold"
+                failed=true
+              else
+                echo "| $pkg | ${coverage}% | :white_check_mark: |" >> "$node_file"
+              fi
             fi
           done
 
-          if [ "$found_any" = false ]; then
-            echo "" >> coverage-report.md
-            echo ":x: **No coverage artifacts found.** Ensure test jobs upload lcov reports." >> coverage-report.md
-            echo "::error::No coverage artifacts found"
-            failed=true
-          else
-            echo "" >> coverage-report.md
-            if [ "$failed" = true ]; then
-              echo ":x: **Coverage check failed**: one or more packages are below the ${threshold}% threshold." >> coverage-report.md
+          # ── Assemble the markdown report ──
+          {
+            echo "## Coverage Report"
+            echo ""
+            echo "### Node (bun test)"
+            echo ""
+            echo "| Package | Line Coverage | Status |"
+            echo "|---------|---------------|--------|"
+            if [ -s "$node_file" ]; then
+              cat "$node_file"
             else
-              echo ":white_check_mark: **All packages meet the ${threshold}% coverage threshold.**" >> coverage-report.md
+              echo "| _(no data)_ | — | — |"
             fi
-            echo "" >> coverage-report.md
-            echo "_Browser coverage is informational only (subset of tests). Node coverage enforces the ${threshold}% threshold._" >> coverage-report.md
+            echo ""
+
+            if [ "$found_any" = false ]; then
+              echo ":x: **No coverage artifacts found.** Ensure test jobs upload lcov reports."
+            elif [ "$failed" = true ]; then
+              echo ":x: **Coverage check failed**: one or more packages are below the ${threshold}% threshold."
+            else
+              echo ":white_check_mark: **All packages meet the ${threshold}% coverage threshold.**"
+            fi
+            echo ""
+
+            # Browser table: one row per package, one column per browser.
+            if [ -s "$browser_tsv" ]; then
+              echo "<details>"
+              echo "<summary>Browser Coverage (informational)</summary>"
+              echo ""
+              cr_icon='![Chromium](https://img.shields.io/badge/-Chromium-4285F4?logo=googlechrome&logoColor=white&style=flat-square)'
+              ff_icon='![Firefox](https://img.shields.io/badge/-Firefox-FF7139?logo=firefox&logoColor=white&style=flat-square)'
+              wk_icon='![WebKit](https://img.shields.io/badge/-WebKit-006CFF?logo=safari&logoColor=white&style=flat-square)'
+              echo "| Package | $cr_icon | $ff_icon | $wk_icon |"
+              echo "|---------|----------|---------|--------|"
+
+              # Collect unique package names (sorted) from the TSV
+              sort -t$'\t' -k1,1 "$browser_tsv" -o "$browser_tsv"
+              pkg_list=$(cut -f1 "$browser_tsv" | sort -u)
+
+              for pkg in $pkg_list; do
+                chromium_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="chromium" {print $3}' "$browser_tsv")
+                firefox_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="firefox" {print $3}' "$browser_tsv")
+                webkit_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="webkit" {print $3}' "$browser_tsv")
+                cr_cell="${chromium_cov:+${chromium_cov}%}" ; cr_cell="${cr_cell:-—}"
+                ff_cell="${firefox_cov:+${firefox_cov}%}" ; ff_cell="${ff_cell:-—}"
+                wk_cell="${webkit_cov:+${webkit_cov}%}"   ; wk_cell="${wk_cell:-—}"
+                echo "| $pkg | $cr_cell | $ff_cell | $wk_cell |"
+              done
+
+              echo ""
+              echo "_Browser coverage is informational only (subset of tests)._"
+              echo "_Node coverage enforces the ${threshold}% threshold._"
+              echo ""
+              echo "</details>"
+            fi
+          } > coverage-report.md
+
+          # Clean up temp files
+          rm -f "$node_file" "$browser_tsv"
+
+          cat coverage-report.md >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$found_any" = false ]; then
+            echo "::error::No coverage artifacts found"
+            exit 1
           fi
-
-          cat coverage-report.md >> $GITHUB_STEP_SUMMARY
-
           if [ "$failed" = true ]; then
             exit 1
           fi
@@ -645,12 +738,39 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # Browser tests: run Vitest browser mode with Playwright (Chromium + Firefox + WebKit)
+  # Browser tests: run Vitest browser mode with Playwright.
+  #
+  # Two-dimensional matrix: shard (package group) × browser.  Each cell runs
+  # a single browser so (a) browsers execute in parallel and (b) coverage is
+  # collected per-browser, enabling the coverage job to report separate tables
+  # for Chromium, Firefox and WebKit.
+  #
+  # Trade-off: 9 jobs instead of 3, but each job only installs one Playwright
+  # browser (~20s) and runs ~1/3 the tests, so wall-clock time drops from
+  # ~3 min (old 3-shard, 3-browser sequential) to ~1 min.
   # ---------------------------------------------------------------------------
   test-browser:
-    name: 'Test: Browser'
+    name: 'Test: Browser (${{ matrix.shard.name }} / ${{ matrix.browser }})'
     runs-on: ubuntu-latest
+    timeout-minutes: 21
     needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          # Shard 1 — crypto: 25 browser test files
+          - name: crypto
+            packages: '@enbox/common @enbox/crypto'
+            coverage-dirs: common crypto
+          # Shard 2 — dwn-sdk-js: 25 browser test files
+          - name: dwn-sdk-js
+            packages: '@enbox/dwn-sdk-js'
+            coverage-dirs: dwn-sdk-js
+          # Shard 3 — remaining: dids(11) + browser(1) + agent(3) + api(1) = 16 files
+          - name: dids-agent-api
+            packages: '@enbox/dids @enbox/browser @enbox/agent @enbox/api'
+            coverage-dirs: dids browser agent api
+        browser: [chromium, firefox, webkit]
 
     steps:
       - name: Checkout repository
@@ -678,52 +798,94 @@ jobs:
           name: workspace-build
           path: packages
 
-      - name: Install Playwright browsers
-        # playwright@1.45.3 is pinned in root devDependencies to match the version
-        # resolved for @vitest/browser-playwright's peer dependency. This ensures
-        # the downloaded browser binaries match what vitest expects at runtime.
-        run: bunx playwright install --with-deps chromium firefox webkit
+      - name: Cache Playwright browser & system deps
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/playwright-apt-cache
+          # v3 suffix busts stale v1/v2 caches that included unrelated
+          # system .deb files (openjdk, libasound2, glib, etc.).
+          key: ${{ runner.os }}-playwright-v3-${{ matrix.browser }}-${{ hashFiles('package.json') }}
+
+      - name: Install Playwright system deps (from cache)
+        # On cache hit the .deb files are already saved in ~/playwright-apt-cache.
+        # Install them directly with dpkg — no network needed, takes ~5s.
+        # --force-all covers dependency issues, breaks/conflicts, and version
+        # skew between the cached .debs and the runner's pre-installed packages.
+        # This is safe: these are ephemeral CI runners, not production systems.
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: |
+          if [ -d ~/playwright-apt-cache ] && ls ~/playwright-apt-cache/*.deb 1>/dev/null 2>&1; then
+            echo "Installing $(ls ~/playwright-apt-cache/*.deb | wc -l) cached .deb packages"
+            sudo dpkg --force-all -i ~/playwright-apt-cache/*.deb || true
+          fi
+
+      - name: Install Playwright system deps (fresh)
+        # Most Playwright deps are already on the runner image. Firefox/WebKit
+        # need a handful of extra font packages (fonts-ipafont-gothic,
+        # fonts-wqy-zenhei, etc.) that are 3-7 MB each and download at
+        # ~50 KB/s from Azure apt mirrors — often stalling for minutes.
+        #
+        # We snapshot /var/cache/apt/archives before and after so we only
+        # cache the .deb files that Playwright actually installed — not the
+        # hundreds of pre-existing system packages.
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: |
+          ls /var/cache/apt/archives/*.deb 2>/dev/null | sort > /tmp/apt-before.txt || true
+          sudo apt-get update -qq
+          bunx playwright install-deps ${{ matrix.browser }}
+          mkdir -p ~/playwright-apt-cache
+          comm -13 /tmp/apt-before.txt <(ls /var/cache/apt/archives/*.deb 2>/dev/null | sort) \
+            | xargs -I{} cp {} ~/playwright-apt-cache/ 2>/dev/null || true
+          echo "Cached $(ls ~/playwright-apt-cache/*.deb 2>/dev/null | wc -l) Playwright .deb packages"
+        timeout-minutes: 15
+
+      - name: Install Playwright browser
+        # playwright@1.45.3 is pinned in root devDependencies to match the
+        # version resolved for @vitest/browser-playwright's peer dependency.
+        # On cache hit the binary is already present — this is a no-op.
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 3
+        run: bunx playwright install ${{ matrix.browser }}
 
       - name: Run browser tests with coverage
         id: browser-tests
         env:
           CI: true
+          BROWSER: ${{ matrix.browser }}
         # Coverage is collected even when some tests fail. Use continue-on-error
         # so the staging/upload steps always run, then re-check the exit code in
         # the final step to fail the job if tests actually broke.
         continue-on-error: true
         run: |
-          bun run --filter @enbox/common      test:browser:coverage
-          bun run --filter @enbox/crypto      test:browser:coverage
-          bun run --filter @enbox/dids        test:browser:coverage
-          bun run --filter @enbox/browser     test:browser:coverage
-          bun run --filter @enbox/dwn-sdk-js  test:browser:coverage
-          bun run --filter @enbox/agent       test:browser:coverage
-          bun run --filter @enbox/api         test:browser:coverage
+          exit_code=0
+          for pkg in ${{ matrix.shard.packages }}; do
+            bun run --filter "$pkg" test:browser:coverage || exit_code=$?
+          done
+          exit $exit_code
 
       - name: Stage browser coverage
         if: always()
         run: |
-          mkdir -p coverage-staging/common-browser coverage-staging/crypto-browser coverage-staging/dids-browser coverage-staging/browser-browser coverage-staging/dwn-sdk-js-browser coverage-staging/agent-browser coverage-staging/api-browser
-          cp packages/common/coverage-browser/lcov.info coverage-staging/common-browser/lcov.info 2>/dev/null || true
-          cp packages/crypto/coverage-browser/lcov.info coverage-staging/crypto-browser/lcov.info 2>/dev/null || true
-          cp packages/dids/coverage-browser/lcov.info coverage-staging/dids-browser/lcov.info 2>/dev/null || true
-          cp packages/browser/coverage-browser/lcov.info coverage-staging/browser-browser/lcov.info 2>/dev/null || true
-          cp packages/dwn-sdk-js/coverage-browser/lcov.info coverage-staging/dwn-sdk-js-browser/lcov.info 2>/dev/null || true
-          cp packages/agent/coverage-browser/lcov.info coverage-staging/agent-browser/lcov.info 2>/dev/null || true
-          cp packages/api/coverage-browser/lcov.info coverage-staging/api-browser/lcov.info 2>/dev/null || true
+          for dir in ${{ matrix.shard.coverage-dirs }}; do
+            mkdir -p "coverage-staging/${dir}-${{ matrix.browser }}"
+            cp "packages/${dir}/coverage-browser-${{ matrix.browser }}/lcov.info" \
+               "coverage-staging/${dir}-${{ matrix.browser }}/lcov.info" 2>/dev/null || true
+          done
 
       - name: Upload browser coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-browser
+          name: coverage-browser-${{ matrix.shard.name }}-${{ matrix.browser }}
           path: coverage-staging/
 
       - name: Fail if browser tests failed
         if: always() && steps.browser-tests.outcome == 'failure'
         run: |
-          echo "::error::Browser tests failed (coverage was still collected)"
+          echo "::error::Browser tests failed in shard '${{ matrix.shard.name }}' / ${{ matrix.browser }} (coverage was still collected)"
           exit 1
 
   # ---------------------------------------------------------------------------
@@ -733,6 +895,7 @@ jobs:
   ci-passed:
     name: CI Passed
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server, test-browser, coverage]
     if: always()
     steps:

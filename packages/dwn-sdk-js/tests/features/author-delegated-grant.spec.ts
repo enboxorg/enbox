@@ -1,7 +1,7 @@
 import type { DidResolver } from '@enbox/dids';
-import type { EventStream } from '../../src/types/subscriptions.js';
+import type { RecordsWriteMessage } from '../../src/types/records-types.js';
 import type { DataStore, MessageStore, PermissionScope, ResumableTaskStore, StateIndex } from '../../src/index.js';
-import type { RecordEvent, RecordsWriteMessage } from '../../src/types/records-types.js';
+import type { EventLog, SubscriptionMessage } from '../../src/types/subscriptions.js';
 
 import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' with { type: 'json' };
 import messageProtocolDefinition from '../vectors/protocol-definitions/message.json' with { type: 'json' };
@@ -17,7 +17,7 @@ import { PermissionGrant } from '../../src/protocols/permission-grant.js';
 import { Poller } from '../utils/poller.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { TestEventStream } from '../test-event-stream.js';
+import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { Time } from '../../src/utils/time.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -32,7 +32,7 @@ export function testAuthorDelegatedGrant(): void {
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
     let stateIndex: StateIndex;
-    let eventStream: EventStream;
+    let eventLog: EventLog;
     let dwn: Dwn;
 
     // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
@@ -45,9 +45,9 @@ export function testAuthorDelegatedGrant(): void {
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
       stateIndex = stores.stateIndex;
-      eventStream = TestEventStream.get();
+      eventLog = TestEventLog.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -209,6 +209,8 @@ export function testAuthorDelegatedGrant(): void {
         const recordsWrite = await RecordsWrite.create({
           signer         : Jws.createSigner(bob),
           delegatedGrant : grantToBob.dataEncodedMessage,
+          protocol       : 'http://test-protocol.xyz',
+          protocolPath   : 'testRecord',
           dataFormat     : 'application/octet-stream',
           data           : TestDataGenerator.randomBytes(10),
         });
@@ -243,6 +245,8 @@ export function testAuthorDelegatedGrant(): void {
         const recordsWrite = await RecordsWrite.create({
           signer         : Jws.createSigner(bob),
           delegatedGrant : grantToBob.dataEncodedMessage,
+          protocol       : 'http://test-protocol.xyz',
+          protocolPath   : 'testRecord',
           dataFormat     : 'application/octet-stream',
           data           : TestDataGenerator.randomBytes(10),
         });
@@ -595,10 +599,11 @@ export function testAuthorDelegatedGrant(): void {
 
       // Create a handler to set or delete the chat record ID in the subscription set depending on the interface method
       const subscriptionChatRecords:Set<string> = new Set();
-      const captureChatRecords = async (event: RecordEvent): Promise<void> => {
-        const { message } = event;
-        if (message.descriptor.method === DwnMethodName.Delete) {
-          const recordId = message.descriptor.recordId;
+      const captureChatRecords = async (msg: SubscriptionMessage): Promise<void> => {
+        if (msg.type !== 'event') { return; }
+        const { message } = msg.event;
+        if ((message as any).descriptor.method === DwnMethodName.Delete) {
+          const recordId = (message as any).descriptor.recordId;
           subscriptionChatRecords.delete(recordId);
         } else {
           const recordId = (message as RecordsWriteMessage).recordId;
@@ -1500,7 +1505,7 @@ export function testAuthorDelegatedGrant(): void {
       // 3. Alice revokes the grant
       const permissionRevoke = await PermissionsProtocol.createRevocation({
         signer : Jws.createSigner(alice),
-        grant  : await PermissionGrant.parse(deviceXGrant.dataEncodedMessage),
+        grant  : PermissionGrant.parse(deviceXGrant.dataEncodedMessage),
       });
       const revocationDataStream = DataStream.fromBytes(permissionRevoke.permissionRevocationBytes);
       const permissionRevokeReply = await dwn.processMessage(alice.did, permissionRevoke.recordsWrite.message, { dataStream: revocationDataStream });

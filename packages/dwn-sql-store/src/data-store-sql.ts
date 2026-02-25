@@ -1,10 +1,27 @@
 import type { Dialect } from './dialect/dialect.js';
 import type { DwnDatabaseType } from './types.js';
+import type { ImportResult } from 'ipfs-unixfs-importer';
 import type { DataStore, DataStoreGetResult, DataStorePutResult } from '@enbox/dwn-sdk-js';
 
+import { BlockstoreSql } from './blockstore-sql.js';
+import { CID } from 'multiformats';
 import { DataStream } from '@enbox/dwn-sdk-js';
+import { exporter } from 'ipfs-unixfs-exporter';
+import { importer } from 'ipfs-unixfs-importer';
 import { Kysely } from 'kysely';
 
+/**
+ * SQL-backed implementation of {@link DataStore} with content-addressed
+ * deduplication.
+ *
+ * Data is stored as DAG-PB blocks (via `ipfs-unixfs-importer`) in the
+ * `dataBlocks` table, keyed by `(rootDataCid, blockCid)`. A separate
+ * `dataRefs` table maps `(tenant, recordId, dataCid)` to content. When
+ * multiple records share the same `dataCid`, blocks are stored only once.
+ *
+ * On `delete()`, the ref is removed and blocks are garbage-collected only
+ * when the last ref to a `dataCid` is gone.
+ */
 export class DataStoreSql implements DataStore {
   #dialect: Dialect;
   #db: Kysely<DwnDatabaseType> | null = null;
@@ -13,138 +30,250 @@ export class DataStoreSql implements DataStore {
     this.#dialect = dialect;
   }
 
-  async open(): Promise<void> {
+  public async open(): Promise<void> {
     if (this.#db) {
       return;
     }
 
     this.#db = new Kysely<DwnDatabaseType>({ dialect: this.#dialect });
 
-    // if table already exists, there is no more things todo
-    const tableName = 'dataStore';
-    const tableExists = await this.#dialect.hasTable(this.#db, tableName);
-    if (tableExists) {
-      return;
-    }
-
-    // else create the table and corresponding indexes
-
-    let table = this.#db.schema
-      .createTable(tableName)
-      .ifNotExists()// kept to show supported by all dialects in contrast to ifNotExists() below, though not needed due to hasTable() check above
-      .addColumn('tenant', 'varchar(255)', (col) => col.notNull())
-      .addColumn('recordId', 'varchar(60)', (col) => col.notNull())
-      .addColumn('dataCid', 'varchar(60)', (col) => col.notNull());
-
-    // Add columns that have dialect-specific constraints
-    table = this.#dialect.addAutoIncrementingColumn(table, 'id', (col) => col.primaryKey());
-    table = this.#dialect.addBlobColumn(table, 'data', (col) => col.notNull());
-    await table.execute();
-
-    // Add index for efficient lookups.
-    await this.#db.schema
-      .createIndex('tenant_recordId_dataCid')
-      // .ifNotExists() // intentionally kept commented out code to show that it is not supported by all dialects (ie. MySQL)
-      .on(tableName)
-      .columns(['tenant', 'recordId', 'dataCid'])
-      .unique()
-      .execute();
+    // Create tables if they don't exist. In production the MigrationRunner
+    // creates these before open() is called; this fallback handles standalone
+    // usage (tests, plugins) that bypass the migration runner.
+    await this.#ensureTables();
   }
 
-  async close(): Promise<void> {
+  public async close(): Promise<void> {
     await this.#db?.destroy();
     this.#db = null;
   }
 
-  async get(
+  public async get(
     tenant: string,
     recordId: string,
-    dataCid: string
+    dataCid: string,
   ): Promise<DataStoreGetResult | undefined> {
-    if (!this.#db) {
-      throw new Error(
-        'Connection to database not open. Call `open` before using `get`.'
-      );
-    }
+    const db = this.#getDb('get');
 
-    const result = await this.#db
-      .selectFrom('dataStore')
-      .selectAll()
+    // Look up the reference to confirm this tenant+record has this data.
+    const ref = await db
+      .selectFrom('dataRefs')
+      .select('dataSize')
       .where('tenant', '=', tenant)
       .where('recordId', '=', recordId)
       .where('dataCid', '=', dataCid)
       .executeTakeFirst();
 
-    if (!result) {
+    if (!ref) {
       return undefined;
     }
 
-    const dataBytes = new Uint8Array(result.data);
-    return {
-      dataSize   : result.data.length,
-      dataStream : new ReadableStream<Uint8Array>({
-        start(controller): void {
-          controller.enqueue(dataBytes);
+    const blockstore = new BlockstoreSql(db, dataCid);
+
+    // Use ipfs-unixfs-exporter to stream data from DAG-PB blocks.
+    const dataDagRoot = await exporter(dataCid, blockstore);
+    const contentIterator = dataDagRoot.content();
+
+    const dataStream = new ReadableStream<Uint8Array>({
+      async pull(controller): Promise<void> {
+        const result = await contentIterator.next();
+        if (result.done) {
           controller.close();
+        } else {
+          controller.enqueue(result.value);
         }
-      }),
+      },
+    });
+
+    return {
+      dataSize: Number(ref.dataSize),
+      dataStream,
     };
   }
 
-  async put(
+  public async put(
     tenant: string,
     recordId: string,
     dataCid: string,
-    dataStream: ReadableStream<Uint8Array>
+    dataStream: ReadableStream<Uint8Array>,
   ): Promise<DataStorePutResult> {
-    if (!this.#db) {
-      throw new Error(
-        'Connection to database not open. Call `open` before using `put`.'
-      );
+    const db = this.#getDb('put');
+
+    // Check if this exact ref already exists (idempotent put).
+    const existingRef = await db
+      .selectFrom('dataRefs')
+      .select('dataSize')
+      .where('tenant', '=', tenant)
+      .where('recordId', '=', recordId)
+      .where('dataCid', '=', dataCid)
+      .executeTakeFirst();
+
+    if (existingRef) {
+      // Drain the stream — caller expects it to be consumed.
+      await DataStream.toBytes(dataStream);
+      return { dataSize: Number(existingRef.dataSize) };
     }
 
-    const bytes = await DataStream.toBytes(dataStream);
-    const data = Buffer.from(bytes);
+    // Check if blocks for this dataCid already exist (dedup path).
+    const blockstore = new BlockstoreSql(db, dataCid);
+    const rootCid = CID.parse(dataCid);
+    const blocksExist = await blockstore.has(rootCid);
 
-    await this.#db
-      .insertInto('dataStore')
-      .values({ tenant, recordId, dataCid, data })
-      .executeTakeFirstOrThrow();
+    let dataSize: number;
 
-    return {
-      dataSize: bytes.length
-    };
+    if (blocksExist) {
+      // Blocks already stored by a previous ref with the same dataCid.
+      // Get the data size from that existing ref.
+      const otherRef = await db
+        .selectFrom('dataRefs')
+        .select('dataSize')
+        .where('dataCid', '=', dataCid)
+        .executeTakeFirst();
+
+      if (otherRef) {
+        dataSize = Number(otherRef.dataSize);
+        // Drain the stream — caller expects it to be consumed.
+        await DataStream.toBytes(dataStream);
+      } else {
+        // Edge case: blocks exist but no ref (interrupted previous put).
+        // Count bytes without full buffering.
+        dataSize = await DataStoreSql.#countStreamBytes(dataStream);
+      }
+    } else {
+      // New data — clean up any partial blocks from interrupted imports,
+      // then chunk the data into DAG-PB blocks via the importer.
+      await blockstore.clear();
+
+      const asyncDataBlocks = importer(
+        [{ content: DataStream.asAsyncIterable(dataStream) }],
+        blockstore,
+        { cidVersion: 1 },
+      );
+
+      // The last block yielded contains the root CID and file size info.
+      let dataDagRoot!: ImportResult;
+      for await (dataDagRoot of asyncDataBlocks) { ; }
+
+      dataSize = Number(dataDagRoot.unixfs?.fileSize() ?? dataDagRoot.size);
+    }
+
+    // Insert the reference.
+    await db
+      .insertInto('dataRefs')
+      .values({ tenant, recordId, dataCid, dataSize })
+      .execute();
+
+    return { dataSize };
   }
 
-  async delete(
+  public async delete(
     tenant: string,
     recordId: string,
-    dataCid: string
+    dataCid: string,
   ): Promise<void> {
-    if (!this.#db) {
-      throw new Error(
-        'Connection to database not open. Call `open` before using `delete`.'
-      );
-    }
+    const db = this.#getDb('delete');
 
-    await this.#db
-      .deleteFrom('dataStore')
+    // Remove the reference.
+    await db
+      .deleteFrom('dataRefs')
       .where('tenant', '=', tenant)
       .where('recordId', '=', recordId)
       .where('dataCid', '=', dataCid)
       .execute();
+
+    // Garbage-collect blocks if no more refs point to this dataCid.
+    const remaining = await db
+      .selectFrom('dataRefs')
+      .select('dataCid')
+      .where('dataCid', '=', dataCid)
+      .executeTakeFirst();
+
+    if (!remaining) {
+      await db
+        .deleteFrom('dataBlocks')
+        .where('rootDataCid', '=', dataCid)
+        .execute();
+    }
   }
 
-  async clear(): Promise<void> {
+  public async clear(): Promise<void> {
+    const db = this.#getDb('clear');
+
+    await db.deleteFrom('dataRefs').execute();
+    await db.deleteFrom('dataBlocks').execute();
+  }
+
+  // ─── Private helpers ────────────────────────────────────────────────
+
+  /**
+   * Returns the open database instance, or throws if not yet opened.
+   */
+  #getDb(method: string): Kysely<DwnDatabaseType> {
     if (!this.#db) {
       throw new Error(
-        'Connection to database not open. Call `open` before using `clear`.'
+        `Connection to database not open. Call \`open\` before using \`${method}\`.`
       );
     }
-
-    await this.#db
-      .deleteFrom('dataStore')
-      .execute();
+    return this.#db;
   }
 
+  /**
+   * Creates the `dataRefs` and `dataBlocks` tables if they don't already exist.
+   * This is a fallback for standalone usage without the MigrationRunner.
+   */
+  async #ensureTables(): Promise<void> {
+    const db = this.#db!;
+
+    // ─── dataRefs ─────────────────────────────────────────────────────
+    if (!(await this.#dialect.hasTable(db, 'dataRefs'))) {
+      await db.schema
+        .createTable('dataRefs')
+        .ifNotExists()
+        .addColumn('tenant', 'varchar(255)', (col) => col.notNull())
+        .addColumn('recordId', 'varchar(60)', (col) => col.notNull())
+        .addColumn('dataCid', 'varchar(60)', (col) => col.notNull())
+        .addColumn('dataSize', 'bigint', (col) => col.notNull())
+        .execute();
+
+      await db.schema.createIndex('index_dataRefs_tenant_recordId_dataCid')
+        .on('dataRefs').columns(['tenant', 'recordId', 'dataCid']).unique().execute();
+
+      await db.schema.createIndex('index_dataRefs_dataCid')
+        .on('dataRefs').column('dataCid').execute();
+
+      await db.schema.createIndex('index_dataRefs_tenant')
+        .on('dataRefs').column('tenant').execute();
+    }
+
+    // ─── dataBlocks ───────────────────────────────────────────────────
+    if (!(await this.#dialect.hasTable(db, 'dataBlocks'))) {
+      let table = db.schema
+        .createTable('dataBlocks')
+        .ifNotExists()
+        .addColumn('rootDataCid', 'varchar(60)', (col) => col.notNull())
+        .addColumn('blockCid', 'varchar(60)', (col) => col.notNull());
+
+      table = this.#dialect.addBlobColumn(table, 'data', (col) => col.notNull());
+      await table.execute();
+
+      await db.schema.createIndex('index_dataBlocks_rootDataCid_blockCid')
+        .on('dataBlocks').columns(['rootDataCid', 'blockCid']).unique().execute();
+    }
+  }
+
+  /**
+   * Counts the number of bytes in a stream without buffering the full content.
+   */
+  static async #countStreamBytes(stream: ReadableStream<Uint8Array>): Promise<number> {
+    const reader = stream.getReader();
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      size += value.byteLength;
+    }
+    return size;
+  }
 }

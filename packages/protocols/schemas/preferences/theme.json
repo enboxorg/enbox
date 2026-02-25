@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://identity.foundation/schemas/preferences/theme",
+  "title": "ThemeData",
+  "description": "Data shape for theme preferences.",
+  "type": "object",
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["light", "dark", "system"],
+      "description": "The theme mode."
+    },
+    "accentColor": {
+      "type": "string",
+      "description": "An optional accent color."
+    },
+    "fontSize": {
+      "type": "string",
+      "enum": ["small", "medium", "large"],
+      "description": "An optional font size preference."
+    }
+  },
+  "required": ["mode"],
+  "additionalProperties": false
+}

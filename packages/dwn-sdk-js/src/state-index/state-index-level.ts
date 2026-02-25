@@ -83,7 +83,8 @@ export class StateIndexLevel implements StateIndex {
     const globalSmt = await this.getGlobalTree(tenant);
     await globalSmt.insert(messageCid);
 
-    // If the message is associated with a protocol, insert into the protocol-scoped tree
+    // Insert into the protocol-scoped tree if the message has a protocol (e.g. RecordsWrite).
+    // Non-record messages like ProtocolsConfigure do not have a protocol.
     const protocol = indexes.protocol as string | undefined;
     if (protocol !== undefined) {
       const protoSmt = await this.getProtocolTree(tenant, protocol);
@@ -104,7 +105,7 @@ export class StateIndexLevel implements StateIndex {
       // Delete from global tree
       await globalSmt.delete(messageCid);
 
-      // Delete from protocol tree if applicable
+      // Delete from protocol tree if the message had a protocol
       if (indexes !== undefined) {
         const protocol = indexes.protocol as string | undefined;
         if (protocol !== undefined) {
@@ -204,11 +205,8 @@ export class StateIndexLevel implements StateIndex {
    */
   private async storeIndexes(tenant: string, messageCid: string, indexes: KeyValues): Promise<void> {
     const metaPartition = await this.getMetaPartition(tenant);
-    // Only store the minimal set of indexes needed for deletion (protocol)
-    const minimalIndexes: KeyValues = {};
-    if (indexes.protocol !== undefined) {
-      minimalIndexes.protocol = indexes.protocol;
-    }
+    // Store the protocol index needed for deletion
+    const minimalIndexes: KeyValues = { protocol: indexes.protocol };
     await metaPartition.put(messageCid, JSON.stringify(minimalIndexes));
   }
 

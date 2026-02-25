@@ -139,30 +139,14 @@ export class Records {
     const contextId = recordsWriteMessage.contextId;
 
     let fullDerivationPath;
-    if (keyDerivationScheme === KeyDerivationScheme.DataFormats) {
-      fullDerivationPath = Records.constructKeyDerivationPathUsingDataFormatsScheme(descriptor.dataFormat);
-    } else if (keyDerivationScheme === KeyDerivationScheme.ProtocolPath) {
+    if (keyDerivationScheme === KeyDerivationScheme.ProtocolPath) {
       fullDerivationPath = Records.constructKeyDerivationPathUsingProtocolPathScheme(descriptor);
-    } else if (keyDerivationScheme === KeyDerivationScheme.ProtocolContext) {
-      fullDerivationPath = Records.constructKeyDerivationPathUsingProtocolContextScheme(contextId);
     } else {
-      // `schemas` scheme
-      fullDerivationPath = Records.constructKeyDerivationPathUsingSchemasScheme(descriptor.schema);
+      // `protocolContext` scheme
+      fullDerivationPath = Records.constructKeyDerivationPathUsingProtocolContextScheme(contextId);
     }
 
     return fullDerivationPath;
-  }
-
-  /**
-   * Constructs the full key derivation path using `dataFormats` scheme.
-   * The derivation path is always `["dataFormats", "<mime-type>"]` regardless of whether
-   * a schema is present. This matches the spec: keys are derived purely from the MIME type.
-   */
-  public static constructKeyDerivationPathUsingDataFormatsScheme(dataFormat: string): string[] {
-    return [
-      KeyDerivationScheme.DataFormats,
-      dataFormat
-    ];
   }
 
   /**
@@ -174,16 +158,7 @@ export class Records {
    * its children (composing protocol) use different protocol URIs and thus different key trees.
    */
   public static constructKeyDerivationPathUsingProtocolPathScheme(descriptor: RecordsWriteDescriptor): string[] {
-    // ensure `protocol` is defined
-    // NOTE: no need to check `protocolPath` and `contextId` because earlier code ensures that if `protocol` is defined, those are defined also
-    if (descriptor.protocol === undefined) {
-      throw new DwnError(
-        DwnErrorCode.RecordsProtocolPathDerivationSchemeMissingProtocol,
-        'Unable to construct key derivation path using `protocols` scheme because `protocol` is missing.'
-      );
-    }
-
-    const protocolPathSegments = descriptor.protocolPath!.split('/');
+    const protocolPathSegments = descriptor.protocolPath.split('/');
     const fullDerivationPath = [
       KeyDerivationScheme.ProtocolPath,
       descriptor.protocol,
@@ -203,39 +178,13 @@ export class Records {
    * a shared context (e.g., thread participants can decrypt messages from both the threads protocol
    * and composing protocols that attach to those threads).
    */
-  public static constructKeyDerivationPathUsingProtocolContextScheme(contextId: string | undefined): string[] {
-    if (contextId === undefined) {
-      throw new DwnError(
-        DwnErrorCode.RecordsProtocolContextDerivationSchemeMissingContextId,
-        'Unable to construct key derivation path using `protocolContext` scheme because `contextId` is missing.'
-      );
-    }
-
+  public static constructKeyDerivationPathUsingProtocolContextScheme(contextId: string): string[] {
     // TODO: Extend key derivation support to include the full contextId (https://github.com/enboxorg/enbox/issues/99)
     const firstContextSegment = contextId.split('/')[0];
 
     const fullDerivationPath = [
       KeyDerivationScheme.ProtocolContext,
       firstContextSegment
-    ];
-
-    return fullDerivationPath;
-  }
-
-  /**
-   * Constructs the full key derivation path using `schemas` scheme.
-   */
-  public static constructKeyDerivationPathUsingSchemasScheme( schema: string | undefined ): string[] {
-    if (schema === undefined) {
-      throw new DwnError(
-        DwnErrorCode.RecordsSchemasDerivationSchemeMissingSchema,
-        'Unable to construct key derivation path using `schemas` scheme because `schema` is missing.'
-      );
-    }
-
-    const fullDerivationPath = [
-      KeyDerivationScheme.Schemas,
-      schema
     ];
 
     return fullDerivationPath;
@@ -456,7 +405,7 @@ export class Records {
     if (authorDelegatedGrantDefined) {
       const delegatedGrant = message.authorization!.authorDelegatedGrant!;
 
-      const permissionGrant = await PermissionGrant.parse(delegatedGrant);
+      const permissionGrant = PermissionGrant.parse(delegatedGrant);
       if (permissionGrant.delegated !== true) {
         throw new DwnError(
           DwnErrorCode.RecordsAuthorDelegatedGrantNotADelegatedGrant,
@@ -499,7 +448,7 @@ export class Records {
 
     if (ownerDelegatedGrantDefined) {
       const delegatedGrant = message.authorization!.ownerDelegatedGrant!;
-      const permissionGrant = await PermissionGrant.parse(delegatedGrant);
+      const permissionGrant = PermissionGrant.parse(delegatedGrant);
 
       if (permissionGrant.delegated !== true) {
         throw new DwnError(

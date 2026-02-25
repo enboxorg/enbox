@@ -37,6 +37,7 @@ export enum JsonRpcErrorCodes {
   Unauthorized = -50401, // equivalent to HTTP Status 401
   Forbidden = -50403, // equivalent to HTTP Status 403
   Conflict = -50409, // equivalent to HTTP Status 409
+  TooManyRequests = -50429, // equivalent to HTTP Status 429
 }
 
 export type JsonRpcResponse = JsonRpcSuccessResponse | JsonRpcErrorResponse;
@@ -116,6 +117,22 @@ export const createJsonRpcSubscriptionRequest = (
     subscription : {
       id: subscriptionId ?? null,
     }
+  };
+};
+
+/**
+ * Creates a JSON-RPC notification to acknowledge receipt of subscription events
+ * up to the given cursor. No `id` is set because no response is expected.
+ */
+export const createJsonRpcAck = (
+  subscriptionId: JsonRpcId,
+  cursor: string,
+): JsonRpcRequest => {
+  return {
+    jsonrpc      : '2.0',
+    method       : 'rpc.ack',
+    params       : { cursor },
+    subscription : { id: subscriptionId },
   };
 };
 

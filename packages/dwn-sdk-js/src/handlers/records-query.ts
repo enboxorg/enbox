@@ -1,9 +1,8 @@
-import type { DataStore } from '../types/data-store.js';
-import type { DidResolver } from '@enbox/dids';
+import type { CoreProtocolRegistry } from '../core/core-protocol.js';
 import type { MessageStore } from '../types//message-store.js';
-import type { MethodHandler } from '../types/method-handler.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { GenericMessage, MessageSort } from '../types/message-types.js';
+import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsQueryMessage, RecordsQueryReply, RecordsQueryReplyEntry } from '../types/records-types.js';
 
 import { authenticate } from '../core/auth.js';
@@ -19,7 +18,7 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 
 export class RecordsQueryHandler implements MethodHandler {
 
-  constructor(private didResolver: DidResolver, private messageStore: MessageStore, private dataStore: DataStore) { }
+  constructor(private deps: HandlerDependencies) { }
 
   public async handle({
     tenant,
@@ -42,9 +41,9 @@ export class RecordsQueryHandler implements MethodHandler {
     } else {
       // authentication and authorization
       try {
-        await authenticate(message.authorization!, this.didResolver);
+        await authenticate(message.authorization!, this.deps.didResolver);
 
-        await RecordsQueryHandler.authorizeRecordsQuery(tenant, recordsQuery, this.messageStore);
+        await RecordsQueryHandler.authorizeRecordsQuery(tenant, recordsQuery, this.deps.messageStore, this.deps.coreProtocols);
       } catch (e) {
         return messageReplyFromError(e, 401);
       }
@@ -63,7 +62,7 @@ export class RecordsQueryHandler implements MethodHandler {
     // attach initial write if returned RecordsWrite is not initial write
     for (const recordsWrite of recordsWrites) {
       if (!await RecordsWrite.isInitialWrite(recordsWrite)) {
-        const initialWriteQueryResult = await this.messageStore.query(
+        const initialWriteQueryResult = await this.deps.messageStore.query(
           tenant,
           [{ recordId: recordsWrite.recordId, isLatestBaseState: false, method: DwnMethodName.Write }]
         );
@@ -123,7 +122,7 @@ export class RecordsQueryHandler implements MethodHandler {
     };
 
     const messageSort = this.convertDateSort(dateSort);
-    return this.messageStore.query(tenant, [ queryFilter ], messageSort, pagination);
+    return this.deps.messageStore.query(tenant, [ queryFilter ], messageSort, pagination);
   }
 
   /**
@@ -169,7 +168,7 @@ export class RecordsQueryHandler implements MethodHandler {
     }
 
     const messageSort = this.convertDateSort(dateSort);
-    return this.messageStore.query(tenant, filters, messageSort, pagination );
+    return this.deps.messageStore.query(tenant, filters, messageSort, pagination );
   }
 
   /**
@@ -181,7 +180,7 @@ export class RecordsQueryHandler implements MethodHandler {
     const { dateSort, pagination } = recordsQuery.message.descriptor;
     const filter = RecordsQueryHandler.buildPublishedRecordsFilter(recordsQuery);
     const messageSort = this.convertDateSort(dateSort);
-    return this.messageStore.query(tenant, [ filter ], messageSort, pagination);
+    return this.deps.messageStore.query(tenant, [ filter ], messageSort, pagination);
   }
 
   private static buildPublishedRecordsFilter(recordsQuery: RecordsQuery): Filter {
@@ -249,7 +248,8 @@ export class RecordsQueryHandler implements MethodHandler {
   private static async authorizeRecordsQuery(
     tenant: string,
     recordsQuery: RecordsQuery,
-    messageStore: MessageStore
+    messageStore: MessageStore,
+    coreProtocols?: CoreProtocolRegistry,
   ): Promise<void> {
 
     if (Message.isSignedByAuthorDelegate(recordsQuery.message)) {
@@ -260,7 +260,7 @@ export class RecordsQueryHandler implements MethodHandler {
     // this is because we dynamically filter out records that the caller is not authorized to see.
     // Currently only run protocol authorization if message deliberately invokes a protocol role.
     if (Records.shouldProtocolAuthorize(recordsQuery.signaturePayload!)) {
-      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsQuery, messageStore);
+      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsQuery, messageStore, coreProtocols);
     }
   }
 }

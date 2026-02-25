@@ -5,6 +5,23 @@ import { defineConfig } from 'vitest/config';
 
 const isCI = !!process.env.CI;
 
+// When BROWSER is set (e.g. by CI matrix), run only that browser and write
+// coverage to a per-browser directory.  Otherwise run all browsers with a
+// single merged coverage directory (the local-dev default).
+const singleBrowser = process.env.BROWSER as 'chromium' | 'firefox' | 'webkit' | undefined;
+
+const instances = singleBrowser
+  ? [{ browser: singleBrowser }]
+  : [
+    { browser: 'chromium' as const },
+    { browser: 'firefox' as const },
+    ...(isCI ? [{ browser: 'webkit' as const }] : []),
+  ];
+
+const coverageDir = singleBrowser
+  ? `./coverage-browser-${singleBrowser}`
+  : './coverage-browser';
+
 export default defineConfig({
   define: {
     'process.env' : '({})',
@@ -13,22 +30,55 @@ export default defineConfig({
   resolve: {
     alias: {
       'bun:test' : resolve(__dirname, '../../testing/bun-test-shim.ts'),
-      // Polyfill Node events module for browser (used by EventEmitterStream)
+      // Polyfill Node events module for transitive dependencies that may use it.
+      // EventEmitterStream now uses mitt directly, but browser-level or other
+      // packages in the dependency tree may still reference Node's events module.
       'events'   : 'eventemitter3',
     },
   },
   optimizeDeps: {
-    // Pre-bundle CJS dependencies so Vite converts them to ESM upfront.
-    // Without explicit inclusion, Vite may discover these mid-test-run and
-    // trigger an optimizeDeps restart. Chromium and WebKit handle restarts
-    // gracefully, but Firefox's strict ESM loader crashes with
-    // "error loading dynamically imported module" — causing flaky CI failures.
+    // Disable automatic dependency discovery so Vite NEVER restarts the
+    // optimizer mid-test-run. When Vite discovers an un-pre-bundled CJS dep
+    // at runtime it restarts the optimizer; Chromium/WebKit handle restarts
+    // gracefully but Firefox's strict ESM loader crashes with
+    // "error loading dynamically imported module". This was the #1 source
+    // of flaky Firefox CI failures (~14% of runs, random test file each time).
     //
-    // Only list packages that are (a) CJS or mixed-format AND (b) resolvable
-    // from this package's node_modules. Entries that can't be resolved produce
-    // "Failed to resolve dependency" warnings and are silently skipped.
+    // With noDiscovery the optimizer only processes the explicit list below.
+    // If a CJS dep is missing, the failure is immediate and deterministic
+    // (not flaky), making it trivial to add the missing entry.
+    noDiscovery: true,
     include: [
-      // noble — CJS format, direct deps of @enbox/dwn-sdk-js
+      // --- CJS packages imported directly from src/ or tests/ ---
+      'abstract-level',
+      'browser-level',
+      'ajv',
+      'ajv/dist/2020.js',
+      'ajv/dist/runtime/ucs2length.js',
+      'eventemitter3',
+      'interface-store',
+      'level',
+      'lodash',
+      'lodash/isPlainObject.js',
+      'mockdate',
+      'ms',
+      'sinon',
+      'uuid',
+
+      // --- CJS transitive deps discovered via noDiscovery testing ---
+      // ipfs / blockstore packages pull in CJS deps (err-code, etc.)
+      'blockstore-core',
+      'ipfs-unixfs-importer',
+      'ipfs-unixfs-exporter',
+
+      // @isaacs/ttlcache — CJS; via @enbox/crypto -> @enbox/common.
+      // Use Vite's nested-dep `>` syntax to resolve through workspace symlinks.
+      '@enbox/crypto > @enbox/common > @isaacs/ttlcache',
+
+      // --- Dual-format packages (CJS default, ESM via exports) ---
+      // Pre-bundling these avoids edge cases where Vite picks the CJS entry.
+      'mitt',
+      '@js-temporal/polyfill',
       '@noble/ciphers/aes',
       '@noble/ciphers/chacha',
       '@noble/ciphers/crypto',
@@ -40,70 +90,87 @@ export default defineConfig({
       '@noble/curves/secp256k1',
       '@noble/ed25519',
       '@noble/secp256k1',
-      // CJS / mixed-format packages
-      'ajv',
-      'ajv/dist/2020.js',
-      'eventemitter3',
-      'level',
-      'lodash',
-      'lodash/isPlainObject.js',
       'lru-cache',
-      'ms',
-      'sinon',
       'ulidx',
+
+      // --- Vitest coverage provider (loaded in-browser by the test runner) ---
+      '@vitest/coverage-istanbul',
     ],
-    // Force Vite to hold the first optimization pass until ALL static imports
-    // from test entry points have been crawled. This prevents the mid-run
-    // discovery restarts that crash Firefox.
     holdUntilCrawlEnd: true,
   },
   test: {
-    // Pure-logic and utility tests that do not depend on LevelDB stores.
-    // Tests using TestStores are excluded (they instantiate Level-backed stores that
-    // require IndexedDB transactions which are more complex in Vitest browser mode).
+    // Run test files sequentially. Multiple files (aggregator.spec.ts,
+    // permissions.spec.ts) share IndexedDB state via the TestStores singleton.
+    // Parallel execution causes clear() in one file to wipe data mid-test in
+    // another, producing intermittent 400s and missing results — especially in
+    // Firefox where IndexedDB transaction scheduling differs from Chromium.
+    fileParallelism: false,
+    // Browser-compatible tests. Pure-logic tests run individually; the 29
+    // store-dependent handler/feature/scenario tests run via the TestSuite
+    // orchestrator which injects IndexedDB-backed stores (via level's browser field).
     include: [
-      'tests/utils/url.spec.ts',
-      'tests/utils/time.spec.ts',
-      'tests/utils/object.spec.ts',
-      'tests/utils/memory-cache.spec.ts',
-      'tests/utils/jws.spec.ts',
-      'tests/utils/hd-key.spec.ts',
-      'tests/utils/filters.spec.ts',
-      'tests/utils/secp256k1.spec.ts',
-      'tests/utils/secp256r1.spec.ts',
+      'tests/utils/cid.spec.ts',
+      // data-stream.spec.ts excluded: its 500KB×3 stream duplication test exceeds
+      // the 15s timeout on WebKit in CI (~25s). DataStream is still covered
+      // transitively by cid.spec.ts and the interfaces/ tests.
       'tests/utils/encryption.spec.ts',
       'tests/utils/encryption-callbacks.spec.ts',
+      'tests/utils/filters.spec.ts',
+      'tests/utils/hd-key.spec.ts',
+      'tests/utils/jws.spec.ts',
+      'tests/utils/memory-cache.spec.ts',
+      'tests/utils/messages.spec.ts',
+      'tests/utils/object.spec.ts',
+      'tests/utils/private-key-signer.spec.ts',
+      'tests/utils/records.spec.ts',
+      'tests/utils/secp256k1.spec.ts',
+      'tests/utils/secp256r1.spec.ts',
+      'tests/utils/time.spec.ts',
+      'tests/utils/url.spec.ts',
       'tests/validation/**/*.spec.ts',
       'tests/core/auth.spec.ts',
       'tests/core/message-reply.spec.ts',
       'tests/core/message.spec.ts',
+      'tests/core/protocol-authorization.spec.ts',
       'tests/jose/jws/general.spec.ts',
       'tests/smt/sparse-merkle-tree.spec.ts',
-      'tests/interfaces/records-read.spec.ts',
-      'tests/interfaces/records-query.spec.ts',
-      'tests/interfaces/records-delete.spec.ts',
-      'tests/interfaces/records-subscribe.spec.ts',
+      'tests/store/blockstore-mock.spec.ts',
+      'tests/interfaces/messages-get.spec.ts',
+      'tests/interfaces/messages-subscribe.spec.ts',
       'tests/interfaces/protocols-configure.spec.ts',
       'tests/interfaces/protocols-query.spec.ts',
-      'tests/interfaces/messages-subscribe.spec.ts',
-      'tests/interfaces/messages-get.spec.ts',
+      'tests/interfaces/records-delete.spec.ts',
+      'tests/interfaces/records-query.spec.ts',
+      'tests/interfaces/records-read.spec.ts',
+      'tests/interfaces/records-subscribe.spec.ts',
+      'tests/interfaces/records-write.spec.ts',
+      'tests/protocols/permission-grant.spec.ts',
       'tests/protocols/permission-request.spec.ts',
+      'tests/protocols/permissions.spec.ts',
+
+      'tests/scenarios/aggregator.spec.ts',
+
+      // Store-dependent tests: 29 handler/feature/scenario test functions run via
+      // the TestSuite orchestrator. Stores resolve to IndexedDB (browser-level)
+      // automatically through level's "browser" package.json field.
+      'tests/store-dependent-tests.spec.ts',
     ],
-    testTimeout : 15_000,
+    testTimeout : 30_000,
+    // Retry failed tests once in CI. Firefox's ESM loader can occasionally
+    // crash on dynamic module imports even with noDiscovery enabled — a
+    // single retry is enough to recover from transient loader failures
+    // without masking real bugs (real failures are deterministic and fail both times).
+    retry: isCI ? 1 : 0,
     coverage: {
       provider         : 'istanbul',
       reporter         : ['text', 'lcov'],
-      reportsDirectory : './coverage-browser',
+      reportsDirectory : coverageDir,
     },
     browser     : {
       enabled  : true,
       headless : true,
       provider : playwright(),
-      instances: [
-        { browser: 'chromium' },
-        { browser: 'firefox' },
-        ...(isCI ? [{ browser: 'webkit' as const }] : []),
-      ],
+      instances,
     },
   },
 });

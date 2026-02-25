@@ -1,24 +1,25 @@
-
 import type { DataStore } from './types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
-import type { EventStream } from './types/subscriptions.js';
 import type { MessageStore } from './types/message-store.js';
-import type { MethodHandler } from './types/method-handler.js';
 import type { ResumableTaskStore } from './types/resumable-task-store.js';
 import type { StateIndex } from './types/state-index.js';
 import type { TenantGate } from './core/tenant-gate.js';
 import type { UnionMessageReply } from './core/message-reply.js';
+import type { EventLog, SubscriptionListener } from './types/subscriptions.js';
 import type { GenericMessage, GenericMessageReply } from './types/message-types.js';
-import type { MessagesReadMessage, MessagesReadReply, MessagesSubscribeMessage, MessagesSubscribeMessageOptions, MessagesSubscribeReply, MessagesSyncMessage, MessagesSyncReply, MessageSubscriptionHandler } from './types/messages-types.js';
+import type { HandlerDependencies, MethodHandler } from './types/method-handler.js';
+import type { MessagesReadMessage, MessagesReadReply, MessagesSubscribeMessage, MessagesSubscribeMessageOptions, MessagesSubscribeReply, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
 import type { ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply } from './types/protocols-types.js';
-import type { RecordsCountMessage, RecordsCountReply, RecordsDeleteMessage, RecordsQueryMessage, RecordsQueryReply, RecordsReadMessage, RecordsReadReply, RecordsSubscribeMessage, RecordsSubscribeMessageOptions, RecordsSubscribeReply, RecordSubscriptionHandler, RecordsWriteMessage, RecordsWriteMessageOptions } from './types/records-types.js';
+import type { RecordsCountMessage, RecordsCountReply, RecordsDeleteMessage, RecordsQueryMessage, RecordsQueryReply, RecordsReadMessage, RecordsReadReply, RecordsSubscribeMessage, RecordsSubscribeMessageOptions, RecordsSubscribeReply, RecordsWriteMessage, RecordsWriteMessageOptions } from './types/records-types.js';
 
 import { AllowAllTenantGate } from './core/tenant-gate.js';
+import { CoreProtocolRegistry } from './core/core-protocol.js';
 import { Message } from './core/message.js';
 import { messageReplyFromError } from './core/message-reply.js';
 import { MessagesReadHandler } from './handlers/messages-read.js';
 import { MessagesSubscribeHandler } from './handlers/messages-subscribe.js';
 import { MessagesSyncHandler } from './handlers/messages-sync.js';
+import { PermissionsProtocol } from './protocols/permissions.js';
 import { ProtocolsConfigureHandler } from './handlers/protocols-configure.js';
 import { ProtocolsQueryHandler } from './handlers/protocols-query.js';
 import { RecordsCountHandler } from './handlers/records-count.js';
@@ -29,7 +30,7 @@ import { RecordsSubscribeHandler } from './handlers/records-subscribe.js';
 import { RecordsWriteHandler } from './handlers/records-write.js';
 import { ResumableTaskManager } from './core/resumable-task-manager.js';
 import { StorageController } from './store/storage-controller.js';
-import { DidDht, DidJwk, DidKey, DidResolverCacheLevel, DidWeb, UniversalResolver } from '@enbox/dids';
+import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from './enums/dwn-interface-method.js';
 
 export class Dwn {
@@ -40,88 +41,64 @@ export class Dwn {
   private resumableTaskStore: ResumableTaskStore;
   private stateIndex: StateIndex;
   private tenantGate: TenantGate;
-  private eventStream?: EventStream;
+  private eventLog?: EventLog;
   private storageController: StorageController;
   private resumableTaskManager: ResumableTaskManager;
+  private _coreProtocols: CoreProtocolRegistry;
+
+  /** Whether the DWN owns the resolver's lifecycle (i.e., created it via defaults). */
+  private ownsResolver: boolean;
 
   private constructor(config: DwnConfig) {
     this.didResolver = config.didResolver!;
+    this.ownsResolver = config.ownsResolver ?? false;
     this.tenantGate = config.tenantGate!;
-    this.eventStream = config.eventStream!;
     this.messageStore = config.messageStore;
     this.dataStore = config.dataStore;
     this.resumableTaskStore = config.resumableTaskStore;
     this.stateIndex = config.stateIndex;
-    this.eventStream = config.eventStream;
+
+    this.eventLog = config.eventLog;
+
     this.storageController = new StorageController({
       messageStore : this.messageStore,
       dataStore    : this.dataStore,
       stateIndex   : this.stateIndex,
-      eventStream  : this.eventStream
+      eventLog     : this.eventLog
     });
     this.resumableTaskManager = new ResumableTaskManager(
       config.resumableTaskStore,
       this.storageController
     );
 
+    // Initialize the core protocol registry with built-in system protocols.
+    this._coreProtocols = new CoreProtocolRegistry();
+    this._coreProtocols.register(new PermissionsProtocol());
+
+    // Build the shared dependency bag once; every handler receives the same object
+    // and accesses only the dependencies it needs.
+    const deps: HandlerDependencies = {
+      didResolver          : this.didResolver,
+      messageStore         : this.messageStore,
+      dataStore            : this.dataStore,
+      stateIndex           : this.stateIndex,
+      resumableTaskManager : this.resumableTaskManager,
+      coreProtocols        : this._coreProtocols,
+      eventLog             : this.eventLog,
+    };
+
     this.methodHandlers = {
-      [DwnInterfaceName.Messages + DwnMethodName.Read]: new MessagesReadHandler(
-        this.didResolver,
-        this.messageStore,
-        this.dataStore,
-      ),
-      [DwnInterfaceName.Messages + DwnMethodName.Subscribe]: new MessagesSubscribeHandler(
-        this.didResolver,
-        this.messageStore,
-        this.eventStream,
-      ),
-      [DwnInterfaceName.Messages + DwnMethodName.Sync]: new MessagesSyncHandler(
-        this.didResolver,
-        this.messageStore,
-        this.stateIndex,
-      ),
-      [DwnInterfaceName.Protocols + DwnMethodName.Configure]: new ProtocolsConfigureHandler(
-        this.didResolver,
-        this.messageStore,
-        this.stateIndex,
-        this.eventStream
-      ),
-      [DwnInterfaceName.Protocols + DwnMethodName.Query]: new ProtocolsQueryHandler(
-        this.didResolver,
-        this.messageStore,
-        this.dataStore
-      ),
-      [DwnInterfaceName.Records + DwnMethodName.Count]: new RecordsCountHandler(
-        this.didResolver,
-        this.messageStore,
-      ),
-      [DwnInterfaceName.Records + DwnMethodName.Delete]: new RecordsDeleteHandler(
-        this.didResolver,
-        this.messageStore,
-        this.resumableTaskManager
-      ),
-      [DwnInterfaceName.Records + DwnMethodName.Query]: new RecordsQueryHandler(
-        this.didResolver,
-        this.messageStore,
-        this.dataStore
-      ),
-      [DwnInterfaceName.Records + DwnMethodName.Read]: new RecordsReadHandler(
-        this.didResolver,
-        this.messageStore,
-        this.dataStore
-      ),
-      [DwnInterfaceName.Records + DwnMethodName.Subscribe]: new RecordsSubscribeHandler(
-        this.didResolver,
-        this.messageStore,
-        this.eventStream
-      ),
-      [DwnInterfaceName.Records + DwnMethodName.Write]: new RecordsWriteHandler(
-        this.didResolver,
-        this.messageStore,
-        this.dataStore,
-        this.stateIndex,
-        this.eventStream
-      )
+      [DwnInterfaceName.Messages + DwnMethodName.Read]       : new MessagesReadHandler(deps),
+      [DwnInterfaceName.Messages + DwnMethodName.Subscribe]  : new MessagesSubscribeHandler(deps),
+      [DwnInterfaceName.Messages + DwnMethodName.Sync]       : new MessagesSyncHandler(deps),
+      [DwnInterfaceName.Protocols + DwnMethodName.Configure] : new ProtocolsConfigureHandler(deps),
+      [DwnInterfaceName.Protocols + DwnMethodName.Query]     : new ProtocolsQueryHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Count]       : new RecordsCountHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Delete]      : new RecordsDeleteHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Query]       : new RecordsQueryHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Read]        : new RecordsReadHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Subscribe]   : new RecordsSubscribeHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Write]       : new RecordsWriteHandler(deps),
     };
   }
 
@@ -129,10 +106,13 @@ export class Dwn {
    * Creates an instance of the DWN.
    */
   public static async create(config: DwnConfig): Promise<Dwn> {
-    config.didResolver ??= new UniversalResolver({
-      didResolvers : [ DidDht, DidJwk, DidKey, DidWeb ],
-      cache        : new DidResolverCacheLevel({ location: 'RESOLVERCACHE' }),
-    });
+    if (!config.didResolver) {
+      config.didResolver = new UniversalResolver({
+        didResolvers : [ DidDht, DidJwk, DidKey, DidWeb ],
+        cache        : new DidResolverCacheMemory(),
+      });
+      config.ownsResolver = true;
+    }
     config.tenantGate ??= new AllowAllTenantGate();
 
     const dwn = new Dwn(config);
@@ -144,21 +124,40 @@ export class Dwn {
    * Initializes the DWN instance and opens the connection to it.
    */
   public async open(): Promise<void> {
+    // Open the resolver's cache if the DWN owns it (created via defaults).
+    if (this.ownsResolver && typeof (this.didResolver as any).open === 'function') {
+      await (this.didResolver as any).open();
+    }
+
     await this.messageStore.open();
     await this.dataStore.open();
     await this.resumableTaskStore.open();
     await this.stateIndex.open();
-    await this.eventStream?.open();
+    await this.eventLog?.open();
 
     await this.resumableTaskManager.resumeTasksAndWaitForCompletion();
   }
 
   public async close(): Promise<void> {
-    await this.eventStream?.close();
+    await this.eventLog?.close();
     await this.messageStore.close();
     await this.dataStore.close();
     await this.resumableTaskStore.close();
     await this.stateIndex.close();
+
+    // Close the resolver's cache if the DWN owns it.
+    if (this.ownsResolver && typeof (this.didResolver as any).close === 'function') {
+      await (this.didResolver as any).close();
+    }
+  }
+
+  /**
+   * The registry of core protocols (hardcoded, immutable, always-installed).
+   * Used by handlers and utilities that need to check whether a protocol URI
+   * belongs to a core protocol or to dispatch lifecycle hooks.
+   */
+  public get coreProtocols(): CoreProtocolRegistry {
+    return this._coreProtocols;
   }
 
   /**
@@ -168,11 +167,11 @@ export class Dwn {
    *
    * Callers are responsible for maintaining consistency across stores.
    */
-  public get storage(): { messageStore: MessageStore; stateIndex: StateIndex; eventStream: EventStream | undefined } {
+  public get storage(): { messageStore: MessageStore; stateIndex: StateIndex; eventLog: EventLog | undefined } {
     return {
       messageStore : this.messageStore,
       stateIndex   : this.stateIndex,
-      eventStream  : this.eventStream,
+      eventLog     : this.eventLog,
     };
   }
 
@@ -264,7 +263,7 @@ export class Dwn {
  */
 export interface MessageOptions {
   dataStream?: ReadableStream<Uint8Array>;
-  subscriptionHandler?: MessageSubscriptionHandler | RecordSubscriptionHandler;
+  subscriptionHandler?: SubscriptionListener;
 };
 
 /**
@@ -274,8 +273,19 @@ export type DwnConfig = {
   didResolver?: DidResolver;
   tenantGate?: TenantGate;
 
-  // event stream is optional if a DWN does not wish to provide subscription services.
-  eventStream?: EventStream;
+  /**
+   * Internal flag indicating the DWN created and owns the resolver's lifecycle.
+   * When true, the DWN will call open()/close() on the resolver during its own lifecycle.
+   * Set automatically by `Dwn.create()` when it creates a default resolver.
+   * @internal
+   */
+  ownsResolver?: boolean;
+
+  /**
+   * Persistent event log with cursor-based reads and in-process subscriptions.
+   * Optional — if not provided, subscriptions will not be supported.
+   */
+  eventLog?: EventLog;
 
   messageStore: MessageStore;
   dataStore: DataStore;

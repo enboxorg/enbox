@@ -87,6 +87,22 @@ export class UniversalResolver implements DidResolver, DidUrlDereferencer {
   }
 
   /**
+   * Opens the resolver's cache, acquiring any resources needed.
+   * Must be called before resolving DIDs if using a cache that requires initialization (e.g., LevelDB).
+   */
+  public async open(): Promise<void> {
+    await this.cache.open();
+  }
+
+  /**
+   * Closes the resolver's cache, releasing any resources held.
+   * Should be called during application shutdown.
+   */
+  public async close(): Promise<void> {
+    await this.cache.close();
+  }
+
+  /**
    * Resolves a DID to a DID Resolution Result.
    *
    * If the DID Resolution Result is present in the cache, it returns the cached result. Otherwise,

@@ -1,7 +1,14 @@
+import type { ActivityLog } from '../admin/activity-log.js';
+import type { AdminConnectionSnapshot } from '../admin/types.js';
+import type { AdminStore } from '../admin/admin-store.js';
+import type { DwnServerConfig } from '../config.js';
+import type { MessageProcessedHook } from '../message-processed-hook.js';
+import type { RateLimiter } from '../rate-limiter.js';
+import type { RegistrationStore } from '../registration/registration-store.js';
 import type { RequestContext } from '../lib/json-rpc-router.js';
 import type { ServerWebSocket } from 'bun';
 import type { WsData } from '../http-api.js';
-import type { Dwn, GenericMessage, MessageEvent } from '@enbox/dwn-sdk-js';
+import type { Dwn, GenericMessage, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 import type { JsonRpcErrorResponse, JsonRpcId, JsonRpcRequest, JsonRpcResponse, JsonRpcSubscription } from '@enbox/dwn-clients';
 
 import log from 'loglevel';
@@ -10,7 +17,8 @@ import { DwnMethodName } from '@enbox/dwn-sdk-js';
 import { jsonRpcRouter } from '../json-rpc-api.js';
 import { requestCounter } from '../metrics.js';
 import { v4 as uuidv4 } from 'uuid';
-import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
+import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
+import { DEFAULT_MAX_IN_FLIGHT, FlowController } from './flow-controller.js';
 import { DwnServerError, DwnServerErrorCode } from '../dwn-error.js';
 
 const HEARTBEAT_INTERVAL = 30_000;
@@ -24,14 +32,28 @@ const HEARTBEAT_INTERVAL = 30_000;
  * and `close()` methods on this class.
  */
 export class SocketConnection {
+  /** Unique identifier for this connection (for admin introspection). */
+  public readonly id: string = uuidv4();
+
+  /** Timestamp when the connection was established (for admin introspection). */
+  public readonly connectedAt: number = Date.now();
+
   private heartbeatInterval: ReturnType<typeof setInterval>;
   private subscriptions: Map<JsonRpcId, JsonRpcSubscription> = new Map();
+  private flowControllers: Map<JsonRpcId, FlowController> = new Map();
   private isAlive: boolean;
 
   constructor(
     private socket: ServerWebSocket<WsData>,
     private dwn: Dwn,
-    private onCloseCallback?: () => void
+    private onCloseCallback?: () => void,
+    private maxInFlight: number = DEFAULT_MAX_IN_FLIGHT,
+    private activityLog?: ActivityLog,
+    private adminStore?: AdminStore,
+    private registrationStore?: RegistrationStore,
+    private serverConfig?: DwnServerConfig,
+    private tenantRateLimiter?: RateLimiter,
+    private messageProcessedHooks?: MessageProcessedHook[],
   ){
     // Bun handles ping/pong automatically at the protocol level, but we still
     // want an application-level heartbeat to detect dead connections.
@@ -91,6 +113,18 @@ export class SocketConnection {
     const connection = this.subscriptions.get(id);
     await connection.close();
     this.subscriptions.delete(id);
+    this.flowControllers.delete(id);
+  }
+
+  /**
+   * Acknowledges subscription events up to the given cursor, advancing the
+   * flow-control window for the subscription.
+   */
+  ackSubscription(id: JsonRpcId, cursor: string): void {
+    const fc = this.flowControllers.get(id);
+    if (fc) {
+      fc.ack(cursor);
+    }
   }
 
   /**
@@ -107,6 +141,9 @@ export class SocketConnection {
 
     // close all of the associated subscriptions
     await Promise.all(closePromises);
+
+    // clear all flow controllers
+    this.flowControllers.clear();
 
     // close the socket.
     this.socket.close();
@@ -166,6 +203,33 @@ export class SocketConnection {
   }
 
   /**
+   * Returns the number of active subscriptions on this connection.
+   */
+  get subscriptionCount(): number {
+    return this.subscriptions.size;
+  }
+
+  /**
+   * Returns a serializable snapshot of this connection for the admin inspector.
+   */
+  toSnapshot(): AdminConnectionSnapshot {
+    const subscriptions = Array.from(this.flowControllers.entries()).map(
+      ([id, fc]): AdminConnectionSnapshot['subscriptions'][number] => ({
+        id       : id as string | number,
+        inflight : fc.inFlightCount,
+        buffered : fc.bufferCount,
+      }),
+    );
+
+    return {
+      id                : this.id,
+      connectedAt       : new Date(this.connectedAt).toISOString(),
+      subscriptionCount : this.subscriptions.size,
+      subscriptions,
+    };
+  }
+
+  /**
    * Sends a JSON encoded string through the WebSocket.
    */
   private send(response: JsonRpcResponse | JsonRpcErrorResponse): void {
@@ -173,12 +237,30 @@ export class SocketConnection {
   }
 
   /**
-   * Creates a subscription handler to send messages matching the subscription requested.
+   * Creates a flow-controlled subscription handler that enforces the
+   * `maxInFlight` window. Returns a `SubscriptionListener` to be passed
+   * to the EventLog, and stores the `FlowController` for later `rpc.ack`
+   * processing.
    */
-  private createSubscriptionHandler(id: JsonRpcId): (message: MessageEvent) => void {
-    return (event) => {
-      const response = createJsonRpcSuccessResponse(id, { event });
-      this.send(response);
+  private createSubscriptionHandler(id: JsonRpcId): (message: SubscriptionMessage) => void {
+    const fc = new FlowController(
+      id,
+      this.maxInFlight,
+      (response) => {
+        this.send(response);
+      },
+      () => {
+        // overflow: close the subscription to prevent OOM
+        this.closeSubscription(id).catch((err) => {
+          log.error(`FlowController: error closing subscription ${String(id)} on overflow`, err);
+        });
+      },
+    );
+
+    this.flowControllers.set(id, fc);
+
+    return (message) => {
+      fc.push(message);
     };
   }
 
@@ -189,19 +271,24 @@ export class SocketConnection {
     const { params, method, subscription } = request;
 
     const requestContext: RequestContext = {
-      transport        : 'ws',
-      dwn              : this.dwn,
-      socketConnection : this,
+      transport             : 'ws',
+      dwn                   : this.dwn,
+      socketConnection      : this,
+      activityLog           : this.activityLog,
+      adminStore            : this.adminStore,
+      registrationStore     : this.registrationStore,
+      config                : this.serverConfig,
+      tenantRateLimiter     : this.tenantRateLimiter,
+      messageProcessedHooks : this.messageProcessedHooks,
     };
 
     // methods that expect a long-running subscription begin with `rpc.subscribe.`
     if (method.startsWith('rpc.subscribe.') && subscription) {
       const { message } = params as { message?: GenericMessage };
       if (message?.descriptor.method === DwnMethodName.Subscribe) {
-        const handlerFunc = this.createSubscriptionHandler(subscription.id);
         requestContext.subscriptionRequest = {
           id                  : subscription.id,
-          subscriptionHandler : (message): void => handlerFunc(message),
+          subscriptionHandler : this.createSubscriptionHandler(subscription.id),
         };
       }
     }

@@ -33,6 +33,15 @@ export interface JweDecryptOptions {
    *
    */
   allowedEncValues?: string[];
+
+  /**
+   * Minimum acceptable PBES2 iteration count ("p2c") for key derivation during decryption.
+   * Per RFC 7518 Section 4.8.1.2, a minimum of 1000 is RECOMMENDED. Set to a lower value
+   * only for test environments where speed is prioritized over security.
+   *
+   * @default 1000
+   */
+  minP2cCount?: number;
 }
 
 /**
@@ -281,11 +290,12 @@ export interface JweKeyManagementDecryptParams<TKeyManager, TCrypto> {
    */
   joseHeader: JweHeaderParams;
 
-  /** Key Manager instanceß responsible for managing cryptographic keys. */
+  /** Key Manager instance responsible for managing cryptographic keys. */
   keyManager: TKeyManager;
 
   /** Crypto API instance that provides the necessary cryptographic operations. */
   crypto: TCrypto;
+
 }
 
 /**
@@ -424,8 +434,10 @@ export class JweKeyManagement {
    */
   public static async decrypt<TKeyManager extends KeyManager, TCrypto extends CryptoApi>({
     key, encryptedKey, joseHeader, crypto
-  }: JweKeyManagementDecryptParams<TKeyManager, TCrypto>
+  }: JweKeyManagementDecryptParams<TKeyManager, TCrypto>,
+  options?: { minP2cCount?: number }
   ): Promise<KeyIdentifier | Jwk> {
+    const minP2cCount = options?.minP2cCount ?? 1000;
     // Determine the Key Management Mode employed by the algorithm specified by the "alg"
     // (algorithm) Header Parameter.
     switch (joseHeader.alg) {
@@ -458,6 +470,16 @@ export class JweKeyManagement {
 
         if (typeof joseHeader.p2c !== 'number') {
           throw new CryptoError(CryptoErrorCode.InvalidJwe, 'JOSE Header "p2c" (PBES2 Count) is missing or not a number.');
+        }
+
+        // Per RFC 7518, Section 4.8.1.2, a minimum iteration count of 1000 is RECOMMENDED.
+        // Enforce this floor to prevent an attacker from supplying a crafted JWE with a
+        // trivially low iteration count that would weaken key derivation.
+        if (joseHeader.p2c < minP2cCount) {
+          throw new CryptoError(
+            CryptoErrorCode.InvalidJwe,
+            `JOSE Header "p2c" (PBES2 Count) is ${joseHeader.p2c}, which is below the minimum of ${minP2cCount}.`
+          );
         }
 
         if (typeof joseHeader.p2s !== 'string') {

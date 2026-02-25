@@ -1,4 +1,4 @@
-import type { ProofOfWorkChallengeModel, RegistrationData, RegistrationRequest } from './registration-types.js';
+import type { ProofOfWorkChallengeModel, RegistrationData, RegistrationRequest, TokenExchangeResponse } from './registration-types.js';
 
 import { concatenateUrl } from './utils.js';
 import { Convert } from '@enbox/common';
@@ -21,7 +21,8 @@ export class DwnRegistrar {
 
     // fetch the terms-of-service
     const termsOfServiceGetResponse = await fetch(termsOfUseEndpoint, {
-      method: 'GET',
+      method : 'GET',
+      signal : AbortSignal.timeout(30_000),
     });
 
     if (termsOfServiceGetResponse.status !== 200) {
@@ -34,7 +35,8 @@ export class DwnRegistrar {
 
     // fetch the proof-of-work challenge
     const proofOfWorkChallengeGetResponse = await fetch(proofOfWorkEndpoint, {
-      method: 'GET',
+      method : 'GET',
+      signal : AbortSignal.timeout(30_000),
     });
     const { challengeNonce, maximumAllowedHashValue }: ProofOfWorkChallengeModel =
       await proofOfWorkChallengeGetResponse.json();
@@ -65,6 +67,7 @@ export class DwnRegistrar {
       method  : 'POST',
       headers : { 'Content-Type': 'application/json' },
       body    : JSON.stringify(registrationRequest),
+      signal  : AbortSignal.timeout(30_000),
     });
 
     if (registrationResponse.status !== 200) {
@@ -125,5 +128,105 @@ export class DwnRegistrar {
     const randomBytes = CryptoUtils.randomBytes(32);
     const hexString = Convert.uint8Array(randomBytes).toHex().toUpperCase();
     return hexString;
+  }
+
+  /**
+   * Exchange an authorization code (from the provider's auth redirect) for a registration token.
+   * The wallet calls this after the user completes the provider's auth flow.
+   *
+   * @param tokenUrl - The provider's token endpoint URL (from ServerInfo.providerAuth.tokenUrl)
+   * @param code - The authorization code from the provider redirect
+   * @param redirectUri - The redirect URI used in the authorize request (must match exactly)
+   * @returns Token exchange response containing the registration token and optional refresh token
+   */
+  public static async exchangeAuthCode(
+    tokenUrl: string,
+    code: string,
+    redirectUri: string,
+  ): Promise<TokenExchangeResponse> {
+    const response = await fetch(tokenUrl, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify({
+        grantType: 'authorization_code',
+        code,
+        redirectUri,
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (response.status !== 200) {
+      const errorText = await response.text();
+      throw new Error(`DwnRegistrar: Token exchange failed (${response.status}): ${errorText}`);
+    }
+
+    return response.json() as Promise<TokenExchangeResponse>;
+  }
+
+  /**
+   * Refresh an expired registration token using a refresh token.
+   *
+   * @param refreshUrl - The provider's refresh endpoint URL (from ServerInfo.providerAuth.refreshUrl)
+   * @param refreshToken - The refresh token from a previous token exchange
+   * @returns New token exchange response with fresh registration token
+   */
+  public static async refreshRegistrationToken(
+    refreshUrl: string,
+    refreshToken: string,
+  ): Promise<TokenExchangeResponse> {
+    const response = await fetch(refreshUrl, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify({
+        grantType: 'refresh_token',
+        refreshToken,
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (response.status !== 200) {
+      const errorText = await response.text();
+      throw new Error(`DwnRegistrar: Token refresh failed (${response.status}): ${errorText}`);
+    }
+
+    return response.json() as Promise<TokenExchangeResponse>;
+  }
+
+  /**
+   * Register a DID as a tenant on a DWN server using a provider auth registration token.
+   * This is the paid-tier alternative to the PoW-based {@link registerTenant}.
+   *
+   * @param dwnEndpoint - The DWN server base URL
+   * @param did - The DID to register as a tenant
+   * @param registrationToken - The opaque registration token from the provider
+   * @param termsOfServiceHash - Optional ToS hash if the server requires it alongside provider auth
+   */
+  public static async registerTenantWithToken(
+    dwnEndpoint: string,
+    did: string,
+    registrationToken: string,
+    termsOfServiceHash?: string,
+  ): Promise<void> {
+    const registrationEndpoint = concatenateUrl(dwnEndpoint, 'registration');
+
+    const registrationRequest: RegistrationRequest = {
+      providerAuth     : { registrationToken },
+      registrationData : {
+        did,
+        termsOfServiceHash,
+      },
+    };
+
+    const response = await fetch(registrationEndpoint, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify(registrationRequest),
+      signal  : AbortSignal.timeout(30_000),
+    });
+
+    if (response.status !== 200) {
+      const errorText = await response.text();
+      throw new Error(`DwnRegistrar: Provider auth registration failed (${response.status}): ${errorText}`);
+    }
   }
 }

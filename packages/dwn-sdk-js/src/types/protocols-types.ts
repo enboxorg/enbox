@@ -75,6 +75,7 @@ export enum ProtocolAction {
   Delete = 'delete',
   Prune = 'prune',
   Read = 'read',
+  Squash = 'squash',
   Update = 'update'
 }
 
@@ -155,6 +156,47 @@ export type ProtocolSizeDefinition = {
 };
 
 /**
+ * Supported strategies for handling writes that would exceed a `$recordLimit`.
+ */
+export enum ProtocolRecordLimitStrategy {
+  /** Reject the incoming write with an error. The author must delete old records first. */
+  Reject = 'reject',
+  /** Automatically delete the oldest record(s) (by `dateCreated`) to make room for the new one. */
+  PurgeOldest = 'purgeOldest',
+}
+
+/**
+ * Limits the number of records at a given protocol path within the same parent context.
+ *
+ * For root-level records, the count is across the entire protocol for the tenant.
+ * For nested records, the count is scoped to the parent record's context.
+ *
+ * Only initial writes (new records) count toward the limit; updates to existing records do not.
+ */
+export type ProtocolRecordLimitDefinition = {
+  /** Maximum number of records allowed at this path within the same parent context. Must be >= 1. */
+  max: number;
+
+  /**
+   * Strategy when the limit is reached.
+   * Currently only `'reject'` is implemented. Future strategies (e.g. `'purgeOldest'`)
+   * are defined in the wire format but not yet enforced.
+   */
+  strategy: ProtocolRecordLimitStrategy | `${ProtocolRecordLimitStrategy}` | (string & {});
+};
+
+/**
+ * Delivery strategy for records at a given protocol path.
+ * Controls how a DWN server proactively distributes records to participants' DWN endpoints.
+ *
+ * - `'direct'`    — The origin DWN pushes new records to all participants' DWN endpoints.
+ *                    Best for small participant sets (2–50).
+ * - `'subscribe'` — Participant providers establish `RecordsSubscribe` connections to the
+ *                    origin DWN. Best for asymmetric fan-out or unbounded audiences.
+ */
+export type ProtocolDeliveryStrategy = 'direct' | 'subscribe';
+
+/**
  * Tag rules for records at a given protocol path. Each non-`$`-prefixed property
  * is a JSON Schema object constraining that tag's value.
  */
@@ -192,7 +234,7 @@ export type ProtocolTagSchema = {
 /**
  * Union of all value types that can appear as properties of a `ProtocolRuleSet`.
  * This includes:
- * - `$`-prefixed directive values (`$encryption`, `$actions`, `$role`, `$ref`, `$size`, `$tags`)
+ * - `$`-prefixed directive values (`$encryption`, `$actions`, `$role`, `$ref`, `$size`, `$tags`, `$delivery`)
  * - Child `ProtocolRuleSet` entries (non-`$` keys)
  */
 type ProtocolRuleSetValue =
@@ -201,6 +243,8 @@ type ProtocolRuleSetValue =
   | ProtocolPathEncryption
   | ProtocolTagsDefinition
   | ProtocolSizeDefinition
+  | ProtocolRecordLimitDefinition
+  | ProtocolDeliveryStrategy
   | boolean
   | string
   | undefined;
@@ -246,6 +290,39 @@ export type ProtocolRuleSet = {
    * If $tags is set, the record must conform to the tag rules.
    */
   $tags?: ProtocolTagsDefinition;
+
+  /**
+   * If $recordLimit is set, the number of records at this protocol path within the same
+   * parent context is constrained. When the limit is reached, the `strategy` determines
+   * whether the write is rejected or the oldest record is purged.
+   */
+  $recordLimit?: ProtocolRecordLimitDefinition;
+
+  /**
+   * If `$immutable` is `true`, records at this protocol path are write-once: they can be
+   * created but never updated after the initial write. `RecordsDelete` is still governed
+   * by `$actions` — immutability means the record's data cannot change, not that it
+   * cannot be removed.
+   */
+  $immutable?: boolean;
+
+  /**
+   * Delivery strategy hint for records at this protocol path.
+   * When set, the DWN server SHOULD proactively deliver records to participants' DWN endpoints.
+   *
+   * - `'direct'`    — Origin DWN pushes to all participant DWN endpoints upon receipt.
+   * - `'subscribe'` — Participant providers subscribe to the origin DWN via `RecordsSubscribe`.
+   */
+  $delivery?: ProtocolDeliveryStrategy;
+
+  /**
+   * If `$squash` is `true`, enables squash writes at this protocol path.
+   * A squash write is a `RecordsWrite` with `squash: true` in the descriptor that
+   * atomically creates a new record (the snapshot) and deletes all sibling records
+   * at the same protocol path within the same parent context that have a
+   * `messageTimestamp` strictly older than the squash record's `messageTimestamp`.
+   */
+  $squash?: boolean;
 
   /**
    * Non-`$`-prefixed keys are nested child `ProtocolRuleSet` entries.

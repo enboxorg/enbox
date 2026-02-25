@@ -1,7 +1,7 @@
 import type { DidResolver } from '@enbox/dids';
 import type {
   DataStore,
-  EventStream,
+  EventLog,
   MessageStore,
   ProtocolDefinition,
   ResumableTaskStore,
@@ -15,7 +15,7 @@ import { MessagesSync } from '../../src/interfaces/messages-sync.js';
 import { MessagesSyncHandler } from '../../src/handlers/messages-sync.js';
 import sinon from 'sinon';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { TestEventStream } from '../test-event-stream.js';
+import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
@@ -29,7 +29,7 @@ export function testMessagesSyncHandler(): void {
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
     let stateIndex: StateIndex;
-    let eventStream: EventStream;
+    let eventLog: EventLog;
     let dwn: Dwn;
 
     beforeAll(async () => {
@@ -40,9 +40,9 @@ export function testMessagesSyncHandler(): void {
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
       stateIndex = stores.stateIndex;
-      eventStream = TestEventStream.get();
+      eventLog = TestEventLog.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -73,6 +73,7 @@ export function testMessagesSyncHandler(): void {
 
       it('returns a different root hash after writing a message', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // get the empty root
         const { message: rootMsg1 } = await MessagesSync.create({
@@ -100,6 +101,7 @@ export function testMessagesSyncHandler(): void {
 
       it('returns protocol-scoped root hash when protocol is specified', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true };
 
@@ -121,10 +123,10 @@ export function testMessagesSyncHandler(): void {
         const writeReply = await dwn.processMessage(alice.did, recordMessage, { dataStream });
         expect(writeReply.status.code).toBe(202);
 
-        // write a flat-space (non-protocol) record to diverge the global root
-        const { message: flatRecord, dataStream: flatDataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
-        const flatWriteReply = await dwn.processMessage(alice.did, flatRecord, { dataStream: flatDataStream });
-        expect(flatWriteReply.status.code).toBe(202);
+        // write a record under a different protocol to diverge the global root
+        const { message: otherRecord, dataStream: otherDataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        const otherWriteReply = await dwn.processMessage(alice.did, otherRecord, { dataStream: otherDataStream });
+        expect(otherWriteReply.status.code).toBe(202);
 
         // get the global root
         const { message: globalRootMsg } = await MessagesSync.create({
@@ -144,7 +146,7 @@ export function testMessagesSyncHandler(): void {
         expect(protoReply.status.code).toBe(200);
 
         // global root and protocol root should be different
-        // (global includes the flat-space record which is not in any protocol)
+        // (global includes the record from the other protocol)
         expect(protoReply.root).not.toBe(globalReply.root);
         // both should be non-empty roots
         expect(protoReply.root!.length).toBe(64);
@@ -154,6 +156,7 @@ export function testMessagesSyncHandler(): void {
     describe('subtree action', () => {
       it('returns a subtree hash for a given bit prefix', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // write a record so the tree is non-empty
         const { message: recordMessage, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -174,6 +177,7 @@ export function testMessagesSyncHandler(): void {
 
       it('returns different hashes for different prefixes', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // write several records to populate various subtrees
         for (let i = 0; i < 10; i++) {
@@ -206,6 +210,7 @@ export function testMessagesSyncHandler(): void {
     describe('leaves action', () => {
       it('returns all message CIDs for an empty prefix', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // write some messages
         const expectedCids: string[] = [];
@@ -225,7 +230,8 @@ export function testMessagesSyncHandler(): void {
         const reply = await dwn.processMessage(alice.did, message);
         expect(reply.status.code).toBe(200);
         expect(Array.isArray(reply.entries)).toBe(true);
-        expect(reply.entries!.length).toBe(3);
+        // 3 RecordsWrite messages + 1 ProtocolsConfigure for the default test protocol
+        expect(reply.entries!.length).toBe(4);
         for (const cid of expectedCids) {
           expect(reply.entries).toContain(cid);
         }
@@ -233,6 +239,7 @@ export function testMessagesSyncHandler(): void {
 
       it('returns protocol-scoped leaves when protocol is specified', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true };
 
@@ -254,10 +261,10 @@ export function testMessagesSyncHandler(): void {
         const protoWriteReply = await dwn.processMessage(alice.did, protoRecord, { dataStream: protoDataStream });
         expect(protoWriteReply.status.code).toBe(202);
 
-        // write a non-protocol record
-        const { message: flatRecord, dataStream: flatDataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
-        const flatWriteReply = await dwn.processMessage(alice.did, flatRecord, { dataStream: flatDataStream });
-        expect(flatWriteReply.status.code).toBe(202);
+        // write a record under a different protocol
+        const { message: otherRecord, dataStream: otherDataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        const otherWriteReply = await dwn.processMessage(alice.did, otherRecord, { dataStream: otherDataStream });
+        expect(otherWriteReply.status.code).toBe(202);
 
         // query protocol-scoped leaves
         const { message } = await MessagesSync.create({
@@ -269,7 +276,7 @@ export function testMessagesSyncHandler(): void {
 
         const reply = await dwn.processMessage(alice.did, message);
         expect(reply.status.code).toBe(200);
-        // should contain the ProtocolsConfigure and the protocol-scoped record, but not the flat record
+        // should contain the ProtocolsConfigure and the protocol-scoped record, but not the other-protocol record
         expect(reply.entries!.length).toBe(2);
         const protocolCid = await Message.getCid(protocolMessage);
         const recordCid = await Message.getCid(protoRecord);
@@ -301,7 +308,7 @@ export function testMessagesSyncHandler(): void {
         });
         (message['descriptor'] as any)['troll'] = 'hehe';
 
-        const handler = new MessagesSyncHandler(didResolver, messageStore, stateIndex);
+        const handler = new MessagesSyncHandler({ didResolver, messageStore, stateIndex });
         const reply = await handler.handle({ tenant: alice.did, message });
         expect(reply.status.code).toBe(400);
       });
@@ -310,6 +317,7 @@ export function testMessagesSyncHandler(): void {
         it('allows sync with a matching MessagesSync grant scope', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
           // write a record so the tree is non-empty
           const { message: recordMessage, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -339,6 +347,92 @@ export function testMessagesSyncHandler(): void {
           expect(reply.status.code).toBe(200);
           expect(typeof reply.root).toBe('string');
           expect(reply.root!.length).toBe(64);
+        });
+
+        it('allows sync with a unified MessagesRead grant scope', async () => {
+          // scenario: A Messages.Read grant should also authorize MessagesSync operations
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+          // write a record so the tree is non-empty
+          const { message: recordMessage, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+          const writeReply = await dwn.processMessage(alice.did, recordMessage, { dataStream });
+          expect(writeReply.status.code).toBe(202);
+
+          // grant bob permission with Messages.Read scope (unified)
+          const { message: grantMessage, dataStream: grantDataStream } = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+            },
+          });
+          const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream: grantDataStream });
+          expect(grantReply.status.code).toBe(202);
+
+          // bob syncs using the Messages.Read grant — root action
+          const { message: syncMsg } = await MessagesSync.create({
+            signer            : Jws.createSigner(bob),
+            action            : 'root',
+            permissionGrantId : grantMessage.recordId,
+          });
+
+          const reply2 = await dwn.processMessage(alice.did, syncMsg);
+          expect(reply2.status.code).toBe(200);
+          expect(typeof reply2.root).toBe('string');
+          expect(reply2.root!.length).toBe(64);
+        });
+
+        it('allows sync with a protocol-scoped MessagesRead grant', async () => {
+          // scenario: A Messages.Read grant scoped to a protocol should authorize protocol-scoped MessagesSync
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true };
+
+          // configure and write a protocol record
+          const { message: protocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
+            author: alice,
+            protocolDefinition,
+          });
+          await dwn.processMessage(alice.did, protocolMessage);
+
+          const { message: recordMessage, dataStream } = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'post',
+            schema       : protocolDefinition.types.post.schema,
+          });
+          await dwn.processMessage(alice.did, recordMessage, { dataStream });
+
+          // grant bob permission with Messages.Read scope scoped to this protocol
+          const { message: grantMessage, dataStream: grantDataStream } = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+              protocol  : protocolDefinition.protocol,
+            },
+          });
+          const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream: grantDataStream });
+          expect(grantReply.status.code).toBe(202);
+
+          // bob syncs leaves with the protocol-scoped Messages.Read grant
+          const { message: syncMsg } = await MessagesSync.create({
+            signer            : Jws.createSigner(bob),
+            action            : 'leaves',
+            prefix            : '',
+            protocol          : protocolDefinition.protocol,
+            permissionGrantId : grantMessage.recordId,
+          });
+
+          const reply2 = await dwn.processMessage(alice.did, syncMsg);
+          expect(reply2.status.code).toBe(200);
+          expect(Array.isArray(reply2.entries)).toBe(true);
+          expect(reply2.entries!.length).toBe(2);
         });
 
         it('allows sync with a protocol-scoped grant', async () => {
@@ -493,7 +587,7 @@ export function testMessagesSyncHandler(): void {
         // manually override to an invalid action
         (message.descriptor as any).action = 'invalid';
 
-        const handler = new MessagesSyncHandler(didResolver, messageStore, stateIndex);
+        const handler = new MessagesSyncHandler({ didResolver, messageStore, stateIndex });
         const reply = await handler.handle({ tenant: alice.did, message });
         expect(reply.status.code).toBe(400);
         // the JSON schema validator catches the invalid action before the handler switch/case
@@ -519,7 +613,7 @@ export function testMessagesSyncHandler(): void {
           // Override action to something that passes the stub but hits the default case
           (message.descriptor as any).action = 'bogusAction';
 
-          const handler = new MessagesSyncHandler(didResolver, messageStore, stateIndex);
+          const handler = new MessagesSyncHandler({ didResolver, messageStore, stateIndex });
           const reply = await handler.handle({ tenant: alice.did, message });
           expect(reply.status.code).toBe(400);
           expect(reply.status.detail).toContain('Unknown action');
@@ -548,7 +642,7 @@ export function testMessagesSyncHandler(): void {
           // Override prefix to contain invalid characters
           (message.descriptor as any).prefix = 'abc';
 
-          const handler = new MessagesSyncHandler(didResolver, messageStore, stateIndex);
+          const handler = new MessagesSyncHandler({ didResolver, messageStore, stateIndex });
           const reply = await handler.handle({ tenant: alice.did, message });
           expect(reply.status.code).toBe(500);
           expect(reply.status.detail).toContain('MessagesSyncInvalidPrefix');
@@ -577,7 +671,7 @@ export function testMessagesSyncHandler(): void {
           // Override prefix to be too long
           (message.descriptor as any).prefix = '0'.repeat(257);
 
-          const handler = new MessagesSyncHandler(didResolver, messageStore, stateIndex);
+          const handler = new MessagesSyncHandler({ didResolver, messageStore, stateIndex });
           const reply = await handler.handle({ tenant: alice.did, message });
           expect(reply.status.code).toBe(500);
           expect(reply.status.detail).toContain('MessagesSyncInvalidPrefix');
@@ -605,7 +699,7 @@ export function testMessagesSyncHandler(): void {
           getProtocolLeaves      : async (): Promise<any> => { throw new Error('Unexpected DB failure'); },
         };
 
-        const handler = new MessagesSyncHandler(didResolver, messageStore, failingStateIndex);
+        const handler = new MessagesSyncHandler({ didResolver, messageStore, stateIndex: failingStateIndex });
 
         const { message } = await MessagesSync.create({
           signer : Jws.createSigner(alice),

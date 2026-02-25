@@ -1,0 +1,66 @@
+{
+  "name": "@enbox/protocol-codegen",
+  "version": "0.1.0",
+  "description": "CLI tool to generate TypeScript types from DWN protocol definitions and JSON Schemas",
+  "type": "module",
+  "main": "./dist/esm/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/types/index.d.ts",
+  "bin": {
+    "protocol-codegen": "./dist/esm/cli.js"
+  },
+  "scripts": {
+    "clean": "rimraf dist",
+    "build:esm": "rimraf dist/esm dist/types && bun tsc -p tsconfig.json",
+    "build": "bun run clean && bun run build:esm",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "test:node": "bun test .spec.ts",
+    "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .spec.ts"
+  },
+  "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/protocol-codegen#readme",
+  "bugs": "https://github.com/enboxorg/enbox/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enboxorg/enbox.git",
+    "directory": "packages/protocol-codegen"
+  },
+  "license": "Apache-2.0",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js"
+    }
+  },
+  "keywords": [
+    "codegen",
+    "decentralized",
+    "dwn",
+    "protocols",
+    "typescript"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "dependencies": {
+    "json-schema-to-typescript": "^15.0.0",
+    "yargs": "^18.0.0"
+  },
+  "devDependencies": {
+    "@types/json-schema": "^7.0.15",
+    "@types/yargs": "^17.0.35",
+    "@typescript-eslint/eslint-plugin": "8.32.1",
+    "@typescript-eslint/parser": "8.32.1",
+    "bun-types": "latest",
+    "eslint": "9.7.0",
+    "rimraf": "5.0.7",
+    "typescript": "5.5.4"
+  }
+}

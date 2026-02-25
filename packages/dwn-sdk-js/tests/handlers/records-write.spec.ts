@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EncryptionInput } from '../../src/interfaces/records-write.js';
-import type { EventStream } from '../../src/types/subscriptions.js';
+import type { EventLog } from '../../src/types/subscriptions.js';
 import type { GenerateFromRecordsWriteOut } from '../utils/test-data-generator.js';
 import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
 import type { PublicKeyJwk } from '../../src/types/jose-types.js';
@@ -19,9 +19,10 @@ import nestedProtocol from '../vectors/protocol-definitions/nested.json' with { 
 import privateProtocol from '../vectors/protocol-definitions/private-protocol.json' with { type: 'json' };
 import recipientCanProtocol from '../vectors/protocol-definitions/recipient-can.json' with { type: 'json' };
 import sinon from 'sinon';
-
 import socialMediaProtocolDefinition from '../vectors/protocol-definitions/social-media.json' with { type: 'json' };
 import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { ArrayUtility } from '../../src/utils/array.js';
 import { base64url } from 'multiformats/bases/base64';
@@ -33,18 +34,18 @@ import { GeneralJwsBuilder } from '../../src/jose/jws/general/builder.js';
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
 import { PermissionConditionPublication } from '../../src/types/permission-types.js';
+import { ProtocolAuthorization } from '../../src/core/protocol-authorization.js';
 import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { RecordsWriteHandler } from '../../src/handlers/records-write.js';
-import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { TestEventStream } from '../test-event-stream.js';
+import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
 import { X25519 } from '@enbox/crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
-import { DataStoreLevel, DwnConstant, DwnInterfaceName, DwnMethodName, KeyDerivationScheme, MessageStoreLevel, PermissionsProtocol, RecordsDelete, RecordsQuery } from '../../src/index.js';
+import { CoreProtocolRegistry, DataStoreLevel, DwnConstant, DwnInterfaceName, DwnMethodName, KeyDerivationScheme, MessageStoreLevel, PermissionsProtocol, RecordsDelete, RecordsQuery } from '../../src/index.js';
+import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnError, DwnErrorCode } from '../../src/core/dwn-error.js';
 
@@ -55,7 +56,7 @@ export function testRecordsWriteHandler(): void {
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
     let stateIndex: StateIndex;
-    let eventStream: EventStream;
+    let eventLog: EventLog;
     let dwn: Dwn;
 
     beforeEach(() => {
@@ -74,9 +75,10 @@ export function testRecordsWriteHandler(): void {
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
         stateIndex = stores.stateIndex;
-        eventStream = TestEventStream.get();
+        eventLog = TestEventLog.get();
+        eventLog = TestEventLog.get();
 
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
       });
 
       beforeEach(async () => {
@@ -91,31 +93,46 @@ export function testRecordsWriteHandler(): void {
         await dwn.close();
       });
 
-      it('should call preProcessingForCoreRecordsWrite after authorization and before storage', async () => {
-        // We create spy or stub for authorization, preProcessingForCoreRecordsWrite and processMessageWithDataStream methods
-        // When we trigger a failure for `preProcessingForCoreRecordsWrite`, we expect the `processMessageWithDataStream` method to not be called
-
-        const authorizationSpy = sinon.spy(RecordsWriteHandler as any, 'authorizeRecordsWrite');
-        const processDataStreamSpy = sinon.spy(RecordsWriteHandler.prototype as any, 'processMessageWithDataStream');
-        const preProcessingForCoreRecordsWriteSpy = sinon.stub(RecordsWriteHandler.prototype as any, 'preProcessingForCoreRecordsWrite')
-          .throws(new DwnError(DwnErrorCode.PermissionsProtocolValidateScopeProtocolMismatch, 'Some Error'));
-
+      it('should dispatch preProcessWrite hook via CoreProtocolRegistry and abort before storage on failure', async () => {
+        // Register a mock core protocol whose preProcessWrite hook throws.
+        // Verify that authorization completes but processMessageWithDataStream is never reached.
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const authorizationSpy = sinon.spy(RecordsWriteHandler.prototype as any, 'authorizeRecordsWrite');
+        const processDataStreamSpy = sinon.spy(RecordsWriteHandler.prototype as any, 'processMessageWithDataStream');
+
+        // Register a mock core protocol that matches the default test protocol's URI
+        const coreProtocols: CoreProtocolRegistry = (dwn as any)._coreProtocols;
+        const protocolUri = defaultTestProtocolDefinition.protocol;
+        coreProtocols.register({
+          uri             : protocolUri,
+          definition      : defaultTestProtocolDefinition,
+          preProcessWrite : (): Promise<void> => {
+            throw new DwnError(
+              DwnErrorCode.PermissionsProtocolValidateScopeProtocolMismatch, 'mock pre-process failure',
+            );
+          },
+          mapErrorToStatusCode: (code: string): number | undefined => {
+            return code.startsWith('PermissionsProtocolValidate') ? 400 : undefined;
+          },
+        });
+
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
         const reply = await dwn.processMessage(alice.did, message, { dataStream });
         expect(reply.status.code).toBe(400);
 
-        // expect that authorization and preProcessingForCoreRecordsWrite are both called once
         expect(authorizationSpy.calledOnce).toBe(true);
-        expect(preProcessingForCoreRecordsWriteSpy.calledOnce).toBe(true);
-
-        // expect that processMessageWithDataStream is NOT called since preProcessingForCoreRecordsWrite failed before reaching it
         expect(processDataStreamSpy.called).toBe(false);
+
+        // Cleanup: unregister the mock so it doesn't affect other tests
+        (coreProtocols as any)._protocols.delete(protocolUri);
       });
 
       it('should only be able to overwrite existing record if new record has a later `messageTimestamp` value', async () => {
       // write a message into DB
         const author = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, author);
         const data1 = new TextEncoder().encode('data1');
         const recordsWriteMessageData = await TestDataGenerator.generateRecordsWrite({ author, data: data1 });
 
@@ -175,13 +192,15 @@ export function testRecordsWriteHandler(): void {
       // start by writing an originating message
         const author = await TestDataGenerator.generatePersona();
         const tenant = author.did;
+
+        // setting up a stub DID resolver
+        TestStubGenerator.stubDidResolver(didResolver, [author]);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+
         const originatingMessageData = await TestDataGenerator.generateRecordsWrite({
           author,
           data: Encoder.stringToBytes('unused')
         });
-
-        // setting up a stub DID resolver
-        TestStubGenerator.stubDidResolver(didResolver, [author]);
 
         const originatingMessageWriteReply =
           await dwn.processMessage(tenant, originatingMessageData.message, { dataStream: originatingMessageData.dataStream });
@@ -257,12 +276,14 @@ export function testRecordsWriteHandler(): void {
           .toBe(newerWrite.message.descriptor.dataCid); // expecting unchanged
       });
 
-      it('#690 - should allow data format of a flat-space record to be updated to any value', async () => {
-        const initialWriteData = await TestDataGenerator.generateRecordsWrite();
-        const tenant = initialWriteData.author.did;
+      it('#690 - should allow data format of a record to be updated to any value', async () => {
+        const author = await TestDataGenerator.generatePersona();
+        const tenant = author.did;
 
-        TestStubGenerator.stubDidResolver(didResolver, [initialWriteData.author]);
+        TestStubGenerator.stubDidResolver(didResolver, [author]);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, author);
 
+        const initialWriteData = await TestDataGenerator.generateRecordsWrite({ author });
         const initialWriteReply = await dwn.processMessage(tenant, initialWriteData.message, { dataStream: initialWriteData.dataStream });
         expect(initialWriteReply.status.code).toBe(202);
 
@@ -271,7 +292,7 @@ export function testRecordsWriteHandler(): void {
         const updateWrite = await RecordsWrite.createFrom({
           recordsWriteMessage : initialWriteData.message,
           dataFormat          : newDataFormat,
-          signer              : Jws.createSigner(initialWriteData.author),
+          signer              : Jws.createSigner(author),
           data                : newDataBytes
         });
 
@@ -282,7 +303,7 @@ export function testRecordsWriteHandler(): void {
         // verify the data format of the record is updated
         const recordsRead = await RecordsRead.create({
           filter : { recordId: initialWriteData.message.recordId },
-          signer : Jws.createSigner(initialWriteData.author),
+          signer : Jws.createSigner(author),
         });
         const recordsReadReply = await dwn.processMessage(tenant, recordsRead.message);
         expect(recordsReadReply.status.code).toBe(200);
@@ -290,11 +311,13 @@ export function testRecordsWriteHandler(): void {
       });
 
       it('should not allow changes to immutable properties', async () => {
-        const initialWriteData = await TestDataGenerator.generateRecordsWrite();
-        const tenant = initialWriteData.author.did;
+        const author = await TestDataGenerator.generatePersona();
+        const tenant = author.did;
 
-        TestStubGenerator.stubDidResolver(didResolver, [initialWriteData.author]);
+        TestStubGenerator.stubDidResolver(didResolver, [author]);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, author);
 
+        const initialWriteData = await TestDataGenerator.generateRecordsWrite({ author });
         const initialWriteReply = await dwn.processMessage(tenant, initialWriteData.message, { dataStream: initialWriteData.dataStream });
         expect(initialWriteReply.status.code).toBe(202);
 
@@ -304,7 +327,7 @@ export function testRecordsWriteHandler(): void {
 
         // dateCreated test
         let childMessageData = await TestDataGenerator.generateRecordsWrite({
-          author      : initialWriteData.author,
+          author,
           recordId,
           schema,
           dateCreated : Time.getCurrentTimestamp(), // should not be allowed to be modified
@@ -318,7 +341,7 @@ export function testRecordsWriteHandler(): void {
 
         // schema test
         childMessageData = await TestDataGenerator.generateRecordsWrite({
-          author     : initialWriteData.author,
+          author,
           recordId,
           schema     : 'should-not-allowed-to-be-modified',
           dateCreated,
@@ -332,12 +355,16 @@ export function testRecordsWriteHandler(): void {
       });
 
       it('should inherit data from previous RecordsWrite given a matching dataCid and dataSize and no dataStream', async () => {
-        const { message, author, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
-          published: false
-        });
+        const author = await TestDataGenerator.generatePersona();
         const tenant = author.did;
 
         TestStubGenerator.stubDidResolver(didResolver, [author]);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+
+        const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
+          author,
+          published: false
+        });
 
         const initialWriteReply = await dwn.processMessage(tenant, message, { dataStream });
         expect(initialWriteReply.status.code).toBe(202);
@@ -368,6 +395,7 @@ export function testRecordsWriteHandler(): void {
         // the DWN should accept an initial write without data, however prevent the user from querying for it until it's updated.
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         const { recordsWrite } = await TestDataGenerator.generateRecordsWrite({ author: alice });
 
@@ -410,6 +438,7 @@ export function testRecordsWriteHandler(): void {
         // the DWN should accept an initial write without data, however prevent the user from querying for it until it's updated.
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // write a record into the dwn
         const { recordsWrite, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -450,13 +479,17 @@ export function testRecordsWriteHandler(): void {
 
       describe('should inherit data from previous RecordsWrite given a matching dataCid and dataSize and no dataStream', () => {
         it('with data above the threshold for encodedData', async () => {
-          const { message, author, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
-            data      : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1),
-            published : false
-          });
+          const author = await TestDataGenerator.generatePersona();
           const tenant = author.did;
 
           TestStubGenerator.stubDidResolver(didResolver, [author]);
+          await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+
+          const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
+            author,
+            data      : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1),
+            published : false
+          });
 
           const initialWriteReply = await dwn.processMessage(tenant, message, { dataStream });
           expect(initialWriteReply.status.code).toBe(202);
@@ -483,13 +516,17 @@ export function testRecordsWriteHandler(): void {
         });
 
         it('with data equal to or below the threshold for encodedData', async () => {
-          const { message, author, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
-            data      : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded),
-            published : false
-          });
+          const author = await TestDataGenerator.generatePersona();
           const tenant = author.did;
 
           TestStubGenerator.stubDidResolver(didResolver, [author]);
+          await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+
+          const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
+            author,
+            data      : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded),
+            published : false
+          });
 
           const initialWriteReply = await dwn.processMessage(tenant, message, { dataStream });
           expect(initialWriteReply.status.code).toBe(202);
@@ -519,25 +556,28 @@ export function testRecordsWriteHandler(): void {
       describe('should return 400 if actual data size mismatches with `dataSize` in descriptor', () => {
         it('with dataStream and `dataSize` larger than encodedData threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
             author : alice,
             data   : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1)
           });
 
-          // replace the dataSize to simulate mismatch, will need to generate `recordId` and `authorization` property again
+          // replace the dataSize to simulate mismatch, will need to generate `recordId`, `contextId`, and `authorization` property again
           message.descriptor.dataSize = DwnConstant.maxDataSizeAllowedToBeEncoded + 100;
           const descriptorCid = await Cid.computeCid(message.descriptor);
           const recordId = await RecordsWrite.getEntryId(alice.did, message.descriptor);
+          const contextId = recordId; // contextId is deterministic: for root records it equals recordId
           const signer = Jws.createSigner(alice);
           const signature = await RecordsWrite.createSignerSignature({
             recordId,
-            contextId   : message.contextId,
+            contextId,
             descriptorCid,
             attestation : message.attestation,
             encryption  : message.encryption,
             signer
           });
           message.recordId = recordId;
+          message.contextId = contextId;
           message.authorization = { signature };
 
           const reply = await dwn.processMessage(alice.did, message, { dataStream });
@@ -547,25 +587,28 @@ export function testRecordsWriteHandler(): void {
 
         it('with only `dataSize` larger than encodedData threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
             author : alice,
             data   : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded)
           });
 
-          // replace the dataSize to simulate mismatch, will need to generate `recordId` and `authorization` property again
+          // replace the dataSize to simulate mismatch, will need to generate `recordId`, `contextId`, and `authorization` property again
           message.descriptor.dataSize = DwnConstant.maxDataSizeAllowedToBeEncoded + 100;
           const descriptorCid = await Cid.computeCid(message.descriptor);
           const recordId = await RecordsWrite.getEntryId(alice.did, message.descriptor);
+          const contextId = recordId; // contextId is deterministic: for root records it equals recordId
           const signer = Jws.createSigner(alice);
           const signature = await RecordsWrite.createSignerSignature({
             recordId,
-            contextId   : message.contextId,
+            contextId,
             descriptorCid,
             attestation : message.attestation,
             encryption  : message.encryption,
             signer
           });
           message.recordId = recordId;
+          message.contextId = contextId;
           message.authorization = { signature };
 
           const reply = await dwn.processMessage(alice.did, message, { dataStream });
@@ -575,25 +618,28 @@ export function testRecordsWriteHandler(): void {
 
         it('with only dataStream larger than encodedData threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
             author : alice,
             data   : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1)
           });
 
-          // replace the dataSize to simulate mismatch, will need to generate `recordId` and `authorization` property again
+          // replace the dataSize to simulate mismatch, will need to generate `recordId`, `contextId`, and `authorization` property again
           message.descriptor.dataSize = 1;
           const descriptorCid = await Cid.computeCid(message.descriptor);
           const recordId = await RecordsWrite.getEntryId(alice.did, message.descriptor);
+          const contextId = recordId; // contextId is deterministic: for root records it equals recordId
           const signer = Jws.createSigner(alice);
           const signature = await RecordsWrite.createSignerSignature({
             recordId,
-            contextId   : message.contextId,
+            contextId,
             descriptorCid,
             attestation : message.attestation,
             encryption  : message.encryption,
             signer
           });
           message.recordId = recordId;
+          message.contextId = contextId;
           message.authorization = { signature };
 
           const reply = await dwn.processMessage(alice.did, message, { dataStream });
@@ -603,24 +649,27 @@ export function testRecordsWriteHandler(): void {
 
         it('with both `dataSize` and dataStream below than encodedData threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
             author: alice
           });
 
-          // replace the dataSize to simulate mismatch, will need to generate `recordId` and `authorization` property again
+          // replace the dataSize to simulate mismatch, will need to generate `recordId`, `contextId`, and `authorization` property again
           message.descriptor.dataSize = 1;
           const descriptorCid = await Cid.computeCid(message.descriptor);
           const recordId = await RecordsWrite.getEntryId(alice.did, message.descriptor);
+          const contextId = recordId; // contextId is deterministic: for root records it equals recordId
           const signer = Jws.createSigner(alice);
           const signature = await RecordsWrite.createSignerSignature({
             recordId,
-            contextId   : message.contextId,
+            contextId,
             descriptorCid,
             attestation : message.attestation,
             encryption  : message.encryption,
             signer
           });
           message.recordId = recordId;
+          message.contextId = contextId;
           message.authorization = { signature };
 
           const reply = await dwn.processMessage(alice.did, message, { dataStream });
@@ -631,6 +680,7 @@ export function testRecordsWriteHandler(): void {
 
       it('should return 400 for data CID mismatch with both dataStream and `dataSize` larger than encodedData threshold', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const { message } = await TestDataGenerator.generateRecordsWrite({
           author : alice,
           data   : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1)
@@ -645,6 +695,7 @@ export function testRecordsWriteHandler(): void {
 
       it('should return 400 for data CID mismatch with `dataSize` larger than encodedData threshold', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const { message } = await TestDataGenerator.generateRecordsWrite({
           author : alice,
           data   : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1)
@@ -659,6 +710,7 @@ export function testRecordsWriteHandler(): void {
 
       it('should return 400 for data CID mismatch with dataStream larger than encodedData threshold', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const { message } = await TestDataGenerator.generateRecordsWrite({
           author : alice,
           data   : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded)
@@ -673,6 +725,7 @@ export function testRecordsWriteHandler(): void {
 
       it('should return 400 for data CID mismatch with both dataStream and `dataSize` below than encodedData threshold', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const { message } = await TestDataGenerator.generateRecordsWrite({
           author : alice,
           data   : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded)
@@ -687,6 +740,7 @@ export function testRecordsWriteHandler(): void {
 
       it('#359 - should not allow access of data by referencing a different`dataCid` in "modify" `RecordsWrite` with large data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // alice writes a record
         const dataString = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
@@ -741,6 +795,7 @@ export function testRecordsWriteHandler(): void {
 
       it('#359 - should not allow access of data by referencing a different`dataCid` in "modify" `RecordsWrite`', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // alice writes a record
         const dataString = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded);
@@ -799,15 +854,19 @@ export function testRecordsWriteHandler(): void {
             const data = Encoder.stringToBytes('test');
             const encodedData = Encoder.bytesToBase64Url(data);
 
-            // new record
-            const { message, author, recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
-              published: false,
-              data,
-            });
+            const author = await TestDataGenerator.generatePersona();
             const tenant = author.did;
 
             // setting up a stub DID resolver
             TestStubGenerator.stubDidResolver(didResolver, [author]);
+            await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+
+            // new record
+            const { message, recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
+              author,
+              published: false,
+              data,
+            });
 
             const reply = await dwn.processMessage(tenant, message, { dataStream });
             expect(reply.status.code).toBe(202);
@@ -838,13 +897,17 @@ export function testRecordsWriteHandler(): void {
           });
 
           it('should inherit parent published state when using createFrom() to create RecordsWrite', async () => {
-            const { message, author, recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
-              published: true
-            });
+            const author = await TestDataGenerator.generatePersona();
             const tenant = author.did;
 
             // setting up a stub DID resolver
             TestStubGenerator.stubDidResolver(didResolver, [author]);
+            await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+
+            const { message, recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
+              author,
+              published: true
+            });
             const reply = await dwn.processMessage(tenant, message, { dataStream });
 
             expect(reply.status.code).toBe(202);
@@ -886,6 +949,7 @@ export function testRecordsWriteHandler(): void {
           const tenant = author.did;
 
           TestStubGenerator.stubDidResolver(didResolver, [author]);
+          await TestDataGenerator.installDefaultTestProtocol(dwn, author);
           const reply = await dwn.processMessage(tenant, message, { dataStream });
 
           expect(reply.status.code).toBe(400);
@@ -900,6 +964,7 @@ export function testRecordsWriteHandler(): void {
           const tenant = author.did;
 
           TestStubGenerator.stubDidResolver(didResolver, [author]);
+          await TestDataGenerator.installDefaultTestProtocol(dwn, author);
 
           const reply = await dwn.processMessage(tenant, message, { dataStream });
 
@@ -922,23 +987,27 @@ export function testRecordsWriteHandler(): void {
 
         describe('state index', () => {
           it('should add an entry to the state index on initial write', async () => {
-            const { message, author, dataStream } = await TestDataGenerator.generateRecordsWrite();
+            const author = await TestDataGenerator.generatePersona();
             TestStubGenerator.stubDidResolver(didResolver, [author]);
+            await TestDataGenerator.installDefaultTestProtocol(dwn, author);
 
+            const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author });
             const reply = await dwn.processMessage(author.did, message, { dataStream });
             expect(reply.status.code).toBe(202);
 
             const events = await stateIndex.getLeaves(author.did, []);
-            expect(events.length).toBe(1);
+            expect(events.length).toBe(2); // 1 for protocol configure + 1 for record write
 
             const messageCid = await Message.getCid(message);
-            expect(events[0]).toBe(messageCid);
+            expect(events).toContain(messageCid);
           });
 
           it('should only keep first write and latest write when subsequent writes happen', async () => {
-            const { message, author, dataStream, recordsWrite } = await TestDataGenerator.generateRecordsWrite();
+            const author = await TestDataGenerator.generatePersona();
             TestStubGenerator.stubDidResolver(didResolver, [author]);
+            await TestDataGenerator.installDefaultTestProtocol(dwn, author);
 
+            const { message, dataStream, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ author });
             const reply = await dwn.processMessage(author.did, message, { dataStream });
             expect(reply.status.code).toBe(202);
 
@@ -961,7 +1030,7 @@ export function testRecordsWriteHandler(): void {
             expect(newestWriteReply.status.code).toBe(202);
 
             const events = await stateIndex.getLeaves(author.did, []);
-            expect(events.length).toBe(2);
+            expect(events.length).toBe(3); // 1 for protocol configure + 2 for record writes (first + latest)
 
             const deletedMessageCid = await Message.getCid(newWrite.message);
 
@@ -2995,7 +3064,9 @@ export function testRecordsWriteHandler(): void {
         // replace valid `encryption` property with a mismatching one — mutate the iv to cause CID mismatch
         message.encryption!.iv = Encoder.stringToBase64Url('any value which will result in a different CID');
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, eventStream);
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
         expect(writeReply.status.code).toBe(400);
@@ -3045,6 +3116,7 @@ export function testRecordsWriteHandler(): void {
         it('#359 - should not allow access of data by referencing `dataCid` in protocol authorized `RecordsWrite`', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
           // alice writes a private record
           const dataString = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded);
@@ -3138,6 +3210,7 @@ export function testRecordsWriteHandler(): void {
         it('#359 - should not allow access of data by referencing `dataCid` in protocol authorized `RecordsWrite` with large data', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
           // alice writes a private record
           const dataString = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
@@ -4128,6 +4201,7 @@ export function testRecordsWriteHandler(): void {
         // Pruned RecordsWrite
         // Data large enough to use the DataStore
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
         const prunedRecordsWrite = await TestDataGenerator.generateRecordsWrite({
           author    : alice,
@@ -4156,6 +4230,7 @@ export function testRecordsWriteHandler(): void {
         // Pruned RecordsWrite
         // Data that would be encoded within the message
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded);
         const prunedRecordsWrite = await TestDataGenerator.generateRecordsWrite({
           author    : alice,
@@ -4178,13 +4253,17 @@ export function testRecordsWriteHandler(): void {
       });
 
       it('should return 400 if attempting a write after a delete', async () => {
-        const { message, author, dataStream } = await TestDataGenerator.generateRecordsWrite({
-          data      : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded),
-          published : false
-        });
+        const author = await TestDataGenerator.generatePersona();
         const tenant = author.did;
 
         TestStubGenerator.stubDidResolver(didResolver, [author]);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+
+        const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
+          author,
+          data      : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded),
+          published : false
+        });
 
         const initialWriteReply = await dwn.processMessage(tenant, message, { dataStream });
         expect(initialWriteReply.status.code).toBe(202);
@@ -4211,6 +4290,8 @@ export function testRecordsWriteHandler(): void {
       it('should not allow referencing data across tenants', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, bob);
         const data = Encoder.stringToBytes('test');
         const dataCid = await Cid.computeDagPbCidFromBytes(data);
         const encodedData = Encoder.bytesToBase64Url(data);
@@ -4263,6 +4344,7 @@ export function testRecordsWriteHandler(): void {
       describe('encodedData threshold', () => {
         it('should call cloneAndAddEncodedData if dataSize is less than or equal to the threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
           const dataBytes = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, data: dataBytes });
           const processEncoded = sinon.spy(RecordsWriteHandler.prototype as any, 'cloneAndAddEncodedData');
@@ -4274,6 +4356,7 @@ export function testRecordsWriteHandler(): void {
 
         it('should not call cloneAndAddEncodedData if dataSize is greater than the threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
           const dataBytes = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, data: dataBytes });
           const processEncoded = sinon.spy(RecordsWriteHandler.prototype as any, 'cloneAndAddEncodedData');
@@ -4285,6 +4368,7 @@ export function testRecordsWriteHandler(): void {
 
         it('should have encodedData field if dataSize is less than or equal to the threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
           const dataBytes = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, data: dataBytes });
 
@@ -4298,6 +4382,7 @@ export function testRecordsWriteHandler(): void {
 
         it('should not have encodedData field if dataSize greater than threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
           const dataBytes = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, data: dataBytes });
 
@@ -4311,6 +4396,7 @@ export function testRecordsWriteHandler(): void {
 
         it('should retain original RecordsWrite message but without the encodedData if data is under threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
           const dataBytes = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, data: dataBytes });
 
@@ -4360,7 +4446,9 @@ export function testRecordsWriteHandler(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStoreStub, dataStoreStub, stateIndex, eventStream);
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
         expect(reply.status.code).toBe(400);
@@ -4384,7 +4472,9 @@ export function testRecordsWriteHandler(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStoreStub, dataStoreStub, stateIndex, eventStream);
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
         expect(reply.status.code).toBe(400);
@@ -4402,7 +4492,12 @@ export function testRecordsWriteHandler(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStoreStub, dataStoreStub, stateIndex, eventStream);
+        // stub protocol validation so the handler reaches authentication/authorization
+        sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
+
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
         expect(reply.status.code).toBe(401);
@@ -4417,7 +4512,12 @@ export function testRecordsWriteHandler(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStoreStub, dataStoreStub, stateIndex, eventStream);
+        // stub protocol validation so the handler reaches authentication/authorization
+        sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
+
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
 
         const tenant = await (await TestDataGenerator.generatePersona()).did; // unauthorized tenant
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
@@ -4450,7 +4550,9 @@ export function testRecordsWriteHandler(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStoreStub, dataStoreStub, stateIndex, eventStream);
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
         expect(reply.status.code).toBe(400);
@@ -4462,7 +4564,9 @@ export function testRecordsWriteHandler(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, attesters: [alice, bob] });
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, eventStream);
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
         expect(writeReply.status.code).toBe(400);
@@ -4477,7 +4581,9 @@ export function testRecordsWriteHandler(): void {
         const anotherWrite = await TestDataGenerator.generateRecordsWrite({ attesters: [alice] });
         message.attestation = anotherWrite.message.attestation;
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, eventStream);
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
         expect(writeReply.status.code).toBe(400);
@@ -4494,7 +4600,9 @@ export function testRecordsWriteHandler(): void {
         const attestationNotReferencedByAuthorization = await RecordsWrite['createAttestation'](descriptorCid, Jws.createSigners([bob]));
         message.attestation = attestationNotReferencedByAuthorization;
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, eventStream);
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
         expect(writeReply.status.code).toBe(400);
@@ -4517,7 +4625,17 @@ export function testRecordsWriteHandler(): void {
 
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolverStub, messageStoreStub, dataStoreStub, stateIndex, eventStream);
+        // stub protocol validation so the handler reaches the process methods
+        sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
+
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver   : didResolverStub, messageStore  : messageStoreStub,
+          dataStore     : dataStoreStub, stateIndex, coreProtocols : new CoreProtocolRegistry(), eventLog,
+        });
+
+        // stub the squash backstop so the stubbed messageStore (which returns RecordsWrite messages
+        // for all queries) does not interfere with the flow reaching the process methods
+        sinon.stub(recordsWriteHandler as any, 'enforceSquashBackstop').resolves();
 
         // simulate throwing unexpected error
         sinon.stub(recordsWriteHandler as any, 'processMessageWithoutDataStream').throws(new Error('an unknown error in recordsWriteHandler.processMessageWithoutDataStream()'));

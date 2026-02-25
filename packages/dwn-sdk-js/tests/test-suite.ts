@@ -1,4 +1,4 @@
-import type { DataStore, EventStream, MessageStore, ResumableTaskStore, StateIndex } from '../src/index.js';
+import type { DataStore, EventLog, MessageStore, ResumableTaskStore, StateIndex } from '../src/index.js';
 
 import { beforeAll } from 'bun:test';
 
@@ -6,8 +6,7 @@ import { testAuthorDelegatedGrant } from './features/author-delegated-grant.spec
 import { testDeletedRecordScenarios } from './scenarios/deleted-record.spec.js';
 import { testDwnClass } from './dwn.spec.js';
 import { testEndToEndScenarios } from './scenarios/end-to-end-tests.spec.js';
-import { testEventStream } from './event-stream/event-stream.spec.js';
-import { TestEventStream } from './test-event-stream.js';
+import { TestEventLog } from './test-event-stream.js';
 import { testMessagesReadHandler } from './handlers/messages-read.spec.js';
 import { testMessagesSubscribeHandler } from './handlers/messages-subscribe.spec.js';
 import { testMessagesSyncHandler } from './handlers/messages-sync.spec.js';
@@ -24,9 +23,13 @@ import { testProtocolsQueryHandler } from './handlers/protocols-query.spec.js';
 import { testProtocolUpdateAction } from './features/protocol-update-action.spec.js';
 import { testRecordsCountHandler } from './handlers/records-count.spec.js';
 import { testRecordsDeleteHandler } from './handlers/records-delete.spec.js';
+import { testRecordsDelivery } from './features/records-delivery.spec.js';
+import { testRecordsImmutable } from './features/records-immutable.spec.js';
 import { testRecordsPrune } from './features/records-prune.spec.js';
 import { testRecordsQueryHandler } from './handlers/records-query.spec.js';
 import { testRecordsReadHandler } from './handlers/records-read.spec.js';
+import { testRecordsRecordLimit } from './features/records-record-limit.spec.js';
+import { testRecordsSquash } from './features/records-squash.spec.js';
 import { testRecordsSubscribeHandler } from './handlers/records-subscribe.spec.js';
 import { testRecordsTags } from './features/records-tags.spec.js';
 import { testRecordsWriteHandler } from './handlers/records-write.spec.js';
@@ -47,18 +50,17 @@ export class TestSuite {
     messageStore?: MessageStore,
     dataStore?: DataStore,
     stateIndex?: StateIndex,
-    eventStream?: EventStream,
+    eventLog?: EventLog,
     resumableTaskStore?: ResumableTaskStore,
   }): void {
 
     beforeAll(async () => {
-      TestEventStream.override(overrides);
+      TestEventLog.override(overrides);
       TestStores.override(overrides);
     });
 
     testDwnClass();
     testMessageStore();
-    testEventStream();
 
     // handler tests
     testMessagesReadHandler();
@@ -82,7 +84,11 @@ export class TestSuite {
     testProtocolCreateAction();
     testProtocolDeleteAction();
     testProtocolUpdateAction();
+    testRecordsDelivery();
+    testRecordsImmutable();
     testRecordsPrune();
+    testRecordsRecordLimit();
+    testRecordsSquash();
     testRecordsTags();
     testResumableTasks();
 

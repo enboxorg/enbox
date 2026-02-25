@@ -6,9 +6,12 @@ describe('RecordsWrite schema definition', () => {
   it('should allow descriptor with only required properties', async () => {
     const validMessage = {
       recordId   : 'anyRecordId',
+      contextId  : 'anyContextId',
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
+        protocol         : 'http://example.com/protocol',
+        protocolPath     : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -22,9 +25,12 @@ describe('RecordsWrite schema definition', () => {
 
   it('should throw if `recordId` is missing', async () => {
     const message = {
-      descriptor: {
+      contextId  : 'anyContextId',
+      descriptor : {
         interface        : 'Records',
         method           : 'Write',
+        protocol         : 'http://example.com/protocol',
+        protocolPath     : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -42,9 +48,12 @@ describe('RecordsWrite schema definition', () => {
   it('should throw if `authorization` is missing', () => {
     const invalidMessage = {
       recordId   : 'anyRecordId',
+      contextId  : 'anyContextId',
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
+        protocol         : 'http://example.com/protocol',
+        protocolPath     : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -61,9 +70,12 @@ describe('RecordsWrite schema definition', () => {
   it('should throw if unknown property is given in message', () => {
     const invalidMessage = {
       recordId   : 'anyRecordId',
+      contextId  : 'anyContextId',
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
+        protocol         : 'http://example.com/protocol',
+        protocolPath     : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -82,9 +94,12 @@ describe('RecordsWrite schema definition', () => {
   it('should throw if unknown property is given in the `descriptor`', () => {
     const invalidMessage = {
       recordId   : 'anyRecordId',
+      contextId  : 'anyContextId',
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
+        protocol         : 'http://example.com/protocol',
+        protocolPath     : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -186,12 +201,14 @@ describe('RecordsWrite schema definition', () => {
     }).toThrow(expectedErrorMessage);
   });
 
-  it('should pass if none of `protocol` related properties are present', () => {
+  it('should throw if `contextId` is missing', () => {
     const invalidMessage = {
       recordId   : 'anyRecordId',
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
+        protocol         : 'http://example.com/protocol',
+        protocolPath     : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -201,7 +218,9 @@ describe('RecordsWrite schema definition', () => {
       authorization: TestDataGenerator.generateAuthorization()
     };
 
-    Message.validateJsonSchema(invalidMessage);
+    expect(() => {
+      Message.validateJsonSchema(invalidMessage);
+    }).toThrow('must have required property \'contextId\'');
   });
 
   it('should throw if `contextId` is defined but `protocol` is missing', () => {
@@ -231,7 +250,8 @@ describe('RecordsWrite schema definition', () => {
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        protocol         : 'invalid', // must have `contextId` to exist
+        protocol         : 'invalid',
+        protocolPath     : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -246,15 +266,15 @@ describe('RecordsWrite schema definition', () => {
     }).toThrow('must have required property \'contextId\'');
   });
 
-  it('#434 - should throw if `parentId` is defined without other protocol related properties', () => {
+  it('#434 - should throw if `protocol` is missing from descriptor', () => {
     const invalidMessage = {
       recordId   : 'anyRecordId',
-      // contextId  : 'anyContextId', // intentionally missing
+      contextId  : 'anyContextId',
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        // protocol         : 'http://foo.bar', // intentionally missing
-        // protocolPath     : 'foo/bar', // intentionally missing
+        // protocol     : 'http://foo.bar', // intentionally missing
+        protocolPath     : 'foo/bar',
         parentId         : 'anyParentId',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
@@ -267,7 +287,7 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).toThrow('must have property protocol when property parentId is present');
+    }).toThrow('descriptor: must have required property \'protocol\'');
   });
 
   it('should throw if `protocol` is defined but `protocolPath` is missing', () => {
@@ -390,9 +410,12 @@ describe('RecordsWrite schema definition', () => {
   it('should throw if published is false but datePublished is present', () => {
     const invalidMessage = {
       recordId   : 'anyRecordId',
+      contextId  : 'anyContextId',
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
+        protocol         : 'http://example.com/protocol',
+        protocolPath     : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -412,9 +435,12 @@ describe('RecordsWrite schema definition', () => {
   it('should throw if published is true but datePublished is missing', () => {
     const invalidMessage = {
       recordId   : 'anyRecordId',
+      contextId  : 'anyContextId',
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
+        protocol         : 'http://example.com/protocol',
+        protocolPath     : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -433,9 +459,12 @@ describe('RecordsWrite schema definition', () => {
   it('should throw if published is missing and datePublished is present', () => {
     const invalidMessage = {
       recordId   : 'anyRecordId',
+      contextId  : 'anyContextId',
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
+        protocol         : 'http://example.com/protocol',
+        protocolPath     : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,

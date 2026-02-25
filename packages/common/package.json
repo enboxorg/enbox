@@ -1,6 +1,6 @@
 {
   "name": "@enbox/common",
-  "version": "0.0.3",
+  "version": "0.0.6",
   "type": "module",
   "main": "./dist/esm/index.js",
   "module": "./dist/esm/index.js",
@@ -15,7 +15,7 @@
     "test:node": "bun test .test.ts",
     "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .test.ts",
     "test:browser": "bunx --bun vitest --config vitest.browser.config.ts --run",
-    "test:browser:coverage": "bunx --bun vitest --config vitest.browser.config.ts --run --coverage --coverage.provider=istanbul --coverage.reportsDirectory=./coverage-browser"
+    "test:browser:coverage": "bunx --bun vitest --config vitest.browser.config.ts --run --coverage --coverage.provider=istanbul"
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/common#readme",
   "bugs": "https://github.com/enboxorg/enbox/issues",

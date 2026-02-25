@@ -1,28 +1,49 @@
+import type { JsonRpcRequest } from '@enbox/dwn-clients';
 import type { RecordsReadReply } from '@enbox/dwn-sdk-js';
+import type { ServerInfo } from '@enbox/dwn-clients';
 import type { Server, ServerWebSocket } from 'bun';
+
+import type { ActivityLog } from './admin/activity-log.js';
+import type { AdminApi } from './admin/admin-api.js';
+import type { AdminStore } from './admin/admin-store.js';
+import type { DwnServerConfig } from './config.js';
+import type { DwnServerError } from './dwn-error.js';
+import type { MessageProcessedHook } from './message-processed-hook.js';
+import type { OpenAuthHandler } from './registration/open-auth-handler.js';
+import type { RateLimiter } from './rate-limiter.js';
+import type { RegistrationManager } from './registration/registration-manager.js';
+import type { RegistrationStore } from './registration/registration-store.js';
+import type { RequestContext } from './lib/json-rpc-router.js';
+import type { SocketConnection } from './connection/socket-connection.js';
 
 import log from 'loglevel';
 
 import { Convert } from '@enbox/common';
-import { readFileSync } from 'fs';
 import { register } from 'prom-client';
 import { v4 as uuidv4 } from 'uuid';
+import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { DataStream, DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
-
-
-import type { DwnServerConfig } from './config.js';
-import type { DwnServerError } from './dwn-error.js';
-import type { JsonRpcRequest } from '@enbox/dwn-clients';
-import type { RegistrationManager } from './registration/registration-manager.js';
-import type { RequestContext } from './lib/json-rpc-router.js';
-import type { ServerInfo } from '@enbox/dwn-clients';
-import type { SocketConnection } from './connection/socket-connection.js';
+import { existsSync, readFileSync } from 'fs';
+import { join, resolve } from 'path';
 
 import { config } from './config.js';
 import { jsonRpcRouter } from './json-rpc-api.js';
+import { validateAdminAuth } from './admin/admin-auth.js';
 import { Web5ConnectServer } from './web5-connect/web5-connect-server.js';
-import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { requestCounter, responseHistogram } from './metrics.js';
+
+/** Property names that must never be used as keys when building objects from user input. */
+const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+// Resolve admin UI dist path at module load time. Gracefully handle the case
+// where the admin UI package is not installed.
+let resolvedAdminUiPath: string | undefined;
+try {
+  const adminUiModule = require('@enbox/dwn-server-admin-ui');
+  resolvedAdminUiPath = adminUiModule.adminUiDistPath;
+} catch {
+  // Admin UI package not installed — static serving will be disabled.
+}
 
 /** Data attached to each Bun WebSocket via `ws.data`. */
 export interface WsData {
@@ -33,6 +54,15 @@ export class HttpApi {
   #config: DwnServerConfig;
   #packageInfo: { version?: string, sdkVersion?: string, server: string };
   #server!: Server<WsData>;
+  #adminApi: AdminApi | undefined;
+  #activityLog: ActivityLog | undefined;
+  #adminStore: AdminStore | undefined;
+  #registrationStore: RegistrationStore | undefined;
+  #ipRateLimiter: RateLimiter | undefined;
+  #tenantRateLimiter: RateLimiter | undefined;
+  #messageProcessedHooks: MessageProcessedHook[];
+  #openAuthHandler: OpenAuthHandler | undefined;
+  #adminUiPath: string | undefined;
   web5ConnectServer: Web5ConnectServer;
   registrationManager: RegistrationManager;
   dwn: Dwn;
@@ -43,11 +73,20 @@ export class HttpApi {
   private constructor() { }
 
   public static async create(
-    config: DwnServerConfig, dwn: Dwn, registrationManager?: RegistrationManager
+    config: DwnServerConfig, dwn: Dwn, registrationManager?: RegistrationManager,
+    adminApi?: AdminApi, activityLog?: ActivityLog,
+    options?: {
+      adminStore? : AdminStore;
+      registrationStore? : RegistrationStore;
+      ipRateLimiter? : RateLimiter;
+      tenantRateLimiter? : RateLimiter;
+      messageProcessedHooks? : MessageProcessedHook[];
+      openAuthHandler? : OpenAuthHandler;
+    },
   ): Promise<HttpApi> {
     const httpApi = new HttpApi();
 
-    log.info(config);
+    log.info(HttpApi.#redactConfig(config));
 
     httpApi.#packageInfo = {
       server: config.serverName,
@@ -56,15 +95,31 @@ export class HttpApi {
     try {
       const packageJson = JSON.parse(readFileSync(config.packageJsonPath).toString());
       httpApi.#packageInfo.version = packageJson.version;
-      httpApi.#packageInfo.sdkVersion = packageJson.dependencies
-        ? packageJson.dependencies['@enbox/dwn-sdk-js']
-        : undefined;
     } catch (error: any) {
       log.info('could not read `package.json` for version info', error);
     }
 
+    // Resolve the SDK version from the actual installed package rather than
+    // the dependency specifier (which may be `workspace:*` in a monorepo).
+    try {
+      const sdkPackageJsonPath = require.resolve('@enbox/dwn-sdk-js/package.json');
+      const sdkPackageJson = JSON.parse(readFileSync(sdkPackageJsonPath).toString());
+      httpApi.#packageInfo.sdkVersion = sdkPackageJson.version;
+    } catch (error: any) {
+      log.info('could not resolve @enbox/dwn-sdk-js version', error);
+    }
+
     httpApi.#config = config;
     httpApi.dwn = dwn;
+    httpApi.#adminApi = adminApi;
+    httpApi.#activityLog = activityLog;
+    httpApi.#adminStore = options?.adminStore;
+    httpApi.#registrationStore = options?.registrationStore;
+    httpApi.#ipRateLimiter = options?.ipRateLimiter;
+    httpApi.#tenantRateLimiter = options?.tenantRateLimiter;
+    httpApi.#messageProcessedHooks = options?.messageProcessedHooks ?? [];
+    httpApi.#openAuthHandler = options?.openAuthHandler;
+    httpApi.#adminUiPath = resolvedAdminUiPath;
 
     if (registrationManager !== undefined) {
       httpApi.registrationManager = registrationManager;
@@ -80,6 +135,18 @@ export class HttpApi {
 
   get server(): Server<WsData> {
     return this.#server;
+  }
+
+  get ipRateLimiter(): RateLimiter | undefined {
+    return this.#ipRateLimiter;
+  }
+
+  get tenantRateLimiter(): RateLimiter | undefined {
+    return this.#tenantRateLimiter;
+  }
+
+  get messageProcessedHooks(): MessageProcessedHook[] {
+    return this.#messageProcessedHooks;
   }
 
   // ---------------------------------------------------------------------------
@@ -107,6 +174,25 @@ export class HttpApi {
           return new Response('WebSocket upgrade failed', { status: 400 });
         }
 
+        // --- Per-IP rate limiting ---
+        if (self.#ipRateLimiter) {
+          const ip = server.requestIP(req)?.address ?? 'unknown';
+          const result = self.#ipRateLimiter.consume(ip);
+          if (result.allowed === false) {
+            const retryAfterSec = Math.ceil(result.retryAfterMs / 1000);
+            return new Response(
+              JSON.stringify({ error: 'Rate limit exceeded' }),
+              {
+                status  : 429,
+                headers : {
+                  'content-type' : 'application/json',
+                  'retry-after'  : String(retryAfterSec),
+                },
+              },
+            );
+          }
+        }
+
         // --- Route matching ---
         let response: Response;
         try {
@@ -117,10 +203,15 @@ export class HttpApi {
         }
 
         // --- CORS headers ---
-        response.headers.set('access-control-allow-origin', '*');
-        response.headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
-        response.headers.set('access-control-allow-headers', '*');
-        response.headers.set('access-control-expose-headers', 'dwn-response');
+        // Admin API and metrics endpoints do not receive wildcard CORS headers
+        // to limit cross-origin access when the admin token is configured.
+        const isAdminRoute = path.startsWith('/admin') || path === '/metrics';
+        if (!isAdminRoute) {
+          response.headers.set('access-control-allow-origin', '*');
+          response.headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
+          response.headers.set('access-control-allow-headers', '*');
+          response.headers.set('access-control-expose-headers', 'dwn-response');
+        }
 
         // --- Response-time metrics ---
         const elapsed = performance.now() - startTime;
@@ -135,6 +226,7 @@ export class HttpApi {
       },
 
       websocket: {
+        maxPayloadLength: self.#config.maxRecordDataSize,
         open(ws: ServerWebSocket<WsData>): void {
           if (self.onWebSocketConnection) {
             self.onWebSocketConnection(ws);
@@ -163,9 +255,52 @@ export class HttpApi {
   }
 
   async close(): Promise<void> {
+    if (this.#openAuthHandler) {
+      this.#openAuthHandler.destroy();
+    }
     if (this.#server) {
       this.#server.stop(true); // close all connections immediately
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Admin UI static file serving
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Serves static files from the admin UI dist directory. Returns `null` when
+   * the admin UI package is not installed or the requested file does not exist.
+   * All non-file paths under `/admin` fall back to `index.html` (SPA routing).
+   */
+  #serveAdminUi(path: string): Response | null {
+    if (!this.#adminUiPath) {
+      return null;
+    }
+
+    // Strip the `/admin` prefix to get the file path within the dist directory.
+    const relativePath = path.replace(/^\/admin\/?/, '');
+
+    // Map to a file on disk. Empty path or paths without an extension get
+    // the SPA index.html (client-side routing).
+    let filePath: string;
+    if (relativePath === '' || !relativePath.includes('.')) {
+      filePath = join(this.#adminUiPath, 'index.html');
+    } else {
+      filePath = join(this.#adminUiPath, relativePath);
+    }
+
+    // Prevent path traversal: resolved path must stay within the admin UI directory.
+    const resolvedBase = resolve(this.#adminUiPath);
+    if (!resolve(filePath).startsWith(resolvedBase)) {
+      return null;
+    }
+
+    if (!existsSync(filePath)) {
+      return null;
+    }
+
+    const file = Bun.file(filePath);
+    return new Response(file);
   }
 
   // ---------------------------------------------------------------------------
@@ -184,6 +319,13 @@ export class HttpApi {
     }
 
     if (method === 'GET' && path === '/metrics') {
+      // Metrics require admin authentication when an admin token is configured.
+      if (this.#config.adminToken) {
+        const authError = validateAdminAuth(req, this.#config);
+        if (authError) {
+          return authError;
+        }
+      }
       try {
         const metricsBody = await register.metrics();
         return new Response(metricsBody, {
@@ -208,6 +350,32 @@ export class HttpApi {
     // --- JSON-RPC POST ---
     if (method === 'POST' && path === '/') {
       return this.#handleJsonRpcPost(req);
+    }
+
+    // --- Admin API routes ---
+    if (path.startsWith('/admin/api/') && this.#adminApi) {
+      return this.#adminApi.route(req, url, path, method);
+    }
+
+    // --- Admin UI static files (only when admin API is enabled) ---
+    if (method === 'GET' && path.startsWith('/admin') && this.#adminApi) {
+      const uiResponse = this.#serveAdminUi(path);
+      if (uiResponse) {
+        return uiResponse;
+      }
+    }
+
+    // --- Provider auth (open-auth) routes ---
+    if (this.#openAuthHandler && path.startsWith('/provider-auth/')) {
+      if (method === 'GET' && path === '/provider-auth/authorize') {
+        return this.#openAuthHandler.handleAuthorize(url);
+      }
+      if (method === 'POST' && path === '/provider-auth/token') {
+        return this.#openAuthHandler.handleToken(req);
+      }
+      if (method === 'POST' && path === '/provider-auth/refresh') {
+        return this.#openAuthHandler.handleRefresh(req);
+      }
     }
 
     // --- Registration routes ---
@@ -282,6 +450,38 @@ export class HttpApi {
   }
 
   // ---------------------------------------------------------------------------
+  // Security helpers
+  // ---------------------------------------------------------------------------
+
+  /** Returns `true` if the given key is a prototype-pollution-dangerous property name. */
+  static #isDangerousKey(key: string | undefined): boolean {
+    return key !== undefined && DANGEROUS_KEYS.has(key);
+  }
+
+  /** Returns `true` if any element in `keys` is a dangerous property name. */
+  static #hasDangerousKey(keys: string[]): boolean {
+    return keys.some(k => DANGEROUS_KEYS.has(k));
+  }
+
+  /** Returns a shallow copy of the config with sensitive values redacted for logging. */
+  static #redactConfig(cfg: DwnServerConfig): Record<string, unknown> {
+    const redacted: Record<string, unknown> = { ...cfg };
+    const sensitiveKeys = ['adminToken', 'providerAuthJwtSecret'];
+    for (const key of sensitiveKeys) {
+      if (redacted[key]) {
+        redacted[key] = '[REDACTED]';
+      }
+    }
+    // Redact passwords in connection-string-like values.
+    for (const [key, value] of Object.entries(redacted)) {
+      if (typeof value === 'string' && /^(?:postgres|mysql|sqlite):\/\//.test(value) && value.includes('@')) {
+        redacted[key] = value.replace(/:\/\/([^:]+):([^@]+)@/, '://$1:****@');
+      }
+    }
+    return redacted;
+  }
+
+  // ---------------------------------------------------------------------------
   // Handlers
   // ---------------------------------------------------------------------------
 
@@ -293,9 +493,13 @@ export class HttpApi {
     if (config.termsOfServiceFilePath !== undefined) {
       registrationRequirements.push('terms-of-service');
     }
+    if (config.providerAuthEnabled && !registrationRequirements.includes('provider-auth-v0')) {
+      registrationRequirements.push('provider-auth-v0');
+    }
 
     const serverInfo: ServerInfo = {
       maxFileSize              : config.maxRecordDataSize,
+      maxInFlight              : config.maxInFlight,
       registrationRequirements : registrationRequirements,
       server                   : this.#packageInfo.server,
       sdkVersion               : this.#packageInfo.sdkVersion,
@@ -303,6 +507,15 @@ export class HttpApi {
       version                  : this.#packageInfo.version,
       webSocketSupport         : config.webSocketSupport,
     };
+
+    if (config.providerAuthEnabled) {
+      serverInfo.providerAuth = {
+        authorizeUrl  : config.providerAuthAuthorizeUrl,
+        tokenUrl      : config.providerAuthTokenUrl,
+        refreshUrl    : config.providerAuthRefreshUrl,
+        managementUrl : config.providerAuthManagementUrl,
+      };
+    }
 
     return Response.json(serverInfo);
   }
@@ -328,10 +541,11 @@ export class HttpApi {
     }
 
     // Materialise the request body before passing to DWN.
-    // Bun (<=1.3.9) has a bug where req.body.getReader() can return undefined
-    // when the stream hasn't been fully received yet, causing DataStream.toBytes()
-    // to crash in its finally block.  Buffering via arrayBuffer() is a safe
-    // workaround until Bun fixes this.
+    // Bun's Bun.serve() returns a ReadableStream for req.body that is
+    // incompatible with the ReadableStream consumer code in dwn-sdk-js,
+    // causing DataStream.toBytes() to crash with "undefined is not a
+    // function" at reader.releaseLock().  Buffering via arrayBuffer()
+    // converts it into a well-behaved stream that dwn-sdk-js can consume.
     // TODO: https://github.com/enboxorg/enbox/issues/90 — remove once Bun ships fix
     const contentLength = req.headers.get('content-length');
     const transferEncoding = req.headers.get('transfer-encoding');
@@ -342,15 +556,31 @@ export class HttpApi {
     }
 
     const requestContext: RequestContext = {
-      dwn        : this.dwn,
-      transport  : 'http',
-      dataStream : requestDataStream,
+      dwn                   : this.dwn,
+      transport             : 'http',
+      dataStream            : requestDataStream,
+      activityLog           : this.#activityLog,
+      adminStore            : this.#adminStore,
+      registrationStore     : this.#registrationStore,
+      config                : this.#config,
+      tenantRateLimiter     : this.#tenantRateLimiter,
+      messageProcessedHooks : this.#messageProcessedHooks,
     };
     const { jsonRpcResponse, dataStream: responseDataStream } =
       await jsonRpcRouter.handle(dwnRpcRequest, requestContext);
 
     if (jsonRpcResponse.error) {
       requestCounter.inc({ method: dwnRpcRequest.method, error: 1 });
+
+      // Return HTTP 429 with Retry-After header for rate-limit rejections.
+      if (jsonRpcResponse.error.code === JsonRpcErrorCodes.TooManyRequests) {
+        const retryAfterSec = jsonRpcResponse.error.data?.retryAfterSec ?? 1;
+        return Response.json(jsonRpcResponse, {
+          status  : 429,
+          headers : { 'retry-after': String(retryAfterSec) },
+        });
+      }
+
       return Response.json(jsonRpcResponse, { status: 500 });
     }
 
@@ -411,6 +641,9 @@ export class HttpApi {
       for (const [param, value] of url.searchParams) {
         const keys = param.split('.');
         const lastKey = keys.pop();
+        if (HttpApi.#hasDangerousKey(keys) || HttpApi.#isDangerousKey(lastKey)) {
+          continue;
+        }
         const nestObj = (obj: Record<string, any>, key: string): Record<string, any> =>
           obj[key] = obj[key] || {};
         const lastLevelObject = keys.reduce(nestObj, queryOptions);
@@ -492,6 +725,9 @@ export class HttpApi {
       for (const [param, value] of url.searchParams) {
         const keys = param.split('.');
         const lastKey = keys.pop();
+        if (HttpApi.#hasDangerousKey(keys) || HttpApi.#isDangerousKey(lastKey)) {
+          continue;
+        }
         const nestObj = (obj: Record<string, any>, key: string): Record<string, any> =>
           obj[key] = obj[key] || {};
         const lastLevelObject = keys.reduce(nestObj, recordsQueryOptions);
@@ -509,7 +745,8 @@ export class HttpApi {
         headers: { 'content-type': 'application/json' },
       });
     } catch (error) {
-      return Response.json(error, { status: 400 });
+      log.error('Error processing query records request', error);
+      return Response.json({ error: 'Bad Request' }, { status: 400 });
     }
   }
 
@@ -534,7 +771,7 @@ export class HttpApi {
     if (method === 'POST' && path === '/registration'
       && this.#config.registrationStoreUrl !== undefined) {
       const requestBody = await req.json();
-      log.info('Registration request:', requestBody);
+      log.info('Registration request received');
 
       try {
         await this.registrationManager.handleRegistrationRequest(requestBody);

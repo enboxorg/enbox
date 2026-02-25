@@ -9,8 +9,7 @@ import emailProtocolDefinition from './fixtures/protocol-definitions/email.json'
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
 
-// TODO: Come up with a better way of resolving the TS errors.
-const testDwnUrls: string[] = [testDwnUrl];
+const testDwnUrls = [testDwnUrl];
 
 describe('Protocol', () => {
   let aliceDid: BearerDid;
@@ -54,11 +53,9 @@ describe('Protocol', () => {
       // Alice configures a protocol on her agent connected DWN.
       const protocolUri = `http://example.com/protocol/${TestDataGenerator.randomString(15)}`;
       const { status: aliceEmailStatus, protocol: aliceEmailProtocol } = await dwnAlice.protocols.configure({
-        message: {
-          definition: {
-            ...emailProtocolDefinition,
-            protocol: protocolUri
-          }
+        definition: {
+          ...emailProtocolDefinition,
+          protocol: protocolUri
         }
       });
 
@@ -74,11 +71,9 @@ describe('Protocol', () => {
 
       // Query Alices's remote DWN for `email` schema records.
       const aliceRemoteQueryResult = await dwnAlice.protocols.query({
-        from    : aliceDid.uri,
-        message : {
-          filter: {
-            protocol: protocolUri,
-          }
+        from   : aliceDid.uri,
+        filter : {
+          protocol: protocolUri,
         }
       });
 
@@ -97,11 +92,9 @@ describe('Protocol', () => {
     it('should return all defined properties', async () => {
       const protocolUri = `http://example.com/protocol/${TestDataGenerator.randomString(15)}`;
       const { status, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
-        message: {
-          definition: {
-            ...emailProtocolDefinition,
-            protocol: protocolUri
-          }
+        definition: {
+          ...emailProtocolDefinition,
+          protocol: protocolUri
         }
       });
       expect(status.code).toBe(202);

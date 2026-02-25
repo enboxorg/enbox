@@ -17,6 +17,13 @@ import type {
   Web5Agent,
 } from '@enbox/agent';
 
+import type {
+  RecordDeleteParams,
+  RecordModel,
+  RecordOptions,
+  RecordUpdateParams,
+} from './record-types.js';
+
 import {
   AgentPermissionsApi,
   DwnInterface,
@@ -27,181 +34,23 @@ import {
 } from '@enbox/agent';
 import { Convert, isEmptyObject, removeUndefinedProperties, Stream } from '@enbox/common';
 
+import type { RecordData } from './record-data.js';
+
+import { createRecordData } from './record-data.js';
 import { dataToBlob, SendCache } from './utils.js';
 
-/**
- * Represents Immutable Record properties that cannot be changed after the record is created.
- *
- * @beta
- * */
-export type ImmutableRecordProperties =
-  Pick<DwnMessageDescriptor[DwnInterface.RecordsWrite], 'dateCreated' | 'parentId' | 'protocol' | 'protocolPath' | 'recipient' | 'schema'>;
+// Re-export types for backward compatibility — consumers that import from
+// `./record.js` will continue to resolve every type without changes.
+export type {
+  ImmutableRecordProperties,
+  OptionalRecordProperties,
+  RecordDeleteParams,
+  RecordModel,
+  RecordOptions,
+  RecordUpdateParams,
+} from './record-types.js';
 
-/**
- * Represents Optional Record properties that depend on the Record's current state.
- *
- * @beta
-*/
-export type OptionalRecordProperties =
-  Pick<DwnMessage[DwnInterface.RecordsWrite], 'authorization' | 'attestation' | 'encryption' | 'contextId' > &
-  Pick<DwnMessageDescriptor[DwnInterface.RecordsWrite], 'dataFormat' | 'dataCid' | 'dataSize' | 'datePublished' | 'published' | 'tags'>;
-
-/**
- * Represents the structured data model of a record, encapsulating the essential fields that define
- * the record's metadata and payload within a Decentralized Web Node (DWN).
- *
- * @beta
- */
-export type RecordModel = ImmutableRecordProperties & OptionalRecordProperties & {
-
-  /** The logical author of the record. */
-  author: string;
-
-  /** The unique identifier of the record. */
-  recordId?: string;
-
-  /** The message timestamp (time of creation, most recent update, or deletion). */
-  timestamp?: string;
-
-  /** The protocol role under which this record is written. */
-  protocolRole?: RecordOptions['protocolRole'];
-};
-
-/**
- * Options for configuring a {@link Record} instance, extending the base `RecordsWriteMessage` with
- * additional properties.
- *
- * This type combines the standard fields required for writing DWN records with additional metadata
- * and configuration options used specifically in the {@link Record} class.
- *
- * @beta
- */
-export type RecordOptions = DwnMessage[DwnInterface.RecordsWrite | DwnInterface.RecordsDelete] & {
-  /** The DID that signed the record. */
-  author: string;
-
-  /** The attestation signature(s) for the record. */
-  attestation?: DwnMessage[DwnInterface.RecordsWrite]['attestation'];
-
-  /** The encryption information for the record. */
-  encryption?: DwnMessage[DwnInterface.RecordsWrite]['encryption'];
-
-  /** The contextId associated with the record. */
-  contextId?: string;
-
-  /** The unique identifier of the record */
-  recordId?: string;
-
-  /** The DID of the DWN tenant under which record operations are being performed. */
-  connectedDid: string;
-
-  /** The optional DID that will sign the records on behalf of the connectedDid  */
-  delegateDid?: string;
-
-  /** The data of the record, either as a Base64 URL encoded string or a Blob. */
-  encodedData?: string | Blob;
-
-  /**
-   * A stream of data, conforming to the Web `ReadableStream` interface, providing a mechanism
-   * to read the record's data sequentially. This is particularly useful for handling large
-   * datasets that should not be loaded entirely in memory, allowing for efficient, chunked
-   * processing of the record's data.
-   *
-   * The DWN SDK now returns Web `ReadableStream` natively, so no conversion is needed.
-   */
-  data?: ReadableStream;
-
-  /** The initial `RecordsWriteMessage` that represents the initial state/version of the record. */
-  initialWrite?: DwnMessage[DwnInterface.RecordsWrite];
-
-  /** The protocol role under which this record is written. */
-  protocolRole?: string;
-
-  /** The remote tenant DID if the record was queried or read from a remote DWN. */
-  remoteOrigin?: string;
-};
-
-/**
- * Parameters for updating a DWN record.
- *
- * This type specifies the set of properties that can be updated on an existing record. It is used
- * to convey the new state or changes to be applied to the record.
- *
- * @beta
- */
-export type RecordUpdateParams = {
-  /**
-   * The new data for the record, which can be of any type. This data will replace the existing
-   * data of the record. It's essential to ensure that this data is compatible with the record's
-   * schema or data format expectations.
-   */
-  data?: unknown;
-
-  /**
-   * The Content Identifier (CID) of the data. Updating this value changes the reference to the data
-   * associated with the record.
-   */
-  dataCid?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['dataCid'];
-
-  /** Whether or not to store the updated message. */
-  store?: boolean;
-
-  /** The data format/MIME type of the supplied data */
-  dataFormat?: string;
-
-  /** The size of the data in bytes. */
-  dataSize?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['dataSize'];
-
-  /** The timestamp of the update message. */
-  timestamp?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['messageTimestamp'];
-
-  /** The timestamp indicating when the record was published. */
-  datePublished?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['datePublished'];
-
-  /** The protocol role under which this record is written. */
-  protocolRole?: RecordOptions['protocolRole'];
-
-  /** The published status of the record. */
-  published?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['published'];
-
-
-  /** The tags associated with the updated record */
-  tags?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['tags'];
-
-  /**
-   * Controls whether the updated record should be auto-encrypted.
-   *
-   * If omitted, auto-detected from the original record: if the record was
-   * originally encrypted, the update is automatically re-encrypted with a
-   * fresh DEK. Set to `false` explicitly to skip encryption on the update.
-   */
-  encryption?: boolean;
-};
-
-/**
- * Parameters for deleting a DWN record.
- *
- * This type specifies the set of properties that are used when deleting an existing record. It is used
- * to convey the new state or changes to be applied to the record.
- *
- * @beta
- */
-export type RecordDeleteParams = {
-  /** Whether or not to store the message. */
-  store?: boolean;
-
-  /** Whether or not to sign the delete as an owner in order to import it. */
-  signAsOwner?: boolean;
-
-  /** Whether or not to prune any children this record may have. */
-  prune?: DwnMessageDescriptor[DwnInterface.RecordsDelete]['prune'];
-
-  /** The timestamp of the delete message. */
-  timestamp?: DwnMessageDescriptor[DwnInterface.RecordsDelete]['messageTimestamp'];
-
-  /** The protocol role under which this record will be deleted. */
-  protocolRole?: string;
-};
+export type { RecordData } from './record-data.js';
 
 /**
  * The result of a {@link Record.update} operation.
@@ -472,147 +321,37 @@ export class Record implements RecordModel {
    *
    * @beta
    */
-  get data(): {
-      blob: () => Promise<Blob>;
-      bytes: () => Promise<Uint8Array>;
-      json: <T = unknown>() => Promise<T>;
-      text: () => Promise<string>;
-      stream: () => Promise<ReadableStream>;
-      then: (
-        onFulfilled?: (value: ReadableStream) => ReadableStream | PromiseLike<ReadableStream>,
-        onRejected?: (reason: any) => PromiseLike<never>,
-      ) => Promise<ReadableStream>;
-      catch: (onRejected?: (reason: any) => PromiseLike<never>) => Promise<ReadableStream>;
-      } {
-    const self = this; // Capture the context of the `Record` instance.
-    const dataObj = {
-
-      /**
-       * Returns the data of the current record as a `Blob`.
-       *
-       * @returns A promise that resolves to a Blob containing the record's data.
-       * @throws If the record data is not available or cannot be converted to a `Blob`.
-       *
-       * @beta
-       */
-      async blob(): Promise<Blob> {
-        return new Blob([await Stream.consumeToBytes({ readableStream: await this.stream() })], { type: self.dataFormat });
-      },
-
-      /**
-       * Returns the data of the current record as a `Uint8Array`.
-       *
-       * @returns A Promise that resolves to a `Uint8Array` containing the record's data bytes.
-       * @throws If the record data is not available or cannot be converted to a byte array.
-       *
-       * @beta
-       */
-      async bytes(): Promise<Uint8Array> {
-        return await Stream.consumeToBytes({ readableStream: await this.stream() });
-      },
-
-      /**
-       * Parses the data of the current record as JSON and returns it as a JavaScript object.
-       *
-       * @returns A Promise that resolves to a JavaScript object parsed from the record's JSON data.
-       * @throws If the record data is not available, not in JSON format, or cannot be parsed.
-       *
-       * @beta
-       */
-      async json<T = unknown>(): Promise<T> {
-        return await Stream.consumeToJson({ readableStream: await this.stream() }) as T;
-      },
-
-      /**
-       * Returns the data of the current record as a `string`.
-       *
-       * @returns A promise that resolves to a `string` containing the record's text data.
-       * @throws If the record data is not available or cannot be converted to text.
-       *
-       * @beta
-       */
-      async text(): Promise<string> {
-        return await Stream.consumeToText({ readableStream: await this.stream() });
-      },
-
-      /**
-       * Provides a Web `ReadableStream` containing the record's data.
-       *
-       * Uses the standard Web Streams API for cross-platform compatibility across
-       * browsers, Node.js, Bun, and Deno.
-       *
-       * @returns A promise that resolves to a Web `ReadableStream` of the record's data.
-       * @throws If the record data is not available in-memory and cannot be fetched.
-       *
-       * @beta
-       */
-      async stream(): Promise<ReadableStream> {
-        if (self.deleted) {
-          throw new Error('404: Not Found');
-        }
-
-        if (self._encodedData) {
-          /** If `encodedData` is set, it indicates that the Record was instantiated by
-           * `dwn.records.create()`/`dwn.records.write()` or the record's data payload was small
-           * enough to be returned in `dwn.records.query()` results. In either case, the data is
-           * already available in-memory and can be returned as a Web `ReadableStream`. */
-          return Stream.fromBlob(self._encodedData);
-
-        } else if (self._readableStream) {
-          /** If a data stream is available, return it and clear the reference so subsequent
-           * calls will re-fetch. Unlike Node Readable streams, a consumed Web ReadableStream
-           * still appears "readable" (unlocked), so we cannot rely on `isReadable()` to
-           * detect exhaustion. Clearing the reference ensures the next call re-fetches. */
-          const currentStream = self._readableStream;
-          self._readableStream = undefined;
-          return currentStream;
-
-        } else {
-          /** The data stream has been consumed or was never set. Re-fetch from either: */
-          return self._remoteOrigin ?
-            // A. ...a remote DWN if the record was originally queried from a remote DWN.
-            await self.readRecordData({ target: self._remoteOrigin, isRemote: true }) :
-            // B. ...a local DWN if the record was originally queried from the local DWN.
-            await self.readRecordData({ target: self._connectedDid, isRemote: false });
-        }
-      },
-
-      /**
-       * Attaches callbacks for the resolution and/or rejection of the `Promise` returned by
-       * `stream()`.
-       *
-       * This method is a proxy to the `then` method of the `Promise` returned by `stream()`,
-       * allowing for a seamless integration with promise-based workflows.
-       * @param onFulfilled - A function to asynchronously execute when the `stream()` promise
-       *                      becomes fulfilled.
-       * @param onRejected - A function to asynchronously execute when the `stream()` promise
-       *                     becomes rejected.
-       * @returns A `Promise` for the completion of which ever callback is executed.
-       */
-      then(
-        onFulfilled?: (value: ReadableStream) => ReadableStream | PromiseLike<ReadableStream>,
-        onRejected?: (reason: any) => PromiseLike<never>,
-      ): Promise<ReadableStream> {
-        return this.stream().then(onFulfilled, onRejected);
-      },
-
-      /**
-       * Attaches a rejection handler callback to the `Promise` returned by the `stream()` method.
-       * This method is a shorthand for `.then(undefined, onRejected)`, specifically designed for handling
-       * rejection cases in the promise chain initiated by accessing the record's data. It ensures that
-       * errors during data retrieval or processing can be caught and handled appropriately.
-       *
-       * @param onRejected - A function to asynchronously execute when the `stream()` promise
-       *                     becomes rejected.
-       * @returns A `Promise` that resolves to the value of the callback if it is called, or to its
-       *          original fulfillment value if the promise is instead fulfilled.
-       */
-      catch(onRejected?: (reason: any) => PromiseLike<never>): Promise<ReadableStream> {
-        return this.stream().catch(onRejected);
+  get data(): RecordData {
+    return createRecordData(async (): Promise<ReadableStream> => {
+      if (this.deleted) {
+        throw new Error('404: Not Found');
       }
-    };
 
-    return dataObj;
+      if (this._encodedData) {
+        /** If `encodedData` is set, it indicates that the Record was instantiated by
+         * `dwn.records.create()`/`dwn.records.write()` or the record's data payload was small
+         * enough to be returned in `dwn.records.query()` results. In either case, the data is
+         * already available in-memory and can be returned as a Web `ReadableStream`. */
+        return Stream.fromBlob(this._encodedData);
+
+      } else if (this._readableStream) {
+        /** If a data stream is available, return it and clear the reference so subsequent
+         * calls will re-fetch. Unlike Node Readable streams, a consumed Web ReadableStream
+         * still appears "readable" (unlocked), so we cannot rely on `isReadable()` to
+         * detect exhaustion. Clearing the reference ensures the next call re-fetches. */
+        const currentStream = this._readableStream;
+        this._readableStream = undefined;
+        return currentStream;
+
+      } else {
+        /** The data stream has been consumed or was never set. Re-fetch from either: */
+        return this._remoteOrigin ?
+          // A. ...a remote DWN if the record was originally queried from a remote DWN.
+          await this.readRecordData({ target: this._remoteOrigin, isRemote: true }) :
+          // B. ...a local DWN if the record was originally queried from the local DWN.
+          await this.readRecordData({ target: this._connectedDid, isRemote: false });
+      }
+    }, this.dataFormat);
   }
 
   /**
@@ -835,18 +574,7 @@ export class Record implements RecordModel {
       encryption    : shouldEncrypt || undefined,
     };
 
-    if (this._delegateDid) {
-      const { message: delegatedGrant } = await this._permissionsApi.getPermissionForRequest({
-        connectedDid : this._connectedDid,
-        delegateDid  : this._delegateDid,
-        protocol     : this.protocol,
-        delegate     : true,
-        cached       : true,
-        messageType  : requestOptions.messageType
-      });
-      requestOptions.messageParams.delegatedGrant = delegatedGrant;
-      requestOptions.granteeDid = this._delegateDid;
-    }
+    await this.applyDelegateGrant(requestOptions);
 
     const agentResponse = await this._agent.processDwnRequest(requestOptions);
 
@@ -925,23 +653,7 @@ export class Record implements RecordModel {
       };
     }
 
-    if (this._delegateDid) {
-      const { message: delegatedGrant } = await this._permissionsApi.getPermissionForRequest({
-        connectedDid : this._connectedDid,
-        delegateDid  : this._delegateDid,
-        protocol     : this.protocol,
-        delegate     : true,
-        cached       : true,
-        messageType  : deleteOptions.messageType
-      });
-
-      deleteOptions.messageParams = {
-        ...deleteOptions.messageParams,
-        delegatedGrant
-      };
-
-      deleteOptions.granteeDid = this._delegateDid;
-    }
+    await this.applyDelegateGrant(deleteOptions);
 
     const agentResponse = await this._agent.processDwnRequest(deleteOptions);
     const { message, reply: { status } } = agentResponse;
@@ -984,23 +696,7 @@ export class Record implements RecordModel {
         store,
       };
 
-      if (this._delegateDid) {
-        const { message: delegatedGrant } = await this._permissionsApi.getPermissionForRequest({
-          connectedDid : this._connectedDid,
-          delegateDid  : this._delegateDid,
-          protocol     : this.protocol,
-          delegate     : true,
-          cached       : true,
-          messageType  : initialWriteRequest.messageType
-        });
-
-        initialWriteRequest.messageParams = {
-          ...initialWriteRequest.messageParams,
-          delegatedGrant
-        };
-
-        initialWriteRequest.granteeDid = this._delegateDid;
-      }
+      await this.applyDelegateGrant(initialWriteRequest);
 
       // Process the prepared initial write, with the options set for storing and/or signing as the owner.
       const agentResponse = await this._agent.processDwnRequest(initialWriteRequest);
@@ -1054,23 +750,7 @@ export class Record implements RecordModel {
       };
     }
 
-    if (this._delegateDid) {
-      const { message: delegatedGrant } = await this._permissionsApi.getPermissionForRequest({
-        connectedDid : this._connectedDid,
-        delegateDid  : this._delegateDid,
-        protocol     : this.protocol,
-        delegate     : true,
-        cached       : true,
-        messageType  : requestOptions.messageType
-      });
-
-      requestOptions.messageParams = {
-        ...requestOptions.messageParams,
-        delegatedGrant
-      };
-
-      requestOptions.granteeDid = this._delegateDid;
-    }
+    await this.applyDelegateGrant(requestOptions);
 
     const agentResponse = await this._agent.processDwnRequest(requestOptions);
     const { message, reply: { status } } = agentResponse;
@@ -1119,25 +799,10 @@ export class Record implements RecordModel {
       // When reading the data as a delegate, if we don't find a grant we will attempt to read it with the delegate DID as the author.
       // This allows users to read publicly available data without needing explicit grants.
       //
-      // NOTE: When a read-only Record class is implemented, callers would have that returned instead when they don't have an explicit permission.
-      // This should fail if a permission is not found, although it should not happen in practice.
-      // TODO: https://github.com/enboxorg/enbox/issues/898
+      // NOTE: For anonymous/public record data access, callers can use `ReadOnlyRecord` via `Web5.anonymous()`.
+      // See: https://github.com/enboxorg/enbox/issues/898
       try {
-        const { message: delegatedGrant } = await this._permissionsApi.getPermissionForRequest({
-          connectedDid : this._connectedDid,
-          delegateDid  : this._delegateDid,
-          protocol     : this.protocol,
-          delegate     : true,
-          cached       : true,
-          messageType  : readRequest.messageType
-        });
-
-        readRequest.messageParams = {
-          ...readRequest.messageParams,
-          delegatedGrant
-        };
-
-        readRequest.granteeDid = this._delegateDid;
+        await this.applyDelegateGrant(readRequest);
       } catch {
         // If there is an error fetching the grant, we will attempt to read the data as the delegate.
         readRequest.author = this._delegateDid;
@@ -1160,6 +825,37 @@ export class Record implements RecordModel {
     } catch (error) {
       throw new Error(`Error encountered while attempting to read data: ${error.message}`);
     }
+  }
+
+  /**
+   * If the record is operating as a delegate, fetches the appropriate permission grant
+   * and applies it to the given DWN request options. This centralises the repeated
+   * pattern of looking up a delegated grant and attaching it to a request.
+   *
+   * @param requestOptions - The DWN request options to augment with the delegate grant.
+   */
+  private async applyDelegateGrant<T extends DwnInterface>(
+    requestOptions: ProcessDwnRequest<T>,
+  ): Promise<void> {
+    if (!this._delegateDid) {
+      return;
+    }
+
+    const { message: delegatedGrant } = await this._permissionsApi.getPermissionForRequest({
+      connectedDid : this._connectedDid,
+      delegateDid  : this._delegateDid,
+      protocol     : this.protocol,
+      delegate     : true,
+      cached       : true,
+      messageType  : requestOptions.messageType
+    });
+
+    requestOptions.messageParams = {
+      ...requestOptions.messageParams,
+      delegatedGrant
+    };
+
+    requestOptions.granteeDid = this._delegateDid;
   }
 
   /**

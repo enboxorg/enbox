@@ -1,7 +1,5 @@
 import type { DidResolver } from '@enbox/dids';
-import type { EventStream } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore, StateIndex } from '../../src/index.js';
-import type { GenericMessage, RecordsWriteMessage } from '../../src/index.js';
+import type { DataStore, EventLog, GenericMessage, MessageStore, ProtocolDefinition, RecordsWriteMessage, ResumableTaskStore, StateIndex } from '../../src/index.js';
 import type { RecordsQueryReply, RecordsQueryReplyEntry, RecordsWriteDescriptor } from '../../src/types/records-types.js';
 
 import sinon from 'sinon';
@@ -23,11 +21,11 @@ import { Message } from '../../src/core/message.js';
 import { RecordsQuery } from '../../src/interfaces/records-query.js';
 import { RecordsQueryHandler } from '../../src/handlers/records-query.js';
 import { RecordsWriteHandler } from '../../src/handlers/records-write.js';
-import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { TestEventStream } from '../test-event-stream.js';
+import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
-import { DataStoreLevel, Dwn, MessageStoreLevel, RecordsWrite, Time } from '../../src/index.js';
+import { CoreProtocolRegistry, DataStoreLevel, Dwn, MessageStoreLevel, ProtocolsConfigure, RecordsWrite, Time } from '../../src/index.js';
+import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 export function testRecordsQueryHandler(): void {
@@ -43,7 +41,7 @@ export function testRecordsQueryHandler(): void {
       let dataStore: DataStore;
       let resumableTaskStore: ResumableTaskStore;
       let stateIndex: StateIndex;
-      let eventStream: EventStream;
+      let eventLog: EventLog;
       let dwn: Dwn;
 
       // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
@@ -56,9 +54,10 @@ export function testRecordsQueryHandler(): void {
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
         stateIndex = stores.stateIndex;
-        eventStream = TestEventStream.get();
+        eventLog = TestEventLog.get();
+        eventLog = TestEventLog.get();
 
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
       });
 
       beforeEach(async () => {
@@ -100,6 +99,7 @@ export function testRecordsQueryHandler(): void {
         const alice = await TestDataGenerator.generatePersona();
         const bob = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const dataFormat = 'myAwesomeDataFormat';
 
         const write = await TestDataGenerator.generateRecordsWrite({ author: alice, attesters: [bob], dataFormat });
@@ -128,6 +128,7 @@ export function testRecordsQueryHandler(): void {
         // setting up a stub resolver
         const mockResolution = TestDataGenerator.createDidResolutionResult(alice);;
         sinon.stub(didResolver, 'resolve').resolves(mockResolution);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // insert data
         const writeReply1 = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
@@ -163,6 +164,7 @@ export function testRecordsQueryHandler(): void {
       it('should return `encodedData` if data size is within the spec threshold', async () => {
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded); // within/on threshold
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const write= await TestDataGenerator.generateRecordsWrite({ author: alice, data });
 
         const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
@@ -179,6 +181,7 @@ export function testRecordsQueryHandler(): void {
       it('should not return `encodedData` if data size is greater then spec threshold', async () => {
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1); // exceeding threshold
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const write= await TestDataGenerator.generateRecordsWrite({ author: alice, data });
 
         const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
@@ -194,6 +197,7 @@ export function testRecordsQueryHandler(): void {
 
       it('should include `initialWrite` property if RecordsWrite is not initial write', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const write = await TestDataGenerator.generateRecordsWrite({ author: alice, published: false });
 
         const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
@@ -219,6 +223,7 @@ export function testRecordsQueryHandler(): void {
       // scenario: 2 records authored by alice, 1st attested by alice, 2nd attested by bob
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const recordsWrite1 = await TestDataGenerator.generateRecordsWrite({ author: alice, attesters: [alice] });
         const recordsWrite2 = await TestDataGenerator.generateRecordsWrite({ author: alice, attesters: [bob] });
 
@@ -466,6 +471,7 @@ export function testRecordsQueryHandler(): void {
       it('should be able to query for published records', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create a published record
         const publishedWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true, schema: 'post' });
@@ -533,6 +539,7 @@ export function testRecordsQueryHandler(): void {
 
       it('should be able to query for unpublished records', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create a published record
         const publishedWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true, schema: 'post' });
@@ -569,6 +576,7 @@ export function testRecordsQueryHandler(): void {
       it('should not be able to query for unpublished records if unauthorized', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create a published record
         const publishedWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true, schema: 'post' });
@@ -615,6 +623,7 @@ export function testRecordsQueryHandler(): void {
 
       it('should be able to query for a record by a dataCid', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create a record
         const writeRecord = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -632,6 +641,7 @@ export function testRecordsQueryHandler(): void {
 
       it('should be able to query with `dataSize` filter (half-open range)', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice, data: TestDataGenerator.randomBytes(10) });
         const write2 = await TestDataGenerator.generateRecordsWrite({ author: alice, data: TestDataGenerator.randomBytes(50) });
         const write3 = await TestDataGenerator.generateRecordsWrite({ author: alice, data: TestDataGenerator.randomBytes(100) });
@@ -706,6 +716,7 @@ export function testRecordsQueryHandler(): void {
 
       it('should be able to range query with `dataSize` filter (open & closed range)', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice, data: TestDataGenerator.randomBytes(10) });
         const write2 = await TestDataGenerator.generateRecordsWrite({ author: alice, data: TestDataGenerator.randomBytes(50) });
         const write3 = await TestDataGenerator.generateRecordsWrite({ author: alice, data: TestDataGenerator.randomBytes(100) });
@@ -764,6 +775,7 @@ export function testRecordsQueryHandler(): void {
         const firstDayOf2022 = Time.createTimestamp({ year: 2022, month: 1, day: 1 });
         const firstDayOf2023 = Time.createTimestamp({ year: 2023, month: 1, day: 1 });
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice, dateCreated: firstDayOf2021, messageTimestamp: firstDayOf2021 });
         const write2 = await TestDataGenerator.generateRecordsWrite({ author: alice, dateCreated: firstDayOf2022, messageTimestamp: firstDayOf2022 });
         const write3 = await TestDataGenerator.generateRecordsWrite({ author: alice, dateCreated: firstDayOf2023, messageTimestamp: firstDayOf2023 });
@@ -831,6 +843,14 @@ export function testRecordsQueryHandler(): void {
         const firstDayOf2022 = Time.createTimestamp({ year: 2022, month: 1, day: 1 });
         const firstDayOf2023 = Time.createTimestamp({ year: 2023, month: 1, day: 1 });
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        // install protocol at a timestamp before the record timestamps so temporal lookup works for updates
+        const protocolsConfigure = await ProtocolsConfigure.create({
+          definition       : defaultTestProtocolDefinition,
+          signer           : Jws.createSigner(alice),
+          messageTimestamp : Time.createTimestamp({ year: 2019, month: 1, day: 1 }),
+        });
+        const protoReply = await dwn.processMessage(alice.did, protocolsConfigure.message);
+        expect(protoReply.status.code).toBe(202);
         const write1 = await TestDataGenerator.generateRecordsWrite({
           author: alice, published: true, dateCreated: firstDayOf2020, datePublished: firstDayOf2021, messageTimestamp: firstDayOf2020
         });
@@ -949,6 +969,7 @@ export function testRecordsQueryHandler(): void {
         const firstDayOf2022 = Time.createTimestamp({ year: 2022, month: 1, day: 1 });
         const firstDayOf2023 = Time.createTimestamp({ year: 2023, month: 1, day: 1 });
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const write1 = await TestDataGenerator.generateRecordsWrite({
           author: alice, published: true, dateCreated: firstDayOf2020, datePublished: firstDayOf2021, messageTimestamp: firstDayOf2020
         });
@@ -1049,6 +1070,14 @@ export function testRecordsQueryHandler(): void {
         const firstDayOf2022 = Time.createTimestamp({ year: 2022, month: 1, day: 1 });
         const firstDayOf2023 = Time.createTimestamp({ year: 2023, month: 1, day: 1 });
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        // install protocol at a timestamp before the record timestamps so temporal lookup works for updates
+        const protocolsConfigure = await ProtocolsConfigure.create({
+          definition       : defaultTestProtocolDefinition,
+          signer           : Jws.createSigner(alice),
+          messageTimestamp : Time.createTimestamp({ year: 2019, month: 1, day: 1 }),
+        });
+        const protoReply = await dwn.processMessage(alice.did, protocolsConfigure.message);
+        expect(protoReply.status.code).toBe(202);
 
         const write1 = await TestDataGenerator.generateRecordsWrite({
           author: alice, dateCreated: firstDayOf2020, messageTimestamp: firstDayOf2020
@@ -1152,6 +1181,7 @@ export function testRecordsQueryHandler(): void {
         const firstDayOf2022 = Time.createTimestamp({ year: 2022, month: 1, day: 1 });
         const firstDayOf2023 = Time.createTimestamp({ year: 2023, month: 1, day: 1 });
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const schema = '2021And2022Schema';
         const write1 = await TestDataGenerator.generateRecordsWrite({
           author: alice, dateCreated: firstDayOf2021, messageTimestamp: firstDayOf2021, schema
@@ -1194,6 +1224,7 @@ export function testRecordsQueryHandler(): void {
         // setting up a stub method resolver
         const mockResolution = TestDataGenerator.createDidResolutionResult(alice);
         sinon.stub(didResolver, 'resolve').resolves(mockResolution);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         const writeReply = await dwn.processMessage(alice.did, message, { dataStream });
         expect(writeReply.status.code).toBe(202);
@@ -1213,6 +1244,7 @@ export function testRecordsQueryHandler(): void {
       // scenario: alice and bob attest to a message alice authored
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, attesters: [alice] });
 
         const writeReply = await dwn.processMessage(alice.did, message, { dataStream });
@@ -1245,6 +1277,7 @@ export function testRecordsQueryHandler(): void {
         // setting up a stub method resolver
         const mockResolution = TestDataGenerator.createDidResolutionResult(alice);;
         sinon.stub(didResolver, 'resolve').resolves(mockResolution);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // insert data
         const publishedWriteReply = await dwn.processMessage(alice.did, publishedWriteData.message, { dataStream: publishedWriteData.dataStream });
@@ -1288,6 +1321,7 @@ export function testRecordsQueryHandler(): void {
         // setting up a stub method resolver
         const mockResolution = TestDataGenerator.createDidResolutionResult(alice);;
         sinon.stub(didResolver, 'resolve').resolves(mockResolution);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // insert data, intentionally out of order
         const writeReply2 = await dwn.processMessage(alice.did, write2Data.message, { dataStream: write2Data.dataStream });
@@ -1434,6 +1468,7 @@ export function testRecordsQueryHandler(): void {
       it('should sort records by `updatedAscending` and `updatedDescending`', async () => {
         // insert three messages into DB
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const schema = 'aSchema';
         const write1Data = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
         await Time.minimalSleep();
@@ -1479,6 +1514,14 @@ export function testRecordsQueryHandler(): void {
         // updatedAscending should return them in order of their update, not creation.
         const createdTimestamp = Time.createTimestamp({ year: 2020, month: 1, day: 1 });
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        // install protocol at a timestamp before the record timestamps so temporal lookup works for updates
+        const protocolsConfigure = await ProtocolsConfigure.create({
+          definition       : defaultTestProtocolDefinition,
+          signer           : Jws.createSigner(alice),
+          messageTimestamp : Time.createTimestamp({ year: 2019, month: 1, day: 1 }),
+        });
+        const protoReply = await dwn.processMessage(alice.did, protocolsConfigure.message);
+        expect(protoReply.status.code).toBe(202);
         const schema = 'aSchema';
 
         const write1 = await TestDataGenerator.generateRecordsWrite({
@@ -1552,6 +1595,7 @@ export function testRecordsQueryHandler(): void {
         const dateCreated = Time.getCurrentTimestamp();
         const messageTimestamp = dateCreated;
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const schema = 'aSchema';
         const published = true;
         const write1Data = await TestDataGenerator.generateRecordsWrite({ messageTimestamp, dateCreated, author: alice, schema, published });
@@ -1600,6 +1644,7 @@ export function testRecordsQueryHandler(): void {
 
       it('should paginate all records in ascending order', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         const messages = await Promise.all(Array(12).fill({}).map(_ => TestDataGenerator.generateRecordsWrite({
           author : alice,
@@ -1641,6 +1686,7 @@ export function testRecordsQueryHandler(): void {
 
       it('should paginate all records in descending order', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         const messages = await Promise.all(Array(12).fill({}).map(_ => TestDataGenerator.generateRecordsWrite({
           author : alice,
@@ -1685,6 +1731,7 @@ export function testRecordsQueryHandler(): void {
       // 1st is unpublished
       // 2nd is published
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const record1Data = await TestDataGenerator.generateRecordsWrite(
           { author: alice, schema: 'https://schema1', published: false }
         );
@@ -2285,7 +2332,9 @@ export function testRecordsQueryHandler(): void {
           ...aliceMessagesForBobPromise,
         ];
 
-        const recordsWriteHandler = new RecordsWriteHandler(didResolver, messageStore, dataStore, stateIndex, eventStream);
+        const recordsWriteHandler = new RecordsWriteHandler({
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+        });
 
         const messages: GenericMessage[] = [];
         for await (const { recordsWrite, message, dataBytes } of messagePromises) {
@@ -2390,6 +2439,7 @@ export function testRecordsQueryHandler(): void {
       it('#170 - should treat records with `published` explicitly set to `false` as unpublished', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const schema = 'schema1';
         const unpublishedRecordsWrite = await TestDataGenerator.generateRecordsWrite(
           { author: alice, schema, data: Encoder.stringToBytes('1'), published: false } // explicitly setting `published` to `false`
@@ -2435,6 +2485,8 @@ export function testRecordsQueryHandler(): void {
       // insert three messages into DB, two with matching schema
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, bob);
         const schema = 'myAwesomeSchema';
         const recordsWriteMessage1Data = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
         const recordsWriteMessage2Data = await TestDataGenerator.generateRecordsWrite({ author: bob, schema });
@@ -2520,6 +2572,7 @@ export function testRecordsQueryHandler(): void {
 
       it('should return 401 for anonymous queries that filter explicitly for unpublished records', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create an unpublished record
         const draftWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'post' });
@@ -3439,7 +3492,9 @@ export function testRecordsQueryHandler(): void {
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
       const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-      const recordsQueryHandler = new RecordsQueryHandler(didResolver, messageStoreStub, dataStoreStub);
+      const recordsQueryHandler = new RecordsQueryHandler({
+        didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub,
+      });
       const reply = await recordsQueryHandler.handle({ tenant, message });
 
       expect(reply.status.code).toBe(401);
@@ -3453,7 +3508,9 @@ export function testRecordsQueryHandler(): void {
       const didResolver = TestStubGenerator.createDidResolverStub(author!);
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
       const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
-      const recordsQueryHandler = new RecordsQueryHandler(didResolver, messageStoreStub, dataStoreStub);
+      const recordsQueryHandler = new RecordsQueryHandler({
+        didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub,
+      });
 
       // stub the `parse()` function to throw an error
       sinon.stub(RecordsQuery, 'parse').throws('anyError');

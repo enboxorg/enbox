@@ -1,5 +1,5 @@
 import type { Web5PlatformAgent } from './types/agent.js';
-import type { SyncEngine, SyncIdentityOptions } from './types/sync.js';
+import type { StartSyncParams, SyncConnectivityState, SyncEngine, SyncIdentityOptions } from './types/sync.js';
 
 export type SyncApiParams = {
   agent?: Web5PlatformAgent;
@@ -41,6 +41,10 @@ export class AgentSyncApi implements SyncEngine {
     this._syncEngine.agent = agent;
   }
 
+  get connectivityState(): SyncConnectivityState {
+    return this._syncEngine.connectivityState;
+  }
+
   public async registerIdentity(params: { did: string; options?: SyncIdentityOptions }): Promise<void> {
     await this._syncEngine.registerIdentity(params);
   }
@@ -61,7 +65,7 @@ export class AgentSyncApi implements SyncEngine {
     return this._syncEngine.sync(direction);
   }
 
-  public startSync(params: { interval: string; }): Promise<void> {
+  public startSync(params: StartSyncParams): Promise<void> {
     return this._syncEngine.startSync(params);
   }
 

@@ -76,7 +76,8 @@ export class AgentPermissionsApi implements PermissionsApi {
     grantee,
     grantor,
     protocol,
-    remote = false
+    remote = false,
+    checkRevoked = true,
   }: FetchPermissionsParams): Promise<PermissionGrantEntry[]> {
 
     // filter by a protocol using tags if provided
@@ -102,14 +103,65 @@ export class AgentPermissionsApi implements PermissionsApi {
       throw new Error(`PermissionsApi: Failed to fetch grants: ${reply.status.detail}`);
     }
 
+    // Build a set of revoked grant IDs so that revoked grants can be filtered out.
+    // Uses a single batch query for all revocations rather than N individual reads.
+    const revokedGrantIds = checkRevoked
+      ? await this.fetchRevokedGrantIds({ author, target, grantor, remote, tags })
+      : new Set<string>();
+
     const grants:PermissionGrantEntry[] = [];
     for (const entry of reply.entries! as DwnDataEncodedRecordsWriteMessage[]) {
-      // TODO: Check for revocation status based on a request parameter and filter out revoked grants
-      const grant = await DwnPermissionGrant.parse(entry);
+      if (revokedGrantIds.has(entry.recordId)) {
+        continue;
+      }
+      const grant = DwnPermissionGrant.parse(entry);
       grants.push({ grant, message: entry });
     }
 
     return grants;
+  }
+
+  /**
+   * Fetch all revocation record IDs for grants, returned as a Set of parent grant record IDs.
+   * Issues a single RecordsQuery for all revocation records, optionally scoped to a grantor and protocol.
+   */
+  private async fetchRevokedGrantIds({ author, target, grantor, remote, tags }: {
+    author: string;
+    target: string;
+    grantor?: string;
+    remote: boolean;
+    tags?: { protocol: string };
+  }): Promise<Set<string>> {
+    const revocationParams: ProcessDwnRequest<DwnInterface.RecordsQuery> = {
+      author,
+      target,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          author       : grantor, // revocations are authored by the same grantor
+          protocol     : PermissionsProtocol.uri,
+          protocolPath : PermissionsProtocol.revocationPath,
+          tags,
+        }
+      }
+    };
+
+    const { reply: revocationReply } = remote
+      ? await this.agent.sendDwnRequest(revocationParams)
+      : await this.agent.processDwnRequest(revocationParams);
+
+    if (revocationReply.status.code !== 200) {
+      throw new Error(`PermissionsApi: Failed to fetch revocations: ${revocationReply.status.detail}`);
+    }
+
+    const revokedGrantIds = new Set<string>();
+    for (const entry of revocationReply.entries! as DwnDataEncodedRecordsWriteMessage[]) {
+      if (entry.descriptor.parentId !== undefined) {
+        revokedGrantIds.add(entry.descriptor.parentId);
+      }
+    }
+
+    return revokedGrantIds;
   }
 
   async fetchRequests({
@@ -141,7 +193,7 @@ export class AgentPermissionsApi implements PermissionsApi {
 
     const requests: PermissionRequestEntry[] = [];
     for (const entry of reply.entries! as DwnDataEncodedRecordsWriteMessage[]) {
-      const request = await DwnPermissionRequest.parse(entry);
+      const request = DwnPermissionRequest.parse(entry);
       requests.push({ request, message: entry });
     }
 
@@ -223,7 +275,7 @@ export class AgentPermissionsApi implements PermissionsApi {
       encodedData: Convert.uint8Array(permissionsGrantBytes).toBase64Url()
     };
 
-    const grant = await DwnPermissionGrant.parse(dataEncodedMessage);
+    const grant = DwnPermissionGrant.parse(dataEncodedMessage);
 
     return { grant, message: dataEncodedMessage };
   }
@@ -269,7 +321,7 @@ export class AgentPermissionsApi implements PermissionsApi {
       encodedData: Convert.uint8Array(permissionRequestBytes).toBase64Url()
     };
 
-    const request = await DwnPermissionRequest.parse(dataEncodedMessage);
+    const request = DwnPermissionRequest.parse(dataEncodedMessage);
 
     return { request, message: dataEncodedMessage };
   }
@@ -336,6 +388,11 @@ export class AgentPermissionsApi implements PermissionsApi {
     grants: PermissionGrantEntry[],
     delegated: boolean = false
   ): Promise<PermissionGrantEntry | undefined> {
+    // Two-pass matching: prefer exact scope matches over unified Messages.Read fallback.
+    // This ensures that if both a Messages.Sync grant and a Messages.Read grant exist,
+    // the specific Messages.Sync grant is returned for MessagesSync lookups.
+    let unifiedFallback: PermissionGrantEntry | undefined;
+
     for (const entry of grants) {
       const { grant, message } = entry;
       if (delegated === true && grant.delegated !== true) {
@@ -344,9 +401,19 @@ export class AgentPermissionsApi implements PermissionsApi {
       const { messageType, protocol, protocolPath, contextId } = messageParams;
 
       if (this.matchScopeFromGrant(grantor, grantee, messageType, grant, protocol, protocolPath, contextId)) {
-        return { grant, message };
+        const scopeMessageType = grant.scope.interface + grant.scope.method;
+        // Exact match — return immediately
+        if (scopeMessageType === messageType) {
+          return { grant, message };
+        }
+        // Unified fallback match — hold for later in case an exact match is found
+        if (!unifiedFallback) {
+          unifiedFallback = { grant, message };
+        }
       }
     }
+
+    return unifiedFallback;
   }
 
   private static matchScopeFromGrant<T extends DwnInterface>(
@@ -365,7 +432,14 @@ export class AgentPermissionsApi implements PermissionsApi {
 
     const scope = grant.scope;
     const scopeMessageType = scope.interface + scope.method;
-    if (scopeMessageType === messageType) {
+
+    // Messages.Read is a unified scope that covers Messages.Read, Messages.Sync, and Messages.Subscribe.
+    // When looking for a MessagesSync or MessagesSubscribe grant, also accept a MessagesRead grant.
+    const isMessagesScopeMatch = scopeMessageType === messageType
+      || (scopeMessageType === DwnInterface.MessagesRead
+        && (messageType === DwnInterface.MessagesSync || messageType === DwnInterface.MessagesSubscribe));
+
+    if (isMessagesScopeMatch) {
       if (isRecordsType(messageType)) {
         const recordScope = scope as DwnRecordsPermissionScope;
         if (recordScope.protocol !== protocol) {

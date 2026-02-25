@@ -6,7 +6,7 @@ import type { KeyValueStore } from '@enbox/common';
 import type { Web5PlatformAgent } from './types/agent.js';
 
 import { Level } from 'level';
-import { DataStoreLevel, EventEmitterStream, MessageStoreLevel, ResumableTaskStoreLevel, StateIndexLevel } from '@enbox/dwn-sdk-js';
+import { DataStoreLevel, EventEmitterEventLog, MessageStoreLevel, ResumableTaskStoreLevel, StateIndexLevel } from '@enbox/dwn-sdk-js';
 import { DidDht, DidJwk, DidResolverCacheMemory } from '@enbox/dids';
 import { LevelStore, MemoryStore } from '@enbox/common';
 
@@ -193,8 +193,6 @@ export class PlatformAgentTestHarness {
             id              : 'dwn',
             type            : 'DecentralizedWebNode',
             serviceEndpoint : testDwnUrls,
-            enc             : '#enc',
-            sig             : '#sig',
           }
         ],
         verificationMethods: [
@@ -259,7 +257,7 @@ export class PlatformAgentTestHarness {
     // Note: There is no in-memory store for DWN, so we always use LevelDB-based disk stores.
     const dwnDataStore = new DataStoreLevel({ blockstoreLocation: testDataPath('DWN_DATASTORE') });
     const dwnStateIndex = new StateIndexLevel({ location: testDataPath('DWN_STATEINDEX') });
-    const dwnEventStream = new EventEmitterStream();
+    const dwnEventLog = new EventEmitterEventLog();
     const dwnResumableTaskStore = new ResumableTaskStoreLevel({ location: testDataPath('DWN_RESUMABLETASKSTORE') });
 
     const dwnMessageStore = new MessageStoreLevel({
@@ -273,7 +271,7 @@ export class PlatformAgentTestHarness {
       dataStore          : dwnDataStore,
       didResolver        : didApi,
       stateIndex         : dwnStateIndex,
-      eventStream        : dwnEventStream,
+      eventLog           : dwnEventLog,
       messageStore       : dwnMessageStore,
       resumableTaskStore : dwnResumableTaskStore
     });

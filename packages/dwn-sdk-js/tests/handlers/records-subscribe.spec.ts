@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
-import type { EventStream } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, ProtocolDefinition, RecordsWriteMessage, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { DataStore, MessageStore, ProtocolDefinition, RecordsDeleteMessage, RecordsWriteMessage, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { EventLog, SubscriptionMessage } from '../../src/types/subscriptions.js';
 import type { RecordEvent, RecordsFilter, RecordSubscriptionHandler } from '../../src/types/records-types.js';
 
 import sinon from 'sinon';
@@ -16,15 +16,15 @@ import { Poller } from '../utils/poller.js';
 import { RecordsSubscribe } from '../../src/interfaces/records-subscribe.js';
 import { RecordsSubscribeHandler } from '../../src/handlers/records-subscribe.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { TestEventStream } from '../test-event-stream.js';
+import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { Dwn, DwnErrorCode, DwnMethodName, EventEmitterStream, MessageStoreLevel, Time } from '../../src/index.js';
+import { Dwn, DwnErrorCode, DwnMethodName, EventEmitterEventLog, MessageStoreLevel, Time } from '../../src/index.js';
 
 export function testRecordsSubscribeHandler(): void {
   describe('RecordsSubscribeHandler.handle()', () => {
-    describe('EventStream disabled',() => {
+    describe('EventLog disabled',() => {
       let didResolver: DidResolver;
       let messageStore: MessageStore;
       let resumableTaskStore: ResumableTaskStore;
@@ -69,7 +69,7 @@ export function testRecordsSubscribeHandler(): void {
 
       it('should respond with a 501 if subscriptions are not supported', async () => {
         await dwn.close(); // close the original dwn instance
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, resumableTaskStore }); // leave out eventStream
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, resumableTaskStore }); // leave out eventLog
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
         // attempt to subscribe
@@ -78,7 +78,7 @@ export function testRecordsSubscribeHandler(): void {
         });
         const subscriptionMessageReply = await dwn.processMessage(alice.did, message, { subscriptionHandler: (_) => {} });
         expect(subscriptionMessageReply.status.code).toBe(501, subscriptionMessageReply.status.detail);
-        expect(subscriptionMessageReply.status.detail).toContain(DwnErrorCode.RecordsSubscribeEventStreamUnimplemented);
+        expect(subscriptionMessageReply.status.detail).toContain(DwnErrorCode.RecordsSubscribeEventLogUnimplemented);
       });
     });
 
@@ -88,7 +88,7 @@ export function testRecordsSubscribeHandler(): void {
       let dataStore: DataStore;
       let resumableTaskStore: ResumableTaskStore;
       let stateIndex: StateIndex;
-      let eventStream: EventStream;
+      let eventLog: EventLog;
       let dwn: Dwn;
 
       // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
@@ -101,9 +101,9 @@ export function testRecordsSubscribeHandler(): void {
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
         stateIndex = stores.stateIndex;
-        eventStream = TestEventStream.get();
+        eventLog = TestEventLog.get();
 
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
       });
 
       beforeEach(async () => {
@@ -138,6 +138,7 @@ export function testRecordsSubscribeHandler(): void {
 
       it('should return initial entries matching the filter', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // write some records before subscribing
         const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://test-schema' });
@@ -171,6 +172,7 @@ export function testRecordsSubscribeHandler(): void {
 
       it('should support pagination on initial entries', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // write 5 records
         for (let i = 0; i < 5; i++) {
@@ -195,6 +197,7 @@ export function testRecordsSubscribeHandler(): void {
 
       it('should include initialWrite for updated records in entries', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create a record
         const write = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://update-test' });
@@ -227,6 +230,7 @@ export function testRecordsSubscribeHandler(): void {
 
       it('should still receive live events after initial entries', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // write a record before subscribing
         const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://live-test' });
@@ -235,7 +239,7 @@ export function testRecordsSubscribeHandler(): void {
 
         // subscribe
         const receivedEvents: RecordEvent[] = [];
-        const subscriptionHandler: RecordSubscriptionHandler = (event): void => { receivedEvents.push(event); };
+        const subscriptionHandler: RecordSubscriptionHandler = (msg): void => { if (msg.type === 'event') { receivedEvents.push(msg.event as RecordEvent); } };
         const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
           author : alice,
           filter : { schema: 'http://live-test' },
@@ -253,6 +257,127 @@ export function testRecordsSubscribeHandler(): void {
         await Poller.pollUntilSuccessOrTimeout(async () => {
           expect(receivedEvents.length).toBe(1);
           expect((receivedEvents[0].message as RecordsWriteMessage).recordId).toBe(write2.message.recordId);
+        });
+      });
+
+      describe('cursor-based subscriptions', () => {
+        it('should use EventLog catch-up when cursor is provided (no initial MessageStore query)', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+          // Read the EventLog to get the current cursor position before writing records.
+          const { cursor: cursorBefore } = await eventLog.read(alice.did);
+
+          // Write records before subscribing.
+          const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://cursor-test' });
+          const write1Reply = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
+          expect(write1Reply.status.code).toBe(202);
+
+          const write2 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://cursor-test' });
+          const write2Reply = await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
+          expect(write2Reply.status.code).toBe(202);
+
+          // Subscribe with the cursor from before the writes. The handler takes the
+          // EventLog catch-up path, replaying events through the subscription handler.
+          const receivedEvents: RecordEvent[] = [];
+          const subscriptionHandler: RecordSubscriptionHandler = (msg): void => { if (msg.type === 'event') { receivedEvents.push(msg.event as RecordEvent); } };
+          const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+            author : alice,
+            filter : { schema: 'http://cursor-test' },
+            cursor : cursorBefore,
+          });
+
+          const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler });
+          expect(subReply.status.code).toBe(200);
+          expect(subReply.subscription).toBeDefined();
+
+          // In cursor mode, initial entries are NOT returned via the reply —
+          // they come through the subscription handler as catch-up events.
+          // The handler wraps SubscriptionListener→RecordSubscriptionHandler,
+          // so we get plain RecordEvents (EOSE is silently consumed).
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(receivedEvents.length).toBeGreaterThanOrEqual(2);
+          });
+
+          // Verify the catch-up events are our records.
+          const recordIds = receivedEvents.map(e => (e.message as RecordsWriteMessage).recordId);
+          expect(recordIds).toContain(write1.message.recordId);
+          expect(recordIds).toContain(write2.message.recordId);
+        });
+
+        it('should receive live events after cursor catch-up', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+          // Write a record before subscribing.
+          const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://cursor-live' });
+          await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
+
+          // Read to get a cursor that includes write1's protocol config + the record.
+          const { cursor: cursorAfterWrite1 } = await eventLog.read(alice.did);
+
+          // Write another record that we'll want to catch up on.
+          const write2 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://cursor-live' });
+          await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
+
+          const receivedEvents: RecordEvent[] = [];
+          const subscriptionHandler: RecordSubscriptionHandler = (msg): void => { if (msg.type === 'event') { receivedEvents.push(msg.event as RecordEvent); } };
+          const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+            author : alice,
+            filter : { schema: 'http://cursor-live' },
+            cursor : cursorAfterWrite1,
+          });
+          const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler });
+          expect(subReply.status.code).toBe(200);
+
+          // Wait for catch-up event (write2).
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(receivedEvents.length).toBeGreaterThanOrEqual(1);
+          });
+
+          // Write a live record after subscribing.
+          const write3 = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://cursor-live' });
+          await dwn.processMessage(alice.did, write3.message, { dataStream: write3.dataStream });
+
+          // Wait for the live event.
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(receivedEvents.length).toBeGreaterThanOrEqual(2);
+          });
+
+          const recordIds = receivedEvents.map(e => (e.message as RecordsWriteMessage).recordId);
+          expect(recordIds).toContain(write2.message.recordId);
+          expect(recordIds).toContain(write3.message.recordId);
+        });
+
+        it('should filter catch-up events when cursor and filter are provided', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+          // Get cursor before writing.
+          const { cursor: cursorBefore } = await eventLog.read(alice.did);
+
+          // Write records with different schemas.
+          const matchWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://filter-match' });
+          await dwn.processMessage(alice.did, matchWrite.message, { dataStream: matchWrite.dataStream });
+
+          const noMatchWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'http://filter-other' });
+          await dwn.processMessage(alice.did, noMatchWrite.message, { dataStream: noMatchWrite.dataStream });
+
+          const receivedEvents: RecordEvent[] = [];
+          const subscriptionHandler: RecordSubscriptionHandler = (msg): void => { if (msg.type === 'event') { receivedEvents.push(msg.event as RecordEvent); } };
+          const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+            author : alice,
+            filter : { schema: 'http://filter-match' },
+            cursor : cursorBefore,
+          });
+          const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler });
+          expect(subReply.status.code).toBe(200);
+
+          // Wait for catch-up events. Should only get the matching one.
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(receivedEvents.length).toBe(1);
+            expect((receivedEvents[0].message as RecordsWriteMessage).recordId).toBe(matchWrite.message.recordId);
+          });
         });
       });
 
@@ -322,6 +447,7 @@ export function testRecordsSubscribeHandler(): void {
 
       it('should return 401 for anonymous subscriptions that filter explicitly for unpublished records', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create an unpublished record
         const draftWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'post' });
@@ -351,9 +477,11 @@ export function testRecordsSubscribeHandler(): void {
         const mismatchingPersona = await TestDataGenerator.generatePersona({ did: author!.did, keyId: author!.keyId });
         const didResolver = TestStubGenerator.createDidResolverStub(mismatchingPersona);
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
-        const eventStreamStub = sinon.createStubInstance(EventEmitterStream);
+        const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
 
-        const recordsSubscribeHandler = new RecordsSubscribeHandler(didResolver, messageStoreStub, eventStreamStub);
+        const recordsSubscribeHandler = new RecordsSubscribeHandler({
+          didResolver, messageStore: messageStoreStub, eventLog: eventLogStub,
+        });
         const reply = await recordsSubscribeHandler.handle({ tenant, message, subscriptionHandler: () => {} });
 
         expect(reply.status.code).toBe(401);
@@ -366,8 +494,10 @@ export function testRecordsSubscribeHandler(): void {
         // setting up a stub method resolver & message store
         const didResolver = TestStubGenerator.createDidResolverStub(author!);
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
-        const eventStreamStub = sinon.createStubInstance(EventEmitterStream);
-        const recordsSubscribeHandler = new RecordsSubscribeHandler(didResolver, messageStoreStub, eventStreamStub);
+        const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
+        const recordsSubscribeHandler = new RecordsSubscribeHandler({
+          didResolver, messageStore: messageStoreStub, eventLog: eventLogStub,
+        });
 
         // stub the `parse()` function to throw an error
         sinon.stub(RecordsSubscribe, 'parse').throws('anyError');
@@ -398,8 +528,9 @@ export function testRecordsSubscribeHandler(): void {
           expect(protocolsConfigureReply.status.code).toBe(202);
 
           const bobMessages: string[] = [];
-          const handleForBob = async (event: RecordEvent): Promise<void> => {
-            const { message } = event;
+          const handleForBob = async (msg: SubscriptionMessage): Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
             const messageCid = await Message.getCid(message);
             bobMessages.push(messageCid);
           };
@@ -416,8 +547,9 @@ export function testRecordsSubscribeHandler(): void {
           expect(subscriptionReply.subscription).toBeDefined();
 
           const carolMessages: string[] = [];
-          const handleForCarol = async (event: RecordEvent): Promise<void> => {
-            const { message } = event;
+          const handleForCarol = async (msg: SubscriptionMessage): Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
             const messageCid = await Message.getCid(message);
             carolMessages.push(messageCid);
           };
@@ -525,13 +657,13 @@ export function testRecordsSubscribeHandler(): void {
           };
 
           const noRoleRecords: Set<string> = new Set();
-          const addNoRole = async (event: RecordEvent): Promise<void> => {
-            const { message } = event;
+          const addNoRole = async (msg: SubscriptionMessage): Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
             if (message.descriptor.method === DwnMethodName.Write) {
-              const recordsWriteMessage = message as RecordsWriteMessage;
-              noRoleRecords.add(recordsWriteMessage.recordId);
+              noRoleRecords.add((message as RecordsWriteMessage).recordId);
             } else {
-              noRoleRecords.delete(message.descriptor.recordId);
+              noRoleRecords.delete((message as RecordsDeleteMessage).descriptor.recordId);
             }
           };
 
@@ -557,13 +689,13 @@ export function testRecordsSubscribeHandler(): void {
           expect(friendRoleReply.status.code).toBe(202);
 
           const recordIds: Set<string> = new Set();
-          const addRecord:RecordSubscriptionHandler = async (event) => {
-            const { message } = event;
+          const addRecord:RecordSubscriptionHandler = async (msg) => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
             if (message.descriptor.method === DwnMethodName.Write) {
-              const recordsWriteMessage = message as RecordsWriteMessage;
-              recordIds.add(recordsWriteMessage.recordId);
+              recordIds.add((message as RecordsWriteMessage).recordId);
             } else {
-              recordIds.delete(message.descriptor.recordId);
+              recordIds.delete((message as RecordsDeleteMessage).descriptor.recordId);
             }
           };
 
@@ -680,8 +812,9 @@ export function testRecordsSubscribeHandler(): void {
           };
 
           const noRoleRecords: string[] = [];
-          const addNoRole = async (event: RecordEvent): Promise<void> => {
-            const { message } = event;
+          const addNoRole = async (msg: SubscriptionMessage): Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
             if ( message.descriptor.method === DwnMethodName.Write) {
               const recordsWriteMessage = message as RecordsWriteMessage;
               noRoleRecords.push(recordsWriteMessage.recordId);
@@ -712,8 +845,9 @@ export function testRecordsSubscribeHandler(): void {
           expect(participantRoleReply.status.code).toBe(202);
 
           const recordIds: string[] = [];
-          const addRecord:RecordSubscriptionHandler = async (event) => {
-            const { message } = event;
+          const addRecord:RecordSubscriptionHandler = async (msg) => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
             if (message.descriptor.method === DwnMethodName.Write) {
               const recordsWriteMessage = message as RecordsWriteMessage;
               recordIds.push(recordsWriteMessage.recordId);
@@ -960,8 +1094,9 @@ export function testRecordsSubscribeHandler(): void {
 
             // Bob subscribes — no role
             const bobRecordIds: Set<string> = new Set();
-            const bobHandler: RecordSubscriptionHandler = async (event): Promise<void> => {
-              const { message } = event;
+            const bobHandler: RecordSubscriptionHandler = async (msg): Promise<void> => {
+              if (msg.type !== 'event') { return; }
+              const { message } = msg.event;
               if (message.descriptor.method === DwnMethodName.Write) {
                 bobRecordIds.add((message as RecordsWriteMessage).recordId);
               }
@@ -979,8 +1114,9 @@ export function testRecordsSubscribeHandler(): void {
 
             // Carol subscribes — no role
             const carolRecordIds: Set<string> = new Set();
-            const carolHandler: RecordSubscriptionHandler = async (event): Promise<void> => {
-              const { message } = event;
+            const carolHandler: RecordSubscriptionHandler = async (msg): Promise<void> => {
+              if (msg.type !== 'event') { return; }
+              const { message } = msg.event;
               if (message.descriptor.method === DwnMethodName.Write) {
                 carolRecordIds.add((message as RecordsWriteMessage).recordId);
               }
@@ -998,8 +1134,9 @@ export function testRecordsSubscribeHandler(): void {
 
             // Dave subscribes — no role, not a participant at all
             const daveRecordIds: Set<string> = new Set();
-            const daveHandler: RecordSubscriptionHandler = async (event): Promise<void> => {
-              const { message } = event;
+            const daveHandler: RecordSubscriptionHandler = async (msg): Promise<void> => {
+              if (msg.type !== 'event') { return; }
+              const { message } = msg.event;
               if (message.descriptor.method === DwnMethodName.Write) {
                 daveRecordIds.add((message as RecordsWriteMessage).recordId);
               }

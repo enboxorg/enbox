@@ -1,5 +1,5 @@
 import type { DidResolver } from '@enbox/dids';
-import type { EventStream } from '../../src/types/subscriptions.js';
+import type { EventLog } from '../../src/types/subscriptions.js';
 import type {
   DataStore,
   MessagesReadReply,
@@ -13,7 +13,7 @@ import { Message } from '../../src/core/message.js';
 import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
 import sinon from 'sinon';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { TestEventStream } from '../test-event-stream.js';
+import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DataStream, Dwn, DwnConstant, DwnErrorCode, DwnInterfaceName, DwnMethodName, Jws, PermissionGrant, PermissionsProtocol, Time } from '../../src/index.js';
@@ -27,7 +27,7 @@ export function testMessagesReadHandler(): void {
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
     let stateIndex: StateIndex;
-    let eventStream: EventStream;
+    let eventLog: EventLog;
 
     // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
     // so that different test suites can reuse the same backend store for testing
@@ -39,9 +39,9 @@ export function testMessagesReadHandler(): void {
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
       stateIndex = stores.stateIndex;
-      eventStream = TestEventStream.get();
+      eventLog = TestEventLog.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -132,6 +132,8 @@ export function testMessagesReadHandler(): void {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
 
+          await TestDataGenerator.installDefaultTestProtocol(dwn, bob);
+
           // bob creates a record that alice will try and get
           const { message: recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: bob });
           const { status } = await dwn.processMessage(bob.did, recordsWrite, { dataStream });
@@ -151,6 +153,8 @@ export function testMessagesReadHandler(): void {
         describe('gets record data in the reply entry', () => {
           it('data is less than threshold', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
+
+            await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
             const { message: recordsWrite, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
               author : alice,
@@ -183,6 +187,8 @@ export function testMessagesReadHandler(): void {
           it('data is greater than threshold', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
 
+            await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
             const { message: recordsWrite, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
               author : alice,
               data   : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 10),
@@ -213,6 +219,8 @@ export function testMessagesReadHandler(): void {
 
           it('data is not available', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
+
+            await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
             // initial write
             const { message: recordsWriteMessage, recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
@@ -396,6 +404,8 @@ export function testMessagesReadHandler(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
         // Alice writes a record to her DWN
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
           author: alice,
@@ -529,7 +539,7 @@ export function testMessagesReadHandler(): void {
           // Alice revokes Carol's grant
           const permissionRevocationCarol = await PermissionsProtocol.createRevocation({
             signer : Jws.createSigner(alice),
-            grant  : await PermissionGrant.parse(permissionGrantCarol.dataEncodedMessage),
+            grant  : PermissionGrant.parse(permissionGrantCarol.dataEncodedMessage),
           });
           const permissionRevocationCarolDataStream = DataStream.fromBytes(permissionRevocationCarol.permissionRevocationBytes);
           const permissionRevocationCarolReply = await dwn.processMessage(
@@ -655,6 +665,7 @@ export function testMessagesReadHandler(): void {
           expect(messagesReadCarolGrantRevocationReply.entry!.message).toEqual(permissionRevocationCarol.recordsWrite.message);
 
           // CONTROL: Alice writes a record not associated with the protocol
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
           const { recordsWrite: recordsWriteControl, dataStream: dataStreamControl } = await TestDataGenerator.generateRecordsWrite({
             author: alice,
           });

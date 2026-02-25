@@ -8,6 +8,7 @@ export type * from './types/sync.js';
 export type * from './types/vc.js';
 
 export * from './agent-did-resolver-cache.js';
+export * from './anonymous-dwn-api.js';
 export * from './bearer-identity.js';
 export * from './crypto-api.js';
 export * from './did-api.js';

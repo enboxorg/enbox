@@ -21,7 +21,7 @@ describe('Records', () => {
   });
 
   describe('constructKeyDerivationPathUsingProtocolPathScheme()', () => {
-    it('should throw if given a flat-space descriptor', async () => {
+    it('should construct a valid key derivation path using protocol path scheme', async () => {
       const descriptor: RecordsWriteDescriptor = {
         interface        : DwnInterfaceName.Records,
         method           : DwnMethodName.Write,
@@ -30,24 +30,19 @@ describe('Records', () => {
         dataSize         : 123,
         dateCreated      : '2022-12-19T10:20:30.123456Z',
         messageTimestamp : '2022-12-19T10:20:30.123456Z',
+        protocol         : 'http://test-protocol.xyz',
+        protocolPath     : 'testRecord',
       };
 
-      expect(() => Records.constructKeyDerivationPathUsingProtocolPathScheme(descriptor))
-        .toThrow(DwnErrorCode.RecordsProtocolPathDerivationSchemeMissingProtocol);
+      const path = Records.constructKeyDerivationPathUsingProtocolPathScheme(descriptor);
+      expect(path).toEqual([KeyDerivationScheme.ProtocolPath, 'http://test-protocol.xyz', 'testRecord']);
     });
   });
 
   describe('constructKeyDerivationPathUsingProtocolContextScheme()', () => {
-    it('should throw if not given contextId', async () => {
-      expect(() => Records.constructKeyDerivationPathUsingProtocolContextScheme(undefined))
-        .toThrow(DwnErrorCode.RecordsProtocolContextDerivationSchemeMissingContextId);
-    });
-  });
-
-  describe('constructKeyDerivationPathUsingSchemasScheme()', () => {
-    it('should throw if not given schema', async () => {
-      expect(() => Records.constructKeyDerivationPathUsingSchemasScheme(undefined))
-        .toThrow(DwnErrorCode.RecordsSchemasDerivationSchemeMissingSchema);
+    it('should construct a valid key derivation path using protocol context scheme', async () => {
+      const path = Records.constructKeyDerivationPathUsingProtocolContextScheme('rootId/childId');
+      expect(path).toEqual([KeyDerivationScheme.ProtocolContext, 'rootId']);
     });
   });
 

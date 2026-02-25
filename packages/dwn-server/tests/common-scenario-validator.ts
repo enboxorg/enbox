@@ -62,8 +62,10 @@ export default class CommonScenarioValidator {
     expect(dataSize).toBeGreaterThan(DwnConstant.maxDataSizeAllowedToBeEncoded);
 
     const recordsWrite = await RecordsWrite.create({
-      signer     : aliceSigner,
-      dataFormat : 'image/jpeg',
+      signer       : aliceSigner,
+      dataFormat   : 'image/jpeg',
+      protocol     : protocolDefinition.protocol,
+      protocolPath : 'foo',
       dataCid,
       dataSize
     });

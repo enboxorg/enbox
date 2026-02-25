@@ -1,4 +1,4 @@
-import type { Dwn, MessageEvent, ProtocolDefinition, RecordsReadReply, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { Dwn, ProtocolDefinition, RecordsReadReply, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type { JwkParamsOkpPublic, PrivateKeyJwk } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
@@ -16,13 +16,36 @@ import type { DwnPermissionScope } from '../src/types/dwn.js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
+import freeForAllProtocolDefinition from './fixtures/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { KeyDeliveryProtocolDefinition } from '../src/store-data-protocols.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { AgentDwnApi, isDwnMessage, isMessagesPermissionScope, isRecordPermissionScope } from '../src/dwn-api.js';
+import { hasRelationalReadAccess, isMultiPartyContext } from '../src/protocol-utils.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
+
+/**
+ * Installs the free-for-all protocol on the given DWN for the given DID.
+ * Use `processRequest` for local DWN and `sendRequest` for remote DWN.
+ */
+async function installFreeForAll(
+  harness: PlatformAgentTestHarness,
+  did: string,
+  send?: boolean,
+): Promise<void> {
+  const fn = send ? 'sendRequest' : 'processRequest';
+  const { reply } = await harness.agent.dwn[fn]({
+    author        : did,
+    target        : did,
+    messageType   : DwnInterface.ProtocolsConfigure,
+    messageParams : { definition: freeForAllProtocolDefinition }
+  });
+  if (reply.status.code !== 202) {
+    throw new Error(`Failed to install free-for-all protocol: ${reply.status.code} ${reply.status.detail}`);
+  }
+}
 
 describe('AgentDwnApi', () => {
   let testHarness: PlatformAgentTestHarness;
@@ -206,6 +229,8 @@ describe('AgentDwnApi', () => {
 
     beforeEach(async () => {
       await testHarness.clearDwnStores();
+      await installFreeForAll(testHarness, alice.did.uri);
+      await installFreeForAll(testHarness, bob.did.uri);
     });
 
     afterAll(async () => {
@@ -214,8 +239,9 @@ describe('AgentDwnApi', () => {
 
     it('handles MessageSubscription', async () => {
       const receivedMessages: string[] = [];
-      const subscriptionHandler = async (event: MessageEvent): Promise<void> => {
-        const { message } = event;
+      const subscriptionHandler = async (msg): Promise<void> => {
+        if (msg.type !== 'event') { return; }
+        const { message } = msg.event;
         receivedMessages.push(await Message.getCid(message));
       };
 
@@ -300,8 +326,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/foo' // no protocol
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/foo'
         },
         dataStream: new Blob([dataBytes3])
       });
@@ -329,8 +357,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -437,8 +467,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -479,8 +511,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -528,8 +562,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -571,8 +607,9 @@ describe('AgentDwnApi', () => {
 
     it('handles RecordsSubscribe message', async () => {
       const receivedMessages: RecordsWriteMessage[] = [];
-      const subscriptionHandler = (event: MessageEvent): void => {
-        const { message } = event;
+      const subscriptionHandler = (msg): void => {
+        if (msg.type !== 'event') { return; }
+        const { message } = msg.event;
         if (!isDwnMessage(DwnInterface.RecordsWrite, message)) {
           throw new Error('Received message is not a RecordsWrite message');
         }
@@ -604,8 +641,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -619,8 +658,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes2])
       });
@@ -634,8 +675,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/other' // different schema
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/other' // different schema
         },
         dataStream: new Blob([dataBytes3])
       });
@@ -660,7 +703,9 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat: 'text/plain'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -692,7 +737,9 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat: 'text/plain'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -715,9 +762,11 @@ describe('AgentDwnApi', () => {
         target        : bob.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          published  : true,
-          schema     : 'foo/bar',
-          dataFormat : 'text/plain'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          published    : true,
+          schema       : 'foo/bar',
+          dataFormat   : 'text/plain'
         },
         dataStream,
       });
@@ -908,8 +957,7 @@ describe('AgentDwnApi', () => {
         signAsOwnerDelegate : true,
         granteeDid          : aliceDeviceX.did.uri,
         messageParams       : {
-          dataFormat     : 'text/plain', // TODO: not necessary
-          delegatedGrant : recordsWriteDelegateGrant.message,
+          delegatedGrant: recordsWriteDelegateGrant.message,
         },
         dataStream,
       });
@@ -1039,6 +1087,53 @@ describe('AgentDwnApi', () => {
     });
   });
 
+  describe('sendRequest() — resubscribe factory', () => {
+    let alice: BearerIdentity;
+
+    beforeAll(async () => {
+      await testHarness.clearStorage();
+      await testHarness.createAgentDid();
+      alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
+    });
+
+    afterAll(() => { sinon.restore(); });
+
+    it('builds a resubscribe factory that reconstructs subscribe messages with a cursor', async () => {
+      // Capture the resubscribeFactory by stubbing agent.rpc.sendDwnRequest.
+      let capturedFactory: ((cursor?: string) => Promise<any>) | undefined;
+      sinon.stub(testHarness.agent.rpc, 'sendDwnRequest')
+        .callsFake(async (params: any): Promise<any> => {
+          if (params.subscription?.resubscribeFactory) {
+            capturedFactory = params.subscription.resubscribeFactory;
+          }
+          return { status: { code: 200, detail: 'OK' }, subscription: { close: async (): Promise<void> => {} } };
+        });
+      sinon.stub(testHarness.agent.rpc, 'getServerInfo').resolves({ webSocketSupport: true } as any);
+
+      const subscriptionHandler = (_msg: any): void => { /* no-op */ };
+
+      await testHarness.agent.dwn.sendRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsSubscribe,
+        messageParams : { filter: { schema: 'https://schemas.xyz/resubscribe-test' } },
+        subscriptionHandler,
+      });
+
+      expect(capturedFactory).toBeDefined();
+
+      // Invoke the factory without a cursor — should use original messageParams.
+      const resumeMessage = await capturedFactory!();
+      expect(resumeMessage).toBeDefined();
+      expect(resumeMessage.descriptor).toBeDefined();
+
+      // Invoke the factory with a cursor — should merge cursor into messageParams.
+      const resumeMessageWithCursor = await capturedFactory!('cursor-abc');
+      expect(resumeMessageWithCursor).toBeDefined();
+      expect(resumeMessageWithCursor.descriptor).toBeDefined();
+    });
+  });
+
   describe('sendRequest()', () => {
     let alice: BearerIdentity;
 
@@ -1159,6 +1254,10 @@ describe('AgentDwnApi', () => {
       // Ensure the DID is published to the DHT. This step is necessary while the DHT Gateways
       // operated by TBD are regularly restarted and DIDs are no longer persisted.
       await DidDht.publish({ did: alice.did });
+
+      // Install free-for-all protocol locally and on remote DWN.
+      await installFreeForAll(testHarness, alice.did.uri);
+      await installFreeForAll(testHarness, alice.did.uri, true);
     });
 
     afterAll(async () => {
@@ -1175,8 +1274,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1215,8 +1316,9 @@ describe('AgentDwnApi', () => {
 
     it('handles MessagesSubscribe', async () => {
       const receivedMessages: string[] = [];
-      const subscriptionHandler = async (event: MessageEvent): Promise<void> => {
-        const { message } = event;
+      const subscriptionHandler = async (msg): Promise<void> => {
+        if (msg.type !== 'event') { return; }
+        const { message } = msg.event;
         receivedMessages.push(await Message.getCid(message));
       };
 
@@ -1301,8 +1403,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/foo' // no protocol
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/foo'
         },
         dataStream: new Blob([dataBytes3])
       });
@@ -1330,8 +1434,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1437,8 +1543,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1479,8 +1587,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1528,8 +1638,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1571,8 +1683,9 @@ describe('AgentDwnApi', () => {
 
     it('handles RecordsSubscribe message', async () => {
       const receivedMessages: RecordsWriteMessage[] = [];
-      const subscriptionHandler = (event: MessageEvent): void => {
-        const { message } = event;
+      const subscriptionHandler = (msg): void => {
+        if (msg.type !== 'event') { return; }
+        const { message } = msg.event;
         if (!isDwnMessage(DwnInterface.RecordsWrite, message)) {
           throw new Error('Received message is not a RecordsWrite message');
         }
@@ -1604,8 +1717,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1619,8 +1734,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/example'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes2])
       });
@@ -1634,8 +1751,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat : 'text/plain',
-          schema     : 'https://schemas.xyz/other' // different schema
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain',
+          schema       : 'https://schemas.xyz/other' // different schema
         },
         dataStream: new Blob([dataBytes3])
       });
@@ -1660,7 +1779,9 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat: 'text/plain'
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          dataFormat   : 'text/plain'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1690,8 +1811,6 @@ describe('AgentDwnApi', () => {
           id              : '#dwn',
           type            : 'DecentralizedWebNode',
           serviceEndpoint : ['https://localhost'], // secure endpoint
-          enc             : '#enc',
-          sig             : '#sig'
         }
       });
 
@@ -1737,9 +1856,7 @@ describe('AgentDwnApi', () => {
         contentStream         : {
           id              : '#dwn',
           type            : 'DecentralizedWebNode',
-          serviceEndpoint : ['http://localhost'], // secure endpoint
-          enc             : '#enc',
-          sig             : '#sig'
+          serviceEndpoint : ['http://localhost'], // insecure endpoint
         }
       });
 
@@ -2180,6 +2297,58 @@ describe('Encryption Callback Factories', () => {
       );
 
       expect(def).toBeUndefined();
+    });
+  });
+
+  describe('fetchRemoteProtocolDefinition()', () => {
+    afterEach(() => { sinon.restore(); });
+
+    it('should delegate to the standalone function and return the definition', async () => {
+      // Install a protocol locally so we can simulate a successful remote fetch.
+      const { reply: { status: configureStatus } } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: emailProtocolDefinition }
+      });
+      expect(configureStatus.code).toBe(202);
+
+      // Stub sendDwnRpcRequest to route to the local DWN instead of making a remote call.
+      const dwnApi = testHarness.agent.dwn;
+      sinon.stub(dwnApi as any, 'sendDwnRpcRequest')
+        .callsFake(async (params: any): Promise<any> => {
+          return dwnApi['_dwn'].processMessage(params.targetDid, params.message);
+        });
+
+      const def = await dwnApi['fetchRemoteProtocolDefinition'](
+        alice.did.uri,
+        emailProtocolDefinition.protocol,
+      );
+
+      expect(def).toBeDefined();
+      expect(def.protocol).toBe(emailProtocolDefinition.protocol);
+    });
+  });
+
+  describe('extractDerivedPublicKey()', () => {
+    afterEach(() => { sinon.restore(); });
+
+    it('should delegate to the standalone function and return undefined when no records exist', async () => {
+      // Stub sendDwnRpcRequest to route to the local DWN.
+      const dwnApi = testHarness.agent.dwn;
+      sinon.stub(dwnApi as any, 'sendDwnRpcRequest')
+        .callsFake(async (params: any): Promise<any> => {
+          return dwnApi['_dwn'].processMessage(params.targetDid, params.message);
+        });
+
+      const result = await dwnApi['extractDerivedPublicKey'](
+        alice.did.uri,
+        'https://protocol.xyz/nonexistent',
+        'root-context-id-abc',
+        alice.did.uri,
+      );
+
+      expect(result).toBeUndefined();
     });
   });
 
@@ -2902,16 +3071,11 @@ describe('Encryption Callback Factories', () => {
     };
 
     it('should detect multi-party protocols via isMultiPartyContext()', () => {
-      // Access private method via bracket notation
-      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
-        testHarness.agent.dwn
-      );
-
       // Multi-party: thread has participant with $role: true
-      expect(isMultiParty(multiPartyProtocolDefinition, 'thread')).toBe(true);
+      expect(isMultiPartyContext(multiPartyProtocolDefinition, 'thread')).toBe(true);
 
       // Single-party: note has no $role children
-      expect(isMultiParty(singlePartyProtocolDefinition, 'note')).toBe(false);
+      expect(isMultiPartyContext(singlePartyProtocolDefinition, 'note')).toBe(false);
     });
 
     it('should encrypt root record with ProtocolContext for multi-party protocol', async () => {
@@ -3854,83 +4018,50 @@ describe('Participant Detection (PR B)', () => {
 
   describe('isMultiPartyContext()', () => {
     it('should return true for role-based protocols', () => {
-      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
-        testHarness.agent.dwn
-      );
-      expect(isMultiParty(roleProtocol, 'thread')).toBe(true);
+      expect(isMultiPartyContext(roleProtocol, 'thread')).toBe(true);
     });
 
     it('should return true for relational-only protocols with read rules', () => {
-      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
-        testHarness.agent.dwn
-      );
-      expect(isMultiParty(relationalProtocol, 'email')).toBe(true);
+      expect(isMultiPartyContext(relationalProtocol, 'email')).toBe(true);
     });
 
     it('should return true for mixed role + relational protocols', () => {
-      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
-        testHarness.agent.dwn
-      );
-      expect(isMultiParty(mixedProtocol, 'community')).toBe(true);
+      expect(isMultiPartyContext(mixedProtocol, 'community')).toBe(true);
     });
 
     it('should return false for single-party protocols', () => {
-      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
-        testHarness.agent.dwn
-      );
-      expect(isMultiParty(singlePartyProtocol, 'note')).toBe(false);
+      expect(isMultiPartyContext(singlePartyProtocol, 'note')).toBe(false);
     });
 
     it('should return false when relational rules only grant create, not read', () => {
-      const isMultiParty = testHarness.agent.dwn['isMultiPartyContext'].bind(
-        testHarness.agent.dwn
-      );
-      expect(isMultiParty(createOnlyProtocol, 'form')).toBe(false);
+      expect(isMultiPartyContext(createOnlyProtocol, 'form')).toBe(false);
     });
   });
 
   describe('hasRelationalReadAccess()', () => {
     it('should find recipient-of read rules', () => {
-      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
-        testHarness.agent.dwn
-      );
-      expect(hasAccess('recipient', 'email', relationalProtocol)).toBe(true);
+      expect(hasRelationalReadAccess('recipient', 'email', relationalProtocol)).toBe(true);
     });
 
     it('should find author-of read rules', () => {
-      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
-        testHarness.agent.dwn
-      );
-      expect(hasAccess('author', 'email', relationalProtocol)).toBe(true);
+      expect(hasRelationalReadAccess('author', 'email', relationalProtocol)).toBe(true);
     });
 
     it('should return false when no matching rule exists', () => {
-      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
-        testHarness.agent.dwn
-      );
-      expect(hasAccess('recipient', 'note', singlePartyProtocol)).toBe(false);
+      expect(hasRelationalReadAccess('recipient', 'note', singlePartyProtocol)).toBe(false);
     });
 
     it('should return false when rules exist but do not grant read', () => {
-      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
-        testHarness.agent.dwn
-      );
-      expect(hasAccess('recipient', 'form/submission', createOnlyProtocol)).toBe(false);
+      expect(hasRelationalReadAccess('recipient', 'form/submission', createOnlyProtocol)).toBe(false);
     });
 
     it('should find rules with undefined actorType (any who)', () => {
-      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
-        testHarness.agent.dwn
-      );
-      expect(hasAccess(undefined, 'email', relationalProtocol)).toBe(true);
+      expect(hasRelationalReadAccess(undefined, 'email', relationalProtocol)).toBe(true);
     });
 
     it('should find deeply nested relational rules', () => {
-      const hasAccess = testHarness.agent.dwn['hasRelationalReadAccess'].bind(
-        testHarness.agent.dwn
-      );
       // The mixed protocol has { who: 'recipient', of: 'community/channel/message', can: ['read'...] }
-      expect(hasAccess('recipient', 'community/channel/message', mixedProtocol)).toBe(true);
+      expect(hasRelationalReadAccess('recipient', 'community/channel/message', mixedProtocol)).toBe(true);
     });
   });
 

@@ -4,10 +4,10 @@
     "noImplicitAny": true,
     "lib": [
       "DOM",
-      "ES6"
+      "ES2022"
     ],
     "allowJs": true,
-    "target": "ES6",
+    "target": "ES2022",
     "module": "NodeNext",
     "declaration": true,
     "declarationMap": true,
@@ -40,6 +40,7 @@
   },
   "include": [
     "./src/index.ts",
+    "./src/types/mitt.d.ts",
     "tests"
   ],
   "exclude": [

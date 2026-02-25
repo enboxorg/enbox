@@ -16,7 +16,7 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 import { normalizeProtocolUrl, normalizeSchemaUrl, validateProtocolUrlNormalized, validateSchemaUrlNormalized } from '../utils/url.js';
-import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
+import { ProtocolAction, ProtocolActor, ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
 
 export type ProtocolsConfigureOptions = {
   messageTimestamp?: string;
@@ -68,7 +68,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
    * @param messageStore Used to check if the grant has been revoked.
    */
   public async authorizeAuthorDelegate(messageStore: MessageStore): Promise<void> {
-    const delegatedGrant = await PermissionGrant.parse(this.message.authorization.authorDelegatedGrant!);
+    const delegatedGrant = PermissionGrant.parse(this.message.authorization.authorDelegatedGrant!);
     await ProtocolsGrantAuthorization.authorizeConfigure({
       protocolsConfigureMessage : this.message,
       expectedGrantor           : this.author!,
@@ -228,6 +228,27 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         throw new DwnError(
           DwnErrorCode.ProtocolsConfigureInvalidSize,
           `Invalid size range found: max limit ${max} less than min limit ${min} at protocol path '${ruleSetProtocolPath}'`
+        );
+      }
+    }
+
+    // Validate $recordLimit
+    if (ruleSet.$recordLimit !== undefined) {
+      const { max, strategy } = ruleSet.$recordLimit;
+
+      if (!Number.isInteger(max) || max < 1) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureInvalidRecordLimit,
+          `Invalid $recordLimit.max value ${max} at protocol path '${ruleSetProtocolPath}': must be an integer >= 1.`
+        );
+      }
+
+      const validStrategies = Object.values(ProtocolRecordLimitStrategy) as string[];
+      if (!validStrategies.includes(strategy as string)) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureInvalidRecordLimit,
+          `Invalid $recordLimit.strategy '${strategy}' at protocol path '${ruleSetProtocolPath}': ` +
+          `must be one of ${validStrategies.join(', ')}.`
         );
       }
     }
@@ -397,6 +418,33 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       }
     }
 
+    // Warn when `$delivery` is set without `$actions`.
+    // Delivery targets are determined from `$actions` role records and actor rules.
+    // Without `$actions`, the server cannot determine who to deliver records to.
+    if (ruleSet.$delivery !== undefined && (ruleSet.$actions === undefined || ruleSet.$actions.length === 0)) {
+      console.warn(
+        `ProtocolsConfigure: protocol path '${ruleSetProtocolPath}' has $delivery: '${ruleSet.$delivery}' ` +
+        `but no $actions rules. The server uses $actions to determine delivery targets — ` +
+        `without $actions, no participants can be resolved for delivery.`
+      );
+    }
+
+    // Warn when `$immutable: true` is combined with `$actions` that include `update` or `co-update`.
+    // The `$immutable` directive overrides any update permission — updates are always rejected.
+    if (ruleSet.$immutable === true && actionRules.length > 0) {
+      const hasUpdateAction = actionRules.some(
+        (rule: ProtocolActionRule): boolean =>
+          rule.can.includes(ProtocolAction.Update) || rule.can.includes(ProtocolAction.CoUpdate)
+      );
+      if (hasUpdateAction) {
+        console.warn(
+          `ProtocolsConfigure: protocol path '${ruleSetProtocolPath}' has $immutable: true ` +
+          `but $actions include 'update' or 'co-update'. The $immutable directive takes ` +
+          `precedence — updates will always be rejected regardless of action rules.`
+        );
+      }
+    }
+
     // Validate nested rule sets
     for (const recordType in ruleSet) {
       if (recordType.startsWith('$')) {
@@ -457,7 +505,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
     }
 
     // validate that `$ref` nodes do not have other directives
-    const forbiddenDirectives = ['$actions', '$role', '$size', '$tags', '$encryption'] as const;
+    const forbiddenDirectives = ['$actions', '$role', '$size', '$tags', '$encryption', '$recordLimit', '$immutable', '$delivery', '$squash'] as const;
     for (const directive of forbiddenDirectives) {
       if (ruleSet[directive] !== undefined) {
         throw new DwnError(

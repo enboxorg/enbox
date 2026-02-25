@@ -477,9 +477,18 @@ export class IndexLevel {
     }
 
     try {
-      await Promise.all(filters.map(filter => {
-        return this.executeSingleFilterQuery(tenant, filter, sortProperty, matches, options );
-      }));
+      // Execute filters sequentially rather than with Promise.all.
+      // Firefox's IndexedDB implementation has two related async issues that cause flaky failures:
+      //   1. Concurrent cursors/transactions can silently miss recently-committed data
+      //   2. A read transaction opened immediately after a write transaction's oncomplete event
+      //      can fail to see the written data (write-read race)
+      // Serializing eliminates both races. Performance impact is negligible: only 3 call sites
+      // (non-owner RecordsQuery/Subscribe/Count) ever pass multiple filters, and each filter
+      // reduces to a single bounded LevelDB range scan completing in single-digit ms.
+      // See: https://github.com/enboxorg/enbox/issues/264
+      for (const filter of filters) {
+        await this.executeSingleFilterQuery(tenant, filter, sortProperty, matches, options);
+      }
     } catch (error) {
       if ((error as DwnError).code === DwnErrorCode.IndexInvalidSortPropertyInMemory) {
         // return empty results if the sort property is invalid.
@@ -501,6 +510,10 @@ export class IndexLevel {
 
   /**
    * Execute a filtered query against a single filter and return all results.
+   *
+   * Sub-queries (exact match, range, OneOf) are executed sequentially to avoid opening
+   * multiple concurrent IndexedDB cursors. Firefox's IDB implementation intermittently
+   * drops results when cursors overlap — see https://github.com/enboxorg/enbox/issues/264
    */
   private async executeSingleFilterQuery(
     tenant: string,
@@ -510,42 +523,8 @@ export class IndexLevel {
     levelOptions?: IndexLevelOptions
   ): Promise<void> {
 
-    // Note: We have an array of Promises in order to support OR (anyOf) matches when given a list of accepted values for a property
-    const filterPromises: Promise<IndexedItem[]>[] = [];
-
-    // If the filter is empty, then we just iterate over one of the indexes that contains all the records and return all items.
-    if (isEmptyObject(filter)) {
-      const getAllItemsPromise = this.getAllItems(tenant, sortProperty);
-      filterPromises.push(getAllItemsPromise);
-    }
-
-    // else the filter is not empty
-    const searchFilter = FilterSelector.reduceFilter(filter);
-    for (const propertyName in searchFilter) {
-      const propertyFilter = searchFilter[propertyName];
-      // We will find the union of these many individual queries later.
-      if (FilterUtility.isEqualFilter(propertyFilter)) {
-        // propertyFilter is an EqualFilter, meaning it is a non-object primitive type
-        const exactMatchesPromise = this.filterExactMatches(tenant, propertyName, propertyFilter, levelOptions);
-        filterPromises.push(exactMatchesPromise);
-      } else if (FilterUtility.isOneOfFilter(propertyFilter)) {
-        // `propertyFilter` is a OneOfFilter
-        // Support OR matches by querying for each values separately, then adding them to the promises array.
-        for (const propertyValue of new Set(propertyFilter)) {
-          const exactMatchesPromise = this.filterExactMatches(tenant, propertyName, propertyValue, levelOptions);
-          filterPromises.push(exactMatchesPromise);
-        }
-      } else if (FilterUtility.isRangeFilter(propertyFilter)) {
-        // `propertyFilter` is a `RangeFilter`
-        const rangeMatchesPromise = this.filterRangeMatches(tenant, propertyName, propertyFilter, levelOptions);
-        filterPromises.push(rangeMatchesPromise);
-      }
-    }
-
-    // acting as an OR match for the property, any of the promises returning a match will be treated as a property match
-    for (const promise of filterPromises) {
-      const indexItems = await promise;
-      // reminder: the promise returns a list of IndexedItem satisfying a particular property match
+    // Collects results from each sub-query sequentially to avoid concurrent IndexedDB cursor races in Firefox.
+    const processResults = (indexItems: IndexedItem[]): void => {
       for (const indexedItem of indexItems) {
         // short circuit: if a data is already included to the final matched key set (by a different `Filter`),
         // no need to evaluate if the data satisfies this current filter being evaluated
@@ -560,6 +539,36 @@ export class IndexLevel {
         }
 
         matches.set(indexedItem.messageCid, indexedItem);
+      }
+    };
+
+    // If the filter is empty, then we just iterate over one of the indexes that contains all the records and return all items.
+    if (isEmptyObject(filter)) {
+      const allItems = await this.getAllItems(tenant, sortProperty);
+      processResults(allItems);
+      return;
+    }
+
+    // else the filter is not empty
+    const searchFilter = FilterSelector.reduceFilter(filter);
+    for (const propertyName in searchFilter) {
+      const propertyFilter = searchFilter[propertyName];
+      // We will find the union of these many individual queries later.
+      if (FilterUtility.isEqualFilter(propertyFilter)) {
+        // propertyFilter is an EqualFilter, meaning it is a non-object primitive type
+        const exactMatches = await this.filterExactMatches(tenant, propertyName, propertyFilter, levelOptions);
+        processResults(exactMatches);
+      } else if (FilterUtility.isOneOfFilter(propertyFilter)) {
+        // `propertyFilter` is a OneOfFilter
+        // Support OR matches by querying for each value separately and sequentially.
+        for (const propertyValue of new Set(propertyFilter)) {
+          const exactMatches = await this.filterExactMatches(tenant, propertyName, propertyValue, levelOptions);
+          processResults(exactMatches);
+        }
+      } else if (FilterUtility.isRangeFilter(propertyFilter)) {
+        // `propertyFilter` is a `RangeFilter`
+        const rangeMatches = await this.filterRangeMatches(tenant, propertyName, propertyFilter, levelOptions);
+        processResults(rangeMatches);
       }
     }
   }

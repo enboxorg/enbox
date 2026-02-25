@@ -14,6 +14,10 @@ export class LevelStore<K = string, V = any> implements KeyValueStore<K, V> {
     this.store = db ?? new Level<K, V>(location);
   }
 
+  async open(): Promise<void> {
+    await this.store.open();
+  }
+
   async clear(): Promise<void> {
     await this.store.clear();
   }
@@ -76,8 +80,14 @@ export class MemoryStore<K, V> implements KeyValueStore<K, V> {
   }
 
   /**
-   * This operation is no-op for `MemoryStore`
-   * and will log a warning if called.
+   * This operation is no-op for `MemoryStore`.
+   */
+  async open(): Promise<void> {
+    /** no-op */
+  }
+
+  /**
+   * This operation is no-op for `MemoryStore`.
    */
   async close(): Promise<void> {
     /** no-op */

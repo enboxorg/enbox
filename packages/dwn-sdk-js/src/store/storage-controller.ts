@@ -1,11 +1,13 @@
 import type { DataStore } from '../types/data-store.js';
-import type { EventStream } from '../types/subscriptions.js';
+import type { EventLog } from '../types/subscriptions.js';
+import type { Filter } from '../types/query-types.js';
 import type { GenericMessage } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
 import type { StateIndex } from '../types/state-index.js';
 import type { RecordsDeleteMessage, RecordsQueryReplyEntry, RecordsWriteMessage } from '../types/records-types.js';
 
 import { DwnConstant } from '../core/dwn-constant.js';
+import { FilterUtility } from '../utils/filter.js';
 import { Message } from '../core/message.js';
 import { Records } from '../utils/records.js';
 import { RecordsDelete } from '../interfaces/records-delete.js';
@@ -18,6 +20,11 @@ export type ResumableRecordsDeleteData = {
   message: RecordsDeleteMessage;
 };
 
+export type ResumableRecordsSquashData = {
+  tenant: string;
+  message: RecordsWriteMessage;
+};
+
 /**
  * A class that provides an abstraction for the usage of MessageStore, DataStore, and StateIndex.
  */
@@ -26,18 +33,18 @@ export class StorageController {
   private messageStore: MessageStore;
   private dataStore: DataStore;
   private stateIndex: StateIndex;
-  private eventStream?: EventStream;
+  private eventLog?: EventLog;
 
-  public constructor({ messageStore, dataStore, stateIndex, eventStream }: {
-    messageStore: MessageStore,
-    dataStore: DataStore,
-    stateIndex: StateIndex,
-    eventStream?: EventStream}
+  public constructor({ messageStore, dataStore, stateIndex, eventLog }: {
+    messageStore : MessageStore,
+    dataStore : DataStore,
+    stateIndex : StateIndex,
+    eventLog? : EventLog}
   ) {
     this.messageStore = messageStore;
     this.dataStore = dataStore;
     this.stateIndex = stateIndex;
-    this.eventStream = eventStream;
+    this.eventLog = eventLog;
   }
 
   public async performRecordsDelete({ tenant, message }: ResumableRecordsDeleteData): Promise<void> {
@@ -66,9 +73,9 @@ export class StorageController {
     await this.messageStore.put(tenant, message, indexes);
     await this.stateIndex.insert(tenant, messageCid, indexes);
 
-    // only emit if the event stream is set
-    if (this.eventStream !== undefined) {
-      this.eventStream.emit(tenant, { message, initialWrite }, indexes);
+    // only emit if the event log is set
+    if (this.eventLog !== undefined) {
+      await this.eventLog.emit(tenant, { message, initialWrite }, indexes);
     }
 
     if (message.descriptor.prune) {
@@ -80,6 +87,76 @@ export class StorageController {
     await StorageController.deleteAllOlderMessagesButKeepInitialWrite(
       tenant, existingMessages, message, this.messageStore, this.dataStore, this.stateIndex
     );
+  }
+
+  /**
+   * Performs the squash processing for a `RecordsWrite` with `squash: true`.
+   * Deletes all sibling records at the same protocol path and parent context whose
+   * `messageTimestamp` is strictly older than the squash record's `messageTimestamp`.
+   * Unlike normal `RecordsDelete` tombstones, squash targets are fully purged — no initial writes
+   * are retained.
+   *
+   * This method is idempotent — it can be safely re-run on resume after a crash.
+   */
+  public async performRecordsSquash({ tenant, message }: ResumableRecordsSquashData): Promise<void> {
+    const { protocol, protocolPath, messageTimestamp } = message.descriptor;
+
+    // Build a filter to find all sibling records at the same protocol path and parent context.
+    // We query by interface only (not method) so that both RecordsWrite and RecordsDelete messages are found.
+    const filter: Filter = {
+      interface    : DwnInterfaceName.Records,
+      protocol,
+      protocolPath : protocolPath,
+    };
+
+    // Scope by parent context for nested records
+    const parentContextId = Records.getParentContextFromOfContextId(message.contextId);
+    if (parentContextId !== undefined && parentContextId !== '') {
+      const prefixFilter = FilterUtility.constructPrefixFilterAsRangeFilter(parentContextId);
+      filter.contextId = prefixFilter;
+    }
+
+    // Query for all records at this path and context
+    const { messages: siblingMessages } = await this.messageStore.query(tenant, [filter]);
+
+    // Group messages by recordId — RecordsWrite messages use `message.recordId`,
+    // RecordsDelete messages use `message.descriptor.recordId`.
+    const recordIdToMessages = new Map<string, GenericMessage[]>();
+    for (const msg of siblingMessages) {
+      let recordId: string;
+      if (Records.isRecordsWrite(msg)) {
+        recordId = msg.recordId;
+      } else {
+        recordId = (msg as RecordsDeleteMessage).descriptor.recordId;
+      }
+
+      const existing = recordIdToMessages.get(recordId);
+      if (existing !== undefined) {
+        existing.push(msg);
+      } else {
+        recordIdToMessages.set(recordId, [msg]);
+      }
+    }
+
+    // Delete all records whose newest message timestamp is strictly older than the squash timestamp.
+    // Skip the squash record itself.
+    for (const [recordId, messages] of recordIdToMessages) {
+      if (recordId === message.recordId) {
+        continue;
+      }
+
+      // Use the newest message's timestamp to determine if the record predates the squash.
+      const newestMessage = await Message.getNewestMessage(messages);
+      if (newestMessage === undefined) {
+        continue;
+      }
+
+      const newestTimestamp = newestMessage.descriptor.messageTimestamp;
+      if (newestTimestamp < messageTimestamp) {
+        // Fully purge this record — all messages (including initial write) and their data
+        await StorageController.purgeRecordMessages(tenant, messages, this.messageStore, this.dataStore, this.stateIndex);
+      }
+    }
   }
 
   /**
@@ -164,7 +241,7 @@ export class StorageController {
    * Purges (permanent hard-delete) all messages of the SAME `recordId` given and their associated data and events.
    * Assumes that the given `recordMessages` are all of the same `recordId`.
    */
-  private static async purgeRecordMessages(
+  public static async purgeRecordMessages(
     tenant: string,
     recordMessages: GenericMessage[],
     messageStore: MessageStore,

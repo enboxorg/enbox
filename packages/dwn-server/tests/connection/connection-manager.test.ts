@@ -43,6 +43,42 @@ describe('InMemoryConnectionManager', () => {
     expect((connectionManager as any).connections.size).toBe(0);
   });
 
+  it('returns zero subscription count when no subscriptions exist', () => {
+    expect(connectionManager.getSubscriptionCount()).toBe(0);
+  });
+
+  it('returns the total subscription count across all connections', async () => {
+    // Connect a client and subscribe to something.
+    const alice = await (await import('@enbox/dwn-sdk-js')).TestDataGenerator.generateDidKeyPersona();
+    await (await import('@enbox/dwn-sdk-js')).TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+    const { message } = await (await import('@enbox/dwn-sdk-js')).TestDataGenerator.generateRecordsSubscribe({
+      author : alice,
+      filter : { schema: 'foo/bar' },
+    });
+
+    const { v4: uuidv4 } = await import('uuid');
+    const { createJsonRpcSubscriptionRequest } = await import('@enbox/dwn-clients');
+
+    const connection = await JsonRpcSocket.connect(wsUrl);
+    const requestId = uuidv4();
+    const subscriptionId = uuidv4();
+    const dwnRequest = createJsonRpcSubscriptionRequest(
+      requestId, 'rpc.subscribe.dwn.processMessage',
+      { message, target: alice.did },
+      subscriptionId,
+    );
+
+    const { response, close } = await connection.subscribe(dwnRequest, () => {});
+    expect(response.error).toBeUndefined();
+
+    // Give server a moment to register the subscription.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(connectionManager.getSubscriptionCount()).toBeGreaterThanOrEqual(1);
+
+    await close();
+  });
+
   it('closes all connections on `closeAll`', async () => {
 
     await JsonRpcSocket.connect(wsUrl);

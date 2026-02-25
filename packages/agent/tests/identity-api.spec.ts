@@ -5,9 +5,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, mock, spyOn } fr
 import type { PortableDid } from '@enbox/dids';
 import type { PortableIdentity } from '../src/index.js';
 
-import { AgentIdentityApi } from '../src/identity-api.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
+import { AgentIdentityApi, isPortableIdentity } from '../src/identity-api.js';
 import { BearerDid, UniversalResolver } from '@enbox/dids';
 
 describe('AgentIdentityApi', () => {
@@ -17,6 +17,38 @@ describe('AgentIdentityApi', () => {
       expect(
         new AgentIdentityApi()
       ).toBeDefined();
+    });
+  });
+
+  describe('isPortableIdentity()', () => {
+    it('should return false for null', () => {
+      expect(isPortableIdentity(null)).toBe(false);
+    });
+
+    it('should return false for undefined', () => {
+      expect(isPortableIdentity(undefined)).toBe(false);
+    });
+
+    it('should return false for non-object', () => {
+      expect(isPortableIdentity('string')).toBe(false);
+    });
+
+    it('should return false for object without did or metadata', () => {
+      expect(isPortableIdentity({})).toBe(false);
+      expect(isPortableIdentity({ did: 'not-portable' })).toBe(false);
+    });
+
+    it('should return true for a valid portable identity', () => {
+      const portableIdentity: PortableIdentity = {
+        did: {
+          uri         : 'did:jwk:eyJhbGciOiJFZERTQSJ9',
+          document    : { id: 'did:jwk:eyJhbGciOiJFZERTQSJ9' },
+          metadata    : {},
+          privateKeys : [{ kty: 'OKP', crv: 'Ed25519', x: 'x', d: 'd' } as any],
+        },
+        metadata: { name: 'Test Identity' },
+      };
+      expect(isPortableIdentity(portableIdentity)).toBe(true);
     });
   });
 
@@ -400,13 +432,11 @@ describe('AgentIdentityApi', () => {
 
           expect(updateSpy.calledOnce).toBe(true);
 
-          // expect the updated DID to have the new DWN service
+          // expect the updated DID to have the new DWN service (without legacy enc/sig)
           expect(updateSpy.firstCall.args[0].portableDid.document.service).toEqual([{
             id              : 'dwn',
             type            : 'DecentralizedWebNode',
             serviceEndpoint : newEndpoints,
-            enc             : '#enc',
-            sig             : '#sig'
           }]);
         });
 
@@ -439,8 +469,6 @@ describe('AgentIdentityApi', () => {
             id              : 'dwn',
             type            : 'DecentralizedWebNode',
             serviceEndpoint : newEndpoints,
-            enc             : '#enc',
-            sig             : '#sig'
           }]);
         });
       });

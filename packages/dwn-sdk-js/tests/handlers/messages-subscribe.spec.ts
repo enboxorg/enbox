@@ -1,27 +1,29 @@
 import type { DidResolver } from '@enbox/dids';
 import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore, StateIndex } from '../../src/index.js';
-import type { EventStream, MessageEvent } from '../../src/types/subscriptions.js';
+import type { EventLog, SubscriptionMessage } from '../../src/types/subscriptions.js';
+
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+
+import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
+import sinon from 'sinon';
 
 import { Dwn } from '../../src/dwn.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
-import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
 import { MessagesSubscribe } from '../../src/interfaces/messages-subscribe.js';
 import { MessagesSubscribeHandler } from '../../src/handlers/messages-subscribe.js';
 import { Poller } from '../utils/poller.js';
-import sinon from 'sinon';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { TestEventStream } from '../test-event-stream.js';
+import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '../../src/index.js';
 
 export function testMessagesSubscribeHandler(): void {
   describe('MessagesSubscribe.handle()', () => {
 
-    describe('EventStream disabled',() => {
+    describe('EventLog disabled',() => {
       let didResolver: DidResolver;
       let messageStore: MessageStore;
       let dataStore: DataStore;
@@ -67,24 +69,24 @@ export function testMessagesSubscribeHandler(): void {
 
       it('should respond with a 501 if subscriptions are not supported', async () => {
         await dwn.close(); // close the original dwn instance
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, resumableTaskStore }); // leave out eventStream
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, resumableTaskStore }); // leave out eventLog
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
         // attempt to subscribe
         const { message } = await MessagesSubscribe.create({ signer: Jws.createSigner(alice) });
         const subscriptionMessageReply = await dwn.processMessage(alice.did, message, { subscriptionHandler: (_) => {} });
         expect(subscriptionMessageReply.status.code).toBe(501);
-        expect(subscriptionMessageReply.status.detail).toContain(DwnErrorCode.MessagesSubscribeEventStreamUnimplemented);
+        expect(subscriptionMessageReply.status.detail).toContain(DwnErrorCode.MessagesSubscribeEventLogUnimplemented);
       });
     });
 
-    describe('EventStream enabled', () => {
+    describe('EventLog enabled', () => {
       let didResolver: DidResolver;
       let messageStore: MessageStore;
       let dataStore: DataStore;
       let resumableTaskStore: ResumableTaskStore;
       let stateIndex: StateIndex;
-      let eventStream: EventStream;
+      let eventLog: EventLog;
       let dwn: Dwn;
 
       // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
@@ -97,7 +99,8 @@ export function testMessagesSubscribeHandler(): void {
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
         stateIndex = stores.stateIndex;
-        eventStream = TestEventStream.get();
+        eventLog = TestEventLog.get();
+        eventLog = TestEventLog.get();
 
         dwn = await Dwn.create({
           didResolver,
@@ -105,7 +108,7 @@ export function testMessagesSubscribeHandler(): void {
           dataStore,
           resumableTaskStore,
           stateIndex,
-          eventStream,
+          eventLog,
         });
 
       });
@@ -131,7 +134,9 @@ export function testMessagesSubscribeHandler(): void {
         // add an invalid property to the descriptor
         (message['descriptor'] as any)['invalid'] = 'invalid';
 
-        const messagesSubscribeHandler = new MessagesSubscribeHandler(didResolver, messageStore, eventStream);
+        const messagesSubscribeHandler = new MessagesSubscribeHandler({
+          didResolver, messageStore, eventLog,
+        });
 
         const reply = await messagesSubscribeHandler.handle({ tenant: alice.did, message, subscriptionHandler: (_) => {} });
         expect(reply.status.code).toBe(400);
@@ -140,12 +145,14 @@ export function testMessagesSubscribeHandler(): void {
 
       it('should allow tenant to subscribe their own event stream', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // set up a promise to read later that captures the emitted messageCid
         let handler;
         const messageSubscriptionPromise: Promise<string> = new Promise((resolve) => {
-          handler = async (event: MessageEvent):Promise<void> => {
-            const { message } = event;
+          handler = async (msg: SubscriptionMessage):Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
             const messageCid = await Message.getCid(message);
             resolve(messageCid);
           };
@@ -166,8 +173,8 @@ export function testMessagesSubscribeHandler(): void {
 
         // control: ensure that the event exists
         const events = await stateIndex.getLeaves(alice.did, []);
-        expect(events.length).toBe(1);
-        expect(events[0]).toBe(messageCid);
+        expect(events.length).toBe(2);
+        expect(events).toContain(messageCid);
 
         // await the event
         const resolvedCid = await messageSubscriptionPromise;
@@ -197,6 +204,92 @@ export function testMessagesSubscribeHandler(): void {
         expect(subscriptionReply.subscription).toBeUndefined();
       });
 
+      describe('cursor-based subscriptions', () => {
+        it('should deliver catch-up events through the handler when cursor is provided', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+          // Read the EventLog to get a cursor before writing.
+          const { cursor: cursorBefore } = await eventLog.read(alice.did);
+
+          // Write a record before subscribing.
+          const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice });
+          const write1Reply = await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
+          expect(write1Reply.status.code).toBe(202);
+          const write1Cid = await Message.getCid(write1.message);
+
+          // Subscribe with cursor from before the write to catch up.
+          const messageCids: string[] = [];
+          const handler = async (msg: SubscriptionMessage): Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
+            const cid = await Message.getCid(message);
+            messageCids.push(cid);
+          };
+
+          const { message: subMessage } = await TestDataGenerator.generateMessagesSubscribe({
+            author : alice,
+            cursor : cursorBefore,
+          });
+          const subReply = await dwn.processMessage(alice.did, subMessage, { subscriptionHandler: handler });
+          expect(subReply.status.code).toBe(200);
+          expect(subReply.subscription).toBeDefined();
+
+          // Wait for the catch-up events.
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(messageCids.length).toBeGreaterThanOrEqual(1);
+            expect(messageCids).toContain(write1Cid);
+          });
+        });
+
+        it('should receive live events after cursor catch-up completes', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+          // Write before subscribing.
+          const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice });
+          await dwn.processMessage(alice.did, write1.message, { dataStream: write1.dataStream });
+
+          // Read to get cursor after write1.
+          const { cursor: cursorAfterWrite1 } = await eventLog.read(alice.did);
+
+          // Write another record that we'll catch up on.
+          const write2 = await TestDataGenerator.generateRecordsWrite({ author: alice });
+          await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
+          const write2Cid = await Message.getCid(write2.message);
+
+          const messageCids: string[] = [];
+          const handler = async (msg: SubscriptionMessage): Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
+            const cid = await Message.getCid(message);
+            messageCids.push(cid);
+          };
+
+          const { message: subMessage } = await TestDataGenerator.generateMessagesSubscribe({
+            author : alice,
+            cursor : cursorAfterWrite1,
+          });
+          const subReply = await dwn.processMessage(alice.did, subMessage, { subscriptionHandler: handler });
+          expect(subReply.status.code).toBe(200);
+
+          // Wait for catch-up (write2).
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(messageCids).toContain(write2Cid);
+          });
+
+          // Write a live record.
+          const write3 = await TestDataGenerator.generateRecordsWrite({ author: alice });
+          await dwn.processMessage(alice.did, write3.message, { dataStream: write3.dataStream });
+          const write3Cid = await Message.getCid(write3.message);
+
+          // Wait for the live event.
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(messageCids).toContain(write3Cid);
+          });
+        });
+      });
+
       describe('grant based subscribes', () => {
         it('allows subscribe of messages with matching interface and method grant scope', async () => {
           // scenario: Alice gives Bob permission to subscribe for all of her messages
@@ -218,10 +311,14 @@ export function testMessagesSubscribeHandler(): void {
           const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream });
           expect(grantReply.status.code).toBe(202);
 
+          // install the default test protocol used by generateRecordsWrite
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
           // create a handler to capture the emitted messageCids
           const messageCids: string[] = [];
-          const handler = async (event: MessageEvent):Promise<void> => {
-            const { message } = event;
+          const handler = async (msg: SubscriptionMessage):Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
             const messageCid = await Message.getCid(message);
             messageCids.push(messageCid);
           };
@@ -278,6 +375,67 @@ export function testMessagesSubscribeHandler(): void {
               await Message.getCid(randomMessage),
             ];
             expect(messageCids.sort()).toEqual(expectedCids.sort());
+          });
+        });
+
+        it('allows subscribe of messages with a unified MessagesRead grant scope', async () => {
+          // scenario: A Messages.Read grant should also authorize MessagesSubscribe operations
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          // create grant that is scoped to `MessagesRead` (unified) for bob
+          const { message: grantMessage, dataStream } = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+            }
+          });
+          const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream });
+          expect(grantReply.status.code).toBe(202);
+
+          // install the default test protocol used by generateRecordsWrite
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+          // create a handler to capture the emitted messageCids
+          const messageCids: string[] = [];
+          const handler = async (msg: SubscriptionMessage):Promise<void> => {
+            if (msg.type !== 'event') { return; }
+            const { message } = msg.event;
+            const messageCid = await Message.getCid(message);
+            messageCids.push(messageCid);
+          };
+
+          // bob subscribes to messages using the Messages.Read grant
+          const { message: subscribeMessage } = await TestDataGenerator.generateMessagesSubscribe({
+            author            : bob,
+            permissionGrantId : grantMessage.recordId,
+          });
+
+          const subscribeReply = await dwn.processMessage(alice.did, subscribeMessage, { subscriptionHandler: handler });
+          expect(subscribeReply.status.code).toBe(200);
+
+          // install the freeForAll protocol and write a record to trigger events
+          const { message: freeForAllConfigure } = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : freeForAll,
+          });
+          const { status: freeForAllReplyStatus } = await dwn.processMessage(alice.did, freeForAllConfigure);
+          expect(freeForAllReplyStatus.code).toBe(202);
+
+          const { message: recordMessage, dataStream: recordDataStream } = await TestDataGenerator.generateRecordsWrite({
+            protocol     : freeForAll.protocol,
+            protocolPath : 'post',
+            schema       : freeForAll.types.post.schema,
+            author       : alice
+          });
+          const recordReply = await dwn.processMessage(alice.did, recordMessage, { dataStream: recordDataStream });
+          expect(recordReply.status.code).toBe(202);
+
+          // ensure that at least one event was received
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(messageCids.length).toBeGreaterThanOrEqual(1);
           });
         });
 
@@ -374,8 +532,9 @@ export function testMessagesSubscribeHandler(): void {
 
             // bob uses the grant to subscribe to protocol 1 messages
             const proto1MessageCids: string[] = [];
-            const proto1Handler = async (event: MessageEvent):Promise<void> => {
-              const { message } = event;
+            const proto1Handler = async (msg: SubscriptionMessage):Promise<void> => {
+              if (msg.type !== 'event') { return; }
+              const { message } = msg.event;
               const messageCid = await Message.getCid(message);
               proto1MessageCids.push(messageCid);
             };
@@ -389,8 +548,9 @@ export function testMessagesSubscribeHandler(): void {
             expect(bobReply1.status.code).toBe(200);
 
             const allMessages: string[] = [];
-            const allHandler = async (event: MessageEvent):Promise<void> => {
-              const { message } = event;
+            const allHandler = async (msg: SubscriptionMessage):Promise<void> => {
+              if (msg.type !== 'event') { return; }
+              const { message } = msg.event;
               const messageCid = await Message.getCid(message);
               allMessages.push(messageCid);
             };

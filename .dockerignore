@@ -1,0 +1,54 @@
+# Version control
+.git
+.gitignore
+
+# CI / IDE
+.github
+.vscode
+.idea
+*.swp
+*.swo
+
+# Documentation
+docs/
+*.md
+!packages/dwn-server/package.json
+
+# Test infrastructure
+docker-compose*.yaml
+__TESTDATA__
+coverage/
+.nyc_output/
+
+# Test directories for packages that don't need tests in Docker builds.
+# dwn-sdk-js tests/ are kept because its tsconfig includes 'tests' and
+# src/index.ts exports TestDataGenerator + Poller from tests/utils/.
+packages/common/tests/
+packages/crypto/tests/
+packages/dids/tests/
+packages/dwn-sql-store/tests/
+packages/dwn-clients/tests/
+packages/dwn-server/tests/
+packages/dwn-relay/tests/
+
+# Packages not needed for dwn-server (exclude source, keep package.json for workspace resolution)
+packages/agent/src/
+packages/agent/tests/
+packages/api/src/
+packages/api/tests/
+packages/browser/src/
+packages/browser/tests/
+packages/protocols/src/
+packages/protocols/tests/
+packages/protocol-codegen/src/
+packages/protocol-codegen/tests/
+
+# Build artifacts (rebuilt in Docker)
+**/dist/
+**/node_modules/
+
+# Misc
+.DS_Store
+*.log
+*.tgz
+.changeset/

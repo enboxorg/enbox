@@ -1,5 +1,6 @@
+import type { ProviderAuthPlugin } from './provider-auth-plugin.js';
 import type { ActiveTenantCheckResult, TenantGate } from '@enbox/dwn-sdk-js';
-import type { ProofOfWorkChallengeModel, RegistrationData, RegistrationRequest } from '@enbox/dwn-clients';
+import type { ProofOfWorkChallengeModel, RegistrationRequest } from '@enbox/dwn-clients';
 
 import { readFileSync } from 'fs';
 
@@ -15,6 +16,7 @@ import { DwnServerError, DwnServerErrorCode } from '../dwn-error.js';
  */
 export class RegistrationManager implements TenantGate {
   private proofOfWorkManager: ProofOfWorkManager;
+  private providerAuthPlugin?: ProviderAuthPlugin;
   private registrationStore: RegistrationStore;
 
   private termsOfServiceHash?: string;
@@ -50,9 +52,10 @@ export class RegistrationManager implements TenantGate {
    */
   public static async create(input: {
     registrationStoreUrl?: string,
-    termsOfServiceFilePath?: string
+    termsOfServiceFilePath?: string,
     proofOfWorkChallengeNonceSeed?: string,
     proofOfWorkInitialMaximumAllowedHash?: string,
+    providerAuthPlugin?: ProviderAuthPlugin,
   }): Promise<RegistrationManager> {
     const { termsOfServiceFilePath, registrationStoreUrl } = input;
 
@@ -82,6 +85,11 @@ export class RegistrationManager implements TenantGate {
     const registrationStore = await RegistrationStore.create(sqlDialect);
     registrationManager.registrationStore = registrationStore;
 
+    // Store optional provider auth plugin.
+    if (input.providerAuthPlugin !== undefined) {
+      registrationManager.providerAuthPlugin = input.providerAuthPlugin;
+    }
+
     return registrationManager;
   }
 
@@ -94,17 +102,79 @@ export class RegistrationManager implements TenantGate {
   }
 
   /**
-   * Handles a registration request.
+   * Handles a registration request by dispatching to the appropriate handler
+   * based on the credentials provided.
    */
   public async handleRegistrationRequest(registrationRequest: RegistrationRequest): Promise<void> {
-    // Ensure the supplied terms of service hash matches the one we require.
-    if (registrationRequest.registrationData.termsOfServiceHash !== this.termsOfServiceHash) {
-      throw new DwnServerError(DwnServerErrorCode.RegistrationManagerInvalidOrOutdatedTermsOfServiceHash,
-        `Expecting terms-of-service hash ${this.termsOfServiceHash}, but got ${registrationRequest.registrationData.termsOfServiceHash}.`
+    if (registrationRequest.providerAuth?.registrationToken !== undefined) {
+      await this.handleProviderAuthRegistration(registrationRequest);
+    } else if (registrationRequest.proofOfWork !== undefined) {
+      await this.handleProofOfWorkRegistration(registrationRequest);
+    } else {
+      throw new DwnServerError(
+        DwnServerErrorCode.RegistrationRequestMissingCredentials,
+        'Registration request must include either providerAuth or proofOfWork credentials.',
+      );
+    }
+  }
+
+  /**
+   * Handles a provider-auth registration request.
+   */
+  private async handleProviderAuthRegistration(registrationRequest: RegistrationRequest): Promise<void> {
+    if (this.providerAuthPlugin === undefined) {
+      throw new DwnServerError(
+        DwnServerErrorCode.ProviderAuthNotEnabled,
+        'Provider auth registration is not enabled on this server.',
       );
     }
 
-    const { challengeNonce, responseNonce } = registrationRequest.proofOfWork;
+    const token = registrationRequest.providerAuth!.registrationToken;
+    const validationResult = await this.providerAuthPlugin.validateRegistrationToken(token);
+
+    if (!validationResult.isValid) {
+      throw new DwnServerError(
+        DwnServerErrorCode.ProviderAuthTokenInvalid,
+        validationResult.detail ?? 'Provider auth registration token is invalid.',
+      );
+    }
+
+    // Validate ToS only when the server has ToS configured AND the request includes a hash.
+    if (this.termsOfServiceHash !== undefined && registrationRequest.registrationData.termsOfServiceHash !== undefined) {
+      if (registrationRequest.registrationData.termsOfServiceHash !== this.termsOfServiceHash) {
+        throw new DwnServerError(DwnServerErrorCode.RegistrationManagerInvalidOrOutdatedTermsOfServiceHash,
+          `Expecting terms-of-service hash ${this.termsOfServiceHash}, ` +
+          `but got ${registrationRequest.registrationData.termsOfServiceHash}.`,
+        );
+      }
+    }
+
+    await this.registrationStore.insertOrUpdateTenantRegistration({
+      did                : registrationRequest.registrationData.did,
+      termsOfServiceHash : registrationRequest.registrationData.termsOfServiceHash,
+      accountId          : validationResult.accountId,
+      registrationType   : 'provider-auth',
+      metadata           : validationResult.metadata !== undefined
+        ? JSON.stringify(validationResult.metadata)
+        : undefined,
+    });
+  }
+
+  /**
+   * Handles a proof-of-work registration request.
+   */
+  private async handleProofOfWorkRegistration(registrationRequest: RegistrationRequest): Promise<void> {
+    // Validate ToS only when the server has ToS configured.
+    if (this.termsOfServiceHash !== undefined) {
+      if (registrationRequest.registrationData.termsOfServiceHash !== this.termsOfServiceHash) {
+        throw new DwnServerError(DwnServerErrorCode.RegistrationManagerInvalidOrOutdatedTermsOfServiceHash,
+          `Expecting terms-of-service hash ${this.termsOfServiceHash}, ` +
+          `but got ${registrationRequest.registrationData.termsOfServiceHash}.`,
+        );
+      }
+    }
+
+    const { challengeNonce, responseNonce } = registrationRequest.proofOfWork!;
 
     await this.proofOfWorkManager.verifyProofOfWork({
       challengeNonce,
@@ -113,14 +183,24 @@ export class RegistrationManager implements TenantGate {
     });
 
     // Store tenant registration data in database.
-    await this.recordTenantRegistration(registrationRequest.registrationData);
+    await this.recordTenantRegistration({
+      did                : registrationRequest.registrationData.did,
+      termsOfServiceHash : registrationRequest.registrationData.termsOfServiceHash,
+      registrationType   : 'proof-of-work',
+    });
   }
 
   /**
    * Records the given registration data in the database.
    * Exposed as a public method for testing purposes.
    */
-  public async recordTenantRegistration(registrationData: RegistrationData): Promise<void> {
+  public async recordTenantRegistration(registrationData: {
+    did: string;
+    termsOfServiceHash?: string;
+    accountId?: string;
+    registrationType?: string;
+    metadata?: string;
+  }): Promise<void> {
     await this.registrationStore.insertOrUpdateTenantRegistration(registrationData);
   }
 
@@ -142,7 +222,16 @@ export class RegistrationManager implements TenantGate {
       };
     }
 
-    if (tenantRegistration.termsOfServiceHash !== this.termsOfServiceHash) {
+    if (tenantRegistration.suspended) {
+      return {
+        isActiveTenant : false,
+        detail         : 'Tenant is suspended.'
+      };
+    }
+
+    // Only enforce ToS hash check when the server has a ToS configured.
+    if (this.termsOfServiceHash !== undefined &&
+      tenantRegistration.termsOfServiceHash !== this.termsOfServiceHash) {
       return {
         isActiveTenant : false,
         detail         : 'Agreed terms-of-service is outdated.'
@@ -150,5 +239,13 @@ export class RegistrationManager implements TenantGate {
     }
 
     return { isActiveTenant: true };
+  }
+
+  /**
+   * Returns the underlying RegistrationStore, if initialized.
+   * Used by the admin API to access tenant data.
+   */
+  public getRegistrationStore(): RegistrationStore | undefined {
+    return this.registrationStore;
   }
 }

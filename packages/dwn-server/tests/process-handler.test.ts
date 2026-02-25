@@ -42,6 +42,21 @@ describe('Process Handlers', () => {
     });
   });
 
+  it('should log an error for an unhandled rejection', async () => {
+    const consoleErrorStub = spyOn(console, 'error').mockImplementation(() => {});
+    const reason = 'Test unhandled rejection reason';
+    const promise = Promise.resolve();
+
+    process.emit('unhandledRejection', reason, promise);
+
+    expect(consoleErrorStub).toHaveBeenCalledTimes(1);
+    const callArgs = consoleErrorStub.mock.calls[0];
+    expect(callArgs[0]).toContain('Unhandled promise rejection');
+    expect(callArgs[0]).toContain(reason);
+
+    consoleErrorStub.mockRestore();
+  });
+
   it('should log an error for an uncaught exception', async () => {
 
     // IMPORTANT: this test is a bit tricky to write because

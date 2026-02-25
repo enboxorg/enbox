@@ -1,5 +1,28 @@
 # @enbox/crypto
 
+## 0.0.7
+
+### Patch Changes
+
+- Updated dependencies [[`4c74a79`](https://github.com/enboxorg/enbox/commit/4c74a794ca9b05fd063371661c0ac45867c6daf2)]:
+  - @enbox/common@0.0.6
+
+## 0.0.6
+
+### Patch Changes
+
+- Updated dependencies [[`0eb40d4`](https://github.com/enboxorg/enbox/commit/0eb40d4d111732262de01258c0f7f8c727466714)]:
+  - @enbox/common@0.0.5
+
+## 0.0.5
+
+### Patch Changes
+
+- [`255ea66`](https://github.com/enboxorg/enbox/commit/255ea668007d728a59899b06f1897b0b933e6bf3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: provider-auth-v0 tenant registration, immutable records, content-addressed data stores, and admin dashboard
+
+- Updated dependencies [[`255ea66`](https://github.com/enboxorg/enbox/commit/255ea668007d728a59899b06f1897b0b933e6bf3)]:
+  - @enbox/common@0.0.4
+
 ## 0.0.4
 
 ### Patch Changes

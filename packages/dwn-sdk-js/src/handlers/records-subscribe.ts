@@ -1,14 +1,13 @@
-import type { DidResolver } from '@enbox/dids';
+import type { CoreProtocolRegistry } from '../core/core-protocol.js';
 import type { MessageSort } from '../types/message-types.js';
 import type { MessageStore } from '../types//message-store.js';
-import type { MethodHandler } from '../types/method-handler.js';
-import type { EventListener, EventStream } from '../types/subscriptions.js';
+import type { SubscriptionListener } from '../types/subscriptions.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
-import type { RecordEvent, RecordsQueryReplyEntry, RecordsSubscribeMessage, RecordsSubscribeReply, RecordSubscriptionHandler } from '../types/records-types.js';
+import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
+import type { RecordsQueryReplyEntry, RecordsSubscribeMessage, RecordsSubscribeReply } from '../types/records-types.js';
 
 import { authenticate } from '../core/auth.js';
 import { DateSort } from '../types/records-types.js';
-import { FilterUtility } from '../utils/filter.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
@@ -21,7 +20,7 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 
 export class RecordsSubscribeHandler implements MethodHandler {
 
-  constructor(private didResolver: DidResolver, private messageStore: MessageStore, private eventStream?: EventStream) { }
+  constructor(private deps: HandlerDependencies) { }
 
   public async handle({
     tenant,
@@ -30,11 +29,11 @@ export class RecordsSubscribeHandler implements MethodHandler {
   }: {
     tenant: string,
     message: RecordsSubscribeMessage,
-    subscriptionHandler: RecordSubscriptionHandler,
+    subscriptionHandler: SubscriptionListener,
   }): Promise<RecordsSubscribeReply> {
-    if (this.eventStream === undefined) {
+    if (this.deps.eventLog === undefined) {
       return messageReplyFromError(new DwnError(
-        DwnErrorCode.RecordsSubscribeEventStreamUnimplemented,
+        DwnErrorCode.RecordsSubscribeEventLogUnimplemented,
         'Subscriptions are not supported'
       ), 501);
     }
@@ -59,8 +58,8 @@ export class RecordsSubscribeHandler implements MethodHandler {
     } else {
       // authentication and authorization
       try {
-        await authenticate(message.authorization!, this.didResolver);
-        await RecordsSubscribeHandler.authorizeRecordsSubscribe(tenant, recordsSubscribe, this.messageStore);
+        await authenticate(message.authorization!, this.deps.didResolver);
+        await RecordsSubscribeHandler.authorizeRecordsSubscribe(tenant, recordsSubscribe, this.deps.messageStore, this.deps.coreProtocols);
       } catch (error) {
         return messageReplyFromError(error, 401);
       }
@@ -74,30 +73,51 @@ export class RecordsSubscribeHandler implements MethodHandler {
       }
     }
 
-    // Step 1: Register event listener FIRST to ensure no events are missed between query and subscribe
-    const listener: EventListener = (eventTenant, event, eventIndexes):void => {
-      if (tenant === eventTenant && FilterUtility.matchAnyFilter(eventIndexes, eventFilters)) {
-        subscriptionHandler(event as RecordEvent);
-      }
-    };
-
     const messageCid = await Message.getCid(message);
-    const subscription = await this.eventStream.subscribe(tenant, messageCid, listener);
+    const { cursor: eventLogCursor } = recordsSubscribe.message.descriptor;
+
+    if (eventLogCursor !== undefined) {
+      // ---- Cursor mode: catch-up from EventLog + EOSE + live ----
+      // All catch-up, buffering, dedup, and EOSE delivery are handled by the
+      // EventLog implementation. The handler just passes the cursor and filters.
+      // The subscriptionHandler receives SubscriptionMessage (event + EOSE) directly.
+
+      try {
+        const subscription = await this.deps.eventLog!.subscribe(tenant, messageCid, subscriptionHandler, {
+          cursor  : eventLogCursor,
+          filters : eventFilters,
+        });
+
+        return {
+          status: { code: 200, detail: 'OK' },
+          subscription,
+        };
+      } catch (error) {
+        return messageReplyFromError(error, 500);
+      }
+    }
+
+    // ---- No cursor: existing behavior (initial snapshot from MessageStore) ----
+
+    // Step 1: Register event listener FIRST to ensure no events are missed between query and subscribe
+    const subscription = await this.deps.eventLog!.subscribe(tenant, messageCid, subscriptionHandler, {
+      filters: eventFilters,
+    });
 
     // Step 2: Query for initial snapshot of matching records
     let entries: RecordsQueryReplyEntry[];
-    let cursor: PaginationCursor | undefined;
+    let paginationCursor: PaginationCursor | undefined;
     try {
       const { dateSort, pagination } = recordsSubscribe.message.descriptor;
       const messageSort = RecordsSubscribeHandler.convertDateSort(dateSort);
-      const queryResult = await this.messageStore.query(tenant, queryFilters, messageSort, pagination);
+      const queryResult = await this.deps.messageStore.query(tenant, queryFilters, messageSort, pagination);
       entries = queryResult.messages as RecordsQueryReplyEntry[];
-      cursor = queryResult.cursor;
+      paginationCursor = queryResult.cursor;
 
       // attach initialWrite for non-initial writes
       for (const entry of entries) {
         if (!await RecordsWrite.isInitialWrite(entry)) {
-          const initialWriteResult = await this.messageStore.query(
+          const initialWriteResult = await this.deps.messageStore.query(
             tenant,
             [{ recordId: entry.recordId, isLatestBaseState: false, method: DwnMethodName.Write }]
           );
@@ -114,10 +134,10 @@ export class RecordsSubscribeHandler implements MethodHandler {
 
     // Step 3: Return subscription + initial entries + cursor
     return {
-      status: { code: 200, detail: 'OK' },
+      status : { code: 200, detail: 'OK' },
       subscription,
       entries,
-      cursor
+      cursor : paginationCursor,
     };
   }
 
@@ -300,7 +320,8 @@ export class RecordsSubscribeHandler implements MethodHandler {
   public static async authorizeRecordsSubscribe(
     tenant: string,
     recordsSubscribe: RecordsSubscribe,
-    messageStore: MessageStore
+    messageStore: MessageStore,
+    coreProtocols?: CoreProtocolRegistry,
   ): Promise<void> {
 
     if (Message.isSignedByAuthorDelegate(recordsSubscribe.message)) {
@@ -311,7 +332,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
     // this is because we dynamically filter out records that the caller is not authorized to see.
     // Currently only run protocol authorization if message deliberately invokes a protocol role.
     if (Records.shouldProtocolAuthorize(recordsSubscribe.signaturePayload!)) {
-      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsSubscribe, messageStore);
+      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsSubscribe, messageStore, coreProtocols);
     }
   }
 }

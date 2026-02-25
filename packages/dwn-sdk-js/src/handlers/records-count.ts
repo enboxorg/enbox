@@ -1,7 +1,7 @@
-import type { DidResolver } from '@enbox/dids';
+import type { CoreProtocolRegistry } from '../core/core-protocol.js';
 import type { Filter } from '../types/query-types.js';
 import type { MessageStore } from '../types//message-store.js';
-import type { MethodHandler } from '../types/method-handler.js';
+import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsCountMessage, RecordsCountReply } from '../types/records-types.js';
 
 import { authenticate } from '../core/auth.js';
@@ -14,7 +14,7 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 
 export class RecordsCountHandler implements MethodHandler {
 
-  constructor(private didResolver: DidResolver, private messageStore: MessageStore) { }
+  constructor(private deps: HandlerDependencies) { }
 
   public async handle({
     tenant,
@@ -35,9 +35,9 @@ export class RecordsCountHandler implements MethodHandler {
     } else {
       // authentication and authorization
       try {
-        await authenticate(message.authorization!, this.didResolver);
+        await authenticate(message.authorization!, this.deps.didResolver);
 
-        await RecordsCountHandler.authorizeRecordsCount(tenant, recordsCount, this.messageStore);
+        await RecordsCountHandler.authorizeRecordsCount(tenant, recordsCount, this.deps.messageStore, this.deps.coreProtocols);
       } catch (e) {
         return messageReplyFromError(e, 401);
       }
@@ -67,7 +67,7 @@ export class RecordsCountHandler implements MethodHandler {
       isLatestBaseState : true
     };
 
-    return this.messageStore.count(tenant, [countFilter]);
+    return this.deps.messageStore.count(tenant, [countFilter]);
   }
 
   /**
@@ -95,7 +95,7 @@ export class RecordsCountHandler implements MethodHandler {
       }
     }
 
-    return this.messageStore.count(tenant, filters);
+    return this.deps.messageStore.count(tenant, filters);
   }
 
   /**
@@ -103,7 +103,7 @@ export class RecordsCountHandler implements MethodHandler {
    */
   private async countPublishedRecords(tenant: string, recordsCount: RecordsCount): Promise<number> {
     const filter = RecordsCountHandler.buildPublishedRecordsFilter(recordsCount);
-    return this.messageStore.count(tenant, [filter]);
+    return this.deps.messageStore.count(tenant, [filter]);
   }
 
   private static buildPublishedRecordsFilter(recordsCount: RecordsCount): Filter {
@@ -167,7 +167,8 @@ export class RecordsCountHandler implements MethodHandler {
   private static async authorizeRecordsCount(
     tenant: string,
     recordsCount: RecordsCount,
-    messageStore: MessageStore
+    messageStore: MessageStore,
+    coreProtocols?: CoreProtocolRegistry,
   ): Promise<void> {
 
     if (Message.isSignedByAuthorDelegate(recordsCount.message)) {
@@ -178,7 +179,7 @@ export class RecordsCountHandler implements MethodHandler {
     // this is because we dynamically filter out records that the caller is not authorized to see.
     // Currently only run protocol authorization if message deliberately invokes a protocol role.
     if (Records.shouldProtocolAuthorize(recordsCount.signaturePayload!)) {
-      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsCount, messageStore);
+      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsCount, messageStore, coreProtocols);
     }
   }
 }

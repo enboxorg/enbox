@@ -1,11 +1,9 @@
-import type { DidResolver } from '@enbox/dids';
 import type { MessageStore } from '../types/message-store.js';
-import type { MethodHandler } from '../types/method-handler.js';
-import type { EventListener, EventStream } from '../types/subscriptions.js';
-import type { MessagesSubscribeMessage, MessagesSubscribeReply, MessageSubscriptionHandler } from '../types/messages-types.js';
+import type { SubscriptionListener } from '../types/subscriptions.js';
+import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
+import type { MessagesSubscribeMessage, MessagesSubscribeReply } from '../types/messages-types.js';
 
 import { authenticate } from '../core/auth.js';
-import { FilterUtility } from '../utils/filter.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { Messages } from '../utils/messages.js';
@@ -15,11 +13,8 @@ import { PermissionsProtocol } from '../protocols/permissions.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 export class MessagesSubscribeHandler implements MethodHandler {
-  constructor(
-    private didResolver: DidResolver,
-    private messageStore: MessageStore,
-    private eventStream?: EventStream
-  ) {}
+
+  constructor(private deps: HandlerDependencies) {}
 
   public async handle({
     tenant,
@@ -28,11 +23,11 @@ export class MessagesSubscribeHandler implements MethodHandler {
   }: {
     tenant: string;
     message: MessagesSubscribeMessage;
-    subscriptionHandler: MessageSubscriptionHandler;
+    subscriptionHandler: SubscriptionListener;
   }): Promise<MessagesSubscribeReply> {
-    if (this.eventStream === undefined) {
+    if (this.deps.eventLog === undefined) {
       return messageReplyFromError(new DwnError(
-        DwnErrorCode.MessagesSubscribeEventStreamUnimplemented,
+        DwnErrorCode.MessagesSubscribeEventLogUnimplemented,
         'Subscriptions are not supported'
       ), 501);
     }
@@ -45,28 +40,29 @@ export class MessagesSubscribeHandler implements MethodHandler {
     }
 
     try {
-      await authenticate(message.authorization, this.didResolver);
-      await MessagesSubscribeHandler.authorizeMessagesSubscribe(tenant, messagesSubscribe, this.messageStore);
+      await authenticate(message.authorization, this.deps.didResolver);
+      await MessagesSubscribeHandler.authorizeMessagesSubscribe(tenant, messagesSubscribe, this.deps.messageStore);
     } catch (error) {
       return messageReplyFromError(error, 401);
     }
 
-    const { filters } = message.descriptor;
-    const messagesFilters = Messages.convertFilters(filters);
+    const { filters, cursor: eventLogCursor } = message.descriptor;
+    const messagesFilters = Messages.convertFilters(filters, this.deps.coreProtocols);
     const messageCid = await Message.getCid(message);
 
-    const listener: EventListener = (eventTenant, event, eventIndexes):void => {
-      if (tenant === eventTenant && FilterUtility.matchAnyFilter(eventIndexes, messagesFilters)) {
-        subscriptionHandler(event);
-      }
-    };
+    try {
+      const subscription = await this.deps.eventLog.subscribe(tenant, messageCid, subscriptionHandler, {
+        cursor  : eventLogCursor,
+        filters : messagesFilters,
+      });
 
-    const subscription = await this.eventStream.subscribe(tenant, messageCid, listener);
-
-    return {
-      status: { code: 200, detail: 'OK' },
-      subscription,
-    };
+      return {
+        status: { code: 200, detail: 'OK' },
+        subscription,
+      };
+    } catch (error) {
+      return messageReplyFromError(error, 500);
+    }
   }
 
   private static async authorizeMessagesSubscribe(tenant: string, messagesSubscribe: MessagesSubscribe, messageStore: MessageStore): Promise<void> {

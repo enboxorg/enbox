@@ -84,13 +84,12 @@ export class PermissionRequest implements PermissionRequestModel {
   }
 
   /** parses the request given an agent, connectedDid and data encoded records write message  */
-  static async parse({ connectedDid, agent, message }:{
+  static parse({ connectedDid, agent, message }:{
     connectedDid: string;
     agent: Web5Agent;
     message: DwnDataEncodedRecordsWriteMessage;
-  }): Promise<PermissionRequest> {
-    //TODO: this does not have to be async https://github.com/enboxorg/enbox/pull/831/files
-    const request = await DwnPermissionRequest.parse(message);
+  }): PermissionRequest {
+    const request = DwnPermissionRequest.parse(message);
     const api = new AgentPermissionsApi({ agent });
     return new PermissionRequest({ api, connectedDid, message, request });
   }

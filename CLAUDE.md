@@ -1,5 +1,13 @@
 # Project Instructions
 
+## Inviolable Rules
+
+### Never modify production code to satisfy tests
+
+Production code must NEVER be weakened, loosened, or given special-case handling to make a test pass. This includes adding defensive null/undefined checks, try/catch blocks, early returns, or any other logic whose sole purpose is to handle conditions that only arise in stubbed/mocked test environments. This is how security vulnerabilities are born.
+
+If a test fails because new production code interacts badly with a stubbed environment, the fix belongs **entirely in the test**: update the stubs to properly simulate reality, or stub the new production method directly on the handler/class instance. The production code path must remain exactly as strict as the real-world scenario demands.
+
 ## Monorepo Overview
 
 Bun workspace monorepo for decentralized web infrastructure. Runtime is **Bun** (>=1.0.0).
@@ -114,11 +122,14 @@ Several packages (`dids`, `agent`, `api`, `dwn-server`, `dwn-sql-store`) require
 ### Quick start
 
 ```bash
-# Start all test services (Pkarr relay, Postgres, MySQL):
+# Start all test services (Pkarr relay, Postgres, MySQL, NATS):
 docker compose -f docker-compose.test.yaml up -d --wait
 
 # Set the Pkarr gateway env var (REQUIRED for did:dht tests):
 export DID_DHT_GATEWAY_URI=http://localhost:7527
+
+# Set the NATS URL (REQUIRED for dwn-server NatsEventLog tests):
+export NATS_URL=nats://localhost:4222
 ```
 
 Without `DID_DHT_GATEWAY_URI`, tests in `agent` (~115 tests), `api` (~23 tests), and `dids` (~1 test) will fail with `DidError: internalError: Failed to put Pkarr record`. These are NOT real test failures — the tests are correct, they just need the gateway.
@@ -131,6 +142,7 @@ Without `DID_DHT_GATEWAY_URI`, tests in `agent` (~115 tests), `api` (~23 tests),
 | PostgreSQL 15 | `enbox-test-postgres` | `localhost:5433` | `dwn-server`, `dwn-sql-store` |
 | PostgreSQL 13 | `enbox-test-postgres-sdk` | `localhost:5432` | `dwn-sql-store` (SDK test suite) |
 | MySQL 8 | `enbox-test-mysql` | `localhost:3306` | `dwn-sql-store` |
+| NATS JetStream | `enbox-test-nats` | `localhost:4222` | `dwn-server` (NatsEventLog plugin tests) |
 
 ### DWN server
 
@@ -184,6 +196,81 @@ All packages are above 90% line coverage in CI. If local coverage numbers look l
 | `dwn-sdk-js` | 98.9% |
 | `dwn-server` | 97.3% |
 | `dwn-sql-store` | 96.9% |
+
+## Releasing & Publishing Packages
+
+Packages are published to npm via **Changesets** and CI. **NEVER bump versions manually in `package.json`** — use the changeset workflow instead.
+
+### How it works
+
+1. **Create a changeset** describing the changes and the semver bump type:
+   ```bash
+   bun changeset
+   ```
+   This interactively creates a `.changeset/<random-name>.md` file. Select which packages are affected and whether the bump is `patch`, `minor`, or `major`.
+
+2. **Commit and push** the changeset file(s) to `main` (directly or via PR).
+
+3. **CI creates a "Version Packages" PR** — the `release.yml` workflow detects pending changesets and opens a PR that bumps all `package.json` versions, updates changelogs, and regenerates the lockfile.
+
+4. **Merge the Version Packages PR** — CI then runs `scripts/publish.sh` which resolves `workspace:*` deps to real versions, packs each package with `bun pm pack`, and publishes tarballs via `npm publish`.
+
+### Key details
+
+- **Changeset config** is in `.changeset/config.json`.
+- **`@enbox/dwn-relay`** has been moved to its own repository at https://github.com/enboxorg/dwn-relay.
+- **`updateInternalDependencies: "patch"`** — when a dependency gets bumped, its dependents automatically get a patch bump too. For example, bumping `@enbox/dwn-sdk-js` as `minor` will auto-bump `@enbox/agent`, `@enbox/api`, `@enbox/protocols`, `@enbox/crypto`, etc. as `patch`.
+- **`scripts/publish.sh`** handles the Bun `workspace:*` → real version resolution that changesets' built-in publish cannot do.
+- The publish script **skips already-published versions** (idempotent).
+- Git tags are created automatically in the format `@enbox/<package>@<version>`.
+- npm auth is handled via `NPM_TOKEN` secret in CI.
+
+### IMPORTANT: Do NOT run `changeset version` locally
+
+**Never run `bunx changeset version` locally.** This command consumes the changeset files, bumps `package.json` versions, and updates changelogs — that is CI's job. If you accidentally run it, revert with `git checkout -- packages/ .changeset/`.
+
+The correct local workflow is:
+1. Create the `.changeset/<name>.md` file (manually or via `bun changeset`)
+2. Commit the changeset file
+3. Push to `main`
+4. CI handles the rest
+
+### Agent-friendly changeset creation
+
+Since `bun changeset` is interactive (not supported in agents), create the changeset file directly:
+
+```bash
+cat > .changeset/my-changeset.md << 'EOF'
+---
+"@enbox/dwn-sdk-js": minor
+"@enbox/agent": patch
+---
+
+feat: add new protocol feature and update agent to use it
+EOF
+```
+
+Use `bunx changeset status` to verify the changeset is valid before committing.
+
+### Semver guidelines for this project
+
+| Change type | Bump | Examples |
+|---|---|---|
+| New feature / new API | `minor` | New protocol directive, new sync engine, new public method |
+| Bug fix / security fix | `patch` | SSRF protection, escape LIKE wildcards, crash fix |
+| Breaking change | `major` | Removed public API, changed wire format, renamed exports |
+| Test-only changes | No bump needed | Don't include test-only packages in the changeset |
+
+### Example changeset file
+
+```markdown
+---
+"@enbox/dwn-clients": patch
+"@enbox/api": patch
+---
+
+feat: add provider-auth-v0 client methods and Web5.connect() integration
+```
 
 ## Coding Style
 

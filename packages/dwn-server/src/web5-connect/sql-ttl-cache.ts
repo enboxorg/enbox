@@ -103,7 +103,13 @@ export class SqlTtlCache {
       return undefined;
     }
 
-    return JSON.parse(entry.value);
+    try {
+      return JSON.parse(entry.value);
+    } catch {
+      // Corrupt entry — remove it and return undefined.
+      this.delete(key); // no need to await
+      return undefined;
+    }
   }
 
   /**

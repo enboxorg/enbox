@@ -1,5 +1,6 @@
 import type { GeneralJws } from './jws-types.js';
 import type { JweEncryption } from '../utils/encryption.js';
+import type { SubscriptionListener } from './subscriptions.js';
 import type { AuthorizationModel, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSubscription, Pagination } from './message-types.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import type { PaginationCursor, RangeCriterion, RangeFilter, StartsWithFilter } from './query-types.js';
@@ -23,8 +24,8 @@ export type RecordsWriteTagsFilter = StartsWithFilter | RangeFilter | string | n
 export type RecordsWriteDescriptor = {
   interface: DwnInterfaceName.Records;
   method: DwnMethodName.Write;
-  protocol?: string;
-  protocolPath?: string;
+  protocol: string;
+  protocolPath: string;
   recipient?: string;
   schema?: string;
   tags?: RecordsWriteTags;
@@ -37,6 +38,14 @@ export type RecordsWriteDescriptor = {
   datePublished?: string;
   dataFormat: string;
   permissionGrantId?: string;
+
+  /**
+   * When `true`, this record is a squash (snapshot) write. The protocol rule set at this record's
+   * `protocolPath` must have `$squash: true`; otherwise the message is rejected.
+   * A squash write must be an initial write (a new record, not an update).
+   * This is an immutable property.
+   */
+  squash?: true;
 };
 
 export type RecordsWriteMessageOptions = {
@@ -57,7 +66,7 @@ export type InternalRecordsWriteMessage = GenericMessage & {
 export type RecordsWriteMessage = {
   authorization: AuthorizationModel; // overriding `GenericMessage` with `authorization` being required
   recordId: string,
-  contextId?: string;
+  contextId: string;
   descriptor: RecordsWriteDescriptor;
   attestation?: GeneralJws;
   encryption?: JweEncryption;
@@ -122,6 +131,12 @@ export type RecordsSubscribeDescriptor = {
   filter: RecordsFilter;
   dateSort?: DateSort;
   pagination?: Pagination;
+  /**
+   * Opaque EventLog cursor string to resume from. When provided, the handler replays
+   * events from the EventLog starting after this cursor instead of querying the
+   * MessageStore for an initial snapshot. An EOSE marker is sent after catch-up.
+   */
+  cursor?: string;
 };
 
 export type RecordsFilter = {
@@ -157,7 +172,7 @@ export type RecordsWriteAttestationPayload = {
 
 export type RecordsWriteSignaturePayload = GenericSignaturePayload & {
   recordId: string;
-  contextId?: string;
+  contextId: string;
   attestationCid?: string;
   encryptionCid?: string;
 };
@@ -176,10 +191,13 @@ export type RecordEvent = {
   initialWrite?: RecordsWriteMessage;
 };
 
-export type RecordSubscriptionHandler = (event: RecordEvent) => void;
+/**
+ * @deprecated Use {@link SubscriptionListener} directly. Retained as an alias for migration.
+ */
+export type RecordSubscriptionHandler = SubscriptionListener;
 
 export type RecordsSubscribeMessageOptions = {
-  subscriptionHandler: RecordSubscriptionHandler;
+  subscriptionHandler: SubscriptionListener;
 };
 
 export type RecordsSubscribeMessage = GenericMessage & {

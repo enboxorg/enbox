@@ -1,46 +1,26 @@
 import type { GeneralJws } from '../types/jws-types.js';
 import type { MessageSigner } from '../types/signer.js';
 import type { EncryptionInput, JweEncryption } from '../utils/encryption.js';
-import type { RecordsWriteAttestationPayload, RecordsWriteDescriptor, RecordsWriteMessage, RecordsWriteSignaturePayload } from '../types/records-types.js';
+import type { RecordsWriteAttestationPayload, RecordsWriteMessage, RecordsWriteSignaturePayload } from '../types/records-types.js';
 
 import { Cid } from '../utils/cid.js';
 import { Encoder } from '../utils/encoder.js';
 import { Encryption } from '../utils/encryption.js';
 import { GeneralJwsBuilder } from '../jose/jws/general/builder.js';
 import { Jws } from '../utils/jws.js';
-import { KeyDerivationScheme } from '../utils/hd-key.js';
 import { removeUndefinedProperties } from '../utils/object.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 /**
  * Creates the JWE `encryption` property if encryption input is given. Else `undefined` is returned.
  * Uses ECDH-ES+A256KW key agreement with X25519 and AEAD content encryption (A256GCM or XC20P).
- * @param descriptor Descriptor of the `RecordsWrite` message which contains the information needed by key path derivation schemes.
  * @param encryptionInput The encryption input containing CEK, IV, authentication tag, and recipient key encryption inputs.
  */
 export async function createEncryptionProperty(
-  descriptor: RecordsWriteDescriptor,
   encryptionInput: EncryptionInput | undefined,
 ): Promise<JweEncryption | undefined> {
   if (encryptionInput === undefined) {
     return undefined;
-  }
-
-  // Validate derivation scheme prerequisites
-  for (const keyEncryptionInput of encryptionInput.keyEncryptionInputs) {
-    if (keyEncryptionInput.derivationScheme === KeyDerivationScheme.ProtocolPath && descriptor.protocol === undefined) {
-      throw new DwnError(
-        DwnErrorCode.RecordsWriteMissingProtocol,
-        '`protocols` encryption scheme cannot be applied to record without the `protocol` property.'
-      );
-    }
-
-    if (keyEncryptionInput.derivationScheme === KeyDerivationScheme.Schemas && descriptor.schema === undefined) {
-      throw new DwnError(
-        DwnErrorCode.RecordsWriteMissingSchema,
-        '`schemas` encryption scheme cannot be applied to record without the `schema` property.'
-      );
-    }
   }
 
   // Build the JWE structure. The authentication tag comes from the AEAD encryption of record data.
@@ -69,7 +49,7 @@ export async function createAttestation(descriptorCid: string, signers?: Message
  */
 export async function createSignerSignature(input: {
   recordId: string,
-  contextId: string | undefined,
+  contextId: string,
   descriptorCid: string,
   attestation: GeneralJws | undefined,
   encryption: JweEncryption | undefined,

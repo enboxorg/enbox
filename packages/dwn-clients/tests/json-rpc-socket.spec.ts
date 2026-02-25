@@ -185,17 +185,13 @@ describe('JsonRpcSocket', () => {
     await sleepWhileWaitingForEvents();
     expect(onCloseSpy).toHaveBeenCalledTimes(1);
 
-    // test default logger
+    // when no onclose handler is provided, close should succeed silently
     const logInfoSpy = spyOn(console, 'info').mockImplementation(() => {});
     const defaultClient = await JsonRpcSocket.connect(socketDwnUrl);
     defaultClient.close();
 
     await sleepWhileWaitingForEvents();
-    expect(logInfoSpy).toHaveBeenCalledTimes(1);
-
-    // extract log message from argument
-    const logMessage:string = logInfoSpy.mock.calls[0][0]!;
-    expect(logMessage).toBe(`JSON RPC Socket close ${socketDwnUrl}`);
+    expect(logInfoSpy).toHaveBeenCalledTimes(0);
   });
 
   describe('event simulation', function () {
@@ -209,17 +205,13 @@ describe('JsonRpcSocket', () => {
       await sleepWhileWaitingForEvents();
       expect(onErrorSpy).toHaveBeenCalledTimes(1);
 
-      // test default logger
+      // when no onerror handler is provided, error should be handled silently
       const logInfoSpy = spyOn(console, 'error').mockImplementation(() => {});
       const defaultClient = await JsonRpcSocket.connect(socketDwnUrl);
       defaultClient['socket'].dispatchEvent(new Event('error'));
 
       await sleepWhileWaitingForEvents();
-      expect(logInfoSpy).toHaveBeenCalledTimes(1);
-
-      // extract log message from argument
-      const logMessage:string = logInfoSpy.mock.calls[0][0]!;
-      expect(logMessage).toBe(`JSON RPC Socket error ${socketDwnUrl}`);
+      expect(logInfoSpy).toHaveBeenCalledTimes(0);
     });
 
     it('closes subscription upon receiving a JsonRpc Error for a long running subscription', async () => {
@@ -266,5 +258,353 @@ describe('JsonRpcSocket', () => {
       expect(responseCounter).toBe(1);
       expect(errorCounter).toBe(1);
     });
+  });
+
+  describe('toText helper', () => {
+    // The `toText` helper is called inside `wireSocket` to convert WebSocket
+    // message data (string, ArrayBuffer, or Uint8Array) into a string before
+    // JSON parsing. We verify that messages delivered in each format are correctly
+    // parsed and dispatched to the registered handler.
+    //
+    // NOTE: The original versions of these tests registered handlers that expected
+    // pre-parsed JSON objects. In reality, `wireSocket` calls `toText(event.data)`
+    // and then `parseJson()` internally, but the handler registered in
+    // `messageHandlers` receives the raw `event` object — not parsed JSON.
+    // Rewritten so each handler manually parses event.data (mirroring the real
+    // `request()` flow) and asserts on the parsed response fields.
+
+    it('should correctly parse a JSON-RPC response delivered as ArrayBuffer', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+
+      const requestId = 'ab-test';
+      // Register a handler that mimics what `request()` does internally:
+      // it receives the raw event and re-parses event.data via toText.
+      const responsePromise = new Promise<JsonRpcResponse>((resolve) => {
+        client['messageHandlers'].set(requestId, (event: { data: unknown }) => {
+          const parsed = JSON.parse(typeof event.data === 'string'
+            ? event.data
+            : new TextDecoder().decode(event.data as ArrayBuffer)) as JsonRpcResponse;
+          resolve(parsed);
+        });
+      });
+
+      const responseObj = { jsonrpc: '2.0', id: requestId, result: { reply: { status: { code: 200 } } } };
+      const encoded = new TextEncoder().encode(JSON.stringify(responseObj));
+      const arrayBuffer = encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength);
+      client['socket'].dispatchEvent(new MessageEvent('message', { data: arrayBuffer }));
+
+      const response = await responsePromise;
+      expect(response.id).toBe(requestId);
+      expect(response.result.reply.status.code).toBe(200);
+
+      client.close();
+    });
+
+    it('should correctly parse a JSON-RPC response delivered as Uint8Array', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+
+      const requestId = 'u8-test';
+      const responsePromise = new Promise<JsonRpcResponse>((resolve) => {
+        client['messageHandlers'].set(requestId, (event: { data: unknown }) => {
+          const parsed = JSON.parse(typeof event.data === 'string'
+            ? event.data
+            : new TextDecoder().decode(event.data as ArrayBuffer)) as JsonRpcResponse;
+          resolve(parsed);
+        });
+      });
+
+      const responseObj = { jsonrpc: '2.0', id: requestId, result: { reply: { status: { code: 201 } } } };
+      const uint8 = new TextEncoder().encode(JSON.stringify(responseObj));
+      client['socket'].dispatchEvent(new MessageEvent('message', { data: uint8 }));
+
+      const response = await responsePromise;
+      expect(response.id).toBe(requestId);
+      expect(response.result.reply.status.code).toBe(201);
+
+      client.close();
+    });
+
+    it('should correctly parse a JSON-RPC response delivered as string', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+
+      const requestId = 'str-test';
+      const responsePromise = new Promise<JsonRpcResponse>((resolve) => {
+        client['messageHandlers'].set(requestId, (event: { data: unknown }) => {
+          const parsed = JSON.parse(typeof event.data === 'string'
+            ? event.data
+            : new TextDecoder().decode(event.data as ArrayBuffer)) as JsonRpcResponse;
+          resolve(parsed);
+        });
+      });
+
+      const responseObj = { jsonrpc: '2.0', id: requestId, result: { reply: { status: { code: 202 } } } };
+      client['socket'].dispatchEvent(new MessageEvent('message', { data: JSON.stringify(responseObj) }));
+
+      const response = await responsePromise;
+      expect(response.id).toBe(requestId);
+      expect(response.result.reply.status.code).toBe(202);
+
+      client.close();
+    });
+  });
+
+  describe('wireSocket edge cases', () => {
+    it('should silently ignore unparseable messages (null parse guard)', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+
+      // Send non-JSON data — wireSocket should return early (parseJson returns null)
+      client['socket'].dispatchEvent(new MessageEvent('message', { data: 'not valid json!!!' }));
+      await sleepWhileWaitingForEvents();
+
+      // No error thrown, client still operational
+      expect(client.isConnected).toBe(true);
+      client.close();
+    });
+
+    it('should silently ignore messages with no matching handler', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+
+      // Send a valid JSON-RPC response with an id that has no registered handler
+      const responseObj = { jsonrpc: '2.0', id: 'unregistered-id', result: null };
+      client['socket'].dispatchEvent(new MessageEvent('message', { data: JSON.stringify(responseObj) }));
+      await sleepWhileWaitingForEvents();
+
+      // No error thrown, client still operational
+      expect(client.isConnected).toBe(true);
+      client.close();
+    });
+  });
+
+  describe('subscribe edge cases', () => {
+    // NOTE: The original version of this test had a conditional assertion that only
+    // checked handler preservation inside `if (sub2.response.error)` — meaning
+    // the critical assertion would be silently skipped if the server happened to
+    // accept the second subscription. Rewritten so the handler-preservation check
+    // is unconditional: we always verify the original handler survives, regardless
+    // of the server's response.
+    it('should preserve existing handler on duplicate subscribe failure', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+      const { message } = await TestDataGenerator.generateRecordsSubscribe({ author: alice });
+
+      const requestId1 = CryptoUtils.randomUuid();
+      const subscriptionId = CryptoUtils.randomUuid();
+      const request1 = createJsonRpcSubscriptionRequest(
+        requestId1,
+        'rpc.subscribe.dwn.processMessage',
+        { target: alice.did, message },
+        subscriptionId,
+      );
+
+      // First subscription — should succeed
+      const listener1 = (_response: JsonRpcResponse): void => {};
+      const sub1 = await client.subscribe(request1, listener1);
+      expect(sub1.response.error).toBeUndefined();
+      expect(client['messageHandlers'].has(subscriptionId)).toBe(true);
+
+      // Capture the handler that was set by the first subscription
+      const originalHandler = client['messageHandlers'].get(subscriptionId);
+      expect(originalHandler).toBeDefined();
+
+      // Second subscription with same subscriptionId — will get an error response from server
+      // because the subscription already exists
+      const requestId2 = CryptoUtils.randomUuid();
+      const request2 = createJsonRpcSubscriptionRequest(
+        requestId2,
+        'rpc.subscribe.dwn.processMessage',
+        { }, // empty params will cause server to reject
+        subscriptionId,
+      );
+
+      const listener2 = (_response: JsonRpcResponse): void => {};
+      const sub2 = await client.subscribe(request2, listener2);
+
+      // The server should reject the duplicate subscription (empty params = invalid).
+      // Regardless of whether an error was returned, the original handler must survive.
+      expect(client['messageHandlers'].has(subscriptionId)).toBe(true);
+      const restoredHandler = client['messageHandlers'].get(subscriptionId);
+      expect(restoredHandler).toBe(originalHandler);
+
+      // If the server did return an error, verify the error structure too.
+      if (sub2.response.error) {
+        expect(sub2.response.error.code).toBeDefined();
+      }
+
+      // Clean up
+      if (sub1.close) {
+        await sub1.close();
+      }
+      client.close();
+    });
+  });
+
+  describe('reconnection', () => {
+    it('should set closedByUser on close() and not attempt reconnect', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, { autoReconnect: true });
+
+      expect(client.isConnected).toBe(true);
+      client.close();
+      expect(client.isConnected).toBe(false);
+
+      // closedByUser should be true — no reconnection attempt
+      expect(client['closedByUser']).toBe(true);
+      expect(client['reconnecting']).toBe(false);
+    });
+
+    it('should reject pending one-shot requests on unexpected close', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, { autoReconnect: false });
+
+      // Set up a pending one-shot request that will never get a response
+      const requestPromise = client.request({
+        jsonrpc : '2.0',
+        id      : 'pending-req',
+        method  : 'test.method',
+      });
+
+      // Simulate an unexpected socket close
+      client['socket'].close();
+      await sleepWhileWaitingForEvents(50);
+
+      // The pending request should be rejected with a transport error
+      const response = await requestPromise;
+      expect(response.error).toBeDefined();
+      expect(response.error!.code).toBe(JsonRpcErrorCodes.TransportError);
+    });
+
+    it('should not reject subscription handlers on unexpected close', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, { autoReconnect: false });
+
+      // Register a subscription handler
+      const subId = 'sub-handler-id';
+      client['subscriptionHandlerIds'].add(subId);
+      const mockHandler = mock((_event: { data: any }): void => {});
+      client['messageHandlers'].set(subId, mockHandler);
+
+      // Simulate an unexpected socket close
+      client['socket'].close();
+      await sleepWhileWaitingForEvents(50);
+
+      // Subscription handler should still be in the map
+      expect(client['messageHandlers'].has(subId)).toBe(true);
+      expect(mockHandler).not.toHaveBeenCalled();
+    });
+
+    it('should call onclose and onreconnecting on unexpected close when autoReconnect is true', async () => {
+      const onclose = mock((): void => {});
+      const onreconnecting = mock((_attempt: number): void => {});
+
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        autoReconnect        : true,
+        baseReconnectDelay   : 50,
+        maxReconnectDelay    : 100,
+        maxReconnectAttempts : 1,
+        onclose,
+        onreconnecting,
+      });
+
+      // Simulate an unexpected socket close
+      client['socket'].close();
+      await sleepWhileWaitingForEvents(200);
+
+      expect(onclose).toHaveBeenCalledTimes(1);
+      expect(onreconnecting).toHaveBeenCalledTimes(1);
+      expect(onreconnecting.mock.calls[0][0]).toBe(1);
+
+      // Clean up
+      client.close();
+    });
+
+    it('should reconnect and call onreconnected on successful reconnection', async () => {
+      const onreconnected = mock((): void => {});
+      const onclose = mock((): void => {});
+
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        autoReconnect      : true,
+        baseReconnectDelay : 50,
+        maxReconnectDelay  : 100,
+        onclose,
+        onreconnected,
+      });
+
+      expect(client.isConnected).toBe(true);
+
+      // Simulate an unexpected socket close (server is still running, so reconnect should succeed)
+      client['socket'].close();
+      await sleepWhileWaitingForEvents(500);
+
+      expect(onreconnected).toHaveBeenCalledTimes(1);
+      expect(client.isConnected).toBe(true);
+
+      // Clean up
+      client.close();
+    });
+
+    it('should stop reconnecting when maxReconnectAttempts is reached', async () => {
+      const onreconnecting = mock((_attempt: number): void => {});
+      // Use a bogus URL that will always fail to connect
+      const consoleErrorSpy = spyOn(console, 'error').mockImplementation(() => {});
+
+      let client: JsonRpcSocket | undefined;
+      try {
+        client = await JsonRpcSocket.connect(socketDwnUrl, {
+          autoReconnect        : true,
+          baseReconnectDelay   : 10,
+          maxReconnectDelay    : 20,
+          maxReconnectAttempts : 2,
+          onreconnecting,
+        });
+
+        // Replace createWebSocket to always fail, simulating the server being down
+        const originalCreate = JsonRpcSocket['createWebSocket'];
+        spyOn(JsonRpcSocket as any, 'createWebSocket').mockRejectedValue(new Error('connection refused'));
+
+        // Simulate unexpected close
+        client['socket'].close();
+        await sleepWhileWaitingForEvents(500);
+
+        // Should have attempted exactly 2 reconnections
+        expect(onreconnecting).toHaveBeenCalledTimes(2);
+        expect(client['reconnecting']).toBe(false);
+
+        // Restore
+        (JsonRpcSocket as any)['createWebSocket'] = originalCreate;
+      } finally {
+        client?.close();
+        consoleErrorSpy.mockRestore();
+      }
+    });
+
+    it('should track isConnected state through connect/disconnect/reconnect cycle', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        autoReconnect      : true,
+        baseReconnectDelay : 50,
+        maxReconnectDelay  : 100,
+      });
+
+      expect(client.isConnected).toBe(true);
+
+      // Simulate unexpected close
+      client['socket'].close();
+      await sleepWhileWaitingForEvents(10);
+
+      expect(client.isConnected).toBe(false);
+
+      // Wait for reconnection (server is still running)
+      await sleepWhileWaitingForEvents(500);
+      expect(client.isConnected).toBe(true);
+
+      // Clean up
+      client.close();
+      expect(client.isConnected).toBe(false);
+    });
+  });
+
+  describe('connect timeout', () => {
+    it('should reject with "connect timed out" when the WebSocket never opens', async () => {
+      // Use a non-routable IP to cause the connection to hang without
+      // emitting open or error, then verify the connect timeout fires.
+      await expect(
+        JsonRpcSocket.connect('ws://10.255.255.1:9999', { connectTimeout: 100 })
+      ).rejects.toThrow('connect timed out');
+    }, 10_000);
   });
 });

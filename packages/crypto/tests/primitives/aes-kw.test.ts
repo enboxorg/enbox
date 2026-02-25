@@ -141,6 +141,48 @@ describe('AesKw', () => {
   });
 
   describe('unwrapKey()', () => {
+    it('should throw when decryption key is missing the alg property', async () => {
+      const decryptionKey: Jwk = {
+        kty : 'oct',
+        k   : '47Fn3ZXGbmntoAKErKN5-d7yuwMejCJtOqgAeq_Ojk0',
+        kid : 'izA6N7g3xmPWStB6Qe6BbGgfrXvrptzuH2eJ1wmdrtk',
+      };
+      const wrappedKeyBytes = new Uint8Array(40);
+
+      await expect(
+        AesKw.unwrapKey({ wrappedKeyBytes, wrappedKeyAlgorithm: 'A256GCM', decryptionKey })
+      ).rejects.toThrow(`missing the 'alg' property`);
+    });
+
+    it('should throw when decryption key has an unsupported algorithm', async () => {
+      const decryptionKey: Jwk = {
+        kty : 'oct',
+        k   : '47Fn3ZXGbmntoAKErKN5-d7yuwMejCJtOqgAeq_Ojk0',
+        alg : 'A256GCM',
+        kid : 'izA6N7g3xmPWStB6Qe6BbGgfrXvrptzuH2eJ1wmdrtk',
+      };
+      const wrappedKeyBytes = new Uint8Array(40);
+
+      await expect(
+        AesKw.unwrapKey({ wrappedKeyBytes, wrappedKeyAlgorithm: 'A256GCM', decryptionKey })
+      ).rejects.toThrow(`'decryptionKey' algorithm is not supported`);
+    });
+
+    it('should throw when wrappedKeyAlgorithm is not supported', async () => {
+      const encryptionKey = await AesKw.generateKey({ length: 256 });
+      const unwrappedKeyInput: Jwk = {
+        kty : 'oct',
+        k   : 'hX-1yAAU6aZCwGqViYfAhIiaTyu1PURMswoI4IQmiY4',
+        alg : 'A256GCM',
+        kid : '-TssSnJNgh10-YTwuBtyZTnv0LY6sdT-TQl9WFTSetI',
+      };
+      const wrappedKeyBytes = await AesKw.wrapKey({ unwrappedKey: unwrappedKeyInput, encryptionKey });
+
+      await expect(
+        AesKw.unwrapKey({ wrappedKeyBytes, wrappedKeyAlgorithm: 'XC20PKW' as any, decryptionKey: encryptionKey })
+      ).rejects.toThrow(`'wrappedKeyAlgorithm' is not supported`);
+    });
+
     it('returns an unwrapped key as a JWK', async () => {
       const unwrappedKeyInput: Jwk = {
         kty : 'oct',
@@ -184,6 +226,70 @@ describe('AesKw', () => {
   });
 
   describe('wrapKey()', () => {
+    it('should throw when encryption key is missing the alg property', async () => {
+      const encryptionKey: Jwk = {
+        kty : 'oct',
+        k   : '47Fn3ZXGbmntoAKErKN5-d7yuwMejCJtOqgAeq_Ojk0',
+        kid : 'izA6N7g3xmPWStB6Qe6BbGgfrXvrptzuH2eJ1wmdrtk',
+      };
+      const unwrappedKey: Jwk = {
+        kty : 'oct',
+        k   : 'hX-1yAAU6aZCwGqViYfAhIiaTyu1PURMswoI4IQmiY4',
+        alg : 'A256GCM',
+        kid : '-TssSnJNgh10-YTwuBtyZTnv0LY6sdT-TQl9WFTSetI',
+      };
+
+      await expect(
+        AesKw.wrapKey({ unwrappedKey, encryptionKey })
+      ).rejects.toThrow(`encryption key is missing the 'alg' property`);
+    });
+
+    it('should throw when encryption key has an unsupported algorithm', async () => {
+      const encryptionKey: Jwk = {
+        kty : 'oct',
+        k   : '47Fn3ZXGbmntoAKErKN5-d7yuwMejCJtOqgAeq_Ojk0',
+        alg : 'A256GCM',
+        kid : 'izA6N7g3xmPWStB6Qe6BbGgfrXvrptzuH2eJ1wmdrtk',
+      };
+      const unwrappedKey: Jwk = {
+        kty : 'oct',
+        k   : 'hX-1yAAU6aZCwGqViYfAhIiaTyu1PURMswoI4IQmiY4',
+        alg : 'A256GCM',
+        kid : '-TssSnJNgh10-YTwuBtyZTnv0LY6sdT-TQl9WFTSetI',
+      };
+
+      await expect(
+        AesKw.wrapKey({ unwrappedKey, encryptionKey })
+      ).rejects.toThrow(`'encryptionKey' algorithm is not supported`);
+    });
+
+    it('should throw when the unwrapped key is missing the alg property', async () => {
+      const encryptionKey = await AesKw.generateKey({ length: 256 });
+      const unwrappedKey: Jwk = {
+        kty : 'oct',
+        k   : 'hX-1yAAU6aZCwGqViYfAhIiaTyu1PURMswoI4IQmiY4',
+        kid : '-TssSnJNgh10-YTwuBtyZTnv0LY6sdT-TQl9WFTSetI',
+      };
+
+      await expect(
+        AesKw.wrapKey({ unwrappedKey, encryptionKey })
+      ).rejects.toThrow(`private key to wrap is missing the 'alg' property`);
+    });
+
+    it('should throw when the unwrapped key has an unsupported algorithm', async () => {
+      const encryptionKey = await AesKw.generateKey({ length: 256 });
+      const unwrappedKey: Jwk = {
+        kty : 'oct',
+        k   : 'hX-1yAAU6aZCwGqViYfAhIiaTyu1PURMswoI4IQmiY4',
+        alg : 'XC20PKW',
+        kid : '-TssSnJNgh10-YTwuBtyZTnv0LY6sdT-TQl9WFTSetI',
+      };
+
+      await expect(
+        AesKw.wrapKey({ unwrappedKey, encryptionKey })
+      ).rejects.toThrow(`'unwrappedKey' algorithm is not supported`);
+    });
+
     it('returns a wrapped key as a byte array', async () => {
       const unwrappedKey: Jwk = {
         kty : 'oct',

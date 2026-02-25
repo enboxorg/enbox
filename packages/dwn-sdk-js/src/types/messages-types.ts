@@ -1,5 +1,5 @@
-import type { MessageEvent } from './subscriptions.js';
 import type { RangeCriterion } from './query-types.js';
+import type { SubscriptionListener } from './subscriptions.js';
 import type { AuthorizationModel, GenericMessage, GenericMessageReply, MessageSubscription } from './message-types.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
@@ -59,10 +59,13 @@ export type MessagesSyncReply = GenericMessageReply & {
   entries? : string[]; // messageCid[] (for 'leaves' action)
 };
 
-export type MessageSubscriptionHandler = (event: MessageEvent) => void;
+/**
+ * @deprecated Use {@link SubscriptionListener} directly. Retained as an alias for migration.
+ */
+export type MessageSubscriptionHandler = SubscriptionListener;
 
 export type MessagesSubscribeMessageOptions = {
-  subscriptionHandler: MessageSubscriptionHandler;
+  subscriptionHandler: SubscriptionListener;
 };
 
 export type MessagesSubscribeMessage = {
@@ -80,4 +83,10 @@ export type MessagesSubscribeDescriptor = {
   messageTimestamp: string;
   filters: MessagesFilter[];
   permissionGrantId?: string;
+  /**
+   * Opaque EventLog cursor string to resume from. When provided, the handler replays
+   * events from the EventLog starting after this cursor instead of returning no
+   * initial snapshot. An EOSE marker is sent after catch-up.
+   */
+  cursor?: string;
 };

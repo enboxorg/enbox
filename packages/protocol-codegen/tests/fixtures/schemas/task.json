@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TaskData",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "The task title."
+    },
+    "completed": {
+      "type": "boolean",
+      "description": "Whether the task is completed."
+    },
+    "dueDate": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Optional due date."
+    }
+  },
+  "required": ["title", "completed"],
+  "additionalProperties": false
+}

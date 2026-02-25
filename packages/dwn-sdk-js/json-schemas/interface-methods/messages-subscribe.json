@@ -44,6 +44,9 @@
         },
         "permissionGrantId": {
           "type": "string"
+        },
+        "cursor": {
+          "type": "string"
         }
       }
     }

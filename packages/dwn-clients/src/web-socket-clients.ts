@@ -1,14 +1,42 @@
-import type { JsonRpcSocketOptions } from './json-rpc-socket.js';
-import type { DwnRpc, DwnRpcRequest, DwnRpcResponse, DwnSubscriptionHandler } from './dwn-rpc-types.js';
-import type { GenericMessage, MessageSubscription, UnionMessageReply } from '@enbox/dwn-sdk-js';
+import type { DwnRpc, DwnRpcRequest, DwnRpcResponse, DwnSubscriptionHandler, ResubscribeFactory } from './dwn-rpc-types.js';
+import type { GenericMessage, MessageSubscription, SubscriptionMessage, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
 import { CryptoUtils } from '@enbox/crypto';
 import { JsonRpcSocket } from './json-rpc-socket.js';
-import { createJsonRpcRequest, createJsonRpcSubscriptionRequest } from './json-rpc.js';
+import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest } from './json-rpc.js';
+
+/**
+ * Metadata for a tracked subscription, including everything needed to
+ * resubscribe after a reconnection.
+ */
+interface TrackedSubscription {
+  /** The DWN `MessageSubscription` handle. */
+  subscription: MessageSubscription;
+
+  /** The target DID for the subscription. */
+  target: string;
+
+  /** The original DWN subscribe message (fallback when no resubscribeFactory). */
+  message: GenericMessage;
+
+  /** The application-level subscription handler. */
+  handler: DwnSubscriptionHandler;
+
+  /**
+   * Factory that reconstructs and re-signs the subscribe message with a cursor.
+   * When present, used instead of the original `message` during resubscription.
+   */
+  resubscribeFactory?: ResubscribeFactory;
+
+  /** The cursor from the most recently received subscription event. */
+  lastCursor?: string;
+}
 
 interface SocketConnection {
   socket: JsonRpcSocket;
-  subscriptions: Map<string, MessageSubscription>;
+  subscriptions: Map<string, TrackedSubscription>;
+  /** The original URL used to create this connection. */
+  url: string;
 }
 
 export class WebSocketDwnRpcClient implements DwnRpc {
@@ -16,7 +44,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   // a map of dwn host to WebSocket connection
   private static connections = new Map<string, SocketConnection>();
 
-  async sendDwnRequest(request: DwnRpcRequest, jsonRpcSocketOptions?: JsonRpcSocketOptions): Promise<DwnRpcResponse> {
+  async sendDwnRequest(request: DwnRpcRequest): Promise<DwnRpcResponse> {
 
     // validate that the dwn URL provided is a valid WebSocket URL
     const url = new URL(request.dwnUrl);
@@ -28,22 +56,60 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     const hasConnection = WebSocketDwnRpcClient.connections.has(url.host);
     if (!hasConnection) {
       try {
-        const socket = await JsonRpcSocket.connect(url.toString(), jsonRpcSocketOptions);
-        const subscriptions = new Map();
-        WebSocketDwnRpcClient.connections.set(url.host, { socket, subscriptions });
+        const connection = await WebSocketDwnRpcClient.createConnection(url);
+        WebSocketDwnRpcClient.connections.set(url.host, connection);
       } catch (error) {
         throw new Error(`Error connecting to ${url.host}: ${(error as Error).message}`);
       }
     }
 
     const connection = WebSocketDwnRpcClient.connections.get(url.host)!;
-    const { targetDid, message, subscriptionHandler } = request;
+    const { targetDid, message, subscription } = request;
 
-    if (subscriptionHandler) {
-      return WebSocketDwnRpcClient.subscriptionRequest(connection, targetDid, message, subscriptionHandler);
+    if (subscription) {
+      return WebSocketDwnRpcClient.subscriptionRequest(
+        connection, targetDid, message, subscription.handler, subscription.resubscribeFactory
+      );
     }
 
     return WebSocketDwnRpcClient.processMessage(connection, targetDid, message);
+  }
+
+  /**
+   * Creates a new `SocketConnection` with lifecycle wiring for reconnection.
+   */
+  private static async createConnection(url: URL): Promise<SocketConnection> {
+    const host = url.host;
+    const subscriptions = new Map<string, TrackedSubscription>();
+
+    const socket = await JsonRpcSocket.connect(url.toString(), {
+      onclose: (): void => {
+        // Remove the stale connection from the map so new requests create a fresh one.
+        WebSocketDwnRpcClient.connections.delete(host);
+
+        // Notify all subscription handlers of disconnection.
+        for (const tracked of subscriptions.values()) {
+          tracked.handler({ type: 'disconnected' });
+        }
+      },
+
+      onreconnecting: (attempt: number): void => {
+        for (const tracked of subscriptions.values()) {
+          tracked.handler({ type: 'reconnecting', attempt });
+        }
+      },
+
+      onreconnected: (): void => {
+        // Re-register this connection in the map (it was deleted on close).
+        const conn = { socket, subscriptions, url: url.toString() };
+        WebSocketDwnRpcClient.connections.set(host, conn);
+
+        // Resubscribe all tracked subscriptions with their last known cursor.
+        WebSocketDwnRpcClient.resubscribeAll(conn);
+      },
+    });
+
+    return { socket, subscriptions, url: url.toString() };
   }
 
   private static async processMessage(
@@ -64,7 +130,11 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   private static async subscriptionRequest(
-    connection: SocketConnection, target:string, message: GenericMessage, messageHandler: DwnSubscriptionHandler
+    connection: SocketConnection,
+    target: string,
+    message: GenericMessage,
+    handler: DwnSubscriptionHandler,
+    resubscribeFactory?: ResubscribeFactory,
   ): Promise<DwnRpcResponse> {
     const requestId = CryptoUtils.randomUuid();
     const subscriptionId = CryptoUtils.randomUuid();
@@ -78,17 +148,28 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       if (error) {
 
         // if there is an error, close the subscription and delete it from the connection
-        const subscription = subscriptions.get(subscriptionId);
-        if (subscription) {
-          subscription.close();
+        const tracked = subscriptions.get(subscriptionId);
+        if (tracked) {
+          tracked.subscription.close();
         }
 
         subscriptions.delete(subscriptionId);
         return;
       }
 
-      const { event } = result;
-      messageHandler(event);
+      const subscriptionMessage = result.subscription as SubscriptionMessage;
+      handler(subscriptionMessage);
+
+      // Track the latest cursor for reconnection.
+      if ('cursor' in subscriptionMessage && subscriptionMessage.cursor) {
+        const tracked = subscriptions.get(subscriptionId);
+        if (tracked) {
+          tracked.lastCursor = subscriptionMessage.cursor;
+        }
+
+        // Send rpc.ack to advance the server's flow-control window.
+        socket.send(createJsonRpcAck(subscriptionId, subscriptionMessage.cursor));
+      }
     });
 
     const { error, result } = response;
@@ -98,10 +179,65 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
     const { reply } = result as { reply: UnionMessageReply };
     if (reply.subscription && close) {
-      subscriptions.set(subscriptionId, { ...reply.subscription, close });
-      reply.subscription.close = close;
+      const wrappedClose = async (): Promise<void> => {
+        subscriptions.delete(subscriptionId);
+        await close();
+      };
+
+      const tracked: TrackedSubscription = {
+        subscription: { ...reply.subscription, close: wrappedClose },
+        target,
+        message,
+        handler,
+        resubscribeFactory,
+      };
+
+      subscriptions.set(subscriptionId, tracked);
+      reply.subscription.close = wrappedClose;
     }
 
     return reply;
+  }
+
+  /**
+   * Resubscribes all tracked subscriptions on a reconnected socket.
+   * Uses the `resubscribeFactory` (if provided) to construct a properly signed
+   * message with the last known cursor. Falls back to the original message
+   * for anonymous/unsigned subscriptions.
+   */
+  private static async resubscribeAll(connection: SocketConnection): Promise<void> {
+    // Snapshot the current subscriptions — resubscription will re-populate the map.
+    const entries = [...connection.subscriptions.entries()];
+    connection.subscriptions.clear();
+
+    for (const [, tracked] of entries) {
+      try {
+        let resumeMessage: GenericMessage;
+
+        if (tracked.resubscribeFactory) {
+          // Reconstruct and re-sign the message with the cursor.
+          resumeMessage = await tracked.resubscribeFactory(tracked.lastCursor);
+        } else {
+          // No factory — reuse the original message as-is.
+          // This only works for anonymous (unsigned) subscriptions.
+          resumeMessage = tracked.message;
+        }
+
+        await WebSocketDwnRpcClient.subscriptionRequest(
+          connection,
+          tracked.target,
+          resumeMessage,
+          tracked.handler,
+          tracked.resubscribeFactory,
+        );
+
+        // Notify the handler that reconnection is complete for this subscription.
+        tracked.handler({ type: 'reconnected' });
+      } catch {
+        // If resubscription fails for one subscription, continue with the rest.
+        // The subscription is effectively lost — the handler was already
+        // notified of disconnection.
+      }
+    }
   }
 }

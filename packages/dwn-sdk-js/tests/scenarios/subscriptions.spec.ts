@@ -1,9 +1,8 @@
 import type { DidResolver } from '@enbox/dids';
-import type { MessageEvent } from '../../src/types/subscriptions.js';
-import type { RecordEvent } from '../../src/types/records-types.js';
+import type { SubscriptionMessage } from '../../src/types/subscriptions.js';
 import type {
   DataStore,
-  EventStream,
+  EventLog,
   MessageStore,
   ResumableTaskStore,
   StateIndex,
@@ -16,18 +15,18 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 
 import { Poller } from '../utils/poller.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { TestEventStream } from '../test-event-stream.js';
+import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { DataStream, Dwn, DwnInterfaceName, DwnMethodName, Jws, Message, PermissionGrant, PermissionsProtocol, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 // NOTE: We use `Poller.pollUntilSuccessOrTimeout` to poll for the expected results.
-// In some cases, the EventStream is a coordinated pub/sub system and the message events are emitted over the network
+// In some cases, the EventLog is a coordinated pub/sub system and the message events are emitted over the network
 // this means that the messages are not processed immediately and we need to wait for the messages to be processed
 // before we can assert the results. The `pollUntilSuccessOrTimeout` function is a utility function that will poll until the expected results are met.
 
 // It is also important to note that in some cases where we are testing a negative case (the message not arriving at the subscriber)
-// we add an alternate subscription to await results within to give the EventStream ample time to process the message.
+// we add an alternate subscription to await results within to give the EventLog ample time to process the message.
 // Additionally in some of these cases the order in which messages are sent to be processed or checked may matter, and they are noted as such.
 
 export function testSubscriptionScenarios(): void {
@@ -37,7 +36,7 @@ export function testSubscriptionScenarios(): void {
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
     let stateIndex: StateIndex;
-    let eventStream: EventStream;
+    let eventLog: EventLog;
     let dwn: Dwn;
     // important to follow the `beforeAll` and `afterAll` pattern to initialize and clean the stores in tests
     // so that different test suites can reuse the same backend store for testing
@@ -49,9 +48,9 @@ export function testSubscriptionScenarios(): void {
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
       stateIndex = stores.stateIndex;
-      eventStream = TestEventStream.get();
+      eventLog = TestEventLog.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -71,11 +70,13 @@ export function testSubscriptionScenarios(): void {
         // Scenario: Alice subscribes to all messages and creates 3 messages. Alice then expects to receive all 3 messages.
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create a handler that adds the messageCid of each message to an array.
         const messageCids: string[] = [];
-        const handler = async (event: MessageEvent): Promise<void> => {
-          const { message } = event;
+        const handler = async (msg: SubscriptionMessage): Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           const messageCid = await Message.getCid(message);
           messageCids.push(messageCid);
         };
@@ -121,6 +122,7 @@ export function testSubscriptionScenarios(): void {
         // alice checks that the Records handler received the delete message
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // subscribe to the Records interface
         const recordsInterfaceSubscription = await TestDataGenerator.generateMessagesSubscribe({
@@ -128,8 +130,9 @@ export function testSubscriptionScenarios(): void {
           filters : [{ interface: DwnInterfaceName.Records }]
         });
         const recordsMessageCids:string[] = [];
-        const recordsSubscribeHandler = async (event: MessageEvent):Promise<void> => {
-          const { message } = event;
+        const recordsSubscribeHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           const messageCid = await Message.getCid(message);
           recordsMessageCids.push(messageCid);
         };
@@ -148,8 +151,9 @@ export function testSubscriptionScenarios(): void {
           filters : [{ interface: DwnInterfaceName.Protocols }]
         });
         const protocolsMessageCids:string[] = [];
-        const protocolsSubscribeHandler = async (event: MessageEvent):Promise<void> => {
-          const { message } = event;
+        const protocolsSubscribeHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           const messageCid = await Message.getCid(message);
           protocolsMessageCids.push(messageCid);
         };
@@ -215,6 +219,7 @@ export function testSubscriptionScenarios(): void {
         // Alice checks the RecordsDelete handler received the delete message
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // subscribe to records write
         const recordsWriteSubscription = await TestDataGenerator.generateMessagesSubscribe({
@@ -222,8 +227,9 @@ export function testSubscriptionScenarios(): void {
           filters : [{ interface: DwnInterfaceName.Records, method: DwnMethodName.Write }]
         });
         const recordsWriteMessageCids:string[] = [];
-        const recordsSubscribeHandler = async (event: MessageEvent):Promise<void> => {
-          const { message } = event;
+        const recordsSubscribeHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           const messageCid = await Message.getCid(message);
           recordsWriteMessageCids.push(messageCid);
         };
@@ -242,8 +248,9 @@ export function testSubscriptionScenarios(): void {
           filters : [{ interface: DwnInterfaceName.Records, method: DwnMethodName.Delete }]
         });
         const recordsDeleteMessageCids:string[] = [];
-        const recordsDeleteSubscribeHandler = async (event: MessageEvent):Promise<void> => {
-          const { message } = event;
+        const recordsDeleteSubscribeHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           const messageCid = await Message.getCid(message);
           recordsDeleteMessageCids.push(messageCid);
         };
@@ -329,8 +336,9 @@ export function testSubscriptionScenarios(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
         const proto1Messages:string[] = [];
-        const proto1Handler = async (event: MessageEvent):Promise<void> => {
-          const { message } = event;
+        const proto1Handler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           proto1Messages.push(await Message.getCid(message));
         };
 
@@ -345,8 +353,9 @@ export function testSubscriptionScenarios(): void {
         expect(proto1SubscriptionReply.subscription).toBeDefined();
 
         const proto2Messages:string[] = [];
-        const proto2Handler = async (event: MessageEvent):Promise<void> => {
-          const { message } = event;
+        const proto2Handler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           proto2Messages.push(await Message.getCid(message));
         };
 
@@ -483,7 +492,7 @@ export function testSubscriptionScenarios(): void {
         // revoke permissions for proto1
         const revokeProto1 = await PermissionsProtocol.createRevocation({
           signer : Jws.createSigner(alice),
-          grant  : await PermissionGrant.parse(grantProto1.dataEncodedMessage),
+          grant  : PermissionGrant.parse(grantProto1.dataEncodedMessage),
         });
         const revokeProto1Response = await dwn.processMessage(
           alice.did,
@@ -495,7 +504,7 @@ export function testSubscriptionScenarios(): void {
         // revoke permissions for proto2
         const revokeProto2 = await PermissionsProtocol.createRevocation({
           signer : Jws.createSigner(alice),
-          grant  : await PermissionGrant.parse(grantProto2.dataEncodedMessage),
+          grant  : PermissionGrant.parse(grantProto2.dataEncodedMessage),
         });
         const revokeProto2Response = await dwn.processMessage(
           alice.did,
@@ -529,19 +538,22 @@ export function testSubscriptionScenarios(): void {
         // we purposely leave one subscription open to ensure that the messages are being processed by an external pub/sub system
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // messageCids of subscription 1 messages
         const sub1MessageCids:string[] = [];
-        const handler1 = async (event: MessageEvent): Promise<void> => {
-          const { message } = event;
+        const handler1 = async (msg: SubscriptionMessage): Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           const messageCid = await Message.getCid(message);
           sub1MessageCids.push(messageCid);
         };
 
         // messageCids of subscription 2 messages
         const sub2MessageCids:string[] = [];
-        const handler2 = async (event: MessageEvent): Promise<void> => {
-          const { message } = event;
+        const handler2 = async (msg: SubscriptionMessage): Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           const messageCid = await Message.getCid(message);
           sub2MessageCids.push(messageCid);
         };
@@ -614,11 +626,13 @@ export function testSubscriptionScenarios(): void {
         // this is to ensure that the messages are not received by the anonymous subscription handler, but have had ample time to be processed
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // create a control handler to capture ALL messages in the protocol with alice as the author
         const allMessages:string[] = [];
-        const allHandler = async (event: MessageEvent): Promise<void> => {
-          const { message } = event;
+        const allHandler = async (msg: SubscriptionMessage): Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           allMessages.push(await Message.getCid(message));
         };
         const allSubscription = await TestDataGenerator.generateMessagesSubscribe({
@@ -630,8 +644,9 @@ export function testSubscriptionScenarios(): void {
 
         // we create an anonymous subscription to capture only published messages
         const publishedMessages:string[] = [];
-        const anonymousSubscriptionHandler = async (event: RecordEvent):Promise<void> => {
-          const { message } = event;
+        const anonymousSubscriptionHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           publishedMessages.push(await Message.getCid(message));
         };
         const anonymousSubscription = await TestDataGenerator.generateRecordsSubscribe({
@@ -694,8 +709,9 @@ export function testSubscriptionScenarios(): void {
 
         // bob subscribes to all records he's authorized to see, with alice as the recipient
         const bobSubscribeAlice:string[] = [];
-        const bobSubscribeHandler = async (event: RecordEvent):Promise<void> => {
-          const { message } = event;
+        const bobSubscribeHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           bobSubscribeAlice.push(await Message.getCid(message));
         };
 
@@ -712,8 +728,9 @@ export function testSubscriptionScenarios(): void {
 
         // carol subscribes to any messages that she or alice are the recipients of
         const carolSubscribeCarolAndAlice:string[] = [];
-        const carolSubscribeHandler = async (event: RecordEvent):Promise<void> => {
-          const { message } = event;
+        const carolSubscribeHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           carolSubscribeCarolAndAlice.push(await Message.getCid(message));
         };
 
@@ -824,8 +841,9 @@ export function testSubscriptionScenarios(): void {
 
         // bob subscribes to all records he's authorized to see, with alice as the author
         const bobSubscribeAlice:string[] = [];
-        const bobSubscribeHandler = async (event: RecordEvent):Promise<void> => {
-          const { message } = event;
+        const bobSubscribeHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           bobSubscribeAlice.push(await Message.getCid(message));
         };
 
@@ -842,8 +860,9 @@ export function testSubscriptionScenarios(): void {
 
         // carol subscribes to any messages that she or alice are the authors of
         const carolSubscribeCarolAndAlice:string[] = [];
-        const carolSubscribeHandler = async (event: RecordEvent):Promise<void> => {
-          const { message } = event;
+        const carolSubscribeHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message } = msg.event;
           carolSubscribeCarolAndAlice.push(await Message.getCid(message));
         };
 
@@ -989,8 +1008,9 @@ export function testSubscriptionScenarios(): void {
         // subscribe to this thread's messages
         const messages:string[] = [];
         const initialWrites: string[] = [];
-        const subscriptionHandler = async (event :MessageEvent):Promise<void> => {
-          const { message, initialWrite } = event;
+        const subscriptionHandler = async (msg: SubscriptionMessage):Promise<void> => {
+          if (msg.type !== 'event') { return; }
+          const { message, initialWrite } = msg.event;
           if (initialWrite !== undefined) {
             initialWrites.push(await Message.getCid(initialWrite));
           }

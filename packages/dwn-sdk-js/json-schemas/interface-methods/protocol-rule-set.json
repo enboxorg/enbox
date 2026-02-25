@@ -57,6 +57,7 @@
                     "delete",
                     "prune",
                     "read",
+                    "squash",
                     "update"
                   ]
                 }
@@ -87,6 +88,7 @@
                     "delete",
                     "prune",
                     "read",
+                    "squash",
                     "update"
                   ]
                 }
@@ -118,6 +120,35 @@
           "minimum": 0
         }
       }
+    },
+    "$recordLimit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max", "strategy"],
+      "properties": {
+        "max": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "strategy": {
+          "type": "string",
+          "enum": ["reject", "purgeOldest"]
+        }
+      }
+    },
+    "$immutable": {
+      "$comment": "When true, records at this protocol path cannot be updated after initial write",
+      "type": "boolean"
+    },
+    "$delivery": {
+      "$comment": "Delivery strategy hint for records at this protocol path. 'direct' = origin pushes to all participant DWN endpoints; 'subscribe' = participant providers subscribe to the origin DWN.",
+      "type": "string",
+      "enum": ["direct", "subscribe"]
+    },
+    "$squash": {
+      "$comment": "When true, enables squash writes at this protocol path — a RecordsWrite with squash: true atomically creates a snapshot and deletes all older sibling records",
+      "type": "boolean",
+      "enum": [true]
     },
     "$tags": {
       "type": "object",

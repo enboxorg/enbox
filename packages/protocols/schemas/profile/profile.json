@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://identity.foundation/schemas/profile/profile",
+  "title": "ProfileData",
+  "description": "Data shape for a profile record.",
+  "type": "object",
+  "properties": {
+    "displayName": {
+      "type": "string",
+      "description": "The display name of the identity."
+    },
+    "bio": {
+      "type": "string",
+      "description": "An optional biography."
+    },
+    "tagline": {
+      "type": "string",
+      "description": "An optional tagline."
+    },
+    "location": {
+      "type": "string",
+      "description": "An optional location."
+    },
+    "website": {
+      "type": "string",
+      "description": "An optional website URL."
+    },
+    "pronouns": {
+      "type": "string",
+      "description": "Optional pronouns."
+    }
+  },
+  "required": ["displayName"],
+  "additionalProperties": false
+}

@@ -1,13 +1,17 @@
 // export everything that we want to be consumable
 export type { DwnConfig } from './dwn.js';
-export type { EventListener, EventStream, EventSubscription, MessageEvent, SubscriptionReply } from './types/subscriptions.js';
+export type { EventListener, EventLog, EventLogEntry, EventLogReadOptions, EventLogReadResult, EventLogSubscribeOptions, EventSubscription, MessageEvent, SubscriptionEose, SubscriptionEvent, SubscriptionListener, SubscriptionMessage, SubscriptionReply } from './types/subscriptions.js';
 export type { AuthorizationModel, Descriptor, DelegatedGrantRecordsWriteMessage, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSort, MessageSubscription, Pagination, QueryResultEntry, Status } from './types/message-types.js';
 export type { MessagesFilter, MessagesReadMessage as MessagesReadMessage, MessagesReadReply as MessagesReadReply, MessagesReadReplyEntry as MessagesReadReplyEntry, MessagesReadDescriptor, MessagesSubscribeDescriptor, MessagesSubscribeMessage, MessagesSubscribeReply, MessageSubscriptionHandler, MessagesSubscribeMessageOptions, MessagesSyncAction, MessagesSyncDescriptor, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
 export type { GT, LT, Filter, FilterValue, KeyValues, EqualFilter, OneOfFilter, RangeFilter, RangeCriterion, PaginationCursor, QueryOptions, RangeValue, StartsWithFilter } from './types/query-types.js';
-export type { ProtocolsConfigureDescriptor, ProtocolDefinition, ProtocolTypes, ProtocolRuleSet, ProtocolsQueryFilter, ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply, ProtocolActionRule, ProtocolPathEncryption, ProtocolsQueryDescriptor, ProtocolSizeDefinition, ProtocolTagsDefinition, ProtocolTagSchema, ProtocolType, ProtocolUses } from './types/protocols-types.js';
+export type { ProtocolsConfigureDescriptor, ProtocolDefinition, ProtocolTypes, ProtocolRuleSet, ProtocolsQueryFilter, ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply, ProtocolActionRule, ProtocolDeliveryStrategy, ProtocolPathEncryption, ProtocolsQueryDescriptor, ProtocolRecordLimitDefinition, ProtocolSizeDefinition, ProtocolTagsDefinition, ProtocolTagSchema, ProtocolType, ProtocolUses } from './types/protocols-types.js';
+export { ProtocolRecordLimitStrategy } from './types/protocols-types.js';
 export type { DataEncodedRecordsWriteMessage, RecordsCountDescriptor, RecordsCountMessage, RecordsCountReply, RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsQueryReply, RecordsQueryReplyEntry, RecordsReadMessage, RecordsReadReply, RecordsSubscribeDescriptor, RecordsSubscribeMessage, RecordsSubscribeReply, RecordSubscriptionHandler, RecordsWriteDescriptor, RecordsWriteTags, RecordsWriteTagValue, RecordsWriteMessage, RecordsWriteSignaturePayload, RecordsDeleteDescriptor, RecordsQueryDescriptor, RecordsReadDescriptor, RecordsSubscribeMessageOptions, RecordsWriteMessageOptions, InternalRecordsWriteMessage, RecordEvent, RecordsWriteTagsFilter } from './types/records-types.js';
 export type { GeneralJws, SignatureEntry } from './types/jws-types.js';
 export { authenticate } from './core/auth.js';
+export { CoreProtocolRegistry } from './core/core-protocol.js';
+export { PERMISSIONS_REVOCATION_PATH } from './core/constants.js';
+export type { CoreProtocol, CoreProtocolStores } from './core/core-protocol.js';
 export { AllowAllTenantGate } from './core/tenant-gate.js';
 export type { ActiveTenantCheckResult, TenantGate } from './core/tenant-gate.js';
 export { Cid } from './utils/cid.js';
@@ -72,7 +76,7 @@ export { Time } from './utils/time.js';
 export * from './types/permission-types.js';
 export * from './types/records-types.js';
 
-// concrete implementations of stores and event stream
+// concrete implementations of stores and event log
 export { BlockstoreLevel } from './store/blockstore-level.js';
 export type { BlockstoreLevelConfig } from './store/blockstore-level.js';
 export { DataStoreLevel } from './store/data-store-level.js';
@@ -85,8 +89,8 @@ export { MessageStoreLevel } from './store/message-store-level.js';
 export type { MessageStoreLevelConfig } from './store/message-store-level.js';
 export { ResumableTaskStoreLevel } from './store/resumable-task-store-level.js';
 export type { ResumableTaskStoreLevelConfig } from './store/resumable-task-store-level.js';
-export { EventEmitterStream } from './event-stream/event-emitter-stream.js';
-export type { EventEmitterStreamConfig } from './event-stream/event-emitter-stream.js';
+export { EventEmitterEventLog } from './event-stream/event-emitter-event-log.js';
+export type { EventEmitterEventLogConfig } from './event-stream/event-emitter-event-log.js';
 
 // Sparse Merkle Tree and StateIndex
 export type { StateIndex } from './types/state-index.js';

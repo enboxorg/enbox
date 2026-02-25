@@ -1,9 +1,6 @@
-import type { DidResolver } from '@enbox/dids';
-import type { EventStream } from '../types/subscriptions.js';
 import type { GenericMessageReply } from '../types/message-types.js';
 import type { MessageStore } from '../types//message-store.js';
-import type { MethodHandler } from '../types/method-handler.js';
-import type { StateIndex } from '../types/state-index.js';
+import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage } from '../types/protocols-types.js';
 
 import { authenticate } from '../core/auth.js';
@@ -18,12 +15,7 @@ import { getRuleSetAtPath, parseCrossProtocolRef } from '../utils/protocols.js';
 
 export class ProtocolsConfigureHandler implements MethodHandler {
 
-  constructor(
-    private didResolver: DidResolver,
-    private messageStore: MessageStore,
-    private stateIndex: StateIndex,
-    private eventStream?: EventStream
-  ) { }
+  constructor(private deps: HandlerDependencies) { }
 
   public async handle({
     tenant,
@@ -38,8 +30,8 @@ export class ProtocolsConfigureHandler implements MethodHandler {
 
     // authentication & authorization
     try {
-      await authenticate(message.authorization, this.didResolver);
-      await ProtocolsConfigureHandler.authorizeProtocolsConfigure(tenant, protocolsConfigure, this.messageStore);
+      await authenticate(message.authorization, this.deps.didResolver);
+      await ProtocolsConfigureHandler.authorizeProtocolsConfigure(tenant, protocolsConfigure, this.deps.messageStore);
     } catch (e) {
       return messageReplyFromError(e, 401);
     }
@@ -48,7 +40,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     // `$ref` paths must exist in the referenced protocols, and cross-protocol roles must exist.
     try {
       await ProtocolsConfigureHandler.validateCompositionDependencies(
-        tenant, message.descriptor.definition, this.messageStore
+        tenant, message.descriptor.definition, this.deps.messageStore
       );
     } catch (e) {
       return messageReplyFromError(e, 400);
@@ -60,7 +52,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       method    : DwnMethodName.Configure,
       protocol  : message.descriptor.definition.protocol
     };
-    const { messages: existingMessages } = await this.messageStore.query(tenant, [ query ]);
+    const { messages: existingMessages } = await this.deps.messageStore.query(tenant, [ query ]);
 
     // find newest message, and if the incoming message is the newest
     let newestMessage = await Message.getNewestMessage(existingMessages);
@@ -75,13 +67,13 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     if (incomingMessageIsNewest) {
       const indexes = ProtocolsConfigureHandler.constructIndexes(protocolsConfigure, true);
 
-      await this.messageStore.put(tenant, message, indexes);
+      await this.deps.messageStore.put(tenant, message, indexes);
       const messageCid = await Message.getCid(message);
-      await this.stateIndex.insert(tenant, messageCid, indexes);
+      await this.deps.stateIndex!.insert(tenant, messageCid, indexes);
 
-      // only emit if the event stream is set
-      if (this.eventStream !== undefined) {
-        this.eventStream.emit(tenant, { message }, indexes);
+      // only emit if the event log is set
+      if (this.deps.eventLog !== undefined) {
+        await this.deps.eventLog.emit(tenant, { message }, indexes);
       }
 
       messageReply = {
@@ -91,9 +83,9 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       // incoming message is older — still store it as a historical version (not the latest)
       const indexes = ProtocolsConfigureHandler.constructIndexes(protocolsConfigure, false);
 
-      await this.messageStore.put(tenant, message, indexes);
+      await this.deps.messageStore.put(tenant, message, indexes);
       const messageCid = await Message.getCid(message);
-      await this.stateIndex.insert(tenant, messageCid, indexes);
+      await this.deps.stateIndex!.insert(tenant, messageCid, indexes);
 
       messageReply = {
         status: { code: 202, detail: 'Accepted' }
@@ -108,8 +100,8 @@ export class ProtocolsConfigureHandler implements MethodHandler {
         const updatedIndexes = ProtocolsConfigureHandler.constructIndexes(existingProtocolsConfigure, false);
         const existingCid = await Message.getCid(existingMessage);
 
-        await this.messageStore.delete(tenant, existingCid);
-        await this.messageStore.put(tenant, existingMessage, updatedIndexes);
+        await this.deps.messageStore.delete(tenant, existingCid);
+        await this.deps.messageStore.put(tenant, existingMessage, updatedIndexes);
       }
     }
 
@@ -230,7 +222,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       const childRuleSet = ruleSet[key] as ProtocolRuleSet;
       const childProtocolPath = protocolPath === '' ? key : `${protocolPath}/${key}`;
 
-      // Validate $ref path exists in the referenced protocol
+      // Validate $ref path exists in the referenced protocol and does not traverse through another $ref
       if (childRuleSet.$ref !== undefined) {
         const parsed = parseCrossProtocolRef(childRuleSet.$ref);
         if (parsed !== undefined) {
@@ -244,13 +236,36 @@ export class ProtocolsConfigureHandler implements MethodHandler {
             );
           }
 
-          const targetRuleSet = getRuleSetAtPath(parsed.protocolPath, refDefinition.structure);
-          if (targetRuleSet === undefined) {
-            throw new DwnError(
-              DwnErrorCode.ProtocolsConfigureInvalidRefProtocolPath,
-              `'$ref' at protocol path '${childProtocolPath}' references type path '${parsed.protocolPath}' ` +
-              `which does not exist in protocol '${refDefinition.protocol}'.`
-            );
+          // Walk the target path segment-by-segment and reject if any intermediate node has a $ref
+          const segments = parsed.protocolPath.split('/');
+          let currentLevel: { [key: string]: ProtocolRuleSet } = refDefinition.structure;
+
+          for (let i = 0; i < segments.length; i++) {
+            const segment = segments[i];
+            const node = currentLevel[segment] as ProtocolRuleSet | undefined;
+
+            if (node === undefined) {
+              throw new DwnError(
+                DwnErrorCode.ProtocolsConfigureInvalidRefProtocolPath,
+                `'$ref' at protocol path '${childProtocolPath}' references type path '${parsed.protocolPath}' ` +
+                `which does not exist in protocol '${refDefinition.protocol}'.`
+              );
+            }
+
+            // If any node along the target path (including the final target) has a $ref,
+            // it means the composition chain passes through another protocol boundary.
+            // Multi-level composition is not supported — reject at install time.
+            if (node.$ref !== undefined) {
+              const traversedPath = segments.slice(0, i + 1).join('/');
+              throw new DwnError(
+                DwnErrorCode.ProtocolsConfigureInvalidRefTargetThroughRef,
+                `'$ref' at protocol path '${childProtocolPath}' references type path '${parsed.protocolPath}' ` +
+                `in protocol '${refDefinition.protocol}', but the node '${traversedPath}' is itself ` +
+                `a '$ref' composition point. multi-level composition (chaining through '$ref' nodes) is not supported.`
+              );
+            }
+
+            currentLevel = node as { [key: string]: ProtocolRuleSet };
           }
         }
       }

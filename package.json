@@ -11,10 +11,11 @@
     "packages/api",
     "packages/protocols",
     "packages/browser",
+    "packages/protocol-codegen",
     "packages/dwn-sdk-js",
     "packages/dwn-sql-store",
     "packages/dwn-server",
-    "packages/electrobun-dwn"
+    "packages/dwn-server-admin-ui"
   ],
   "scripts": {
     "clean": "bun run clean:modules && bun run clean:data && bun run --filter '*' clean",
@@ -23,8 +24,6 @@
     "build": "bun run --filter '*' build",
     "build:ci": "./scripts/ci-setup.sh",
     "test:node": "bun run --filter '*' test:node",
-    "electrobun-dwn:dev": "bun run --filter @enbox/electrobun-dwn dev",
-    "electrobun-dwn:build": "bun run --filter @enbox/electrobun-dwn build",
     "lint": "bun run --filter '*' lint",
     "lint:fix": "bun run --filter '*' lint:fix",
     "changeset": "changeset",

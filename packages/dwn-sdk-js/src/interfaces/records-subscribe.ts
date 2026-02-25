@@ -23,6 +23,12 @@ export type RecordsSubscribeOptions = {
   protocolRole?: string;
 
   /**
+   * Opaque EventLog cursor string to resume from. When provided, catch-up events are
+   * replayed from the EventLog and an EOSE marker is delivered before live events.
+   */
+  cursor?: string;
+
+  /**
    * The delegated grant to sign on behalf of the logical author, which is the grantor (`grantedBy`) of the delegated grant.
    */
   delegatedGrant?: DataEncodedRecordsWriteMessage;
@@ -68,6 +74,7 @@ export class RecordsSubscribe extends AbstractMessage<RecordsSubscribeMessage> {
       filter           : Records.normalizeFilter(options.filter),
       dateSort         : options.dateSort,
       pagination       : options.pagination,
+      cursor           : options.cursor,
     };
 
     // delete all descriptor properties that are `undefined` else the code will encounter the following IPLD issue when attempting to generate CID:
@@ -97,7 +104,7 @@ export class RecordsSubscribe extends AbstractMessage<RecordsSubscribeMessage> {
  * @param messageStore Used to check if the grant has been revoked.
  */
   public async authorizeDelegate(messageStore: MessageStore): Promise<void> {
-    const delegatedGrant = await PermissionGrant.parse(this.message.authorization!.authorDelegatedGrant!);
+    const delegatedGrant = PermissionGrant.parse(this.message.authorization!.authorDelegatedGrant!);
     await RecordsGrantAuthorization.authorizeQueryOrSubscribe({
       incomingMessage : this.message,
       expectedGrantor : this.author!,

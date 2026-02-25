@@ -1,14 +1,21 @@
+import type { Filter } from '../types/query-types.js';
 import type { GenericMessage } from '../types/message-types.js';
+import type { MessagesFilter } from '../types/messages-types.js';
 import type { MessageSigner } from '../types/signer.js';
 import type { MessageStore } from '../types/message-store.js';
 import type { ProtocolDefinition } from '../types/protocols-types.js';
+import type { CoreProtocol, CoreProtocolStores } from '../core/core-protocol.js';
 import type { DataEncodedRecordsWriteMessage, RecordsWriteMessage } from '../types/records-types.js';
 import type { PermissionConditions, PermissionGrantData, PermissionRequestData, PermissionRevocationData, PermissionScope, RecordsPermissionScope } from '../types/permission-types.js';
 
+import { DwnConstant } from '../core/dwn-constant.js';
 import { Encoder } from '../utils/encoder.js';
+import { FilterUtility } from '../utils/filter.js';
+import { Message } from '../core/message.js';
 import { PermissionGrant } from './permission-grant.js';
 import { PermissionRequest } from './permission-request.js';
-import { RecordsWrite } from '../../src/interfaces/records-write.js';
+import { Records } from '../utils/records.js';
+import { RecordsWrite } from '../interfaces/records-write.js';
 import { Time } from '../utils/time.js';
 import { validateJsonSchema } from '../schema-validator.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
@@ -79,12 +86,16 @@ export type PermissionRevocationCreateOptions = {
 
 /**
  * This is a first-class DWN protocol for managing permission grants of a given DWN.
+ *
+ * It implements the `CoreProtocol` interface so that its lifecycle hooks
+ * (validation, pre-processing, post-processing) are dispatched generically
+ * by the `CoreProtocolRegistry` rather than being hardcoded in handlers.
  */
-export class PermissionsProtocol {
+export class PermissionsProtocol implements CoreProtocol {
   /**
    * The URI of the DWN Permissions protocol.
    */
-  public static readonly uri = 'https://tbd.website/dwn/permissions';
+  public static readonly uri = 'https://identity.foundation/dwn/permissions';
 
   /**
    * The protocol path of the `request` record.
@@ -155,6 +166,137 @@ export class PermissionsProtocol {
       }
     }
   };
+
+  // ---------- CoreProtocol instance accessors ----------
+
+  /** @inheritdoc */
+  public get uri(): string {
+    return PermissionsProtocol.uri;
+  }
+
+  /** @inheritdoc */
+  public get definition(): ProtocolDefinition {
+    return PermissionsProtocol.definition;
+  }
+
+  // ---------- CoreProtocol lifecycle hooks ----------
+
+  /** @inheritdoc */
+  public validateRecord(message: RecordsWriteMessage, dataBytes: Uint8Array): void {
+    PermissionsProtocol.validateSchema(message, dataBytes);
+  }
+
+  /**
+   * Pre-processing hook for permission revocation records.
+   * Validates that the revocation's `tags.protocol` matches the grant's scoped protocol.
+   */
+  public async preProcessWrite(
+    tenant: string,
+    message: RecordsWriteMessage,
+    messageStore: MessageStore,
+  ): Promise<void> {
+    if (message.descriptor.protocolPath !== PermissionsProtocol.revocationPath) {
+      return;
+    }
+
+    // fetch the parent grant to compare the scoped protocol against the revocation tag
+    const permissionGrantId = message.descriptor.parentId!;
+    const grant = await PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId);
+
+    const revokeTagProtocol = message.descriptor.tags?.protocol;
+    const grantProtocol = 'protocol' in grant.scope ? grant.scope.protocol : undefined;
+    if (grantProtocol !== revokeTagProtocol) {
+      throw new DwnError(
+        DwnErrorCode.PermissionsProtocolValidateRevocationProtocolTagMismatch,
+        `Revocation protocol ${revokeTagProtocol} does not match grant protocol ${grantProtocol}`
+      );
+    }
+  }
+
+  /**
+   * Post-processing hook for permission revocation records.
+   * When a grant is revoked, all messages authorized by that grant and created
+   * after the revocation timestamp are deleted from all stores.
+   *
+   * Deletion order is deliberate to avoid orphaned data in case of crash:
+   *   1. data store  (large blobs first)
+   *   2. state index (SMT entries)
+   *   3. message store
+   */
+  public async postProcessWrite(
+    tenant: string,
+    recordsWrite: RecordsWrite,
+    stores: CoreProtocolStores,
+  ): Promise<void> {
+    if (recordsWrite.message.descriptor.protocolPath !== PermissionsProtocol.revocationPath) {
+      return;
+    }
+
+    const permissionGrantId = recordsWrite.message.descriptor.parentId!;
+    const grantAuthorizedMessagesQuery = {
+      permissionGrantId,
+      dateCreated: { gte: recordsWrite.message.descriptor.messageTimestamp },
+    };
+    const { messages: grantAuthorizedMessages } = await stores.messageStore.query(tenant, [grantAuthorizedMessagesQuery]);
+
+    if (grantAuthorizedMessages.length === 0) {
+      return;
+    }
+
+    // 1. Delete data from the data store first to avoid orphaned data blobs in case of crash.
+    //    Only RecordsWrite messages with data larger than maxDataSizeAllowedToBeEncoded have data in the data store.
+    for (const message of grantAuthorizedMessages) {
+      if (message.descriptor.method === DwnMethodName.Write) {
+        const recordsWriteMessage = message as RecordsWriteMessage;
+        if (recordsWriteMessage.descriptor.dataSize > DwnConstant.maxDataSizeAllowedToBeEncoded) {
+          await stores.dataStore.delete(tenant, recordsWriteMessage.recordId, recordsWriteMessage.descriptor.dataCid);
+        }
+      }
+    }
+
+    // 2. Compute CIDs and delete from state index before message store to avoid orphaned state entries.
+    const messageCids = await Promise.all(grantAuthorizedMessages.map((message): Promise<string> => Message.getCid(message)));
+    await stores.stateIndex.delete(tenant, messageCids);
+
+    // 3. Finally delete all messages from the message store.
+    await Promise.all(messageCids.map((cid): Promise<void> => stores.messageStore.delete(tenant, cid)));
+  }
+
+  /** @inheritdoc */
+  public mapErrorToStatusCode(errorCode: string): number | undefined {
+    if (errorCode.startsWith('PermissionsProtocolValidate')) {
+      return 400;
+    }
+    return undefined;
+  }
+
+  /**
+   * Constructs an additional filter for protocol-scoped message queries so that
+   * permission records (grants, requests, revocations) tagged with the target
+   * protocol appear alongside that protocol's own records in sync/subscribe/read results.
+   */
+  public constructAdditionalMessageFilter(filter: MessagesFilter): Filter | undefined {
+    const { protocol, messageTimestamp } = filter;
+    if (protocol === undefined) {
+      return undefined;
+    }
+
+    const taggedFilter = {
+      protocol: PermissionsProtocol.uri,
+      ...Records.convertTagsFilter({ protocol }),
+    } as Filter;
+
+    if (messageTimestamp !== undefined) {
+      const messageTimestampFilter = FilterUtility.convertRangeCriterion(messageTimestamp);
+      if (messageTimestampFilter) {
+        taggedFilter.messageTimestamp = messageTimestampFilter;
+      }
+    }
+
+    return taggedFilter;
+  }
+
+  // ---------- Static utility methods ----------
 
   public static parseRequest(base64UrlEncodedRequest: string): PermissionRequestData {
     return Encoder.base64UrlToObject(base64UrlEncodedRequest);
@@ -394,7 +536,7 @@ export class PermissionsProtocol {
     }
 
     const permissionGrantMessage = possibleGrantMessage as DataEncodedRecordsWriteMessage;
-    const permissionGrant = await PermissionGrant.parse(permissionGrantMessage);
+    const permissionGrant = PermissionGrant.parse(permissionGrantMessage);
 
     return permissionGrant;
   }
@@ -421,11 +563,11 @@ export class PermissionsProtocol {
       const grant = await PermissionsProtocol.fetchGrant(tenant, messageStore, incomingMessage.descriptor.parentId!);
       return grant.scope;
     } else if (incomingMessage.descriptor.protocolPath === PermissionsProtocol.grantPath) {
-      const grant = await PermissionGrant.parse(incomingMessage);
+      const grant = PermissionGrant.parse(incomingMessage);
       return grant.scope;
     } else {
       // if the record is not a grant or revocation, it must be a request
-      const request = await PermissionRequest.parse(incomingMessage);
+      const request = PermissionRequest.parse(incomingMessage);
       return request.scope;
     }
   }

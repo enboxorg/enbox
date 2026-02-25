@@ -3,6 +3,8 @@ import type { MessageStore } from '../types/message-store.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { ProtocolDefinition, ProtocolRuleSet, ProtocolType, ProtocolTypes } from '../types/protocols-types.js';
 
+import { ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
+
 import type { RecordsWrite } from '../interfaces/records-write.js';
 
 import Ajv from 'ajv/dist/2020.js';
@@ -388,4 +390,135 @@ export async function verifyAsRoleRecordIfNeeded(
       `DID '${recipient}' is already recipient of a role record at protocol path '${protocolPath} under the parent context ${parentContextId}.`
     );
   }
+}
+
+/**
+ * Verifies that a new record creation does not exceed the `$recordLimit` defined in the rule set.
+ *
+ * This check only applies to initial writes (new records). Updates to existing records are not counted.
+ * The count is scoped to the same `protocol + protocolPath` within the parent context:
+ * - For root-level records: counted across the entire protocol for the tenant.
+ * - For nested records: counted within the parent record's context.
+ *
+ * @throws {DwnError} with `ProtocolAuthorizationRecordLimitExceeded` if the limit is reached and strategy is `reject`.
+ * @throws {DwnError} with `ProtocolAuthorizationRecordLimitStrategyNotImplemented` if strategy is not yet implemented.
+ */
+export async function verifyRecordLimit(
+  tenant: string,
+  incomingMessage: RecordsWrite,
+  ruleSet: ProtocolRuleSet,
+  messageStore: MessageStore,
+): Promise<void> {
+  if (ruleSet.$recordLimit === undefined) {
+    return;
+  }
+
+  // Only enforce on initial writes — updates to existing records do not count as new records.
+  const isInitialWrite = await incomingMessage.isInitialWrite();
+  if (!isInitialWrite) {
+    return;
+  }
+
+  const { max, strategy } = ruleSet.$recordLimit;
+
+  // Build a filter to count existing records at the same protocol path and parent context.
+  const protocolPath = incomingMessage.message.descriptor.protocolPath!;
+  const filter: Filter = {
+    interface         : DwnInterfaceName.Records,
+    method            : DwnMethodName.Write,
+    isLatestBaseState : true,
+    protocol          : incomingMessage.message.descriptor.protocol!,
+    protocolPath,
+  };
+
+  // Scope by parent context for nested records.
+  const parentContextId = Records.getParentContextFromOfContextId(incomingMessage.message.contextId)!;
+  if (parentContextId !== '') {
+    const prefixFilter = FilterUtility.constructPrefixFilterAsRangeFilter(parentContextId);
+    filter.contextId = prefixFilter;
+  }
+
+  const existingCount = await messageStore.count(tenant, [filter]);
+
+  if (existingCount >= max) {
+    if (strategy === ProtocolRecordLimitStrategy.Reject) {
+      throw new DwnError(
+        DwnErrorCode.ProtocolAuthorizationRecordLimitExceeded,
+        `record limit of ${max} reached at protocol path '${protocolPath}'` +
+        `${parentContextId !== '' ? ` under parent context '${parentContextId}'` : ''}` +
+        `: new records are rejected until existing records are deleted.`
+      );
+    }
+
+    // Future strategies (e.g. purgeOldest) will be implemented here.
+    // For now, any non-reject strategy that somehow passes schema validation is rejected.
+    throw new DwnError(
+      DwnErrorCode.ProtocolAuthorizationRecordLimitStrategyNotImplemented,
+      `record limit strategy '${strategy}' is not yet implemented.`
+    );
+  }
+}
+
+/**
+ * Verifies that a `RecordsWrite` with `squash: true` is eligible:
+ * 1. The protocol rule set at the record's `protocolPath` must have `$squash: true`.
+ * 2. The squash write must be an initial write (a new record, not an update).
+ *
+ * @throws {DwnError} with `ProtocolAuthorizationSquashNotEnabled` if `$squash` is not enabled.
+ * @throws {DwnError} with `ProtocolAuthorizationSquashNotInitialWrite` if the squash write is not an initial write.
+ */
+export async function verifySquashEligibility(
+  incomingMessage: RecordsWrite,
+  ruleSet: ProtocolRuleSet,
+): Promise<void> {
+  const squash = incomingMessage.message.descriptor.squash;
+
+  if (squash !== true) {
+    return;
+  }
+
+  // squash write must be at a protocol path with $squash: true
+  if (ruleSet.$squash !== true) {
+    throw new DwnError(
+      DwnErrorCode.ProtocolAuthorizationSquashNotEnabled,
+      `squash writes are not enabled at protocol path '${incomingMessage.message.descriptor.protocolPath}': ` +
+      `rule set must have $squash: true.`
+    );
+  }
+
+  // squash write must be an initial write (a new record, not an update)
+  const isInitialWrite = await incomingMessage.isInitialWrite();
+  if (!isInitialWrite) {
+    throw new DwnError(
+      DwnErrorCode.ProtocolAuthorizationSquashNotInitialWrite,
+      `squash write must be an initial write (a new record): updates cannot be squash writes.`
+    );
+  }
+}
+
+/**
+ * Verifies that an update is not attempted on a record whose protocol path has `$immutable: true`.
+ *
+ * Only non-initial writes (updates) are rejected — initial writes are always allowed.
+ * `RecordsDelete` is not affected by this check; immutability prevents data mutation, not removal.
+ *
+ * @throws {DwnError} with `ProtocolAuthorizationImmutableRecord` if an update is attempted on an immutable record.
+ */
+export async function verifyImmutability(
+  incomingMessage: RecordsWrite,
+  ruleSet: ProtocolRuleSet,
+): Promise<void> {
+  if (ruleSet.$immutable !== true) {
+    return;
+  }
+
+  const isInitialWrite = await incomingMessage.isInitialWrite();
+  if (isInitialWrite) {
+    return;
+  }
+
+  throw new DwnError(
+    DwnErrorCode.ProtocolAuthorizationImmutableRecord,
+    `record at protocol path '${incomingMessage.message.descriptor.protocolPath}' is immutable: updates are not allowed.`
+  );
 }

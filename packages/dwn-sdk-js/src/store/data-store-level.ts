@@ -1,4 +1,5 @@
 import type { ImportResult } from 'ipfs-unixfs-importer';
+import type { LevelWrapper } from './level-wrapper.js';
 import type { DataStore, DataStoreGetResult, DataStorePutResult } from '../types/data-store.js';
 
 import { BlockstoreLevel } from './blockstore-level.js';
@@ -7,12 +8,20 @@ import { DataStream } from '../utils/data-stream.js';
 import { exporter } from 'ipfs-unixfs-exporter';
 import { importer } from 'ipfs-unixfs-importer';
 
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
 /**
  * A simple implementation of {@link DataStore} that works in both the browser and server-side.
  * Leverages LevelDB under the hood.
  *
- * It has the following structure (`+` represents an additional sublevel/partition):
- *   'data' + <tenant> + <recordId> + <dataCid> -> <data>
+ * It has the following sublevel structure (`+` represents an additional sublevel):
+ *   'refs'      + <tenant> + <recordId>  : key <dataCid>  → JSON { dataSize }
+ *   'blocks'    + <dataCid>              : key <blockCid>  → block data (shared)
+ *   'refcounts' : key <dataCid>                            → JSON { count, dataSize }
+ *
+ * Identical data (same dataCid) is stored only once in the blocks sublevel.
+ * Multiple (tenant, recordId) pairs can reference the same blocks.
  */
 export class DataStoreLevel implements DataStore {
   config: DataStoreLevelConfig;
@@ -41,29 +50,74 @@ export class DataStoreLevel implements DataStore {
   }
 
   async put(tenant: string, recordId: string, dataCid: string, dataStream: ReadableStream<Uint8Array>): Promise<DataStorePutResult> {
-    const blockstoreForData = await this.getBlockstoreForStoringData(tenant, recordId, dataCid);
+    // Check if this exact ref already exists (idempotent re-put).
+    const refsPartition = await this.getRefsPartition(tenant, recordId);
+    const existingRef = await refsPartition.get(dataCid);
+    if (existingRef) {
+      await dataStream.cancel();
+      const { dataSize } = JSON.parse(textDecoder.decode(existingRef)) as { dataSize: number };
+      return { dataSize };
+    }
 
-    const asyncDataBlocks = importer([{ content: DataStream.asAsyncIterable(dataStream) }], blockstoreForData, { cidVersion: 1 });
+    // Check refcount — if > 0, blocks already exist for this dataCid.
+    const refcountsPartition = await this.getRefcountsPartition();
+    const rawRefcount = await refcountsPartition.get(dataCid);
+    const refcountData = rawRefcount
+      ? JSON.parse(textDecoder.decode(rawRefcount)) as { count: number; dataSize: number }
+      : { count: 0, dataSize: 0 };
 
-    // NOTE: the last block contains the root CID as well as info to derive the data size
-    let dataDagRoot!: ImportResult;
-    for await (dataDagRoot of asyncDataBlocks) { ; }
+    let dataSize: number;
 
-    return {
-      dataSize: Number(dataDagRoot.unixfs?.fileSize() ?? dataDagRoot.size)
-    };
+    if (refcountData.count > 0) {
+      // Blocks already exist — skip import.
+      await dataStream.cancel();
+      dataSize = refcountData.dataSize;
+    } else {
+      // First write — import blocks into the shared blocks partition.
+      const blocksPartition = await this.getBlocksPartition(dataCid);
+      const asyncDataBlocks = importer(
+        [{ content: DataStream.asAsyncIterable(dataStream) }],
+        blocksPartition,
+        { cidVersion: 1 }
+      );
+
+      // NOTE: the last block contains the root CID as well as info to derive the data size.
+      let dataDagRoot!: ImportResult;
+      for await (dataDagRoot of asyncDataBlocks) { ; }
+      dataSize = Number(dataDagRoot.unixfs?.fileSize() ?? dataDagRoot.size);
+    }
+
+    // Write ref entry.
+    await refsPartition.put(dataCid, textEncoder.encode(JSON.stringify({ dataSize })));
+
+    // Increment refcount.
+    await refcountsPartition.put(dataCid, textEncoder.encode(JSON.stringify({
+      count: refcountData.count + 1,
+      dataSize,
+    })));
+
+    return { dataSize };
   }
 
   public async get(tenant: string, recordId: string, dataCid: string): Promise<DataStoreGetResult | undefined> {
-    const blockstoreForData = await this.getBlockstoreForStoringData(tenant, recordId, dataCid);
+    // Check ref exists.
+    const refsPartition = await this.getRefsPartition(tenant, recordId);
+    const rawRef = await refsPartition.get(dataCid);
+    if (!rawRef) {
+      return undefined;
+    }
 
-    const exists = await blockstoreForData.has(dataCid);
+    const { dataSize } = JSON.parse(textDecoder.decode(rawRef)) as { dataSize: number };
+
+    // Export from the shared blocks partition.
+    const blocksPartition = await this.getBlocksPartition(dataCid);
+    const exists = await blocksPartition.has(dataCid);
     if (!exists) {
       return undefined;
     }
 
-    // data is chunked into dag-pb unixfs blocks. re-inflate the chunks.
-    const dataDagRoot = await exporter(dataCid, blockstoreForData);
+    // Data is chunked into DAG-PB UnixFS blocks. Re-inflate the chunks.
+    const dataDagRoot = await exporter(dataCid, blocksPartition);
     const contentIterator = dataDagRoot.content();
 
     const dataStream = new ReadableStream<Uint8Array>({
@@ -77,21 +131,42 @@ export class DataStoreLevel implements DataStore {
       }
     });
 
-    let dataSize = dataDagRoot.size;
-
-    if (dataDagRoot.type === 'file' || dataDagRoot.type === 'directory') {
-      dataSize = dataDagRoot.unixfs.fileSize();
-    }
-
-    return {
-      dataSize: Number(dataSize),
-      dataStream,
-    };
+    return { dataSize, dataStream };
   }
 
   public async delete(tenant: string, recordId: string, dataCid: string): Promise<void> {
-    const blockstoreForData = await this.getBlockstoreForStoringData(tenant, recordId, dataCid);
-    await blockstoreForData.clear();
+    // Check ref exists.
+    const refsPartition = await this.getRefsPartition(tenant, recordId);
+    const rawRef = await refsPartition.get(dataCid);
+    if (!rawRef) {
+      return;
+    }
+
+    // Remove ref.
+    await refsPartition.delete(dataCid);
+
+    // Decrement refcount and GC blocks if this was the last ref.
+    const refcountsPartition = await this.getRefcountsPartition();
+    const rawRefcount = await refcountsPartition.get(dataCid);
+    if (!rawRefcount) {
+      return;
+    }
+
+    const refcountData = JSON.parse(textDecoder.decode(rawRefcount)) as { count: number; dataSize: number };
+    const newCount = refcountData.count - 1;
+
+    if (newCount <= 0) {
+      // Last reference removed — garbage-collect blocks and refcount entry.
+      const blocksPartition = await this.getBlocksPartition(dataCid);
+      await blocksPartition.clear();
+      await refcountsPartition.delete(dataCid);
+    } else {
+      // Other references remain — update the count.
+      await refcountsPartition.put(dataCid, textEncoder.encode(JSON.stringify({
+        count    : newCount,
+        dataSize : refcountData.dataSize,
+      })));
+    }
   }
 
   /**
@@ -102,15 +177,30 @@ export class DataStoreLevel implements DataStore {
   }
 
   /**
-   * Gets the blockstore used for storing data for the given `tenant -> `recordId` -> `dataCid`.
+   * Gets the refs sublevel for the given tenant and recordId.
+   * Caller uses `dataCid` as the key within the returned partition.
    */
-  private async getBlockstoreForStoringData(tenant: string, recordId: string, dataCid: string): Promise<BlockstoreLevel> {
-    const dataPartitionName = 'data';
-    const blockstoreForData = await this.blockstore.partition(dataPartitionName);
-    const blockstoreOfGivenTenant = await blockstoreForData.partition(tenant);
-    const blockstoreOfGivenRecordId = await blockstoreOfGivenTenant.partition(recordId);
-    const blockstoreOfGivenDataCidOfRecordId = await blockstoreOfGivenRecordId.partition(dataCid);
-    return blockstoreOfGivenDataCidOfRecordId;
+  private async getRefsPartition(tenant: string, recordId: string): Promise<LevelWrapper<Uint8Array>> {
+    const refsRoot = await this.blockstore.db.partition('refs');
+    const tenantPartition = await refsRoot.partition(tenant);
+    return tenantPartition.partition(recordId);
+  }
+
+  /**
+   * Gets the shared blocks sublevel for the given dataCid.
+   * Used as a Blockstore for ipfs-unixfs-importer/exporter.
+   */
+  private async getBlocksPartition(dataCid: string): Promise<BlockstoreLevel> {
+    const blocksRoot = await this.blockstore.partition('blocks');
+    return blocksRoot.partition(dataCid);
+  }
+
+  /**
+   * Gets the refcounts sublevel.
+   * Key: `dataCid` → JSON `{ count, dataSize }`.
+   */
+  private async getRefcountsPartition(): Promise<LevelWrapper<Uint8Array>> {
+    return this.blockstore.db.partition('refcounts');
   }
 
 }

@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://identity.foundation/schemas/profile/link",
+  "title": "LinkData",
+  "description": "Data shape for a link record (e.g. social links).",
+  "type": "object",
+  "properties": {
+    "url": {
+      "type": "string",
+      "description": "The URL of the link."
+    },
+    "title": {
+      "type": "string",
+      "description": "The display title of the link."
+    },
+    "icon": {
+      "type": "string",
+      "description": "An optional icon for the link."
+    },
+    "sortOrder": {
+      "type": "number",
+      "description": "An optional sort order for display."
+    }
+  },
+  "required": ["url", "title"],
+  "additionalProperties": false
+}

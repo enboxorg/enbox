@@ -1,5 +1,5 @@
 import type { DidResolver } from '@enbox/dids';
-import type { EventStream } from '../../src/types/subscriptions.js';
+import type { EventLog } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
 
 import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
@@ -13,7 +13,7 @@ import { Jws } from '../../src/utils/jws.js';
 import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { TestEventStream } from '../test-event-stream.js';
+import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
@@ -26,7 +26,7 @@ export function testOwnerSignature(): void {
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
     let stateIndex: StateIndex;
-    let eventStream: EventStream;
+    let eventLog: EventLog;
     let dwn: Dwn;
 
     // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
@@ -39,9 +39,9 @@ export function testOwnerSignature(): void {
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
       stateIndex = stores.stateIndex;
-      eventStream = TestEventStream.get();
+      eventLog = TestEventLog.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -58,10 +58,14 @@ export function testOwnerSignature(): void {
       await dwn.close();
     });
 
-    it('should use `ownerSignature` for authorization when it is given - flat-space', async () => {
+    it('should use `ownerSignature` for authorization when it is given', async () => {
       // scenario: Alice fetch a message authored by Bob from Bob's DWN and retains (writes) it in her DWN
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
+
+      // Install default test protocol for both Bob and Alice (needed because all records require a protocol)
+      await TestDataGenerator.installDefaultTestProtocol(dwn, bob);
+      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
       // Bob writes a message to his DWN
       const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: bob, published: true });
@@ -124,7 +128,7 @@ export function testOwnerSignature(): void {
       const recordsWriteReply = await dwn.processMessage(alice.did, bobRecordsWrite.message, { dataStream: bobRecordsWrite.dataStream });
       expect(recordsWriteReply.status.code).toBe(401);
 
-      // Skipping Alice fetching the message from Bob's DWN (as this is tested already in the flat-space test)
+      // Skipping Alice fetching the message from Bob's DWN (as this is tested already in the owner-signature test above)
 
       // Alice augments Bob's message as an external owner
       const ownerSignedMessage = await RecordsWrite.parse(bobRecordsWrite.message);
@@ -149,11 +153,14 @@ export function testOwnerSignature(): void {
       expect(ArrayUtility.byteArraysEqual(dataFetched, bobRecordsWrite.dataBytes!)).toBe(true);
     });
 
-    it('should throw if `ownerSignature` in `authorization` is mismatching with the tenant - flat-space', async () => {
+    it('should throw if `ownerSignature` in `authorization` is mismatching with the tenant', async () => {
       // scenario: Carol attempts to store a message with Alice being the owner, and should fail
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const carol = await TestDataGenerator.generateDidKeyPersona();
+
+      // Install default test protocol for Carol (the tenant where the message will be processed)
+      await TestDataGenerator.installDefaultTestProtocol(dwn, carol);
 
       // Bob creates a message, we skip writing to bob's DWN because that's orthogonal to this test
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: bob, published: true });
@@ -204,6 +211,9 @@ export function testOwnerSignature(): void {
       // scenario: Malicious Bob attempts to retain an externally authored message in Alice's DWN by providing an invalid `ownerSignature`
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
+
+      // Install default test protocol for Alice (the tenant where the message will be processed)
+      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
       // Bob creates a message, we skip writing to bob's DWN because that's orthogonal to this test
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: bob, published: true });

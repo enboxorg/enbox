@@ -3,7 +3,8 @@
   "$id": "https://identity.foundation/dwn/json-schemas/records-write-unidentified.json",
   "type": "object",
   "required": [
-    "descriptor"
+    "descriptor",
+    "contextId"
   ],
   "properties": {
     "recordId": {
@@ -50,10 +51,8 @@
                   "derivationScheme": {
                     "type": "string",
                     "enum": [
-                      "dataFormats",
                       "protocolContext",
-                      "protocolPath",
-                      "schemas"
+                      "protocolPath"
                     ]
                   },
                   "derivedPublicKey": {
@@ -175,12 +174,18 @@
         },
         "permissionGrantId": {
           "type": "string"
+        },
+        "squash": {
+          "type": "boolean",
+          "enum": [true]
         }
       },
       "additionalProperties": false,
       "required": [
         "interface",
         "method",
+        "protocol",
+        "protocolPath",
         "dataCid",
         "dataSize",
         "dateCreated",
@@ -247,57 +252,5 @@
         }
       ]
     }
-  },
-  "$comment": "rule defining `protocol` and `contextId` relationship",
-  "anyOf": [
-    {
-      "properties": {
-        "descriptor": {
-          "type": "object",
-          "required": [
-            "protocol",
-            "protocolPath"
-          ]
-        }
-      },
-      "required": [
-        "contextId"
-      ]
-    },
-    {
-      "allOf": [
-        {
-          "not": {
-            "required": [
-              "contextId"
-            ]
-          }
-        },
-        {
-          "properties": {
-            "descriptor": {
-              "type": "object",
-              "not": {
-                "required": [
-                  "protocol"
-                ]
-              }
-            }
-          }
-        },
-        {
-          "properties": {
-            "descriptor": {
-              "type": "object",
-              "not": {
-                "required": [
-                  "protocolPath"
-                ]
-              }
-            }
-          }
-        }
-      ]
-    }
-  ]
+  }
 }

@@ -1,17 +1,19 @@
 import type { AbstractLevel } from 'abstract-level';
-import type { GenericMessage, MessagesSyncReply } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncReply, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import ms from 'ms';
 
 import { Level } from 'level';
-import { hashToHex, initDefaultHashes } from '@enbox/dwn-sdk-js';
+import { hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-js';
 
 import type { PermissionsApi } from './types/permissions.js';
-import type { SyncEngine, SyncIdentityOptions } from './types/sync.js';
+import type { StartSyncParams, SyncConnectivityState, SyncEngine, SyncIdentityOptions, SyncMode } from './types/sync.js';
 import type { Web5Agent, Web5PlatformAgent } from './types/agent.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnInterface } from './types/dwn.js';
+import { getDwnServiceEndpointUrls } from './utils.js';
+import { isRecordsWrite } from './utils.js';
 import { topologicalSort } from './sync-topological-sort.js';
 import { pullMessages, pushMessages } from './sync-messages.js';
 
@@ -27,6 +29,36 @@ export type SyncEngineLevelParams = {
  * balance between round-trip count and leaf-set size.
  */
 const MAX_DIFF_DEPTH = 16;
+
+/**
+ * Key for the subscription cursor sublevel. Cursors are keyed by
+ * `{did}^{dwnUrl}[^{protocol}]` and store an opaque EventLog cursor string.
+ */
+const CURSOR_SEPARATOR = '^';
+
+/**
+ * Debounce window for push-on-write. When the local EventLog emits events,
+ * we batch them and push after this delay to avoid a push per individual write.
+ */
+const PUSH_DEBOUNCE_MS = 250;
+
+/** Tracks a live subscription to a remote DWN for one sync target. */
+type LiveSubscription = {
+  did: string;
+  dwnUrl: string;
+  delegateDid?: string;
+  protocol?: string;
+  close: () => Promise<void>;
+};
+
+/** Tracks a local EventLog subscription for push-on-write. */
+type LocalSubscription = {
+  did: string;
+  dwnUrl: string;
+  delegateDid?: string;
+  protocol?: string;
+  close: () => Promise<void>;
+};
 
 export class SyncEngineLevel implements SyncEngine {
   /**
@@ -53,6 +85,37 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private _defaultHashHex?: Map<number, string>;
 
+  // ---------------------------------------------------------------------------
+  // Live sync state
+  // ---------------------------------------------------------------------------
+
+  /** Current sync mode, set by `startSync`. */
+  private _syncMode: SyncMode = 'poll';
+
+  /** Active live pull subscriptions (remote -> local via MessagesSubscribe). */
+  private _liveSubscriptions: LiveSubscription[] = [];
+
+  /** Active local EventLog subscriptions for push-on-write (local -> remote). */
+  private _localSubscriptions: LocalSubscription[] = [];
+
+  /** Connectivity state derived from subscription health. */
+  private _connectivityState: SyncConnectivityState = 'unknown';
+
+  /** Debounce timer for batched push-on-write. */
+  private _pushDebounceTimer?: ReturnType<typeof setTimeout>;
+
+  /** Pending message CIDs to push, accumulated during the debounce window. */
+  private _pendingPushCids: Map<string, { did: string; dwnUrl: string; delegateDid?: string; protocol?: string; cids: string[] }> = new Map();
+
+  /** Count of consecutive SMT sync failures (for backoff in poll mode). */
+  private _consecutiveFailures = 0;
+
+  /** Maximum consecutive failures before entering backoff. */
+  private static readonly MAX_CONSECUTIVE_FAILURES = 5;
+
+  /** Backoff multiplier for consecutive failures (caps at 4x the configured interval). */
+  private static readonly MAX_BACKOFF_MULTIPLIER = 4;
+
   constructor({ agent, dataPath, db }: SyncEngineLevelParams) {
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent: agent as Web5Agent });
@@ -76,6 +139,10 @@ export class SyncEngineLevel implements SyncEngine {
   set agent(agent: Web5PlatformAgent) {
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent: agent as Web5Agent });
+  }
+
+  get connectivityState(): SyncConnectivityState {
+    return this._connectivityState;
   }
 
   public async clear(): Promise<void> {
@@ -139,6 +206,10 @@ export class SyncEngineLevel implements SyncEngine {
     await registeredIdentities.put(did, JSON.stringify(options));
   }
 
+  // ---------------------------------------------------------------------------
+  // One-shot sync (SMT set reconciliation)
+  // ---------------------------------------------------------------------------
+
   public async sync(direction?: 'push' | 'pull'): Promise<void> {
     if (this._syncLock) {
       throw new Error('SyncEngineLevel: Sync operation is already in progress.');
@@ -149,6 +220,7 @@ export class SyncEngineLevel implements SyncEngine {
       // Iterate over all registered identities and their DWN endpoints.
       const syncTargets = await this.getSyncTargets();
       const errored = new Set<string>();
+      let hadFailure = false;
 
       for (const target of syncTargets) {
         const { did, delegateDid, dwnUrl, protocol } = target;
@@ -186,9 +258,23 @@ export class SyncEngineLevel implements SyncEngine {
             }
           }
         } catch (error: any) {
-          // If the remote DWN is unreachable, skip this target and continue.
+          // Skip this DWN endpoint for remaining targets and log the real cause.
           errored.add(dwnUrl);
+          hadFailure = true;
           console.error(`SyncEngineLevel: Error syncing ${did} with ${dwnUrl}`, error);
+        }
+      }
+
+      // Track consecutive failures for backoff in poll mode.
+      if (hadFailure) {
+        this._consecutiveFailures++;
+        if (this._connectivityState === 'online') {
+          this._connectivityState = 'offline';
+        }
+      } else {
+        this._consecutiveFailures = 0;
+        if (syncTargets.length > 0) {
+          this._connectivityState = 'online';
         }
       }
     } finally {
@@ -196,44 +282,36 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  public async startSync({ interval }: {
-    interval: string
-  }): Promise<void> {
-    const intervalMilliseconds = ms(interval);
+  // ---------------------------------------------------------------------------
+  // startSync / stopSync
+  // ---------------------------------------------------------------------------
 
-    const intervalSync = async (): Promise<void> => {
-      if (this._syncLock) {
-        return;
-      }
+  public async startSync(params: StartSyncParams): Promise<void> {
+    const mode = params.mode ?? 'poll';
+    const intervalStr = params.interval ?? (mode === 'live' ? '5m' : '2m');
+    const intervalMilliseconds = ms(intervalStr);
 
-      clearInterval(this._syncIntervalId);
-      this._syncIntervalId = undefined;
-
-      try {
-        await this.sync();
-      } catch (error) {
-        console.error('SyncEngineLevel: Error during sync operation', error);
-      }
-
-      if (!this._syncIntervalId) {
-        this._syncIntervalId = setInterval(intervalSync, intervalMilliseconds);
-      }
-    };
-
+    // Tear down previous mode if there are active live resources.
+    if (this._liveSubscriptions.length > 0 || this._localSubscriptions.length > 0) {
+      await this.teardownLiveSync();
+    }
     if (this._syncIntervalId) {
       clearInterval(this._syncIntervalId);
+      this._syncIntervalId = undefined;
     }
 
-    this._syncIntervalId = setInterval(intervalSync, intervalMilliseconds);
+    this._syncMode = mode;
 
-    // Initiate an immediate sync.
-    if (!this._syncLock) {
-      await this.sync();
+    if (mode === 'live') {
+      await this.startLiveSync(intervalMilliseconds);
+    } else {
+      await this.startPollSync(intervalMilliseconds);
     }
   }
 
   /**
-   * stopSync awaits the completion of the current sync operation before stopping the sync interval.
+   * stopSync awaits the completion of the current sync operation before stopping the sync interval
+   * and tearing down any live subscriptions.
    */
   public async stopSync(timeout: number = 2000): Promise<void> {
     let elapsedTimeout = 0;
@@ -251,6 +329,411 @@ export class SyncEngineLevel implements SyncEngine {
       clearInterval(this._syncIntervalId);
       this._syncIntervalId = undefined;
     }
+
+    await this.teardownLiveSync();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Poll-mode sync (legacy)
+  // ---------------------------------------------------------------------------
+
+  private async startPollSync(intervalMilliseconds: number): Promise<void> {
+    const intervalSync = async (): Promise<void> => {
+      if (this._syncLock) {
+        return;
+      }
+
+      clearInterval(this._syncIntervalId);
+      this._syncIntervalId = undefined;
+
+      try {
+        await this.sync();
+      } catch (error) {
+        console.error('SyncEngineLevel: Error during sync operation', error);
+      }
+
+      // Apply backoff on consecutive failures.
+      const backoffMultiplier = Math.min(
+        Math.pow(2, this._consecutiveFailures),
+        SyncEngineLevel.MAX_BACKOFF_MULTIPLIER,
+      );
+      const effectiveInterval = this._consecutiveFailures > 0
+        ? intervalMilliseconds * backoffMultiplier
+        : intervalMilliseconds;
+
+      if (!this._syncIntervalId) {
+        this._syncIntervalId = setInterval(intervalSync, effectiveInterval);
+      }
+    };
+
+    if (this._syncIntervalId) {
+      clearInterval(this._syncIntervalId);
+    }
+
+    this._syncIntervalId = setInterval(intervalSync, intervalMilliseconds);
+
+    // Initiate an immediate sync.
+    if (!this._syncLock) {
+      await this.sync();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Live-mode sync
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Starts live sync:
+   * 1. Performs an initial SMT reconciliation to catch up.
+   * 2. Opens MessagesSubscribe subscriptions to each remote DWN for real-time pull.
+   * 3. Subscribes to the local EventLog for push-on-write.
+   * 4. Schedules an infrequent SMT integrity check at `interval`.
+   */
+  private async startLiveSync(intervalMilliseconds: number): Promise<void> {
+    // Step 1: Initial SMT catch-up.
+    try {
+      await this.sync();
+    } catch (error) {
+      console.error('SyncEngineLevel: Error during initial live-sync catch-up', error);
+    }
+
+    // Step 2: Open live subscriptions for each sync target.
+    const syncTargets = await this.getSyncTargets();
+    for (const target of syncTargets) {
+      try {
+        await this.openLivePullSubscription(target);
+        await this.openLocalPushSubscription(target);
+      } catch (error: any) {
+        console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
+      }
+    }
+
+    // Step 3: Schedule infrequent SMT integrity check.
+    const integrityCheck = async (): Promise<void> => {
+      if (this._syncLock) {
+        return;
+      }
+
+      try {
+        await this.sync();
+      } catch (error) {
+        console.error('SyncEngineLevel: Error during SMT integrity check', error);
+      }
+    };
+
+    this._syncIntervalId = setInterval(integrityCheck, intervalMilliseconds);
+  }
+
+  /**
+   * Tears down all live subscriptions and push listeners.
+   */
+  private async teardownLiveSync(): Promise<void> {
+    // Clear the push debounce timer.
+    if (this._pushDebounceTimer) {
+      clearTimeout(this._pushDebounceTimer);
+      this._pushDebounceTimer = undefined;
+    }
+
+    // Flush any pending push CIDs.
+    this._pendingPushCids.clear();
+
+    // Close all live pull subscriptions.
+    for (const sub of this._liveSubscriptions) {
+      try {
+        await sub.close();
+      } catch {
+        // Best-effort cleanup.
+      }
+    }
+    this._liveSubscriptions = [];
+
+    // Close all local push subscriptions.
+    for (const sub of this._localSubscriptions) {
+      try {
+        await sub.close();
+      } catch {
+        // Best-effort cleanup.
+      }
+    }
+    this._localSubscriptions = [];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Live pull: MessagesSubscribe to remote DWN
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Opens a MessagesSubscribe WebSocket subscription to a remote DWN.
+   * Incoming events are processed locally as they arrive.
+   */
+  private async openLivePullSubscription(target: {
+    did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
+  }): Promise<void> {
+    const { did, delegateDid, dwnUrl, protocol } = target;
+
+    // Resolve the cursor from the last session (if any).
+    const cursorKey = this.buildCursorKey(did, dwnUrl, protocol);
+    const cursor = await this.getCursor(cursorKey);
+
+    // Build the MessagesSubscribe filters.
+    const filters = protocol ? [{ protocol }] : [];
+
+    // Look up permission grant for MessagesSubscribe if using a delegate.
+    let permissionGrantId: string | undefined;
+    if (delegateDid) {
+      try {
+        const grant = await this._permissionsApi.getPermissionForRequest({
+          connectedDid : did,
+          messageType  : DwnInterface.MessagesSubscribe,
+          delegateDid,
+          protocol,
+          cached       : true
+        });
+        permissionGrantId = grant.grant.id;
+      } catch {
+        // Fall back to trying MessagesRead which is a unified scope.
+        try {
+          const grant = await this._permissionsApi.getPermissionForRequest({
+            connectedDid : did,
+            messageType  : DwnInterface.MessagesRead,
+            delegateDid,
+            protocol,
+            cached       : true
+          });
+          permissionGrantId = grant.grant.id;
+        } catch (error: any) {
+          console.error('SyncEngineLevel: Could not find permission grant for live pull subscription', error);
+          return;
+        }
+      }
+    }
+
+    // Define the subscription handler that processes incoming events.
+    const subscriptionHandler = async (subMessage: SubscriptionMessage): Promise<void> => {
+      if (subMessage.type === 'eose') {
+        // End-of-stored-events — catch-up complete, persist cursor.
+        await this.setCursor(cursorKey, subMessage.cursor);
+        this._connectivityState = 'online';
+        return;
+      }
+
+      if (subMessage.type === 'event') {
+        const event: MessageEvent = subMessage.event;
+        try {
+          // Process the message locally.
+          const dataStream = this.extractDataStream(event);
+          await this.agent.dwn.node.processMessage(did, event.message, { dataStream });
+        } catch (error: any) {
+          console.error(`SyncEngineLevel: Error processing live-pull event for ${did}`, error);
+        }
+
+        // Persist cursor for resume on reconnect.
+        await this.setCursor(cursorKey, subMessage.cursor);
+      }
+    };
+
+    // Send the subscription request through the agent's DWN API.
+    const response = await this.agent.dwn.sendRequest({
+      author        : did,
+      target        : did,
+      messageType   : DwnInterface.MessagesSubscribe,
+      granteeDid    : delegateDid,
+      messageParams : {
+        filters,
+        cursor,
+        permissionGrantId,
+      },
+      subscriptionHandler: subscriptionHandler as any,
+    });
+
+    const reply = response.reply as MessagesSubscribeReply;
+    if (reply.status.code !== 200 || !reply.subscription) {
+      console.error(`SyncEngineLevel: MessagesSubscribe failed for ${did} -> ${dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
+      return;
+    }
+
+    this._liveSubscriptions.push({
+      did,
+      dwnUrl,
+      delegateDid,
+      protocol,
+      close: async (): Promise<void> => { await reply.subscription!.close(); },
+    });
+
+    this._connectivityState = 'online';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Live push: local EventLog subscription for immediate push
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Subscribes to the local DWN's EventLog so that writes by the user are
+   * immediately pushed to the remote DWN instead of waiting for the next poll.
+   */
+  private async openLocalPushSubscription(target: {
+    did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
+  }): Promise<void> {
+    const { did, delegateDid, dwnUrl, protocol } = target;
+
+    // Build filters scoped to the protocol (if any).
+    const filters = protocol ? [{ protocol }] : [];
+
+    // Look up permission grant for local subscription.
+    let permissionGrantId: string | undefined;
+    if (delegateDid) {
+      try {
+        const grant = await this._permissionsApi.getPermissionForRequest({
+          connectedDid : did,
+          messageType  : DwnInterface.MessagesRead,
+          delegateDid,
+          protocol,
+          cached       : true,
+        });
+        permissionGrantId = grant.grant.id;
+      } catch {
+        // No grant available — skip push-on-write for this target.
+        return;
+      }
+    }
+
+    // Subscribe to the local DWN's EventLog.
+    const subscriptionHandler = (subMessage: SubscriptionMessage): void => {
+      if (subMessage.type !== 'event') {
+        return;
+      }
+
+      // Accumulate the message CID for a debounced push.
+      const targetKey = this.buildCursorKey(did, dwnUrl, protocol);
+      const cid = this.tryGetCidSync(subMessage.event.message);
+      if (cid === undefined) {
+        return;
+      }
+
+      let pending = this._pendingPushCids.get(targetKey);
+      if (!pending) {
+        pending = { did, dwnUrl, delegateDid, protocol, cids: [] };
+        this._pendingPushCids.set(targetKey, pending);
+      }
+      pending.cids.push(cid);
+
+      // Debounce the push.
+      if (this._pushDebounceTimer) {
+        clearTimeout(this._pushDebounceTimer);
+      }
+      this._pushDebounceTimer = setTimeout((): void => {
+        void this.flushPendingPushes();
+      }, PUSH_DEBOUNCE_MS);
+    };
+
+    // Process the local subscription request.
+    const response = await this.agent.dwn.processRequest({
+      author              : did,
+      target              : did,
+      messageType         : DwnInterface.MessagesSubscribe,
+      granteeDid          : delegateDid,
+      messageParams       : { filters, permissionGrantId },
+      subscriptionHandler : subscriptionHandler as any,
+    });
+
+    const reply = response.reply as MessagesSubscribeReply;
+    if (reply.status.code !== 200 || !reply.subscription) {
+      console.error(`SyncEngineLevel: Local MessagesSubscribe failed for ${did}: ${reply.status.code} ${reply.status.detail}`);
+      return;
+    }
+
+    this._localSubscriptions.push({
+      did,
+      dwnUrl,
+      delegateDid,
+      protocol,
+      close: async (): Promise<void> => { await reply.subscription!.close(); },
+    });
+  }
+
+  /**
+   * Flushes accumulated push CIDs to remote DWNs.
+   */
+  private async flushPendingPushes(): Promise<void> {
+    this._pushDebounceTimer = undefined;
+
+    const entries = [...this._pendingPushCids.entries()];
+    this._pendingPushCids.clear();
+
+    for (const [, pending] of entries) {
+      const { did, dwnUrl, delegateDid, protocol, cids } = pending;
+      if (cids.length === 0) {
+        continue;
+      }
+
+      try {
+        await pushMessages({
+          did, dwnUrl, delegateDid, protocol,
+          messageCids    : cids,
+          agent          : this.agent,
+          permissionsApi : this._permissionsApi,
+        });
+      } catch (error: any) {
+        console.error(`SyncEngineLevel: Push-on-write failed for ${did} -> ${dwnUrl}`, error);
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cursor persistence
+  // ---------------------------------------------------------------------------
+
+  private buildCursorKey(did: string, dwnUrl: string, protocol?: string): string {
+    const base = `${did}${CURSOR_SEPARATOR}${dwnUrl}`;
+    return protocol ? `${base}${CURSOR_SEPARATOR}${protocol}` : base;
+  }
+
+  private async getCursor(key: string): Promise<string | undefined> {
+    const cursors = this._db.sublevel('syncCursors');
+    try {
+      return await cursors.get(key);
+    } catch (error) {
+      const e = error as { code: string };
+      if (e.code === 'LEVEL_NOT_FOUND') {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  private async setCursor(key: string, cursor: string): Promise<void> {
+    const cursors = this._db.sublevel('syncCursors');
+    await cursors.put(key, cursor);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Utility helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Extracts a ReadableStream from a MessageEvent if it contains a RecordsWrite with data.
+   */
+  private extractDataStream(event: MessageEvent): ReadableStream<Uint8Array> | undefined {
+    if (isRecordsWrite(event) && (event as any).data) {
+      return (event as any).data;
+    }
+    return undefined;
+  }
+
+  /**
+   * Synchronously attempts to get a message CID. Returns undefined on failure.
+   * This is used in the synchronous EventLog callback; the actual CID computation
+   * is fast for already-constructed messages.
+   */
+  private tryGetCidSync(message: GenericMessage): string | undefined {
+    // Message.getCid is async but very fast (SHA-256 of the descriptor).
+    // We fire-and-forget into a microtask and store the result.
+    // For the debounced push, the CID will be resolved by the time we flush.
+    let cid: string | undefined;
+    void Message.getCid(message).then((result): void => { cid = result; });
+    // Since this is a microtask, it may not resolve immediately.
+    // Use the descriptor's CID field if available as a synchronous fallback.
+    return cid ?? (message as any).messageCid ?? undefined;
   }
 
   // ---------------------------------------------------------------------------
@@ -507,10 +990,6 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   // ---------------------------------------------------------------------------
-  // Pull — fetch messages from remote, process locally in dependency order
-  // ---------------------------------------------------------------------------
-
-  // ---------------------------------------------------------------------------
   // Pull / Push — delegates to standalone functions in sync-messages.ts
   // ---------------------------------------------------------------------------
 
@@ -558,7 +1037,7 @@ export class SyncEngineLevel implements SyncEngine {
    * Delegate to the standalone `topologicalSort` function.
    * Tests call `SyncEngineLevel.topologicalSort(...)` so this static method must remain.
    */
-  static topologicalSort<T extends { message: GenericMessage }>(
+  public static topologicalSort<T extends { message: GenericMessage }>(
     messages: T[]
   ): T[] {
     return topologicalSort(messages);
@@ -576,16 +1055,15 @@ export class SyncEngineLevel implements SyncEngine {
     const targets: { did: string; dwnUrl: string; delegateDid?: string; protocol?: string }[] = [];
 
     for await (const [did, options] of this._db.sublevel('registeredIdentities').iterator()) {
-      const { protocols, delegateDid } = await new Promise<SyncIdentityOptions>((resolve): void => {
-        try {
-          const parsed = JSON.parse(options) as SyncIdentityOptions;
-          resolve({ protocols: parsed.protocols, delegateDid: parsed.delegateDid });
-        } catch {
-          resolve({ protocols: [] });
-        }
-      });
+      let parsed: SyncIdentityOptions;
+      try {
+        parsed = JSON.parse(options) as SyncIdentityOptions;
+      } catch {
+        parsed = { protocols: [] };
+      }
+      const { protocols, delegateDid } = parsed;
 
-      const dwnEndpointUrls = await this.agent.dwn.getDwnEndpointUrlsForTarget(did);
+      const dwnEndpointUrls = await getDwnServiceEndpointUrls(did, this.agent.did);
       if (dwnEndpointUrls.length === 0) {
         continue;
       }

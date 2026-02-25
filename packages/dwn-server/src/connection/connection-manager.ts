@@ -1,6 +1,13 @@
 import type { Dwn } from '@enbox/dwn-sdk-js';
 import type { ServerWebSocket } from 'bun';
 
+import type { ActivityLog } from '../admin/activity-log.js';
+import type { AdminConnectionSnapshot } from '../admin/types.js';
+import type { AdminStore } from '../admin/admin-store.js';
+import type { DwnServerConfig } from '../config.js';
+import type { MessageProcessedHook } from '../message-processed-hook.js';
+import type { RateLimiter } from '../rate-limiter.js';
+import type { RegistrationStore } from '../registration/registration-store.js';
 import type { WsData } from '../http-api.js';
 
 import { SocketConnection } from './socket-connection.js';
@@ -12,7 +19,13 @@ export interface ConnectionManager {
   /** connect handler invoked when a new WebSocket connection is established. */
   connect(socket: ServerWebSocket<WsData>): Promise<void>;
   /** closes all of the connections */
-  closeAll(): Promise<void>
+  closeAll(): Promise<void>;
+  /** Returns the number of active connections. */
+  getConnectionCount(): number;
+  /** Returns the total number of active subscriptions across all connections. */
+  getSubscriptionCount(): number;
+  /** Returns serializable snapshots of all active connections. */
+  getConnectionSnapshots(): AdminConnectionSnapshot[];
 }
 
 /**
@@ -22,14 +35,25 @@ export interface ConnectionManager {
 export class InMemoryConnectionManager implements ConnectionManager {
   constructor(
     private dwn: Dwn,
-    private connections: Map<ServerWebSocket<WsData>, SocketConnection> = new Map()
+    private connections: Map<ServerWebSocket<WsData>, SocketConnection> = new Map(),
+    private maxInFlight?: number,
+    private activityLog?: ActivityLog,
+    private adminStore?: AdminStore,
+    private registrationStore?: RegistrationStore,
+    private serverConfig?: DwnServerConfig,
+    private tenantRateLimiter?: RateLimiter,
+    private messageProcessedHooks?: MessageProcessedHook[],
   ) {}
 
   async connect(socket: ServerWebSocket<WsData>): Promise<void> {
-    const connection = new SocketConnection(socket, this.dwn, () => {
-      // this is the onClose handler to clean up any closed connections.
-      this.connections.delete(socket);
-    });
+    const connection = new SocketConnection(
+      socket, this.dwn, () => {
+        // this is the onClose handler to clean up any closed connections.
+        this.connections.delete(socket);
+      },
+      this.maxInFlight, this.activityLog,
+      this.adminStore, this.registrationStore, this.serverConfig, this.tenantRateLimiter, this.messageProcessedHooks,
+    );
 
     // Attach the connection to the ws.data so Bun's websocket handlers can delegate to it.
     socket.data.connection = connection;
@@ -41,5 +65,25 @@ export class InMemoryConnectionManager implements ConnectionManager {
     const closePromises: Promise<void>[] = [];
     this.connections.forEach((connection) => closePromises.push(connection.close()));
     await Promise.all(closePromises);
+  }
+
+  getConnectionCount(): number {
+    return this.connections.size;
+  }
+
+  getSubscriptionCount(): number {
+    let count = 0;
+    this.connections.forEach((conn) => {
+      count += conn.subscriptionCount;
+    });
+    return count;
+  }
+
+  getConnectionSnapshots(): AdminConnectionSnapshot[] {
+    const snapshots: AdminConnectionSnapshot[] = [];
+    this.connections.forEach((conn) => {
+      snapshots.push(conn.toSnapshot());
+    });
+    return snapshots;
   }
 }

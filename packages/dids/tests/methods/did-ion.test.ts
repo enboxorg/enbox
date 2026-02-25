@@ -669,7 +669,8 @@ describe('DidIon', () => {
 
       expect(resolutionResult).toEqual(mockResult);
       expect(fetchStub).toHaveBeenCalledWith(
-        `https://dev.uniresolver.io/1.0/identifiers/${didUri}`
+        `https://dev.uniresolver.io/1.0/identifiers/${didUri}`,
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
       expect(fetchStub).toHaveBeenCalledTimes(1);
     });

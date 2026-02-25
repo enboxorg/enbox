@@ -89,9 +89,12 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
 
   /**
    * Properties to use when writing and querying records with the DWN store.
+   * Subclasses MUST override this to include `protocol` and `protocolPath`.
    */
-  protected _recordProperties = {
-    dataFormat: 'application/json',
+  protected _recordProperties: { dataFormat: string; protocol: string; protocolPath: string; schema?: string } = {
+    dataFormat   : 'application/json',
+    protocol     : '', // overridden by subclass
+    protocolPath : '', // overridden by subclass
   };
 
   public async delete({ id, agent, tenant }: DataStoreDeleteParams): Promise<boolean> {

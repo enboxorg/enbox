@@ -374,6 +374,16 @@ describe('JWK', () => {
       expect(isPrivateJwk('string')).toBe(false);
       expect(isPrivateJwk([])).toBe(false);
     });
+
+    it('returns false for an unknown kty value', () => {
+      const unknownKty = { kty: 'unknown', d: 'some-private-data' };
+      expect(isPrivateJwk(unknownKty)).toBe(false);
+    });
+
+    it('returns false for an object with no kty property', () => {
+      const noKty = { d: 'some-private-data', crv: 'P-256' };
+      expect(isPrivateJwk(noKty)).toBe(false);
+    });
   });
 
   describe('isPublicJwk()', () => {
@@ -448,6 +458,21 @@ describe('JWK', () => {
       expect(isPublicJwk(123)).toBe(false);
       expect(isPublicJwk('string')).toBe(false);
       expect(isPublicJwk([])).toBe(false);
+    });
+
+    it('returns false for an unknown kty value', () => {
+      const unknownKty = { kty: 'unknown', x: 'some-public-data' };
+      expect(isPublicJwk(unknownKty)).toBe(false);
+    });
+
+    it('returns false for oct kty (no public key concept for symmetric keys)', () => {
+      const octKey = { kty: 'oct', k: 'base64url-encoded-key' };
+      expect(isPublicJwk(octKey)).toBe(false);
+    });
+
+    it('returns false for RSA key missing required properties', () => {
+      const rsaMissingE = { kty: 'RSA', n: 'base64url-encoded-n-value' };
+      expect(isPublicJwk(rsaMissingE)).toBe(false);
     });
   });
 });

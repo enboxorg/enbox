@@ -69,8 +69,8 @@ describe('web5 api', () => {
         });
         expect(web5).toBeDefined();
         expect(web5).toHaveProperty('did');
-        expect(web5).toHaveProperty('dwn');
         expect(web5).toHaveProperty('vc');
+        expect(web5).toHaveProperty('using');
       });
 
       it('supports a single agent with multiple Web5 instances and different DIDs', async () => {
@@ -118,22 +118,38 @@ describe('web5 api', () => {
           didMethod : 'jwk',
         });
 
+        // Install free-for-all protocol for both identities.
+        const freeForAllDefinition = {
+          protocol  : 'http://free-for-all.xyz',
+          published : true,
+          types     : { post: {} },
+          structure : { post: {} },
+        };
+        for (const identity of [careerIdentity, socialIdentity]) {
+          await testHarness.agent.dwn.processRequest({
+            author        : identity.did.uri,
+            target        : identity.did.uri,
+            messageType   : DwnInterface.ProtocolsConfigure,
+            messageParams : { definition: freeForAllDefinition },
+          });
+        }
+
         // Instantiate a Web5 instance with the "Career" Identity, write a record, and verify the result.
         const web5Career = new Web5({
           agent        : testHarness.agent,
           connectedDid : careerIdentity.did.uri,
         });
-        const careerResult = await web5Career.dwn.records.write({
-          data    : 'Hello, world!',
-          message : {
-            schema     : 'foo/bar',
-            dataFormat : 'text/plain',
-          },
+        const careerResult = await (web5Career as any)._dwn.records.write({
+          data         : 'Hello, world!',
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          schema       : 'foo/bar',
+          dataFormat   : 'text/plain',
         });
         expect(careerResult.status.code).toBe(202);
         expect(careerResult.record).toBeDefined();
-        expect(careerResult.record?.author).toBe(careerIdentity.did.uri);
-        expect(await careerResult.record?.data.text()).toBe(
+        expect(careerResult.record.author).toBe(careerIdentity.did.uri);
+        expect(await careerResult.record.data.text()).toBe(
           'Hello, world!'
         );
 
@@ -142,17 +158,17 @@ describe('web5 api', () => {
           agent        : testHarness.agent,
           connectedDid : socialIdentity.did.uri,
         });
-        const socialResult = await web5Social.dwn.records.write({
-          data    : 'Hello, everyone!',
-          message : {
-            schema     : 'foo/bar',
-            dataFormat : 'text/plain',
-          },
+        const socialResult = await (web5Social as any)._dwn.records.write({
+          data         : 'Hello, everyone!',
+          protocol     : 'http://free-for-all.xyz',
+          protocolPath : 'post',
+          schema       : 'foo/bar',
+          dataFormat   : 'text/plain',
         });
         expect(socialResult.status.code).toBe(202);
         expect(socialResult.record).toBeDefined();
-        expect(socialResult.record?.author).toBe(socialIdentity.did.uri);
-        expect(await socialResult.record?.data.text()).toBe(
+        expect(socialResult.record.author).toBe(socialIdentity.did.uri);
+        expect(await socialResult.record.data.text()).toBe(
           'Hello, everyone!'
         );
       });
@@ -186,7 +202,7 @@ describe('web5 api', () => {
       // this avoids DB locks when the agent is created twice
       sinon.stub(Web5UserAgent, 'create').resolves(testHarness.agent as Web5UserAgent);
 
-      const { web5, recoveryPhrase, did } = await Web5.connect();
+      const { web5, recoveryPhrase, did } = await Web5.connect({ sync: 'off' });
       expect(web5).toBeDefined();
       expect(web5.agent).toBeInstanceOf(Web5UserAgent);
       // Verify recovery phrase is a 12-word string.
@@ -194,7 +210,7 @@ describe('web5 api', () => {
       expect(recoveryPhrase.split(' ')).toHaveLength(12);
 
       // if called again, the same DID is returned, and the recovery phrase is not regenerated
-      const { recoveryPhrase: recoveryPhraseConnect2, did: didConnect2 } = await Web5.connect();
+      const { recoveryPhrase: recoveryPhraseConnect2, did: didConnect2 } = await Web5.connect({ sync: 'off' });
       expect(recoveryPhraseConnect2).toBeUndefined();
       expect(didConnect2).toBe(did);
     });
@@ -208,9 +224,13 @@ describe('web5 api', () => {
       });
 
       // Call connect() with the custom agent.
+      // Sync is disabled because this test only verifies that connect() accepts
+      // a pre-created DID; firing sync against the unreachable testDwnUrls would
+      // hold the sync lock and cause subsequent tests to time out.
       const { web5, did } = await Web5.connect({
         agent        : testHarness.agent,
         connectedDid : testIdentity.did.uri,
+        sync         : 'off',
       });
 
       expect(did).toBeDefined();
@@ -225,7 +245,8 @@ describe('web5 api', () => {
       const walletConnectSpy = sinon.spy(WalletConnect, 'initClient');
       const identityApiSpy = sinon.spy(AgentIdentityApi.prototype, 'create');
       const { web5, did } = await Web5.connect({
-        techPreview: { dwnEndpoints: ['https://dwn.example.com/preview'] },
+        techPreview : { dwnEndpoints: ['https://dwn.example.com/preview'] },
+        sync        : 'off',
       });
       expect(web5).toBeDefined();
       expect(did).toBeDefined();
@@ -247,7 +268,8 @@ describe('web5 api', () => {
       const identityApiSpy = sinon.spy(AgentIdentityApi.prototype, 'create');
       const walletConnectSpy = sinon.spy(WalletConnect, 'initClient');
       const { web5, did } = await Web5.connect({
-        didCreateOptions: { dwnEndpoints: ['https://dwn.example.com'] },
+        didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+        sync             : 'off',
       });
       expect(web5).toBeDefined();
       expect(did).toBeDefined();
@@ -260,26 +282,22 @@ describe('web5 api', () => {
       expect(walletConnectSpy.called).toBe(false);
     });
 
-    it('defaults to the first identity if multiple identities exist', async () => {
-      // scenario: For some reason more than one identity exists when attempting to re-connect to `Web5`
-      // the first identity in the array should be the one selected
-      // TODO: this has happened due to a race condition somewhere. Dig into this issue
-      // and implement a better way to select/manage DIDs when using `Web5.connect()`
-
-      // create an identity by connecting
+    it('reconnects with the first identity when multiple identities exist', async () => {
+      // When additional identities are created via agent.identity.create() (e.g. for
+      // multi-persona use), connect() should still return the same DID on reconnect.
       sinon.stub(Web5UserAgent, 'create').resolves(testHarness.agent as Web5UserAgent);
-      const { web5, did } = await Web5.connect({ techPreview: { dwnEndpoints: [ testDwnUrl ] } });
+      const { web5, did } = await Web5.connect({ techPreview: { dwnEndpoints: [ testDwnUrl ] }, sync: 'off' });
       expect(web5).toBeDefined();
       expect(did).toBeDefined();
 
-      // create a second identity
+      // Create a second identity outside of connect() (multi-persona scenario).
       await testHarness.agent.identity.create({
         didMethod : 'jwk',
         metadata  : { name: 'Second' }
       });
 
-      // connect again
-      const { did: did2 } = await Web5.connect();
+      // Reconnecting should return the same DID as the first connect().
+      const { did: did2 } = await Web5.connect({ sync: 'off' });
       expect(did2).toBe(did);
     });
 
@@ -288,7 +306,7 @@ describe('web5 api', () => {
         .stub(Web5UserAgent, 'create')
         .resolves(testHarness.agent as Web5UserAgent);
       const identityApiSpy = sinon.spy(AgentIdentityApi.prototype, 'create');
-      const { web5, did } = await Web5.connect();
+      const { web5, did } = await Web5.connect({ sync: 'off' });
       expect(web5).toBeDefined();
       expect(did).toBeDefined();
 
@@ -471,12 +489,10 @@ describe('web5 api', () => {
         expect(delegateDid).toBe(app.uri);
 
         // use the grant to write a record
-        const writeResult = await web5.dwn.records.write({
-          data    : 'Hello, world!',
-          message : {
-            protocol     : protocol.protocol,
-            protocolPath : 'foo',
-          }
+        const writeResult = await (web5 as any)._dwn.records.write({
+          data         : 'Hello, world!',
+          protocol     : protocol.protocol,
+          protocolPath : 'foo',
         });
         expect(writeResult.status.code).toBe(202);
         expect(writeResult.record).toBeDefined();
@@ -485,11 +501,9 @@ describe('web5 api', () => {
         const writeSigner = Jws.getSignerDid(writeResult.record.authorization.signature.signatures[0]);
         expect(writeSigner).toBe(delegateDid);
 
-        const readResult = await web5.dwn.records.read({
+        const readResult = await (web5 as any)._dwn.records.read({
           protocol : protocol.protocol,
-          message  : {
-            filter: { recordId: writeResult.record.id }
-          }
+          filter   : { recordId: writeResult.record.id }
         });
         expect(readResult.status.code).toBe(200);
         expect(readResult.record).toBeDefined();
@@ -500,21 +514,16 @@ describe('web5 api', () => {
 
         // Because no grants exist for query, it will not fail but instead author AND sign as the delegate DID.
         // It will only return results if they are public, here it will return none. This is tested elsewhere.
-        const noPermissionQuery = await web5.dwn.records.query({
-          protocol : protocol.protocol,
-          message  : {
-            filter: { protocol: protocol.protocol }
-          }
+        const noPermissionQuery = await (web5 as any)._dwn.records.query({
+          filter: { protocol: protocol.protocol }
         });
         expect(noPermissionQuery.status.code).toBe(200);
         expect(noPermissionQuery.records).toHaveLength(0);
 
         try {
-          await web5.dwn.records.delete({
+          await (web5 as any)._dwn.records.delete({
             protocol : protocol.protocol,
-            message  : {
-              recordId: writeResult.record.id
-            }
+            recordId : writeResult.record.id
           });
 
           throw new Error('Should have thrown an error');
@@ -556,20 +565,15 @@ describe('web5 api', () => {
         });
 
         // attempt to delete using the grant
-        const deleteResult = await web5.dwn.records.delete({
+        const deleteResult = await (web5 as any)._dwn.records.delete({
           protocol : protocol.protocol,
-          message  : {
-            recordId: writeResult.record.id
-          }
+          recordId : writeResult.record.id
         });
         expect(deleteResult.status.code).toBe(202);
 
         // attempt to query using the grant
-        const queryResult = await web5.dwn.records.query({
-          protocol : protocol.protocol,
-          message  : {
-            filter: { protocol: protocol.protocol }
-          }
+        const queryResult = await (web5 as any)._dwn.records.query({
+          filter: { protocol: protocol.protocol }
         });
         expect(queryResult.status.code).toBe(200);
         expect(queryResult.records).toHaveLength(0); // record has been deleted
@@ -935,6 +939,108 @@ describe('web5 api', () => {
       });
     });
 
+    describe('processConnectedGrants()', () => {
+      it('should return empty array when grants have no protocol in scope', async () => {
+        const alice = await testHarness.createIdentity({
+          name        : 'Alice',
+          testDwnUrls : [testDwnUrl],
+        });
+
+        // Create a grant with a scope that has NO protocol field (e.g. Messages.Read at the top level).
+        const noProtocolGrant = await testHarness.agent.permissions.createGrant({
+          delegated   : true,
+          author      : alice.did.uri,
+          grantedTo   : alice.did.uri,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+          scope       : {
+            interface : DwnInterfaceName.Messages,
+            method    : DwnMethodName.Read,
+            // No `protocol` field — triggers the `if (protocol)` guard (line 737).
+          },
+        });
+
+        const connectedProtocols = await Web5.processConnectedGrants({
+          grants      : [noProtocolGrant.message],
+          agent       : testHarness.agent,
+          delegateDid : alice.did.uri,
+        });
+
+        // The grant was stored but no protocol was added to the result set.
+        expect(connectedProtocols).toEqual([]);
+      });
+
+      it('should return protocols when grants have protocol in scope', async () => {
+        const alice = await testHarness.createIdentity({
+          name        : 'Alice',
+          testDwnUrls : [testDwnUrl],
+        });
+
+        const protocolUri = 'https://example.com/test-protocol';
+
+        const protocolGrant = await testHarness.agent.permissions.createGrant({
+          delegated   : true,
+          author      : alice.did.uri,
+          grantedTo   : alice.did.uri,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+          scope       : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Write,
+            protocol  : protocolUri,
+          },
+        });
+
+        const connectedProtocols = await Web5.processConnectedGrants({
+          grants      : [protocolGrant.message],
+          agent       : testHarness.agent,
+          delegateDid : alice.did.uri,
+        });
+
+        expect(connectedProtocols).toEqual([protocolUri]);
+      });
+
+      it('should deduplicate protocols across multiple grants', async () => {
+        const alice = await testHarness.createIdentity({
+          name        : 'Alice',
+          testDwnUrls : [testDwnUrl],
+        });
+
+        const protocolUri = 'https://example.com/dedup-protocol';
+
+        const grant1 = await testHarness.agent.permissions.createGrant({
+          delegated   : true,
+          author      : alice.did.uri,
+          grantedTo   : alice.did.uri,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+          scope       : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Write,
+            protocol  : protocolUri,
+          },
+        });
+
+        const grant2 = await testHarness.agent.permissions.createGrant({
+          delegated   : true,
+          author      : alice.did.uri,
+          grantedTo   : alice.did.uri,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+          scope       : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Read,
+            protocol  : protocolUri,
+          },
+        });
+
+        const connectedProtocols = await Web5.processConnectedGrants({
+          grants      : [grant1.message, grant2.message],
+          agent       : testHarness.agent,
+          delegateDid : alice.did.uri,
+        });
+
+        // Same protocol appears in both grants, should be deduplicated.
+        expect(connectedProtocols).toEqual([protocolUri]);
+      });
+    });
+
     describe('registration', () => {
       it('should call onSuccess if registration is successful', async () => {
         sinon
@@ -969,6 +1075,7 @@ describe('web5 api', () => {
               'https://dwn.production.com/',
             ],
           },
+          sync: 'off',
         });
         expect(web5).toBeDefined();
         expect(did).toBeDefined();
@@ -1015,6 +1122,7 @@ describe('web5 api', () => {
               'https://dwn.production.com/',
             ],
           },
+          sync: 'off',
         });
         expect(web5).toBeDefined();
         expect(did).toBeDefined();
@@ -1061,6 +1169,7 @@ describe('web5 api', () => {
               'https://dwn.production.com/',
             ],
           },
+          sync: 'off',
         });
         expect(web5).toBeDefined();
         expect(did).toBeDefined();
@@ -1072,6 +1181,449 @@ describe('web5 api', () => {
         // Expect getServerInfo to be called but not registerTenant
         expect(serverInfoStub.calledTwice).toBe(true); // once per dwnEndpoint
         expect(registerStub.notCalled).toBe(true); // not called
+      });
+
+      describe('provider-auth', () => {
+        it('should use provider auth when server requires it and callback is provided', async () => {
+          sinon
+            .stub(Web5UserAgent, 'create')
+            .resolves(testHarness.agent as Web5UserAgent);
+          sinon
+            .stub(testHarness.agent.rpc, 'getServerInfo')
+            .resolves({
+              registrationRequirements : ['provider-auth-v0'],
+              maxFileSize              : 10000,
+              webSocketSupport         : true,
+              providerAuth             : {
+                authorizeUrl : 'https://auth.example.com/authorize',
+                tokenUrl     : 'https://auth.example.com/token',
+                refreshUrl   : 'https://auth.example.com/refresh',
+              },
+            });
+
+          const exchangeStub = sinon
+            .stub(DwnRegistrar, 'exchangeAuthCode')
+            .resolves({
+              registrationToken : 'reg-token-123',
+              refreshToken      : 'refresh-456',
+              expiresIn         : 3600,
+              tokenType         : 'bearer',
+            });
+
+          const registerTokenStub = sinon
+            .stub(DwnRegistrar, 'registerTenantWithToken')
+            .resolves();
+
+          const onProviderAuthRequired = sinon.stub().callsFake(
+            async (params: any): Promise<any> => ({
+              code  : 'auth-code-xyz',
+              state : params.state,
+            }),
+          );
+
+          const onRegistrationTokensSpy = sinon.spy();
+
+          const registration = {
+            onSuccess            : (): void => {},
+            onFailure            : (): void => {},
+            onProviderAuthRequired,
+            onRegistrationTokens : onRegistrationTokensSpy,
+          };
+
+          const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
+          const registerFailureSpy = sinon.spy(registration, 'onFailure');
+
+          const { web5, did } = await Web5.connect({
+            registration,
+            didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+            sync             : 'off',
+          });
+
+          expect(web5).toBeDefined();
+          expect(did).toBeDefined();
+          expect(registerSuccessSpy.calledOnce).toBe(true);
+          expect(registerFailureSpy.notCalled).toBe(true);
+
+          // Verify the auth flow was triggered.
+          expect(onProviderAuthRequired.calledOnce).toBe(true);
+          const authParams = onProviderAuthRequired.firstCall.args[0];
+          expect(authParams.authorizeUrl).toContain('https://auth.example.com/authorize');
+          expect(authParams.dwnEndpoint).toBe('https://dwn.example.com');
+          expect(authParams.state).toBeDefined();
+
+          // Verify code exchange was called.
+          expect(exchangeStub.calledOnce).toBe(true);
+          expect(exchangeStub.firstCall.args[0]).toBe('https://auth.example.com/token');
+          expect(exchangeStub.firstCall.args[1]).toBe('auth-code-xyz');
+
+          // Verify registration was called for both agent DID and connected DID.
+          expect(registerTokenStub.callCount).toBe(2);
+
+          // Verify tokens were reported back.
+          expect(onRegistrationTokensSpy.calledOnce).toBe(true);
+          const tokens = onRegistrationTokensSpy.firstCall.args[0];
+          expect(tokens['https://dwn.example.com']).toBeDefined();
+          expect(tokens['https://dwn.example.com'].registrationToken).toBe('reg-token-123');
+          expect(tokens['https://dwn.example.com'].refreshToken).toBe('refresh-456');
+        });
+
+        it('should reuse cached registration tokens from previous sessions', async () => {
+          sinon
+            .stub(Web5UserAgent, 'create')
+            .resolves(testHarness.agent as Web5UserAgent);
+          sinon
+            .stub(testHarness.agent.rpc, 'getServerInfo')
+            .resolves({
+              registrationRequirements : ['provider-auth-v0'],
+              maxFileSize              : 10000,
+              webSocketSupport         : true,
+              providerAuth             : {
+                authorizeUrl : 'https://auth.example.com/authorize',
+                tokenUrl     : 'https://auth.example.com/token',
+              },
+            });
+
+          const registerTokenStub = sinon
+            .stub(DwnRegistrar, 'registerTenantWithToken')
+            .resolves();
+
+          const onProviderAuthRequired = sinon.spy();
+
+          const registration = {
+            onSuccess          : (): void => {},
+            onFailure          : (): void => {},
+            onProviderAuthRequired,
+            registrationTokens : {
+              'https://dwn.example.com': {
+                registrationToken : 'cached-token',
+                tokenUrl          : 'https://auth.example.com/token',
+              },
+            },
+          };
+
+          const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
+
+          await Web5.connect({
+            registration,
+            didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+            sync             : 'off',
+          });
+
+          expect(registerSuccessSpy.calledOnce).toBe(true);
+
+          // The auth flow callback should NOT be called since we had a cached token.
+          expect(onProviderAuthRequired.notCalled).toBe(true);
+
+          // Registration should still be called with the cached token.
+          expect(registerTokenStub.callCount).toBe(2); // agent DID + connected DID
+          expect(registerTokenStub.firstCall.args[2]).toBe('cached-token');
+        });
+
+        it('should refresh expired tokens before registration', async () => {
+          sinon
+            .stub(Web5UserAgent, 'create')
+            .resolves(testHarness.agent as Web5UserAgent);
+          sinon
+            .stub(testHarness.agent.rpc, 'getServerInfo')
+            .resolves({
+              registrationRequirements : ['provider-auth-v0'],
+              maxFileSize              : 10000,
+              webSocketSupport         : true,
+              providerAuth             : {
+                authorizeUrl : 'https://auth.example.com/authorize',
+                tokenUrl     : 'https://auth.example.com/token',
+                refreshUrl   : 'https://auth.example.com/refresh',
+              },
+            });
+
+          const refreshStub = sinon
+            .stub(DwnRegistrar, 'refreshRegistrationToken')
+            .resolves({
+              registrationToken : 'refreshed-token',
+              refreshToken      : 'new-refresh',
+              expiresIn         : 7200,
+              tokenType         : 'bearer',
+            });
+
+          const registerTokenStub = sinon
+            .stub(DwnRegistrar, 'registerTenantWithToken')
+            .resolves();
+
+          const onProviderAuthRequired = sinon.spy();
+
+          const registration = {
+            onSuccess          : (): void => {},
+            onFailure          : (): void => {},
+            onProviderAuthRequired,
+            registrationTokens : {
+              'https://dwn.example.com': {
+                registrationToken : 'expired-token',
+                refreshToken      : 'old-refresh',
+                expiresAt         : Date.now() - 60000, // expired 1 minute ago
+                tokenUrl          : 'https://auth.example.com/token',
+                refreshUrl        : 'https://auth.example.com/refresh',
+              },
+            },
+          };
+
+          const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
+
+          await Web5.connect({
+            registration,
+            didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+            sync             : 'off',
+          });
+
+          expect(registerSuccessSpy.calledOnce).toBe(true);
+
+          // Token should have been refreshed.
+          expect(refreshStub.calledOnce).toBe(true);
+          expect(refreshStub.firstCall.args[0]).toBe('https://auth.example.com/refresh');
+          expect(refreshStub.firstCall.args[1]).toBe('old-refresh');
+
+          // Auth flow callback should NOT be called since refresh succeeded.
+          expect(onProviderAuthRequired.notCalled).toBe(true);
+
+          // Registration should use the refreshed token.
+          expect(registerTokenStub.firstCall.args[2]).toBe('refreshed-token');
+        });
+
+        it('should fall back to PoW when provider auth callback is not provided', async () => {
+          sinon
+            .stub(Web5UserAgent, 'create')
+            .resolves(testHarness.agent as Web5UserAgent);
+          sinon
+            .stub(testHarness.agent.rpc, 'getServerInfo')
+            .resolves({
+              registrationRequirements : ['provider-auth-v0', 'proof-of-work-sha256-v0'],
+              maxFileSize              : 10000,
+              webSocketSupport         : true,
+              providerAuth             : {
+                authorizeUrl : 'https://auth.example.com/authorize',
+                tokenUrl     : 'https://auth.example.com/token',
+              },
+            });
+
+          const registerStub = sinon
+            .stub(DwnRegistrar, 'registerTenant')
+            .resolves();
+
+          const registration = {
+            onSuccess : (): void => {},
+            onFailure : (): void => {},
+            // NOTE: no onProviderAuthRequired — should fall back to PoW.
+          };
+
+          const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
+
+          await Web5.connect({
+            registration,
+            didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+            sync             : 'off',
+          });
+
+          expect(registerSuccessSpy.calledOnce).toBe(true);
+          expect(registerStub.callCount).toBe(2); // PoW for both DIDs
+        });
+
+        it('should use default registration when server does not advertise provider-auth-v0', async () => {
+          sinon
+            .stub(Web5UserAgent, 'create')
+            .resolves(testHarness.agent as Web5UserAgent);
+          sinon
+            .stub(testHarness.agent.rpc, 'getServerInfo')
+            .resolves({
+              registrationRequirements : ['terms-of-service'],
+              maxFileSize              : 10000,
+              webSocketSupport         : true,
+            });
+
+          const registerStub = sinon
+            .stub(DwnRegistrar, 'registerTenant')
+            .resolves();
+
+          const onProviderAuthRequired = sinon.spy();
+
+          const registration = {
+            onSuccess : (): void => {},
+            onFailure : (): void => {},
+            onProviderAuthRequired,
+          };
+
+          const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
+          const registerFailureSpy = sinon.spy(registration, 'onFailure');
+
+          const { web5, did } = await Web5.connect({
+            registration,
+            didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+            sync             : 'off',
+          });
+
+          expect(web5).toBeDefined();
+          expect(did).toBeDefined();
+          expect(registerSuccessSpy.calledOnce).toBe(true);
+          expect(registerFailureSpy.notCalled).toBe(true);
+
+          // Provider auth callback should NOT be called — server did not advertise it.
+          expect(onProviderAuthRequired.notCalled).toBe(true);
+
+          // Default registration should be used for both DIDs.
+          expect(registerStub.callCount).toBe(2);
+        });
+
+        it('should use default registration when server advertises provider-auth-v0 but has no providerAuth info', async () => {
+          sinon
+            .stub(Web5UserAgent, 'create')
+            .resolves(testHarness.agent as Web5UserAgent);
+          sinon
+            .stub(testHarness.agent.rpc, 'getServerInfo')
+            .resolves({
+              registrationRequirements : ['provider-auth-v0'],
+              maxFileSize              : 10000,
+              webSocketSupport         : true,
+              // NOTE: no providerAuth field — hasProviderAuth will be false.
+            });
+
+          const registerStub = sinon
+            .stub(DwnRegistrar, 'registerTenant')
+            .resolves();
+
+          const onProviderAuthRequired = sinon.spy();
+
+          const registration = {
+            onSuccess : (): void => {},
+            onFailure : (): void => {},
+            onProviderAuthRequired,
+          };
+
+          const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
+
+          await Web5.connect({
+            registration,
+            didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+            sync             : 'off',
+          });
+
+          expect(registerSuccessSpy.calledOnce).toBe(true);
+
+          // Provider auth callback should NOT be called — providerAuth info missing.
+          expect(onProviderAuthRequired.notCalled).toBe(true);
+
+          // Default registration should be used.
+          expect(registerStub.callCount).toBe(2);
+        });
+
+        it('should call onFailure when provider auth state mismatch occurs', async () => {
+          sinon
+            .stub(Web5UserAgent, 'create')
+            .resolves(testHarness.agent as Web5UserAgent);
+          sinon
+            .stub(testHarness.agent.rpc, 'getServerInfo')
+            .resolves({
+              registrationRequirements : ['provider-auth-v0'],
+              maxFileSize              : 10000,
+              webSocketSupport         : true,
+              providerAuth             : {
+                authorizeUrl : 'https://auth.example.com/authorize',
+                tokenUrl     : 'https://auth.example.com/token',
+              },
+            });
+
+          const onProviderAuthRequired = sinon.stub().resolves({
+            code  : 'auth-code',
+            state : 'wrong-state', // does not match the generated state
+          });
+
+          const registration = {
+            onSuccess : (): void => {},
+            onFailure : (): void => {},
+            onProviderAuthRequired,
+          };
+
+          const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
+          const registerFailureSpy = sinon.spy(registration, 'onFailure');
+
+          await Web5.connect({
+            registration,
+            didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+            sync             : 'off',
+          });
+
+          // Should fail due to state mismatch.
+          expect(registerSuccessSpy.notCalled).toBe(true);
+          expect(registerFailureSpy.calledOnce).toBe(true);
+          const failError = registerFailureSpy.firstCall.args[0];
+          expect(failError.message).toContain('state mismatch');
+        });
+      });
+
+      it('should clear tokenData when expired and no refreshUrl/refreshToken are available', async () => {
+        sinon
+          .stub(Web5UserAgent, 'create')
+          .resolves(testHarness.agent as Web5UserAgent);
+        sinon
+          .stub(testHarness.agent.rpc, 'getServerInfo')
+          .resolves({
+            registrationRequirements : ['provider-auth-v0'],
+            maxFileSize              : 10000,
+            webSocketSupport         : true,
+            providerAuth             : {
+              authorizeUrl : 'https://auth.example.com/authorize',
+              tokenUrl     : 'https://auth.example.com/token',
+              refreshUrl   : 'https://auth.example.com/refresh',
+            },
+          });
+
+        // Stub the auth flow: simulates the provider auth callback.
+        const onProviderAuthRequired = sinon.stub().resolves({
+          code  : 'auth-code-123',
+          state : '', // We'll intercept the state to match it below.
+        });
+
+        // Stub exchangeAuthCode to return valid token data.
+        sinon.stub(DwnRegistrar, 'exchangeAuthCode').resolves({
+          registrationToken : 'new-token',
+          refreshToken      : 'new-refresh',
+          expiresIn         : 3600,
+          tokenType         : 'bearer',
+        });
+
+        sinon.stub(DwnRegistrar, 'registerTenantWithToken').resolves();
+
+        // Make onProviderAuthRequired resolve with matching state.
+        onProviderAuthRequired.callsFake(async ({ state }) => ({
+          code: 'auth-code-123',
+          state,
+        }));
+
+        const registration = {
+          onSuccess          : (): void => {},
+          onFailure          : (): void => {},
+          onProviderAuthRequired,
+          // Expired token WITHOUT refreshUrl/refreshToken — triggers the else branch (line 590-591).
+          registrationTokens : {
+            'https://dwn.example.com': {
+              registrationToken : 'expired-token',
+              expiresAt         : Date.now() - 60000, // expired 1 minute ago
+              tokenUrl          : 'https://auth.example.com/token',
+              // No refreshUrl or refreshToken — should clear tokenData.
+            },
+          },
+        };
+
+        const registerSuccessSpy = sinon.spy(registration, 'onSuccess');
+        const registerFailureSpy = sinon.spy(registration, 'onFailure');
+
+        await Web5.connect({
+          registration,
+          didCreateOptions : { dwnEndpoints: ['https://dwn.example.com'] },
+          sync             : 'off',
+        });
+
+        // onProviderAuthRequired should have been called because tokenData was cleared to undefined.
+        expect(onProviderAuthRequired.calledOnce).toBe(true);
+        expect(registerSuccessSpy.calledOnce).toBe(true);
+        expect(registerFailureSpy.notCalled).toBe(true);
       });
 
       it('techPreview.dwnEndpoints should take precedence over didCreateOptions.dwnEndpoints', async () => {
@@ -1107,7 +1659,8 @@ describe('web5 api', () => {
               'https://dwn.production.com/',
             ],
           }, // two endpoints,
-          techPreview: { dwnEndpoints: ['https://dwn.production.com/'] }, // one endpoint
+          techPreview : { dwnEndpoints: ['https://dwn.production.com/'] }, // one endpoint
+          sync        : 'off',
         });
         expect(web5).toBeDefined();
         expect(did).toBeDefined();

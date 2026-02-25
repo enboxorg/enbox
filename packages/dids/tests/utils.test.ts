@@ -332,15 +332,44 @@ describe('DID Utils', () => {
   });
 
   describe('isDwnDidService', () => {
-    it('returns true for a valid DwnDidService object', () => {
-      const validDwnService = {
+    it('returns true for a DwnDidService without enc/sig (spec-compliant minimal)', () => {
+      const minimalDwnService = {
+        id              : 'did:example:123#dwn',
+        type            : 'DecentralizedWebNode',
+        serviceEndpoint : 'https://dwn.example.org',
+      };
+      expect(isDwnDidService(minimalDwnService)).toBe(true);
+    });
+
+    it('returns true for a DwnDidService with legacy enc/sig properties', () => {
+      const legacyDwnService = {
         id              : 'did:example:123#dwn',
         type            : 'DecentralizedWebNode',
         serviceEndpoint : 'https://dwn.example.org',
         enc             : 'did:example:123#key-1',
         sig             : 'did:example:123#key-2'
       };
-      expect(isDwnDidService(validDwnService)).toBe(true);
+      expect(isDwnDidService(legacyDwnService)).toBe(true);
+    });
+
+    it('returns true with only enc present (no sig)', () => {
+      const encOnlyService = {
+        id              : 'did:example:123#dwn',
+        type            : 'DecentralizedWebNode',
+        serviceEndpoint : 'https://dwn.example.org',
+        enc             : 'did:example:123#key-1'
+      };
+      expect(isDwnDidService(encOnlyService)).toBe(true);
+    });
+
+    it('returns true with only sig present (no enc)', () => {
+      const sigOnlyService = {
+        id              : 'did:example:123#dwn',
+        type            : 'DecentralizedWebNode',
+        serviceEndpoint : 'https://dwn.example.org',
+        sig             : 'did:example:123#key-2'
+      };
+      expect(isDwnDidService(sigOnlyService)).toBe(true);
     });
 
     it('returns false for a non-DwnDidService type', () => {
@@ -348,30 +377,8 @@ describe('DID Utils', () => {
         id              : 'did:example:123#service',
         type            : 'SomeOtherType',
         serviceEndpoint : 'https://service.example.org',
-        enc             : 'did:example:123#key-1',
-        sig             : 'did:example:123#key-2'
       };
       expect(isDwnDidService(nonDwnService)).toBe(false);
-    });
-
-    it('returns false for missing enc property', () => {
-      const missingEncService = {
-        id              : 'did:example:123#dwn',
-        type            : 'DecentralizedWebNode',
-        serviceEndpoint : 'https://dwn.example.org',
-        sig             : 'did:example:123#key-2'
-      };
-      expect(isDwnDidService(missingEncService)).toBe(false);
-    });
-
-    it('returns false for missing sig property', () => {
-      const missingSigService = {
-        id              : 'did:example:123#dwn',
-        type            : 'DecentralizedWebNode',
-        serviceEndpoint : 'https://dwn.example.org',
-        enc             : 'did:example:123#key-1'
-      };
-      expect(isDwnDidService(missingSigService)).toBe(false);
     });
 
     it('returns false for invalid enc property type', () => {
@@ -380,7 +387,6 @@ describe('DID Utils', () => {
         type            : 'DecentralizedWebNode',
         serviceEndpoint : 'https://dwn.example.org',
         enc             : 123,
-        sig             : 'did:example:123#key-2'
       };
       expect(isDwnDidService(invalidEncService)).toBe(false);
     });
@@ -390,7 +396,6 @@ describe('DID Utils', () => {
         id              : 'did:example:123#dwn',
         type            : 'DecentralizedWebNode',
         serviceEndpoint : 'https://dwn.example.org',
-        enc             : 'did:example:123#key-1',
         sig             : true
       };
       expect(isDwnDidService(invalidSigService)).toBe(false);
@@ -402,7 +407,6 @@ describe('DID Utils', () => {
         type            : 'DecentralizedWebNode',
         serviceEndpoint : 'https://dwn.example.org',
         enc             : [123, 'did:example:123#key-1'],
-        sig             : 'did:example:123#key-2'
       };
       expect(isDwnDidService(arrayEncService)).toBe(false);
     });
@@ -412,7 +416,6 @@ describe('DID Utils', () => {
         id              : 'did:example:123#dwn',
         type            : 'DecentralizedWebNode',
         serviceEndpoint : 'https://dwn.example.org',
-        enc             : 'did:example:123#key-1',
         sig             : ['did:example:123#key-2', null]
       };
       expect(isDwnDidService(arraySigService)).toBe(false);
@@ -437,8 +440,6 @@ describe('DID Utils', () => {
         id            : 'did:example:123#dwn',
         type          : 'DecentralizedWebNode',
         wrongProperty : 'https://dwn.example.org',
-        enc           : 'did:example:123#key-1',
-        sig           : 'did:example:123#key-2'
       };
       expect(isDwnDidService(invalidStructureService)).toBe(false);
     });

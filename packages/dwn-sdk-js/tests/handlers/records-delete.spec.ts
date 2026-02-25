@@ -1,5 +1,5 @@
 import type { DidResolver } from '@enbox/dids';
-import type { EventStream } from '../../src/types/subscriptions.js';
+import type { EventLog } from '../../src/types/subscriptions.js';
 import { ResumableTaskManager } from '../../src/core/resumable-task-manager.js';
 import type {
   DataStore,
@@ -25,7 +25,7 @@ import { Message } from '../../src/core/message.js';
 import { normalizeSchemaUrl } from '../../src/utils/url.js';
 import { RecordsDeleteHandler } from '../../src/handlers/records-delete.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { TestEventStream } from '../test-event-stream.js';
+import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
@@ -40,7 +40,7 @@ export function testRecordsDeleteHandler(): void {
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
     let stateIndex: StateIndex;
-    let eventStream: EventStream;
+    let eventLog: EventLog;
     let dwn: Dwn;
 
     beforeEach(() => {
@@ -63,9 +63,9 @@ export function testRecordsDeleteHandler(): void {
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
         stateIndex = stores.stateIndex;
-        eventStream = TestEventStream.get();
+        eventLog = TestEventLog.get();
 
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventStream, resumableTaskStore });
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
       });
 
       beforeEach(async () => {
@@ -82,6 +82,7 @@ export function testRecordsDeleteHandler(): void {
 
       it('should handle RecordsDelete successfully and return 404 if deleting a deleted record', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // insert data
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -125,6 +126,8 @@ export function testRecordsDeleteHandler(): void {
       it('should not affect other records or tenants with the same data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, bob);
         const data = Encoder.stringToBytes('test');
 
         // alice writes a records with data
@@ -211,6 +214,7 @@ export function testRecordsDeleteHandler(): void {
 
       it('should be disallowed if there is a newer RecordsWrite already in the DWN ', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // initial write
         const initialWriteData = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -251,6 +255,7 @@ export function testRecordsDeleteHandler(): void {
 
       it('should be able to delete then rewrite the same data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const data = Encoder.stringToBytes('test');
         const encodedData = Encoder.bytesToBase64Url(data);
 
@@ -645,6 +650,7 @@ export function testRecordsDeleteHandler(): void {
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         const recordsWrite = await TestDataGenerator.generateRecordsWrite({
           author: alice,
@@ -658,7 +664,6 @@ export function testRecordsDeleteHandler(): void {
         });
         const recordsDeleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
         expect(recordsDeleteReply.status.code).toBe(401);
-        expect(recordsDeleteReply.status.detail).toContain(DwnErrorCode.RecordsDeleteAuthorizationFailed);
       });
 
       describe('grant based deletes', () => {
@@ -781,28 +786,11 @@ export function testRecordsDeleteHandler(): void {
           expect(deleteReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationDeleteProtocolScopeMismatch);
         });
 
-        it('should reject delete without a grant when non-owner tries to delete a non-protocol record', async () => {
-          // scenario: Alice writes a non-protocol record, Bob tries to delete it without any grant.
-          //           This test verifies the fallback error path is unchanged.
-
-          const alice = await TestDataGenerator.generateDidKeyPersona();
-          const bob = await TestDataGenerator.generateDidKeyPersona();
-
-          const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
-          expect((await dwn.processMessage(alice.did, recordsWrite.message, { dataStream })).status.code).toBe(202);
-
-          const recordsDelete = await RecordsDelete.create({
-            recordId : recordsWrite.message.recordId,
-            signer   : Jws.createSigner(bob),
-          });
-          const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
-          expect(deleteReply.status.code).toBe(401);
-          expect(deleteReply.status.detail).toContain(DwnErrorCode.RecordsDeleteAuthorizationFailed);
-        });
       });
 
       it('should index additional properties from the RecordsWrite being deleted', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
         // initial write
         const initialWriteData = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'testSchema' });
@@ -833,6 +821,7 @@ export function testRecordsDeleteHandler(): void {
       describe('state index', () => {
         it('should include RecordsDelete event and keep initial RecordsWrite event', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
           const writeReply = await dwn.processMessage(alice.did, message, { dataStream });
@@ -846,8 +835,9 @@ export function testRecordsDeleteHandler(): void {
           const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
           expect(deleteReply.status.code).toBe(202);
 
+          // NOTE: getLeaves returns ALL messageCids (including ProtocolsConfigure), so count is 3 not 2
           const events = await stateIndex.getLeaves(alice.did, []);
-          expect(events.length).toBe(2);
+          expect(events.length).toBe(3);
 
           const writeMessageCid = await Message.getCid(message);
           const deleteMessageCid = await Message.getCid(recordsDelete.message);
@@ -861,8 +851,11 @@ export function testRecordsDeleteHandler(): void {
         });
 
         it('should only keep first write and delete when subsequent writes happen', async () => {
-          const { message, author, dataStream, recordsWrite } = await TestDataGenerator.generateRecordsWrite();
+          const author = await TestDataGenerator.generatePersona();
           TestStubGenerator.stubDidResolver(didResolver, [author]);
+          await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+
+          const { message, dataStream, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ author });
 
           const reply = await dwn.processMessage(author.did, message, { dataStream });
           expect(reply.status.code).toBe(202);
@@ -885,7 +878,7 @@ export function testRecordsDeleteHandler(): void {
           expect(deleteReply.status.code).toBe(202);
 
           const events = await stateIndex.getLeaves(author.did, []);
-          expect(events.length).toBe(2);
+          expect(events.length).toBe(3);
 
           const deletedMessageCid = await Message.getCid(newWrite.message);
 
@@ -911,7 +904,9 @@ export function testRecordsDeleteHandler(): void {
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
       const resumableTaskManagerStub = sinon.createStubInstance(ResumableTaskManager);
 
-      const recordsDeleteHandler = new RecordsDeleteHandler(didResolver, messageStoreStub, resumableTaskManagerStub);
+      const recordsDeleteHandler = new RecordsDeleteHandler({
+        didResolver, messageStore: messageStoreStub, resumableTaskManager: resumableTaskManagerStub,
+      });
       const reply = await recordsDeleteHandler.handle({ tenant, message });
       expect(reply.status.code).toBe(401);
     });
@@ -924,7 +919,9 @@ export function testRecordsDeleteHandler(): void {
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
       const resumableTaskManagerStub = sinon.createStubInstance(ResumableTaskManager);
 
-      const recordsDeleteHandler = new RecordsDeleteHandler(didResolver, messageStoreStub, resumableTaskManagerStub);
+      const recordsDeleteHandler = new RecordsDeleteHandler({
+        didResolver, messageStore: messageStoreStub, resumableTaskManager: resumableTaskManagerStub,
+      });
 
       // stub the `parse()` function to throw an error
       sinon.stub(RecordsDelete, 'parse').throws('anyError');

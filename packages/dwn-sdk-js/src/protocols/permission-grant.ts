@@ -68,7 +68,7 @@ export class PermissionGrant {
    * and that the decoded data contains `scope` and `dateExpires`.
    * @throws {DwnError} if any required field is missing.
    */
-  public static async parse(message: DataEncodedRecordsWriteMessage): Promise<PermissionGrant> {
+  public static parse(message: DataEncodedRecordsWriteMessage): PermissionGrant {
     PermissionGrant.validateMessage(message);
     const permissionGrant = new PermissionGrant(message);
     return permissionGrant;

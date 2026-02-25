@@ -31,3 +31,13 @@ export const testPostgresDialect = new PostgresDialect({
 export const testSqliteDialect = new SqliteDialect({
   database: async (): Promise<ReturnType<typeof createBunSqliteDatabase>> => createBunSqliteDatabase('dwn.sqlite', { create: true }),
 });
+
+/**
+ * Creates a fresh SQLite dialect with the given database file name.
+ * Useful for tests that need an isolated database (e.g., DataStoreS3 tests).
+ */
+export function getTestSqliteDialect(filename = 'dwn-s3-test.sqlite'): SqliteDialect {
+  return new SqliteDialect({
+    database: async (): Promise<ReturnType<typeof createBunSqliteDatabase>> => createBunSqliteDatabase(filename, { create: true }),
+  });
+}

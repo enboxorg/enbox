@@ -179,4 +179,109 @@ describe('SocketConnection', () => {
     expect(logSpy).toHaveBeenCalledTimes(1);
     expect(closeSpy).toHaveBeenCalledTimes(1);
   });
+
+  describe('toSnapshot()', () => {
+    it('should return a snapshot with all expected fields', async () => {
+      const socket = createMockSocket();
+      const connection = new SocketConnection(socket, dwn);
+
+      const snapshot = connection.toSnapshot();
+
+      expect(snapshot.id).toBe(connection.id);
+      expect(typeof snapshot.connectedAt).toBe('string');
+      // Verify connectedAt is a valid ISO date string.
+      expect(new Date(snapshot.connectedAt).toISOString()).toBe(snapshot.connectedAt);
+      expect(snapshot.subscriptionCount).toBe(0);
+      expect(snapshot.subscriptions).toBeInstanceOf(Array);
+      expect(snapshot.subscriptions.length).toBe(0);
+
+      await connection.close();
+    });
+
+    it('should reflect the correct subscription count after adding subscriptions', async () => {
+      const socket = createMockSocket();
+      const connection = new SocketConnection(socket, dwn);
+
+      await connection.addSubscription({
+        id     : 'snap-sub-1',
+        method : 'method',
+        params : {},
+        close  : async (): Promise<void> => {},
+      });
+
+      const snapshot = connection.toSnapshot();
+      expect(snapshot.subscriptionCount).toBe(1);
+
+      await connection.close();
+    });
+  });
+
+  describe('toSnapshot() with active flow controllers', () => {
+    it('should include flow controller stats in subscription snapshots', async () => {
+      const socket = createMockSocket();
+      const connection = new SocketConnection(socket, dwn, undefined, 10);
+
+      // Populate the flowControllers map directly to simulate an active subscription.
+      const { FlowController } = await import('../../src/connection/flow-controller.js');
+      const fc = new FlowController('fc-sub-1', 10, () => {}, () => {});
+      (connection as any).flowControllers.set('fc-sub-1', fc);
+
+      // Also add a matching subscription entry so subscriptionCount is correct.
+      (connection as any).subscriptions.set('fc-sub-1', {
+        id    : 'fc-sub-1',
+        close : async (): Promise<void> => {},
+      });
+
+      const snapshot = connection.toSnapshot();
+      expect(snapshot.subscriptionCount).toBe(1);
+      expect(snapshot.subscriptions.length).toBe(1);
+      expect(snapshot.subscriptions[0].id).toBe('fc-sub-1');
+      expect(snapshot.subscriptions[0].inflight).toBe(0);
+      expect(snapshot.subscriptions[0].buffered).toBe(0);
+
+      await connection.close();
+    });
+  });
+
+  // NOTE: The original version had a "send when socket is not OPEN" test that
+  // mocked readyState to 0 and asserted that send() would not forward to the
+  // underlying socket. However, `SocketConnection.send()` has no readyState
+  // guard — it unconditionally calls `this.socket.send()` (line 234 of
+  // socket-connection.ts). The test was meaningless because it was testing
+  // behavior that doesn't exist in the source. Replaced with tests for the
+  // `message()` method's actual error-handling paths: empty payload and
+  // invalid JSON, which both return JsonRpcErrorCodes.BadRequest (-50400).
+  describe('message()', () => {
+    it('should return a BadRequest error response for an empty payload', async () => {
+      const socket = createMockSocket();
+      const connection = new SocketConnection(socket, dwn);
+
+      const sendStub = socket.send as sinon.SinonStub;
+      await connection.message(Buffer.from(''));
+
+      // The empty-payload guard (line 170-176) should send back a JSON-RPC error.
+      expect(sendStub.calledOnce).toBe(true);
+      const sent = JSON.parse(sendStub.firstCall.args[0]);
+      expect(sent.error).toBeDefined();
+      expect(sent.error.code).toBe(-50400); // JsonRpcErrorCodes.BadRequest
+      expect(sent.error.message).toBe('request payload required.');
+
+      await connection.close();
+    });
+
+    it('should return a BadRequest error response for invalid JSON', async () => {
+      const socket = createMockSocket();
+      const connection = new SocketConnection(socket, dwn);
+
+      const sendStub = socket.send as sinon.SinonStub;
+      await connection.message(Buffer.from('not valid json!!!'));
+
+      expect(sendStub.calledOnce).toBe(true);
+      const sent = JSON.parse(sendStub.firstCall.args[0]);
+      expect(sent.error).toBeDefined();
+      expect(sent.error.code).toBe(-50400); // JsonRpcErrorCodes.BadRequest
+
+      await connection.close();
+    });
+  });
 });

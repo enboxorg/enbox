@@ -1,8 +1,7 @@
-import type { DataStore } from '../types/data-store.js';
-import type { DidResolver } from '@enbox/dids';
+import type { CoreProtocolRegistry } from '../core/core-protocol.js';
 import type { Filter } from '../types/query-types.js';
 import type { MessageStore } from '../types//message-store.js';
-import type { MethodHandler } from '../types/method-handler.js';
+import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsDeleteMessage, RecordsQueryReplyEntry, RecordsReadMessage, RecordsReadReply } from '../types/records-types.js';
 
 import { authenticate } from '../core/auth.js';
@@ -21,7 +20,7 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 
 export class RecordsReadHandler implements MethodHandler {
 
-  constructor(private didResolver: DidResolver, private messageStore: MessageStore, private dataStore: DataStore) { }
+  constructor(private deps: HandlerDependencies) { }
 
   public async handle({
     tenant,
@@ -38,7 +37,7 @@ export class RecordsReadHandler implements MethodHandler {
     // authentication
     try {
       if (recordsRead.author !== undefined) {
-        await authenticate(message.authorization!, this.didResolver);
+        await authenticate(message.authorization!, this.deps.didResolver);
       }
     } catch (e) {
       return messageReplyFromError(e, 401);
@@ -52,7 +51,7 @@ export class RecordsReadHandler implements MethodHandler {
       ...Records.convertFilter(message.descriptor.filter)
     };
     const messageSort = Records.convertDateSort(message.descriptor.dateSort);
-    const { messages: existingMessages } = await this.messageStore.query(tenant, [ query ], messageSort, { limit: 1 });
+    const { messages: existingMessages } = await this.deps.messageStore.query(tenant, [ query ], messageSort, { limit: 1 });
     if (existingMessages.length === 0) {
       return {
         status: { code: 404, detail: 'Not Found' }
@@ -61,24 +60,35 @@ export class RecordsReadHandler implements MethodHandler {
 
     const matchedMessage = existingMessages[0];
 
-    // if the matched message is a RecordsDelete, we mark the record as not-found and return both the RecordsDelete and the initial RecordsWrite
-    // TODO: https://github.com/enboxorg/enbox/issues/222
-    // Consider performing authorization checks like when records exists before returning RecordsDelete and initial RecordsWrite of a deleted record
+    // If the matched message is a RecordsDelete, authorize against the newest RecordsWrite
+    // (for parity with the live-record path which authorizes against the latest write),
+    // then return 404 with both the RecordsDelete and the initial RecordsWrite.
     if (matchedMessage.descriptor.method === DwnMethodName.Delete) {
       const recordsDeleteMessage = matchedMessage as RecordsDeleteMessage;
-      const initialWrite = await RecordsWrite.fetchInitialRecordsWriteMessage(this.messageStore, tenant, recordsDeleteMessage.descriptor.recordId);
+      const recordId = recordsDeleteMessage.descriptor.recordId;
 
+      const initialWrite = await RecordsWrite.fetchInitialRecordsWriteMessage(this.deps.messageStore, tenant, recordId);
       if (initialWrite === undefined) {
         return messageReplyFromError(new DwnError(
           DwnErrorCode.RecordsReadInitialWriteNotFound,
-          'Initial write for deleted record not found'
+          'initial write for deleted record not found'
         ), 400);
       }
 
-      // Perform authorization before returning the delete and initial write messages
-      const parsedInitialWrite = await RecordsWrite.parse(initialWrite);
+      // Authorize against the newest RecordsWrite so that mutable properties like `published`
+      // reflect the record's state at the time of deletion, not just the initial write.
+      let newestWrite;
       try {
-        await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedInitialWrite, this.messageStore);
+        newestWrite = await RecordsWrite.fetchNewestRecordsWrite(this.deps.messageStore, tenant, recordId);
+      } catch {
+        // If newest write is not found (should not happen since initial write exists),
+        // fall back to the initial write for authorization.
+        newestWrite = initialWrite;
+      }
+      const parsedNewestWrite = await RecordsWrite.parse(newestWrite);
+
+      try {
+        await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedNewestWrite, this.deps.messageStore, this.deps.coreProtocols);
       } catch (error) {
         return messageReplyFromError(error, 401);
       }
@@ -87,7 +97,7 @@ export class RecordsReadHandler implements MethodHandler {
         status : { code: 404, detail: 'Not Found' },
         entry  : {
           recordsDelete: recordsDeleteMessage,
-          initialWrite
+          initialWrite,
         }
       };
     }
@@ -96,7 +106,10 @@ export class RecordsReadHandler implements MethodHandler {
     const matchedRecordsWrite = matchedMessage as RecordsQueryReplyEntry;
 
     try {
-      await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, await RecordsWrite.parse(matchedRecordsWrite), this.messageStore);
+      const parsedWrite = await RecordsWrite.parse(matchedRecordsWrite);
+      await RecordsReadHandler.authorizeRecordsRead(
+        tenant, recordsRead, parsedWrite, this.deps.messageStore, this.deps.coreProtocols,
+      );
     } catch (error) {
       return messageReplyFromError(error, 401);
     }
@@ -107,10 +120,14 @@ export class RecordsReadHandler implements MethodHandler {
       data = DataStream.fromBytes(dataBytes);
       delete matchedRecordsWrite.encodedData;
     } else {
-      const result = await this.dataStore.get(tenant, matchedRecordsWrite.recordId, matchedRecordsWrite.descriptor.dataCid);
+      const result = await this.deps.dataStore!.get(tenant, matchedRecordsWrite.recordId, matchedRecordsWrite.descriptor.dataCid);
       if (result?.dataStream === undefined) {
+        // The message envelope exists but the record data is unavailable (e.g., evicted
+        // by a storage-constrained node, or read proxying to peer endpoints failed).
+        // Return 410 with the recordsWrite so the requester can try an alternative endpoint.
         return {
-          status: { code: 404, detail: 'Not Found' }
+          status : { code: 410, detail: 'Record data not available' },
+          entry  : { recordsWrite: matchedRecordsWrite },
         };
       }
       data = result.dataStream;
@@ -126,7 +143,7 @@ export class RecordsReadHandler implements MethodHandler {
 
     // attach initial write if latest RecordsWrite is not initial write
     if (!await RecordsWrite.isInitialWrite(matchedRecordsWrite)) {
-      const initialWriteQueryResult = await this.messageStore.query(
+      const initialWriteQueryResult = await this.deps.messageStore.query(
         tenant,
         [{ recordId: matchedRecordsWrite.recordId, isLatestBaseState: false, method: DwnMethodName.Write }]
       );
@@ -145,7 +162,8 @@ export class RecordsReadHandler implements MethodHandler {
     tenant: string,
     recordsRead: RecordsRead,
     matchedRecordsWrite: RecordsWrite,
-    messageStore: MessageStore
+    messageStore: MessageStore,
+    coreProtocols?: CoreProtocolRegistry,
   ): Promise<void> {
     if (Message.isSignedByAuthorDelegate(recordsRead.message)) {
       await recordsRead.authorizeDelegate(matchedRecordsWrite.message, messageStore);
@@ -174,10 +192,8 @@ export class RecordsReadHandler implements MethodHandler {
         permissionGrant,
         messageStore
       });
-    } else if (descriptor.protocol !== undefined) {
-      await ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, messageStore);
     } else {
-      throw new DwnError(DwnErrorCode.RecordsReadAuthorizationFailed, 'message failed authorization');
+      await ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, messageStore, coreProtocols);
     }
   }
 }

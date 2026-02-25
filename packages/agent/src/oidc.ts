@@ -410,7 +410,7 @@ async function verifyJwt({ jwt }: { jwt: string }): Promise<Record<string, unkno
  * using the encryption key passed via QR code.
  */
 const getAuthRequest = async (request_uri: string, encryption_key: string): Promise<Web5ConnectAuthRequest> => {
-  const authRequest = await fetch(request_uri);
+  const authRequest = await fetch(request_uri, { signal: AbortSignal.timeout(30_000) });
   const jwe = await authRequest.text();
   const jwt = await decryptAuthRequest({
     jwe,
@@ -832,6 +832,7 @@ async function submitAuthResponse(
     headers : {
       'Content-Type': 'application/x-www-form-urlencoded',
     },
+    signal: AbortSignal.timeout(30_000),
   });
 }
 

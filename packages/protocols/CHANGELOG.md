@@ -1,5 +1,72 @@
 # @enbox/protocols
 
+## 0.2.8
+
+### Patch Changes
+
+- Updated dependencies [[`4c74a79`](https://github.com/enboxorg/enbox/commit/4c74a794ca9b05fd063371661c0ac45867c6daf2)]:
+  - @enbox/dwn-sdk-js@0.1.1
+  - @enbox/api@0.3.1
+
+## 0.2.7
+
+### Patch Changes
+
+- Updated dependencies [[`0eb40d4`](https://github.com/enboxorg/enbox/commit/0eb40d4d111732262de01258c0f7f8c727466714)]:
+  - @enbox/dwn-sdk-js@0.1.0
+  - @enbox/api@0.3.0
+
+## 0.2.6
+
+### Patch Changes
+
+- [`255ea66`](https://github.com/enboxorg/enbox/commit/255ea668007d728a59899b06f1897b0b933e6bf3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: provider-auth-v0 tenant registration, immutable records, content-addressed data stores, and admin dashboard
+
+- Updated dependencies [[`255ea66`](https://github.com/enboxorg/enbox/commit/255ea668007d728a59899b06f1897b0b933e6bf3)]:
+  - @enbox/api@0.2.4
+  - @enbox/dwn-sdk-js@0.0.8
+
+## 0.2.5
+
+### Patch Changes
+
+- Updated dependencies [[`c36ffb2`](https://github.com/enboxorg/enbox/commit/c36ffb203d8b5eaefffc698f053be6262f1b4ca6)]:
+  - @enbox/api@0.2.3
+
+## 0.2.4
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @enbox/api@0.2.2
+
+## 0.2.3
+
+### Patch Changes
+
+- [#261](https://github.com/enboxorg/enbox/pull/261) [`8a2f650`](https://github.com/enboxorg/enbox/commit/8a2f650c88f4b78f415dcacc23d7f4c82bc9a67b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(protocols): increase avatar size limit to 12 MB and hero banner to 24 MB
+
+- Updated dependencies []:
+  - @enbox/api@0.2.1
+
+## 0.2.2
+
+### Patch Changes
+
+- [#254](https://github.com/enboxorg/enbox/pull/254) [`d399df5`](https://github.com/enboxorg/enbox/commit/d399df5490e248703cec59b1b3265d3566689e5c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(protocols): remove empty `$actions` arrays from `ListsDefinition` folder structure
+
+  The DWN JSON schema requires `$actions` arrays to have at least one item (`minItems: 1`).
+  Empty `$actions: []` on the `folder` type caused `ProtocolsConfigure` to fail with
+  `SchemaValidatorFailure` when installing the Lists protocol.
+
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies [[`bb0bfa3`](https://github.com/enboxorg/enbox/commit/bb0bfa31917d296968d3e6f2a41daa9ce5d603b1)]:
+  - @enbox/api@0.2.0
+  - @enbox/dwn-sdk-js@0.0.7
+
 ## 0.2.0
 
 ### Minor Changes

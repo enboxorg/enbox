@@ -5,6 +5,23 @@ import { defineConfig } from 'vitest/config';
 
 const isCI = !!process.env.CI;
 
+// When BROWSER is set (e.g. by CI matrix), run only that browser and write
+// coverage to a per-browser directory.  Otherwise run all browsers with a
+// single merged coverage directory (the local-dev default).
+const singleBrowser = process.env.BROWSER as 'chromium' | 'firefox' | 'webkit' | undefined;
+
+const instances = singleBrowser
+  ? [{ browser: singleBrowser }]
+  : [
+    { browser: 'chromium' as const },
+    { browser: 'firefox' as const },
+    ...(isCI ? [{ browser: 'webkit' as const }] : []),
+  ];
+
+const coverageDir = singleBrowser
+  ? `./coverage-browser-${singleBrowser}`
+  : './coverage-browser';
+
 export default defineConfig({
   define: {
     'process.env.DID_DHT_GATEWAY_URI' : JSON.stringify(''),
@@ -18,9 +35,18 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    // Pre-bundle CJS deps to avoid mid-run optimizeDeps restarts that crash Firefox.
+    // Disable automatic dependency discovery so that Vite NEVER restarts the
+    // optimizer mid-test-run (Firefox crashes on optimizer restarts).
+    // See packages/dwn-sdk-js/vitest.browser.config.ts for full explanation.
+    noDiscovery: true,
     include: [
+      // --- CJS packages reachable from agent browser test imports ---
+      'abstract-level',
+      'level',
       'ms',
+      // @isaacs/ttlcache — CJS; transitive dep via @enbox/crypto -> @enbox/common.
+      // Use Vite's nested-dep `>` syntax to resolve through workspace symlinks.
+      '@enbox/crypto > @enbox/common > @isaacs/ttlcache',
     ],
     holdUntilCrawlEnd: true,
   },
@@ -36,17 +62,13 @@ export default defineConfig({
     coverage: {
       provider         : 'istanbul',
       reporter         : ['text', 'lcov'],
-      reportsDirectory : './coverage-browser',
+      reportsDirectory : coverageDir,
     },
     browser     : {
       enabled  : true,
       headless : true,
       provider : playwright(),
-      instances: [
-        { browser: 'chromium' },
-        { browser: 'firefox' },
-        ...(isCI ? [{ browser: 'webkit' as const }] : []),
-      ],
+      instances,
     },
   },
 });

@@ -49,7 +49,7 @@ export class PermissionRequest {
    * and that the decoded data contains `scope`.
    * @throws {DwnError} if any required field is missing.
    */
-  public static async parse(message: DataEncodedRecordsWriteMessage): Promise<PermissionRequest> {
+  public static parse(message: DataEncodedRecordsWriteMessage): PermissionRequest {
     PermissionRequest.validateMessage(message);
     const permissionRequest = new PermissionRequest(message);
     return permissionRequest;

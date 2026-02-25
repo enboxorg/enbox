@@ -1,6 +1,6 @@
 {
   "name": "@enbox/dids",
-  "version": "0.0.4",
+  "version": "0.0.8",
   "description": "TBD DIDs library",
   "type": "module",
   "main": "./dist/esm/index.js",
@@ -16,7 +16,7 @@
     "test:node": "bun test tests/",
     "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage tests/",
     "test:browser": "bunx --bun vitest --config vitest.browser.config.ts --run",
-    "test:browser:coverage": "bunx --bun vitest --config vitest.browser.config.ts --run --coverage --coverage.provider=istanbul --coverage.reportsDirectory=./coverage-browser"
+    "test:browser:coverage": "bunx --bun vitest --config vitest.browser.config.ts --run --coverage --coverage.provider=istanbul"
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/dids#readme",
   "bugs": "https://github.com/enboxorg/enbox/issues",

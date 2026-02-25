@@ -23,15 +23,22 @@
 
 export * from './define-protocol.js';
 export * from './did-api.js';
-export * from './dwn-api.js';
+export * from './dwn-reader-api.js';
 export * from './grant-revocation.js';
 export * from './live-query.js';
 export * from './permission-grant.js';
 export * from './permission-request.js';
 export * from './protocol.js';
 export * from './protocol-types.js';
+export * from './read-only-record.js';
 export * from './record.js';
-export * from './typed-dwn-api.js';
+export * from './record-data.js';
+export * from './record-types.js';
+export * from './repository.js';
+export * from './repository-types.js';
+export * from './typed-live-query.js';
+export * from './typed-record.js';
+export * from './typed-web5.js';
 export * from './vc-api.js';
 export * from './web5.js';
 

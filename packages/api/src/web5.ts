@@ -4,6 +4,8 @@
  */
 /// <reference types="@enbox/dwn-sdk-js" />
 
+import type { DidMethodResolver } from '@enbox/dids';
+import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type {
   BearerIdentity,
   DwnDataEncodedRecordsWriteMessage,
@@ -17,12 +19,17 @@ import type {
   Web5Agent,
 } from '@enbox/agent';
 
-import { DwnRegistrar } from '@enbox/dwn-clients';
-import { WalletConnect, Web5UserAgent } from '@enbox/agent';
+import type { SchemaMap, TypedProtocol } from './protocol-types.js';
+
+import { AnonymousDwnApi, WalletConnect, Web5UserAgent } from '@enbox/agent';
+import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
+import { DwnRegistrar, Web5RpcClient } from '@enbox/dwn-clients';
 
 import { DidApi } from './did-api.js';
 import { DwnApi } from './dwn-api.js';
+import { DwnReaderApi } from './dwn-reader-api.js';
 import { PermissionGrant } from './permission-grant.js';
+import { TypedWeb5 } from './typed-web5.js';
 import { VcApi } from './vc-api.js';
 
 /** Override defaults configured during the technical preview phase. */
@@ -66,6 +73,60 @@ export type ConnectOptions = Omit<WalletConnectOptions, 'permissionRequests'> & 
    * This is used to create the {@link ConnectPermissionRequest} for the wallet connect flow.
    */
   permissionRequests: ConnectPermissionRequest[];
+};
+
+/**
+ * Options for creating an anonymous (read-only) Web5 instance via {@link Web5.anonymous}.
+ *
+ * @beta
+ */
+export type Web5AnonymousOptions = {
+  /** Override the default DID method resolvers. Defaults to `[DidDht, DidJwk, DidKey, DidWeb]`. */
+  didResolvers?: DidMethodResolver[];
+};
+
+/**
+ * The result of calling {@link Web5.anonymous}.
+ *
+ * Contains only a read-only `dwn` property — no `did`, `vc`, or `agent`.
+ *
+ * @beta
+ */
+export type Web5AnonymousApi = {
+  /** A read-only DWN API for querying public data on remote DWNs. */
+  dwn: DwnReaderApi;
+};
+
+/** Parameters passed to the onProviderAuthRequired callback. */
+export type ProviderAuthParams = {
+  /** Full authorize URL to open in a browser (query params already appended). */
+  authorizeUrl: string;
+  /** The DWN endpoint URL this auth is for (informational). */
+  dwnEndpoint: string;
+  /** CSRF nonce — the provider will return this unchanged in the redirect. */
+  state: string;
+};
+
+/** Result returned by the app after the user completes provider auth. */
+export type ProviderAuthResult = {
+  /** Authorization code from the provider's redirect. */
+  code: string;
+  /** Must match the state from ProviderAuthParams (CSRF validation). */
+  state: string;
+};
+
+/** Persisted registration token data for a DWN endpoint. */
+export type RegistrationTokenData = {
+  /** Opaque registration token for POST /registration. */
+  registrationToken: string;
+  /** Refresh token for obtaining new registration tokens. */
+  refreshToken?: string;
+  /** Unix timestamp (ms) when the token expires. Undefined = never expires. */
+  expiresAt?: number;
+  /** Provider's token exchange URL (needed for code exchange). */
+  tokenUrl: string;
+  /** Provider's refresh URL (needed for token refresh). */
+  refreshUrl?: string;
 };
 
 /** Optional overrides that can be provided when calling {@link Web5.connect}. */
@@ -143,8 +204,13 @@ export type Web5ConnectOptions = {
 
   /**
    * Enable synchronization of DWN records between local and remote DWNs.
-   * Sync defaults to running every 2 minutes and can be set to any value accepted by `ms()`.
-   * To disable sync set to 'off'.
+   *
+   * - **Omitted / `undefined`**: Live sync mode (default). Opens real-time
+   *   `MessagesSubscribe` WebSocket subscriptions for instant pull and
+   *   push-on-write, with a background SMT integrity check every 5 minutes.
+   * - **Interval string** (e.g. `'2m'`, `'30s'`): Poll mode. Performs a full
+   *   SMT set-reconciliation sync at the specified interval.
+   * - **`'off'`**: Sync is disabled entirely.
    */
   sync?: string;
 
@@ -168,10 +234,29 @@ export type Web5ConnectOptions = {
    * If registration is successful, the `onSuccess` callback will be called.
    */
   registration? : {
-    /** Called when all of the DWN registrations are successful */
-    onSuccess: () => void;
-    /** Called when any of the DWN registrations fail */
-    onFailure: (error: any) => void;
+    /** Called when all of the DWN registrations are successful. */
+    onSuccess : () => void;
+    /** Called when any of the DWN registrations fail. */
+    onFailure : (error: any) => void;
+
+    /**
+     * Called when a DWN endpoint requires provider auth (`'provider-auth-v0'`).
+     * The app is responsible for opening the authorizeUrl in a browser,
+     * capturing the redirect back, and returning the auth code.
+     * If not provided, provider-auth endpoints fall back to PoW registration.
+     */
+    onProviderAuthRequired? : (params: ProviderAuthParams) => Promise<ProviderAuthResult>;
+
+    /**
+     * Pre-existing registration tokens from a previous session, keyed by DWN endpoint URL.
+     * If a valid (non-expired) token exists for an endpoint, it is used directly.
+     */
+    registrationTokens? : Record<string, RegistrationTokenData>;
+
+    /**
+     * Called when new registration tokens are obtained so the app can persist them.
+     */
+    onRegistrationTokens? : (tokens: Record<string, RegistrationTokenData>) => void;
   }
 };
 
@@ -234,8 +319,8 @@ export class Web5 {
   /** Exposed instance to the DID APIs, allow users to create and resolve DIDs  */
   did: DidApi;
 
-  /** Exposed instance to the DWN APIs, allow users to read/write records */
-  dwn: DwnApi;
+  /** Internal DWN API instance. Use {@link Web5.using} for protocol-scoped access. */
+  private _dwn: DwnApi;
 
   /** Exposed instance to the VC APIs, allow users to issue, present and verify VCs */
   vc: VcApi;
@@ -243,8 +328,78 @@ export class Web5 {
   constructor({ agent, connectedDid, delegateDid }: Web5Params) {
     this.agent = agent;
     this.did = new DidApi({ agent, connectedDid });
-    this.dwn = new DwnApi({ agent, connectedDid, delegateDid });
+    this._dwn = new DwnApi({ agent, connectedDid, delegateDid });
     this.vc = new VcApi({ agent, connectedDid });
+  }
+
+  /**
+   * Returns a {@link TypedWeb5} instance scoped to the given protocol.
+   *
+   * This is the **primary developer interface** for interacting with
+   * protocol-backed records. It auto-injects the protocol URI, protocolPath,
+   * and schema into every operation, and provides compile-time path
+   * autocompletion plus typed data payloads via the schema map.
+   *
+   * @param protocol - A typed protocol created via `defineProtocol()`.
+   * @returns A `TypedWeb5` instance bound to the given protocol.
+   *
+   * @example
+   * ```ts
+   * const social = web5.using(SocialProtocol);
+   *
+   * await social.configure();
+   *
+   * const { record } = await social.records.write('friend', {
+   *   data: { did: 'did:example:alice', alias: 'Alice' },
+   * });
+   *
+   * const { records } = await social.records.query('friend');
+   * ```
+   */
+  public using<D extends ProtocolDefinition, M extends SchemaMap>(
+    protocol: TypedProtocol<D, M>,
+  ): TypedWeb5<D, M> {
+    return new TypedWeb5<D, M>(this._dwn, protocol);
+  }
+
+  /**
+   * Creates a lightweight, read-only Web5 instance for querying public DWN data.
+   *
+   * No identity, vault, password, or signing keys are required. The returned
+   * API supports querying and reading published records and protocols from any
+   * remote DWN, using **unsigned** (anonymous) DWN messages.
+   *
+   * @param options - Optional configuration overrides.
+   * @returns A {@link Web5AnonymousApi} with a read-only `dwn` property.
+   *
+   * @example
+   * ```ts
+   * const { dwn } = Web5.anonymous();
+   *
+   * const { records } = await dwn.records.query({
+   *   from: 'did:dht:alice...',
+   *   filter: { protocol: 'https://social.example/posts', protocolPath: 'post' },
+   * });
+   *
+   * for (const record of records) {
+   *   console.log(record.id, await record.data.text());
+   * }
+   * ```
+   *
+   * @beta
+   */
+  static anonymous(options?: Web5AnonymousOptions): Web5AnonymousApi {
+    const didResolver = new UniversalResolver({
+      didResolvers : options?.didResolvers ?? [DidDht, DidJwk, DidKey, DidWeb],
+      cache        : new DidResolverCacheMemory(),
+    });
+
+    const rpcClient = new Web5RpcClient();
+    const anonymousDwn = new AnonymousDwnApi({ didResolver, rpcClient });
+
+    return {
+      dwn: new DwnReaderApi(anonymousDwn),
+    };
   }
 
   /**
@@ -358,17 +513,14 @@ export class Web5 {
           throw new Error(`Failed to connect to wallet: ${error.message}`);
         }
       } else {
-        // No connected identity found and no connectOptions provided, use local Identities
-        // Query the Agent's DWN tenant for identity records.
+        // No connected (WalletConnect) identity and no walletConnectOptions provided.
+        // Look for an existing local identity, or create one on first use.
         const identities = await userAgent.identity.list();
 
-        // If an existing identity is not found found, create a new one.
-        const existingIdentityCount = identities.length;
-        if (existingIdentityCount === 0) {
-          // since we are creating a new identity, we will want to register sync for the created Did
+        if (identities.length === 0) {
           registerSync = true;
 
-          // Generate a new Identity for the end-user.
+          // First use — generate a new Identity for the end-user.
           identity = await userAgent.identity.create({
             didMethod  : 'dht',
             metadata   : { name: 'Default' },
@@ -398,8 +550,9 @@ export class Web5 {
           });
 
         } else {
-          // If multiple identities are found, use the first one.
-          // TODO: Implement selecting a connectedDid from multiple identities
+          // Reconnecting — use the first local identity. When the agent manages
+          // multiple identities (e.g. created via agent.identity.create()), the
+          // first one returned by the store is used as the default for connect().
           identity = identities[0];
         }
       }
@@ -409,27 +562,105 @@ export class Web5 {
       // If the stored identity has a connected DID, use the identity DID as the delegated DID, otherwise it is undefined.
       delegateDid = identity.metadata.connectedDid ? identity.did.uri : undefined;
       if (registration !== undefined) {
-        // If a registration object is passed, we attempt to register the AgentDID and the ConnectedDID with the DWN endpoints provided
+        const updatedTokens: Record<string, RegistrationTokenData> = {
+          ...(registration.registrationTokens ?? {}),
+        };
+
         try {
           for (const dwnEndpoint of serviceEndpointNodes) {
-            // check if endpoint needs registration
             const serverInfo = await userAgent.rpc.getServerInfo(dwnEndpoint);
+
             if (serverInfo.registrationRequirements.length === 0) {
-              // no registration required
               continue;
             }
 
-            // register the agent DID
-            await DwnRegistrar.registerTenant(dwnEndpoint, agent.agentDid.uri);
+            // Deduplicate DIDs to register.
+            const didsToRegister = [agent.agentDid.uri, connectedDid]
+              .filter((did, i, arr): did is string => arr.indexOf(did) === i);
 
-            // register the connected Identity DID
-            await DwnRegistrar.registerTenant(dwnEndpoint, connectedDid);
+            const hasProviderAuth = serverInfo.registrationRequirements.includes('provider-auth-v0')
+              && serverInfo.providerAuth !== undefined;
+
+            if (hasProviderAuth && registration.onProviderAuthRequired) {
+              // --- Provider Auth Path ---
+              let tokenData = updatedTokens[dwnEndpoint];
+
+              // Refresh expired tokens.
+              if (tokenData?.expiresAt !== undefined && tokenData.expiresAt < Date.now()) {
+                if (tokenData.refreshUrl && tokenData.refreshToken) {
+                  const refreshed = await DwnRegistrar.refreshRegistrationToken(
+                    tokenData.refreshUrl, tokenData.refreshToken,
+                  );
+                  tokenData = {
+                    registrationToken : refreshed.registrationToken,
+                    refreshToken      : refreshed.refreshToken,
+                    expiresAt         : refreshed.expiresIn !== undefined
+                      ? Date.now() + (refreshed.expiresIn * 1000) : undefined,
+                    tokenUrl   : tokenData.tokenUrl,
+                    refreshUrl : tokenData.refreshUrl,
+                  };
+                  updatedTokens[dwnEndpoint] = tokenData;
+                } else {
+                  tokenData = undefined;
+                }
+              }
+
+              // Run the auth flow if no valid token exists.
+              if (tokenData === undefined) {
+                const state = crypto.randomUUID();
+                const providerAuth = serverInfo.providerAuth!;
+                const separator = providerAuth.authorizeUrl.includes('?') ? '&' : '?';
+                const authorizeUrl = `${providerAuth.authorizeUrl}${separator}`
+                  + `redirect_uri=${encodeURIComponent(dwnEndpoint)}`
+                  + `&state=${encodeURIComponent(state)}`;
+
+                const authResult = await registration.onProviderAuthRequired({
+                  authorizeUrl,
+                  dwnEndpoint,
+                  state,
+                });
+
+                if (authResult.state !== state) {
+                  throw new Error('Provider auth state mismatch — possible CSRF attack.');
+                }
+
+                const tokenResponse = await DwnRegistrar.exchangeAuthCode(
+                  providerAuth.tokenUrl, authResult.code, dwnEndpoint,
+                );
+
+                tokenData = {
+                  registrationToken : tokenResponse.registrationToken,
+                  refreshToken      : tokenResponse.refreshToken,
+                  expiresAt         : tokenResponse.expiresIn !== undefined
+                    ? Date.now() + (tokenResponse.expiresIn * 1000) : undefined,
+                  tokenUrl   : providerAuth.tokenUrl,
+                  refreshUrl : providerAuth.refreshUrl,
+                };
+                updatedTokens[dwnEndpoint] = tokenData;
+              }
+
+              // Register each DID using the provider auth token.
+              for (const did of didsToRegister) {
+                await DwnRegistrar.registerTenantWithToken(
+                  dwnEndpoint, did, tokenData.registrationToken,
+                );
+              }
+
+            } else {
+              // --- Default Path (PoW / general registration) ---
+              for (const did of didsToRegister) {
+                await DwnRegistrar.registerTenant(dwnEndpoint, did);
+              }
+            }
           }
 
-          // If no failures occurred, call the onSuccess callback
+          // Notify app of updated tokens for persistence.
+          if (registration.onRegistrationTokens) {
+            registration.onRegistrationTokens(updatedTokens);
+          }
+
           registration.onSuccess();
         } catch (error) {
-          // for any failure, call the onFailure callback with the error
           registration.onFailure(error);
         }
       }
@@ -455,8 +686,11 @@ export class Web5 {
         }
 
         // Enable sync using the specified interval or default.
-        sync ??= '2m';
-        userAgent.sync.startSync({ interval: sync })
+        // When sync is unset (undefined), default to live mode.
+        // When sync is an interval string (e.g. '2m', '30s'), use poll mode with that interval.
+        const syncMode = sync === undefined ? 'live' : 'poll';
+        const syncInterval = sync ?? (syncMode === 'live' ? '5m' : '2m');
+        userAgent.sync.startSync({ mode: syncMode, interval: syncInterval })
           .catch((error: any) => {
             console.error(`Sync failed: ${error}`);
           });
@@ -508,7 +742,7 @@ export class Web5 {
     const connectedProtocols = new Set<string>();
     for (const grantMessage of grants) {
       // use the delegateDid as the connectedDid of the grant as they do not yet support impersonation/delegation
-      const grant = await PermissionGrant.parse({ connectedDid: delegateDid, agent, message: grantMessage });
+      const grant = PermissionGrant.parse({ connectedDid: delegateDid, agent, message: grantMessage });
       // store the grant as the owner of the DWN, this will allow the delegateDid to use the grant when impersonating the connectedDid
       const { status } = await grant.store(true);
       if (status.code !== 202) {

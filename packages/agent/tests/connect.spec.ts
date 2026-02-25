@@ -90,7 +90,7 @@ describe('web5 connect', () => {
         descriptor : {
           interface    : 'Records',
           method       : 'Write',
-          protocol     : 'https://tbd.website/dwn/permissions',
+          protocol     : 'https://identity.foundation/dwn/permissions',
           protocolPath : 'grant',
           recipient:
             'did:dht:pfm8f6w57srtci1k3spp73dqgk5eo3afkimtyi4zcqc5hg1ui5mo',
@@ -290,7 +290,6 @@ describe('web5 connect', () => {
       expect(result).toEqual(authRequest);
     });
 
-    // TODO: waiting for DWN feature complete
     it('should create permission grants for each selected did', async () => {
       const results = await Oidc.createPermissionGrants(
         providerIdentity.did.uri,
@@ -509,6 +508,42 @@ describe('web5 connect', () => {
       expect(typeof results).toBe('object');
       expect(results?.delegateGrants).toBeInstanceOf(Array);
       expect(typeof results?.delegatePortableDid).toBe('object');
+    });
+  });
+
+  describe('initClient — error paths', () => {
+    it('should throw when signJwt returns undefined', async () => {
+      sinon.stub(Oidc, 'signJwt').resolves(undefined as any);
+
+      await expect(
+        WalletConnect.initClient({
+          displayName        : 'Sample App',
+          walletUri          : 'http://localhost:3000/',
+          connectServerUrl   : 'http://localhost:3000/connect',
+          permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: {} as any }],
+          onWalletUriReady   : () => {},
+          validatePin        : async () => '1234',
+        })
+      ).rejects.toThrow('Unable to sign requestObject');
+    });
+
+    it('should throw when PAR response is not ok', async () => {
+      sinon.stub(Oidc, 'signJwt').resolves('signed.jwt.value');
+      sinon.stub(Oidc, 'encryptAuthRequest').resolves('encrypted-jwe');
+      sinon.stub(globalThis, 'fetch').resolves(
+        new Response('Bad Request', { status: 400, statusText: 'Bad Request' })
+      );
+
+      await expect(
+        WalletConnect.initClient({
+          displayName        : 'Sample App',
+          walletUri          : 'http://localhost:3000/',
+          connectServerUrl   : 'http://localhost:3000/connect',
+          permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: {} as any }],
+          onWalletUriReady   : () => {},
+          validatePin        : async () => '1234',
+        })
+      ).rejects.toThrow('400: Bad Request');
     });
   });
 
@@ -856,17 +891,11 @@ describe('web5 connect', () => {
       });
 
       expect(permissionRequests.protocolDefinition).toEqual(protocol);
-      // only includes the sync permissions + protocol query permission
-      expect(permissionRequests.permissionScopes.length).toBe(4);
+      // Messages.Read (unified: covers Read, Subscribe, Sync) + Protocols.Query
+      expect(permissionRequests.permissionScopes.length).toBe(2);
       const scopes = permissionRequests.permissionScopes;
       expect(scopes.find(
         scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Read
-      )).toBeDefined();
-      expect(scopes.find(
-        scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Sync
-      )).toBeDefined();
-      expect(scopes.find(
-        scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Subscribe
       )).toBeDefined();
       expect(scopes.find(
         scope => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Query
@@ -894,8 +923,8 @@ describe('web5 connect', () => {
 
       expect(permissionRequests.protocolDefinition).toEqual(protocol);
 
-      // the 3 sync permissions plus the 2 requested permissions, and a protocol query permission
-      expect(permissionRequests.permissionScopes.length).toBe(6);
+      // Messages.Read (unified) + 2 requested Records permissions + Protocols.Query
+      expect(permissionRequests.permissionScopes.length).toBe(4);
       expect(permissionRequests.permissionScopes.find(
         scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read
       )).toBeDefined();
@@ -925,8 +954,8 @@ describe('web5 connect', () => {
 
       expect(permissionRequests.protocolDefinition).toEqual(protocol);
 
-      // the 3 sync permissions plus the 5 requested permissions
-      expect(permissionRequests.permissionScopes.length).toBe(10);
+      // Messages.Read (unified) + 5 requested Records permissions + Protocols.Query + Protocols.Configure
+      expect(permissionRequests.permissionScopes.length).toBe(8);
       const ps = permissionRequests.permissionScopes;
       expect(ps.find(
         scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read

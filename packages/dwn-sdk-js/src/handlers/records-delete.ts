@@ -1,9 +1,8 @@
-import type { DidResolver } from '@enbox/dids';
+import type { CoreProtocolRegistry } from '../core/core-protocol.js';
 import type { GenericMessageReply } from '../types/message-types.js';
 import type { MessageStore } from '../types//message-store.js';
-import type { MethodHandler } from '../types/method-handler.js';
 import type { RecordsDeleteMessage } from '../types/records-types.js';
-import type { ResumableTaskManager } from '../core/resumable-task-manager.js';
+import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 
 import { authenticate } from '../core/auth.js';
 import { DwnInterfaceName } from '../enums/dwn-interface-method.js';
@@ -16,15 +15,10 @@ import { RecordsDelete } from '../interfaces/records-delete.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { ResumableTaskName } from '../core/resumable-task-manager.js';
-import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 export class RecordsDeleteHandler implements MethodHandler {
 
-  constructor(
-    private didResolver: DidResolver,
-    private messageStore: MessageStore,
-    private resumableTaskManager: ResumableTaskManager,
-  ) { }
+  constructor(private deps: HandlerDependencies) { }
 
   public async handle({
     tenant,
@@ -39,7 +33,7 @@ export class RecordsDeleteHandler implements MethodHandler {
 
     // authentication
     try {
-      await authenticate(message.authorization, this.didResolver);
+      await authenticate(message.authorization, this.deps.didResolver);
     } catch (e) {
       return messageReplyFromError(e, 401);
     }
@@ -49,7 +43,7 @@ export class RecordsDeleteHandler implements MethodHandler {
       interface : DwnInterfaceName.Records,
       recordId  : message.descriptor.recordId
     };
-    const { messages: existingMessages } = await this.messageStore.query(tenant, [ query ]);
+    const { messages: existingMessages } = await this.deps.messageStore.query(tenant, [ query ]);
 
     // find which message is the newest, and if the incoming message is the newest
     const newestExistingMessage = await Message.getNewestMessage(existingMessages);
@@ -73,19 +67,20 @@ export class RecordsDeleteHandler implements MethodHandler {
       // NOTE: We need a RecordsWrite (doesn't have to be initial) to access the immutable properties for delete processing,
       // but if the latest record state is a RecordsDelete (ie. when we are pruning a non-prune delete),
       // we'd need to use the initial write because RecordsDelete does not contain the immutable properties needed for processing.
-      const initialWrite = await RecordsWrite.fetchInitialRecordsWrite(this.messageStore, tenant, message.descriptor.recordId);
+      const initialWrite = await RecordsWrite.fetchInitialRecordsWrite(this.deps.messageStore, tenant, message.descriptor.recordId);
 
       await RecordsDeleteHandler.authorizeRecordsDelete(
         tenant,
         recordsDelete,
         initialWrite!,
-        this.messageStore
+        this.deps.messageStore,
+        this.deps.coreProtocols,
       );
     } catch (e) {
       return messageReplyFromError(e, 401);
     }
 
-    await this.resumableTaskManager.run({
+    await this.deps.resumableTaskManager!.run({
       name : ResumableTaskName.RecordsDelete,
       data : { tenant, message }
     });
@@ -105,7 +100,8 @@ export class RecordsDeleteHandler implements MethodHandler {
     tenant: string,
     recordsDelete: RecordsDelete,
     recordsWrite: RecordsWrite,
-    messageStore: MessageStore
+    messageStore: MessageStore,
+    coreProtocols?: CoreProtocolRegistry,
   ): Promise<void> {
 
     if (Message.isSignedByAuthorDelegate(recordsDelete.message)) {
@@ -124,13 +120,8 @@ export class RecordsDeleteHandler implements MethodHandler {
         permissionGrant,
         messageStore,
       });
-    } else if (recordsWrite.message.descriptor.protocol !== undefined) {
-      await ProtocolAuthorization.authorizeDelete(tenant, recordsDelete, recordsWrite, messageStore);
     } else {
-      throw new DwnError(
-        DwnErrorCode.RecordsDeleteAuthorizationFailed,
-        'RecordsDelete message failed authorization'
-      );
+      await ProtocolAuthorization.authorizeDelete(tenant, recordsDelete, recordsWrite, messageStore, coreProtocols);
     }
   }
 };

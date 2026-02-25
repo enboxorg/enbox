@@ -13,8 +13,13 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 export type MessagesSubscribeOptions = {
   signer: MessageSigner;
   messageTimestamp?: string;
-  filters?: MessagesFilter[]
+  filters?: MessagesFilter[];
   permissionGrantId?: string;
+  /**
+   * Opaque EventLog cursor string to resume from. When provided, catch-up events are
+   * replayed from the EventLog and an EOSE marker is delivered before live events.
+   */
+  cursor?: string;
 };
 
 export class MessagesSubscribe extends AbstractMessage<MessagesSubscribeMessage> {
@@ -48,6 +53,7 @@ export class MessagesSubscribe extends AbstractMessage<MessagesSubscribeMessage>
       filters           : options.filters ?? [],
       messageTimestamp  : options.messageTimestamp ?? currentTime,
       permissionGrantId : options.permissionGrantId,
+      cursor            : options.cursor,
     };
 
     removeUndefinedProperties(descriptor);

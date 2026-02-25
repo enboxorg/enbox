@@ -13,6 +13,7 @@ dist/
 # Coverage
 coverage/
 coverage-browser/
+coverage-browser-*/
 *.lcov
 
 # Environment variables
@@ -162,3 +163,6 @@ __screenshots__/
 
 .notes/
 TEST-COMPOUND-INDEX/
+
+# Local AI agent instructions (not committed)
+CLAUDE.local.md

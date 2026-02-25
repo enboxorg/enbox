@@ -421,4 +421,108 @@ describe('LocalKeyManager', () => {
       }
     });
   });
+
+  describe('secp256r1 algorithm support', () => {
+    describe('generateKey()', () => {
+      it('should generate a secp256r1 key and return a key URI', async () => {
+        const keyUri = await keyManager.generateKey({ algorithm: 'secp256r1' });
+
+        expect(keyUri).toBeDefined();
+        expect(typeof keyUri).toBe('string');
+        expect(keyUri.indexOf('urn:jwk:')).toBe(0);
+      });
+    });
+
+    describe('getPublicKey()', () => {
+      it('should return a P-256 public key with correct properties', async () => {
+        const keyUri = await keyManager.generateKey({ algorithm: 'secp256r1' });
+
+        const publicKey = await keyManager.getPublicKey({ keyUri });
+
+        expect(publicKey).toBeDefined();
+        expect(publicKey).toHaveProperty('kty', 'EC');
+        expect(publicKey).toHaveProperty('alg', 'ES256');
+        expect(publicKey).toHaveProperty('crv', 'P-256');
+        expect(publicKey).toHaveProperty('x');
+        expect(publicKey).toHaveProperty('y');
+        expect(publicKey).not.toHaveProperty('d');
+      });
+    });
+
+    describe('sign()', () => {
+      it('should generate a signature as Uint8Array', async () => {
+        const keyUri = await keyManager.generateKey({ algorithm: 'secp256r1' });
+        const data = new TextEncoder().encode('secp256r1 sign test');
+
+        const signature = await keyManager.sign({ keyUri, data });
+
+        expect(signature).toBeInstanceOf(Uint8Array);
+        expect(signature.length).toBeGreaterThan(0);
+      });
+    });
+
+    describe('verify()', () => {
+      it('should return true for a valid secp256r1 signature', async () => {
+        const keyUri = await keyManager.generateKey({ algorithm: 'secp256r1' });
+        const publicKey = await keyManager.getPublicKey({ keyUri });
+        const data = new TextEncoder().encode('secp256r1 verify test');
+        const signature = await keyManager.sign({ keyUri, data });
+
+        const isValid = await keyManager.verify({ key: publicKey, signature, data });
+
+        expect(isValid).toBe(true);
+      });
+
+      it('should return false for an invalid secp256r1 signature', async () => {
+        const keyUri = await keyManager.generateKey({ algorithm: 'secp256r1' });
+        const publicKey = await keyManager.getPublicKey({ keyUri });
+        const data = new TextEncoder().encode('secp256r1 invalid sig test');
+        const signature = new Uint8Array(64);
+
+        const isValid = await keyManager.verify({ key: publicKey, signature, data });
+
+        expect(isValid).toBe(false);
+      });
+    });
+  });
+
+  describe('X25519 algorithm support', () => {
+    describe('generateKey()', () => {
+      it('should generate an X25519 key and return a key URI', async () => {
+        const keyUri = await keyManager.generateKey({ algorithm: 'X25519' });
+
+        expect(keyUri).toBeDefined();
+        expect(typeof keyUri).toBe('string');
+        expect(keyUri.indexOf('urn:jwk:')).toBe(0);
+      });
+    });
+
+    describe('getPublicKey()', () => {
+      it('should return an X25519 public key with correct properties', async () => {
+        const keyUri = await keyManager.generateKey({ algorithm: 'X25519' });
+
+        const publicKey = await keyManager.getPublicKey({ keyUri });
+
+        expect(publicKey).toBeDefined();
+        expect(publicKey).toHaveProperty('kty', 'OKP');
+        expect(publicKey).toHaveProperty('crv', 'X25519');
+        expect(publicKey).toHaveProperty('x');
+        expect(publicKey).not.toHaveProperty('d');
+      });
+    });
+
+    describe('exportKey()', () => {
+      it('should export an X25519 private key as a JWK', async () => {
+        const keyUri = await keyManager.generateKey({ algorithm: 'X25519' });
+
+        const jwk = await keyManager.exportKey({ keyUri });
+
+        expect(jwk).toBeDefined();
+        expect(jwk).toHaveProperty('kty', 'OKP');
+        expect(jwk).toHaveProperty('crv', 'X25519');
+        expect(jwk).toHaveProperty('d');
+        expect(jwk).toHaveProperty('x');
+      });
+    });
+  });
 });
