@@ -229,7 +229,7 @@ export async function runServerMigrationsIfNeeded(config: DwnServerConfig): Prom
   const dialect = getOrCreateDialect(parsedUrl, config);
   const db = new Kysely<Record<string, unknown>>({ dialect });
   try {
-    const applied = await runServerMigrations(db);
+    const applied = await runServerMigrations(db, dialect);
     if (applied.length > 0) {
       console.log(`Server migrations applied: ${applied.join(', ')}`);
     }

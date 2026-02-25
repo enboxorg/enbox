@@ -1,22 +1,33 @@
-import type { Kysely, Migration, MigrationResultSet } from 'kysely';
+import type { Dialect } from '@enbox/dwn-sql-store';
+import type { ServerMigrationFactory } from './migrations/index.js';
+import type { Kysely, Migration, MigrationProvider, MigrationResultSet } from 'kysely';
 
 import { allServerMigrations } from './migrations/index.js';
 import { Migrator } from 'kysely';
 
 /**
- * Simple {@link MigrationProvider} that returns a static dictionary of
- * server migrations. Unlike DWN store migrations, server table DDL uses
- * only standard SQL types, so no dialect closure is needed.
+ * {@link MigrationProvider} for server migrations. Wraps an ordered list of
+ * `(name, factory)` pairs. At resolution time each factory is called with the
+ * dialect, producing the concrete Kysely {@link Migration} objects.
  */
-class ServerMigrationProvider {
-  #migrations: Record<string, Migration>;
+class ServerMigrationProvider implements MigrationProvider {
+  #dialect: Dialect;
+  #factories: ReadonlyArray<readonly [name: string, factory: ServerMigrationFactory]>;
 
-  constructor(migrations: Record<string, Migration>) {
-    this.#migrations = migrations;
+  constructor(
+    dialect: Dialect,
+    factories: ReadonlyArray<readonly [name: string, factory: ServerMigrationFactory]>,
+  ) {
+    this.#dialect = dialect;
+    this.#factories = factories;
   }
 
   public async getMigrations(): Promise<Record<string, Migration>> {
-    return this.#migrations;
+    const migrations: Record<string, Migration> = {};
+    for (const [name, factory] of this.#factories) {
+      migrations[name] = factory(this.#dialect);
+    }
+    return migrations;
   }
 }
 
@@ -31,16 +42,19 @@ class ServerMigrationProvider {
  * registration stores, or the TTL cache.
  *
  * @param db - An open Kysely instance connected to the target database.
- * @param migrations - Optional custom migration dictionary; defaults to
- *   the built-in {@link allServerMigrations}.
+ * @param dialect - The dialect for the target database. Passed to each
+ *   migration factory so it can use dialect-specific DDL helpers.
+ * @param migrations - Optional custom migration list; defaults to the
+ *   built-in {@link allServerMigrations}.
  * @returns The names of newly applied migrations (empty if already up-to-date).
  * @throws If any migration fails.
  */
 export async function runServerMigrations(
   db: Kysely<any>,
-  migrations?: Record<string, Migration>,
+  dialect: Dialect,
+  migrations?: ReadonlyArray<readonly [name: string, factory: ServerMigrationFactory]>,
 ): Promise<string[]> {
-  const provider = new ServerMigrationProvider(migrations ?? allServerMigrations);
+  const provider = new ServerMigrationProvider(dialect, migrations ?? allServerMigrations);
   const migrator = new Migrator({
     db,
     provider,

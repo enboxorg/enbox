@@ -49,7 +49,7 @@ describe('AdminStore', () => {
     // Run both DWN and server migrations before creating stores.
     const migrationDb = new Kysely<Record<string, unknown>>({ dialect: sharedDialect });
     await runDwnStoreMigrations(migrationDb, sharedDialect);
-    await runServerMigrations(migrationDb);
+    await runServerMigrations(migrationDb, sharedDialect);
 
     const dataStore = new DataStoreSql(sharedDialect);
     const messageStore = new MessageStoreSql(sharedDialect);

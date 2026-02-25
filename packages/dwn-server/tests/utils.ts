@@ -207,7 +207,7 @@ export async function createMigratedInMemoryDialect(): Promise<Dialect> {
   const dialect = new SqliteDialect({ database: async (): Promise<typeof sharedDb> => sharedDb });
 
   const db = new Kysely<Record<string, unknown>>({ dialect });
-  await runServerMigrations(db);
+  await runServerMigrations(db, dialect);
 
   return dialect;
 }
@@ -224,7 +224,7 @@ export async function createMigratedInMemoryDialect(): Promise<Dialect> {
 export async function createMigratedFileDialect(sqliteUrl: string): Promise<Dialect> {
   const dialect = getDialectFromUrl(new URL(sqliteUrl));
   const db = new Kysely<Record<string, unknown>>({ dialect });
-  await runServerMigrations(db);
+  await runServerMigrations(db, dialect);
 
   return dialect;
 }

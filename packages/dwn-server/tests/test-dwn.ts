@@ -42,7 +42,7 @@ export async function getTestDwn(options: {
   // Run DWN store and server migrations before creating stores.
   const migrationDb = new Kysely<Record<string, unknown>>({ dialect });
   await runDwnStoreMigrations(migrationDb, dialect);
-  await runServerMigrations(migrationDb);
+  await runServerMigrations(migrationDb, dialect);
 
   const dataStore = new DataStoreSql(dialect);
   const stateIndex = new StateIndexSql(dialect);

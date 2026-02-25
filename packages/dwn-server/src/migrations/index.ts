@@ -1,17 +1,18 @@
-import type { Migration } from 'kysely';
+import type { ServerMigrationFactory } from './001-initial-server-schema.js';
 
 import { migration001InitialServerSchema } from './001-initial-server-schema.js';
 
 /**
  * All DWN server migrations in sequential order.
  *
- * These migrations manage tables owned by `@enbox/dwn-server` (admin stores,
- * registration, TTL cache, etc.). They are separate from the DWN store
- * migrations in `@enbox/dwn-sql-store` which manage core DWN tables.
+ * Each entry is a `[name, factory]` tuple where the factory receives the
+ * `Dialect` and returns a standard Kysely `Migration`. This mirrors the
+ * pattern used by DWN store migrations in `@enbox/dwn-sql-store`.
  *
- * Server migrations use plain Kysely `Migration` objects (no dialect closure
- * needed) because server tables use only standard SQL types.
+ * **Ordering contract:** Entries MUST be sorted by name (lexicographic).
  */
-export const allServerMigrations: Record<string, Migration> = {
-  '001-initial-server-schema': migration001InitialServerSchema,
-};
+export type { ServerMigrationFactory };
+
+export const allServerMigrations: ReadonlyArray<readonly [name: string, factory: ServerMigrationFactory]> = [
+  ['001-initial-server-schema', migration001InitialServerSchema],
+];

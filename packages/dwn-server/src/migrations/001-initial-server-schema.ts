@@ -1,4 +1,12 @@
+import type { Dialect } from '@enbox/dwn-sql-store';
 import type { Kysely, Migration } from 'kysely';
+
+/**
+ * Factory type for server migrations. Mirrors the `DwnMigrationFactory` from
+ * `@enbox/dwn-sql-store` — receives the {@link Dialect} so migrations can use
+ * dialect-specific helpers like `addAutoIncrementingColumn()`.
+ */
+export type ServerMigrationFactory = (dialect: Dialect) => Migration;
 
 /**
  * Baseline server migration: creates all DWN server admin and cache tables.
@@ -11,7 +19,7 @@ import type { Kysely, Migration } from 'kysely';
  * - `adminPasskeys`: WebAuthn admin passkeys
  * - `cacheEntries`: TTL-based key/value cache (Web5 Connect state, etc.)
  */
-export const migration001InitialServerSchema: Migration = {
+export const migration001InitialServerSchema: ServerMigrationFactory = (dialect): Migration => ({
 
   async up(db: Kysely<any>): Promise<void> {
 
@@ -38,16 +46,17 @@ export const migration001InitialServerSchema: Migration = {
       .execute();
 
     // ─── adminAuditLog ────────────────────────────────────────────────
-    await db.schema
+    let auditTable = db.schema
       .createTable('adminAuditLog')
       .ifNotExists()
-      .addColumn('id', 'integer', (col) => col.primaryKey().autoIncrement())
       .addColumn('timestamp', 'text', (col) => col.notNull())
       .addColumn('actor', 'text', (col) => col.notNull())
       .addColumn('action', 'text', (col) => col.notNull())
       .addColumn('target', 'text')
-      .addColumn('detail', 'text')
-      .execute();
+      .addColumn('detail', 'text');
+
+    auditTable = dialect.addAutoIncrementingColumn(auditTable, 'id', (col) => col.primaryKey());
+    await auditTable.execute();
 
     try {
       await db.schema.createIndex('index_audit_timestamp')
@@ -102,4 +111,4 @@ export const migration001InitialServerSchema: Migration = {
         .ifNotExists().on('cacheEntries').column('expiry').execute();
     } catch { /* index already exists */ }
   },
-};
+});

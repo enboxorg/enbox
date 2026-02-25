@@ -537,7 +537,7 @@ The monorepo has two independent migration sets that may target the **same** dat
 | Domain | Package | Tables | Tracking table | Runner |
 |---|---|---|---|---|
 | **DWN stores** | `@enbox/dwn-sql-store` | `messageStoreMessages`, `dataRefs`, `dataBlocks`, `stateIndexMessages`, `resumableTaskMessages` | `kysely_migration` (default) | `runDwnStoreMigrations(db, dialect)` |
-| **Server stores** | `@enbox/dwn-server` | `registeredTenants`, `tenantQuotas`, `adminAuditLog`, `adminWebhooks`, `adminPasskeys`, `cacheEntries` | `dwn_server_migration` (custom) | `runServerMigrations(db)` |
+| **Server stores** | `@enbox/dwn-server` | `registeredTenants`, `tenantQuotas`, `adminAuditLog`, `adminWebhooks`, `adminPasskeys`, `cacheEntries` | `dwn_server_migration` (custom) | `runServerMigrations(db, dialect)` |
 
 Server migrations use custom table names (`dwn_server_migration`, `dwn_server_migration_lock`) to avoid collisions when both domains share a database.
 
@@ -550,7 +550,7 @@ Server migrations use custom table names (`dwn_server_migration`, `dwn_server_mi
 | `packages/dwn-sql-store/src/migrations/index.ts` | `allDwnMigrations` — ordered `[name, factory]` tuple array |
 | `packages/dwn-sql-store/src/migrations/*.ts` | Individual DWN migration files |
 | `packages/dwn-server/src/server-migration-runner.ts` | `runServerMigrations()` — server migration entry point |
-| `packages/dwn-server/src/migrations/index.ts` | `allServerMigrations` — `Record<string, Migration>` |
+| `packages/dwn-server/src/migrations/index.ts` | `allServerMigrations` — ordered `[name, factory]` tuple array |
 | `packages/dwn-server/src/migrations/*.ts` | Individual server migration files |
 | `packages/dwn-server/src/storage.ts` | `runServerMigrationsIfNeeded()`, `runSqlMigrationsIfNeeded()`, `getDialectFromUrl()` |
 
@@ -582,32 +582,36 @@ export const allDwnMigrations = [
 ] as const;
 ```
 
-### Server Migrations (plain Kysely `Migration`)
+### Server Migrations (factory pattern)
 
-Server tables use only standard SQL types, so no dialect closure is needed — migrations are plain Kysely `Migration` objects:
+Server migrations also use the factory/closure pattern (receiving the `Dialect`) because tables like `adminAuditLog` need `dialect.addAutoIncrementingColumn()` for cross-database auto-increment support:
 
 ```typescript
+import type { Dialect } from '@enbox/dwn-sql-store';
 import type { Kysely, Migration } from 'kysely';
+import type { ServerMigrationFactory } from './001-initial-server-schema.js';
 
-export const migration002MyServerChange: Migration = {
+export const migration002MyServerChange: ServerMigrationFactory = (dialect): Migration => ({
   async up(db: Kysely<any>): Promise<void> {
-    await db.schema
+    let table = db.schema
       .createTable('newTable')
       .ifNotExists()
-      .addColumn('id', 'text', (col) => col.primaryKey())
-      .addColumn('name', 'text', (col) => col.notNull())
-      .execute();
+      .addColumn('name', 'text', (col) => col.notNull());
+
+    // Use dialect helper for portable auto-incrementing primary key
+    table = dialect.addAutoIncrementingColumn(table, 'id', (col) => col.primaryKey());
+    await table.execute();
   },
-};
+});
 ```
 
 Register in `packages/dwn-server/src/migrations/index.ts`:
 
 ```typescript
-export const allServerMigrations: Record<string, Migration> = {
-  '001-initial-server-schema' : migration001InitialServerSchema,
-  '002-my-server-change'      : migration002MyServerChange,
-};
+export const allServerMigrations: ReadonlyArray<readonly [name: string, factory: ServerMigrationFactory]> = [
+  ['001-initial-server-schema', migration001InitialServerSchema],
+  ['002-my-server-change', migration002MyServerChange],
+];
 ```
 
 ### Migration Conventions
