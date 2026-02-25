@@ -20,6 +20,7 @@ export * from './dwn-type-guards.js';
 export * from './protocol-utils.js';
 export * from './hd-identity-vault.js';
 export * from './identity-api.js';
+export * from './local-dwn.js';
 export * from './local-key-manager.js';
 export * from './permissions-api.js';
 export * from './store-data.js';

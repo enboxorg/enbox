@@ -7,7 +7,6 @@
  * @module
  */
 
-import type { DidUrlDereferencer } from '@enbox/dids';
 import type { PublicKeyJwk } from '@enbox/crypto';
 import type { TtlCache } from '@enbox/common';
 import type {
@@ -26,12 +25,14 @@ import type {
 
 import { KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
-import { getDwnServiceEndpointUrls } from './utils.js';
 import { DwnInterface as DwnInterfaceEnum, dwnMessageConstructors } from './types/dwn.js';
 
 // ---------------------------------------------------------------------------
 // Dependency signatures — keep the extracted code free of `this` references.
 // ---------------------------------------------------------------------------
+
+/** Callback to resolve DWN endpoint URLs for a target DID (with local discovery). */
+type GetDwnEndpointUrlsFn = (targetDid: string) => Promise<string[]>;
 
 /** Callback to obtain a DWN signer for a given DID. */
 type GetSignerFn = (author: string) => Promise<DwnSigner>;
@@ -106,7 +107,7 @@ export async function getProtocolDefinition(
  *
  * @param targetDid - The remote DWN owner
  * @param protocolUri - The protocol URI to look up
- * @param didDereferencer - A DID URL dereferencer for resolving service endpoints
+ * @param getDwnEndpointUrls - Callback to resolve DWN endpoint URLs (with local discovery)
  * @param sendDwnRpcRequest - Callback to send the RPC query
  * @param cache - The shared protocol definition cache
  * @returns The protocol definition
@@ -115,7 +116,7 @@ export async function getProtocolDefinition(
 export async function fetchRemoteProtocolDefinition(
   targetDid: string,
   protocolUri: string,
-  didDereferencer: DidUrlDereferencer,
+  getDwnEndpointUrls: GetDwnEndpointUrlsFn,
   sendDwnRpcRequest: SendDwnRpcRequestFn,
   cache: TtlCache<string, ProtocolDefinition>,
 ): Promise<ProtocolDefinition> {
@@ -131,7 +132,7 @@ export async function fetchRemoteProtocolDefinition(
 
   const reply = await sendDwnRpcRequest({
     targetDid,
-    dwnEndpointUrls : await getDwnServiceEndpointUrls(targetDid, didDereferencer),
+    dwnEndpointUrls : await getDwnEndpointUrls(targetDid),
     message         : protocolsQuery.message,
   }) as ProtocolsQueryReply;
 
@@ -158,7 +159,7 @@ export async function fetchRemoteProtocolDefinition(
  * @param protocolUri    - The protocol URI to search
  * @param rootContextId  - The root context ID
  * @param requesterDid   - The DID of the requester (used for signing the query)
- * @param didDereferencer - A DID URL dereferencer for resolving service endpoints
+ * @param getDwnEndpointUrls - Callback to resolve DWN endpoint URLs (with local discovery)
  * @param getSigner      - Callback to obtain the signer for `requesterDid`
  * @param sendDwnRpcRequest - Callback to send the RPC query
  * @returns The rootKeyId and derivedPublicKey, or `undefined` if no
@@ -169,7 +170,7 @@ export async function extractDerivedPublicKey(
   protocolUri: string,
   rootContextId: string,
   requesterDid: string,
-  didDereferencer: DidUrlDereferencer,
+  getDwnEndpointUrls: GetDwnEndpointUrlsFn,
   getSigner: GetSignerFn,
   sendDwnRpcRequest: SendDwnRpcRequestFn,
 ): Promise<{ rootKeyId: string; derivedPublicKey: PublicKeyJwk } | undefined> {
@@ -184,7 +185,7 @@ export async function extractDerivedPublicKey(
     },
   });
 
-  const dwnEndpointUrls = await getDwnServiceEndpointUrls(targetDid, didDereferencer);
+  const dwnEndpointUrls = await getDwnEndpointUrls(targetDid);
   const queryReply = await sendDwnRpcRequest<DwnInterfaceEnum.RecordsQuery>({
     targetDid,
     dwnEndpointUrls,

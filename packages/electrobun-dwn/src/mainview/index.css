@@ -1,0 +1,79 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 32px;
+  min-height: 100vh;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  color: #f1f5f9;
+  background:
+    radial-gradient(1400px circle at 0% 0%, #2563eb 0%, #0f172a 45%),
+    linear-gradient(145deg, #0f172a 0%, #111827 100%);
+}
+
+.container {
+  max-width: 760px;
+  margin: 0 auto;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 16px;
+  padding: 28px 30px;
+  box-shadow: 0 24px 60px rgba(2, 6, 23, 0.45);
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: 2rem;
+}
+
+h2 {
+  margin: 16px 0 10px;
+  font-size: 1.1rem;
+}
+
+.description {
+  margin: 0 0 12px;
+  color: #cbd5e1;
+}
+
+.status {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(30, 41, 59, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+#status {
+  color: #4ade80;
+}
+
+#server-url {
+  color: #93c5fd;
+}
+
+.notes {
+  margin-top: 18px;
+  color: #e2e8f0;
+}
+
+ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+li {
+  margin: 6px 0;
+}
+
+code {
+  font-family: "Iosevka Term", "Fira Code", monospace;
+  font-size: 0.9em;
+  color: #f8fafc;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 6px;
+  padding: 0 6px;
+}

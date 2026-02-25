@@ -12,7 +12,6 @@ import type { Web5Agent, Web5PlatformAgent } from './types/agent.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnInterface } from './types/dwn.js';
-import { getDwnServiceEndpointUrls } from './utils.js';
 import { isRecordsWrite } from './utils.js';
 import { topologicalSort } from './sync-topological-sort.js';
 import { pullMessages, pushMessages } from './sync-messages.js';
@@ -1063,7 +1062,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
       const { protocols, delegateDid } = parsed;
 
-      const dwnEndpointUrls = await getDwnServiceEndpointUrls(did, this.agent.did);
+      const dwnEndpointUrls = await this.agent.dwn.getDwnEndpointUrlsForTarget(did);
       if (dwnEndpointUrls.length === 0) {
         continue;
       }

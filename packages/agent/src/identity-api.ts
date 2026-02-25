@@ -9,7 +9,6 @@ import type { IdentityMetadata, PortableIdentity } from './types/identity.js';
 import { isPortableDid } from '@enbox/dids';
 
 import { BearerIdentity } from './bearer-identity.js';
-import { getDwnServiceEndpointUrls } from './utils.js';
 import { InMemoryIdentityStore } from './store-identity.js';
 
 export interface IdentityApiParams<TKeyManager extends AgentKeyManager> {
@@ -226,7 +225,7 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
    * @throws An error if the DID is not found, or no DWN service exists.
    */
   public getDwnEndpoints({ didUri }: { didUri: string; }): Promise<string[]> {
-    return getDwnServiceEndpointUrls(didUri, this.agent.did);
+    return this.agent.dwn.getDwnEndpointUrlsForTarget(didUri);
   }
 
   /**

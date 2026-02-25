@@ -277,7 +277,8 @@ export class PlatformAgentTestHarness {
     });
 
     // Instantiate Agent's DWN API using the custom DWN instance.
-    const dwnApi = new AgentDwnApi({ dwn });
+    // Disable local DWN discovery so tests don't accidentally probe localhost.
+    const dwnApi = new AgentDwnApi({ dwn, localDwnStrategy: 'off' });
 
     // Instantiate Agent's Sync API using a custom LevelDB-backed store.
     const syncStore = new Level(testDataPath('SYNC_STORE'));
