@@ -22,7 +22,6 @@ import {
   Records,
 } from '@enbox/dwn-sdk-js';
 
-import { getDwnServiceEndpointUrls } from './utils.js';
 import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
 import { buildEncryptionInput, encryptAndComputeCid, getEncryptionKeyDeriver, getKeyDecrypter, ivLength } from './dwn-encryption.js';
 import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
@@ -219,6 +218,7 @@ export async function writeContextKeyRecord(
  * @param contextKeyMessage - The context key message to send
  * @param getDwnMessage - Function to read a full message from local DWN
  * @param sendDwnRpcRequest - Function to send a DWN RPC request
+ * @param getDwnEndpointUrlsForTarget - Function to resolve DWN endpoint URLs (with local discovery)
  */
 export async function eagerSendContextKeyRecord(
   agent: Web5PlatformAgent,
@@ -226,10 +226,11 @@ export async function eagerSendContextKeyRecord(
   contextKeyMessage: DwnMessage[DwnInterface.RecordsWrite],
   getDwnMessage: (params: { author: string; messageType: DwnInterface; messageCid: string }) => Promise<{ message: any; data?: Blob }>,
   sendDwnRpcRequest: (params: { targetDid: string; dwnEndpointUrls: string[]; message: any; data?: Blob }) => Promise<any>,
+  getDwnEndpointUrlsForTarget: (targetDid: string) => Promise<string[]>,
 ): Promise<void> {
   let dwnEndpointUrls: string[];
   try {
-    dwnEndpointUrls = await getDwnServiceEndpointUrls(tenantDid, agent.did);
+    dwnEndpointUrls = await getDwnEndpointUrlsForTarget(tenantDid);
   } catch {
     // DID resolution or endpoint lookup failed — not fatal, sync will handle it.
     return;
@@ -266,6 +267,7 @@ export async function eagerSendContextKeyRecord(
  * @param processRequest - The agent's processRequest method (bound)
  * @param getSigner - Function to get a signer for a DID
  * @param sendDwnRpcRequest - Function to send a DWN RPC request
+ * @param getDwnEndpointUrlsForTarget - Function to resolve DWN endpoint URLs (with local discovery)
  * @returns The decrypted `DerivedPrivateJwk`, or `undefined` if no matching record found
  */
 export async function fetchContextKeyRecord(
@@ -274,6 +276,7 @@ export async function fetchContextKeyRecord(
   processRequest: ProcessRequestFn,
   getSigner: (author: string) => Promise<any>,
   sendDwnRpcRequest: (params: { targetDid: string; dwnEndpointUrls: string[]; message: any; data?: Blob }) => Promise<any>,
+  getDwnEndpointUrlsForTarget: (targetDid: string) => Promise<string[]>,
 ): Promise<DerivedPrivateJwk | undefined> {
   const { ownerDid, requesterDid, sourceProtocol, sourceContextId } = params;
   const protocolUri = KeyDeliveryProtocolDefinition.protocol;
@@ -323,7 +326,7 @@ export async function fetchContextKeyRecord(
   } else {
     // Remote query: participant queries the context owner's DWN
     const signer = await getSigner(requesterDid);
-    const dwnEndpointUrls = await getDwnServiceEndpointUrls(ownerDid, agent.did);
+    const dwnEndpointUrls = await getDwnEndpointUrlsForTarget(ownerDid);
 
     const recordsQuery = await dwnMessageConstructors[DwnInterface.RecordsQuery].create({
       signer,

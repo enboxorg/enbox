@@ -218,62 +218,35 @@ describe('dwn-key-delivery', () => {
 
   describe('eagerSendContextKeyRecord', () => {
     it('should return early when DWN endpoint lookup fails', async () => {
-      const mockAgent = {
-        did: {
-          dereference: sinon.stub().resolves({
-            dereferencingMetadata : {},
-            contentStream         : undefined,
-          }),
-        },
-      } as any;
+      const mockAgent = {} as any;
       const getDwnMessage = sinon.stub();
       const sendDwnRpcRequest = sinon.stub();
+      const getDwnEndpointUrls = sinon.stub().rejects(new Error('endpoint lookup failed'));
 
       await eagerSendContextKeyRecord(
         mockAgent, 'did:example:alice', { recordId: 'rec' } as any,
-        getDwnMessage, sendDwnRpcRequest,
+        getDwnMessage, sendDwnRpcRequest, getDwnEndpointUrls,
       );
 
       expect(getDwnMessage.called).toBe(false);
     });
 
     it('should return early when no DWN endpoints found', async () => {
-      const mockAgent = {
-        did: {
-          dereference: sinon.stub().resolves({
-            dereferencingMetadata : {},
-            contentStream         : {
-              id              : 'did:example:alice#dwn',
-              type            : 'DecentralizedWebNode',
-              serviceEndpoint : [],
-            },
-          }),
-        },
-      } as any;
+      const mockAgent = {} as any;
       const getDwnMessage = sinon.stub();
       const sendDwnRpcRequest = sinon.stub();
+      const getDwnEndpointUrls = sinon.stub().resolves([]);
 
       await eagerSendContextKeyRecord(
         mockAgent, 'did:example:alice', { recordId: 'rec' } as any,
-        getDwnMessage, sendDwnRpcRequest,
+        getDwnMessage, sendDwnRpcRequest, getDwnEndpointUrls,
       );
 
       expect(getDwnMessage.called).toBe(false);
     });
 
     it('should read message and send to remote DWN', async () => {
-      const mockAgent = {
-        did: {
-          dereference: sinon.stub().resolves({
-            dereferencingMetadata : {},
-            contentStream         : {
-              id              : 'did:example:alice#dwn',
-              type            : 'DecentralizedWebNode',
-              serviceEndpoint : ['https://dwn.example.com'],
-            },
-          }),
-        },
-      } as any;
+      const mockAgent = {} as any;
 
       const contextKeyMessage = {
         recordId   : 'rec-send',
@@ -282,10 +255,11 @@ describe('dwn-key-delivery', () => {
 
       const getDwnMessage = sinon.stub().resolves({ message: contextKeyMessage, data: new Blob(['test']) });
       const sendDwnRpcRequest = sinon.stub().resolves({ status: { code: 202 } });
+      const getDwnEndpointUrls = sinon.stub().resolves(['https://dwn.example.com']);
 
       await eagerSendContextKeyRecord(
         mockAgent, 'did:example:alice', contextKeyMessage,
-        getDwnMessage, sendDwnRpcRequest,
+        getDwnMessage, sendDwnRpcRequest, getDwnEndpointUrls,
       );
 
       expect(getDwnMessage.calledOnce).toBe(true);
@@ -334,6 +308,7 @@ describe('dwn-key-delivery', () => {
         processRequest,
         sinon.stub(),
         sinon.stub(),
+        sinon.stub(), // getDwnEndpointUrlsForTarget — not called in local path
       );
 
       expect(result).toBeDefined();
@@ -356,6 +331,7 @@ describe('dwn-key-delivery', () => {
         processRequest,
         sinon.stub(),
         sinon.stub(),
+        sinon.stub(), // getDwnEndpointUrlsForTarget — not called in local path
       );
 
       expect(result).toBeUndefined();
@@ -387,6 +363,7 @@ describe('dwn-key-delivery', () => {
         processRequest,
         sinon.stub(),
         sinon.stub(),
+        sinon.stub(), // getDwnEndpointUrlsForTarget — not called in local path
       );
 
       expect(result).toBeUndefined();
@@ -403,14 +380,6 @@ describe('dwn-key-delivery', () => {
 
       const mockAgent = {
         did: {
-          dereference: sinon.stub().resolves({
-            dereferencingMetadata : {},
-            contentStream         : {
-              id              : 'did:example:alice#dwn',
-              type            : 'DecentralizedWebNode',
-              serviceEndpoint : ['https://dwn.example.com'],
-            },
-          }),
           resolve: sinon.stub().resolves({
             didDocument: {
               id                 : 'did:example:bob',
@@ -470,6 +439,8 @@ describe('dwn-key-delivery', () => {
       const plainStream = DataStream.fromBytes(encoded);
       const decryptStub = sinon.stub(Records, 'decrypt').resolves(plainStream);
 
+      const getDwnEndpointUrls = sinon.stub().resolves(['https://dwn.example.com']);
+
       const result = await fetchContextKeyRecord(
         mockAgent,
         {
@@ -481,6 +452,7 @@ describe('dwn-key-delivery', () => {
         sinon.stub(), // processRequest not used in remote path
         getSigner,
         sendDwnRpcRequest,
+        getDwnEndpointUrls,
       );
 
       expect(result).toBeDefined();
@@ -491,18 +463,7 @@ describe('dwn-key-delivery', () => {
     });
 
     it('should return undefined when remote query finds no entries', async () => {
-      const mockAgent = {
-        did: {
-          dereference: sinon.stub().resolves({
-            dereferencingMetadata : {},
-            contentStream         : {
-              id              : 'did:example:alice#dwn',
-              type            : 'DecentralizedWebNode',
-              serviceEndpoint : ['https://dwn.example.com'],
-            },
-          }),
-        },
-      } as any;
+      const mockAgent = {} as any;
 
       const mockSigner = { keyId: 'did:example:bob#sig', sign: sinon.stub().resolves(new Uint8Array(64)) };
       const getSigner = sinon.stub().resolves(mockSigner);
@@ -511,6 +472,8 @@ describe('dwn-key-delivery', () => {
         status  : { code: 200, detail: 'OK' },
         entries : [],
       } as RecordsQueryReply);
+
+      const getDwnEndpointUrls = sinon.stub().resolves(['https://dwn.example.com']);
 
       const result = await fetchContextKeyRecord(
         mockAgent,
@@ -523,24 +486,14 @@ describe('dwn-key-delivery', () => {
         sinon.stub(),
         getSigner,
         sendDwnRpcRequest,
+        getDwnEndpointUrls,
       );
 
       expect(result).toBeUndefined();
     });
 
     it('should return undefined when remote read returns no data', async () => {
-      const mockAgent = {
-        did: {
-          dereference: sinon.stub().resolves({
-            dereferencingMetadata : {},
-            contentStream         : {
-              id              : 'did:example:alice#dwn',
-              type            : 'DecentralizedWebNode',
-              serviceEndpoint : ['https://dwn.example.com'],
-            },
-          }),
-        },
-      } as any;
+      const mockAgent = {} as any;
 
       const mockSigner = { keyId: 'did:example:bob#sig', sign: sinon.stub().resolves(new Uint8Array(64)) };
       const getSigner = sinon.stub().resolves(mockSigner);
@@ -555,6 +508,8 @@ describe('dwn-key-delivery', () => {
         entry  : { data: undefined, recordsWrite: undefined },
       } as RecordsReadReply);
 
+      const getDwnEndpointUrls = sinon.stub().resolves(['https://dwn.example.com']);
+
       const result = await fetchContextKeyRecord(
         mockAgent,
         {
@@ -566,6 +521,7 @@ describe('dwn-key-delivery', () => {
         sinon.stub(),
         getSigner,
         sendDwnRpcRequest,
+        getDwnEndpointUrls,
       );
 
       expect(result).toBeUndefined();

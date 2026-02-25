@@ -203,7 +203,7 @@ describe('SyncEngineLevel — private methods', () => {
     it('should return empty array when no identities registered', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
-        did      : { dereference: sinon.stub() },
+        dwn      : { getDwnEndpointUrlsForTarget: sinon.stub() },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
 
@@ -214,11 +214,8 @@ describe('SyncEngineLevel — private methods', () => {
     it('should skip identities whose DID has no DWN endpoints', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
-        did      : {
-          dereference: sinon.stub().resolves({
-            dereferencingMetadata : {},
-            contentStream         : undefined,
-          }),
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves([]),
         },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
@@ -231,15 +228,8 @@ describe('SyncEngineLevel — private methods', () => {
     it('should produce one target per DWN URL when protocols is empty', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
-        did      : {
-          dereference: sinon.stub().resolves({
-            dereferencingMetadata : {},
-            contentStream         : {
-              id              : 'did:example:alice#dwn',
-              type            : 'DecentralizedWebNode',
-              serviceEndpoint : ['https://dwn.example.com'],
-            },
-          }),
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
         },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
@@ -255,15 +245,8 @@ describe('SyncEngineLevel — private methods', () => {
     it('should produce one target per protocol per DWN URL', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
-        did      : {
-          dereference: sinon.stub().resolves({
-            dereferencingMetadata : {},
-            contentStream         : {
-              id              : 'did:example:bob#dwn',
-              type            : 'DecentralizedWebNode',
-              serviceEndpoint : ['https://dwn.example.com'],
-            },
-          }),
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
         },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
@@ -281,15 +264,8 @@ describe('SyncEngineLevel — private methods', () => {
     it('should include delegateDid from identity options', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
-        did      : {
-          dereference: sinon.stub().resolves({
-            dereferencingMetadata : {},
-            contentStream         : {
-              id              : 'did:example:carol#dwn',
-              type            : 'DecentralizedWebNode',
-              serviceEndpoint : ['https://dwn.example.com'],
-            },
-          }),
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
         },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
@@ -306,15 +282,8 @@ describe('SyncEngineLevel — private methods', () => {
     it('should handle invalid JSON in identity options gracefully', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
-        did      : {
-          dereference: sinon.stub().resolves({
-            dereferencingMetadata : {},
-            contentStream         : {
-              id              : 'did:example:broken#dwn',
-              type            : 'DecentralizedWebNode',
-              serviceEndpoint : ['https://dwn.example.com'],
-            },
-          }),
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
         },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
