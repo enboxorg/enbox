@@ -1,5 +1,13 @@
 # @enbox/api
 
+## 0.3.2
+
+### Patch Changes
+
+- Updated dependencies [[`7a68c55`](https://github.com/enboxorg/enbox/commit/7a68c5509da7d01700240b630ac529cbf94a629a)]:
+  - @enbox/dwn-clients@0.0.9
+  - @enbox/agent@0.2.2
+
 ## 0.3.1
 
 ### Patch Changes

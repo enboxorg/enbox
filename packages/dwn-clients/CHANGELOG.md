@@ -1,5 +1,13 @@
 # @enbox/dwn-clients
 
+## 0.0.9
+
+### Patch Changes
+
+- [#553](https://github.com/enboxorg/enbox/pull/553) [`7a68c55`](https://github.com/enboxorg/enbox/commit/7a68c5509da7d01700240b630ac529cbf94a629a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: include providerAuth and maxInFlight in getServerInfo response
+
+  `HttpDwnRpcClient.getServerInfo()` explicitly mapped fields from the `/info` JSON response but omitted `providerAuth` and `maxInFlight`, causing provider-auth-v0 registration to silently fall through to the PoW path.
+
 ## 0.0.8
 
 ### Patch Changes
