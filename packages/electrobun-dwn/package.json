@@ -7,7 +7,7 @@
   "scripts": {
     "prebuild:dwn": "bun run --filter @enbox/common build && bun run --filter @enbox/crypto build && bun run --filter @enbox/dids build && bun run --filter @enbox/dwn-sdk-js build && bun run --filter @enbox/dwn-clients build && bun run --filter @enbox/dwn-sql-store build && bun run --filter @enbox/dwn-server build",
     "dev": "bun run prebuild:dwn && electrobun dev",
-    "build": "bun run prebuild:dwn && electrobun build"
+    "build": "electrobun build"
   },
   "dependencies": {
     "@enbox/dwn-server": "workspace:*",
