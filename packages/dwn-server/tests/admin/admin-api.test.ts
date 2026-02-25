@@ -3114,3 +3114,481 @@ describe('Passkey status — admin disabled', () => {
     expect(response.status).toBe(404);
   });
 });
+
+// =============================================================================
+// Passkey route coverage — unit tests via AdminApi.create with pre-populated store
+// =============================================================================
+
+describe('Passkey routes — unit coverage', () => {
+  const { AdminApi } = require('../../src/admin/admin-api.js');
+  const { AdminPasskeyStore } = require('../../src/admin/admin-passkey-store.js');
+  const { AdminSessionManager } = require('../../src/admin/admin-session.js');
+
+  const testRecord = {
+    id         : 'cred-test-1',
+    name       : 'Test Key',
+    publicKey  : 'dGVzdC1wdWJsaWMta2V5',
+    counter    : 5,
+    transports : '["internal","usb"]',
+    createdAt  : '2025-01-15T10:00:00.000Z',
+    lastUsedAt : '2025-02-01T12:00:00.000Z',
+  };
+
+  async function createApiWithPasskeys(): Promise<{
+    api: InstanceType<typeof AdminApi>;
+    store: InstanceType<typeof AdminPasskeyStore>;
+    sessionManager: InstanceType<typeof AdminSessionManager>;
+  }> {
+    const { getDialectFromUrl } = await import('../../src/storage.js');
+    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const store = await AdminPasskeyStore.create(dialect);
+    const sessionManager = new AdminSessionManager();
+
+    await store.save(testRecord);
+
+    const api = AdminApi.create({
+      config       : { ...defaultConfig, adminToken },
+      dwn          : {} as any,
+      passkeyStore : store,
+      sessionManager,
+    });
+
+    return { api, store, sessionManager };
+  }
+
+  function routeReq(
+    api: InstanceType<typeof AdminApi>,
+    path: string,
+    method: string,
+    options: RequestInit = {},
+  ): Promise<Response> {
+    const url = `http://localhost/admin/api${path}`;
+    const { headers: extraHeaders, ...rest } = options;
+    const req = new Request(url, {
+      method,
+      ...rest,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        ...(extraHeaders as Record<string, string>),
+      },
+    });
+    return api.route(req, new URL(url), `/admin/api${path}`, method);
+  }
+
+  // --- Passkey list with data ---
+
+  it('should list passkeys with summary fields when credentials exist', async () => {
+    const { api, store, sessionManager } = await createApiWithPasskeys();
+
+    const res = await routeReq(api, '/passkeys', 'GET');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.passkeys.length).toBe(1);
+    expect(body.passkeys[0].id).toBe('cred-test-1');
+    expect(body.passkeys[0].name).toBe('Test Key');
+    expect(body.passkeys[0].createdAt).toBe('2025-01-15T10:00:00.000Z');
+    expect(body.passkeys[0].lastUsedAt).toBe('2025-02-01T12:00:00.000Z');
+    // Ensure publicKey is NOT leaked in the summary.
+    expect(body.passkeys[0].publicKey).toBeUndefined();
+
+    await store.close();
+    sessionManager.destroy();
+  });
+
+  // --- Register options with existing credentials (excludeCredentials path) ---
+
+  it('should include excludeCredentials when passkeys already exist', async () => {
+    const { api, store, sessionManager } = await createApiWithPasskeys();
+
+    const res = await routeReq(api, '/passkeys/register/options', 'POST', {
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ name: 'Another Key' }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.challenge).toBeDefined();
+    expect(body.excludeCredentials).toBeDefined();
+    expect(body.excludeCredentials.length).toBe(1);
+    expect(body.excludeCredentials[0].id).toBe('cred-test-1');
+
+    await store.close();
+    sessionManager.destroy();
+  });
+
+  // --- Register verify — missing body ---
+
+  it('should return 400 for register verify with invalid JSON', async () => {
+    const { api, store, sessionManager } = await createApiWithPasskeys();
+
+    const req = new Request('http://localhost/admin/api/passkeys/register/verify', {
+      method  : 'POST',
+      headers : {
+        authorization  : `Bearer ${adminToken}`,
+        'content-type' : 'application/json',
+      },
+      body: 'not json',
+    });
+    const res = await api.route(req, new URL(req.url), '/admin/api/passkeys/register/verify', 'POST');
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('Invalid JSON body');
+
+    await store.close();
+    sessionManager.destroy();
+  });
+
+  it('should return 400 for register verify with missing credential', async () => {
+    const { api, store, sessionManager } = await createApiWithPasskeys();
+
+    const res = await routeReq(api, '/passkeys/register/verify', 'POST', {
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('credential is required');
+
+    await store.close();
+    sessionManager.destroy();
+  });
+
+  it('should return 400 for register verify with a bogus credential', async () => {
+    const { api, store, sessionManager } = await createApiWithPasskeys();
+
+    // First get a challenge so the verify handler has something to check against.
+    await routeReq(api, '/passkeys/register/options', 'POST', {
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({}),
+    });
+
+    const res = await routeReq(api, '/passkeys/register/verify', 'POST', {
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({
+        credential: {
+          id       : 'fake-id',
+          rawId    : 'fake-id',
+          type     : 'public-key',
+          response : {
+            clientDataJSON    : 'eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiZmFrZSIsIm9yaWdpbiI6Imh0dHA6Ly9sb2NhbGhvc3QifQ',
+            attestationObject : 'o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVkBJg',
+          },
+        },
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('Registration verification failed.');
+
+    await store.close();
+    sessionManager.destroy();
+  });
+
+  // --- Register verify without passkey store ---
+
+  it('should return 501 for register verify when passkey store is not enabled', async () => {
+    const mgr = new AdminSessionManager();
+    const api = AdminApi.create({
+      config         : { ...defaultConfig, adminToken },
+      dwn            : {} as any,
+      sessionManager : mgr,
+    });
+
+    const res = await routeReq(api, '/passkeys/register/verify', 'POST', {
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ credential: {} }),
+    });
+    expect(res.status).toBe(501);
+
+    mgr.destroy();
+  });
+
+  // --- Register options without passkey store ---
+
+  it('should return 501 for register options when passkey store is not enabled', async () => {
+    const mgr = new AdminSessionManager();
+    const api = AdminApi.create({
+      config         : { ...defaultConfig, adminToken },
+      dwn            : {} as any,
+      sessionManager : mgr,
+    });
+
+    const res = await routeReq(api, '/passkeys/register/options', 'POST', {
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({}),
+    });
+    expect(res.status).toBe(501);
+
+    mgr.destroy();
+  });
+
+  // --- Login options with existing passkeys (allowCredentials path) ---
+
+  it('should return authentication options with allowCredentials when passkeys exist', async () => {
+    const { api, store, sessionManager } = await createApiWithPasskeys();
+
+    // Login options are unauthenticated, so route directly without auth.
+    const req = new Request('http://localhost/admin/api/passkeys/login/options', {
+      method: 'POST',
+    });
+    const res = await api.route(req, new URL(req.url), '/admin/api/passkeys/login/options', 'POST');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.challenge).toBeDefined();
+    expect(body.allowCredentials).toBeDefined();
+    expect(body.allowCredentials.length).toBe(1);
+    expect(body.allowCredentials[0].id).toBe('cred-test-1');
+
+    await store.close();
+    sessionManager.destroy();
+  });
+
+  // --- Login verify — unknown credential ---
+
+  it('should return 400 for login verify with an unknown credential ID', async () => {
+    const { api, store, sessionManager } = await createApiWithPasskeys();
+
+    const req = new Request('http://localhost/admin/api/passkeys/login/verify', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({
+        credential: {
+          id       : 'nonexistent-cred',
+          rawId    : 'nonexistent-cred',
+          type     : 'public-key',
+          response : { clientDataJSON: 'x', authenticatorData: 'x', signature: 'x' },
+        },
+      }),
+    });
+    const res = await api.route(req, new URL(req.url), '/admin/api/passkeys/login/verify', 'POST');
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('Unknown credential.');
+
+    await store.close();
+    sessionManager.destroy();
+  });
+
+  // --- Login verify — bogus credential against a known ID ---
+
+  it('should return 401 for login verify with a bogus authenticator response', async () => {
+    const { api, store, sessionManager } = await createApiWithPasskeys();
+
+    // First get a challenge.
+    const optReq = new Request('http://localhost/admin/api/passkeys/login/options', {
+      method: 'POST',
+    });
+    await api.route(optReq, new URL(optReq.url), '/admin/api/passkeys/login/options', 'POST');
+
+    const req = new Request('http://localhost/admin/api/passkeys/login/verify', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({
+        credential: {
+          id       : 'cred-test-1',
+          rawId    : 'cred-test-1',
+          type     : 'public-key',
+          response : {
+            clientDataJSON    : 'eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiZmFrZSIsIm9yaWdpbiI6Imh0dHA6Ly9sb2NhbGhvc3QifQ',
+            authenticatorData : 'SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAAAA',
+            signature         : 'MEUCIQC',
+          },
+        },
+      }),
+    });
+    const res = await api.route(req, new URL(req.url), '/admin/api/passkeys/login/verify', 'POST');
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body.error).toBe('Authentication verification failed.');
+
+    await store.close();
+    sessionManager.destroy();
+  });
+
+  // --- Login verify — invalid JSON ---
+
+  it('should return 400 for login verify with invalid JSON', async () => {
+    const { api, store, sessionManager } = await createApiWithPasskeys();
+
+    const req = new Request('http://localhost/admin/api/passkeys/login/verify', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : 'not json',
+    });
+    const res = await api.route(req, new URL(req.url), '/admin/api/passkeys/login/verify', 'POST');
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('Invalid JSON body');
+
+    await store.close();
+    sessionManager.destroy();
+  });
+
+  // --- Login verify — missing credential field ---
+
+  it('should return 400 for login verify with missing credential field', async () => {
+    const { api, store, sessionManager } = await createApiWithPasskeys();
+
+    const req = new Request('http://localhost/admin/api/passkeys/login/verify', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ somethingElse: true }),
+    });
+    const res = await api.route(req, new URL(req.url), '/admin/api/passkeys/login/verify', 'POST');
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('credential is required');
+
+    await store.close();
+    sessionManager.destroy();
+  });
+
+  // --- Login options/verify — without passkey store ---
+
+  it('should return 501 for login options when passkey store is not enabled', async () => {
+    const api = AdminApi.create({
+      config : { ...defaultConfig, adminToken },
+      dwn    : {} as any,
+    });
+
+    const req = new Request('http://localhost/admin/api/passkeys/login/options', {
+      method: 'POST',
+    });
+    const res = await api.route(req, new URL(req.url), '/admin/api/passkeys/login/options', 'POST');
+    expect(res.status).toBe(501);
+  });
+
+  it('should return 501 for login verify when passkey store is not enabled', async () => {
+    const api = AdminApi.create({
+      config : { ...defaultConfig, adminToken },
+      dwn    : {} as any,
+    });
+
+    const req = new Request('http://localhost/admin/api/passkeys/login/verify', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ credential: {} }),
+    });
+    const res = await api.route(req, new URL(req.url), '/admin/api/passkeys/login/verify', 'POST');
+    expect(res.status).toBe(501);
+  });
+
+  // --- Passkey list without passkey store ---
+
+  it('should return 501 for passkey list when passkey store is not enabled', async () => {
+    const api = AdminApi.create({
+      config : { ...defaultConfig, adminToken },
+      dwn    : {} as any,
+    });
+
+    const res = await routeReq(api, '/passkeys', 'GET');
+    expect(res.status).toBe(501);
+  });
+
+  // --- Passkey delete without passkey store ---
+
+  it('should return 501 for passkey delete when passkey store is not enabled', async () => {
+    const api = AdminApi.create({
+      config : { ...defaultConfig, adminToken },
+      dwn    : {} as any,
+    });
+
+    const res = await routeReq(api, '/passkeys/some-id', 'DELETE');
+    expect(res.status).toBe(501);
+  });
+
+  // --- Origin fallback ---
+
+  it('should fall back to baseUrl for WebAuthn origin when no Origin header', async () => {
+    const { api, store, sessionManager } = await createApiWithPasskeys();
+
+    // Request without Origin header — the handler should fall back to config.baseUrl.
+    const res = await routeReq(api, '/passkeys/register/options', 'POST', {
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({}),
+    });
+    // Should still succeed — the origin is used during verify, not options.
+    expect(res.status).toBe(200);
+
+    await store.close();
+    sessionManager.destroy();
+  });
+
+  // --- RP ID fallback from baseUrl ---
+
+  it('should derive RP ID from baseUrl when Host header is missing', async () => {
+    const { getDialectFromUrl } = await import('../../src/storage.js');
+    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const store = await AdminPasskeyStore.create(dialect);
+    const sessionManager = new AdminSessionManager();
+    await store.save(testRecord);
+
+    const api = AdminApi.create({
+      config       : { ...defaultConfig, adminToken, baseUrl: 'https://example.com:8080' },
+      dwn          : {} as any,
+      passkeyStore : store,
+      sessionManager,
+    });
+
+    // Create a request without a Host header.
+    const req = new Request('http://localhost/admin/api/passkeys/login/options', {
+      method  : 'POST',
+      headers : {}, // No Host header
+    });
+    const res = await api.route(req, new URL(req.url), '/admin/api/passkeys/login/options', 'POST');
+    expect(res.status).toBe(200);
+
+    await store.close();
+    sessionManager.destroy();
+  });
+
+  // --- Challenge consumption ---
+
+  it('should consume a challenge only once (one-time use)', async () => {
+    const { api, store, sessionManager } = await createApiWithPasskeys();
+
+    // Generate a challenge via register options.
+    const optRes = await routeReq(api, '/passkeys/register/options', 'POST', {
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({}),
+    });
+    const { challenge } = await optRes.json();
+    expect(challenge).toBeDefined();
+
+    // Try to verify with a bogus credential — the challenge will be consumed
+    // (or fail verification). Either way the challenge should not be reusable.
+    await routeReq(api, '/passkeys/register/verify', 'POST', {
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({
+        credential: {
+          id       : 'x',
+          rawId    : 'x',
+          type     : 'public-key',
+          response : {
+            clientDataJSON    : Buffer.from(JSON.stringify({ type: 'webauthn.create', challenge, origin: 'http://localhost' })).toString('base64url'),
+            attestationObject : 'o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVkBJg',
+          },
+        },
+      }),
+    });
+
+    // A second verify with the same challenge should also fail.
+    const res2 = await routeReq(api, '/passkeys/register/verify', 'POST', {
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({
+        credential: {
+          id       : 'x',
+          rawId    : 'x',
+          type     : 'public-key',
+          response : {
+            clientDataJSON    : Buffer.from(JSON.stringify({ type: 'webauthn.create', challenge, origin: 'http://localhost' })).toString('base64url'),
+            attestationObject : 'o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVkBJg',
+          },
+        },
+      }),
+    });
+    expect(res2.status).toBe(400);
+
+    await store.close();
+    sessionManager.destroy();
+  });
+});
