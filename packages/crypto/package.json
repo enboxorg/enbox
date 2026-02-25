@@ -1,6 +1,6 @@
 {
   "name": "@enbox/crypto",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Web5 cryptographic library",
   "type": "module",
   "main": "./dist/esm/index.js",
