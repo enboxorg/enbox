@@ -174,4 +174,62 @@ export const api = {
       return false;
     }
   },
+
+  // ---------------------------------------------------------------------------
+  // Passkey (WebAuthn) methods
+  // ---------------------------------------------------------------------------
+
+  /** Checks whether any passkeys are registered (unauthenticated). */
+  getPasskeyStatus: async (): Promise<{ hasPasskeys: boolean }> => {
+    const response = await fetch('/admin/api/passkeys/status');
+    if (!response.ok) { return { hasPasskeys: false }; }
+    return response.json();
+  },
+
+  /** Gets login challenge options (unauthenticated). */
+  getPasskeyLoginOptions: async (): Promise<any> => {
+    const response = await fetch('/admin/api/passkeys/login/options', { method: 'POST' });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({ error: response.statusText }));
+      throw new Error(body.error || `HTTP ${response.status}`);
+    }
+    return response.json();
+  },
+
+  /** Verifies a passkey login and returns a session token (unauthenticated). */
+  verifyPasskeyLogin: async (credential: any): Promise<{ verified: boolean; token: string }> => {
+    const response = await fetch('/admin/api/passkeys/login/verify', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ credential }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({ error: response.statusText }));
+      throw new Error(body.error || `HTTP ${response.status}`);
+    }
+    return response.json();
+  },
+
+  /** Gets registration challenge options (requires token auth). */
+  getPasskeyRegisterOptions: (name?: string) =>
+    request<any>('/passkeys/register/options', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ name }),
+    }),
+
+  /** Verifies passkey registration (requires token auth). */
+  verifyPasskeyRegistration: (credential: any, name?: string) =>
+    request<any>('/passkeys/register/verify', {
+      method  : 'POST',
+      headers : { 'content-type': 'application/json' },
+      body    : JSON.stringify({ credential, name }),
+    }),
+
+  /** Lists all registered passkeys (requires auth). */
+  getPasskeys: () => request<any>('/passkeys'),
+
+  /** Deletes a passkey by ID (requires token auth). */
+  deletePasskey: (id: string) =>
+    request<any>(`/passkeys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 };

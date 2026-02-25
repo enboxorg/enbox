@@ -1,39 +1,68 @@
+import type { AdminSessionManager } from './admin-session.js';
 import type { DwnServerConfig } from '../config.js';
 
 import { timingSafeEqual } from 'crypto';
 
 /**
+ * The result of admin authentication.
+ *
+ * When authentication succeeds, `authMethod` indicates how the caller
+ * authenticated:
+ * - `'token'`   — static bearer token (from `DWN_ADMIN_TOKEN`)
+ * - `'session'` — passkey-derived session token
+ */
+export type AdminAuthResult = {
+  /** `null` when auth succeeded, or a `Response` to send back on failure. */
+  error : Response | null;
+  /** How the caller authenticated. Only set when `error` is `null`. */
+  authMethod? : 'token' | 'session';
+};
+
+/**
  * Validates the admin bearer token from the `Authorization` header.
  *
- * @returns `null` if authentication succeeds, or a `Response` with the appropriate
- *          error status (404 if admin is disabled, 401 if credentials are missing/invalid).
+ * Supports two authentication methods:
+ * 1. **Static bearer token** — the original `DWN_ADMIN_TOKEN`
+ * 2. **Session token** — issued after a successful WebAuthn passkey login
+ *
+ * @returns An {@link AdminAuthResult}. When `error` is `null`, auth passed.
  */
-export function validateAdminAuth(req: Request, config: DwnServerConfig): Response | null {
+export function validateAdminAuth(
+  req: Request,
+  config: DwnServerConfig,
+  sessionManager?: AdminSessionManager,
+): AdminAuthResult {
   const expectedToken = config.adminToken;
 
   // If no admin token is configured, the admin API is disabled.
   // Return 404 to avoid revealing the endpoint exists.
   if (!expectedToken) {
-    return new Response('Not Found', { status: 404 });
+    return { error: new Response('Not Found', { status: 404 }) };
   }
 
   const authHeader = req.headers.get('authorization');
   if (!authHeader) {
-    return new Response('Unauthorized', { status: 401 });
+    return { error: new Response('Unauthorized', { status: 401 }) };
   }
 
   // Expect "Bearer <token>" format.
   if (!authHeader.startsWith('Bearer ')) {
-    return new Response('Unauthorized', { status: 401 });
+    return { error: new Response('Unauthorized', { status: 401 }) };
   }
 
   const suppliedToken = authHeader.slice('Bearer '.length);
 
-  if (!constantTimeEquals(expectedToken, suppliedToken)) {
-    return new Response('Unauthorized', { status: 401 });
+  // Try static token first.
+  if (constantTimeEquals(expectedToken, suppliedToken)) {
+    return { error: null, authMethod: 'token' };
   }
 
-  return null; // auth passed
+  // Try session token if a session manager is available.
+  if (sessionManager && sessionManager.validate(suppliedToken)) {
+    return { error: null, authMethod: 'session' };
+  }
+
+  return { error: new Response('Unauthorized', { status: 401 }) };
 }
 
 /**

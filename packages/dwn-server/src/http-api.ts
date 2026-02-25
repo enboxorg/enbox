@@ -5,6 +5,7 @@ import type { Server, ServerWebSocket } from 'bun';
 
 import type { ActivityLog } from './admin/activity-log.js';
 import type { AdminApi } from './admin/admin-api.js';
+import type { AdminSessionManager } from './admin/admin-session.js';
 import type { AdminStore } from './admin/admin-store.js';
 import type { DwnServerConfig } from './config.js';
 import type { DwnServerError } from './dwn-error.js';
@@ -62,6 +63,7 @@ export class HttpApi {
   #tenantRateLimiter: RateLimiter | undefined;
   #messageProcessedHooks: MessageProcessedHook[];
   #openAuthHandler: OpenAuthHandler | undefined;
+  #sessionManager: AdminSessionManager | undefined;
   #adminUiPath: string | undefined;
   web5ConnectServer: Web5ConnectServer;
   registrationManager: RegistrationManager;
@@ -82,6 +84,7 @@ export class HttpApi {
       tenantRateLimiter? : RateLimiter;
       messageProcessedHooks? : MessageProcessedHook[];
       openAuthHandler? : OpenAuthHandler;
+      sessionManager? : AdminSessionManager;
     },
   ): Promise<HttpApi> {
     const httpApi = new HttpApi();
@@ -119,6 +122,7 @@ export class HttpApi {
     httpApi.#tenantRateLimiter = options?.tenantRateLimiter;
     httpApi.#messageProcessedHooks = options?.messageProcessedHooks ?? [];
     httpApi.#openAuthHandler = options?.openAuthHandler;
+    httpApi.#sessionManager = options?.sessionManager;
     httpApi.#adminUiPath = resolvedAdminUiPath;
 
     if (registrationManager !== undefined) {
@@ -321,9 +325,9 @@ export class HttpApi {
     if (method === 'GET' && path === '/metrics') {
       // Metrics require admin authentication when an admin token is configured.
       if (this.#config.adminToken) {
-        const authError = validateAdminAuth(req, this.#config);
-        if (authError) {
-          return authError;
+        const authResult = validateAdminAuth(req, this.#config, this.#sessionManager);
+        if (authResult.error) {
+          return authResult.error;
         }
       }
       try {

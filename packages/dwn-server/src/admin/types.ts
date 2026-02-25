@@ -350,3 +350,31 @@ export type AdminWebhookInput = {
   events : string[];
   secret? : string;
 };
+
+// ---------------------------------------------------------------------------
+// Passkey (WebAuthn) authentication
+// ---------------------------------------------------------------------------
+
+/**
+ * Summary of a registered passkey for the admin API response.
+ *
+ * Future: migrate to DID/DWN-based auth (see https://github.com/enboxorg/enbox/issues/546).
+ */
+export type AdminPasskeySummary = {
+  /** Base64url-encoded credential ID. */
+  id : string;
+  /** Human-readable name (e.g. "MacBook Touch ID"). */
+  name : string;
+  /** ISO-8601 timestamp when the passkey was registered. */
+  createdAt : string;
+  /** ISO-8601 timestamp of the most recent successful authentication. */
+  lastUsedAt : string | null;
+};
+
+/**
+ * Request body for registering a new passkey.
+ */
+export type AdminPasskeyRegisterInput = {
+  /** Human-readable name for the passkey. */
+  name? : string;
+};
