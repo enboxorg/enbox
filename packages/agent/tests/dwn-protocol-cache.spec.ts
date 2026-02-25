@@ -111,10 +111,10 @@ describe('dwn-protocol-cache', () => {
       const cache = new TtlCache<string, ProtocolDefinition>({ ttl: 60_000 });
       cache.set(`remote~${targetDid}~${protocolUri}`, mockDefinition);
       const sendDwnRpcRequest = sinon.stub();
-      const didDereferencer = { dereference: sinon.stub() };
+      const getDwnEndpointUrls = sinon.stub();
 
       const result = await fetchRemoteProtocolDefinition(
-        targetDid, protocolUri, didDereferencer as any, sendDwnRpcRequest, cache,
+        targetDid, protocolUri, getDwnEndpointUrls, sendDwnRpcRequest, cache,
       );
       expect(result).toBe(mockDefinition);
       expect(sendDwnRpcRequest.callCount).toBe(0);
@@ -126,19 +126,10 @@ describe('dwn-protocol-cache', () => {
         status  : { code: 200 },
         entries : [{ descriptor: { definition: mockDefinition } }],
       } as ProtocolsQueryReply);
-      const didDereferencer = {
-        dereference: sinon.stub().resolves({
-          dereferencingMetadata : {},
-          contentStream         : {
-            id              : `${targetDid}#dwn`,
-            type            : 'DecentralizedWebNode',
-            serviceEndpoint : ['https://dwn.example.com'],
-          },
-        }),
-      };
+      const getDwnEndpointUrls = sinon.stub().resolves(['https://dwn.example.com']);
 
       const result = await fetchRemoteProtocolDefinition(
-        targetDid, protocolUri, didDereferencer as any, sendDwnRpcRequest, cache,
+        targetDid, protocolUri, getDwnEndpointUrls, sendDwnRpcRequest, cache,
       );
       expect(result).toEqual(mockDefinition);
       expect(cache.get(`remote~${targetDid}~${protocolUri}`)).toEqual(mockDefinition);
@@ -150,19 +141,10 @@ describe('dwn-protocol-cache', () => {
         status  : { code: 404 },
         entries : [],
       } as unknown as ProtocolsQueryReply);
-      const didDereferencer = {
-        dereference: sinon.stub().resolves({
-          dereferencingMetadata : {},
-          contentStream         : {
-            id              : `${targetDid}#dwn`,
-            type            : 'DecentralizedWebNode',
-            serviceEndpoint : ['https://dwn.example.com'],
-          },
-        }),
-      };
+      const getDwnEndpointUrls = sinon.stub().resolves(['https://dwn.example.com']);
 
       await expect(fetchRemoteProtocolDefinition(
-        targetDid, protocolUri, didDereferencer as any, sendDwnRpcRequest, cache,
+        targetDid, protocolUri, getDwnEndpointUrls, sendDwnRpcRequest, cache,
       )).rejects.toThrow('Failed to fetch protocol');
     });
 
@@ -172,19 +154,10 @@ describe('dwn-protocol-cache', () => {
         status  : { code: 200 },
         entries : [],
       } as unknown as ProtocolsQueryReply);
-      const didDereferencer = {
-        dereference: sinon.stub().resolves({
-          dereferencingMetadata : {},
-          contentStream         : {
-            id              : `${targetDid}#dwn`,
-            type            : 'DecentralizedWebNode',
-            serviceEndpoint : ['https://dwn.example.com'],
-          },
-        }),
-      };
+      const getDwnEndpointUrls = sinon.stub().resolves(['https://dwn.example.com']);
 
       await expect(fetchRemoteProtocolDefinition(
-        targetDid, protocolUri, didDereferencer as any, sendDwnRpcRequest, cache,
+        targetDid, protocolUri, getDwnEndpointUrls, sendDwnRpcRequest, cache,
       )).rejects.toThrow('Failed to fetch protocol');
     });
   });
@@ -209,16 +182,7 @@ describe('dwn-protocol-cache', () => {
       return sinon.stub().resolves(persona.signer);
     }
 
-    const dwnDereferencer = (did: string): any => ({
-      dereference: sinon.stub().resolves({
-        dereferencingMetadata : {},
-        contentStream         : {
-          id              : `${did}#dwn`,
-          type            : 'DecentralizedWebNode',
-          serviceEndpoint : ['https://dwn.example.com'],
-        },
-      }),
-    });
+    const getDwnEndpointUrls = sinon.stub().resolves(['https://dwn.example.com']);
 
     it('should return undefined when query returns non-200', async () => {
       const getSigner = await createRealSigner();
@@ -229,7 +193,7 @@ describe('dwn-protocol-cache', () => {
 
       const result = await extractDerivedPublicKey(
         targetDid, protocolUri, rootContextId, requesterDid,
-        dwnDereferencer(targetDid) as any, getSigner, sendDwnRpcRequest,
+        getDwnEndpointUrls, getSigner, sendDwnRpcRequest,
       );
       expect(result).toBeUndefined();
     });
@@ -243,7 +207,7 @@ describe('dwn-protocol-cache', () => {
 
       const result = await extractDerivedPublicKey(
         targetDid, protocolUri, rootContextId, requesterDid,
-        dwnDereferencer(targetDid) as any, getSigner, sendDwnRpcRequest,
+        getDwnEndpointUrls, getSigner, sendDwnRpcRequest,
       );
       expect(result).toBeUndefined();
     });
@@ -267,7 +231,7 @@ describe('dwn-protocol-cache', () => {
 
       const result = await extractDerivedPublicKey(
         targetDid, protocolUri, rootContextId, requesterDid,
-        dwnDereferencer(targetDid) as any, getSigner, sendDwnRpcRequest,
+        getDwnEndpointUrls, getSigner, sendDwnRpcRequest,
       );
       expect(result).toBeDefined();
       expect(result!.rootKeyId).toBe('root-key-1');
@@ -292,7 +256,7 @@ describe('dwn-protocol-cache', () => {
 
       const result = await extractDerivedPublicKey(
         targetDid, protocolUri, rootContextId, requesterDid,
-        dwnDereferencer(targetDid) as any, getSigner, sendDwnRpcRequest,
+        getDwnEndpointUrls, getSigner, sendDwnRpcRequest,
       );
       expect(result).toBeUndefined();
     });
@@ -306,7 +270,7 @@ describe('dwn-protocol-cache', () => {
 
       const result = await extractDerivedPublicKey(
         targetDid, protocolUri, rootContextId, requesterDid,
-        dwnDereferencer(targetDid) as any, getSigner, sendDwnRpcRequest,
+        getDwnEndpointUrls, getSigner, sendDwnRpcRequest,
       );
       expect(result).toBeUndefined();
     });

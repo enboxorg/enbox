@@ -105,23 +105,23 @@ describe('AgentDwnApi', () => {
   describe('getDwnEndpointUrlsForTarget()', () => {
     const localDid = 'did:jwk:local';
 
-    function createDerefResult(did: string, serviceEndpoint: string | string[]) {
+    function createDerefResult(did: string, serviceEndpoint: string | string[]): object {
       return {
-        dereferencingMetadata: {},
-        contentStream: {
-          id: `${did}#dwn`,
-          type: 'DecentralizedWebNode',
-          serviceEndpoint,
-          enc: `${did}#enc`,
-          sig: `${did}#sig`,
+        dereferencingMetadata : {},
+        contentStream         : {
+          id              : `${did}#dwn`,
+          type            : 'DecentralizedWebNode',
+          serviceEndpoint : serviceEndpoint,
+          enc             : `${did}#enc`,
+          sig             : `${did}#sig`,
         },
       };
     }
 
     function createMockAgent(): any {
       return {
-        agentDid: { uri: 'did:jwk:agent' },
-        did: {
+        agentDid : { uri: 'did:jwk:agent' },
+        did      : {
           dereference: sinon.stub().resolves(createDerefResult(localDid, 'https://remote.example')),
         },
         identity: {
@@ -135,15 +135,15 @@ describe('AgentDwnApi', () => {
       };
     }
 
-    it('uses the local DWN endpoint if available even when DID #dwn dereference fails', async () => {
+    it('should use the local DWN endpoint if available even when DID #dwn dereference fails', async () => {
       const mockAgent = createMockAgent();
       mockAgent.did.dereference.rejects(new Error('DID dereference failed'));
       mockAgent.rpc.getServerInfo.onFirstCall().resolves({ server: '@enbox/dwn-server' });
 
       const dwnApi = new AgentDwnApi({
-        agent: mockAgent,
-        dwn: {} as Dwn,
-        localDwnStrategy: 'prefer',
+        agent            : mockAgent,
+        dwn              : {} as Dwn,
+        localDwnStrategy : 'prefer',
       });
 
       const endpoints = await dwnApi.getDwnEndpointUrlsForTarget(localDid);
@@ -153,13 +153,13 @@ describe('AgentDwnApi', () => {
       expect(mockAgent.did.dereference.callCount).toBe(1);
     });
 
-    it('throws when strategy is only and local DWN is unavailable', async () => {
+    it('should throw when strategy is only and local DWN is unavailable', async () => {
       const mockAgent = createMockAgent();
 
       const dwnApi = new AgentDwnApi({
-        agent: mockAgent,
-        dwn: {} as Dwn,
-        localDwnStrategy: 'only',
+        agent            : mockAgent,
+        dwn              : {} as Dwn,
+        localDwnStrategy : 'only',
       });
 
       await expect(dwnApi.getDwnEndpointUrlsForTarget(localDid))
@@ -167,13 +167,13 @@ describe('AgentDwnApi', () => {
       expect(mockAgent.did.dereference.callCount).toBe(0);
     });
 
-    it('returns DID endpoints and skips local probing when strategy is off', async () => {
+    it('should return DID endpoints and skip local probing when strategy is off', async () => {
       const mockAgent = createMockAgent();
 
       const dwnApi = new AgentDwnApi({
-        agent: mockAgent,
-        dwn: {} as Dwn,
-        localDwnStrategy: 'off',
+        agent            : mockAgent,
+        dwn              : {} as Dwn,
+        localDwnStrategy : 'off',
       });
 
       const endpoints = await dwnApi.getDwnEndpointUrlsForTarget(localDid);
@@ -183,7 +183,7 @@ describe('AgentDwnApi', () => {
       expect(mockAgent.did.dereference.callCount).toBe(1);
     });
 
-    it('prepends local endpoint ahead of DID endpoints when strategy is prefer', async () => {
+    it('should prepend local endpoint ahead of DID endpoints when strategy is prefer', async () => {
       const mockAgent = createMockAgent();
       mockAgent.did.dereference.resolves(
         createDerefResult(localDid, ['https://remote-a.example', 'https://remote-b.example'])
@@ -191,9 +191,9 @@ describe('AgentDwnApi', () => {
       mockAgent.rpc.getServerInfo.onFirstCall().resolves({ server: '@enbox/dwn-server' });
 
       const dwnApi = new AgentDwnApi({
-        agent: mockAgent,
-        dwn: {} as Dwn,
-        localDwnStrategy: 'prefer',
+        agent            : mockAgent,
+        dwn              : {} as Dwn,
+        localDwnStrategy : 'prefer',
       });
 
       const endpoints = await dwnApi.getDwnEndpointUrlsForTarget(localDid);
@@ -204,6 +204,26 @@ describe('AgentDwnApi', () => {
         'https://remote-b.example',
       ]);
       expect(mockAgent.rpc.getServerInfo.callCount).toBe(1);
+      expect(mockAgent.did.dereference.callCount).toBe(1);
+    });
+
+    it('should skip local probing for a DID not managed by this agent', async () => {
+      const mockAgent = createMockAgent();
+      mockAgent.identity.list.resolves([
+        { did: { uri: 'did:jwk:other' }, metadata: {} },
+      ]);
+
+      const dwnApi = new AgentDwnApi({
+        agent            : mockAgent,
+        dwn              : {} as Dwn,
+        localDwnStrategy : 'prefer',
+      });
+
+      const endpoints = await dwnApi.getDwnEndpointUrlsForTarget(localDid);
+
+      expect(endpoints).toEqual(['https://remote.example']);
+      // No localhost probing should have occurred for an unmanaged DID.
+      expect(mockAgent.rpc.getServerInfo.callCount).toBe(0);
       expect(mockAgent.did.dereference.callCount).toBe(1);
     });
   });
