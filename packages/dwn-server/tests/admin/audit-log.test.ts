@@ -5,7 +5,7 @@ import { tmpdir } from 'os';
 import { mkdtempSync, rmSync } from 'fs';
 
 import { AuditLog } from '../../src/admin/audit-log.js';
-import { getDialectFromUrl } from '../../src/storage.js';
+import { createMigratedFileDialect } from '../utils.js';
 
 describe('AuditLog', () => {
   let auditLog: AuditLog;
@@ -13,7 +13,7 @@ describe('AuditLog', () => {
 
   beforeAll(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'audit-log-test-'));
-    const dialect = getDialectFromUrl(new URL(`sqlite://${tmpDir}/audit.db`));
+    const dialect = await createMigratedFileDialect(`sqlite://${tmpDir}/audit.db`);
     auditLog = await AuditLog.create(dialect);
   });
 
@@ -32,12 +32,10 @@ describe('AuditLog', () => {
     });
 
     it('should handle calling create() twice on the same database (idempotent)', async () => {
-      const dialect = getDialectFromUrl(new URL(`sqlite://${tmpDir}/audit-idempotent.db`));
+      const dialect = await createMigratedFileDialect(`sqlite://${tmpDir}/audit-idempotent.db`);
       const log1 = await AuditLog.create(dialect);
       // Creating a second instance on the same DB should not throw.
-      // Note: we use a separate dialect instance for the same file, which is fine for SQLite.
-      const dialect2 = getDialectFromUrl(new URL(`sqlite://${tmpDir}/audit-idempotent.db`));
-      const log2 = await AuditLog.create(dialect2);
+      const log2 = await AuditLog.create(dialect);
       expect(log2).toBeDefined();
       await log1.close();
       await log2.close();
@@ -242,7 +240,7 @@ describe('AuditLog', () => {
   describe('retention cleanup timer', () => {
     it('should run enforceRetention() on the interval and purge old entries', async () => {
       const retentionTmpDir = mkdtempSync(join(tmpdir(), 'audit-retention-'));
-      const retentionDialect = getDialectFromUrl(new URL(`sqlite://${retentionTmpDir}/retention.db`));
+      const retentionDialect = await createMigratedFileDialect(`sqlite://${retentionTmpDir}/retention.db`);
 
       // Create with retention config: maxRows = 2 so we can trigger pruning.
       const retentionLog = await AuditLog.create(retentionDialect, {
@@ -268,7 +266,7 @@ describe('AuditLog', () => {
 
     it('should log when enforceRetention fails during timer callback', async () => {
       const retentionTmpDir = mkdtempSync(join(tmpdir(), 'audit-retention-err-'));
-      const retentionDialect = getDialectFromUrl(new URL(`sqlite://${retentionTmpDir}/retention-err.db`));
+      const retentionDialect = await createMigratedFileDialect(`sqlite://${retentionTmpDir}/retention-err.db`);
 
       // Create an audit log with retention enabled to start the timer.
       const retentionLog = await AuditLog.create(retentionDialect, {
@@ -289,7 +287,7 @@ describe('AuditLog', () => {
   describe('close()', () => {
     it('should close the database connection without error', async () => {
       const closeTmpDir = mkdtempSync(join(tmpdir(), 'audit-log-close-'));
-      const dialect = getDialectFromUrl(new URL(`sqlite://${closeTmpDir}/close.db`));
+      const dialect = await createMigratedFileDialect(`sqlite://${closeTmpDir}/close.db`);
       const log = await AuditLog.create(dialect);
       await log.record({ actor: 'system', action: 'test.close' });
       await log.close();

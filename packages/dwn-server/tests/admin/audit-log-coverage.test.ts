@@ -6,7 +6,7 @@ import { tmpdir } from 'os';
 import { mkdtempSync, rmSync } from 'fs';
 
 import { AuditLog } from '../../src/admin/audit-log.js';
-import { getDialectFromUrl } from '../../src/storage.js';
+import { createMigratedFileDialect } from '../utils.js';
 
 /**
  * Coverage tests for AuditLog lines 289-295:
@@ -35,7 +35,7 @@ describe('AuditLog — retention cleanup timer coverage', () => {
     );
 
     const tmpDir = mkdtempSync(join(tmpdir(), 'audit-timer-cover-'));
-    const dialect = getDialectFromUrl(new URL(`sqlite://${tmpDir}/timer.db`));
+    const dialect = await createMigratedFileDialect(`sqlite://${tmpDir}/timer.db`);
 
     // Create with retention: maxRows = 2 so excess entries get purged.
     const auditLog = await AuditLog.create(dialect, {
@@ -82,7 +82,7 @@ describe('AuditLog — retention cleanup timer coverage', () => {
     );
 
     const tmpDir = mkdtempSync(join(tmpdir(), 'audit-timer-noop-'));
-    const dialect = getDialectFromUrl(new URL(`sqlite://${tmpDir}/noop.db`));
+    const dialect = await createMigratedFileDialect(`sqlite://${tmpDir}/noop.db`);
 
     const auditLog = await AuditLog.create(dialect, {
       maxAgeDays : 0,
@@ -116,7 +116,7 @@ describe('AuditLog — retention cleanup timer coverage', () => {
     );
 
     const tmpDir = mkdtempSync(join(tmpdir(), 'audit-timer-err-'));
-    const dialect = getDialectFromUrl(new URL(`sqlite://${tmpDir}/err.db`));
+    const dialect = await createMigratedFileDialect(`sqlite://${tmpDir}/err.db`);
 
     const auditLog = await AuditLog.create(dialect, {
       maxAgeDays : 1,
@@ -141,7 +141,7 @@ describe('AuditLog — retention cleanup timer coverage', () => {
 
   it('should not start cleanup interval twice', async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'audit-double-'));
-    const dialect = getDialectFromUrl(new URL(`sqlite://${tmpDir}/double.db`));
+    const dialect = await createMigratedFileDialect(`sqlite://${tmpDir}/double.db`);
 
     const auditLog = await AuditLog.create(dialect, {
       maxAgeDays : 1,
@@ -154,7 +154,7 @@ describe('AuditLog — retention cleanup timer coverage', () => {
 
   it('should return 0 when enforceRetention is called with no config', async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'audit-noconf-'));
-    const dialect = getDialectFromUrl(new URL(`sqlite://${tmpDir}/noconf.db`));
+    const dialect = await createMigratedFileDialect(`sqlite://${tmpDir}/noconf.db`);
 
     const auditLog = await AuditLog.create(dialect);
     const deleted = await auditLog.enforceRetention();

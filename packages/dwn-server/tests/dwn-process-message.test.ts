@@ -25,7 +25,7 @@ describe('handleDwnProcessMessage', () => {
       target  : alice.did,
     });
 
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
     await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
     const context: RequestContext = { dwn, transport: 'http', dataStream };
 
@@ -52,7 +52,7 @@ describe('handleDwnProcessMessage', () => {
       target: 'did:key:abc1234',
     });
 
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
     const context: RequestContext = { dwn, transport: 'http' };
 
     const { jsonRpcResponse } = await handleDwnProcessMessage(
@@ -81,7 +81,7 @@ describe('handleDwnProcessMessage', () => {
       target  : alice.did,
     });
 
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
     await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
     const context: RequestContext = { dwn, transport: 'http', dataStream };
 
@@ -132,7 +132,7 @@ describe('handleDwnProcessMessage', () => {
       target  : alice.did,
     });
 
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
     await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
     const context: RequestContext = { dwn, transport: 'http', dataStream };
 
@@ -180,7 +180,7 @@ describe('handleDwnProcessMessage', () => {
       target: 'did:key:abc1234',
     });
 
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
     const context: RequestContext = { dwn, transport: 'ws' };
 
     const { jsonRpcResponse } = await handleDwnProcessMessage(
@@ -203,7 +203,7 @@ describe('handleDwnProcessMessage', () => {
       target: 'did:key:abc1234',
     });
 
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
     const context: RequestContext = { dwn, transport: 'http', subscriptionRequest: { id: 'test', subscriptionHandler: () => {} } };
 
     const { jsonRpcResponse } = await handleDwnProcessMessage(
@@ -226,7 +226,7 @@ describe('handleDwnProcessMessage', () => {
       target: 'did:key:abc1234',
     });
 
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
     spyOn(dwn, 'processMessage').mockImplementation(() => {
       throw new Error('unexpected error');
     });
@@ -247,7 +247,7 @@ describe('handleDwnProcessMessage', () => {
   it('should reject when per-tenant rate limit is exceeded', async () => {
     const rateLimiter = new RateLimiter({ refillRate: 10, maxTokens: 1 });
     try {
-      const dwn = await getTestDwn();
+      const { dwn } = await getTestDwn();
       const context: RequestContext = {
         dwn,
         transport         : 'http',
@@ -281,7 +281,7 @@ describe('handleDwnProcessMessage', () => {
   });
 
   it('should reject RecordsWrite when message quota is exceeded', async () => {
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
 
     // Create a mock admin store that reports the tenant already has messages.
     const mockAdminStore = {
@@ -318,7 +318,7 @@ describe('handleDwnProcessMessage', () => {
   });
 
   it('should reject RecordsWrite when storage quota is exceeded', async () => {
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
 
     const mockAdminStore = {
       getTenantMessageCount : async (): Promise<number> => 0,
@@ -354,7 +354,7 @@ describe('handleDwnProcessMessage', () => {
   });
 
   it('should use per-tenant quota override when available', async () => {
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
 
     const mockAdminStore = {
       getTenantMessageCount : async (): Promise<number> => 3,
@@ -400,7 +400,7 @@ describe('handleDwnProcessMessage', () => {
   });
 
   it('should skip quota enforcement when both quotas are 0 (unlimited)', async () => {
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
 
     const mockAdminStore = {
       getTenantMessageCount : async (): Promise<number> => 999,
@@ -442,7 +442,7 @@ describe('handleDwnProcessMessage', () => {
   });
 
   it('should allow RecordsWrite when quota is not exceeded', async () => {
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
 
     const mockAdminStore = {
       getTenantMessageCount : async (): Promise<number> => 1,

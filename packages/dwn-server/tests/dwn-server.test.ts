@@ -11,7 +11,7 @@ describe('DwnServer', () => {
   let dwn: Dwn;
 
   it('starts with injected dwn', async () => {
-    dwn = await getTestDwn();
+    ({ dwn } = await getTestDwn());
 
     const dwnServer = new DwnServer({ config: dwnServerConfig, dwn });
     await dwnServer.start();
@@ -24,7 +24,7 @@ describe('DwnServer', () => {
 
   describe('webSocketSupport config', () => {
     it('should start without websocket support if disabled', async () => {
-      dwn = await getTestDwn({ withEvents: true });
+      ({ dwn } = await getTestDwn({ withEvents: true }));
       const withoutSocketServer = new DwnServer({
         dwn,
         config: {
@@ -41,7 +41,7 @@ describe('DwnServer', () => {
     });
 
     it('should start with websocket support if enabled', async () => {
-      dwn = await getTestDwn({ withEvents: true });
+      ({ dwn } = await getTestDwn({ withEvents: true }));
       const withSocketServer = new DwnServer({
         dwn,
         config: {

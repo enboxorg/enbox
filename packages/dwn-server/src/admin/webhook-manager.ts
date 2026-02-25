@@ -2,9 +2,9 @@ import type { Dialect } from '@enbox/dwn-sql-store';
 import type { AdminWebhook, AdminWebhookInput } from './types.js';
 
 import { createHmac } from 'crypto';
-import { Kysely } from 'kysely';
 import log from 'loglevel';
 import { v4 as uuidv4 } from 'uuid';
+import { Kysely, sql } from 'kysely';
 
 /**
  * Payload delivered to webhook endpoints.
@@ -50,16 +50,18 @@ export class WebhookManager {
     return manager;
   }
 
+  /**
+   * Verifies that the required table exists. Throws a clear error directing
+   * the caller to run server migrations first.
+   */
   async #initialize(): Promise<void> {
-    await this.#db.schema
-      .createTable(WebhookManager.#tableName)
-      .ifNotExists()
-      .addColumn('id', 'text', (col) => col.primaryKey())
-      .addColumn('url', 'text', (col) => col.notNull())
-      .addColumn('events', 'text', (col) => col.notNull()) // JSON array
-      .addColumn('secret', 'text')
-      .addColumn('createdAt', 'text', (col) => col.notNull())
-      .execute();
+    try {
+      await sql`SELECT 1 FROM ${sql.table(WebhookManager.#tableName)} LIMIT 0`.execute(this.#db);
+    } catch {
+      throw new Error(
+        `WebhookManager: table '${WebhookManager.#tableName}' does not exist. Run server migrations before starting.`
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@ describe('handleDwnProcessMessage', () => {
     const requestId = uuidv4();
     const dwnRequest = createJsonRpcRequest(requestId, 'rpc.subscribe.close', { });
 
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
     const context: RequestContext = { dwn, transport: 'ws' };
 
     const { jsonRpcResponse } = await handleSubscriptionsClose(
@@ -33,7 +33,7 @@ describe('handleDwnProcessMessage', () => {
     const dwnRequest = createJsonRpcRequest(requestId, 'rpc.subscribe.close', { });
     const socketConnection = sinon.createStubInstance(SocketConnection);
 
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
     const context: RequestContext = { dwn, transport: 'ws', socketConnection };
 
     const { jsonRpcResponse } = await handleSubscriptionsClose(
@@ -56,7 +56,7 @@ describe('handleDwnProcessMessage', () => {
       ''
     ));
 
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
     const context: RequestContext = { dwn, transport: 'ws', socketConnection };
 
     const { jsonRpcResponse } = await handleSubscriptionsClose(
@@ -76,7 +76,7 @@ describe('handleDwnProcessMessage', () => {
     const socketConnection = sinon.createStubInstance(SocketConnection);
     socketConnection.closeSubscription.throws(new Error('unknown error'));
 
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
     const context: RequestContext = { dwn, transport: 'ws', socketConnection };
 
     const { jsonRpcResponse } = await handleSubscriptionsClose(
@@ -95,7 +95,7 @@ describe('handleDwnProcessMessage', () => {
     const dwnRequest = createJsonRpcSubscriptionRequest(requestId, 'rpc.subscribe.close', {}, id);
     const socketConnection = sinon.createStubInstance(SocketConnection);
 
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
     const context: RequestContext = { dwn, transport: 'ws', socketConnection };
 
     const { jsonRpcResponse } = await handleSubscriptionsClose(
@@ -113,7 +113,7 @@ describe('handleDwnProcessMessage', () => {
 
     const socketConnection = sinon.createStubInstance(SocketConnection);
 
-    const dwn = await getTestDwn();
+    const { dwn } = await getTestDwn();
     const context: RequestContext = { dwn, transport: 'ws', socketConnection };
 
     const { jsonRpcResponse } = await handleSubscriptionsClose(

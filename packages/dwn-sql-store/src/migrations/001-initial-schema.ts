@@ -1,6 +1,6 @@
 import type { Dialect } from '../dialect/dialect.js';
-import type { Kysely } from 'kysely';
-import type { Migration } from '../migration-runner.js';
+import type { DwnMigrationFactory } from '../migration-provider.js';
+import type { Kysely, Migration } from 'kysely';
 
 import { sql } from 'kysely';
 
@@ -8,13 +8,12 @@ import { sql } from 'kysely';
  * Baseline migration: captures the schema as of the pre-migration era.
  *
  * For existing databases that already have these tables, this migration is
- * detected as "already applied" during the adoption bootstrap (see MigrationRunner).
+ * detected as "already applied" during the adoption bootstrap (see runDwnStoreMigrations).
  * For new databases, this creates the full initial schema.
  */
-export const migration001InitialSchema: Migration = {
-  name: '001-initial-schema',
+export const migration001InitialSchema: DwnMigrationFactory = (dialect: Dialect): Migration => ({
 
-  async up(db: Kysely<any>, dialect: Dialect): Promise<void> {
+  async up(db: Kysely<any>): Promise<void> {
 
     // ─── messageStoreMessages ───────────────────────────────────────────
     if (!(await dialect.hasTable(db, 'messageStoreMessages'))) {
@@ -187,4 +186,4 @@ export const migration001InitialSchema: Migration = {
         .on('stateIndexMeta').columns(['tenant', 'messageCid']).execute();
     }
   },
-};
+});

@@ -1,8 +1,12 @@
+import type { DwnDatabaseType } from '../src/types.js';
+
 import { createBunSqliteDatabase } from '../src/dialect/bun-sqlite-adapter.js';
 import { DataStoreS3 } from '../src/data-store-s3.js';
 import { DataStoreSql } from '../src/data-store-sql.js';
+import { Kysely } from 'kysely';
 import { MessageStoreSql } from '../src/message-store-sql.js';
 import { ResumableTaskStoreSql } from '../src/resumable-task-store-sql.js';
+import { runDwnStoreMigrations } from '../src/migration-runner.js';
 import { SqliteDialect } from '../src/dialect/sqlite-dialect.js';
 import { StateIndexSql } from '../src/state-index-sql.js';
 import { describe, expect, it } from 'bun:test';
@@ -98,7 +102,15 @@ describe('Store guards — db not open', () => {
     });
 
     it('should be idempotent — calling open() twice does not throw', async () => {
-      const freshStore = new DataStoreSql(dialect);
+      // Use a shared in-memory database so migrations and the store see the same tables.
+      const sharedDb = createBunSqliteDatabase(':memory:', { create: true });
+      const freshDialect = new SqliteDialect({
+        database: async (): Promise<ReturnType<typeof createBunSqliteDatabase>> => sharedDb,
+      });
+      const db = new Kysely<DwnDatabaseType>({ dialect: freshDialect });
+      await runDwnStoreMigrations(db, freshDialect);
+
+      const freshStore = new DataStoreSql(freshDialect);
       await freshStore.open();
       await freshStore.open(); // second call should be a no-op
       await freshStore.close();

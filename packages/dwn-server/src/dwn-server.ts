@@ -31,7 +31,7 @@ import { RateLimiter } from './rate-limiter.js';
 import { RegistrationManager } from './registration/registration-manager.js';
 import { WebhookManager } from './admin/webhook-manager.js';
 import { WsApi } from './ws-api.js';
-import { getDialectFromUrl, getDwnConfig } from './storage.js';
+import { getDialectFromUrl, getDwnConfig, runServerMigrationsIfNeeded } from './storage.js';
 import { removeProcessHandlers, setProcessHandlers } from './process-handlers.js';
 
 /**
@@ -144,6 +144,13 @@ export class DwnServer {
    */
   async #setupServer(): Promise<void> {
 
+    // Run server migrations (admin stores, registration, TTL cache) FIRST,
+    // before creating any stores that depend on the server schema. The
+    // returned dialect is reused for the TTL cache and admin stores so that
+    // in-memory SQLite shares a single database instance across migrations
+    // and stores.
+    const serverDialect = await runServerMigrationsIfNeeded(this.config);
+
     let registrationManager: RegistrationManager | undefined;
 
     if (!this.dwn) {
@@ -235,36 +242,32 @@ export class DwnServer {
       adminStore = AdminStore.create(storageUrl);
       activityLog = new ActivityLog(this.config.adminActivityLogCapacity);
 
-      // Create the persistent audit log using the registration store's dialect
-      // (same DB) or the message store URL as fallback.
+      // Reuse the dialect returned by server migrations when available — this
+      // is critical for in-memory SQLite where every `getDialectFromUrl` call
+      // creates a separate database. For Postgres, `serverDialect` points at
+      // the same shared pool, so reusing it also avoids pool proliferation.
       if (this.config.registrationStoreUrl) {
+        const adminDialect = serverDialect ?? getDialectFromUrl(new URL(this.config.registrationStoreUrl));
+
         try {
-          const auditDialect = getDialectFromUrl(new URL(this.config.registrationStoreUrl));
-          auditLog = await AuditLog.create(auditDialect, {
+          auditLog = await AuditLog.create(adminDialect, {
             maxAgeDays : this.config.auditLogMaxAgeDays,
             maxRows    : this.config.auditLogMaxRows,
           });
         } catch (err) {
           log.warn('Failed to create audit log:', err);
         }
-      }
 
-      // Create webhook manager using the same dialect as the audit log.
-      if (this.config.registrationStoreUrl) {
         try {
-          const webhookDialect = getDialectFromUrl(new URL(this.config.registrationStoreUrl));
-          webhookManager = await WebhookManager.create(webhookDialect);
+          webhookManager = await WebhookManager.create(adminDialect);
         } catch (err) {
           log.warn('Failed to create webhook manager:', err);
         }
-      }
 
-      // Create passkey store and session manager for WebAuthn admin auth.
-      // @see https://github.com/enboxorg/enbox/issues/546
-      if (this.config.registrationStoreUrl) {
+        // Create passkey store and session manager for WebAuthn admin auth.
+        // @see https://github.com/enboxorg/enbox/issues/546
         try {
-          const passkeyDialect = getDialectFromUrl(new URL(this.config.registrationStoreUrl));
-          passkeyStore = await AdminPasskeyStore.create(passkeyDialect);
+          passkeyStore = await AdminPasskeyStore.create(adminDialect);
           sessionManager = new AdminSessionManager(this.config.adminSessionTtlSeconds);
           log.info('Admin passkey authentication enabled');
         } catch (err) {
@@ -330,7 +333,11 @@ export class DwnServer {
 
     this.#httpApi = await HttpApi.create(
       this.config, this.dwn, registrationManager, adminApi, activityLog,
-      { adminStore, registrationStore, ipRateLimiter, tenantRateLimiter, messageProcessedHooks, openAuthHandler, sessionManager },
+      {
+        adminStore, registrationStore, ipRateLimiter, tenantRateLimiter,
+        messageProcessedHooks, openAuthHandler, sessionManager,
+        ttlCacheDialect: serverDialect,
+      },
     );
 
     await this.#httpApi.start(this.config.port);

@@ -1,13 +1,17 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import type { DwnDatabaseType } from '../src/types.js';
 
 import { createBunSqliteDatabase } from '../src/dialect/bun-sqlite-adapter.js';
+import { Kysely } from 'kysely';
+import { runDwnStoreMigrations } from '../src/migration-runner.js';
 import { SqliteDialect } from '../src/dialect/sqlite-dialect.js';
 import { StateIndexSql } from '../src/state-index-sql.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 describe('StateIndexSql', () => {
+  // Share a single in-memory database so migrations and the store see the same tables.
+  const sharedDb = createBunSqliteDatabase(':memory:', { create: true });
   const dialect = new SqliteDialect({
-    database: async (): Promise<ReturnType<typeof createBunSqliteDatabase>> =>
-      createBunSqliteDatabase(':memory:', { create: true }),
+    database: async (): Promise<ReturnType<typeof createBunSqliteDatabase>> => sharedDb,
   });
 
   let stateIndex: StateIndexSql;
@@ -16,6 +20,10 @@ describe('StateIndexSql', () => {
   const protocol = 'https://proto.example.com/v1';
 
   beforeAll(async () => {
+    // Run migrations before opening the store — tables must exist first.
+    const db = new Kysely<DwnDatabaseType>({ dialect });
+    await runDwnStoreMigrations(db, dialect);
+
     stateIndex = new StateIndexSql(dialect);
     await stateIndex.open();
   });

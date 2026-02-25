@@ -3,7 +3,6 @@ import type { DwnDatabaseType } from './types.js';
 import type { DataStore, DataStoreGetResult, DataStorePutResult } from '@enbox/dwn-sdk-js';
 
 import { DataStream } from '@enbox/dwn-sdk-js';
-import { Kysely } from 'kysely';
 import { Readable } from 'stream';
 import { Upload } from '@aws-sdk/lib-storage';
 import {
@@ -14,6 +13,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { Kysely, sql } from 'kysely';
 
 /**
  * S3-backed implementation of {@link DataStore} with SQL-based reference
@@ -56,7 +56,9 @@ export class DataStoreS3 implements DataStore {
     }
 
     this.#db = new Kysely<DwnDatabaseType>({ dialect: this.#dialect });
-    await this.#ensureRefsTable();
+
+    // Fail fast if migrations have not been run — the dataRefs table must already exist.
+    await this.#assertTablesExist();
   }
 
   public async close(): Promise<void> {
@@ -277,30 +279,17 @@ export class DataStoreS3 implements DataStore {
   }
 
   /**
-   * Creates the `dataRefs` table if it doesn't already exist.
-   * Shares the same schema as DataStoreSql's `dataRefs` table.
+   * Verifies that the required `dataRefs` table exists by executing a
+   * zero-row SELECT. Throws a clear error directing the caller to run
+   * migrations first.
    */
-  async #ensureRefsTable(): Promise<void> {
-    const db = this.#db!;
-
-    if (!(await this.#dialect.hasTable(db, 'dataRefs'))) {
-      await db.schema
-        .createTable('dataRefs')
-        .ifNotExists()
-        .addColumn('tenant', 'varchar(255)', (col) => col.notNull())
-        .addColumn('recordId', 'varchar(60)', (col) => col.notNull())
-        .addColumn('dataCid', 'varchar(60)', (col) => col.notNull())
-        .addColumn('dataSize', 'bigint', (col) => col.notNull())
-        .execute();
-
-      await db.schema.createIndex('index_dataRefs_tenant_recordId_dataCid')
-        .on('dataRefs').columns(['tenant', 'recordId', 'dataCid']).unique().execute();
-
-      await db.schema.createIndex('index_dataRefs_dataCid')
-        .on('dataRefs').column('dataCid').execute();
-
-      await db.schema.createIndex('index_dataRefs_tenant')
-        .on('dataRefs').column('tenant').execute();
+  async #assertTablesExist(): Promise<void> {
+    try {
+      await sql`SELECT 1 FROM ${sql.table('dataRefs')} LIMIT 0`.execute(this.#db!);
+    } catch {
+      throw new Error(
+        'DataStoreS3: table \'dataRefs\' does not exist. Run DWN store migrations before opening stores.'
+      );
     }
   }
 }

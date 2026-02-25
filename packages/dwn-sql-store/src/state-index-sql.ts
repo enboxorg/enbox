@@ -16,9 +16,9 @@ import type { KeyValues } from '@enbox/dwn-sdk-js';
 import type { StateIndex } from '@enbox/dwn-sdk-js';
 
 import { initDefaultHashes } from '@enbox/dwn-sdk-js';
-import { Kysely } from 'kysely';
 import { SMTStoreSql } from './smt-store-sql.js';
 import { SparseMerkleTree } from '@enbox/dwn-sdk-js';
+import { Kysely, sql } from 'kysely';
 
 export class StateIndexSql implements StateIndex {
   #dialect: Dialect;
@@ -51,68 +51,24 @@ export class StateIndexSql implements StateIndex {
     // Ensure default hashes are initialized for the SMT
     await initDefaultHashes();
 
-    // ─── Create stateIndexNodes table ─────────────────────────────────────
-    const nodesTableName = 'stateIndexNodes';
-    const nodesTableExists = await this.#dialect.hasTable(this.#db, nodesTableName);
-    if (!nodesTableExists) {
-      await this.#db.schema
-        .createTable(nodesTableName)
-        .ifNotExists()
-        .addColumn('tenant', 'varchar(255)', (col) => col.notNull())
-        .addColumn('scope', 'varchar(200)', (col) => col.notNull())
-        .addColumn('nodeHash', 'varchar(64)', (col) => col.notNull())
-        .addColumn('nodeType', 'varchar(10)', (col) => col.notNull())
-        .addColumn('leftHash', 'varchar(64)')
-        .addColumn('rightHash', 'varchar(64)')
-        .addColumn('leafKeyHash', 'varchar(64)')
-        .addColumn('leafValueCid', 'varchar(60)')
-        .execute();
+    // Fail fast if migrations have not been run — tables must already exist.
+    await this.#assertTablesExist();
+  }
 
-      // Not UNIQUE because the delete-then-insert upsert pattern in SMTStoreSql
-      // can race under concurrent access, causing duplicate key violations.
-      await this.#db.schema
-        .createIndex('index_stateIndexNodes_tenant_scope_nodeHash')
-        .on(nodesTableName)
-        .columns(['tenant', 'scope', 'nodeHash'])
-        .execute();
-    }
-
-    // ─── Create stateIndexRoots table ─────────────────────────────────────
-    const rootsTableName = 'stateIndexRoots';
-    const rootsTableExists = await this.#dialect.hasTable(this.#db, rootsTableName);
-    if (!rootsTableExists) {
-      await this.#db.schema
-        .createTable(rootsTableName)
-        .ifNotExists()
-        .addColumn('tenant', 'varchar(255)', (col) => col.notNull())
-        .addColumn('scope', 'varchar(200)', (col) => col.notNull())
-        .addColumn('rootHash', 'varchar(64)', (col) => col.notNull())
-        .execute();
-
-      await this.#db.schema
-        .createIndex('index_stateIndexRoots_tenant_scope')
-        .on(rootsTableName)
-        .columns(['tenant', 'scope'])
-        .execute();
-    }
-
-    // ─── Create stateIndexMeta table ──────────────────────────────────────
-    const metaTableName = 'stateIndexMeta';
-    const metaTableExists = await this.#dialect.hasTable(this.#db, metaTableName);
-    if (!metaTableExists) {
-      await this.#db.schema
-        .createTable(metaTableName)
-        .ifNotExists()
-        .addColumn('tenant', 'varchar(255)', (col) => col.notNull())
-        .addColumn('messageCid', 'varchar(60)', (col) => col.notNull())
-        .addColumn('protocol', 'varchar(200)')
-        .execute();
-
-      await this.#db.schema
-        .createIndex('index_stateIndexMeta_tenant_messageCid')
-        .on(metaTableName)
-        .columns(['tenant', 'messageCid'])
-        .execute();
+  /**
+   * Verifies that the required tables exist by executing a zero-row SELECT.
+   * Throws a clear error directing the caller to run migrations first.
+   */
+  async #assertTablesExist(): Promise<void> {
+    const tables = ['stateIndexNodes', 'stateIndexRoots', 'stateIndexMeta'] as const;
+    for (const table of tables) {
+      try {
+        await sql`SELECT 1 FROM ${sql.table(table)} LIMIT 0`.execute(this.#db!);
+      } catch {
+        throw new Error(
+          `StateIndexSql: table '${table}' does not exist. Run DWN store migrations before opening stores.`
+        );
+      }
     }
   }
 

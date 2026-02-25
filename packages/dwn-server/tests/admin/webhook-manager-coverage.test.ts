@@ -5,7 +5,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { mkdtempSync, rmSync } from 'fs';
 
-import { getDialectFromUrl } from '../../src/storage.js';
+import { createMigratedFileDialect } from '../utils.js';
 import { WebhookManager } from '../../src/admin/webhook-manager.js';
 
 /**
@@ -23,7 +23,7 @@ describe('WebhookManager — error path coverage', () => {
 
   beforeAll(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'webhook-cover-'));
-    const dialect = getDialectFromUrl(new URL(`sqlite://${tmpDir}/webhooks.db`));
+    const dialect = await createMigratedFileDialect(`sqlite://${tmpDir}/webhooks.db`);
     manager = await WebhookManager.create(dialect);
   });
 
@@ -58,7 +58,7 @@ describe('WebhookManager — error path coverage', () => {
   describe('#deliver error handling (line 159)', () => {
     it('should catch and log when individual webhook delivery fails', async () => {
       const freshTmpDir = mkdtempSync(join(tmpdir(), 'webhook-deliver-err-'));
-      const dialect = getDialectFromUrl(new URL(`sqlite://${freshTmpDir}/deliver-err.db`));
+      const dialect = await createMigratedFileDialect(`sqlite://${freshTmpDir}/deliver-err.db`);
       const freshManager = await WebhookManager.create(dialect);
 
       // Register a webhook.
@@ -84,7 +84,7 @@ describe('WebhookManager — error path coverage', () => {
 
     it('should catch and log when fetch returns non-OK status with retries', async () => {
       const freshTmpDir = mkdtempSync(join(tmpdir(), 'webhook-deliver-500-'));
-      const dialect = getDialectFromUrl(new URL(`sqlite://${freshTmpDir}/deliver-500.db`));
+      const dialect = await createMigratedFileDialect(`sqlite://${freshTmpDir}/deliver-500.db`);
       const freshManager = await WebhookManager.create(dialect);
 
       await freshManager.register({
@@ -106,7 +106,7 @@ describe('WebhookManager — error path coverage', () => {
   describe('#matchesEvent patterns', () => {
     it('should not fire for non-matching patterns', async () => {
       const freshTmpDir = mkdtempSync(join(tmpdir(), 'webhook-nomatch-'));
-      const dialect = getDialectFromUrl(new URL(`sqlite://${freshTmpDir}/nomatch.db`));
+      const dialect = await createMigratedFileDialect(`sqlite://${freshTmpDir}/nomatch.db`);
       const freshManager = await WebhookManager.create(dialect);
 
       const fetchStub = sinon.stub(globalThis, 'fetch').resolves(

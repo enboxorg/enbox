@@ -4,7 +4,7 @@ import type { ManagedResumableTask, ResumableTaskStore } from '@enbox/dwn-sdk-js
 
 import { Cid } from '@enbox/dwn-sdk-js';
 import { executeWithTransaction } from './utils/transaction.js';
-import { Kysely } from 'kysely';
+import { Kysely, sql } from 'kysely';
 
 export class ResumableTaskStoreSql implements ResumableTaskStore {
   private static readonly taskTimeoutInSeconds = 60;
@@ -23,31 +23,22 @@ export class ResumableTaskStoreSql implements ResumableTaskStore {
 
     this.#db = new Kysely<DwnDatabaseType>({ dialect: this.#dialect });
 
-    // if table already exists, there is no more things todo
-    const tableName = 'resumableTasks';
-    const tableExists = await this.#dialect.hasTable(this.#db, tableName);
-    if (tableExists) {
-      return;
+    // Fail fast if migrations have not been run — tables must already exist.
+    await this.#assertTablesExist();
+  }
+
+  /**
+   * Verifies that the required tables exist by executing a zero-row SELECT.
+   * Throws a clear error directing the caller to run migrations first.
+   */
+  async #assertTablesExist(): Promise<void> {
+    try {
+      await sql`SELECT 1 FROM ${sql.table('resumableTasks')} LIMIT 0`.execute(this.#db!);
+    } catch {
+      throw new Error(
+        'ResumableTaskStoreSql: table \'resumableTasks\' does not exist. Run DWN store migrations before opening stores.'
+      );
     }
-
-    // else create the table and corresponding indexes
-
-    const table = this.#db.schema
-      .createTable(tableName)
-      .ifNotExists() // kept to show supported by all dialects in contrast to ifNotExists() below, though not needed due to hasTable() check above
-      .addColumn('id', 'varchar(255)', (col) => col.primaryKey())
-      .addColumn('task', 'text')
-      .addColumn('timeout', 'bigint')
-      .addColumn('retryCount', 'integer');
-
-    await table.execute();
-
-    await this.#db.schema
-      .createIndex('index_timeout')
-      // .ifNotExists() // intentionally kept commented out code to show that it is not supported by all dialects (ie. MySQL)
-      .on('resumableTasks')
-      .column('timeout')
-      .execute();
   }
 
   async close(): Promise<void> {

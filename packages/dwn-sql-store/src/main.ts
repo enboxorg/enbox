@@ -8,6 +8,7 @@ export * from './data-store-s3.js';
 export * from './data-store-sql.js';
 export * from './state-index-sql.js';
 export * from './message-store-sql.js';
+export * from './migration-provider.js';
 export * from './migration-runner.js';
 export * from './migrations/index.js';
 export * from './resumable-task-store-sql.js';

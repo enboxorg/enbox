@@ -29,47 +29,24 @@ export class RegistrationStore {
     return store;
   }
 
+  /**
+   * Verifies that the required tables exist. Throws a clear error directing
+   * the caller to run server migrations first.
+   */
   private async initialize(): Promise<void> {
-    await this.db.schema
-      .createTable(RegistrationStore.registeredTenantTableName)
-      .ifNotExists()
-      .addColumn('did', 'text', (column) => column.primaryKey())
-      .addColumn('termsOfServiceHash', 'text')
-      .addColumn('suspended', 'integer', (column) => column.defaultTo(0))
-      .execute();
-
-    // Add the `suspended` column to existing tables that don't have it yet.
-    // Kysely doesn't support `ADD COLUMN IF NOT EXISTS` across all dialects, so we
-    // catch and ignore the "column already exists" error.
-    try {
-      await this.db.schema
-        .alterTable(RegistrationStore.registeredTenantTableName)
-        .addColumn('suspended', 'integer', (column) => column.defaultTo(0))
-        .execute();
-    } catch {
-      // Column already exists — expected for new installations.
-    }
-
-    // Add provider-auth columns (idempotent migration). https://github.com/enboxorg/enbox/issues/404
-    for (const col of ['accountId', 'registrationType', 'registeredAt', 'metadata']) {
+    const tables = [
+      RegistrationStore.registeredTenantTableName,
+      RegistrationStore.tenantQuotasTableName,
+    ];
+    for (const table of tables) {
       try {
-        await this.db.schema
-          .alterTable(RegistrationStore.registeredTenantTableName)
-          .addColumn(col, 'text')
-          .execute();
+        await sql`SELECT 1 FROM ${sql.table(table)} LIMIT 0`.execute(this.db);
       } catch {
-        // Column already exists — expected.
+        throw new Error(
+          `RegistrationStore: table '${table}' does not exist. Run server migrations before starting.`
+        );
       }
     }
-
-    // Per-tenant storage quotas table.
-    await this.db.schema
-      .createTable(RegistrationStore.tenantQuotasTableName)
-      .ifNotExists()
-      .addColumn('did', 'text', (column) => column.primaryKey())
-      .addColumn('maxMessages', 'integer', (column) => column.defaultTo(0))
-      .addColumn('maxStorageBytes', 'bigint', (column) => column.defaultTo(0))
-      .execute();
   }
 
   /**

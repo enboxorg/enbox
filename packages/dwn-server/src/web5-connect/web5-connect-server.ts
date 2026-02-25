@@ -1,6 +1,7 @@
+import type { Dialect } from '@enbox/dwn-sql-store';
+
 import { CryptoUtils } from '@enbox/crypto';
 
-import { getDialectFromUrl } from '../storage.js';
 import { SqlTtlCache } from './sql-ttl-cache.js';
 
 /**
@@ -41,16 +42,16 @@ export class Web5ConnectServer {
    * Creates a new instance of the Web5 Connect Server.
    * @param params.baseUrl The the base URL of the connect server including the port.
    *                       This is given to the Identity Provider (wallet) to fetch the Web5 Connect Request object.
-   * @param params.sqlTtlCacheUrl The URL of the SQL database to use as the TTL cache.
+   * @param params.sqlDialect The SQL dialect to use for the TTL cache. Must point to a database
+   *                          where server migrations have already been run.
    */
-  public static async create({ baseUrl, sqlTtlCacheUrl }: {
+  public static async create({ baseUrl, sqlDialect }: {
     baseUrl: string;
-    sqlTtlCacheUrl: string;
+    sqlDialect: Dialect;
   }): Promise<Web5ConnectServer> {
     const web5ConnectServer = new Web5ConnectServer({ baseUrl });
 
     // Initialize TTL cache.
-    const sqlDialect = getDialectFromUrl(new URL(sqlTtlCacheUrl));
     web5ConnectServer.cache = await SqlTtlCache.create(sqlDialect);
 
     return web5ConnectServer;
@@ -119,5 +120,13 @@ export class Web5ConnectServer {
     }
 
     return response;
+  }
+
+  /**
+   * Stops the TTL cache cleanup timer. Must be called during shutdown to
+   * prevent leaked timers.
+   */
+  public close(): void {
+    this.cache.close();
   }
 }

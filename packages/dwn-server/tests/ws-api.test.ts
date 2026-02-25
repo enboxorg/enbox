@@ -1,3 +1,4 @@
+import type { Dialect } from '@enbox/dwn-sql-store';
 import type { SinonFakeTimers } from 'sinon';
 import type { Dwn, MessageEvent, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
@@ -20,6 +21,7 @@ describe('websocket api', function () {
   let httpApi: HttpApi;
   let wsApi: WsApi;
   let dwn: Dwn;
+  let dialect: Dialect;
   let clock: SinonFakeTimers;
   let wsUrl: string;
   let httpUrl: string;
@@ -33,8 +35,8 @@ describe('websocket api', function () {
   });
 
   beforeEach(async function () {
-    dwn = await getTestDwn({ withEvents: true });
-    httpApi = await HttpApi.create(config, dwn);
+    ({ dwn, dialect } = await getTestDwn({ withEvents: true }));
+    httpApi = await HttpApi.create(config, dwn, undefined, undefined, undefined, { ttlCacheDialect: dialect });
     await httpApi.start(0);
     const port = httpApi.server.port;
     wsUrl = `ws://127.0.0.1:${port}`;
@@ -449,6 +451,7 @@ describe('websocket backpressure (rpc.ack)', function () {
   let httpApi: HttpApi;
   let wsApi: WsApi;
   let dwn: Dwn;
+  let dialect: Dialect;
   let clock: SinonFakeTimers;
   let wsUrl: string;
   let httpUrl: string;
@@ -471,8 +474,8 @@ describe('websocket backpressure (rpc.ack)', function () {
    * Helper: creates the DWN + HTTP + WS stack with a custom maxInFlight.
    */
   async function setupServer(maxInFlight: number): Promise<void> {
-    dwn = await getTestDwn({ withEvents: true });
-    httpApi = await HttpApi.create(config, dwn);
+    ({ dwn, dialect } = await getTestDwn({ withEvents: true }));
+    httpApi = await HttpApi.create(config, dwn, undefined, undefined, undefined, { ttlCacheDialect: dialect });
     await httpApi.start(0);
     const port = httpApi.server.port;
     wsUrl = `ws://127.0.0.1:${port}`;

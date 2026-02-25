@@ -45,9 +45,8 @@ describe('storage — coverage', () => {
       expect(dialect).toBeDefined();
     });
 
-    it('should return undefined for an unknown protocol', () => {
-      const dialect = getDialectFromUrl(new URL('ftp://localhost/data'));
-      expect(dialect).toBeUndefined();
+    it('should throw for an unknown protocol', () => {
+      expect(() => getDialectFromUrl(new URL('ftp://localhost/data'))).toThrow('Unsupported database protocol');
     });
   });
 

@@ -37,7 +37,7 @@ describe('SocketConnection', () => {
   let dwn: Dwn;
 
   beforeAll(async () => {
-    dwn = await getTestDwn();
+    ({ dwn } = await getTestDwn());
   });
 
   afterAll(async () => {

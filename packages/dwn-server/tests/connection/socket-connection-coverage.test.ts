@@ -51,7 +51,7 @@ describe('SocketConnection — overflow callback coverage', () => {
   let dwn: Dwn;
 
   beforeAll(async () => {
-    dwn = await getTestDwn();
+    ({ dwn } = await getTestDwn());
   });
 
   afterEach(() => {

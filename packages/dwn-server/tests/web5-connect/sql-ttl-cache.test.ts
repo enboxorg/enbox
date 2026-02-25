@@ -1,13 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 
-import { getDialectFromUrl } from '../../src/storage.js';
+import { createMigratedInMemoryDialect } from '../utils.js';
 import { SqlTtlCache } from '../../src/web5-connect/sql-ttl-cache.js';
 
 describe('SqlTtlCache', () => {
   let cache: SqlTtlCache;
 
   beforeAll(async () => {
-    const dialect = getDialectFromUrl(new URL('sqlite://'));
+    const dialect = await createMigratedInMemoryDialect();
     cache = await SqlTtlCache.create(dialect);
   });
 
@@ -18,7 +18,7 @@ describe('SqlTtlCache', () => {
 
   describe('create()', () => {
     it('should create a SqlTtlCache instance via static factory', async () => {
-      const dialect = getDialectFromUrl(new URL('sqlite://'));
+      const dialect = await createMigratedInMemoryDialect();
       const instance = await SqlTtlCache.create(dialect);
       expect(instance).toBeInstanceOf(SqlTtlCache);
     });
