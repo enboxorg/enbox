@@ -13,5 +13,7 @@ export { DwnServer, DwnServerOptions } from './dwn-server.js';
 export { HttpApi } from './http-api.js';
 export { jsonRpcRouter } from './json-rpc-api.js';
 export type { MessageProcessedContext, MessageProcessedHook } from './message-processed-hook.js';
+export { OpenAuthHandler } from './registration/open-auth-handler.js';
+export { RegistrationManager } from './registration/registration-manager.js';
 export { getDwnConfig, StoreType, BackendTypes, DwnStore } from './storage.js';
 export { WsApi } from './ws-api.js';

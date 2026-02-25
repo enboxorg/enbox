@@ -52,6 +52,24 @@ export type DwnServerOptions = {
    * are appended after the DeliveryService hook.
    */
   messageProcessedHooks?: MessageProcessedHook[];
+
+  /**
+   * An externally created RegistrationManager to use as the tenant gate and
+   * registration endpoint handler. When a pre-built `dwn` is provided, the
+   * server cannot create its own RegistrationManager (because it doesn't
+   * control the DWN's TenantGate). Pass one here to enable registration
+   * endpoints (`POST /registration`, etc.) with a pre-built DWN.
+   */
+  registrationManager?: RegistrationManager;
+
+  /**
+   * An externally created OpenAuthHandler for the built-in provider-auth
+   * endpoints (`/provider-auth/authorize`, `/provider-auth/token`,
+   * `/provider-auth/refresh`). When a pre-built `dwn` is provided, the
+   * server skips creating this handler. Pass one here to enable the
+   * open-auth flow with a pre-built DWN.
+   */
+  openAuthHandler?: OpenAuthHandler;
 };
 
 /**
@@ -80,9 +98,13 @@ export class DwnServer {
   #tenantRateLimiter: RateLimiter | undefined;
   #auditLog: AuditLog | undefined;
   #externalHooks: MessageProcessedHook[];
+  #externalRegistrationManager: RegistrationManager | undefined;
+  #externalOpenAuthHandler: OpenAuthHandler | undefined;
 
   /**
-   * @param options.dwn - Dwn instance to use as an override. Registration endpoint will not be enabled if this is provided.
+   * @param options.dwn - Dwn instance to use as an override.
+   * @param options.registrationManager - External RegistrationManager to use with a pre-built DWN.
+   * @param options.openAuthHandler - External OpenAuthHandler to use with a pre-built DWN.
    */
   constructor(options: DwnServerOptions = {}) {
     this.config = options.config ?? defaultConfig;
@@ -90,6 +112,8 @@ export class DwnServer {
     this.didResolver = options.didResolver;
     this.dwn = options.dwn;
     this.#externalHooks = options.messageProcessedHooks ?? [];
+    this.#externalRegistrationManager = options.registrationManager;
+    this.#externalOpenAuthHandler = options.openAuthHandler;
 
     log.setLevel(this.config.logLevel as log.LogLevelDesc);
 
@@ -116,49 +140,11 @@ export class DwnServer {
    */
   async #setupServer(): Promise<void> {
 
-    let registrationManager: RegistrationManager;
+    let registrationManager: RegistrationManager | undefined;
+
     if (!this.dwn) {
-      // Load provider auth plugin if configured.
-      let providerAuthPlugin: ProviderAuthPlugin | undefined;
-      if (this.config.providerAuthEnabled) {
-        if (this.config.providerAuthPluginPath) {
-          // Custom external plugin.
-          providerAuthPlugin = await loadProviderAuthPlugin(this.config.providerAuthPluginPath);
-          log.info('Provider auth plugin loaded from path');
-        } else if (this.config.providerAuthJwtSecret || this.config.providerAuthJwtJwksUrl) {
-          // Built-in JWT plugin.
-          providerAuthPlugin = await JwtProviderAuthPlugin.create({
-            secret   : this.config.providerAuthJwtSecret,
-            jwksUrl  : this.config.providerAuthJwtJwksUrl,
-            issuer   : this.config.baseUrl,
-            audience : this.config.baseUrl,
-          });
-          log.info('Built-in JWT provider auth plugin created');
-        }
-      }
-
-      // undefined registrationStoreUrl is used as a signal that there is no need for tenant registration, DWN is open for all.
-      registrationManager = await RegistrationManager.create({
-        registrationStoreUrl                 : this.config.registrationStoreUrl,
-        termsOfServiceFilePath               : this.config.termsOfServiceFilePath,
-        proofOfWorkChallengeNonceSeed        : this.config.registrationProofOfWorkSeed,
-        proofOfWorkInitialMaximumAllowedHash : this.config.registrationProofOfWorkInitialMaxHash,
-        providerAuthPlugin,
-      });
-
-      // Warn if the tenant gate is active but no registration method is enabled.
-      // This is almost certainly a misconfiguration — new tenants will be rejected
-      // with 401 and have no way to register.
-      if (this.config.registrationStoreUrl
-        && !this.config.registrationProofOfWorkEnabled
-        && !providerAuthPlugin) {
-        log.warn(
-          '*** WARNING: DWN_REGISTRATION_STORE_URL is set (tenant gate active) but neither ' +
-          'proof-of-work (DWN_REGISTRATION_PROOF_OF_WORK_ENABLED) nor provider auth ' +
-          '(DWN_PROVIDER_AUTH_ENABLED + secret/plugin) is configured. ' +
-          'New tenants will be unable to register. ***',
-        );
-      }
+      // No pre-built DWN — create everything from scratch including registration.
+      registrationManager = await this.#createRegistrationManager();
 
       let eventLog: EventLog | undefined;
       if (this.config.webSocketSupport) {
@@ -186,6 +172,11 @@ export class DwnServer {
         eventLog,
       });
       this.dwn = await Dwn.create(dwnConfig);
+    } else if (this.#externalRegistrationManager) {
+      // Pre-built DWN with an externally-provided RegistrationManager.
+      // The caller is responsible for passing this RegistrationManager as the
+      // TenantGate when creating the DWN instance.
+      registrationManager = this.#externalRegistrationManager;
     }
 
     // Assemble message-processed hooks.
@@ -291,14 +282,17 @@ export class DwnServer {
 
     // Create open-auth handler if provider auth is enabled with a JWT secret
     // and authorize/token URLs point to this server (or are not set — defaulting to built-in).
-    let openAuthHandler: OpenAuthHandler | undefined;
-    if (this.config.providerAuthEnabled && this.config.providerAuthJwtSecret && !this.config.providerAuthPluginPath) {
+    // An externally-provided handler (e.g. from the relay) takes precedence.
+    let openAuthHandler: OpenAuthHandler | undefined = this.#externalOpenAuthHandler;
+    if (!openAuthHandler && this.config.providerAuthEnabled && this.config.providerAuthJwtSecret && !this.config.providerAuthPluginPath) {
       openAuthHandler = OpenAuthHandler.create(
         this.config.providerAuthJwtSecret,
         this.config.baseUrl,
       );
       log.info('Built-in open-auth endpoints enabled');
+    }
 
+    if (openAuthHandler) {
       // Auto-configure authorize/token/refresh URLs if not explicitly set.
       if (!this.config.providerAuthAuthorizeUrl) {
         this.config.providerAuthAuthorizeUrl = `${this.config.baseUrl}/provider-auth/authorize`;
@@ -337,6 +331,56 @@ export class DwnServer {
     if (adminApi) {
       adminApi.startMetricsUpdater();
     }
+  }
+
+  /**
+   * Creates a RegistrationManager based on the server config. Factored out of
+   * `#setupServer()` so the same logic can be reused regardless of whether the
+   * DWN is created internally or externally.
+   */
+  async #createRegistrationManager(): Promise<RegistrationManager> {
+    // Load provider auth plugin if configured.
+    let providerAuthPlugin: ProviderAuthPlugin | undefined;
+    if (this.config.providerAuthEnabled) {
+      if (this.config.providerAuthPluginPath) {
+        // Custom external plugin.
+        providerAuthPlugin = await loadProviderAuthPlugin(this.config.providerAuthPluginPath);
+        log.info('Provider auth plugin loaded from path');
+      } else if (this.config.providerAuthJwtSecret || this.config.providerAuthJwtJwksUrl) {
+        // Built-in JWT plugin.
+        providerAuthPlugin = await JwtProviderAuthPlugin.create({
+          secret   : this.config.providerAuthJwtSecret,
+          jwksUrl  : this.config.providerAuthJwtJwksUrl,
+          issuer   : this.config.baseUrl,
+          audience : this.config.baseUrl,
+        });
+        log.info('Built-in JWT provider auth plugin created');
+      }
+    }
+
+    // undefined registrationStoreUrl is used as a signal that there is no need
+    // for tenant registration, DWN is open for all.
+    const registrationManager = await RegistrationManager.create({
+      registrationStoreUrl                 : this.config.registrationStoreUrl,
+      termsOfServiceFilePath               : this.config.termsOfServiceFilePath,
+      proofOfWorkChallengeNonceSeed        : this.config.registrationProofOfWorkSeed,
+      proofOfWorkInitialMaximumAllowedHash : this.config.registrationProofOfWorkInitialMaxHash,
+      providerAuthPlugin,
+    });
+
+    // Warn if the tenant gate is active but no registration method is enabled.
+    if (this.config.registrationStoreUrl
+      && !this.config.registrationProofOfWorkEnabled
+      && !providerAuthPlugin) {
+      log.warn(
+        '*** WARNING: DWN_REGISTRATION_STORE_URL is set (tenant gate active) but neither ' +
+        'proof-of-work (DWN_REGISTRATION_PROOF_OF_WORK_ENABLED) nor provider auth ' +
+        '(DWN_PROVIDER_AUTH_ENABLED + secret/plugin) is configured. ' +
+        'New tenants will be unable to register. ***',
+      );
+    }
+
+    return registrationManager;
   }
 
   /**
