@@ -35,6 +35,7 @@ COPY packages/dwn-server/package.json      packages/dwn-server/
 COPY packages/agent/package.json             packages/agent/
 COPY packages/api/package.json               packages/api/
 COPY packages/browser/package.json           packages/browser/
+COPY packages/electrobun-dwn/package.json    packages/electrobun-dwn/
 COPY packages/protocols/package.json         packages/protocols/
 COPY packages/protocol-codegen/package.json  packages/protocol-codegen/
 
@@ -78,6 +79,7 @@ COPY packages/dwn-server/      packages/dwn-server/
 COPY packages/agent/package.json             packages/agent/
 COPY packages/api/package.json               packages/api/
 COPY packages/browser/package.json           packages/browser/
+COPY packages/electrobun-dwn/package.json    packages/electrobun-dwn/
 COPY packages/protocols/package.json         packages/protocols/
 COPY packages/protocol-codegen/package.json  packages/protocol-codegen/
 
