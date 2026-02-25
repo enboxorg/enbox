@@ -226,6 +226,8 @@ export class HttpDwnRpcClient implements DwnRpc {
 
         const serverInfo: ServerInfo = {
           maxFileSize              : results.maxFileSize,
+          maxInFlight              : results.maxInFlight,
+          providerAuth             : results.providerAuth,
           registrationRequirements : results.registrationRequirements,
           server                   : results.server,
           sdkVersion               : results.sdkVersion,
