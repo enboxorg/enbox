@@ -1,5 +1,11 @@
 # @enbox/dwn-server
 
+## 0.0.7
+
+### Patch Changes
+
+- [#541](https://github.com/enboxorg/enbox/pull/541) [`f484270`](https://github.com/enboxorg/enbox/commit/f4842708cbf378ae854105487fa73e880aba806a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Allow passing RegistrationManager and OpenAuthHandler via DwnServerOptions when using a pre-built DWN instance. This enables registration endpoints and open-auth flow for consumers like dwn-relay that construct their own DWN with custom store wrappers. Also exports RegistrationManager and OpenAuthHandler from the package index.
+
 ## 0.0.6
 
 ### Patch Changes
