@@ -133,7 +133,8 @@ export type RegistrationTokenData = {
 export type Web5ConnectOptions = {
   /**
    * Controls local DWN discovery behavior for remote-target DWN sends/sync.
-   * `prefer` (default) tries local first, `only` requires local, `off` disables local probing.
+   * `'off'` (default) disables local probing, `'prefer'` tries local first
+   * then falls back to DID-document endpoints, `'only'` requires a local server.
    */
   localDwnStrategy?: LocalDwnStrategy;
 
@@ -416,7 +417,7 @@ export class Web5 {
   static async connect({
     agent,
     agentVault,
-    localDwnStrategy = 'prefer',
+    localDwnStrategy = 'off',
     connectedDid,
     password,
     recoveryPhrase,
