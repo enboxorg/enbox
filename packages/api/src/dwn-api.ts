@@ -161,10 +161,13 @@ export type RecordsReadRequest = Omit<DwnMessageParams[DwnInterface.RecordsRead]
 /**
  * Encapsulates the response from a record read operation, combining the general operation status
  * with the specific record that was retrieved.
+ *
+ * When the status code is not in the 2xx range (e.g. 401, 404), `record` will be `undefined`.
+ * Always check `status.code` before accessing the record.
  */
 export type RecordsReadResponse = DwnResponseStatus & {
-  /** The record retrieved by the read operation. */
-  record: Record;
+  /** The record retrieved by the read operation, or `undefined` if the request failed. */
+  record?: Record;
 };
 
 /**
@@ -223,9 +226,11 @@ export type RecordsWriteRequest = Omit<Partial<DwnMessageParams[DwnInterface.Rec
 export type RecordsWriteResponse = DwnResponseStatus & {
   /**
    * The `Record` instance representing the record that was successfully written to the
-   * DWN as a result of the write operation.
+   * DWN as a result of the write operation, or `undefined` if the write failed.
+   *
+   * Always check `status.code` before accessing the record.
    */
-  record: Record;
+  record?: Record;
 };
 
 /**
@@ -688,7 +693,7 @@ export class DwnApi {
 
         const { reply: { entry, status } } = agentResponse;
 
-        let record: Record;
+        let record: Record | undefined;
         if (200 <= status.code && status.code <= 299) {
           const recordOptions = {
             /**
@@ -883,7 +888,7 @@ export class DwnApi {
 
         const { message: responseMessage, reply: { status } } = agentResponse;
 
-        let record: Record;
+        let record: Record | undefined;
         if (200 <= status.code && status.code <= 299) {
           const recordOptions = {
             /**

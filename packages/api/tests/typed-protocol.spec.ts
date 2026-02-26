@@ -836,9 +836,116 @@ describe('TypedProtocol API', () => {
           data: { name: 'String Test' },
         });
 
-        const str = record.toString();
+        const str = record!.toString();
         expect(str).toContain('Record:');
-        expect(str).toContain(record.id);
+        expect(str).toContain(record!.id);
+      });
+    });
+
+    describe('record type safety (discriminated union)', () => {
+      it('create() should return record on success', async () => {
+        const result = await typed.records.create('list', {
+          data: { name: 'Type Safety Test' },
+        });
+
+        expect(result.status.code).toBe(202);
+        expect(result.record).toBeDefined();
+
+        // After a truthiness check, record should be narrowed to TypedRecord
+        if (result.record) {
+          expect(result.record.id).toBeDefined();
+          const data = await result.record.data.json();
+          expect(data.name).toBe('Type Safety Test');
+        }
+      });
+
+      it('create() should return undefined record on failure', async () => {
+        // Stub the agent to return a non-2xx status for the write operation.
+        // DwnApi.records is a getter that returns a fresh object, so we stub
+        // at the agent level instead.
+        const processStub = sinon.stub(testHarness.agent, 'processDwnRequest').resolves({
+          reply   : { status: { code: 400, detail: 'Bad Request' } },
+          message : {} as never,
+        } as never);
+
+        const result = await typed.records.create('list', {
+          data: { name: 'Should Fail' },
+        });
+
+        expect(result.status.code).toBe(400);
+        expect(result.record).toBeUndefined();
+
+        processStub.restore();
+      });
+
+      it('read() should return record on success', async () => {
+        // First create a record
+        const { record: created } = await typed.records.create('list', {
+          data: { name: 'Read Target' },
+        });
+
+        const result = await typed.records.read('list', {
+          filter: { recordId: created!.id },
+        });
+
+        expect(result.status.code).toBe(200);
+        expect(result.record).toBeDefined();
+
+        if (result.record) {
+          const data = await result.record.data.json();
+          expect(data.name).toBe('Read Target');
+        }
+      });
+
+      it('read() should return undefined record on failure', async () => {
+        // Stub at the agent level — DwnApi.records is a getter that
+        // returns a fresh object, so direct stubbing doesn't work.
+        const processStub = sinon.stub(testHarness.agent, 'processDwnRequest').resolves({
+          reply   : { status: { code: 404, detail: 'Not Found' }, entry: {} },
+          message : {} as never,
+        } as never);
+
+        const result = await typed.records.read('list', {
+          filter: { recordId: 'nonexistent-id' },
+        });
+
+        expect(result.status.code).toBe(404);
+        expect(result.record).toBeUndefined();
+
+        processStub.restore();
+      });
+
+      it('record should be narrowable via truthiness check', async () => {
+        const result = await typed.records.create('list', {
+          data: { name: 'Narrowing Test' },
+        });
+
+        // This is the pattern users should use:
+        if (!result.record) {
+          // In this branch, TypeScript knows record is undefined
+          expect(result.status.code).not.toBe(202);
+          return;
+        }
+
+        // In this branch, TypeScript knows record is TypedRecord<ListData>
+        expect(result.record.id).toBeDefined();
+        expect(result.record.contextId).toBeDefined();
+      });
+
+      it('destructured record should be TypedRecord | undefined', async () => {
+        const { status, record } = await typed.records.create('list', {
+          data: { name: 'Destructure Test' },
+        });
+
+        expect(status.code).toBe(202);
+
+        // After destructuring, `record` is `TypedRecord | undefined`
+        // The user must check before using it
+        if (record) {
+          expect(record.id).toBeDefined();
+          const data = await record.data.json();
+          expect(data.name).toBe('Destructure Test');
+        }
       });
     });
   });

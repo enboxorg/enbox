@@ -110,7 +110,7 @@ function buildRootCollectionMethods(
       const { record } = await typed.records.read(path, {
         filter: { recordId },
       });
-      return record;
+      return record; // undefined when the read fails (e.g. 404)
     },
 
     async delete(recordId: string): Promise<DwnResponseStatus> {
@@ -198,7 +198,7 @@ function buildNestedCollectionMethods(
       const { record } = await typed.records.read(path, {
         filter: { recordId },
       });
-      return record;
+      return record; // undefined when the read fails (e.g. 404)
     },
 
     async delete(recordId: string): Promise<DwnResponseStatus> {

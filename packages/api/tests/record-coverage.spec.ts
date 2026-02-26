@@ -493,4 +493,139 @@ describe('Record — coverage gaps (stubbed)', () => {
       await expect(record.data.text()).rejects.toThrow('Cannot access data of a deleted record.');
     });
   });
+
+  describe('DwnApi record type safety', () => {
+    it('write() should return record: undefined when status is non-2xx', async () => {
+      // Simulate a 400 response from the agent
+      agentStub.processDwnRequest.resolves({
+        reply   : { status: { code: 400, detail: 'Bad Request' } },
+        message : {},
+      });
+
+      const { DwnApi } = await import('../src/dwn-api.js');
+      const dwnApi = new DwnApi({
+        agent        : agentStub as unknown as Web5Agent,
+        connectedDid : 'did:example:alice',
+      });
+
+      const result = await dwnApi.records.write({
+        data         : { test: true },
+        protocol     : 'https://example.com/protocol',
+        protocolPath : 'test',
+      });
+
+      expect(result.status.code).toBe(400);
+      expect(result.record).toBeUndefined();
+    });
+
+    it('write() should return record when status is 2xx', async () => {
+      // Create a valid write message for a success response
+      const validDescriptor = {
+        interface        : DwnInterface.RecordsWrite,
+        method           : 'Write',
+        protocol         : 'https://example.com/protocol',
+        protocolPath     : 'test',
+        schema           : 'https://example.com/schema',
+        dataFormat       : 'application/json',
+        dataCid          : 'bafyreicid',
+        dataSize         : 13,
+        dateCreated      : '2024-01-01T00:00:00.000000Z',
+        messageTimestamp : '2024-01-01T00:00:00.000000Z',
+        recordId         : 'rec-success',
+      };
+
+      agentStub.processDwnRequest.resolves({
+        reply   : { status: { code: 202, detail: 'Accepted' } },
+        message : {
+          recordId      : 'rec-success',
+          descriptor    : validDescriptor,
+          authorization : createValidAuthorization(),
+        },
+      });
+
+      const { DwnApi } = await import('../src/dwn-api.js');
+      const dwnApi = new DwnApi({
+        agent        : agentStub as unknown as Web5Agent,
+        connectedDid : 'did:example:alice',
+      });
+
+      const result = await dwnApi.records.write({
+        data         : { test: true },
+        protocol     : 'https://example.com/protocol',
+        protocolPath : 'test',
+      });
+
+      expect(result.status.code).toBe(202);
+      expect(result.record).toBeDefined();
+      expect(result.record).toBeInstanceOf(Record);
+    });
+
+    it('read() should return record: undefined when status is non-2xx', async () => {
+      agentStub.processDwnRequest.resolves({
+        reply: {
+          status : { code: 404, detail: 'Not Found' },
+          entry  : {},
+        },
+        message: {},
+      });
+
+      const { DwnApi } = await import('../src/dwn-api.js');
+      const dwnApi = new DwnApi({
+        agent        : agentStub as unknown as Web5Agent,
+        connectedDid : 'did:example:alice',
+      });
+
+      const result = await dwnApi.records.read({
+        filter: { recordId: 'nonexistent' },
+      });
+
+      expect(result.status.code).toBe(404);
+      expect(result.record).toBeUndefined();
+    });
+
+    it('read() should return record when status is 2xx', async () => {
+      const validDescriptor = {
+        interface        : DwnInterface.RecordsWrite,
+        method           : 'Write',
+        protocol         : 'https://example.com/protocol',
+        protocolPath     : 'test',
+        schema           : 'https://example.com/schema',
+        dataFormat       : 'application/json',
+        dataCid          : 'bafyreicid',
+        dataSize         : 13,
+        dateCreated      : '2024-01-01T00:00:00.000000Z',
+        messageTimestamp : '2024-01-01T00:00:00.000000Z',
+        recordId         : 'rec-read',
+      };
+
+      agentStub.processDwnRequest.resolves({
+        reply: {
+          status : { code: 200, detail: 'OK' },
+          entry  : {
+            recordsWrite: {
+              recordId      : 'rec-read',
+              descriptor    : validDescriptor,
+              authorization : createValidAuthorization(),
+            },
+            data: new Blob(['{"test":true}']),
+          },
+        },
+        message: {},
+      });
+
+      const { DwnApi } = await import('../src/dwn-api.js');
+      const dwnApi = new DwnApi({
+        agent        : agentStub as unknown as Web5Agent,
+        connectedDid : 'did:example:alice',
+      });
+
+      const result = await dwnApi.records.read({
+        filter: { recordId: 'rec-read' },
+      });
+
+      expect(result.status.code).toBe(200);
+      expect(result.record).toBeDefined();
+      expect(result.record).toBeInstanceOf(Record);
+    });
+  });
 });
