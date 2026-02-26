@@ -3853,7 +3853,7 @@ describe('Record', () => {
         await deletedRecord.data.text();
         throw new Error('Expected an exception to be thrown');
       } catch (error:any) {
-        expect(error.message).toContain('Not Found');
+        expect(error.message).toContain('Cannot access data of a deleted record.');
       }
     });
 

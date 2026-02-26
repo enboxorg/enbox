@@ -129,6 +129,16 @@ export type RegistrationTokenData = {
   refreshUrl?: string;
 };
 
+/**
+ * Controls DWN sync mode.
+ *
+ * - `'off'`   — Sync disabled entirely.
+ * - An interval string such as `'30s'`, `'2m'`, `'1h'` — Poll mode at the
+ *   specified interval.
+ * - `undefined` (omitted) — Live WebSocket sync (default).
+ */
+export type SyncOption = 'off' | `${number}${'s' | 'm' | 'h'}`;
+
 /** Optional overrides that can be provided when calling {@link Web5.connect}. */
 export type Web5ConnectOptions = {
   /**
@@ -213,7 +223,7 @@ export type Web5ConnectOptions = {
    *   SMT set-reconciliation sync at the specified interval.
    * - **`'off'`**: Sync is disabled entirely.
    */
-  sync?: string;
+  sync?: SyncOption;
 
   /**
    * Override defaults configured during the technical preview phase.
@@ -385,6 +395,33 @@ export class Web5 {
     // Store with erased generics so the map value type stays uniform.
     this._typedInstances.set(uri, instance as unknown as TypedWeb5<ProtocolDefinition, SchemaMap>);
     return instance;
+  }
+
+  /**
+   * Stops DWN sync and clears the cached {@link TypedWeb5} instances.
+   *
+   * Call this when the application is shutting down or the user is
+   * disconnecting to cleanly release background resources. After calling
+   * `disconnect()`, the `Web5` instance should not be reused.
+   *
+   * @param timeout - Maximum milliseconds to wait for an in-progress sync
+   *   cycle to finish before force-stopping. Defaults to `2000`.
+   *
+   * @example
+   * ```ts
+   * await web5.disconnect();
+   * ```
+   *
+   * @beta
+   */
+  public async disconnect(timeout?: number): Promise<void> {
+    // Stop any active sync.
+    if ('sync' in this.agent && typeof (this.agent as any).sync?.stopSync === 'function') {
+      await (this.agent as any).sync.stopSync(timeout);
+    }
+
+    // Clear cached TypedWeb5 instances so they are not accidentally reused.
+    this._typedInstances.clear();
   }
 
   /**

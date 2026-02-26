@@ -800,6 +800,27 @@ describe('TypedProtocol API', () => {
         expect(deletedRecord.deleted).toBe(true);
       });
 
+      it('should mutate the original record in-place on successful delete', async () => {
+        const { record: original } = await typed.records.create('list', {
+          data: { name: 'Will be deleted' },
+        });
+
+        // Verify not deleted before.
+        expect(original.deleted).toBe(false);
+
+        const { status, record: returned } = await original.delete();
+        expect(status.code).toBe(202);
+
+        // The returned record should be in a deleted state (existing behavior).
+        expect(returned.deleted).toBe(true);
+
+        // The ORIGINAL record should also reflect the deletion (new behavior).
+        expect(original.deleted).toBe(true);
+
+        // Both timestamps should match.
+        expect(original.timestamp).toBe(returned.timestamp);
+      });
+
       it('should forward toJSON() from the underlying Record', async () => {
         const { record } = await typed.records.create('list', {
           data: { name: 'JSON Test' },

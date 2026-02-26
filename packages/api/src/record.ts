@@ -215,10 +215,10 @@ export class Record implements RecordModel {
   /** Record's encryption */
   get encryption(): DwnMessage[DwnInterface.RecordsWrite]['encryption'] { return this._encryption; }
 
-  /** Record's signatures attestation */
+  /** Record's authorization signature(s). */
   get authorization(): DwnMessage[DwnInterface.RecordsWrite | DwnInterface.RecordsDelete]['authorization'] { return this._authorization; }
 
-  /** Record's signatures attestation */
+  /** Record's attestation signature. */
   get attestation(): DwnMessage[DwnInterface.RecordsWrite]['attestation'] | undefined { return this._attestation; }
 
   /** Role under which the author is writing the record */
@@ -324,7 +324,7 @@ export class Record implements RecordModel {
   get data(): RecordData {
     return createRecordData(async (): Promise<ReadableStream> => {
       if (this.deleted) {
-        throw new Error('404: Not Found');
+        throw new Error('Cannot access data of a deleted record.');
       }
 
       if (this._encodedData) {
@@ -381,15 +381,18 @@ export class Record implements RecordModel {
   }
 
   /**
-   * Send the current record to a remote DWN by specifying their DID
+   * Send the current record to a remote DWN by specifying their DID.
    * If no DID is specified, the target is assumed to be the owner (connectedDID).
    *
-   * If an initial write is present and the Record class send cache has no awareness of it, the initial write is sent first
-   * (vs waiting for the regular DWN sync)
+   * If the record is in a deleted state, a `RecordsDelete` message is sent
+   * so the remote DWN reflects the deletion.
+   *
+   * If an initial write is present and the Record class send cache has no
+   * awareness of it, the initial write is sent first (vs waiting for the
+   * regular DWN sync).
    *
    * @param target - the optional DID to send the record to, if none is set it is sent to the connectedDid
    * @returns the status of the send record request
-   * @throws `Error` if the record has already been deleted.
    *
    * @beta
    */
@@ -628,6 +631,11 @@ export class Record implements RecordModel {
 
   /**
    * Delete the current record on the DWN.
+   *
+   * On success, **both** a new `Record` instance is returned *and* the
+   * current instance (`this`) is mutated in-place to reflect the deleted
+   * state (the {@link Record.deleted | deleted} getter will return `true`).
+   *
    * @param params - Parameters to delete the record.
    * @returns the status and a new Record instance reflecting the deleted state
    */
@@ -697,6 +705,16 @@ export class Record implements RecordModel {
       initialWrite,
       ...message as DwnMessage[DwnInterface.RecordsDelete],
     }, this._permissionsApi);
+
+    // Also mutate *this* record so the caller's original reference reflects
+    // the deletion without having to capture the returned record.
+    const deleteMsg = message as DwnMessage[DwnInterface.RecordsDelete];
+    this._descriptor = deleteMsg.descriptor;
+    this._authorization = deleteMsg.authorization;
+    this._protocolRole = deleteParams?.protocolRole ?? this._protocolRole;
+    this._encodedData = undefined;
+    this._readableStream = undefined;
+    this._rawMessageDirty = true;
 
     return { status, record: deletedRecord };
   }
