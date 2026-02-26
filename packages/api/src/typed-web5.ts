@@ -91,100 +91,406 @@ type DataFormatForPath<
 // Request / response types
 // ---------------------------------------------------------------------------
 
-/** Options for {@link TypedWeb5} `records.create()`. */
+/**
+ * Options for {@link TypedWeb5} `records.create()`.
+ *
+ * The `data` field is type-checked against the protocol's schema map for
+ * the given path, providing compile-time safety for record payloads.
+ *
+ * @typeParam D - The protocol definition type.
+ * @typeParam M - The schema map mapping type names to TypeScript types.
+ * @typeParam Path - The protocol path string literal.
+ *
+ * @example
+ * ```ts
+ * await proto.records.create('notebook/page', {
+ *   data: { title: 'My Page', body: '...' },       // type-checked as PageData
+ *   parentContextId: notebook.contextId,             // link to parent
+ *   tags: { category: 'draft' },
+ * });
+ * ```
+ */
 export type TypedCreateRequest<
   D extends ProtocolDefinition,
   M extends SchemaMap,
   Path extends string,
 > = {
-  /** The data payload. Type-checked against the schema map. */
+  /** The data payload. Type-checked against the schema map for the given path. */
   data: DataForPath<D, M, Path>;
 
+  /**
+   * The context ID of the parent record.
+   *
+   * Required when creating a child record under a parent in a hierarchical
+   * protocol structure. Use the parent record's {@link TypedRecord.contextId | contextId}
+   * as this value.
+   *
+   * @example
+   * ```ts
+   * const { record: notebook } = await proto.records.create('notebook', {
+   *   data: { name: 'My Notebook' },
+   * });
+   *
+   * // Create a page under the notebook
+   * await proto.records.create('notebook/page', {
+   *   data: { title: 'Page 1' },
+   *   parentContextId: notebook.contextId,
+   * });
+   * ```
+   */
   parentContextId?: string;
+
+  /**
+   * Whether the record should be publicly published.
+   *
+   * Published records can be read by anyone without authorization.
+   */
   published?: boolean;
+
+  /**
+   * ISO 8601 timestamp for when the record is considered published.
+   * Only meaningful when `published` is `true`.
+   */
   datePublished?: string;
+
+  /**
+   * The DID of the intended recipient.
+   *
+   * Sets the recipient for permission-scoped records. The recipient may
+   * have special read/write permissions as defined by the protocol's
+   * `$actions` rules.
+   */
   recipient?: string;
+
+  /**
+   * The protocol role under which to create this record.
+   *
+   * The DWN will verify that the author is authorized to write under
+   * this role per the protocol's `$actions` configuration.
+   */
   protocolRole?: string;
+
+  /**
+   * The MIME type / data format for the record.
+   *
+   * If omitted, defaults to the first entry in the protocol type's
+   * `dataFormats` array (typically `'application/json'`).
+   */
   dataFormat?: DataFormatForPath<D, Path>;
+
+  /**
+   * Key-value metadata tags to attach to the record.
+   *
+   * Tags are indexed by the DWN and can be used in query filters for
+   * efficient lookups. Values can be strings, numbers, booleans, or
+   * arrays of strings/numbers.
+   */
   tags?: globalThis.Record<string, string | number | boolean | string[] | number[]>;
 
-  /** Whether to persist immediately (defaults to `true`). */
+  /**
+   * Whether to persist the record to the local DWN immediately.
+   *
+   * Defaults to `true`. Set to `false` to create the record in memory
+   * only — you can call {@link TypedRecord.store | record.store()} later.
+   */
   store?: boolean;
 
-  /** Whether to auto-encrypt (follows protocol definition if omitted). */
+  /**
+   * Whether to auto-encrypt the record.
+   *
+   * If omitted, encryption follows the protocol definition. Set to `true`
+   * to force encryption or `false` to skip it.
+   */
   encryption?: boolean;
 };
 
-/** Response from {@link TypedWeb5} `records.create()`. */
+/**
+ * Response from {@link TypedWeb5} `records.create()`.
+ *
+ * @typeParam T - The data type of the created record.
+ */
 export type TypedCreateResponse<T = unknown> = DwnResponseStatus & {
+  /**
+   * The created record, typed as `TypedRecord<T>`.
+   *
+   * Access `record.id`, `record.contextId`, and `record.data.json()` for
+   * the most commonly needed values after creation.
+   */
   record: TypedRecord<T>;
 };
 
-/** Filter options for {@link TypedWeb5} `records.query()`. */
+/**
+ * Filter options for {@link TypedWeb5} `records.query()` and `records.subscribe()`.
+ *
+ * The `protocol`, `protocolPath`, and `schema` fields are automatically
+ * injected by {@link TypedWeb5} — you only need to supply additional
+ * filter criteria.
+ *
+ * Common filter fields inherited from `RecordsFilter`:
+ *
+ * - **`parentId`** — Filter by parent context ID. Despite the name, this
+ *   filters on the parent record's **context ID** (i.e. pass
+ *   `parent.contextId`, not `parent.id`). Use this to find child records
+ *   under a specific parent in a hierarchical protocol.
+ * - **`recordId`** — Match a specific record by its unique ID.
+ * - **`recipient`** — Filter by recipient DID.
+ * - **`dataFormat`** — Filter by MIME type.
+ * - **`dateCreated`** — Range filter on creation date.
+ * - **`contextId`** — Filter by context ID directly.
+ *
+ * @example
+ * ```ts
+ * // Find pages under a specific notebook
+ * const { records } = await proto.records.query('notebook/page', {
+ *   filter: {
+ *     parentId: notebook.contextId,  // filters by parent's context ID
+ *     tags: { status: 'published' },
+ *   },
+ * });
+ * ```
+ */
 export type TypedQueryFilter = Omit<RecordsFilter, 'protocol' | 'protocolPath' | 'schema'> & {
+  /**
+   * Filter records by tag values.
+   *
+   * Only records whose tags match **all** specified key-value pairs are
+   * returned. Array values match if the record's tag contains any of the
+   * specified values.
+   */
   tags?: globalThis.Record<string, string | number | boolean | (string | number)[]>;
 };
 
-/** Options for {@link TypedWeb5} `records.query()`. */
+/**
+ * Options for {@link TypedWeb5} `records.query()`.
+ *
+ * All fields are optional — calling `query(path)` with no request object
+ * returns all records at that path.
+ *
+ * @example
+ * ```ts
+ * const { records, cursor } = await proto.records.query('notebook', {
+ *   filter: { tags: { archived: false } },
+ *   dateSort: DateSort.CreatedDescending,
+ *   pagination: { limit: 25 },
+ * });
+ *
+ * // Paginate for more
+ * if (cursor) {
+ *   const { records: next } = await proto.records.query('notebook', {
+ *     pagination: { limit: 25, cursor },
+ *   });
+ * }
+ * ```
+ */
 export type TypedQueryRequest = {
-  /** Optional remote DWN DID to query from. */
+  /**
+   * A remote DWN DID to query from.
+   *
+   * When set, the query is sent to the specified DID's remote DWN instead
+   * of the local DWN.
+   */
   from?: string;
 
-  /** Query filter (protocol, protocolPath, schema are injected). */
+  /**
+   * Filter criteria for the query.
+   *
+   * The `protocol`, `protocolPath`, and `schema` fields are auto-injected.
+   * See {@link TypedQueryFilter} for available filter fields.
+   */
   filter?: TypedQueryFilter;
+
+  /**
+   * Sort order for the returned records.
+   *
+   * Use `DateSort.CreatedAscending`, `DateSort.CreatedDescending`,
+   * `DateSort.PublishedAscending`, or `DateSort.PublishedDescending`.
+   */
   dateSort?: DateSort;
+
+  /**
+   * Pagination options.
+   *
+   * - `limit` — Maximum number of records to return.
+   * - `cursor` — A pagination cursor from a previous query response to
+   *   resume from where the last page left off.
+   */
   pagination?: { limit?: number; cursor?: DwnPaginationCursor };
+
+  /**
+   * The protocol role under which to execute the query.
+   *
+   * Required when the protocol's `$actions` rules restrict read access
+   * to specific roles.
+   */
   protocolRole?: string;
 
-  /** When true, automatically decrypts encrypted records. */
+  /**
+   * When `true`, automatically decrypts encrypted records in the results.
+   *
+   * If omitted, encrypted records are returned as-is (data accessors will
+   * return encrypted bytes).
+   */
   encryption?: boolean;
 };
 
-/** Response from {@link TypedWeb5} `records.query()`. */
+/**
+ * Response from {@link TypedWeb5} `records.query()`.
+ *
+ * @typeParam T - The data type of the queried records.
+ */
 export type TypedQueryResponse<T = unknown> = DwnResponseStatus & {
+  /**
+   * The matching records, each wrapped as {@link TypedRecord | TypedRecord<T>}.
+   *
+   * The array is empty if no records match the filter criteria.
+   */
   records: TypedRecord<T>[];
+
+  /**
+   * A pagination cursor for fetching the next page of results.
+   *
+   * Pass this to a subsequent `query()` call's `pagination.cursor` to
+   * continue from where this page ended. `undefined` when there are no
+   * more results.
+   */
   cursor?: DwnPaginationCursor;
 };
 
-/** Options for {@link TypedWeb5} `records.read()`. */
+/**
+ * Options for {@link TypedWeb5} `records.read()`.
+ *
+ * A `filter` is required to identify which record to read. The most common
+ * approach is to filter by `recordId`.
+ *
+ * @example
+ * ```ts
+ * // Read a specific record by ID
+ * const { record } = await proto.records.read('notebook', {
+ *   filter: { recordId: notebookId },
+ * });
+ *
+ * // Read from a remote DWN
+ * const { record: remote } = await proto.records.read('notebook', {
+ *   from: 'did:example:alice',
+ *   filter: { recordId: notebookId },
+ * });
+ * ```
+ */
 export type TypedReadRequest = {
-  /** Optional remote DWN DID to read from. */
+  /**
+   * A remote DWN DID to read from.
+   *
+   * When set, the read is performed against the specified DID's remote
+   * DWN instead of the local DWN.
+   */
   from?: string;
 
-  /** Filter to identify the record (protocol and protocolPath are injected). */
+  /**
+   * Filter to identify the record to read.
+   *
+   * The `protocol`, `protocolPath`, and `schema` fields are auto-injected.
+   * Typically you filter by `recordId` to read a specific record. Other
+   * fields from `RecordsFilter` (like `contextId`, `parentId`, `recipient`)
+   * are also available.
+   */
   filter: Omit<RecordsFilter, 'protocol' | 'protocolPath' | 'schema'>;
 
-  /** When true, automatically decrypts the record. */
+  /**
+   * When `true`, automatically decrypts the record if it is encrypted.
+   *
+   * If omitted, encrypted records are returned as-is.
+   */
   encryption?: boolean;
 };
 
-/** Response from {@link TypedWeb5} `records.read()`. */
+/**
+ * Response from {@link TypedWeb5} `records.read()`.
+ *
+ * @typeParam T - The data type of the read record.
+ */
 export type TypedReadResponse<T = unknown> = DwnResponseStatus & {
+  /** The record matching the filter, typed as {@link TypedRecord | TypedRecord<T>}. */
   record: TypedRecord<T>;
 };
 
-/** Options for {@link TypedWeb5} `records.delete()`. */
+/**
+ * Options for {@link TypedWeb5} `records.delete()`.
+ *
+ * @example
+ * ```ts
+ * const { status } = await proto.records.delete('notebook', {
+ *   recordId: notebook.id,
+ * });
+ * ```
+ */
 export type TypedDeleteRequest = {
-  /** Optional remote DWN DID to delete from. */
+  /**
+   * A remote DWN DID to delete from.
+   *
+   * When set, the delete is performed on the specified DID's remote DWN.
+   */
   from?: string;
 
-  /** The `recordId` of the record to delete. */
+  /**
+   * The unique `recordId` of the record to delete.
+   *
+   * Use {@link TypedRecord.id | record.id} to obtain this value.
+   */
   recordId: string;
 };
 
-/** Options for {@link TypedWeb5} `records.subscribe()`. */
+/**
+ * Options for {@link TypedWeb5} `records.subscribe()`.
+ *
+ * @example
+ * ```ts
+ * const { liveQuery } = await proto.records.subscribe('notebook/page', {
+ *   filter: { parentId: notebook.contextId },
+ * });
+ *
+ * liveQuery.on('create', (record) => {
+ *   console.log('New page:', await record.data.json());
+ * });
+ * ```
+ */
 export type TypedSubscribeRequest = {
-  /** Optional remote DWN DID to subscribe to. */
+  /**
+   * A remote DWN DID to subscribe to.
+   *
+   * When set, the subscription listens to the specified DID's remote DWN.
+   */
   from?: string;
 
-  /** Subscription filter (protocol, protocolPath, schema are injected). */
+  /**
+   * Filter criteria for the subscription.
+   *
+   * The `protocol`, `protocolPath`, and `schema` fields are auto-injected.
+   * See {@link TypedQueryFilter} for available filter fields.
+   */
   filter?: TypedQueryFilter;
+
+  /**
+   * The protocol role under which to subscribe.
+   *
+   * Required when the protocol's `$actions` rules restrict read access
+   * to specific roles.
+   */
   protocolRole?: string;
 };
 
-/** Response from {@link TypedWeb5} `records.subscribe()`. */
+/**
+ * Response from {@link TypedWeb5} `records.subscribe()`.
+ *
+ * @typeParam T - The data type of records in the subscription.
+ */
 export type TypedSubscribeResponse<T = unknown> = DwnResponseStatus & {
-  /** The typed live query instance, or `undefined` if the request failed. */
+  /**
+   * The typed live query instance for receiving real-time record changes.
+   *
+   * `undefined` if the subscription request failed (check `status.code`).
+   * When defined, use `liveQuery.on('create' | 'update' | 'delete', callback)`
+   * to react to changes. Call `liveQuery.close()` to stop the subscription.
+   */
   liveQuery?: TypedLiveQuery<T>;
 };
 
@@ -225,24 +531,44 @@ export class TypedWeb5<
   D extends ProtocolDefinition = ProtocolDefinition,
   M extends SchemaMap = SchemaMap,
 > {
+  /** @internal */
   private _dwn: DwnApi;
+  /** @internal */
   private _definition: D;
+  /** @internal */
   private _configured: boolean = false;
+  /** @internal */
   private _validPaths: Set<string>;
+  /** @internal */
   private _records?: TypedWeb5<D, M>['records'];
 
+  /**
+   * @internal Create a new `TypedWeb5` instance. Use `web5.using(protocol)` instead.
+   * @param dwn - The underlying DWN API instance.
+   * @param protocol - The typed protocol containing the definition and schema map.
+   */
   constructor(dwn: DwnApi, protocol: TypedProtocol<D, M>) {
     this._dwn = dwn;
     this._definition = protocol.definition;
     this._validPaths = collectPaths(this._definition.structure);
   }
 
-  /** The protocol URI. */
+  /**
+   * The protocol URI string (e.g. `'https://example.com/social'`).
+   *
+   * This is the globally unique identifier for the protocol and is
+   * auto-injected into every record operation.
+   */
   public get protocol(): string {
     return this._definition.protocol;
   }
 
-  /** The raw protocol definition. */
+  /**
+   * The raw protocol definition object.
+   *
+   * Contains the full `protocol`, `types`, and `structure` that define
+   * the protocol's schema and permission rules.
+   */
   public get definition(): D {
     return this._definition;
   }
@@ -251,11 +577,29 @@ export class TypedWeb5<
    * Configures (installs) this protocol on the local DWN.
    *
    * If the protocol is already installed with an identical definition,
-   * this is a no-op and returns the existing protocol. If the definition
-   * has changed (e.g. new types, modified structure), the protocol is
-   * re-configured with the updated definition.
+   * this is a no-op and returns the existing protocol with status `200`.
+   * If the definition has changed (e.g. new types, modified structure),
+   * the protocol is re-configured with the updated definition and returns
+   * status `202`.
    *
-   * @param options - Optional overrides like `encryption`.
+   * **Must be called before any record operations.** Methods like
+   * `records.create()`, `records.query()`, etc. will throw if the protocol
+   * has not been configured.
+   *
+   * @param options - Optional configuration overrides.
+   * @param options.encryption - Whether to enable auto-encryption for the
+   *   protocol. If omitted, follows the protocol definition defaults.
+   * @returns The DWN response status and the installed protocol object.
+   *
+   * @example
+   * ```ts
+   * const proto = web5.using(NotebookProtocol);
+   *
+   * const { status, protocol } = await proto.configure();
+   * console.log(status.code); // 202 (first install) or 200 (already installed)
+   *
+   * // Now you can use records.create(), records.query(), etc.
+   * ```
    */
   public async configure(options?: { encryption?: boolean }): Promise<DwnResponseStatus & { protocol?: Protocol }> {
     // Query for an existing installation of this protocol.
@@ -285,7 +629,12 @@ export class TypedWeb5<
     return result;
   }
 
-  /** Whether the protocol has been configured (installed) on the local DWN. */
+  /**
+   * Whether the protocol has been configured (installed) on the local DWN.
+   *
+   * Returns `true` after a successful call to {@link TypedWeb5.configure | configure()}.
+   * Record operations will throw if this is `false`.
+   */
   public get isConfigured(): boolean {
     return this._configured;
   }
@@ -313,12 +662,21 @@ export class TypedWeb5<
   /**
    * Protocol-scoped record operations.
    *
-   * Every method auto-injects the protocol URI, protocolPath, and schema
-   * from the protocol definition. Path parameters provide compile-time
-   * autocompletion via `ProtocolPaths<D>`.
+   * Every method auto-injects the `protocol`, `protocolPath`, and `schema`
+   * from the protocol definition — you never need to specify them manually.
+   * Path parameters provide **compile-time autocompletion** via
+   * `ProtocolPaths<D>`, and data types are resolved from the schema map.
    *
    * All methods return {@link TypedRecord} or {@link TypedLiveQuery} instances
-   * that carry the resolved data type from the schema map.
+   * that carry the resolved data type from the schema map, providing
+   * end-to-end type safety.
+   *
+   * Available methods:
+   * - {@link TypedWeb5.records.create | create(path, request)} — Create a new record
+   * - {@link TypedWeb5.records.query | query(path, request?)} — Query records with filters
+   * - {@link TypedWeb5.records.read | read(path, request)} — Read a single record
+   * - {@link TypedWeb5.records.delete | delete(path, request)} — Delete a record by ID
+   * - {@link TypedWeb5.records.subscribe | subscribe(path, request?)} — Real-time subscription
    */
   public get records(): {
     create: <Path extends ProtocolPaths<D> & string>(
@@ -354,8 +712,29 @@ export class TypedWeb5<
       /**
        * Create a new record at the given protocol path.
        *
-       * @param path - The protocol path (e.g. `'friend'`, `'group/member'`).
-       * @param request - Create options including typed `data`.
+       * The `protocol`, `protocolPath`, and `schema` are auto-injected from
+       * the protocol definition. The `data` field is type-checked against
+       * the schema map for the given path.
+       *
+       * @param path - The protocol path (e.g. `'notebook'`, `'notebook/page'`).
+       *   Provides compile-time autocompletion for valid paths.
+       * @param request - Create options including the typed `data` payload
+       *   and optional fields like `parentContextId`, `tags`, `recipient`.
+       * @returns A {@link TypedCreateResponse} containing the DWN response
+       *   `status` and the created {@link TypedRecord}.
+       *
+       * @example
+       * ```ts
+       * const { status, record } = await proto.records.create('notebook', {
+       *   data: { name: 'My Notebook' },
+       * });
+       *
+       * // Create a child page under the notebook's context
+       * const { record: page } = await proto.records.create('notebook/page', {
+       *   data: { title: 'First Page', body: '' },
+       *   parentContextId: record.contextId,
+       * });
+       * ```
        */
       create: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
@@ -391,8 +770,37 @@ export class TypedWeb5<
       /**
        * Query records at the given protocol path.
        *
-       * @param path - The protocol path to query.
-       * @param request - Optional filter, sort, and pagination.
+       * Returns all matching records as an array of typed records, with
+       * an optional pagination cursor for fetching additional pages.
+       *
+       * @param path - The protocol path to query (e.g. `'notebook'`,
+       *   `'notebook/page'`).
+       * @param request - Optional filter, sort, and pagination options.
+       *   Omit entirely to return all records at the path.
+       * @returns A {@link TypedQueryResponse} containing `status`, `records`
+       *   (as {@link TypedRecord | TypedRecord<T>[]}), and an optional
+       *   `cursor` for pagination.
+       *
+       * @example
+       * ```ts
+       * // Query all notebooks
+       * const { records } = await proto.records.query('notebook');
+       *
+       * // Query pages under a specific notebook
+       * const { records: pages } = await proto.records.query('notebook/page', {
+       *   filter: { parentId: notebook.contextId },
+       * });
+       *
+       * for (const page of pages) {
+       *   const data = await page.data.json(); // PageData
+       * }
+       *
+       * // Paginated query
+       * const { records: batch, cursor } = await proto.records.query('notebook', {
+       *   pagination: { limit: 10 },
+       *   dateSort: DateSort.CreatedDescending,
+       * });
+       * ```
        */
       query: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
@@ -427,8 +835,24 @@ export class TypedWeb5<
       /**
        * Read a single record at the given protocol path.
        *
+       * Unlike `query()`, which returns an array, `read()` returns exactly
+       * one record. Use `filter.recordId` to target a specific record.
+       *
        * @param path - The protocol path to read from.
-       * @param request - Read options including a filter to identify the record.
+       * @param request - Read options including a `filter` to identify the
+       *   record. See {@link TypedReadRequest} for details.
+       * @returns A {@link TypedReadResponse} containing `status` and the
+       *   matching {@link TypedRecord}.
+       *
+       * @example
+       * ```ts
+       * const { record } = await proto.records.read('notebook', {
+       *   filter: { recordId: notebookId },
+       * });
+       *
+       * const data = await record.data.json(); // NotebookData
+       * console.log(data.name);
+       * ```
        */
       read: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
@@ -460,8 +884,25 @@ export class TypedWeb5<
       /**
        * Delete a record at the given protocol path.
        *
-       * @param path - The protocol path (used for permission scoping).
-       * @param request - Delete options including the `recordId`.
+       * The path is used for protocol validation and permission scoping,
+       * while the actual record is identified by `recordId`.
+       *
+       * @param path - The protocol path (used for permission scoping and
+       *   path validation).
+       * @param request - Delete options. `recordId` is required; `from` is
+       *   optional for remote deletes.
+       * @returns The DWN response status.
+       *
+       * @example
+       * ```ts
+       * const { status } = await proto.records.delete('notebook', {
+       *   recordId: notebook.id,
+       * });
+       *
+       * if (status.code === 202) {
+       *   console.log('Notebook deleted');
+       * }
+       * ```
        */
       delete: async <Path extends ProtocolPaths<D> & string>(
         _path: Path,
@@ -476,14 +917,40 @@ export class TypedWeb5<
       },
 
       /**
-       * Subscribe to records at the given protocol path.
+       * Subscribe to real-time changes at the given protocol path.
        *
        * Returns a {@link TypedLiveQuery} that atomically provides an initial
        * snapshot and a real-time stream of deduplicated change events, with
        * all records typed as `TypedRecord<T>`.
        *
        * @param path - The protocol path to subscribe to.
-       * @param request - Optional filter and role.
+       * @param request - Optional filter and role. Use `filter.parentId`
+       *   to scope the subscription to children of a specific parent.
+       * @returns A {@link TypedSubscribeResponse} containing `status` and
+       *   a {@link TypedLiveQuery} for receiving events.
+       *
+       * @example
+       * ```ts
+       * const { liveQuery } = await proto.records.subscribe('notebook/page', {
+       *   filter: { parentId: notebook.contextId },
+       * });
+       *
+       * liveQuery.on('create', (record) => {
+       *   // record is TypedRecord<PageData>
+       *   console.log('New page created');
+       * });
+       *
+       * liveQuery.on('update', (record) => {
+       *   const data = await record.data.json(); // PageData
+       * });
+       *
+       * liveQuery.on('delete', (record) => {
+       *   console.log('Page deleted:', record.id);
+       * });
+       *
+       * // Stop listening
+       * liveQuery.close();
+       * ```
        */
       subscribe: async <Path extends ProtocolPaths<D> & string>(
         path: Path,
