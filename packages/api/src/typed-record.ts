@@ -126,7 +126,8 @@ export type TypedRecordUpdateResult<T> = DwnResponseStatus & {
    * The updated record, carrying the same type parameter `T`.
    *
    * This is a **new** {@link TypedRecord} instance reflecting the post-update
-   * state; the original record instance is not mutated.
+   * state. The original record instance is also mutated in-place, so both
+   * references see the updated data.
    */
   record: TypedRecord<T>;
 };
@@ -266,8 +267,9 @@ export class TypedRecord<T> {
    * Update the current record's data and/or metadata on the DWN.
    *
    * The `data` field accepts `Partial<T>`, so you only need to provide
-   * the fields you want to change. A new {@link TypedRecord} is returned;
-   * the original instance is not mutated.
+   * the fields you want to change. A new {@link TypedRecord} is returned
+   * **and** the original instance is mutated in-place, so both the returned
+   * record and the original reference reflect the updated state.
    *
    * @param params - Update parameters. `data` is type-checked as `Partial<T>`.
    *   Other fields like `tags`, `published`, and `datePublished` can also be
@@ -290,6 +292,10 @@ export class TypedRecord<T> {
    */
   public async update(params: TypedRecordUpdateParams<T>): Promise<TypedRecordUpdateResult<T>> {
     const { status, record } = await this._record.update(params as RecordUpdateParams);
+    // The underlying Record.update() now also mutates `this._record` in-place,
+    // so the original TypedRecord reference already reflects the new data.
+    // We still return a new TypedRecord wrapping the returned record for callers
+    // that use the destructured result.
     return { status, record: new TypedRecord<T>(record) };
   }
 
