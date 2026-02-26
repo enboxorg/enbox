@@ -323,6 +323,15 @@ export class Web5 {
   /** Internal DWN API instance. Use {@link Web5.using} for protocol-scoped access. */
   private _dwn: DwnApi;
 
+  /**
+   * Cache of {@link TypedWeb5} instances keyed by protocol URI.
+   *
+   * Ensures that `web5.using(Protocol)` returns the **same** `TypedWeb5`
+   * instance for a given protocol across multiple call sites, avoiding
+   * redundant protocol installations and duplicated internal state.
+   */
+  private _typedInstances = new Map<string, TypedWeb5<ProtocolDefinition, SchemaMap>>();
+
   /** Exposed instance to the VC APIs, allow users to issue, present and verify VCs */
   vc: VcApi;
 
@@ -340,6 +349,10 @@ export class Web5 {
    * protocol-backed records. It auto-injects the protocol URI, protocolPath,
    * and schema into every operation, and provides compile-time path
    * autocompletion plus typed data payloads via the schema map.
+   *
+   * Instances are **cached by protocol URI** — calling `using()` multiple
+   * times with the same protocol returns the same `TypedWeb5` instance,
+   * so auto-configure only runs once and all call sites share state.
    *
    * @param protocol - A typed protocol created via `defineProtocol()`.
    * @returns A `TypedWeb5` instance bound to the given protocol.
@@ -360,7 +373,18 @@ export class Web5 {
   public using<D extends ProtocolDefinition, M extends SchemaMap>(
     protocol: TypedProtocol<D, M>,
   ): TypedWeb5<D, M> {
-    return new TypedWeb5<D, M>(this._dwn, protocol);
+    const uri = protocol.definition.protocol;
+    const cached = this._typedInstances.get(uri);
+
+    if (cached) {
+      // The map stores a type-erased instance; restore the caller's generics.
+      return cached as unknown as TypedWeb5<D, M>;
+    }
+
+    const instance = new TypedWeb5<D, M>(this._dwn, protocol);
+    // Store with erased generics so the map value type stays uniform.
+    this._typedInstances.set(uri, instance as unknown as TypedWeb5<ProtocolDefinition, SchemaMap>);
+    return instance;
   }
 
   /**

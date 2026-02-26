@@ -14,7 +14,11 @@ import {
 
 import { Convert } from '@enbox/common';
 import { DidJwk } from '@enbox/dids';
+import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+
+import { defineProtocol } from '../src/define-protocol.js';
 import { testDwnUrl } from './utils/test-config.js';
+import { TypedWeb5 } from '../src/typed-web5.js';
 import { Web5 } from '../src/web5.js';
 import { DwnInterfaceName, DwnMethodName, Jws, Time } from '@enbox/dwn-sdk-js';
 
@@ -97,6 +101,104 @@ describe('web5 api', () => {
           connectedDid : socialIdentity.did.uri,
         });
         expect(web5Social).toBeDefined();
+      });
+    });
+
+    describe('using()', () => {
+      const TestProtocolDef = {
+        protocol  : 'https://example.com/protocols/test',
+        published : true,
+        types     : {
+          item: {
+            schema      : 'https://example.com/schemas/item',
+            dataFormats : ['application/json'],
+          },
+        },
+        structure: {
+          item: {},
+        },
+      } as const satisfies ProtocolDefinition;
+
+      type TestSchemaMap = { item: { name: string } };
+
+      const TestProtocol = defineProtocol(TestProtocolDef, {} as TestSchemaMap);
+
+      it('returns the same TypedWeb5 instance for repeated calls with the same protocol', async () => {
+        const identity = await testHarness.agent.identity.create({
+          metadata  : { name: 'CacheTest' },
+          didMethod : 'jwk',
+        });
+
+        const web5 = new Web5({
+          agent        : testHarness.agent,
+          connectedDid : identity.did.uri,
+        });
+
+        const first = web5.using(TestProtocol);
+        const second = web5.using(TestProtocol);
+
+        expect(first).toBeInstanceOf(TypedWeb5);
+        expect(first).toBe(second); // same reference
+      });
+
+      it('returns different TypedWeb5 instances for different protocols', async () => {
+        const OtherProtocolDef = {
+          protocol  : 'https://example.com/protocols/other',
+          published : true,
+          types     : {
+            thing: {
+              schema      : 'https://example.com/schemas/thing',
+              dataFormats : ['application/json'],
+            },
+          },
+          structure: { thing: {} },
+        } as const satisfies ProtocolDefinition;
+
+        type OtherSchemaMap = { thing: { value: number } };
+        const OtherProtocol = defineProtocol(OtherProtocolDef, {} as OtherSchemaMap);
+
+        const identity = await testHarness.agent.identity.create({
+          metadata  : { name: 'CacheTest2' },
+          didMethod : 'jwk',
+        });
+
+        const web5 = new Web5({
+          agent        : testHarness.agent,
+          connectedDid : identity.did.uri,
+        });
+
+        const test = web5.using(TestProtocol);
+        const other = web5.using(OtherProtocol);
+
+        expect(test).not.toBe(other);
+        expect(test.protocol).toBe('https://example.com/protocols/test');
+        expect(other.protocol).toBe('https://example.com/protocols/other');
+      });
+
+      it('caches per Web5 instance, not globally', async () => {
+        const identity1 = await testHarness.agent.identity.create({
+          metadata  : { name: 'User1' },
+          didMethod : 'jwk',
+        });
+        const identity2 = await testHarness.agent.identity.create({
+          metadata  : { name: 'User2' },
+          didMethod : 'jwk',
+        });
+
+        const web5a = new Web5({
+          agent        : testHarness.agent,
+          connectedDid : identity1.did.uri,
+        });
+        const web5b = new Web5({
+          agent        : testHarness.agent,
+          connectedDid : identity2.did.uri,
+        });
+
+        const fromA = web5a.using(TestProtocol);
+        const fromB = web5b.using(TestProtocol);
+
+        // Different Web5 instances must NOT share cached TypedWeb5 instances.
+        expect(fromA).not.toBe(fromB);
       });
     });
 
