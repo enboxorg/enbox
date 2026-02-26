@@ -571,59 +571,87 @@ describe('repository()', () => {
     });
   });
 
-  describe('error paths', () => {
-    it('should throw when calling create() before configure()', async () => {
+  describe('auto-configure on first operation', () => {
+    it('should auto-configure and succeed when calling create() before configure()', async () => {
       const typed = new TypedWeb5(dwnAlice, TodoProtocol);
       const repo = repository(typed);
 
-      await expect(
-        repo.list.create({ data: { name: 'Fail' } }),
-      ).rejects.toThrow('has not been configured');
+      const result = await repo.list.create({ data: { name: 'Auto-configured' } });
+
+      expect(result.status.code).toBe(202);
+      expect(result.record).toBeInstanceOf(TypedRecord);
+      expect(typed.isConfigured).toBe(true);
     });
 
-    it('should throw when calling query() before configure()', async () => {
+    it('should auto-configure and succeed when calling query() before configure()', async () => {
       const typed = new TypedWeb5(dwnAlice, TodoProtocol);
       const repo = repository(typed);
 
-      await expect(
-        repo.list.query(),
-      ).rejects.toThrow('has not been configured');
+      const result = await repo.list.query();
+
+      expect(result.status.code).toBe(200);
+      expect(result.records).toBeDefined();
+      expect(typed.isConfigured).toBe(true);
     });
 
-    it('should throw when calling singleton set() before configure()', async () => {
+    it('should auto-configure and succeed when calling singleton set() before configure()', async () => {
       const typed = new TypedWeb5(dwnAlice, ProfileProtocol);
       const repo = repository(typed);
 
-      await expect(
-        repo.profile.set({ data: { displayName: 'Fail' } }),
-      ).rejects.toThrow('has not been configured');
+      const result = await repo.profile.set({ data: { displayName: 'Auto-configured' } });
+
+      expect(result.status.code).toBe(202);
+      expect(result.record).toBeInstanceOf(TypedRecord);
+      expect(typed.isConfigured).toBe(true);
     });
 
-    it('should throw when calling singleton get() before configure()', async () => {
+    it('should auto-configure and succeed when calling singleton get() before configure()', async () => {
       const typed = new TypedWeb5(dwnAlice, ProfileProtocol);
       const repo = repository(typed);
 
-      await expect(
-        repo.profile.get(),
-      ).rejects.toThrow('has not been configured');
+      // get() on an empty singleton should return undefined or a record
+      const _result = await repo.profile.get();
+
+      // Protocol should be auto-configured regardless of whether a record exists
+      expect(typed.isConfigured).toBe(true);
     });
 
-    it('should throw when calling nested create() before configure()', async () => {
+    it('should auto-configure and succeed when calling nested create() before configure()', async () => {
       const typed = new TypedWeb5(dwnAlice, TodoProtocol);
       const repo = repository(typed);
 
-      await expect(
-        repo.list.task.create('ctx-123', { data: { title: 'Fail', completed: false } }),
-      ).rejects.toThrow('has not been configured');
+      // Create a parent list first (this will auto-configure)
+      const { record: listRecord } = await repo.list.create({
+        data: { name: 'Parent List' },
+      });
+
+      // Create a nested task
+      const result = await repo.list.task.create(listRecord.contextId, {
+        data: { title: 'Nested Task', completed: false },
+      });
+
+      expect(result.status.code).toBe(202);
+      expect(result.record).toBeInstanceOf(TypedRecord);
+      expect(typed.isConfigured).toBe(true);
     });
 
-    it('should throw when calling nested singleton set() before configure()', async () => {
+    it('should auto-configure and succeed when calling nested singleton set() before configure()', async () => {
       const typed = new TypedWeb5(dwnAlice, ProfileProtocol);
       const repo = repository(typed);
 
-      await expect(
-        repo.group.settings.set('ctx-123', { data: { theme: 'dark', notifications: true } }),
-      ).rejects.toThrow('has not been configured');
+      // Create a parent group first (this will auto-configure)
+      const { record: groupRecord } = await repo.group.create({
+        data: { name: 'Test Group' },
+      });
+
+      // Set the nested singleton settings
+      const result = await repo.group.settings.set(groupRecord.contextId, {
+        data: { theme: 'dark', notifications: true },
+      });
+
+      expect(result.status.code).toBe(202);
+      expect(result.record).toBeInstanceOf(TypedRecord);
+      expect(typed.isConfigured).toBe(true);
     });
   });
 
