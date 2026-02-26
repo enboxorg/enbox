@@ -258,6 +258,8 @@ export type TypedQueryFilter = Omit<RecordsFilter, 'protocol' | 'protocolPath' |
    * specified values.
    */
   tags?: globalThis.Record<string, string | number | boolean | (string | number)[]>;
+  /** Alias for `parentId` — filters records by parent context ID. */
+  parentContextId?: string;
 };
 
 /**
@@ -393,7 +395,10 @@ export type TypedReadRequest = {
    * fields from `RecordsFilter` (like `contextId`, `parentId`, `recipient`)
    * are also available.
    */
-  filter: Omit<RecordsFilter, 'protocol' | 'protocolPath' | 'schema'>;
+  filter: Omit<RecordsFilter, 'protocol' | 'protocolPath' | 'schema'> & {
+    /** Alias for `parentId` — filters records by parent context ID. */
+    parentContextId?: string;
+  };
 
   /**
    * When `true`, automatically decrypts the record if it is encrypted.
@@ -811,11 +816,13 @@ export class TypedWeb5<
         const typeName = lastSegment(normalizedPath);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
+        const queryFilter = mapParentContextId(request?.filter);
+
         const { status, records, cursor } = await this._dwn.records.query({
           from       : request?.from,
           encryption : request?.encryption,
           filter     : {
-            ...request?.filter,
+            ...queryFilter,
             protocol     : this._definition.protocol,
             protocolPath : normalizedPath,
             ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
@@ -863,12 +870,14 @@ export class TypedWeb5<
         const typeName = lastSegment(normalizedPath);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
+        const readFilter = mapParentContextId(request.filter);
+
         const { status, record } = await this._dwn.records.read({
           from       : request.from,
           encryption : request.encryption,
           protocol   : this._definition.protocol,
           filter     : {
-            ...request.filter,
+            ...readFilter,
             protocol     : this._definition.protocol,
             protocolPath : normalizedPath,
             ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
@@ -961,10 +970,12 @@ export class TypedWeb5<
         const typeName = lastSegment(normalizedPath);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
+        const subFilter = mapParentContextId(request?.filter);
+
         const { status, liveQuery } = await this._dwn.records.subscribe({
           from   : request?.from,
           filter : {
-            ...request?.filter,
+            ...subFilter,
             protocol     : this._definition.protocol,
             protocolPath : normalizedPath,
             ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
@@ -987,6 +998,22 @@ export class TypedWeb5<
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Maps the `parentContextId` alias to the underlying `parentId` field
+ * expected by the DWN SDK. If both are provided, `parentId` takes precedence.
+ * Returns a new object (or `undefined` if the input was `undefined`).
+ */
+function mapParentContextId<T extends Record<string, unknown>>(
+  filter: T | undefined,
+): Omit<T, 'parentContextId'> | undefined {
+  if (!filter) { return undefined; }
+  const { parentContextId, ...rest } = filter as Record<string, unknown>;
+  if (parentContextId !== undefined && rest.parentId === undefined) {
+    rest.parentId = parentContextId;
+  }
+  return rest as Omit<T, 'parentContextId'>;
+}
 
 /**
  * Compares two protocol definitions for deep equality using deterministic
