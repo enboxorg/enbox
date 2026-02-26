@@ -538,6 +538,8 @@ export class TypedWeb5<
   /** @internal */
   private _configured: boolean = false;
   /** @internal */
+  private _ensureReadyPromise: Promise<void> | null = null;
+  /** @internal */
   private _validPaths: Set<string>;
   /** @internal */
   private _records?: TypedWeb5<D, M>['records'];
@@ -640,22 +642,76 @@ export class TypedWeb5<
   }
 
   /**
-   * Validates that the protocol has been configured and that the path is
-   * recognized. Throws a descriptive error if either check fails.
+   * Validates that the path is recognized.
+   * Throws a descriptive error if the path is not a valid protocol path.
    */
-  private _assertReady(path: string): void {
-    if (!this._configured) {
-      throw new Error(
-        `TypedWeb5: protocol '${this._definition.protocol}' has not been configured. ` +
-        'Call configure() before performing record operations.',
-      );
-    }
-
+  private _assertValidPath(path: string): void {
     if (!this._validPaths.has(path)) {
       throw new Error(
         `TypedWeb5: invalid protocol path '${path}'. ` +
         `Valid paths are: ${[...this._validPaths].join(', ')}.`,
       );
+    }
+  }
+
+  /**
+   * Ensures the protocol is configured before performing record operations.
+   *
+   * On first call, queries for an existing protocol installation:
+   * - If found with an identical definition → marks as configured.
+   * - If found with a different definition → marks as configured but warns
+   *   that the local definition differs from the installed one.
+   * - If not found → installs the protocol via `protocols.configure()`.
+   *
+   * Concurrent calls are deduplicated via a shared Promise so the network
+   * call only happens once.
+   */
+  private async _ensureReady(path: string): Promise<void> {
+    if (this._configured) {
+      this._assertValidPath(path);
+      return;
+    }
+
+    if (this._ensureReadyPromise === null) {
+      this._ensureReadyPromise = this._autoConfigureOnce();
+    }
+
+    await this._ensureReadyPromise;
+    this._assertValidPath(path);
+  }
+
+  /**
+   * Performs the one-time auto-configuration check. Called at most once;
+   * subsequent calls reuse the same Promise via `_ensureReadyPromise`.
+   */
+  private async _autoConfigureOnce(): Promise<void> {
+    const { protocols } = await this._dwn.protocols.query({
+      filter: { protocol: this._definition.protocol },
+    });
+
+    if (protocols.length > 0) {
+      const existing = protocols[0];
+      if (definitionsEqual(existing.definition, this._definition)) {
+        this._configured = true;
+        return;
+      }
+
+      // Installed but definitions differ — allow operations but warn.
+      console.warn(
+        `TypedWeb5: installed protocol '${this._definition.protocol}' differs from the provided definition. ` +
+        'Call configure() to update it.',
+      );
+      this._configured = true;
+      return;
+    }
+
+    // Not installed — configure it now.
+    const result = await this._dwn.protocols.configure({
+      definition: this._definition,
+    });
+
+    if (result.status.code === 202) {
+      this._configured = true;
     }
   }
 
@@ -741,7 +797,7 @@ export class TypedWeb5<
         request: TypedCreateRequest<D, M, Path>,
       ): Promise<TypedCreateResponse<DataForPath<D, M, Path>>> => {
         const normalizedPath = normalizePath(path);
-        this._assertReady(normalizedPath);
+        await this._ensureReady(normalizedPath);
         const typeName = lastSegment(normalizedPath);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
@@ -807,7 +863,7 @@ export class TypedWeb5<
         request?: TypedQueryRequest,
       ): Promise<TypedQueryResponse<DataForPath<D, M, Path>>> => {
         const normalizedPath = normalizePath(path);
-        this._assertReady(normalizedPath);
+        await this._ensureReady(normalizedPath);
         const typeName = lastSegment(normalizedPath);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
@@ -859,7 +915,7 @@ export class TypedWeb5<
         request: TypedReadRequest,
       ): Promise<TypedReadResponse<DataForPath<D, M, Path>>> => {
         const normalizedPath = normalizePath(path);
-        this._assertReady(normalizedPath);
+        await this._ensureReady(normalizedPath);
         const typeName = lastSegment(normalizedPath);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
@@ -908,7 +964,7 @@ export class TypedWeb5<
         _path: Path,
         request: TypedDeleteRequest,
       ): Promise<DwnResponseStatus> => {
-        this._assertReady(normalizePath(_path));
+        await this._ensureReady(normalizePath(_path));
         return this._dwn.records.delete({
           from     : request.from,
           protocol : this._definition.protocol,
@@ -957,7 +1013,7 @@ export class TypedWeb5<
         request?: TypedSubscribeRequest,
       ): Promise<TypedSubscribeResponse<DataForPath<D, M, Path>>> => {
         const normalizedPath = normalizePath(path);
-        this._assertReady(normalizedPath);
+        await this._ensureReady(normalizedPath);
         const typeName = lastSegment(normalizedPath);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 

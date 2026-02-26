@@ -454,57 +454,90 @@ describe('TypedProtocol API', () => {
       });
     });
 
+    describe('auto-configure on first operation', () => {
+      it('should auto-configure and succeed when calling create() before configure()', async () => {
+        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+
+        const { status, record } = await unconfigured.records.create('list', {
+          data: { name: 'Auto-configured' },
+        });
+
+        expect(status.code).toBe(202);
+        expect(record).toBeInstanceOf(TypedRecord);
+        expect(unconfigured.isConfigured).toBe(true);
+      });
+
+      it('should auto-configure and succeed when calling query() before configure()', async () => {
+        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+
+        const { status, records } = await unconfigured.records.query('list');
+
+        expect(status.code).toBe(200);
+        expect(records).toBeDefined();
+        expect(unconfigured.isConfigured).toBe(true);
+      });
+
+      it('should auto-configure and succeed when calling read() before configure()', async () => {
+        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+
+        // Create a record first via auto-configure, then read it back
+        const { record: created } = await unconfigured.records.create('list', {
+          data: { name: 'Read Test' },
+        });
+
+        const { status, record } = await unconfigured.records.read('list', {
+          filter: { recordId: created.id },
+        });
+
+        expect(status.code).toBe(200);
+        expect(record).toBeInstanceOf(TypedRecord);
+        expect(unconfigured.isConfigured).toBe(true);
+      });
+
+      it('should auto-configure and succeed when calling delete() before configure()', async () => {
+        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+
+        // Create a record first via auto-configure, then delete it
+        const { record: created } = await unconfigured.records.create('list', {
+          data: { name: 'Delete Test' },
+        });
+
+        const { status } = await unconfigured.records.delete('list', {
+          recordId: created.id,
+        });
+
+        expect(status.code).toBe(202);
+        expect(unconfigured.isConfigured).toBe(true);
+      });
+
+      it('should auto-configure and succeed when calling subscribe() before configure()', async () => {
+        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+
+        const { status, liveQuery } = await unconfigured.records.subscribe('list');
+
+        expect(status.code).toBe(200);
+        expect(liveQuery).toBeDefined();
+        expect(unconfigured.isConfigured).toBe(true);
+
+        await liveQuery.close();
+      });
+
+      it('should install the protocol transparently on first operation', async () => {
+        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+
+        // Perform an operation without explicit configure()
+        await unconfigured.records.create('list', { data: { name: 'Transparent' } });
+
+        // Verify the protocol was installed
+        const { protocols } = await dwnAlice.protocols.query({
+          filter: { protocol: TodoProtocol.definition.protocol },
+        });
+        expect(protocols.length).toBe(1);
+      });
+    });
+
     describe('error paths', () => {
-      it('should throw when calling create() before configure()', async () => {
-        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
-
-        await expect(
-          unconfigured.records.create('list', { data: { name: 'Fail' } }),
-        ).rejects.toThrow('has not been configured');
-      });
-
-      it('should throw when calling query() before configure()', async () => {
-        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
-
-        await expect(
-          unconfigured.records.query('list'),
-        ).rejects.toThrow('has not been configured');
-      });
-
-      it('should throw when calling read() before configure()', async () => {
-        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
-
-        await expect(
-          unconfigured.records.read('list', { filter: { recordId: 'abc' } }),
-        ).rejects.toThrow('has not been configured');
-      });
-
-      it('should throw when calling delete() before configure()', async () => {
-        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
-
-        await expect(
-          unconfigured.records.delete('list', { recordId: 'abc' }),
-        ).rejects.toThrow('has not been configured');
-      });
-
-      it('should throw when calling subscribe() before configure()', async () => {
-        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
-
-        await expect(
-          unconfigured.records.subscribe('list'),
-        ).rejects.toThrow('has not been configured');
-      });
-
-      it('should include the protocol URI in the not-configured error message', async () => {
-        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
-
-        await expect(
-          unconfigured.records.create('list', { data: { name: 'Fail' } }),
-        ).rejects.toThrow('https://example.com/protocols/todo');
-      });
-
       it('should throw on invalid protocol path', async () => {
-        // Configure first so the not-configured guard passes
         await expect(
           typed.records.create('nonexistent' as any, { data: {} }),
         ).rejects.toThrow('invalid protocol path');
