@@ -5,6 +5,10 @@
  * evaluated `stream()` function with convenience accessors that mirror the
  * Fetch `Response` API (`blob()`, `bytes()`, `json()`, `text()`).
  *
+ * Data is **cached after first read** so that subsequent calls to any accessor
+ * return the same data without re-fetching. Concurrent calls are safe — only
+ * one fetch is performed and all callers share the result.
+ *
  * Extracted from `record.ts` so the convenience-method boilerplate lives in
  * its own module while the stream-resolution logic (which is tightly coupled
  * to `Record` internals) stays inside the `Record` class.
@@ -15,11 +19,22 @@
 import { Stream } from '@enbox/common';
 
 /**
+ * Maximum data size (in bytes) that will be cached in-memory after the first
+ * read. Payloads larger than this threshold are not cached and will be
+ * re-fetched on every access.
+ */
+const DATA_CACHE_LIMIT = 10 * 1024 * 1024; // 10 MB
+
+/**
  * A thenable data accessor returned by {@link Record.data}.
  *
  * Provides convenience methods for consuming the record's data in various
  * formats, plus `then`/`catch` so the object can be awaited directly to
  * obtain the underlying `ReadableStream`.
+ *
+ * Data is cached after the first read so that repeated calls (e.g.,
+ * `data.json()` followed by `data.text()`) do not trigger redundant
+ * network requests.
  *
  * @beta
  */
@@ -46,6 +61,15 @@ export type RecordData = {
 /**
  * Create a {@link RecordData} wrapper around a `stream` provider function.
  *
+ * The first call to any accessor (`blob`, `bytes`, `json`, `text`, `stream`)
+ * consumes the underlying stream and caches the raw bytes (up to
+ * {@link DATA_CACHE_LIMIT}). Subsequent calls reconstruct a fresh stream
+ * from the cache, preventing the common footgun of stale data after stream
+ * consumption.
+ *
+ * Concurrent calls are safe: if multiple accessors are called simultaneously,
+ * only one stream fetch is performed and all callers share the result.
+ *
  * @param streamFn   - A function that returns a `Promise<ReadableStream>` for the record data.
  * @param dataFormat - The MIME type used when constructing Blobs.
  * @returns A {@link RecordData} object with convenience accessors.
@@ -53,6 +77,46 @@ export type RecordData = {
  * @beta
  */
 export function createRecordData(streamFn: () => Promise<ReadableStream>, dataFormat: string | undefined): RecordData {
+  // In-memory byte cache. Populated after the first successful read.
+  let cachedBytes: Uint8Array | undefined;
+  // In-flight read promise. Ensures concurrent callers share a single fetch.
+  let inflight: Promise<Uint8Array> | undefined;
+
+  /**
+   * Returns the record data as raw bytes, using the cache when available.
+   * If a read is already in-flight, waits for it instead of starting a new one.
+   */
+  async function getBytes(): Promise<Uint8Array> {
+    // Fast path: cache hit.
+    if (cachedBytes) {
+      return cachedBytes;
+    }
+
+    // If another call is already fetching, wait for it.
+    if (inflight) {
+      return inflight;
+    }
+
+    // Start a new fetch and share the promise.
+    inflight = (async (): Promise<Uint8Array> => {
+      const readableStream = await streamFn();
+      const bytes = await Stream.consumeToBytes({ readableStream });
+
+      // Cache only if within the size limit.
+      if (bytes.byteLength <= DATA_CACHE_LIMIT) {
+        cachedBytes = bytes;
+      }
+
+      return bytes;
+    })();
+
+    try {
+      return await inflight;
+    } finally {
+      inflight = undefined;
+    }
+  }
+
   const dataObj: RecordData = {
 
     /**
@@ -64,7 +128,7 @@ export function createRecordData(streamFn: () => Promise<ReadableStream>, dataFo
      * @beta
      */
     async blob(): Promise<Blob> {
-      return new Blob([await Stream.consumeToBytes({ readableStream: await this.stream() })], { type: dataFormat });
+      return new Blob([await getBytes()], { type: dataFormat });
     },
 
     /**
@@ -76,7 +140,7 @@ export function createRecordData(streamFn: () => Promise<ReadableStream>, dataFo
      * @beta
      */
     async bytes(): Promise<Uint8Array> {
-      return await Stream.consumeToBytes({ readableStream: await this.stream() });
+      return await getBytes();
     },
 
     /**
@@ -88,7 +152,8 @@ export function createRecordData(streamFn: () => Promise<ReadableStream>, dataFo
      * @beta
      */
     async json<T = unknown>(): Promise<T> {
-      return await Stream.consumeToJson({ readableStream: await this.stream() }) as T;
+      const bytes = await getBytes();
+      return JSON.parse(new TextDecoder().decode(bytes)) as T;
     },
 
     /**
@@ -100,7 +165,8 @@ export function createRecordData(streamFn: () => Promise<ReadableStream>, dataFo
      * @beta
      */
     async text(): Promise<string> {
-      return await Stream.consumeToText({ readableStream: await this.stream() });
+      const bytes = await getBytes();
+      return new TextDecoder().decode(bytes);
     },
 
     /**
@@ -109,12 +175,27 @@ export function createRecordData(streamFn: () => Promise<ReadableStream>, dataFo
      * Uses the standard Web Streams API for cross-platform compatibility across
      * browsers, Node.js, Bun, and Deno.
      *
+     * If the data has already been read and cached, returns a fresh stream
+     * reconstructed from the cache.
+     *
      * @returns A promise that resolves to a Web `ReadableStream` of the record's data.
      * @throws If the record data is not available in-memory and cannot be fetched.
      *
      * @beta
      */
-    stream: streamFn,
+    async stream(): Promise<ReadableStream> {
+      // If we have cached bytes, reconstruct a fresh stream from them.
+      if (cachedBytes) {
+        return new ReadableStream({
+          start(controller): void {
+            controller.enqueue(cachedBytes);
+            controller.close();
+          },
+        });
+      }
+      // Otherwise delegate to the original stream provider.
+      return streamFn();
+    },
 
     /**
      * Attaches callbacks for the resolution and/or rejection of the `Promise` returned by

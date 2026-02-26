@@ -490,7 +490,7 @@ describe('Record — coverage gaps (stubbed)', () => {
       const record = new Record(agentStub as unknown as Web5Agent, options);
       expect(record.deleted).toBe(true);
 
-      await expect(record.data.text()).rejects.toThrow('404');
+      await expect(record.data.text()).rejects.toThrow('Cannot access data of a deleted record.');
     });
   });
 });

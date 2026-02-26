@@ -26,17 +26,17 @@ export type ProtocolMetadata = {
 /**
  * Encapsulates a DWN Protocol with its associated metadata and configuration.
  *
- * This class primarly exists to provide developers with a convenient way to configure/install
+ * This class primarily exists to provide developers with a convenient way to configure/install
  * protocols on remote DWNs.
  */
 export class Protocol {
   /** The {@link Web5Agent} instance that handles DWNs requests. */
   private _agent: Web5Agent;
 
-  /** The ProtocolsConfigureMessage containing the detailed configuration for the protocol. */
+  /** Metadata associated with the protocol, including the author and optional message CID. */
   private _metadata: ProtocolMetadata;
 
-  /** Metadata associated with the protocol, including the author and optional message CID. */
+  /** The ProtocolsConfigureMessage containing the detailed configuration for the protocol. */
   private _protocolsConfigureMessage: DwnMessage[DwnInterface.ProtocolsConfigure];
 
   /**

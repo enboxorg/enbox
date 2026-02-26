@@ -136,7 +136,8 @@ export type TypedRecordUpdateResult<T> = DwnResponseStatus & {
  * Result of a {@link TypedRecord.delete} operation.
  *
  * Includes the DWN response status and the record in its deleted state.
- * After deletion, calling data accessors on the returned record will throw.
+ * The original record instance is also mutated in-place, so both
+ * references reflect the deletion.
  *
  * @typeParam T - The data type of the record.
  */
@@ -302,8 +303,9 @@ export class TypedRecord<T> {
   /**
    * Delete the current record from the DWN.
    *
-   * After deletion, the returned record's {@link TypedRecord.deleted | deleted}
-   * property will be `true` and calling data accessors will throw.
+   * After deletion, **both** the returned record and the original instance's
+   * {@link TypedRecord.deleted | deleted} property will be `true`, and
+   * calling data accessors on either will throw.
    *
    * @param params - Optional delete parameters:
    *   - `store` — whether to persist the delete message (defaults to `true`).

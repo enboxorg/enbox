@@ -44,3 +44,4 @@ export * from './web5.js';
 
 import * as utils from './utils.js';
 export { utils };
+export { isOk } from './utils.js';
