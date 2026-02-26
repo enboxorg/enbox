@@ -16,9 +16,9 @@ export const localDwnHostCandidates = ['127.0.0.1', 'localhost'] as const;
 /**
  * Controls how the agent discovers and routes to a local DWN server.
  *
+ * - `'off'`    — (default) skip local discovery entirely.
  * - `'prefer'` — probe localhost first; fall back to DID-document endpoints.
  * - `'only'`   — require a local server; throw if none is found.
- * - `'off'`    — skip local discovery entirely.
  */
 export type LocalDwnStrategy = 'prefer' | 'only' | 'off';
 
