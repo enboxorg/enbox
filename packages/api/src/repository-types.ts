@@ -108,9 +108,12 @@ export type CollectionCRUD<
   M extends SchemaMap,
   Path extends string,
 > = {
-  create(options: CollectionCreateOptions<D, M, Path>): Promise<DwnResponseStatus & { record: TypedRecord<DataAt<D, M, Path>> }>;
+  create(options: CollectionCreateOptions<D, M, Path>): Promise<
+    | (DwnResponseStatus & { record: TypedRecord<DataAt<D, M, Path>> })
+    | (DwnResponseStatus & { record: undefined })
+  >;
   query(options?: TypedQueryRequest): Promise<DwnResponseStatus & { records: TypedRecord<DataAt<D, M, Path>>[]; cursor?: DwnPaginationCursor }>;
-  get(recordId: string): Promise<TypedRecord<DataAt<D, M, Path>>>;
+  get(recordId: string): Promise<TypedRecord<DataAt<D, M, Path>> | undefined>;
   delete(recordId: string): Promise<DwnResponseStatus>;
   subscribe(options?: TypedSubscribeRequest): Promise<TypedLiveQuery<DataAt<D, M, Path>> | undefined>;
 };
@@ -121,7 +124,10 @@ export type SingletonCRUD<
   M extends SchemaMap,
   Path extends string,
 > = {
-  set(options: SingletonSetOptions<D, M, Path>): Promise<DwnResponseStatus & { record: TypedRecord<DataAt<D, M, Path>> }>;
+  set(options: SingletonSetOptions<D, M, Path>): Promise<
+    | (DwnResponseStatus & { record: TypedRecord<DataAt<D, M, Path>> })
+    | (DwnResponseStatus & { record: undefined })
+  >;
   get(): Promise<TypedRecord<DataAt<D, M, Path>> | undefined>;
   delete(recordId: string): Promise<DwnResponseStatus>;
 };
@@ -135,12 +141,15 @@ export type NestedCollectionCRUD<
   create(
     parentContextId: string,
     options: CollectionCreateOptions<D, M, Path>,
-  ): Promise<DwnResponseStatus & { record: TypedRecord<DataAt<D, M, Path>> }>;
+  ): Promise<
+    | (DwnResponseStatus & { record: TypedRecord<DataAt<D, M, Path>> })
+    | (DwnResponseStatus & { record: undefined })
+  >;
   query(
     parentContextId: string,
     options?: TypedQueryRequest,
   ): Promise<DwnResponseStatus & { records: TypedRecord<DataAt<D, M, Path>>[]; cursor?: DwnPaginationCursor }>;
-  get(recordId: string): Promise<TypedRecord<DataAt<D, M, Path>>>;
+  get(recordId: string): Promise<TypedRecord<DataAt<D, M, Path>> | undefined>;
   delete(recordId: string): Promise<DwnResponseStatus>;
   subscribe(
     parentContextId: string,
@@ -157,7 +166,10 @@ export type NestedSingletonCRUD<
   set(
     parentContextId: string,
     options: SingletonSetOptions<D, M, Path>,
-  ): Promise<DwnResponseStatus & { record: TypedRecord<DataAt<D, M, Path>> }>;
+  ): Promise<
+    | (DwnResponseStatus & { record: TypedRecord<DataAt<D, M, Path>> })
+    | (DwnResponseStatus & { record: undefined })
+  >;
   get(parentContextId: string): Promise<TypedRecord<DataAt<D, M, Path>> | undefined>;
   delete(recordId: string): Promise<DwnResponseStatus>;
 };

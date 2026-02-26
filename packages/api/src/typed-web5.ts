@@ -207,17 +207,22 @@ export type TypedCreateRequest<
 /**
  * Response from {@link TypedWeb5} `records.create()`.
  *
+ * Uses a discriminated union so that TypeScript narrows `record` to
+ * `TypedRecord<T>` after a `status.code` check:
+ *
+ * ```ts
+ * const result = await proto.records.create('notebook', { data });
+ * if (result.record) {
+ *   // TypeScript knows `record` is TypedRecord<NotebookData> here
+ *   console.log(result.record.id);
+ * }
+ * ```
+ *
  * @typeParam T - The data type of the created record.
  */
-export type TypedCreateResponse<T = unknown> = DwnResponseStatus & {
-  /**
-   * The created record, typed as `TypedRecord<T>`.
-   *
-   * Access `record.id`, `record.contextId`, and `record.data.json()` for
-   * the most commonly needed values after creation.
-   */
-  record: TypedRecord<T>;
-};
+export type TypedCreateResponse<T = unknown> =
+  | (DwnResponseStatus & { record: TypedRecord<T> })
+  | (DwnResponseStatus & { record: undefined });
 
 /**
  * Filter options for {@link TypedWeb5} `records.query()` and `records.subscribe()`.
@@ -411,12 +416,21 @@ export type TypedReadRequest = {
 /**
  * Response from {@link TypedWeb5} `records.read()`.
  *
+ * Uses a discriminated union so that TypeScript narrows `record` to
+ * `TypedRecord<T>` after a truthiness check:
+ *
+ * ```ts
+ * const result = await proto.records.read('notebook', { filter: { recordId } });
+ * if (result.record) {
+ *   const data = await result.record.data.json(); // NotebookData
+ * }
+ * ```
+ *
  * @typeParam T - The data type of the read record.
  */
-export type TypedReadResponse<T = unknown> = DwnResponseStatus & {
-  /** The record matching the filter, typed as {@link TypedRecord | TypedRecord<T>}. */
-  record: TypedRecord<T>;
-};
+export type TypedReadResponse<T = unknown> =
+  | (DwnResponseStatus & { record: TypedRecord<T> })
+  | (DwnResponseStatus & { record: undefined });
 
 /**
  * Options for {@link TypedWeb5} `records.delete()`.
@@ -824,7 +838,7 @@ export class TypedWeb5<
 
         return {
           status,
-          record: new TypedRecord<DataForPath<D, M, Path>>(record),
+          record: record ? new TypedRecord<DataForPath<D, M, Path>>(record) : undefined,
         };
       },
 
@@ -942,7 +956,7 @@ export class TypedWeb5<
 
         return {
           status,
-          record: new TypedRecord<DataForPath<D, M, Path>>(record),
+          record: record ? new TypedRecord<DataForPath<D, M, Path>>(record) : undefined,
         };
       },
 
