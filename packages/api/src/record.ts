@@ -506,8 +506,14 @@ export class Record implements RecordModel {
 
   /**
    * Update the current record on the DWN.
+   *
+   * On success, **both** a new `Record` instance is returned *and* the
+   * current instance (`this`) is mutated in-place to reflect the updated
+   * state. This means callers can safely continue using the original
+   * reference after an update without capturing the returned record.
+   *
    * @param params - Parameters to update the record.
-   * @returns the status of the update request
+   * @returns the status of the update request and the updated Record
    * @throws `Error` if the record has already been deleted.
    *
    * @beta
@@ -599,6 +605,23 @@ export class Record implements RecordModel {
       encodedData  : data !== undefined ? dataBlob : this._encodedData,
       ...responseMessage as DwnMessage[DwnInterface.RecordsWrite],
     }, this._permissionsApi);
+
+    // Also mutate *this* record's internal state so that the caller's
+    // original reference reflects the update without having to capture
+    // the returned record. This eliminates the common footgun where
+    // `await record.update({ data }); await record.data.json()` returns
+    // stale data because `update()` historically only returned a *new* Record.
+    const msg = responseMessage as DwnMessage[DwnInterface.RecordsWrite];
+    this._descriptor = msg.descriptor;
+    this._attestation = msg.attestation;
+    this._authorization = msg.authorization;
+    this._encryption = msg.encryption;
+    this._contextId = msg.contextId;
+    this._initialWrite = initialWrite;
+    this._protocolRole = protocolRole ?? this._protocolRole;
+    this._encodedData = data !== undefined ? dataBlob : this._encodedData;
+    this._readableStream = undefined; // Invalidate any consumed stream.
+    this._rawMessageDirty = true; // Force rawMessage cache rebuild.
 
     return { status, record: updatedRecord };
   }

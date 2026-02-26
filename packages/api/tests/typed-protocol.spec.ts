@@ -759,6 +759,35 @@ describe('TypedProtocol API', () => {
         expect(data.description).toBe('Now with description');
       });
 
+      it('should mutate the original record in-place on successful update', async () => {
+        const { record: original } = await typed.records.create('list', {
+          data: { name: 'Before' },
+        });
+
+        // Verify initial data.
+        const dataBefore = await original.data.json();
+        expect(dataBefore.name).toBe('Before');
+
+        // Perform update — the original reference should reflect the new data.
+        const { status, record: returned } = await original.update({
+          data: { name: 'After', description: 'Added description' },
+        });
+
+        expect(status.code).toBe(202);
+
+        // The returned record should have the new data (existing behavior).
+        const returnedData = await returned.data.json();
+        expect(returnedData.name).toBe('After');
+
+        // The ORIGINAL record should also reflect the new data (new behavior).
+        const originalData = await original.data.json();
+        expect(originalData.name).toBe('After');
+        expect(originalData.description).toBe('Added description');
+
+        // Timestamps should match between original and returned.
+        expect(original.timestamp).toBe(returned.timestamp);
+      });
+
       it('should delete a record via TypedRecord.delete()', async () => {
         const { record } = await typed.records.create('list', {
           data: { name: 'Delete Me' },

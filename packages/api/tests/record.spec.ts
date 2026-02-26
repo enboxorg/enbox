@@ -2897,6 +2897,37 @@ describe('Record', () => {
       expect(firstUpdateTimestamp).not.toBe(secondUpdateTimestamp);
     });
 
+    it('mutates the original record in-place on successful update', async () => {
+      const { status, record } = await dwnAlice.records.write({
+        data         : 'original',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain'
+      });
+
+      expect(status.code).toBe(202);
+
+      // Read original data.
+      const originalData = await record!.data.text();
+      expect(originalData).toBe('original');
+
+      // Update the record.
+      const { status: updateStatus, record: updatedRecord } = await record!.update({ data: 'updated' });
+      expect(updateStatus.code).toBe(202);
+
+      // The returned record should have the new data.
+      const returnedData = await updatedRecord!.data.text();
+      expect(returnedData).toBe('updated');
+
+      // The ORIGINAL record should also reflect the new data (in-place mutation).
+      const mutatedData = await record!.data.text();
+      expect(mutatedData).toBe('updated');
+
+      // Timestamps should be in sync.
+      expect(record!.timestamp).toBe(updatedRecord!.timestamp);
+    });
+
     it('throws an exception when an immutable property is modified', async () => {
       const { status, record } = await dwnAlice.records.write({
         data         : 'Hello, world!',
