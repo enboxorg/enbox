@@ -33,6 +33,7 @@ The high-level SDK for building decentralized applications with protocol-first d
   - [Unscoped DWN Access](#unscoped-dwn-access)
   - [Permissions](#permissions)
   - [DID Operations](#did-operations)
+- [Browser Builds — Required Polyfills](#browser-builds--required-polyfills)
 - [API Reference](#api-reference)
 - [License](#license)
 
@@ -758,6 +759,68 @@ await request.send('did:dht:alice...');
 // Resolve any DID
 const { didDocument } = await web5.did.resolve('did:dht:abc...');
 ```
+
+---
+
+## Browser Builds — Required Polyfills
+
+The Enbox packages reference several Node.js globals that must be shimmed in browser environments. Most bundlers (Vite, webpack) handle the main bundle automatically, but **secondary build targets** (e.g., service workers, Web Workers) may need explicit configuration.
+
+### Required shims
+
+| Global | Shim value | Used by |
+|--------|-----------|---------|
+| `global` | `globalThis` | `@enbox/agent` transitive deps |
+| `process.env` | `{}` | `@enbox/agent`, `@enbox/dids` |
+| `process.browser` | `true` | `@enbox/agent` transitive deps |
+| `process.emitWarning` | `() => {}` | `@enbox/agent` transitive deps |
+
+### Vite configuration
+
+For the main app bundle, add to `vite.config.ts`:
+
+```ts
+import nodePolyfills from 'vite-plugin-node-stdlib-browser';
+
+export default defineConfig({
+  define: {
+    global: 'globalThis',
+  },
+  plugins: [nodePolyfills()],
+});
+```
+
+### Service workers (VitePWA)
+
+Service workers built via [VitePWA](https://vite-pwa-org.netlify.app/) run in a separate Vite build that does **not** inherit the main app's polyfill plugins. Two additional steps are needed:
+
+1. **Build as IIFE** to compile away `import.meta.url` references:
+   ```ts
+   VitePWA({
+     strategies: 'injectManifest',
+     injectManifest: {
+       rollupFormat: 'iife',
+     },
+   })
+   ```
+
+2. **Prepend a `process` shim** via a Rollup plugin:
+   ```ts
+   VitePWA({
+     injectManifest: {
+       rollupFormat: 'iife',
+       buildPlugins: {
+         rollup: [{
+           name: 'sw-process-shim',
+           renderChunk(code) {
+             const shim = 'if(typeof process==="undefined"){self.process={env:{},browser:true,emitWarning:function(){}};};\n';
+             return { code: shim + code, map: null };
+           },
+         }],
+       },
+     },
+   })
+   ```
 
 ---
 
