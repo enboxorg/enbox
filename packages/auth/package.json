@@ -1,0 +1,69 @@
+{
+  "name": "@enbox/auth",
+  "version": "0.1.0",
+  "description": "Headless authentication and identity management SDK for Enbox",
+  "type": "module",
+  "main": "./dist/esm/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/types/index.d.ts",
+  "scripts": {
+    "clean": "rimraf dist",
+    "build:esm": "rimraf dist/esm dist/types && bun tsc -p tsconfig.json",
+    "build": "bun run clean && bun run build:esm",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "test:node": "bun test --timeout 10000 .spec.ts"
+  },
+  "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/auth#readme",
+  "bugs": "https://github.com/enboxorg/enbox/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enboxorg/enbox.git",
+    "directory": "packages/auth"
+  },
+  "license": "Apache-2.0",
+  "contributors": [
+    {
+      "name": "Liran Cohen",
+      "url": "https://github.com/LiranCohen"
+    }
+  ],
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js"
+    }
+  },
+  "keywords": [
+    "auth",
+    "authentication",
+    "identity",
+    "decentralized",
+    "decentralized-identity",
+    "DID",
+    "web5",
+    "enbox"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "dependencies": {
+    "@enbox/agent": "workspace:*",
+    "@enbox/api": "workspace:*",
+    "@enbox/common": "workspace:*",
+    "@enbox/dids": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.8",
+    "bun-types": "latest",
+    "rimraf": "4.4.0",
+    "typescript": "5.5.4"
+  }
+}
