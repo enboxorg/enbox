@@ -8,8 +8,6 @@
 
 import type { Web5UserAgent } from '@enbox/agent';
 
-import { Web5 } from '@enbox/api';
-
 import type { AuthEventEmitter } from '../events.js';
 import type { LocalConnectOptions, StorageAdapter, SyncOption } from '../types.js';
 import { AuthSession } from '../identity-session.js';
@@ -122,9 +120,6 @@ export async function localConnect(
       });
   }
 
-  // Build the Web5 instance.
-  const web5 = new Web5({ agent: userAgent, connectedDid, delegateDid });
-
   // Persist session info.
   await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
   await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid);
@@ -136,7 +131,7 @@ export async function localConnect(
   };
 
   const session = new AuthSession({
-    web5,
+    agent: userAgent,
     did: connectedDid,
     delegateDid,
     recoveryPhrase,

@@ -8,8 +8,6 @@
 
 import type { Web5UserAgent } from '@enbox/agent';
 
-import { Web5 } from '@enbox/api';
-
 import type { AuthEventEmitter } from '../events.js';
 import type {
   ImportFromPhraseOptions,
@@ -108,8 +106,6 @@ export async function importFromPhrase(
       .catch((err: unknown) => console.error('[@enbox/auth] Sync failed:', err));
   }
 
-  const web5 = new Web5({ agent: userAgent, connectedDid });
-
   await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
   await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid);
 
@@ -119,7 +115,7 @@ export async function importFromPhrase(
   };
 
   const session = new AuthSession({
-    web5,
+    agent    : userAgent,
     did      : connectedDid,
     identity : identityInfo,
   });
@@ -165,8 +161,6 @@ export async function importFromPortable(
       .catch((err: unknown) => console.error('[@enbox/auth] Sync failed:', err));
   }
 
-  const web5 = new Web5({ agent: userAgent, connectedDid, delegateDid });
-
   await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
   await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid);
 
@@ -177,7 +171,7 @@ export async function importFromPortable(
   };
 
   const session = new AuthSession({
-    web5,
+    agent: userAgent,
     did: connectedDid,
     delegateDid,
     identity: identityInfo,

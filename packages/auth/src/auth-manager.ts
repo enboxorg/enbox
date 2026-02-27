@@ -8,7 +8,6 @@
 
 import type { BearerIdentity, PortableIdentity } from '@enbox/agent';
 import { Web5UserAgent } from '@enbox/agent';
-import { Web5 } from '@enbox/api';
 
 import { AuthEventEmitter } from './events.js';
 import { localConnect } from './flows/local-connect.js';
@@ -52,9 +51,9 @@ import { VaultManager } from './vault/vault-manager.js';
  * // Subsequent times: restores the previous session
  * const session = await auth.restoreSession() ?? await auth.connect();
  *
- * // Use the Web5 instance
- * const protocol = session.web5.using(MyProtocol);
- * const { record } = await protocol.records.create('item', { data: { ... } });
+ * // session.agent  — the authenticated Web5 agent
+ * // session.did    — the connected DID URI
+ * // session.web5   — convenience Web5 instance (lazy, for @enbox/api users)
  * ```
  *
  * @example Wallet connect
@@ -328,9 +327,11 @@ export class AuthManager {
     const { clearStorage = false, timeout = 2000 } = options;
     const did = this._session?.did;
 
-    // Stop sync and clean up Web5 instance.
+    // Stop sync.
     if (this._session) {
-      await this._session.web5.disconnect(timeout);
+      if ('sync' in this._userAgent && typeof (this._userAgent as any).sync?.stopSync === 'function') {
+        await (this._userAgent as any).sync.stopSync(timeout);
+      }
     }
 
     this._session = undefined;
@@ -407,9 +408,6 @@ export class AuthManager {
     const connectedDid = identity.metadata.connectedDid ?? identity.did.uri;
     const delegateDid = identity.metadata.connectedDid ? identity.did.uri : undefined;
 
-    // Re-construct Web5.
-    const web5 = new Web5({ agent: this._userAgent, connectedDid, delegateDid });
-
     // Persist the switch.
     await this._storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
     await this._storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid);
@@ -430,7 +428,7 @@ export class AuthManager {
     }
 
     this._session = new AuthSession({
-      web5,
+      agent: this._userAgent,
       did: connectedDid,
       delegateDid,
       identity: identityInfo,

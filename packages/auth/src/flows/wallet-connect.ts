@@ -132,9 +132,7 @@ export async function walletConnect(
       console.error('[@enbox/auth] Sync failed:', err);
     });
 
-  // Build the Web5 instance.
   const delegateDid = delegatePortableDid.uri;
-  const web5 = new Web5({ agent: userAgent, connectedDid, delegateDid });
 
   // Persist session info.
   await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
@@ -149,7 +147,7 @@ export async function walletConnect(
   };
 
   const session = new AuthSession({
-    web5,
+    agent: userAgent,
     did: connectedDid,
     delegateDid,
     identity: identityInfo,

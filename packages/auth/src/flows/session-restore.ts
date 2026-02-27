@@ -8,8 +8,6 @@
 
 import type { Web5UserAgent } from '@enbox/agent';
 
-import { Web5 } from '@enbox/api';
-
 import type { AuthEventEmitter } from '../events.js';
 import type { RestoreSessionOptions, StorageAdapter, SyncOption } from '../types.js';
 import { AuthSession } from '../identity-session.js';
@@ -108,8 +106,6 @@ export async function restoreSession(
       });
   }
 
-  const web5 = new Web5({ agent: userAgent, connectedDid, delegateDid });
-
   // Update persisted session info.
   await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid);
 
@@ -120,7 +116,7 @@ export async function restoreSession(
   };
 
   const session = new AuthSession({
-    web5,
+    agent: userAgent,
     did: connectedDid,
     delegateDid,
     identity: identityInfo,
