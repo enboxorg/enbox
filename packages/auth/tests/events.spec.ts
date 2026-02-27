@@ -45,8 +45,8 @@ describe('AuthEventEmitter', () => {
 
     emitter.emit('session-start', {
       session: {
-        did: 'did:example:test',
-        identity: { didUri: 'did:example:test', name: 'Test' },
+        did      : 'did:example:test',
+        identity : { didUri: 'did:example:test', name: 'Test' },
       },
     });
 

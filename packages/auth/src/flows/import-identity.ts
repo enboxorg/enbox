@@ -9,14 +9,14 @@
 import type { Web5UserAgent } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
+import { AuthSession } from '../identity-session.js';
+import { STORAGE_KEYS } from '../types.js';
 import type {
   ImportFromPhraseOptions,
   ImportFromPortableOptions,
   StorageAdapter,
   SyncOption,
 } from '../types.js';
-import { AuthSession } from '../identity-session.js';
-import { STORAGE_KEYS } from '../types.js';
 
 /** @internal */
 export interface ImportContext {
@@ -171,10 +171,10 @@ export async function importFromPortable(
   };
 
   const session = new AuthSession({
-    agent: userAgent,
-    did: connectedDid,
+    agent    : userAgent,
+    did      : connectedDid,
     delegateDid,
-    identity: identityInfo,
+    identity : identityInfo,
   });
 
   emitter.emit('identity-added', { identity: identityInfo });

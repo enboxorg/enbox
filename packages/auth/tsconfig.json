@@ -5,6 +5,9 @@
       "DOM",
       "ES2022"
     ],
+    "types": [
+      "bun-types"
+    ],
     "strict": true,
     "declarationDir": "dist/types",
     "outDir": "dist/esm"

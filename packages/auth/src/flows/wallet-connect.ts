@@ -7,14 +7,15 @@
  * @module
  */
 
-import type { Web5UserAgent } from '@enbox/agent';
+import { Convert } from '@enbox/common';
 import { WalletConnect } from '@enbox/agent';
-import { Web5 } from '@enbox/api';
+import type { DwnDataEncodedRecordsWriteMessage, DwnMessagesPermissionScope, DwnRecordsPermissionScope, Web5UserAgent } from '@enbox/agent';
+import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
-import type { StorageAdapter, SyncOption, WalletConnectOptions } from '../types.js';
 import { AuthSession } from '../identity-session.js';
 import { STORAGE_KEYS } from '../types.js';
+import type { StorageAdapter, SyncOption, WalletConnectOptions } from '../types.js';
 
 /** @internal */
 export interface WalletConnectContext {
@@ -25,12 +26,61 @@ export interface WalletConnectContext {
 }
 
 /**
+ * Process connected grants by storing them in the local DWN as the owner.
+ *
+ * This is the agent-level equivalent of `Web5.processConnectedGrants()`.
+ * It stores each grant, signed as owner, and returns the deduplicated
+ * list of protocol URIs represented by the grants.
+ *
+ * @internal
+ */
+export async function processConnectedGrants(params: {
+  agent: Web5UserAgent;
+  delegateDid: string;
+  grants: DwnDataEncodedRecordsWriteMessage[];
+}): Promise<string[]> {
+  const { agent, delegateDid, grants } = params;
+  const connectedProtocols = new Set<string>();
+
+  for (const grantMessage of grants) {
+    const grant = DwnPermissionGrant.parse(grantMessage);
+
+    // Store the grant as the owner of the DWN so the delegateDid
+    // can use it when impersonating the connectedDid.
+    const { encodedData, ...rawMessage } = grantMessage;
+    const dataStream = new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart]);
+
+    const { reply } = await agent.processDwnRequest({
+      store       : true,
+      author      : delegateDid,
+      target      : delegateDid,
+      messageType : DwnInterface.RecordsWrite,
+      signAsOwner : true,
+      rawMessage,
+      dataStream,
+    });
+
+    if (reply.status.code !== 202) {
+      throw new Error(
+        `[@enbox/auth] Failed to process connected grant: ${reply.status.detail}`
+      );
+    }
+
+    const protocol = (grant.scope as DwnMessagesPermissionScope | DwnRecordsPermissionScope).protocol;
+    if (protocol) {
+      connectedProtocols.add(protocol);
+    }
+  }
+
+  return [...connectedProtocols];
+}
+
+/**
  * Execute the wallet connect flow.
  *
- * 1. Builds permission requests from the provided protocol definitions.
- * 2. Calls `WalletConnect.initClient()` to run the full OIDC relay flow.
- * 3. Imports the delegate DID and processes grants.
- * 4. Sets up sync and returns an AuthSession.
+ * 1. Passes the permission requests directly to `WalletConnect.initClient()`.
+ * 2. Imports the delegate DID and processes grants.
+ * 3. Sets up sync and returns an AuthSession.
  */
 export async function walletConnect(
   ctx: WalletConnectContext,
@@ -46,21 +96,13 @@ export async function walletConnect(
     );
   }
 
-  // Build permission request objects from the user-friendly format.
-  const walletPermissionRequests = options.permissionRequests.map(
-    ({ protocolDefinition, permissions }) =>
-      WalletConnect.createPermissionRequestForProtocol({
-        definition  : protocolDefinition,
-        permissions : permissions ?? ['read', 'write', 'delete', 'query', 'subscribe'],
-      })
-  );
-
   // Run the full OIDC wallet connect flow.
+  // permissionRequests are already agent-level ConnectPermissionRequest objects.
   const result = await WalletConnect.initClient({
     displayName        : options.displayName,
     connectServerUrl   : options.connectServerUrl,
     walletUri          : options.walletUri ?? 'web5://connect',
-    permissionRequests : walletPermissionRequests,
+    permissionRequests : options.permissionRequests,
     onWalletUriReady   : options.onWalletUriReady,
     validatePin        : options.validatePin,
   });
@@ -86,8 +128,8 @@ export async function walletConnect(
       },
     });
 
-    // Process the connected grants.
-    const connectedProtocols = await Web5.processConnectedGrants({
+    // Process the connected grants using agent primitives.
+    const connectedProtocols = await processConnectedGrants({
       agent       : userAgent,
       delegateDid : delegatePortableDid.uri,
       grants      : delegateGrants,
@@ -147,18 +189,18 @@ export async function walletConnect(
   };
 
   const session = new AuthSession({
-    agent: userAgent,
-    did: connectedDid,
+    agent    : userAgent,
+    did      : connectedDid,
     delegateDid,
-    identity: identityInfo,
+    identity : identityInfo,
   });
 
   emitter.emit('identity-added', { identity: identityInfo });
   emitter.emit('session-start', {
     session: {
-      did       : session.did,
+      did      : session.did,
       delegateDid,
-      identity  : identityInfo,
+      identity : identityInfo,
     },
   });
 

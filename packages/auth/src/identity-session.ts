@@ -4,19 +4,17 @@
  */
 
 import type { Web5Agent } from '@enbox/agent';
-import { Web5 } from '@enbox/api';
 
 import type { IdentityInfo } from './types.js';
 
 /**
  * An active, authenticated session bound to a specific identity.
  *
- * The session exposes the authenticated **agent**, **connectedDid**, and
- * **delegateDid** — the primitives needed by `@enbox/api` to construct
- * a `Web5` instance. A convenience {@link web5} getter is provided for
- * apps that use `@enbox/api` directly.
+ * The session exposes the authenticated **agent**, **did**, and
+ * **delegateDid** — the primitives needed to interact with the DWN
+ * network. Consumers that use `@enbox/api` can construct a `Web5`
+ * instance from these properties:
  *
- * **Typical usage with `@enbox/api`:**
  * ```ts
  * import { Web5 } from '@enbox/api';
  *
@@ -26,12 +24,6 @@ import type { IdentityInfo } from './types.js';
  *   connectedDid: session.did,
  *   delegateDid: session.delegateDid,
  * });
- * ```
- *
- * **Or use the convenience getter:**
- * ```ts
- * const session = await auth.connect();
- * const web5 = session.web5; // lazily constructed Web5 instance
  * ```
  */
 export class AuthSession {
@@ -57,9 +49,6 @@ export class AuthSession {
   /** Metadata about the connected identity. */
   readonly identity: IdentityInfo;
 
-  /** Lazily-constructed Web5 instance. */
-  private _web5?: Web5;
-
   constructor(params: {
     agent: Web5Agent;
     did: string;
@@ -72,28 +61,5 @@ export class AuthSession {
     this.delegateDid = params.delegateDid;
     this.recoveryPhrase = params.recoveryPhrase;
     this.identity = params.identity;
-  }
-
-  /**
-   * Convenience getter that returns a `Web5` instance from `@enbox/api`.
-   *
-   * The instance is lazily constructed on first access and cached.
-   * This is equivalent to:
-   * ```ts
-   * new Web5({ agent: session.agent, connectedDid: session.did, delegateDid: session.delegateDid })
-   * ```
-   *
-   * Apps that don't use `@enbox/api` directly (e.g. CLI tools that only
-   * need the agent) can ignore this property entirely.
-   */
-  get web5(): Web5 {
-    if (!this._web5) {
-      this._web5 = new Web5({
-        agent        : this.agent,
-        connectedDid : this.did,
-        delegateDid  : this.delegateDid,
-      });
-    }
-    return this._web5;
   }
 }

@@ -2,8 +2,8 @@
  * @enbox/auth — Headless authentication and identity management SDK.
  *
  * Provides composable, multi-identity-aware authentication that works
- * in both browser and CLI environments. Can be used standalone or
- * alongside `@enbox/api` for full DWN protocol operations.
+ * in both browser and CLI environments. Depends only on `@enbox/agent`
+ * and can be used standalone or consumed by `@enbox/api`.
  *
  * @example Standalone auth
  * ```ts
@@ -24,11 +24,11 @@
  * const auth = await AuthManager.create({ sync: '15s' });
  * const session = await auth.connect();
  *
- * // Option A: use the convenience getter
- * const web5 = session.web5;
- *
- * // Option B: construct Web5 yourself
- * const web5 = new Web5({ agent: session.agent, connectedDid: session.did });
+ * const web5 = new Web5({
+ *   agent: session.agent,
+ *   connectedDid: session.did,
+ *   delegateDid: session.delegateDid,
+ * });
  * ```
  *
  * @packageDocumentation
@@ -51,6 +51,7 @@ export type {
   AuthManagerOptions,
   AuthSessionInfo,
   AuthState,
+  ConnectPermissionRequest,
   DisconnectOptions,
   IdentityInfo,
   IdentityVaultBackup,
@@ -63,5 +64,4 @@ export type {
   StorageAdapter,
   SyncOption,
   WalletConnectOptions,
-  Web5ConnectResult,
 } from './types.js';

@@ -101,7 +101,7 @@ jobs:
   # Lightweight packages: common, crypto (no external services needed)
   # ---------------------------------------------------------------------------
   test-lightweight:
-    name: 'Test: common / crypto'
+    name: 'Test: common / crypto / auth'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     needs: setup
@@ -136,13 +136,15 @@ jobs:
         run: |
           bun run --filter @enbox/common  test:node:coverage
           bun run --filter @enbox/crypto  test:node:coverage
+          bun run --filter @enbox/auth    test:node:coverage
 
       - name: Stage coverage
         if: always()
         run: |
-          mkdir -p coverage-staging/common coverage-staging/crypto
+          mkdir -p coverage-staging/common coverage-staging/crypto coverage-staging/auth
           cp packages/common/coverage/lcov.info coverage-staging/common/lcov.info 2>/dev/null || true
           cp packages/crypto/coverage/lcov.info coverage-staging/crypto/lcov.info 2>/dev/null || true
+          cp packages/auth/coverage/lcov.info   coverage-staging/auth/lcov.info   2>/dev/null || true
 
       - name: Upload coverage
         if: always()

@@ -9,9 +9,9 @@
 import type { Web5UserAgent } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
-import type { LocalConnectOptions, StorageAdapter, SyncOption } from '../types.js';
 import { AuthSession } from '../identity-session.js';
 import { INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../types.js';
+import type { LocalConnectOptions, StorageAdapter, SyncOption } from '../types.js';
 
 /** @internal */
 export interface LocalConnectContext {
@@ -54,7 +54,7 @@ export async function localConnect(
   if (await userAgent.firstLaunch()) {
     recoveryPhrase = await userAgent.initialize({
       password,
-      recoveryPhrase : options.recoveryPhrase,
+      recoveryPhrase: options.recoveryPhrase,
       dwnEndpoints,
     });
   }
@@ -131,19 +131,19 @@ export async function localConnect(
   };
 
   const session = new AuthSession({
-    agent: userAgent,
-    did: connectedDid,
+    agent    : userAgent,
+    did      : connectedDid,
     delegateDid,
     recoveryPhrase,
-    identity: identityInfo,
+    identity : identityInfo,
   });
 
   emitter.emit('identity-added', { identity: identityInfo });
   emitter.emit('session-start', {
     session: {
-      did       : session.did,
+      did      : session.did,
       delegateDid,
-      identity  : identityInfo,
+      identity : identityInfo,
     },
   });
 

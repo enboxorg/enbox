@@ -27,12 +27,30 @@ describe('AuthSession', () => {
     const identity = { didUri: 'did:example:test', name: 'Test' };
 
     const session = new AuthSession({
-      agent    : mockAgent,
-      did      : 'did:example:test',
+      agent : mockAgent,
+      did   : 'did:example:test',
       identity,
     });
 
     expect(session.delegateDid).toBeUndefined();
     expect(session.recoveryPhrase).toBeUndefined();
+  });
+
+  test('identity info contains connectedDid when present', () => {
+    const mockAgent = { agentDid: { uri: 'did:example:agent' } } as any;
+    const identity = {
+      didUri       : 'did:example:wallet',
+      name         : 'Wallet Identity',
+      connectedDid : 'did:example:external',
+    };
+
+    const session = new AuthSession({
+      agent       : mockAgent,
+      did         : 'did:example:wallet',
+      delegateDid : 'did:example:delegate',
+      identity,
+    });
+
+    expect(session.identity.connectedDid).toBe('did:example:external');
   });
 });

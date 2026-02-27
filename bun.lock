@@ -85,7 +85,6 @@
       "version": "0.1.0",
       "dependencies": {
         "@enbox/agent": "workspace:*",
-        "@enbox/api": "workspace:*",
         "@enbox/common": "workspace:*",
         "@enbox/dids": "workspace:*",
       },

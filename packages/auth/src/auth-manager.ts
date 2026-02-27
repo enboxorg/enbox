@@ -6,16 +6,17 @@
  * @module
  */
 
-import type { BearerIdentity, PortableIdentity } from '@enbox/agent';
 import { Web5UserAgent } from '@enbox/agent';
+import type { BearerIdentity, PortableIdentity } from '@enbox/agent';
 
 import { AuthEventEmitter } from './events.js';
-import { localConnect } from './flows/local-connect.js';
-import { importFromPhrase, importFromPortable } from './flows/import-identity.js';
-import { restoreSession } from './flows/session-restore.js';
-import { walletConnect } from './flows/wallet-connect.js';
 import { AuthSession } from './identity-session.js';
 import { createDefaultStorage } from './storage/storage.js';
+import { localConnect } from './flows/local-connect.js';
+import { restoreSession } from './flows/session-restore.js';
+import { STORAGE_KEYS } from './types.js';
+import { VaultManager } from './vault/vault-manager.js';
+import { walletConnect } from './flows/wallet-connect.js';
 import type {
   AuthEvent,
   AuthEventHandler,
@@ -31,8 +32,7 @@ import type {
   SyncOption,
   WalletConnectOptions,
 } from './types.js';
-import { STORAGE_KEYS } from './types.js';
-import { VaultManager } from './vault/vault-manager.js';
+import { importFromPhrase, importFromPortable } from './flows/import-identity.js';
 
 /**
  * The primary entry point for authentication and identity management.
@@ -53,7 +53,7 @@ import { VaultManager } from './vault/vault-manager.js';
  *
  * // session.agent  — the authenticated Web5 agent
  * // session.did    — the connected DID URI
- * // session.web5   — convenience Web5 instance (lazy, for @enbox/api users)
+ * // session.identity — metadata about the connected identity
  * ```
  *
  * @example Wallet connect
@@ -428,10 +428,10 @@ export class AuthManager {
     }
 
     this._session = new AuthSession({
-      agent: this._userAgent,
-      did: connectedDid,
+      agent    : this._userAgent,
+      did      : connectedDid,
       delegateDid,
-      identity: identityInfo,
+      identity : identityInfo,
     });
 
     this._setState('connected');
@@ -538,7 +538,7 @@ export class AuthManager {
   // ─── Private helpers ───────────────────────────────────────────
 
   private _setState(state: AuthState): void {
-    if (state === this._state) return;
+    if (state === this._state) {return;}
     const previous = this._state;
     this._state = state;
     this._emitter.emit('state-change', { previous, current: state });

@@ -9,9 +9,9 @@
 import type { Web5UserAgent } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
-import type { RestoreSessionOptions, StorageAdapter, SyncOption } from '../types.js';
 import { AuthSession } from '../identity-session.js';
 import { INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../types.js';
+import type { RestoreSessionOptions, StorageAdapter, SyncOption } from '../types.js';
 
 /** @internal */
 export interface SessionRestoreContext {
@@ -116,10 +116,10 @@ export async function restoreSession(
   };
 
   const session = new AuthSession({
-    agent: userAgent,
-    did: connectedDid,
+    agent    : userAgent,
+    did      : connectedDid,
     delegateDid,
-    identity: identityInfo,
+    identity : identityInfo,
   });
 
   emitter.emit('session-start', {

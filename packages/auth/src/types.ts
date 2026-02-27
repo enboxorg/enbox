@@ -3,12 +3,22 @@
  * Public types for the authentication and identity management SDK.
  */
 
-import type { IdentityVaultBackup, PortableIdentity } from '@enbox/agent';
-import type { ConnectPermissionRequest, SyncOption, Web5ConnectResult } from '@enbox/api';
+import type { ConnectPermissionRequest, PortableIdentity } from '@enbox/agent';
 
 // Re-export types that consumers will need
-export type { IdentityVaultBackup, PortableIdentity } from '@enbox/agent';
-export type { SyncOption, Web5ConnectResult } from '@enbox/api';
+export type { ConnectPermissionRequest, IdentityVaultBackup, PortableIdentity } from '@enbox/agent';
+
+// ─── Sync ────────────────────────────────────────────────────────
+
+/**
+ * Controls DWN synchronisation behaviour.
+ *
+ * - `'off'`   — Sync disabled entirely.
+ * - An interval string such as `'30s'`, `'2m'`, `'1h'` — Poll mode at the
+ *   specified interval.
+ * - `undefined` (omitted) — Live WebSocket sync (default).
+ */
+export type SyncOption = 'off' | `${number}${'s' | 'm' | 'h'}`;
 
 // ─── Auth State Machine ─────────────────────────────────────────
 
@@ -23,10 +33,10 @@ export type { SyncOption, Web5ConnectResult } from '@enbox/api';
  * ```
  */
 export type AuthState =
-  | 'uninitialized'  // No vault exists, no identities
-  | 'locked'         // Vault exists but is locked (password required)
-  | 'unlocked'       // Vault unlocked, no active session
-  | 'connected';     // Active session with an identity
+  | 'uninitialized' // No vault exists, no identities
+  | 'locked' // Vault exists but is locked (password required)
+  | 'unlocked' // Vault unlocked, no active session
+  | 'connected'; // Active session with an identity
 
 // ─── Events ──────────────────────────────────────────────────────
 
@@ -42,13 +52,13 @@ export type AuthEvent =
 
 /** Payload type for each event, keyed by event name. */
 export interface AuthEventMap {
-  'state-change':     { previous: AuthState; current: AuthState };
-  'session-start':    { session: AuthSessionInfo };
-  'session-end':      { did: string };
-  'identity-added':   { identity: IdentityInfo };
+  'state-change': { previous: AuthState; current: AuthState };
+  'session-start': { session: AuthSessionInfo };
+  'session-end': { did: string };
+  'identity-added': { identity: IdentityInfo };
   'identity-removed': { didUri: string };
-  'vault-locked':     Record<string, never>;
-  'vault-unlocked':   Record<string, never>;
+  'vault-locked': Record<string, never>;
+  'vault-unlocked': Record<string, never>;
 }
 
 /** A type-safe event handler for a specific event. */
@@ -149,7 +159,13 @@ export interface WalletConnectOptions {
   /** Wallet URI scheme. Defaults to `'web5://connect'`. */
   walletUri?: string;
 
-  /** Protocol permission requests for the wallet connect flow. */
+  /**
+   * Protocol permission requests for the wallet connect flow.
+   *
+   * Each entry is a `ConnectPermissionRequest` from `@enbox/agent` containing
+   * a `protocolDefinition` and `permissionScopes`. Use
+   * `WalletConnect.createPermissionRequestForProtocol()` to build these.
+   */
   permissionRequests: ConnectPermissionRequest[];
 
   /** Called when the wallet URI is ready (render as QR code). */

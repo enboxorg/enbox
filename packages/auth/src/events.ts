@@ -46,7 +46,7 @@ export class AuthEventEmitter {
    */
   emit<E extends AuthEvent>(event: E, payload: AuthEventMap[E]): void {
     const set = this._listeners.get(event);
-    if (!set) return;
+    if (!set) { return; }
     for (const handler of set) {
       try {
         handler(payload);
