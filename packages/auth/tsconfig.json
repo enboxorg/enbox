@@ -1,0 +1,21 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": [
+      "DOM",
+      "ES2022"
+    ],
+    "types": [
+      "bun-types"
+    ],
+    "strict": true,
+    "declarationDir": "dist/types",
+    "outDir": "dist/esm"
+  },
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

@@ -9,6 +9,7 @@
     "packages/dwn-clients",
     "packages/agent",
     "packages/api",
+    "packages/auth",
     "packages/protocols",
     "packages/browser",
     "packages/protocol-codegen",
