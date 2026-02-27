@@ -8,6 +8,7 @@ import type {
   DidResolutionResult,
   DidResolverCache,
   DidVerificationMethod,
+  DidWebCreateOptions,
   PortableDid,
 } from '@enbox/dids';
 
@@ -77,6 +78,7 @@ export interface DidCreateParams<
 export interface DidMethodCreateOptions<TKeyManager> {
   dht: DidDhtCreateOptions<TKeyManager>;
   jwk: DidJwkCreateOptions<TKeyManager>;
+  web: DidWebCreateOptions<TKeyManager>;
 }
 
 export interface DidApiParams {
