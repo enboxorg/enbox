@@ -89,12 +89,82 @@ export interface AuthSessionInfo {
   identity: IdentityInfo;
 }
 
+// ─── Registration ────────────────────────────────────────────────
+
+/** Parameters passed to the onProviderAuthRequired callback. */
+export interface ProviderAuthParams {
+  /** Full authorize URL to open in a browser (query params already appended). */
+  authorizeUrl: string;
+  /** The DWN endpoint URL this auth is for (informational). */
+  dwnEndpoint: string;
+  /** CSRF nonce — the provider will return this unchanged in the redirect. */
+  state: string;
+}
+
+/** Result returned by the app after the user completes provider auth. */
+export interface ProviderAuthResult {
+  /** Authorization code from the provider's redirect. */
+  code: string;
+  /** Must match the state from ProviderAuthParams (CSRF validation). */
+  state: string;
+}
+
+/** Persisted registration token data for a DWN endpoint. */
+export interface RegistrationTokenData {
+  /** Opaque registration token for POST /registration. */
+  registrationToken: string;
+  /** Refresh token for obtaining new registration tokens. */
+  refreshToken?: string;
+  /** Unix timestamp (ms) when the token expires. Undefined = never expires. */
+  expiresAt?: number;
+  /** Provider's token exchange URL (needed for code exchange). */
+  tokenUrl: string;
+  /** Provider's refresh URL (needed for token refresh). */
+  refreshUrl?: string;
+}
+
 // ─── Options ─────────────────────────────────────────────────────
 
-/** Registration callback configuration for DWN endpoints. */
+/**
+ * DWN registration configuration.
+ *
+ * When provided, the agent DID and connected DID will be registered with
+ * DWN endpoints after identity creation. Supports two paths:
+ *
+ * 1. **Provider auth** (`provider-auth-v0`) — the DWN endpoint requires
+ *    OAuth-style auth. If {@link onProviderAuthRequired} is provided and
+ *    the server advertises provider auth, the app handles the auth flow.
+ * 2. **Proof of Work** (default fallback) — the DWN endpoint requires
+ *    solving a PoW challenge to register.
+ */
 export interface RegistrationOptions {
+  /** Called when all DWN registrations complete successfully. */
   onSuccess: () => void;
+
+  /** Called when any DWN registration fails. */
   onFailure: (error: unknown) => void;
+
+  /**
+   * Called when a DWN endpoint requires provider auth (`'provider-auth-v0'`).
+   *
+   * The app should open the `authorizeUrl` in a browser, capture the
+   * redirect with the auth code, and return the result. If not provided,
+   * endpoints requiring provider auth fall back to PoW registration.
+   */
+  onProviderAuthRequired?: (params: ProviderAuthParams) => Promise<ProviderAuthResult>;
+
+  /**
+   * Pre-existing registration tokens from a previous session, keyed by
+   * DWN endpoint URL. If a valid (non-expired) token exists for an
+   * endpoint, it is used directly without re-running the auth flow.
+   */
+  registrationTokens?: Record<string, RegistrationTokenData>;
+
+  /**
+   * Called when new or refreshed registration tokens are obtained.
+   * The app should persist these for future sessions.
+   */
+  onRegistrationTokens?: (tokens: Record<string, RegistrationTokenData>) => void;
 }
 
 /** Options for {@link AuthManager.create}. */

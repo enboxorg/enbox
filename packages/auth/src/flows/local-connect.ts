@@ -10,8 +10,9 @@ import type { Web5UserAgent } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
 import { AuthSession } from '../identity-session.js';
+import { registerWithDwnEndpoints } from './dwn-registration.js';
 import { INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../types.js';
-import type { LocalConnectOptions, StorageAdapter, SyncOption } from '../types.js';
+import type { LocalConnectOptions, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
 
 /** @internal */
 export interface LocalConnectContext {
@@ -21,6 +22,7 @@ export interface LocalConnectContext {
   defaultPassword?: string;
   defaultSync?: SyncOption;
   defaultDwnEndpoints?: string[];
+  registration?: RegistrationOptions;
 }
 
 /**
@@ -101,6 +103,19 @@ export async function localConnect(
 
   const connectedDid = identity.metadata.connectedDid ?? identity.did.uri;
   const delegateDid = identity.metadata.connectedDid ? identity.did.uri : undefined;
+
+  // Register with DWN endpoints (if registration options are provided).
+  if (ctx.registration) {
+    await registerWithDwnEndpoints(
+      {
+        userAgent : userAgent,
+        dwnEndpoints,
+        agentDid  : userAgent.agentDid.uri,
+        connectedDid,
+      },
+      ctx.registration,
+    );
+  }
 
   // Register sync for new identities.
   if (isNewIdentity && sync !== 'off') {

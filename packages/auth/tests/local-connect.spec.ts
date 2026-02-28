@@ -244,4 +244,35 @@ describe('localConnect', () => {
 
     expect(createCalls[0].metadata.name).toBe('My Custom Name');
   });
+
+  test('calls registration when registration options are provided', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const identity = createMockIdentity();
+
+    let registrationSucceeded = false;
+    const agent = createMockAgent({
+      firstLaunch      : async () => false,
+      identityList     : async () => [identity],
+      rpcGetServerInfo : async () => ({
+        registrationRequirements : [],
+        maxFileSize              : 10_000_000,
+      }),
+    });
+
+    await localConnect(
+      {
+        userAgent    : agent,
+        emitter,
+        storage,
+        registration : {
+          onSuccess : () => { registrationSucceeded = true; },
+          onFailure : () => {},
+        },
+      },
+      {},
+    );
+
+    expect(registrationSucceeded).toBe(true);
+  });
 });

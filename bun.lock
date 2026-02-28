@@ -87,6 +87,7 @@
         "@enbox/agent": "workspace:*",
         "@enbox/common": "workspace:*",
         "@enbox/dids": "workspace:*",
+        "@enbox/dwn-clients": "workspace:*",
         "level": "8.0.0",
       },
       "devDependencies": {

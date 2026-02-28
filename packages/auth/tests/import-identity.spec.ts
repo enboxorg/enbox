@@ -147,6 +147,36 @@ describe('importFromPhrase', () => {
 
     expect(initCalls[0].dwnEndpoints).toEqual(['https://custom.example.com']);
   });
+
+  test('calls registration when registration options are provided', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+
+    let registrationSucceeded = false;
+    const agent = createMockAgent({
+      firstLaunch      : async () => false,
+      identityList     : async () => [createMockIdentity()],
+      rpcGetServerInfo : async () => ({
+        registrationRequirements : [],
+        maxFileSize              : 10_000_000,
+      }),
+    });
+
+    await importFromPhrase(
+      {
+        userAgent    : agent,
+        emitter,
+        storage,
+        registration : {
+          onSuccess : () => { registrationSucceeded = true; },
+          onFailure : () => {},
+        },
+      },
+      { recoveryPhrase: 'phrase', password: 'pass' },
+    );
+
+    expect(registrationSucceeded).toBe(true);
+  });
 });
 
 describe('importFromPortable', () => {
@@ -266,5 +296,34 @@ describe('importFromPortable', () => {
     );
 
     expect(events).toEqual(['identity-added', 'session-start']);
+  });
+
+  test('calls registration when registration options are provided', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+
+    let registrationSucceeded = false;
+    const agent = createMockAgent({
+      identityImport   : async () => createMockIdentity(),
+      rpcGetServerInfo : async () => ({
+        registrationRequirements : [],
+        maxFileSize              : 10_000_000,
+      }),
+    });
+
+    await importFromPortable(
+      {
+        userAgent    : agent,
+        emitter,
+        storage,
+        registration : {
+          onSuccess : () => { registrationSucceeded = true; },
+          onFailure : () => {},
+        },
+      },
+      { portableIdentity: {} as any },
+    );
+
+    expect(registrationSucceeded).toBe(true);
   });
 });

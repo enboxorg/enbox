@@ -27,6 +27,7 @@ import type {
   ImportFromPhraseOptions,
   ImportFromPortableOptions,
   LocalConnectOptions,
+  RegistrationOptions,
   RestoreSessionOptions,
   StorageAdapter,
   SyncOption,
@@ -80,6 +81,7 @@ export class AuthManager {
   private _defaultPassword?: string;
   private _defaultSync?: SyncOption;
   private _defaultDwnEndpoints?: string[];
+  private _registration?: RegistrationOptions;
 
   private constructor(params: {
     userAgent: Web5UserAgent;
@@ -89,6 +91,7 @@ export class AuthManager {
     defaultPassword?: string;
     defaultSync?: SyncOption;
     defaultDwnEndpoints?: string[];
+    registration?: RegistrationOptions;
   }) {
     this._userAgent = params.userAgent;
     this._emitter = params.emitter;
@@ -97,6 +100,7 @@ export class AuthManager {
     this._defaultPassword = params.defaultPassword;
     this._defaultSync = params.defaultSync;
     this._defaultDwnEndpoints = params.defaultDwnEndpoints;
+    this._registration = params.registration;
   }
 
   /**
@@ -126,6 +130,7 @@ export class AuthManager {
       defaultPassword     : options.password,
       defaultSync         : options.sync,
       defaultDwnEndpoints : options.dwnEndpoints,
+      registration        : options.registration,
     });
 
     // Determine initial state.
@@ -163,6 +168,7 @@ export class AuthManager {
           defaultPassword     : this._defaultPassword,
           defaultSync         : this._defaultSync,
           defaultDwnEndpoints : this._defaultDwnEndpoints,
+          registration        : this._registration,
         },
         options,
       );
@@ -201,10 +207,12 @@ export class AuthManager {
 
       const session = await walletConnect(
         {
-          userAgent   : this._userAgent,
-          emitter     : this._emitter,
-          storage     : this._storage,
-          defaultSync : this._defaultSync,
+          userAgent           : this._userAgent,
+          emitter             : this._emitter,
+          storage             : this._storage,
+          defaultSync         : this._defaultSync,
+          defaultDwnEndpoints : this._defaultDwnEndpoints,
+          registration        : this._registration,
         },
         options,
       );
@@ -235,6 +243,7 @@ export class AuthManager {
           storage             : this._storage,
           defaultSync         : this._defaultSync,
           defaultDwnEndpoints : this._defaultDwnEndpoints,
+          registration        : this._registration,
         },
         options,
       );
@@ -264,6 +273,7 @@ export class AuthManager {
           storage             : this._storage,
           defaultSync         : this._defaultSync,
           defaultDwnEndpoints : this._defaultDwnEndpoints,
+          registration        : this._registration,
         },
         options,
       );

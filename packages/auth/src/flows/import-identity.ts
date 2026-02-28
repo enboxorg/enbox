@@ -10,10 +10,12 @@ import type { Web5UserAgent } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
 import { AuthSession } from '../identity-session.js';
+import { registerWithDwnEndpoints } from './dwn-registration.js';
 import { STORAGE_KEYS } from '../types.js';
 import type {
   ImportFromPhraseOptions,
   ImportFromPortableOptions,
+  RegistrationOptions,
   StorageAdapter,
   SyncOption,
 } from '../types.js';
@@ -25,6 +27,7 @@ export interface ImportContext {
   storage: StorageAdapter;
   defaultSync?: SyncOption;
   defaultDwnEndpoints?: string[];
+  registration?: RegistrationOptions;
 }
 
 /**
@@ -94,6 +97,19 @@ export async function importFromPhrase(
 
   const connectedDid = identity.did.uri;
 
+  // Register with DWN endpoints (if registration options are provided).
+  if (ctx.registration) {
+    await registerWithDwnEndpoints(
+      {
+        userAgent : userAgent,
+        dwnEndpoints,
+        agentDid  : userAgent.agentDid.uri,
+        connectedDid,
+      },
+      ctx.registration,
+    );
+  }
+
   // Register and start sync.
   if (isNewIdentity && sync !== 'off') {
     await userAgent.sync.registerIdentity({ did: connectedDid, options: { protocols: [] } });
@@ -147,6 +163,21 @@ export async function importFromPortable(
 
   const connectedDid = identity.metadata.connectedDid ?? identity.did.uri;
   const delegateDid = identity.metadata.connectedDid ? identity.did.uri : undefined;
+
+  // Register with DWN endpoints (if registration options are provided).
+  // For portable imports, extract endpoints from the DID document's DWN service.
+  if (ctx.registration) {
+    const dwnEndpoints = ctx.defaultDwnEndpoints ?? ['https://enbox-dwn.fly.dev'];
+    await registerWithDwnEndpoints(
+      {
+        userAgent : userAgent,
+        dwnEndpoints,
+        agentDid  : userAgent.agentDid.uri,
+        connectedDid,
+      },
+      ctx.registration,
+    );
+  }
 
   // Register and start sync.
   if (sync !== 'off') {
