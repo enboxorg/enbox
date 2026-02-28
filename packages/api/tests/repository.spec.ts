@@ -10,8 +10,8 @@ import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { repository } from '../src/repository.js';
 import { testDwnUrl } from './utils/test-config.js';
+import { TypedEnbox } from '../src/typed-enbox.js';
 import { TypedRecord } from '../src/typed-record.js';
-import { TypedWeb5 } from '../src/typed-web5.js';
 
 // ---------------------------------------------------------------------------
 // Test protocol definitions
@@ -178,7 +178,7 @@ describe('repository()', () => {
 
   describe('configure()', () => {
     it('should install the protocol via configure()', async () => {
-      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      const typed = new TypedEnbox(dwnAlice, TodoProtocol);
       const repo = repository(typed);
 
       const result = await repo.configure();
@@ -193,11 +193,11 @@ describe('repository()', () => {
   });
 
   describe('root collection CRUD', () => {
-    let typed: TypedWeb5<typeof TodoProtocolDefinition, TodoSchemaMap>;
+    let typed: TypedEnbox<typeof TodoProtocolDefinition, TodoSchemaMap>;
     let repo: any;
 
     beforeEach(async () => {
-      typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      typed = new TypedEnbox(dwnAlice, TodoProtocol);
       repo = repository(typed);
       const { status } = await repo.configure();
       expect(status.code).toBe(202);
@@ -264,11 +264,11 @@ describe('repository()', () => {
   });
 
   describe('nested collection CRUD', () => {
-    let typed: TypedWeb5<typeof TodoProtocolDefinition, TodoSchemaMap>;
+    let typed: TypedEnbox<typeof TodoProtocolDefinition, TodoSchemaMap>;
     let repo: any;
 
     beforeEach(async () => {
-      typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      typed = new TypedEnbox(dwnAlice, TodoProtocol);
       repo = repository(typed);
       await repo.configure();
     });
@@ -358,11 +358,11 @@ describe('repository()', () => {
   });
 
   describe('deeply nested records', () => {
-    let typed: TypedWeb5<typeof TodoProtocolDefinition, TodoSchemaMap>;
+    let typed: TypedEnbox<typeof TodoProtocolDefinition, TodoSchemaMap>;
     let repo: any;
 
     beforeEach(async () => {
-      typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      typed = new TypedEnbox(dwnAlice, TodoProtocol);
       repo = repository(typed);
       await repo.configure();
     });
@@ -388,11 +388,11 @@ describe('repository()', () => {
   });
 
   describe('root singleton CRUD', () => {
-    let typed: TypedWeb5<typeof ProfileProtocolDefinition, ProfileSchemaMap>;
+    let typed: TypedEnbox<typeof ProfileProtocolDefinition, ProfileSchemaMap>;
     let repo: any;
 
     beforeEach(async () => {
-      typed = new TypedWeb5(dwnAlice, ProfileProtocol);
+      typed = new TypedEnbox(dwnAlice, ProfileProtocol);
       repo = repository(typed);
       await repo.configure();
     });
@@ -461,11 +461,11 @@ describe('repository()', () => {
   });
 
   describe('nested singleton CRUD', () => {
-    let typed: TypedWeb5<typeof ProfileProtocolDefinition, ProfileSchemaMap>;
+    let typed: TypedEnbox<typeof ProfileProtocolDefinition, ProfileSchemaMap>;
     let repo: any;
 
     beforeEach(async () => {
-      typed = new TypedWeb5(dwnAlice, ProfileProtocol);
+      typed = new TypedEnbox(dwnAlice, ProfileProtocol);
       repo = repository(typed);
       await repo.configure();
     });
@@ -532,11 +532,11 @@ describe('repository()', () => {
   });
 
   describe('mixed collection and singleton under same parent', () => {
-    let typed: TypedWeb5<typeof ProfileProtocolDefinition, ProfileSchemaMap>;
+    let typed: TypedEnbox<typeof ProfileProtocolDefinition, ProfileSchemaMap>;
     let repo: any;
 
     beforeEach(async () => {
-      typed = new TypedWeb5(dwnAlice, ProfileProtocol);
+      typed = new TypedEnbox(dwnAlice, ProfileProtocol);
       repo = repository(typed);
       await repo.configure();
     });
@@ -573,7 +573,7 @@ describe('repository()', () => {
 
   describe('auto-configure on first operation', () => {
     it('should auto-configure and succeed when calling create() before configure()', async () => {
-      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      const typed = new TypedEnbox(dwnAlice, TodoProtocol);
       const repo = repository(typed);
 
       const result = await repo.list.create({ data: { name: 'Auto-configured' } });
@@ -584,7 +584,7 @@ describe('repository()', () => {
     });
 
     it('should auto-configure and succeed when calling query() before configure()', async () => {
-      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      const typed = new TypedEnbox(dwnAlice, TodoProtocol);
       const repo = repository(typed);
 
       const result = await repo.list.query();
@@ -595,7 +595,7 @@ describe('repository()', () => {
     });
 
     it('should auto-configure and succeed when calling singleton set() before configure()', async () => {
-      const typed = new TypedWeb5(dwnAlice, ProfileProtocol);
+      const typed = new TypedEnbox(dwnAlice, ProfileProtocol);
       const repo = repository(typed);
 
       const result = await repo.profile.set({ data: { displayName: 'Auto-configured' } });
@@ -606,7 +606,7 @@ describe('repository()', () => {
     });
 
     it('should auto-configure and succeed when calling singleton get() before configure()', async () => {
-      const typed = new TypedWeb5(dwnAlice, ProfileProtocol);
+      const typed = new TypedEnbox(dwnAlice, ProfileProtocol);
       const repo = repository(typed);
 
       // get() on an empty singleton should return undefined or a record
@@ -617,7 +617,7 @@ describe('repository()', () => {
     });
 
     it('should auto-configure and succeed when calling nested create() before configure()', async () => {
-      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      const typed = new TypedEnbox(dwnAlice, TodoProtocol);
       const repo = repository(typed);
 
       // Create a parent list first (this will auto-configure)
@@ -636,7 +636,7 @@ describe('repository()', () => {
     });
 
     it('should auto-configure and succeed when calling nested singleton set() before configure()', async () => {
-      const typed = new TypedWeb5(dwnAlice, ProfileProtocol);
+      const typed = new TypedEnbox(dwnAlice, ProfileProtocol);
       const repo = repository(typed);
 
       // Create a parent group first (this will auto-configure)
@@ -657,7 +657,7 @@ describe('repository()', () => {
 
   describe('proxy node caching', () => {
     it('should return the same child node on repeated access', () => {
-      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      const typed = new TypedEnbox(dwnAlice, TodoProtocol);
       const repo = repository(typed);
 
       const task1 = repo.list.task;
@@ -668,7 +668,7 @@ describe('repository()', () => {
 
   describe('undefined child access', () => {
     it('should return undefined for non-existent child nodes', () => {
-      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      const typed = new TypedEnbox(dwnAlice, TodoProtocol);
       const repo = repository(typed);
 
       const nonExistent = (repo.list as any).nonExistent;
@@ -676,7 +676,7 @@ describe('repository()', () => {
     });
 
     it('should return undefined for non-existent root nodes', () => {
-      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      const typed = new TypedEnbox(dwnAlice, TodoProtocol);
       const repo = repository(typed);
 
       const nonExistent = (repo as any).nonExistent;

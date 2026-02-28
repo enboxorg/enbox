@@ -44,6 +44,9 @@ export { AuthEventEmitter } from './events.js';
 // without a direct @enbox/agent dependency.
 export { HdIdentityVault, Web5UserAgent } from '@enbox/agent';
 
+// Wallet-connect helpers
+export { processConnectedGrants } from './flows/wallet-connect.js';
+
 // Storage adapters
 export { BrowserStorage, LevelStorage, MemoryStorage, createDefaultStorage } from './storage/storage.js';
 

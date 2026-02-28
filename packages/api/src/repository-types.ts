@@ -18,7 +18,7 @@ import type {
   TypedCreateRequest,
   TypedQueryRequest,
   TypedSubscribeRequest,
-} from './typed-web5.js';
+} from './typed-enbox.js';
 import type { DwnPaginationCursor, DwnResponseStatus } from '@enbox/agent';
 import type { ProtocolDefinition, ProtocolRuleSet } from '@enbox/dwn-sdk-js';
 

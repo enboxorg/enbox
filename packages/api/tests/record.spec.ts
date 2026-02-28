@@ -5,6 +5,7 @@ import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { utils as didUtils } from '@enbox/dids';
+import { processConnectedGrants } from '@enbox/auth';
 import { Stream } from '@enbox/common';
 import {
   DwnConstant, DwnContentEncryptionAlgorithm, DwnDateSort, DwnInterface, DwnKeyDerivationScheme,
@@ -13,14 +14,15 @@ import {
 } from '@enbox/agent';
 import { Jws, Message, Poller } from '@enbox/dwn-sdk-js';
 
-import { dataToBlob } from '../src/utils.js';
-import { DwnApi } from '../src/dwn-api.js';
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
 import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json' with { type: 'json' };
+
+import { dataToBlob } from '../src/utils.js';
+import { DwnApi } from '../src/dwn-api.js';
+import { Enbox } from '../src/enbox.js';
 import { Record } from '../src/record.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { Web5 } from '../src/web5.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 
@@ -196,22 +198,36 @@ describe('Record', () => {
 
       const grants = await Oidc.createPermissionGrants(aliceDid.uri, delegatedBearerDid, testHarness.agent, grantRequest.permissionScopes);
 
-      sinon.stub(Web5UserAgent, 'create').resolves(delegateHarness.agent as Web5UserAgent);
-      sinon.stub(WalletConnect, 'createPermissionRequestForProtocol').resolves(grantRequest);
-      sinon.stub(delegateHarness.agent.identity, 'connectedIdentity').resolves(undefined);
-      sinon.stub(delegateHarness.agent.sync, 'startSync').resolves();
-      // // stub WalletConnect.initClient to return the did and grants
-      sinon.stub(WalletConnect, 'initClient').resolves({
-        connectedDid        : aliceDid.uri,
-        delegatePortableDid : delegateDid,
-        delegateGrants      : grants,
+      // Import the delegate DID as a full identity (with connectedDid metadata)
+      // so the delegate agent can resolve it and sign on behalf of Alice.
+      await delegateHarness.agent.identity.import({ portableIdentity: {
+        portableDid : delegateDid,
+        metadata    : {
+          connectedDid : aliceDid.uri,
+          name         : 'Default',
+          uri          : delegateDid.uri,
+          tenant       : delegateHarness.agent.agentDid.uri,
+        }
+      } });
+
+      // Process the connected grants (stores them in the delegate agent's DWN).
+      const connectedProtocols = await processConnectedGrants({
+        grants, delegateDid: delegateDid.uri, agent: delegateHarness.agent as Web5UserAgent,
       });
 
-      // connect with grants
-      const connectResult = await Web5.connect({ walletConnectOptions: {
-        permissionRequests: [ grantRequest ]
-      } as any });
-      delegateDwn = (connectResult.web5 as any)._dwn;
+      // Register sync for Alice's DID and pull the protocol configuration.
+      await (delegateHarness.agent as Web5UserAgent).sync.registerIdentity({
+        did     : aliceDid.uri,
+        options : {
+          delegateDid : delegateDid.uri,
+          protocols   : connectedProtocols,
+        }
+      });
+      await (delegateHarness.agent as Web5UserAgent).sync.sync('pull');
+
+      // Construct the Enbox instance directly with delegate support.
+      const enbox = new Enbox({ agent: delegateHarness.agent, connectedDid: aliceDid.uri, delegateDid: delegateDid.uri });
+      delegateDwn = (enbox as any)._dwn;
     });
 
     it('should update a record with a delegated grant', async () => {

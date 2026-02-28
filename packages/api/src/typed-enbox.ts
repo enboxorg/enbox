@@ -1,7 +1,7 @@
 /**
- * A protocol-scoped API returned by {@link Web5.using}.
+ * A protocol-scoped API returned by {@link Enbox.using}.
  *
- * `TypedWeb5` is the **primary developer interface** for interacting with
+ * `TypedEnbox` is the **primary developer interface** for interacting with
  * protocol-backed records. It auto-injects the protocol URI, protocolPath,
  * and schema into every operation, and provides compile-time path
  * autocompletion plus typed data payloads via the schema map.
@@ -92,7 +92,7 @@ type DataFormatForPath<
 // ---------------------------------------------------------------------------
 
 /**
- * Options for {@link TypedWeb5} `records.create()`.
+ * Options for {@link TypedEnbox} `records.create()`.
  *
  * The `data` field is type-checked against the protocol's schema map for
  * the given path, providing compile-time safety for record payloads.
@@ -205,7 +205,7 @@ export type TypedCreateRequest<
 };
 
 /**
- * Response from {@link TypedWeb5} `records.create()`.
+ * Response from {@link TypedEnbox} `records.create()`.
  *
  * Uses a discriminated union so that TypeScript narrows `record` to
  * `TypedRecord<T>` after a `status.code` check:
@@ -225,10 +225,10 @@ export type TypedCreateResponse<T = unknown> =
   | (DwnResponseStatus & { record: undefined });
 
 /**
- * Filter options for {@link TypedWeb5} `records.query()` and `records.subscribe()`.
+ * Filter options for {@link TypedEnbox} `records.query()` and `records.subscribe()`.
  *
  * The `protocol`, `protocolPath`, and `schema` fields are automatically
- * injected by {@link TypedWeb5} — you only need to supply additional
+ * injected by {@link TypedEnbox} — you only need to supply additional
  * filter criteria.
  *
  * Common filter fields inherited from `RecordsFilter`:
@@ -268,7 +268,7 @@ export type TypedQueryFilter = Omit<RecordsFilter, 'protocol' | 'protocolPath' |
 };
 
 /**
- * Options for {@link TypedWeb5} `records.query()`.
+ * Options for {@link TypedEnbox} `records.query()`.
  *
  * All fields are optional — calling `query(path)` with no request object
  * returns all records at that path.
@@ -341,7 +341,7 @@ export type TypedQueryRequest = {
 };
 
 /**
- * Response from {@link TypedWeb5} `records.query()`.
+ * Response from {@link TypedEnbox} `records.query()`.
  *
  * @typeParam T - The data type of the queried records.
  */
@@ -364,7 +364,7 @@ export type TypedQueryResponse<T = unknown> = DwnResponseStatus & {
 };
 
 /**
- * Options for {@link TypedWeb5} `records.read()`.
+ * Options for {@link TypedEnbox} `records.read()`.
  *
  * A `filter` is required to identify which record to read. The most common
  * approach is to filter by `recordId`.
@@ -414,7 +414,7 @@ export type TypedReadRequest = {
 };
 
 /**
- * Response from {@link TypedWeb5} `records.read()`.
+ * Response from {@link TypedEnbox} `records.read()`.
  *
  * Uses a discriminated union so that TypeScript narrows `record` to
  * `TypedRecord<T>` after a truthiness check:
@@ -433,7 +433,7 @@ export type TypedReadResponse<T = unknown> =
   | (DwnResponseStatus & { record: undefined });
 
 /**
- * Options for {@link TypedWeb5} `records.delete()`.
+ * Options for {@link TypedEnbox} `records.delete()`.
  *
  * @example
  * ```ts
@@ -459,7 +459,7 @@ export type TypedDeleteRequest = {
 };
 
 /**
- * Options for {@link TypedWeb5} `records.subscribe()`.
+ * Options for {@link TypedEnbox} `records.subscribe()`.
  *
  * @example
  * ```ts
@@ -498,7 +498,7 @@ export type TypedSubscribeRequest = {
 };
 
 /**
- * Response from {@link TypedWeb5} `records.subscribe()`.
+ * Response from {@link TypedEnbox} `records.subscribe()`.
  *
  * @typeParam T - The data type of records in the subscription.
  */
@@ -514,7 +514,7 @@ export type TypedSubscribeResponse<T = unknown> = DwnResponseStatus & {
 };
 
 // ---------------------------------------------------------------------------
-// TypedWeb5 class
+// TypedEnbox class
 // ---------------------------------------------------------------------------
 
 /**
@@ -546,7 +546,7 @@ export type TypedSubscribeResponse<T = unknown> = DwnResponseStatus & {
  * }
  * ```
  */
-export class TypedWeb5<
+export class TypedEnbox<
   D extends ProtocolDefinition = ProtocolDefinition,
   M extends SchemaMap = SchemaMap,
 > {
@@ -561,10 +561,10 @@ export class TypedWeb5<
   /** @internal */
   private _validPaths: Set<string>;
   /** @internal */
-  private _records?: TypedWeb5<D, M>['records'];
+  private _records?: TypedEnbox<D, M>['records'];
 
   /**
-   * @internal Create a new `TypedWeb5` instance. Use `web5.using(protocol)` instead.
+   * @internal Create a new `TypedEnbox` instance. Use `web5.using(protocol)` instead.
    * @param dwn - The underlying DWN API instance.
    * @param protocol - The typed protocol containing the definition and schema map.
    */
@@ -653,7 +653,7 @@ export class TypedWeb5<
   /**
    * Whether the protocol has been configured (installed) on the local DWN.
    *
-   * Returns `true` after a successful call to {@link TypedWeb5.configure | configure()}.
+   * Returns `true` after a successful call to {@link TypedEnbox.configure | configure()}.
    * Record operations will throw if this is `false`.
    */
   public get isConfigured(): boolean {
@@ -667,7 +667,7 @@ export class TypedWeb5<
   private _assertValidPath(path: string): void {
     if (!this._validPaths.has(path)) {
       throw new Error(
-        `TypedWeb5: invalid protocol path '${path}'. ` +
+        `TypedEnbox: invalid protocol path '${path}'. ` +
         `Valid paths are: ${[...this._validPaths].join(', ')}.`,
       );
     }
@@ -717,7 +717,7 @@ export class TypedWeb5<
 
       // Installed but definitions differ — allow operations but warn.
       console.warn(
-        `TypedWeb5: installed protocol '${this._definition.protocol}' differs from the provided definition. ` +
+        `TypedEnbox: installed protocol '${this._definition.protocol}' differs from the provided definition. ` +
         'Call configure() to update it.',
       );
       this._configured = true;
@@ -747,11 +747,11 @@ export class TypedWeb5<
    * end-to-end type safety.
    *
    * Available methods:
-   * - {@link TypedWeb5.records.create | create(path, request)} — Create a new record
-   * - {@link TypedWeb5.records.query | query(path, request?)} — Query records with filters
-   * - {@link TypedWeb5.records.read | read(path, request)} — Read a single record
-   * - {@link TypedWeb5.records.delete | delete(path, request)} — Delete a record by ID
-   * - {@link TypedWeb5.records.subscribe | subscribe(path, request?)} — Real-time subscription
+   * - {@link TypedEnbox.records.create | create(path, request)} — Create a new record
+   * - {@link TypedEnbox.records.query | query(path, request?)} — Query records with filters
+   * - {@link TypedEnbox.records.read | read(path, request)} — Read a single record
+   * - {@link TypedEnbox.records.delete | delete(path, request)} — Delete a record by ID
+   * - {@link TypedEnbox.records.subscribe | subscribe(path, request?)} — Real-time subscription
    */
   public get records(): {
     create: <Path extends ProtocolPaths<D> & string>(
@@ -1160,3 +1160,10 @@ function stableStringify(value: unknown): string {
   );
   return '{' + pairs.join(',') + '}';
 }
+
+// ---------------------------------------------------------------------------
+// Deprecated alias — migration aid
+// ---------------------------------------------------------------------------
+
+/** @deprecated Use {@link TypedEnbox} instead. Will be removed in a future version. */
+export const TypedWeb5 = TypedEnbox;

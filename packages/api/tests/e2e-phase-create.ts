@@ -10,8 +10,10 @@
  *   E2E_ADMIN_TOKEN — (Optional) DWN admin token for tenant registration
  */
 
+import { Web5UserAgent } from '@enbox/agent';
 import { ProfileProtocol, SocialGraphProtocol } from '@enbox/protocols';
-import { repository, Web5 } from '../src/index.js';
+
+import { Enbox, repository } from '../src/index.js';
 
 const DWN_URL = process.env.E2E_DWN_URL!;
 const persona = JSON.parse(process.env.E2E_PERSONA!);
@@ -55,18 +57,27 @@ async function registerTenant(dwnUrl: string, did: string): Promise<void> {
 async function main(): Promise<void> {
   log('Connecting to create new agent + identity...');
 
-  const { web5, did, recoveryPhrase } = await Web5.connect({
-    password,
-    sync             : 'off',
-    techPreview      : { dwnEndpoints: [DWN_URL] },
-    didCreateOptions : { dwnEndpoints: [DWN_URL] },
-  });
+  // Create the agent, initialize the vault, and start it.
+  const agent = await Web5UserAgent.create();
+  const recoveryPhrase = await agent.initialize({ password, dwnEndpoints: [DWN_URL] });
+  await agent.start({ password });
 
   if (!recoveryPhrase) {
     throw new Error('No recovery phrase returned');
   }
 
+  // Create a new identity with the specified DWN endpoints.
+  const identity = await agent.identity.create({
+    didMethod  : 'dht',
+    didOptions : { services: [{ id: 'dwn', type: 'DecentralizedWebNode', serviceEndpoint: [DWN_URL] }] },
+    metadata   : { name: 'E2E Test Identity' },
+  });
+  const did = identity.did.uri;
+
   log(`Identity created: ${did}`);
+
+  // Construct the Enbox instance.
+  const web5 = new Enbox({ agent, connectedDid: did });
 
   // Install Social Graph (prerequisite for Profile)
   const social = web5.using(SocialGraphProtocol);
@@ -101,7 +112,6 @@ async function main(): Promise<void> {
 
   // Register both DIDs as tenants on the remote DWN (required when the server
   // has a registrationStoreUrl configured but no self-service registration flow).
-  const agent = (web5 as any).agent;
   await registerTenant(DWN_URL, agent.agentDid.uri);
   await registerTenant(DWN_URL, did);
 

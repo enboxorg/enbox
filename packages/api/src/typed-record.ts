@@ -12,7 +12,7 @@
  * - `.update({ data })` accepts `Partial<T>` for the data payload.
  *
  * You never construct `TypedRecord` directly — instances are returned by
- * {@link TypedWeb5} methods such as `records.create()`, `records.query()`,
+ * {@link TypedEnbox} methods such as `records.create()`, `records.query()`,
  * `records.read()`, and `records.subscribe()`.
  *
  * @typeParam T - The TypeScript type of the record's data payload, resolved
@@ -156,7 +156,7 @@ export type TypedRecordDeleteResult<T> = DwnResponseStatus & {
 /**
  * A type-safe wrapper around {@link Record} that preserves the data type `T`.
  *
- * Obtain instances through {@link TypedWeb5} methods — `records.create()`,
+ * Obtain instances through {@link TypedEnbox} methods — `records.create()`,
  * `records.query()`, `records.read()`, or `records.subscribe()` — never
  * construct directly.
  *
@@ -166,7 +166,7 @@ export type TypedRecordDeleteResult<T> = DwnResponseStatus & {
  *
  * @example
  * ```ts
- * // TypedRecord instances are returned by TypedWeb5 methods:
+ * // TypedRecord instances are returned by TypedEnbox methods:
  * const { record } = await proto.records.create('notebook', {
  *   data: { name: 'My Notebook' },
  * });

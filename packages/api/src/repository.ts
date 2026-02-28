@@ -1,7 +1,7 @@
 /**
  * Protocol-aware repository factory.
  *
- * `repository()` takes a `TypedWeb5` instance and returns a Proxy-backed
+ * `repository()` takes a `TypedEnbox` instance and returns a Proxy-backed
  * object whose shape mirrors the protocol's `structure` tree with
  * ergonomic CRUD methods on each node.
  *
@@ -30,7 +30,7 @@
 import type { DwnResponseStatus } from '@enbox/agent';
 import type { Repository } from './repository-types.js';
 import type { SchemaMap } from './protocol-types.js';
-import type { TypedWeb5 } from './typed-web5.js';
+import type { TypedEnbox } from './typed-enbox.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '@enbox/dwn-sdk-js';
 
 // ---------------------------------------------------------------------------
@@ -92,7 +92,7 @@ function getChildKeys(definition: ProtocolDefinition, path: string): string[] {
  * Build collection CRUD methods for a root-level path.
  */
 function buildRootCollectionMethods(
-  typed: TypedWeb5<ProtocolDefinition, SchemaMap>,
+  typed: TypedEnbox<ProtocolDefinition, SchemaMap>,
   path: string,
 ): Record<string, Function> {
   return {
@@ -133,7 +133,7 @@ function buildRootCollectionMethods(
  * in query-then-create/update.
  */
 function buildRootSingletonMethods(
-  typed: TypedWeb5<ProtocolDefinition, SchemaMap>,
+  typed: TypedEnbox<ProtocolDefinition, SchemaMap>,
   path: string,
 ): Record<string, Function> {
   return {
@@ -171,7 +171,7 @@ function buildRootSingletonMethods(
  * Build collection CRUD methods for a nested path.
  */
 function buildNestedCollectionMethods(
-  typed: TypedWeb5<ProtocolDefinition, SchemaMap>,
+  typed: TypedEnbox<ProtocolDefinition, SchemaMap>,
   path: string,
 ): Record<string, Function> {
   return {
@@ -225,7 +225,7 @@ function buildNestedCollectionMethods(
  * conditions between concurrent set() calls.
  */
 function buildNestedSingletonMethods(
-  typed: TypedWeb5<ProtocolDefinition, SchemaMap>,
+  typed: TypedEnbox<ProtocolDefinition, SchemaMap>,
   path: string,
 ): Record<string, Function> {
   return {
@@ -276,7 +276,7 @@ function buildNestedSingletonMethods(
  * and Proxy-based child nodes.
  */
 function buildNode(
-  typed: TypedWeb5<ProtocolDefinition, SchemaMap>,
+  typed: TypedEnbox<ProtocolDefinition, SchemaMap>,
   definition: ProtocolDefinition,
   path: string,
   isNested: boolean,
@@ -324,7 +324,7 @@ function buildNode(
 // ---------------------------------------------------------------------------
 
 /**
- * Creates a protocol-aware repository from a `TypedWeb5` instance.
+ * Creates a protocol-aware repository from a `TypedEnbox` instance.
  *
  * The returned object provides domain-specific CRUD methods that mirror
  * the protocol's structure tree:
@@ -334,7 +334,7 @@ function buildNode(
  * - Singletons: `repo.profile.set()`, `repo.profile.get()`
  * - Protocol install: `repo.configure()`
  *
- * @param typed - A `TypedWeb5` instance from `web5.using(protocol)`.
+ * @param typed - A `TypedEnbox` instance from `web5.using(protocol)`.
  * @returns A typed repository object.
  *
  * @example
@@ -351,7 +351,7 @@ function buildNode(
 export function repository<
   D extends ProtocolDefinition,
   M extends SchemaMap,
->(typed: TypedWeb5<D, M>): Repository<D, M> {
+>(typed: TypedEnbox<D, M>): Repository<D, M> {
   const definition = typed.definition as ProtocolDefinition;
 
   // Get root-level type keys from the structure
@@ -374,7 +374,7 @@ export function repository<
       if (rootKeys.includes(prop)) {
         if (!(prop in nodeCache)) {
           nodeCache[prop] = buildNode(
-            typed as unknown as TypedWeb5<ProtocolDefinition, SchemaMap>,
+            typed as unknown as TypedEnbox<ProtocolDefinition, SchemaMap>,
             definition,
             prop,
             false,
