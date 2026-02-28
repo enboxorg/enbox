@@ -59,7 +59,7 @@ describe('AuthManager.create()', () => {
     const agent = createMockAgent({ vaultIsInitialized: async () => false });
     mockUserAgentCreate.mockImplementationOnce((): any => Promise.resolve(agent));
 
-    const manager = await AuthManager.create();
+    const manager = await AuthManager.create({ storage: new MemoryStorage() });
 
     expect(manager).toBeInstanceOf(AuthManager);
     expect(manager.state).toBe('uninitialized');
@@ -90,7 +90,7 @@ describe('AuthManager.create()', () => {
     });
     mockUserAgentCreate.mockImplementationOnce((): any => Promise.resolve(agent));
 
-    const manager = await AuthManager.create();
+    const manager = await AuthManager.create({ storage: new MemoryStorage() });
 
     expect(manager.state).toBe('locked');
   });
@@ -102,7 +102,7 @@ describe('AuthManager.create()', () => {
     });
     mockUserAgentCreate.mockImplementationOnce((): any => Promise.resolve(agent));
 
-    const manager = await AuthManager.create();
+    const manager = await AuthManager.create({ storage: new MemoryStorage() });
 
     expect(manager.state).toBe('unlocked');
   });
@@ -114,7 +114,7 @@ describe('AuthManager.create()', () => {
       return Promise.resolve(createMockAgent());
     });
 
-    await AuthManager.create({ dataPath: '/my/data' });
+    await AuthManager.create({ dataPath: '/my/data', storage: new MemoryStorage() });
 
     expect(capturedOptions.dataPath).toBe('/my/data');
   });
@@ -143,7 +143,7 @@ describe('AuthManager.walletConnect()', () => {
       delegateGrants      : [],
     }));
 
-    const manager = await AuthManager.create();
+    const manager = await AuthManager.create({ storage: new MemoryStorage() });
     const session = await manager.walletConnect({
       displayName        : 'Test App',
       connectServerUrl   : 'https://relay.example.com',
@@ -180,7 +180,7 @@ describe('AuthManager.walletConnect()', () => {
       delegateGrants      : [],
     }));
 
-    const manager = await AuthManager.create();
+    const manager = await AuthManager.create({ storage: new MemoryStorage() });
     await manager.walletConnect({
       displayName        : 'Test App',
       connectServerUrl   : 'https://relay.example.com',
@@ -212,7 +212,7 @@ describe('AuthManager.walletConnect()', () => {
       delegateGrants      : [],
     }));
 
-    const manager = await AuthManager.create({ password: 'my-password' });
+    const manager = await AuthManager.create({ password: 'my-password', storage: new MemoryStorage() });
     await manager.walletConnect({
       displayName        : 'Test App',
       connectServerUrl   : 'https://relay.example.com',
@@ -243,7 +243,7 @@ describe('AuthManager.walletConnect()', () => {
       delegateGrants      : [],
     }));
 
-    const manager = await AuthManager.create();
+    const manager = await AuthManager.create({ storage: new MemoryStorage() });
     manager.on('vault-unlocked', () => { events.push('vault-unlocked'); });
 
     await manager.walletConnect({
@@ -276,7 +276,7 @@ describe('AuthManager.walletConnect()', () => {
       delegateGrants      : [],
     }));
 
-    const manager = await AuthManager.create();
+    const manager = await AuthManager.create({ storage: new MemoryStorage() });
 
     const first = manager.walletConnect({
       displayName        : 'Test App',
@@ -306,7 +306,7 @@ describe('AuthManager.walletConnect()', () => {
     });
     mockUserAgentCreate.mockImplementationOnce((): any => Promise.resolve(agent));
 
-    const manager = await AuthManager.create();
+    const manager = await AuthManager.create({ storage: new MemoryStorage() });
 
     try {
       await manager.walletConnect({
@@ -341,7 +341,7 @@ describe('AuthManager.walletConnect()', () => {
       delegateGrants      : [],
     }));
 
-    const manager = await AuthManager.create({ sync: '20s' });
+    const manager = await AuthManager.create({ sync: '20s', storage: new MemoryStorage() });
     await manager.walletConnect({
       displayName        : 'Test App',
       connectServerUrl   : 'https://relay.example.com',
