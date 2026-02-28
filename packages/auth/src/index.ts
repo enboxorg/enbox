@@ -40,6 +40,10 @@ export { AuthSession } from './identity-session.js';
 export { VaultManager } from './vault/vault-manager.js';
 export { AuthEventEmitter } from './events.js';
 
+// Re-export agent classes so consumers can construct custom agents/vaults
+// without a direct @enbox/agent dependency.
+export { HdIdentityVault, Web5UserAgent } from '@enbox/agent';
+
 // Storage adapters
 export { BrowserStorage, LevelStorage, MemoryStorage, createDefaultStorage } from './storage/storage.js';
 
@@ -58,6 +62,7 @@ export type {
   ImportFromPhraseOptions,
   ImportFromPortableOptions,
   LocalConnectOptions,
+  LocalDwnStrategy,
   PortableIdentity,
   ProviderAuthParams,
   ProviderAuthResult,
