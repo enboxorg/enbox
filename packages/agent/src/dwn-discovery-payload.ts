@@ -6,11 +6,13 @@
  * redirect flow. It is encoded as base64url and placed in the URL
  * fragment (`#`) of the callback URL.
  *
+ * This module intentionally avoids external dependencies so it can be
+ * consumed from any environment (Bun, browser, Electrobun) without
+ * triggering transitive dependency resolution issues.
+ *
  * @see https://github.com/enboxorg/enbox/issues/586
  * @module
  */
-
-import { Convert } from '@enbox/common';
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -53,7 +55,7 @@ export const DWN_REGISTER_PATH = 'register';
  */
 export function encodeDwnDiscoveryPayload(payload: DwnDiscoveryPayload): string {
   const json = JSON.stringify(payload);
-  return Convert.string(json).toBase64Url();
+  return stringToBase64Url(json);
 }
 
 /**
@@ -64,7 +66,7 @@ export function encodeDwnDiscoveryPayload(payload: DwnDiscoveryPayload): string 
  */
 export function decodeDwnDiscoveryPayload(encoded: string): DwnDiscoveryPayload | undefined {
   try {
-    const json = Convert.base64Url(encoded).toString();
+    const json = base64UrlToString(encoded);
     const parsed: unknown = JSON.parse(json);
 
     if (!isValidPayload(parsed)) {
@@ -181,4 +183,35 @@ function isValidPayload(value: unknown): value is DwnDiscoveryPayload {
   }
 
   return true;
+}
+
+/**
+ * Encode a UTF-8 string as unpadded base64url (RFC 4648 §5).
+ *
+ * Uses the standard `btoa` global available in all target runtimes
+ * (browser, Bun, Node 16+).
+ */
+function stringToBase64Url(input: string): string {
+  return btoa(input)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+/**
+ * Decode an unpadded base64url string back to a UTF-8 string.
+ *
+ * Re-adds padding and swaps base64url characters back to standard
+ * base64 before calling the standard `atob` global.
+ */
+function base64UrlToString(input: string): string {
+  // Restore standard base64 alphabet and padding.
+  let base64 = input.replace(/-/g, '+').replace(/_/g, '/');
+  const remainder = base64.length % 4;
+  if (remainder === 2) {
+    base64 += '==';
+  } else if (remainder === 3) {
+    base64 += '=';
+  }
+  return atob(base64);
 }
