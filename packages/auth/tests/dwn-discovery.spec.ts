@@ -11,6 +11,7 @@ import {
   checkUrlForDwnDiscoveryPayload,
   clearLocalDwnEndpoint,
   persistLocalDwnEndpoint,
+  probeLocalDwn,
   requestLocalDwnDiscovery,
   restoreLocalDwnEndpoint,
 } from '../src/flows/dwn-discovery.js';
@@ -548,5 +549,88 @@ describe('requestLocalDwnDiscovery', () => {
     expect(result).toBe(true);
     expect(hrefValues).toHaveLength(1);
     expect(hrefValues[0]).toContain('dwn://register');
+  });
+});
+
+// ─── probeLocalDwn ──────────────────────────────────────────────────
+
+describe('probeLocalDwn', () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test('should return the endpoint when a valid @enbox/dwn-server is found', async () => {
+    globalThis.fetch = (async (url: string): Promise<Response> => {
+      if (url === 'http://127.0.0.1:3000/info') {
+        return new Response(JSON.stringify({ server: '@enbox/dwn-server' }), {
+          status  : 200,
+          headers : { 'Content-Type': 'application/json' },
+        });
+      }
+      throw new Error('connection refused');
+    }) as typeof fetch;
+
+    const result = await probeLocalDwn();
+
+    expect(result).toBe('http://127.0.0.1:3000');
+  });
+
+  test('should return undefined when no server responds', async () => {
+    globalThis.fetch = (async (): Promise<Response> => {
+      throw new Error('connection refused');
+    }) as typeof fetch;
+
+    const result = await probeLocalDwn();
+
+    expect(result).toBeUndefined();
+  });
+
+  test('should skip servers that do not identify as @enbox/dwn-server', async () => {
+    globalThis.fetch = (async (): Promise<Response> => {
+      return new Response(JSON.stringify({ server: 'some-other-server' }), {
+        status  : 200,
+        headers : { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const result = await probeLocalDwn();
+
+    expect(result).toBeUndefined();
+  });
+
+  test('should skip ports that return non-200 responses', async () => {
+    let callCount = 0;
+    globalThis.fetch = (async (): Promise<Response> => {
+      callCount++;
+      return new Response('Not Found', { status: 404 });
+    }) as typeof fetch;
+
+    const result = await probeLocalDwn();
+
+    expect(result).toBeUndefined();
+    // Should have probed all port/host combinations.
+    expect(callCount).toBeGreaterThan(0);
+  });
+
+  test('should return the first valid endpoint and stop probing', async () => {
+    const probedUrls: string[] = [];
+    globalThis.fetch = (async (url: string): Promise<Response> => {
+      probedUrls.push(url as string);
+      if (url === 'http://127.0.0.1:3000/info') {
+        return new Response(JSON.stringify({ server: '@enbox/dwn-server' }), {
+          status  : 200,
+          headers : { 'Content-Type': 'application/json' },
+        });
+      }
+      throw new Error('connection refused');
+    }) as typeof fetch;
+
+    const result = await probeLocalDwn();
+
+    expect(result).toBe('http://127.0.0.1:3000');
+    // Port 3000 is first in the list, so only one probe should have succeeded.
+    expect(probedUrls).toHaveLength(1);
   });
 });
