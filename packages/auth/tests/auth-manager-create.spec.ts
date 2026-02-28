@@ -118,6 +118,84 @@ describe('AuthManager.create()', () => {
 
     expect(capturedOptions.dataPath).toBe('/my/data');
   });
+
+  test('uses pre-built agent when provided', async () => {
+    const customAgent = createMockAgent({ vaultIsInitialized: async () => false });
+    const callsBefore = mockUserAgentCreate.mock.calls.length;
+
+    const manager = await AuthManager.create({
+      agent   : customAgent as any,
+      storage : new MemoryStorage(),
+    });
+
+    // Web5UserAgent.create() should NOT have been called.
+    expect(mockUserAgentCreate.mock.calls.length).toBe(callsBefore);
+    expect(manager.agent).toBe(customAgent);
+    expect(manager.state).toBe('uninitialized');
+  });
+
+  test('agent option ignores dataPath, agentVault, and localDwnStrategy', async () => {
+    const customAgent = createMockAgent({ vaultIsInitialized: async () => true, vaultIsLocked: () => false });
+    const callsBefore = mockUserAgentCreate.mock.calls.length;
+
+    const manager = await AuthManager.create({
+      agent            : customAgent as any,
+      dataPath         : '/should/be/ignored',
+      agentVault       : { fake: 'vault' } as any,
+      localDwnStrategy : 'prefer' as any,
+      storage          : new MemoryStorage(),
+    });
+
+    // Web5UserAgent.create() should NOT have been called.
+    expect(mockUserAgentCreate.mock.calls.length).toBe(callsBefore);
+    expect(manager.agent).toBe(customAgent);
+    expect(manager.state).toBe('unlocked');
+  });
+
+  test('passes agentVault to Web5UserAgent.create', async () => {
+    let capturedOptions: any;
+    mockUserAgentCreate.mockImplementationOnce((...args: any[]): any => {
+      capturedOptions = args[0];
+      return Promise.resolve(createMockAgent());
+    });
+
+    const fakeVault = { fake: 'vault' } as any;
+    await AuthManager.create({ agentVault: fakeVault, storage: new MemoryStorage() });
+
+    expect(capturedOptions.agentVault).toBe(fakeVault);
+  });
+
+  test('passes localDwnStrategy to Web5UserAgent.create', async () => {
+    let capturedOptions: any;
+    mockUserAgentCreate.mockImplementationOnce((...args: any[]): any => {
+      capturedOptions = args[0];
+      return Promise.resolve(createMockAgent());
+    });
+
+    await AuthManager.create({ localDwnStrategy: 'prefer' as any, storage: new MemoryStorage() });
+
+    expect(capturedOptions.localDwnStrategy).toBe('prefer');
+  });
+
+  test('passes all agent creation options together', async () => {
+    let capturedOptions: any;
+    mockUserAgentCreate.mockImplementationOnce((...args: any[]): any => {
+      capturedOptions = args[0];
+      return Promise.resolve(createMockAgent());
+    });
+
+    const fakeVault = { fake: 'vault' } as any;
+    await AuthManager.create({
+      dataPath         : '/custom/path',
+      agentVault       : fakeVault,
+      localDwnStrategy : 'only' as any,
+      storage          : new MemoryStorage(),
+    });
+
+    expect(capturedOptions.dataPath).toBe('/custom/path');
+    expect(capturedOptions.agentVault).toBe(fakeVault);
+    expect(capturedOptions.localDwnStrategy).toBe('only');
+  });
 });
 
 describe('AuthManager.walletConnect()', () => {

@@ -3,10 +3,13 @@
  * Public types for the authentication and identity management SDK.
  */
 
-import type { ConnectPermissionRequest, PortableIdentity } from '@enbox/agent';
+import type { ConnectPermissionRequest, HdIdentityVault, LocalDwnStrategy, PortableIdentity, Web5UserAgent } from '@enbox/agent';
 
 // Re-export types that consumers will need
-export type { ConnectPermissionRequest, IdentityVaultBackup, PortableIdentity } from '@enbox/agent';
+export type { ConnectPermissionRequest, HdIdentityVault, IdentityVaultBackup, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
+
+// Re-export Web5UserAgent so consumers don't need a direct @enbox/agent dep
+export type { Web5UserAgent } from '@enbox/agent';
 
 // ─── Sync ────────────────────────────────────────────────────────
 
@@ -170,9 +173,41 @@ export interface RegistrationOptions {
 /** Options for {@link AuthManager.create}. */
 export interface AuthManagerOptions {
   /**
+   * Provide a pre-built {@link Web5UserAgent} instance.
+   *
+   * When provided, `dataPath`, `agentVault`, and `localDwnStrategy` are
+   * ignored — the agent is used as-is. This is the escape hatch for
+   * advanced scenarios like custom DWN stores (e.g., SQLite-backed DWN).
+   *
+   * @example
+   * ```ts
+   * const agent = await Web5UserAgent.create({ dwnApi: myCustomDwnApi });
+   * const auth = await AuthManager.create({ agent });
+   * ```
+   */
+  agent?: Web5UserAgent;
+
+  /**
+   * Provide a custom {@link HdIdentityVault} implementation.
+   * Defaults to a LevelDB-backed vault with PBES2-HS512+A256KW encryption.
+   * Ignored when `agent` is provided.
+   */
+  agentVault?: HdIdentityVault;
+
+  /**
+   * Controls local DWN discovery behavior for remote-target DWN sends/sync.
+   * `'off'` (default) disables local probing, `'prefer'` tries local first
+   * then falls back to DID-document endpoints, `'only'` requires a local server.
+   * Ignored when `agent` is provided.
+   */
+  localDwnStrategy?: LocalDwnStrategy;
+
+  /**
    * Data path for agent storage.
    * - Browser default: `'DATA/AGENT'`
    * - CLI default: `'~/.enbox'`
+   *
+   * Ignored when `agent` is provided.
    */
   dataPath?: string;
 

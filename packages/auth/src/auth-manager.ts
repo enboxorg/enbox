@@ -106,8 +106,9 @@ export class AuthManager {
   /**
    * Create a new AuthManager instance.
    *
-   * This initializes the underlying `Web5UserAgent` with platform-appropriate
-   * defaults and prepares the vault, storage, and event system.
+   * When a pre-built `agent` is provided, it is used as-is and
+   * `dataPath`, `agentVault`, and `localDwnStrategy` are ignored.
+   * Otherwise, a new `Web5UserAgent` is created with the given options.
    *
    * @param options - Configuration options for the auth manager.
    * @returns A ready-to-use AuthManager instance.
@@ -116,8 +117,11 @@ export class AuthManager {
     const emitter = new AuthEventEmitter();
     const storage = options.storage ?? createDefaultStorage();
 
-    const userAgent = await Web5UserAgent.create({
-      dataPath: options.dataPath,
+    // Use a pre-built agent or create one with the given options.
+    const userAgent = options.agent ?? await Web5UserAgent.create({
+      dataPath         : options.dataPath,
+      agentVault       : options.agentVault,
+      localDwnStrategy : options.localDwnStrategy,
     });
 
     const vault = new VaultManager(userAgent.vault, emitter);
