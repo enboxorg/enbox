@@ -14,6 +14,8 @@
  * @module
  */
 
+import { normalizeBaseUrl } from './local-dwn.js';
+
 // ─── Types ────────────────────────────────────────────────────────
 
 /** The JSON shape persisted in the discovery file. */
@@ -218,7 +220,7 @@ export class DwnDiscoveryFile {
       return undefined;
     }
 
-    return { endpoint: normalizeEndpoint(parsed.endpoint), pid: parsed.pid };
+    return { endpoint: normalizeBaseUrl(parsed.endpoint), pid: parsed.pid };
   }
 
   /**
@@ -228,7 +230,7 @@ export class DwnDiscoveryFile {
    */
   public async write(record: DwnDiscoveryRecord): Promise<void> {
     const json = JSON.stringify(
-      { endpoint: normalizeEndpoint(record.endpoint), pid: record.pid },
+      { endpoint: normalizeBaseUrl(record.endpoint), pid: record.pid },
       null,
       2,
     );
@@ -264,7 +266,4 @@ function isValidRecord(value: unknown): value is DwnDiscoveryRecord {
   return true;
 }
 
-/** Strip trailing slashes for consistent endpoint comparison. */
-function normalizeEndpoint(url: string): string {
-  return url.endsWith('/') ? url.slice(0, -1) : url;
-}
+

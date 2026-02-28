@@ -6,12 +6,11 @@
  * redirect flow. It is encoded as base64url and placed in the URL
  * fragment (`#`) of the callback URL.
  *
- * This module is intentionally free of Node.js dependencies so it can
- * be used in both server (Bun) and browser environments.
- *
  * @see https://github.com/enboxorg/enbox/issues/586
  * @module
  */
+
+import { Convert } from '@enbox/common';
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -49,27 +48,12 @@ export const DWN_REGISTER_PATH = 'register';
  * Encode a {@link DwnDiscoveryPayload} as a base64url string suitable
  * for use in a URL fragment.
  *
- * Uses the standard `TextEncoder` + `btoa` path so this works in both
- * Node.js / Bun and browser environments.
- *
  * @param payload - The discovery payload to encode.
  * @returns A base64url-encoded string (no padding).
  */
 export function encodeDwnDiscoveryPayload(payload: DwnDiscoveryPayload): string {
   const json = JSON.stringify(payload);
-  const bytes = new TextEncoder().encode(json);
-
-  // Convert to base64 via btoa (available in Bun, Node 16+, and all browsers).
-  let base64 = '';
-  if (typeof btoa === 'function') {
-    base64 = btoa(String.fromCharCode(...bytes));
-  } else {
-    // Node.js < 16 fallback (unlikely but safe).
-    base64 = Buffer.from(bytes).toString('base64');
-  }
-
-  // Convert base64 → base64url (RFC 4648 §5): replace +/= with -/_ and strip padding.
-  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return Convert.string(json).toBase64Url();
 }
 
 /**
@@ -80,24 +64,7 @@ export function encodeDwnDiscoveryPayload(payload: DwnDiscoveryPayload): string 
  */
 export function decodeDwnDiscoveryPayload(encoded: string): DwnDiscoveryPayload | undefined {
   try {
-    // Convert base64url → base64: restore +/ and add padding.
-    let base64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
-    const padLength = (4 - (base64.length % 4)) % 4;
-    base64 += '='.repeat(padLength);
-
-    let json: string;
-    if (typeof atob === 'function') {
-      const binary = atob(base64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
-      json = new TextDecoder().decode(bytes);
-    } else {
-      // Node.js < 16 fallback.
-      json = Buffer.from(base64, 'base64').toString('utf-8');
-    }
-
+    const json = Convert.base64Url(encoded).toString();
     const parsed: unknown = JSON.parse(json);
 
     if (!isValidPayload(parsed)) {

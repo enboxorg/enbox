@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import type { DwnDiscoveryPayload } from '../src/dwn-discovery-payload.js';
 
+import { Convert } from '@enbox/common';
 import {
   buildDwnDiscoveryRedirectUrl,
   decodeDwnDiscoveryPayload,
@@ -86,8 +87,7 @@ describe('DwnDiscoveryPayload', () => {
     });
 
     it('should return undefined for valid base64url that is not JSON', () => {
-      // base64url of "hello world" (not JSON)
-      const encoded = btoa('hello world').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      const encoded = Convert.string('hello world').toBase64Url();
 
       const decoded = decodeDwnDiscoveryPayload(encoded);
 
@@ -95,8 +95,7 @@ describe('DwnDiscoveryPayload', () => {
     });
 
     it('should return undefined for valid JSON missing the endpoint field', () => {
-      const json = JSON.stringify({ foo: 'bar' });
-      const encoded = btoa(json).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      const encoded = Convert.string(JSON.stringify({ foo: 'bar' })).toBase64Url();
 
       const decoded = decodeDwnDiscoveryPayload(encoded);
 
@@ -104,8 +103,7 @@ describe('DwnDiscoveryPayload', () => {
     });
 
     it('should return undefined for valid JSON with an empty endpoint', () => {
-      const json = JSON.stringify({ endpoint: '' });
-      const encoded = btoa(json).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      const encoded = Convert.string(JSON.stringify({ endpoint: '' })).toBase64Url();
 
       const decoded = decodeDwnDiscoveryPayload(encoded);
 
@@ -113,8 +111,7 @@ describe('DwnDiscoveryPayload', () => {
     });
 
     it('should return undefined for valid JSON with a numeric endpoint', () => {
-      const json = JSON.stringify({ endpoint: 12345 });
-      const encoded = btoa(json).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      const encoded = Convert.string(JSON.stringify({ endpoint: 12345 })).toBase64Url();
 
       const decoded = decodeDwnDiscoveryPayload(encoded);
 
@@ -122,8 +119,7 @@ describe('DwnDiscoveryPayload', () => {
     });
 
     it('should return undefined for valid JSON with a null value', () => {
-      const json = 'null';
-      const encoded = btoa(json).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      const encoded = Convert.string('null').toBase64Url();
 
       const decoded = decodeDwnDiscoveryPayload(encoded);
 
