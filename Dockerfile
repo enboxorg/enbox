@@ -34,6 +34,7 @@ COPY packages/dwn-server/package.json      packages/dwn-server/
 # and lockfile integrity checks succeed. Only source is excluded via .dockerignore.
 COPY packages/agent/package.json             packages/agent/
 COPY packages/api/package.json               packages/api/
+COPY packages/auth/package.json              packages/auth/
 COPY packages/browser/package.json           packages/browser/
 COPY packages/electrobun-dwn/package.json    packages/electrobun-dwn/
 COPY packages/protocols/package.json         packages/protocols/
@@ -78,6 +79,7 @@ COPY packages/dwn-server/      packages/dwn-server/
 # Copy package.json for excluded packages (workspace resolution)
 COPY packages/agent/package.json             packages/agent/
 COPY packages/api/package.json               packages/api/
+COPY packages/auth/package.json              packages/auth/
 COPY packages/browser/package.json           packages/browser/
 COPY packages/electrobun-dwn/package.json    packages/electrobun-dwn/
 COPY packages/protocols/package.json         packages/protocols/
