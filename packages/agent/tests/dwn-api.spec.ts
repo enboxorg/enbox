@@ -102,6 +102,53 @@ describe('AgentDwnApi', () => {
     });
   });
 
+  describe('setCachedLocalDwnEndpoint()', () => {
+    it('should return true and cache the endpoint when the server is valid', async () => {
+      const mockDwn = ({} as unknown) as Dwn;
+      const rpcStub = sinon.stub().resolves({ server: '@enbox/dwn-server' });
+      const mockAgent = { rpc: { getServerInfo: rpcStub } } as any;
+      const dwnApi = new AgentDwnApi({ agent: mockAgent, dwn: mockDwn });
+
+      const result = await dwnApi.setCachedLocalDwnEndpoint('http://127.0.0.1:55557');
+      expect(result).toBe(true);
+      expect(rpcStub.calledOnce).toBe(true);
+      expect(rpcStub.firstCall.args[0]).toBe('http://127.0.0.1:55557');
+    });
+
+    it('should return false when the server is not reachable', async () => {
+      const mockDwn = ({} as unknown) as Dwn;
+      const rpcStub = sinon.stub().rejects(new Error('connection refused'));
+      const mockAgent = { rpc: { getServerInfo: rpcStub } } as any;
+      const dwnApi = new AgentDwnApi({ agent: mockAgent, dwn: mockDwn });
+
+      const result = await dwnApi.setCachedLocalDwnEndpoint('http://127.0.0.1:9999');
+      expect(result).toBe(false);
+    });
+
+    it('should return false when the server is not @enbox/dwn-server', async () => {
+      const mockDwn = ({} as unknown) as Dwn;
+      const rpcStub = sinon.stub().resolves({ server: 'some-other-server' });
+      const mockAgent = { rpc: { getServerInfo: rpcStub } } as any;
+      const dwnApi = new AgentDwnApi({ agent: mockAgent, dwn: mockDwn });
+
+      const result = await dwnApi.setCachedLocalDwnEndpoint('http://127.0.0.1:55557');
+      expect(result).toBe(false);
+    });
+
+    it('should lazily initialize LocalDwnDiscovery when _localDwnDiscovery is undefined', async () => {
+      const mockDwn = ({} as unknown) as Dwn;
+      const rpcStub = sinon.stub().resolves({ server: '@enbox/dwn-server' });
+      const mockAgent = { rpc: { getServerInfo: rpcStub } } as any;
+      const dwnApi = new AgentDwnApi({ dwn: mockDwn });
+      dwnApi.agent = mockAgent;
+
+      // After setting agent, _localDwnDiscovery is initialized via the setter.
+      // Calling setCachedLocalDwnEndpoint should work without errors.
+      const result = await dwnApi.setCachedLocalDwnEndpoint('http://127.0.0.1:55557');
+      expect(result).toBe(true);
+    });
+  });
+
   describe('getDwnEndpointUrlsForTarget()', () => {
     const localDid = 'did:jwk:local';
 

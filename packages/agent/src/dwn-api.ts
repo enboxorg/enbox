@@ -220,6 +220,24 @@ export class AgentDwnApi {
   }
 
   /**
+   * Inject a cached local DWN endpoint (e.g. from a `dwn://register`
+   * browser redirect or from persisted storage). The endpoint is validated
+   * via `GET /info` before being accepted.
+   *
+   * @param endpoint - The local DWN server base URL.
+   * @returns `true` if the endpoint was validated and cached, `false` otherwise.
+   * @see https://github.com/enboxorg/enbox/issues/589
+   */
+  public async setCachedLocalDwnEndpoint(endpoint: string): Promise<boolean> {
+    this._localDwnDiscovery ??= new LocalDwnDiscovery(
+      this.agent.rpc,
+      10_000,
+      AgentDwnApi._tryCreateDiscoveryFile(),
+    );
+    return this._localDwnDiscovery.setCachedEndpoint(endpoint);
+  }
+
+  /**
    * Resolves the DWN service endpoint URLs for the given target DID, optionally
    * prepending a local DWN server endpoint when local discovery is enabled and
    * the target is a locally-managed DID.

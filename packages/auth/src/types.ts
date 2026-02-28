@@ -370,4 +370,13 @@ export const STORAGE_KEYS = {
 
   /** The connected DID (for wallet-connected sessions). */
   CONNECTED_DID: 'enbox:auth:connectedDid',
+
+  /**
+   * The base URL of the local DWN server discovered via the `dwn://register`
+   * browser redirect flow. Persisted so subsequent page loads can skip the
+   * redirect and inject the endpoint directly.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/589
+   */
+  LOCAL_DWN_ENDPOINT: 'enbox:auth:localDwnEndpoint',
 } as const;
