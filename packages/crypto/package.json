@@ -15,6 +15,8 @@
     "lint:fix": "eslint . --fix",
     "test:node": "bun test .test.ts",
     "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .test.ts",
+    "test:fuzz": "bun test tests/fuzz/ .fuzz.spec.ts",
+    "test:fuzz-long": "FAST_CHECK_NUM_RUNS=10000 bun test tests/fuzz/ .fuzz.spec.ts",
     "test:browser": "bunx --bun vitest --config vitest.browser.config.ts --run",
     "test:browser:coverage": "bunx --bun vitest --config vitest.browser.config.ts --run --coverage --coverage.provider=istanbul"
   },
@@ -81,6 +83,7 @@
     "@vitest/browser-playwright": "4.0.18",
     "@vitest/coverage-istanbul": "4.0.18",
     "eslint": "9.7.0",
+    "fast-check": "4.5.3",
     "rimraf": "5.0.7",
     "typescript": "5.5.4",
     "vitest": "4.0.18"
