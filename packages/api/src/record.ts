@@ -840,7 +840,7 @@ export class Record implements RecordModel {
       // When reading the data as a delegate, if we don't find a grant we will attempt to read it with the delegate DID as the author.
       // This allows users to read publicly available data without needing explicit grants.
       //
-      // NOTE: For anonymous/public record data access, callers can use `ReadOnlyRecord` via `Web5.anonymous()`.
+      // NOTE: For anonymous/public record data access, callers can use `ReadOnlyRecord` via `Enbox.anonymous()`.
       // See: https://github.com/enboxorg/enbox/issues/898
       try {
         await this.applyDelegateGrant(readRequest);

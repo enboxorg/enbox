@@ -54,7 +54,7 @@ export class DidApi {
    * Initiates the creation of a Decentralized Identifier (DID) using the specified method, options,
    * and storage preference.
    *
-   * This method sends a request to the Web5 Agent to create a new DID based on the provided method,
+   * This method sends a request to the Enbox Agent to create a new DID based on the provided method,
    * with method-specific options. It also specifies whether the newly created DID should be stored.
    *
    * @param request - The request parameters for creating a DID, including the method, options, and

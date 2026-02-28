@@ -20,14 +20,6 @@ import type { BearerDid } from '@enbox/dids';
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
-
-import { DwnApi } from '../src/dwn-api.js';
-import { repository } from '../src/repository.js';
-import { testDwnUrl } from './utils/test-config.js';
-import { TypedRecord } from '../src/typed-record.js';
-import { TypedWeb5 } from '../src/typed-web5.js';
-
 import {
   ConnectProtocol,
   ListsProtocol,
@@ -35,6 +27,13 @@ import {
   SocialGraphProtocol,
   StatusProtocol,
 } from '@enbox/protocols';
+import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
+
+import { DwnApi } from '../src/dwn-api.js';
+import { repository } from '../src/repository.js';
+import { testDwnUrl } from './utils/test-config.js';
+import { TypedEnbox } from '../src/typed-enbox.js';
+import { TypedRecord } from '../src/typed-record.js';
 
 // ---------------------------------------------------------------------------
 // Test setup
@@ -85,7 +84,7 @@ describe('@enbox/protocols integration', () => {
    * protocols that compose with it via `uses`.
    */
   async function installSocialGraph(): Promise<void> {
-    const socialTyped = new TypedWeb5(dwnAlice, SocialGraphProtocol);
+    const socialTyped = new TypedEnbox(dwnAlice, SocialGraphProtocol);
     const { status } = await socialTyped.configure();
     expect(status.code).toBeOneOf([200, 202]);
   }
@@ -96,13 +95,13 @@ describe('@enbox/protocols integration', () => {
 
   describe('SocialGraphProtocol', () => {
     it('should configure the protocol', async () => {
-      const typed = new TypedWeb5(dwnAlice, SocialGraphProtocol);
+      const typed = new TypedEnbox(dwnAlice, SocialGraphProtocol);
       const { status } = await typed.configure();
       expect(status.code).toBe(202);
     });
 
     it('should create a friend record with required recipient and tags', async () => {
-      const typed = new TypedWeb5(dwnAlice, SocialGraphProtocol);
+      const typed = new TypedEnbox(dwnAlice, SocialGraphProtocol);
       await typed.configure();
 
       // Friend has $role: true, so requires a recipient.
@@ -122,7 +121,7 @@ describe('@enbox/protocols integration', () => {
     });
 
     it('should create a block record with tags', async () => {
-      const typed = new TypedWeb5(dwnAlice, SocialGraphProtocol);
+      const typed = new TypedEnbox(dwnAlice, SocialGraphProtocol);
       await typed.configure();
 
       const { status, record } = await typed.records.create('block', {
@@ -139,7 +138,7 @@ describe('@enbox/protocols integration', () => {
     });
 
     it('should create a group with nested members', async () => {
-      const typed = new TypedWeb5(dwnAlice, SocialGraphProtocol);
+      const typed = new TypedEnbox(dwnAlice, SocialGraphProtocol);
       await typed.configure();
 
       const { record: groupRecord } = await typed.records.create('group', {
@@ -161,7 +160,7 @@ describe('@enbox/protocols integration', () => {
     });
 
     it('should query friend records', async () => {
-      const typed = new TypedWeb5(dwnAlice, SocialGraphProtocol);
+      const typed = new TypedEnbox(dwnAlice, SocialGraphProtocol);
       await typed.configure();
 
       await typed.records.create('friend', {
@@ -189,7 +188,7 @@ describe('@enbox/protocols integration', () => {
     it('should configure after Social Graph is installed', async () => {
       await installSocialGraph();
 
-      const typed = new TypedWeb5(dwnAlice, ProfileProtocol);
+      const typed = new TypedEnbox(dwnAlice, ProfileProtocol);
       const { status } = await typed.configure();
       expect(status.code).toBe(202);
     });
@@ -197,7 +196,7 @@ describe('@enbox/protocols integration', () => {
     it('should set and get a singleton profile via repository', async () => {
       await installSocialGraph();
 
-      const typed = new TypedWeb5(dwnAlice, ProfileProtocol);
+      const typed = new TypedEnbox(dwnAlice, ProfileProtocol);
       const repo = repository(typed);
       await repo.configure();
 
@@ -221,7 +220,7 @@ describe('@enbox/protocols integration', () => {
     it('should upsert a singleton profile on second set()', async () => {
       await installSocialGraph();
 
-      const typed = new TypedWeb5(dwnAlice, ProfileProtocol);
+      const typed = new TypedEnbox(dwnAlice, ProfileProtocol);
       const repo = repository(typed);
       await repo.configure();
 
@@ -245,7 +244,7 @@ describe('@enbox/protocols integration', () => {
     it('should create nested links under profile', async () => {
       await installSocialGraph();
 
-      const typed = new TypedWeb5(dwnAlice, ProfileProtocol);
+      const typed = new TypedEnbox(dwnAlice, ProfileProtocol);
       const repo = repository(typed);
       await repo.configure();
 
@@ -271,7 +270,7 @@ describe('@enbox/protocols integration', () => {
 
   describe('ConnectProtocol', () => {
     it('should configure and set wallet singleton', async () => {
-      const typed = new TypedWeb5(dwnAlice, ConnectProtocol);
+      const typed = new TypedEnbox(dwnAlice, ConnectProtocol);
       const repo = repository(typed);
       await repo.configure();
 
@@ -288,7 +287,7 @@ describe('@enbox/protocols integration', () => {
     });
 
     it('should upsert wallet on second set()', async () => {
-      const typed = new TypedWeb5(dwnAlice, ConnectProtocol);
+      const typed = new TypedEnbox(dwnAlice, ConnectProtocol);
       const repo = repository(typed);
       await repo.configure();
 
@@ -315,7 +314,7 @@ describe('@enbox/protocols integration', () => {
     it('should configure and create a status record', async () => {
       await installSocialGraph();
 
-      const typed = new TypedWeb5(dwnAlice, StatusProtocol);
+      const typed = new TypedEnbox(dwnAlice, StatusProtocol);
       await typed.configure();
 
       const { status, record } = await typed.records.create('status', {
@@ -333,7 +332,7 @@ describe('@enbox/protocols integration', () => {
     it('should query status records', async () => {
       await installSocialGraph();
 
-      const typed = new TypedWeb5(dwnAlice, StatusProtocol);
+      const typed = new TypedEnbox(dwnAlice, StatusProtocol);
       await typed.configure();
 
       await typed.records.create('status', { data: { text: 'Status 1' } });
@@ -352,7 +351,7 @@ describe('@enbox/protocols integration', () => {
     it('should configure after Social Graph is installed', async () => {
       await installSocialGraph();
 
-      const typed = new TypedWeb5(dwnAlice, ListsProtocol);
+      const typed = new TypedEnbox(dwnAlice, ListsProtocol);
       const { status } = await typed.configure();
       expect(status.code).toBe(202);
     });
@@ -360,7 +359,7 @@ describe('@enbox/protocols integration', () => {
     it('should create folders with 3-level nesting', async () => {
       await installSocialGraph();
 
-      const typed = new TypedWeb5(dwnAlice, ListsProtocol);
+      const typed = new TypedEnbox(dwnAlice, ListsProtocol);
       await typed.configure();
 
       const { record: folder1 } = await typed.records.create('folder', {
@@ -386,7 +385,7 @@ describe('@enbox/protocols integration', () => {
     it('should query nested folders under a parent', async () => {
       await installSocialGraph();
 
-      const typed = new TypedWeb5(dwnAlice, ListsProtocol);
+      const typed = new TypedEnbox(dwnAlice, ListsProtocol);
       await typed.configure();
 
       const { record: folder1 } = await typed.records.create('folder', {

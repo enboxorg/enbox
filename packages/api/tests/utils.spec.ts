@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { dataToBlob, SendCache } from '../src/utils.js';
 
-describe('Web5 API Utils', () => {
+describe('Enbox API Utils', () => {
   describe('dataToBlob()', () => {
     it('should handle text data with explicit format', async () => {
       const result = dataToBlob('Hello World', 'text/plain');

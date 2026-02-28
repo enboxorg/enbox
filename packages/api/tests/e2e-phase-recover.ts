@@ -20,7 +20,7 @@
 import { DwnApi } from '../src/dwn-api.js';
 import { ProfileProtocol } from '@enbox/protocols';
 import { Web5UserAgent } from '@enbox/agent';
-import { repository, TypedWeb5 } from '../src/index.js';
+import { repository, TypedEnbox } from '../src/index.js';
 
 const DWN_URL = process.env.E2E_DWN_URL!;
 const persona = JSON.parse(process.env.E2E_PERSONA!);
@@ -129,10 +129,10 @@ async function main(): Promise<void> {
   log('Verifying recovered profile data...');
 
   const dwnApi = new DwnApi({ agent, connectedDid: recoveredDid });
-  const profile = new TypedWeb5(dwnApi, ProfileProtocol);
+  const profile = new TypedEnbox(dwnApi, ProfileProtocol);
   const repo = repository(profile);
 
-  // The protocol was synced from the remote but TypedWeb5 needs configure()
+  // The protocol was synced from the remote but TypedEnbox needs configure()
   // to be called to mark itself ready. This is a local-only operation since
   // the ProtocolsConfigure record already exists in the local DWN.
   await repo.configure();

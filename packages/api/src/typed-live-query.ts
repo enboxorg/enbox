@@ -60,7 +60,7 @@ export type TypedRecordChange<T> = {
  * A type-safe wrapper around {@link LiveQuery} that preserves the data type `T`
  * through the initial snapshot and all subsequent change events.
  *
- * Obtain instances through `TypedWeb5.records.subscribe()` — never construct
+ * Obtain instances through `TypedEnbox.records.subscribe()` — never construct
  * directly.
  */
 export class TypedLiveQuery<T> {

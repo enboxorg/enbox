@@ -9,9 +9,9 @@ import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { testDwnUrl } from './utils/test-config.js';
+import { TypedEnbox } from '../src/typed-enbox.js';
 import { TypedLiveQuery } from '../src/typed-live-query.js';
 import { TypedRecord } from '../src/typed-record.js';
-import { TypedWeb5 } from '../src/typed-web5.js';
 
 // ---------------------------------------------------------------------------
 // Test protocol definition
@@ -119,35 +119,35 @@ describe('TypedProtocol API', () => {
     });
   });
 
-  describe('TypedWeb5', () => {
+  describe('TypedEnbox', () => {
     it('should be constructable from a DwnApi and TypedProtocol', () => {
-      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
-      expect(typed).toBeInstanceOf(TypedWeb5);
+      const typed = new TypedEnbox(dwnAlice, TodoProtocol);
+      expect(typed).toBeInstanceOf(TypedEnbox);
     });
 
     it('should expose the protocol URI', () => {
-      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      const typed = new TypedEnbox(dwnAlice, TodoProtocol);
       expect(typed.protocol).toBe('https://example.com/protocols/todo');
     });
 
     it('should expose the protocol definition', () => {
-      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      const typed = new TypedEnbox(dwnAlice, TodoProtocol);
       expect(typed.definition).toBe(TodoProtocolDefinition);
     });
 
     it('should return the same records object on repeated access', () => {
-      const typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      const typed = new TypedEnbox(dwnAlice, TodoProtocol);
       const records1 = typed.records;
       const records2 = typed.records;
       expect(records1).toBe(records2);
     });
   });
 
-  describe('TypedWeb5.records', () => {
-    let typed: TypedWeb5<typeof TodoProtocolDefinition, TodoSchemaMap>;
+  describe('TypedEnbox.records', () => {
+    let typed: TypedEnbox<typeof TodoProtocolDefinition, TodoSchemaMap>;
 
     beforeEach(async () => {
-      typed = new TypedWeb5(dwnAlice, TodoProtocol);
+      typed = new TypedEnbox(dwnAlice, TodoProtocol);
 
       // Install the protocol first
       const { status } = await typed.configure();
@@ -176,7 +176,7 @@ describe('TypedProtocol API', () => {
 
       it('should re-configure when the definition changes', async () => {
         // Protocol was already configured in beforeEach with the original definition.
-        // Create a new TypedWeb5 with a modified definition (added a new type).
+        // Create a new TypedEnbox with a modified definition (added a new type).
         const updatedDefinition = {
           ...TodoProtocolDefinition,
           types: {
@@ -198,7 +198,7 @@ describe('TypedProtocol API', () => {
         };
 
         const updatedProtocol = defineProtocol(updatedDefinition);
-        const updatedTyped = new TypedWeb5(dwnAlice, updatedProtocol);
+        const updatedTyped = new TypedEnbox(dwnAlice, updatedProtocol);
 
         const { status } = await updatedTyped.configure();
 
@@ -456,7 +456,7 @@ describe('TypedProtocol API', () => {
 
     describe('auto-configure on first operation', () => {
       it('should auto-configure and succeed when calling create() before configure()', async () => {
-        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+        const unconfigured = new TypedEnbox(dwnAlice, TodoProtocol);
 
         const { status, record } = await unconfigured.records.create('list', {
           data: { name: 'Auto-configured' },
@@ -468,7 +468,7 @@ describe('TypedProtocol API', () => {
       });
 
       it('should auto-configure and succeed when calling query() before configure()', async () => {
-        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+        const unconfigured = new TypedEnbox(dwnAlice, TodoProtocol);
 
         const { status, records } = await unconfigured.records.query('list');
 
@@ -478,7 +478,7 @@ describe('TypedProtocol API', () => {
       });
 
       it('should auto-configure and succeed when calling read() before configure()', async () => {
-        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+        const unconfigured = new TypedEnbox(dwnAlice, TodoProtocol);
 
         // Create a record first via auto-configure, then read it back
         const { record: created } = await unconfigured.records.create('list', {
@@ -495,7 +495,7 @@ describe('TypedProtocol API', () => {
       });
 
       it('should auto-configure and succeed when calling delete() before configure()', async () => {
-        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+        const unconfigured = new TypedEnbox(dwnAlice, TodoProtocol);
 
         // Create a record first via auto-configure, then delete it
         const { record: created } = await unconfigured.records.create('list', {
@@ -511,7 +511,7 @@ describe('TypedProtocol API', () => {
       });
 
       it('should auto-configure and succeed when calling subscribe() before configure()', async () => {
-        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+        const unconfigured = new TypedEnbox(dwnAlice, TodoProtocol);
 
         const { status, liveQuery } = await unconfigured.records.subscribe('list');
 
@@ -523,7 +523,7 @@ describe('TypedProtocol API', () => {
       });
 
       it('should install the protocol transparently on first operation', async () => {
-        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+        const unconfigured = new TypedEnbox(dwnAlice, TodoProtocol);
 
         // Perform an operation without explicit configure()
         await unconfigured.records.create('list', { data: { name: 'Transparent' } });
@@ -556,7 +556,7 @@ describe('TypedProtocol API', () => {
       });
 
       it('should report isConfigured as false before configure()', () => {
-        const unconfigured = new TypedWeb5(dwnAlice, TodoProtocol);
+        const unconfigured = new TypedEnbox(dwnAlice, TodoProtocol);
         expect(unconfigured.isConfigured).toBe(false);
       });
 
@@ -634,7 +634,7 @@ describe('TypedProtocol API', () => {
           };
 
           const modifiedProtocol = defineProtocol(modifiedDefinition);
-          const modifiedTyped = new TypedWeb5(dwnAlice, modifiedProtocol);
+          const modifiedTyped = new TypedEnbox(dwnAlice, modifiedProtocol);
 
           const result = await modifiedTyped.configure();
           // Should return 202 because the definition changed (new type added).

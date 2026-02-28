@@ -1,20 +1,20 @@
 /**
- * Making developing with Web5 components at least 5 times easier to work with.
+ * Enbox SDK — high-level API for Decentralized Web Nodes, DIDs, and VCs.
  *
- * Web5 consists of the following components:
- * - Decentralized Identifiers
- * - Verifiable Credentials
- * - DWeb Node personal datastores
+ * The SDK provides protocol-scoped access to DWN records with compile-time
+ * type safety, DID management, and Verifiable Credential operations.
  *
- * The SDK sets out to gather the most oft used functionality from all three of
- * these pillar technologies to provide a simple library that is as close to
- * effortless as possible.
+ * Authentication and identity management are handled by `@enbox/auth`.
  *
- * The SDK is currently still under active development, but having entered the
- * Tech Preview phase there is now a drive to avoid unnecessary changes unless
- * backwards compatibility is provided. Additional functionality will be added
- * in the lead up to 1.0 final, and modifications will be made to address
- * issues and community feedback.
+ * @example
+ * ```ts
+ * import { AuthManager } from '@enbox/auth';
+ * import { Enbox } from '@enbox/api';
+ *
+ * const auth = await AuthManager.create({ sync: '15s' });
+ * const session = await auth.connect();
+ * const enbox = Enbox.connect({ session });
+ * ```
  *
  * [Link to GitHub Repo](https://github.com/enboxorg/enbox)
  *
@@ -24,6 +24,7 @@
 export * from './define-protocol.js';
 export * from './did-api.js';
 export * from './dwn-reader-api.js';
+export * from './enbox.js';
 export * from './grant-revocation.js';
 export * from './live-query.js';
 export * from './permission-grant.js';
@@ -36,11 +37,10 @@ export * from './record-data.js';
 export * from './record-types.js';
 export * from './repository.js';
 export * from './repository-types.js';
+export * from './typed-enbox.js';
 export * from './typed-live-query.js';
 export * from './typed-record.js';
-export * from './typed-web5.js';
 export * from './vc-api.js';
-export * from './web5.js';
 
 import * as utils from './utils.js';
 export { utils };

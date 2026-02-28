@@ -11,8 +11,8 @@ import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { DwnReaderApi } from '../src/dwn-reader-api.js';
+import { Enbox } from '../src/enbox.js';
 import { ReadOnlyRecord } from '../src/read-only-record.js';
-import { Web5 } from '../src/web5.js';
 
 /**
  * Creates a stubbed AnonymousDwnApi for testing.
@@ -587,9 +587,9 @@ describe('ReadOnlyRecord', () => {
   });
 });
 
-describe('Web5.anonymous()', () => {
-  it('should create a Web5AnonymousApi with a dwn property', () => {
-    const anonApi = Web5.anonymous();
+describe('Enbox.anonymous()', () => {
+  it('should create an EnboxAnonymousApi with a dwn property', () => {
+    const anonApi = Enbox.anonymous();
 
     expect(anonApi).toBeDefined();
     expect(anonApi.dwn).toBeDefined();
@@ -603,13 +603,13 @@ describe('Web5.anonymous()', () => {
 
   it('should accept custom DID resolvers', () => {
     // Just verify it doesn't throw with custom resolvers.
-    const anonApi = Web5.anonymous({ didResolvers: [] });
+    const anonApi = Enbox.anonymous({ didResolvers: [] });
     expect(anonApi.dwn).toBeDefined();
   });
 
   it('should create separate instances on each call', () => {
-    const a = Web5.anonymous();
-    const b = Web5.anonymous();
+    const a = Enbox.anonymous();
+    const b = Enbox.anonymous();
     expect(a.dwn).not.toBe(b.dwn);
   });
 });

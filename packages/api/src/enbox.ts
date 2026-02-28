@@ -1,0 +1,281 @@
+/**
+ * NOTE: Added reference types here to avoid a `pnpm` bug during build.
+ * https://github.com/enboxorg/enbox/pull/507
+ */
+/// <reference types="@enbox/dwn-sdk-js" />
+
+import type { AuthSession } from '@enbox/auth';
+import type { DidMethodResolver } from '@enbox/dids';
+import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { Web5Agent } from '@enbox/agent';
+
+import type { SchemaMap, TypedProtocol } from './protocol-types.js';
+
+import { AnonymousDwnApi } from '@enbox/agent';
+import { Web5RpcClient } from '@enbox/dwn-clients';
+import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
+
+import { DidApi } from './did-api.js';
+import { DwnApi } from './dwn-api.js';
+import { DwnReaderApi } from './dwn-reader-api.js';
+import { TypedEnbox } from './typed-enbox.js';
+import { VcApi } from './vc-api.js';
+
+/**
+ * Options for creating an anonymous (read-only) Enbox instance via {@link Enbox.anonymous}.
+ *
+ * @beta
+ */
+export type EnboxAnonymousOptions = {
+  /** Override the default DID method resolvers. Defaults to `[DidDht, DidJwk, DidKey, DidWeb]`. */
+  didResolvers?: DidMethodResolver[];
+};
+
+/**
+ * The result of calling {@link Enbox.anonymous}.
+ *
+ * Contains only a read-only `dwn` property — no `did`, `vc`, or `agent`.
+ *
+ * @beta
+ */
+export type EnboxAnonymousApi = {
+  /** A read-only DWN API for querying public data on remote DWNs. */
+  dwn: DwnReaderApi;
+};
+
+/**
+ * Parameters for constructing an {@link Enbox} instance.
+ *
+ * These are the minimal primitives needed to interact with the DWN network.
+ * Typically obtained from an {@link AuthSession} via `@enbox/auth`.
+ */
+export type EnboxParams = {
+  /**
+   * A {@link Web5Agent} instance that handles DIDs, DWNs and VCs requests. The agent manages the
+   * user keys and identities, and is responsible to sign and verify messages.
+   */
+  agent: Web5Agent;
+
+  /** The DID of the tenant under which all DID, DWN, and VC requests are being performed. */
+  connectedDid: string;
+
+  /** The DID that will be signing messages using grants from the connectedDid. */
+  delegateDid?: string;
+};
+
+/**
+ * The main Enbox API interface. It provides protocol-scoped access to
+ * Decentralized Web Nodes (DWNs), Decentralized Identifiers (DIDs),
+ * and Verifiable Credentials (VCs).
+ *
+ * Authentication and identity management are handled externally by
+ * `@enbox/auth`. Use {@link Enbox.connect} to create an instance from
+ * an {@link AuthSession} or raw parameters.
+ *
+ * @example
+ * ```ts
+ * import { AuthManager } from '@enbox/auth';
+ * import { Enbox } from '@enbox/api';
+ *
+ * const auth = await AuthManager.create({ sync: '15s' });
+ * const session = await auth.connect();
+ *
+ * const enbox = Enbox.connect({ session });
+ * const social = enbox.using(SocialProtocol);
+ * ```
+ */
+export class Enbox {
+  /**
+   * A {@link Web5Agent} instance that handles DIDs, DWNs and VCs requests. The agent manages the
+   * user keys and identities, and is responsible to sign and verify messages.
+   */
+  public agent: Web5Agent;
+
+  /** Exposed instance to the DID APIs, allow users to create and resolve DIDs. */
+  public did: DidApi;
+
+  /** Internal DWN API instance. Use {@link Enbox.using} for protocol-scoped access. */
+  private _dwn: DwnApi;
+
+  /**
+   * Cache of {@link TypedEnbox} instances keyed by protocol URI.
+   *
+   * Ensures that `enbox.using(Protocol)` returns the **same** `TypedEnbox`
+   * instance for a given protocol across multiple call sites, avoiding
+   * redundant protocol installations and duplicated internal state.
+   */
+  private _typedInstances = new Map<string, TypedEnbox<ProtocolDefinition, SchemaMap>>();
+
+  /** Exposed instance to the VC APIs, allow users to issue, present and verify VCs. */
+  public vc: VcApi;
+
+  constructor({ agent, connectedDid, delegateDid }: EnboxParams) {
+    this.agent = agent;
+    this.did = new DidApi({ agent, connectedDid });
+    this._dwn = new DwnApi({ agent, connectedDid, delegateDid });
+    this.vc = new VcApi({ agent, connectedDid });
+  }
+
+  /**
+   * Returns a {@link TypedEnbox} instance scoped to the given protocol.
+   *
+   * This is the **primary developer interface** for interacting with
+   * protocol-backed records. It auto-injects the protocol URI, protocolPath,
+   * and schema into every operation, and provides compile-time path
+   * autocompletion plus typed data payloads via the schema map.
+   *
+   * Instances are **cached by protocol URI** — calling `using()` multiple
+   * times with the same protocol returns the same `TypedEnbox` instance,
+   * so auto-configure only runs once and all call sites share state.
+   *
+   * @param protocol - A typed protocol created via `defineProtocol()`.
+   * @returns A `TypedEnbox` instance bound to the given protocol.
+   *
+   * @example
+   * ```ts
+   * const social = enbox.using(SocialProtocol);
+   *
+   * await social.configure();
+   *
+   * const { record } = await social.records.write('friend', {
+   *   data: { did: 'did:example:alice', alias: 'Alice' },
+   * });
+   *
+   * const { records } = await social.records.query('friend');
+   * ```
+   */
+  public using<D extends ProtocolDefinition, M extends SchemaMap>(
+    protocol: TypedProtocol<D, M>,
+  ): TypedEnbox<D, M> {
+    const uri = protocol.definition.protocol;
+    const cached = this._typedInstances.get(uri);
+
+    if (cached) {
+      // The map stores a type-erased instance; restore the caller's generics.
+      return cached as unknown as TypedEnbox<D, M>;
+    }
+
+    const instance = new TypedEnbox<D, M>(this._dwn, protocol);
+    // Store with erased generics so the map value type stays uniform.
+    this._typedInstances.set(uri, instance as unknown as TypedEnbox<ProtocolDefinition, SchemaMap>);
+    return instance;
+  }
+
+  /**
+   * Stops DWN sync and clears the cached {@link TypedEnbox} instances.
+   *
+   * Call this when the application is shutting down or the user is
+   * disconnecting to cleanly release background resources. After calling
+   * `disconnect()`, the `Enbox` instance should not be reused.
+   *
+   * @param timeout - Maximum milliseconds to wait for an in-progress sync
+   *   cycle to finish before force-stopping. Defaults to `2000`.
+   *
+   * @example
+   * ```ts
+   * await enbox.disconnect();
+   * ```
+   *
+   * @beta
+   */
+  public async disconnect(timeout?: number): Promise<void> {
+    // Stop any active sync.
+    if ('sync' in this.agent && typeof (this.agent as any).sync?.stopSync === 'function') {
+      await (this.agent as any).sync.stopSync(timeout);
+    }
+
+    // Clear cached TypedEnbox instances so they are not accidentally reused.
+    this._typedInstances.clear();
+  }
+
+  /**
+   * Creates a lightweight, read-only Enbox instance for querying public DWN data.
+   *
+   * No identity, vault, password, or signing keys are required. The returned
+   * API supports querying and reading published records and protocols from any
+   * remote DWN, using **unsigned** (anonymous) DWN messages.
+   *
+   * @param options - Optional configuration overrides.
+   * @returns An {@link EnboxAnonymousApi} with a read-only `dwn` property.
+   *
+   * @example
+   * ```ts
+   * const { dwn } = Enbox.anonymous();
+   *
+   * const { records } = await dwn.records.query({
+   *   from: 'did:dht:alice...',
+   *   filter: { protocol: 'https://social.example/posts', protocolPath: 'post' },
+   * });
+   *
+   * for (const record of records) {
+   *   console.log(record.id, await record.data.text());
+   * }
+   * ```
+   *
+   * @beta
+   */
+  public static anonymous(options?: EnboxAnonymousOptions): EnboxAnonymousApi {
+    const didResolver = new UniversalResolver({
+      didResolvers : options?.didResolvers ?? [DidDht, DidJwk, DidKey, DidWeb],
+      cache        : new DidResolverCacheMemory(),
+    });
+
+    const rpcClient = new Web5RpcClient();
+    const anonymousDwn = new AnonymousDwnApi({ didResolver, rpcClient });
+
+    return {
+      dwn: new DwnReaderApi(anonymousDwn),
+    };
+  }
+
+  /**
+   * Creates an {@link Enbox} instance from an {@link AuthSession} or raw parameters.
+   *
+   * This is a thin factory — all authentication, identity management, vault
+   * initialization, DWN registration, and sync setup are handled externally
+   * by `@enbox/auth` via {@link AuthSession}.
+   *
+   * @param params - Either `{ session }` with an {@link AuthSession} from
+   *   `@enbox/auth`, or raw `{ agent, connectedDid, delegateDid? }` parameters.
+   * @returns A new {@link Enbox} instance ready for use.
+   *
+   * @example
+   * ```ts
+   * // Using an AuthSession from @enbox/auth
+   * import { AuthManager } from '@enbox/auth';
+   * const auth = await AuthManager.create({ sync: '15s' });
+   * const session = await auth.connect();
+   * const enbox = Enbox.connect({ session });
+   *
+   * // Using raw parameters
+   * const enbox = Enbox.connect({ agent, connectedDid: did });
+   * ```
+   */
+  public static connect(params: { session: AuthSession } | EnboxParams): Enbox {
+    if ('session' in params) {
+      const { session } = params;
+      return new Enbox({
+        agent        : session.agent,
+        connectedDid : session.did,
+        delegateDid  : session.delegateDid,
+      });
+    }
+    return new Enbox(params);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Deprecated aliases — migration aid
+// ---------------------------------------------------------------------------
+
+/** @deprecated Use {@link Enbox} instead. Will be removed in a future version. */
+export const Web5 = Enbox;
+
+/** @deprecated Use {@link EnboxParams} instead. */
+export type Web5Params = EnboxParams;
+
+/** @deprecated Use {@link EnboxAnonymousOptions} instead. */
+export type Web5AnonymousOptions = EnboxAnonymousOptions;
+
+/** @deprecated Use {@link EnboxAnonymousApi} instead. */
+export type Web5AnonymousApi = EnboxAnonymousApi;

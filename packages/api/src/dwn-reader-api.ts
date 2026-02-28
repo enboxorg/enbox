@@ -129,11 +129,11 @@ export type ReaderProtocolsQueryResponse = DwnResponseStatus & {
  * on every call (remote-only). All messages are unsigned, so only published
  * records and protocols are accessible.
  *
- * Obtain an instance via {@link Web5.anonymous | `Web5.anonymous()`}.
+ * Obtain an instance via {@link Enbox.anonymous | `Enbox.anonymous()`}.
  *
  * @example
  * ```ts
- * const { dwn } = Web5.anonymous();
+ * const { dwn } = Enbox.anonymous();
  *
  * const { records } = await dwn.records.query({
  *   from: 'did:dht:alice...',

@@ -567,7 +567,7 @@ export class DwnApi {
           // if we don't find a delegated grant, we will attempt to query signing as the delegated DID
           // This is to allow the API caller to query public records without needing to impersonate the delegate.
           //
-          // NOTE: For anonymous/public queries without explicit permissions, callers can use `DwnReaderApi` via `Web5.anonymous()`.
+          // NOTE: For anonymous/public queries without explicit permissions, callers can use `DwnReaderApi` via `Enbox.anonymous()`.
           // See: https://github.com/enboxorg/enbox/issues/898
           try {
             const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
@@ -659,7 +659,7 @@ export class DwnApi {
           // if we don't find a delegated grant, we will attempt to read signing as the delegated DID
           // This is to allow the API caller to read public records without needing to impersonate the delegate.
           //
-          // NOTE: For anonymous/public reads without explicit permissions, callers can use `DwnReaderApi` via `Web5.anonymous()`.
+          // NOTE: For anonymous/public reads without explicit permissions, callers can use `DwnReaderApi` via `Enbox.anonymous()`.
           // See: https://github.com/enboxorg/enbox/issues/898
 
           try {
@@ -790,7 +790,7 @@ export class DwnApi {
           // if we don't find a delegated grant, we will attempt to subscribe signing as the delegated DID
           // This is to allow the API caller to subscribe to public records without needing to impersonate the delegate.
           //
-          // NOTE: For anonymous/public subscriptions without explicit permissions, callers can use `DwnReaderApi` via `Web5.anonymous()`.
+          // NOTE: For anonymous/public subscriptions without explicit permissions, callers can use `DwnReaderApi` via `Enbox.anonymous()`.
           // See: https://github.com/enboxorg/enbox/issues/898
           try {
             const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({

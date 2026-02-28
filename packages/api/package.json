@@ -1,7 +1,7 @@
 {
   "name": "@enbox/api",
   "version": "0.3.2",
-  "description": "SDK for accessing the features and capabilities of Web5",
+  "description": "Enbox SDK — high-level API for Decentralized Web Nodes, DIDs, and Verifiable Credentials",
   "type": "module",
   "main": "./dist/esm/index.js",
   "module": "./dist/esm/index.js",
@@ -71,8 +71,8 @@
     "DID",
     "sdk",
     "verifiable-credentials",
-    "web5",
-    "web5-sdk"
+    "enbox",
+    "enbox-sdk"
   ],
   "publishConfig": {
     "access": "public"
@@ -82,6 +82,7 @@
   },
   "dependencies": {
     "@enbox/agent": "workspace:*",
+    "@enbox/auth": "workspace:*",
     "@enbox/common": "workspace:*",
     "@enbox/dwn-clients": "workspace:*"
   },
