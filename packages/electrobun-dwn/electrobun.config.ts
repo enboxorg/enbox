@@ -5,6 +5,7 @@ export default {
     name       : 'electrobun-dwn',
     identifier : 'org.enbox.electrobun-dwn',
     version    : '0.0.1',
+    urlSchemes : ['dwn'],
   },
   build: {
     views: {
