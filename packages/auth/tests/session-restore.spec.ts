@@ -132,6 +132,27 @@ describe('restoreSession', () => {
     expect(events).toEqual(['vault-unlocked', 'session-start']);
   });
 
+  test('applies local DWN discovery from stored endpoint', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+    // Pre-populate a stored endpoint (simulating a previous dwn:// redirect).
+    await storage.set(STORAGE_KEYS.LOCAL_DWN_ENDPOINT, 'http://127.0.0.1:55557');
+
+    const setCalls: string[] = [];
+    const agent = createMockAgent({
+      firstLaunch                  : async () => false,
+      dwnSetCachedLocalDwnEndpoint : async (endpoint) => { setCalls.push(endpoint); return true; },
+    });
+
+    const session = await restoreSession({ userAgent: agent, emitter, storage });
+    expect(session).toBeDefined();
+
+    // The stored endpoint should have been injected into the agent.
+    expect(setCalls).toEqual(['http://127.0.0.1:55557']);
+  });
+
   test('uses insecure default password when none provided', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();

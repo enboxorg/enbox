@@ -9,9 +9,11 @@
 import type { Web5UserAgent } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
+import type { RestoreSessionOptions, StorageAdapter, SyncOption } from '../types.js';
+
+import { applyLocalDwnDiscovery } from './dwn-discovery.js';
 import { AuthSession } from '../identity-session.js';
 import { INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../types.js';
-import type { RestoreSessionOptions, StorageAdapter, SyncOption } from '../types.js';
 
 /** @internal */
 export interface SessionRestoreContext {
@@ -60,6 +62,9 @@ export async function restoreSession(
 
   await userAgent.start({ password });
   emitter.emit('vault-unlocked', {});
+
+  // Apply local DWN discovery (browser redirect payload or persisted endpoint).
+  await applyLocalDwnDiscovery(userAgent, storage);
 
   // Determine which identity to reconnect.
   const activeIdentityDid = await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY);

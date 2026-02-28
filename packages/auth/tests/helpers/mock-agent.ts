@@ -40,6 +40,7 @@ export interface MockAgentOverrides {
   identityExport?: (params: any) => Promise<any>;
   identityConnectedIdentity?: () => Promise<MockIdentity | undefined>;
   didDelete?: (params: any) => Promise<void>;
+  dwnSetCachedLocalDwnEndpoint?: (endpoint: string) => Promise<boolean>;
   syncRegisterIdentity?: (params: any) => Promise<void>;
   syncStartSync?: (params: any) => Promise<void>;
   syncStopSync?: (timeout: number) => Promise<void>;
@@ -82,6 +83,11 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): Web5UserAge
 
     did: {
       delete: overrides.didDelete ?? (async (): Promise<void> => {}),
+    },
+
+    dwn: {
+      setCachedLocalDwnEndpoint: overrides.dwnSetCachedLocalDwnEndpoint
+        ?? (async (): Promise<boolean> => false),
     },
 
     sync: {

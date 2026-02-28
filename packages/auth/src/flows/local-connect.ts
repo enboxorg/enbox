@@ -9,10 +9,12 @@
 import type { Web5UserAgent } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
+import type { LocalConnectOptions, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
+
+import { applyLocalDwnDiscovery } from './dwn-discovery.js';
 import { AuthSession } from '../identity-session.js';
 import { registerWithDwnEndpoints } from './dwn-registration.js';
 import { INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../types.js';
-import type { LocalConnectOptions, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
 
 /** @internal */
 export interface LocalConnectContext {
@@ -64,6 +66,9 @@ export async function localConnect(
   // Start the agent (unlocks vault if locked, sets agentDid).
   await userAgent.start({ password });
   emitter.emit('vault-unlocked', {});
+
+  // Apply local DWN discovery (browser redirect payload or persisted endpoint).
+  await applyLocalDwnDiscovery(userAgent, storage);
 
   // Find or create the user identity.
   const identities = await userAgent.identity.list();
