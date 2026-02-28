@@ -5,11 +5,12 @@
   "type": "module",
   "description": "Electrobun app that runs a local Enbox DWN server",
   "scripts": {
-    "prebuild:dwn": "bun run --filter @enbox/common build && bun run --filter @enbox/crypto build && bun run --filter @enbox/dids build && bun run --filter @enbox/dwn-sdk-js build && bun run --filter @enbox/dwn-clients build && bun run --filter @enbox/dwn-sql-store build && bun run --filter @enbox/dwn-server build",
+    "prebuild:dwn": "bun run --filter @enbox/common build && bun run --filter @enbox/crypto build && bun run --filter @enbox/dids build && bun run --filter @enbox/dwn-sdk-js build && bun run --filter @enbox/dwn-clients build && bun run --filter @enbox/agent build && bun run --filter @enbox/dwn-sql-store build && bun run --filter @enbox/dwn-server build",
     "dev": "bun run prebuild:dwn && electrobun dev",
     "build": "electrobun build"
   },
   "dependencies": {
+    "@enbox/agent": "workspace:*",
     "@enbox/dwn-server": "workspace:*",
     "electrobun": "1.13.1"
   },
