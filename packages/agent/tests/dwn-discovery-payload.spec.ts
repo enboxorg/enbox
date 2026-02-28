@@ -60,13 +60,20 @@ describe('DwnDiscoveryPayload', () => {
       expect(decoded).toEqual(payload);
     });
 
-    it('should round-trip a payload with an https endpoint', () => {
-      const payload: DwnDiscoveryPayload = { endpoint: 'https://dwn.example.com' };
+    it('should round-trip a payload with an https localhost endpoint', () => {
+      const payload: DwnDiscoveryPayload = { endpoint: 'https://localhost:55500' };
 
       const encoded = encodeDwnDiscoveryPayload(payload);
       const decoded = decodeDwnDiscoveryPayload(encoded);
 
       expect(decoded).toEqual(payload);
+    });
+
+    it('should reject a payload with a non-loopback endpoint', () => {
+      const encoded = encodeDwnDiscoveryPayload({ endpoint: 'https://dwn.example.com' });
+      const decoded = decodeDwnDiscoveryPayload(encoded);
+
+      expect(decoded).toBeUndefined();
     });
 
     it('should round-trip a payload with unicode in the endpoint path', () => {
@@ -128,6 +135,85 @@ describe('DwnDiscoveryPayload', () => {
       const decoded = decodeDwnDiscoveryPayload(encoded);
 
       expect(decoded).toBeUndefined();
+    });
+
+    it('should round-trip a payload containing multi-byte UTF-8 characters', () => {
+      const payload: DwnDiscoveryPayload = { endpoint: 'http://127.0.0.1:3000/caf\u00e9' };
+
+      const encoded = encodeDwnDiscoveryPayload(payload);
+      const decoded = decodeDwnDiscoveryPayload(encoded);
+
+      expect(decoded).toEqual(payload);
+    });
+
+    it('should round-trip a payload containing emoji (4-byte UTF-8)', () => {
+      // Emoji is U+1F680 which is above U+FFFF and requires a surrogate
+      // pair in JavaScript — tests the TextEncoder/TextDecoder path.
+      const payload: DwnDiscoveryPayload = { endpoint: 'http://127.0.0.1:3000/\u{1F680}' };
+
+      const encoded = encodeDwnDiscoveryPayload(payload);
+      const decoded = decodeDwnDiscoveryPayload(encoded);
+
+      expect(decoded).toEqual(payload);
+    });
+
+    it('should round-trip a payload containing CJK characters', () => {
+      const payload: DwnDiscoveryPayload = { endpoint: 'http://127.0.0.1:3000/\u4F60\u597D' };
+
+      const encoded = encodeDwnDiscoveryPayload(payload);
+      const decoded = decodeDwnDiscoveryPayload(encoded);
+
+      expect(decoded).toEqual(payload);
+    });
+  });
+
+  describe('loopback validation', () => {
+    it('should accept 127.0.0.1 endpoints', () => {
+      const encoded = toBase64Url(JSON.stringify({ endpoint: 'http://127.0.0.1:55500' }));
+
+      expect(decodeDwnDiscoveryPayload(encoded)).toBeDefined();
+    });
+
+    it('should accept localhost endpoints', () => {
+      const encoded = toBase64Url(JSON.stringify({ endpoint: 'http://localhost:3000' }));
+
+      expect(decodeDwnDiscoveryPayload(encoded)).toBeDefined();
+    });
+
+    it('should accept [::1] (IPv6 loopback) endpoints', () => {
+      const encoded = toBase64Url(JSON.stringify({ endpoint: 'http://[::1]:55500' }));
+
+      expect(decodeDwnDiscoveryPayload(encoded)).toBeDefined();
+    });
+
+    it('should accept subdomain of localhost', () => {
+      const encoded = toBase64Url(JSON.stringify({ endpoint: 'http://foo.localhost:3000' }));
+
+      expect(decodeDwnDiscoveryPayload(encoded)).toBeDefined();
+    });
+
+    it('should reject a remote hostname', () => {
+      const encoded = toBase64Url(JSON.stringify({ endpoint: 'https://evil.com:55500' }));
+
+      expect(decodeDwnDiscoveryPayload(encoded)).toBeUndefined();
+    });
+
+    it('should reject a private network IP', () => {
+      const encoded = toBase64Url(JSON.stringify({ endpoint: 'http://192.168.1.1:55500' }));
+
+      expect(decodeDwnDiscoveryPayload(encoded)).toBeUndefined();
+    });
+
+    it('should reject a hostname that contains localhost but is not localhost', () => {
+      const encoded = toBase64Url(JSON.stringify({ endpoint: 'http://notlocalhost:3000' }));
+
+      expect(decodeDwnDiscoveryPayload(encoded)).toBeUndefined();
+    });
+
+    it('should reject an endpoint with no scheme', () => {
+      const encoded = toBase64Url(JSON.stringify({ endpoint: '127.0.0.1:3000' }));
+
+      expect(decodeDwnDiscoveryPayload(encoded)).toBeUndefined();
     });
   });
 

@@ -1,17 +1,12 @@
 import type { DwnServerConfig } from '@enbox/dwn-server';
 
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-
 import {
   buildDwnDiscoveryRedirectUrl,
-  DISCOVERY_DIR,
-  DISCOVERY_FILENAME,
+  DwnDiscoveryFile,
   localDwnPortCandidates,
   parseDwnRegisterUrl,
 } from '@enbox/agent';
 import Electrobun, { BrowserWindow, Utils } from 'electrobun/bun';
-import { mkdir, unlink, writeFile } from 'node:fs/promises';
 
 function selectPortCandidates(): number[] {
   const envPort = Bun.env.DS_PORT;
@@ -51,7 +46,7 @@ function resolveDwnServerPackageJsonPath(): string {
 function createDwnServerConfig(port: number): DwnServerConfig {
   return {
     serverName            : process.env.DWN_SERVER_PACKAGE_NAME || '@enbox/dwn-server',
-    baseUrl               : process.env.DWN_BASE_URL || `http://localhost:${port}`,
+    baseUrl               : process.env.DWN_BASE_URL || `http://127.0.0.1:${port}`,
     port,
     ttlCacheUrl           : process.env.DWN_TTL_CACHE_URL || 'sqlite://',
     packageJsonPath       : resolveDwnServerPackageJsonPath(),
@@ -79,26 +74,11 @@ function createDwnServerConfig(port: number): DwnServerConfig {
 // ─── Discovery file ──────────────────────────────────────────────
 //
 // Write ~/.enbox/dwn.json on startup so CLI/native apps can discover
-// the local DWN server without port probing.
+// the local DWN server without port probing.  Uses the shared
+// `DwnDiscoveryFile` class from `@enbox/agent` for consistent
+// validation, permissions (0600), and path resolution.
 
-const discoveryDir = join(homedir(), DISCOVERY_DIR);
-const discoveryFilePath = join(discoveryDir, DISCOVERY_FILENAME);
-
-async function writeDiscoveryFile(endpoint: string): Promise<void> {
-  const record = { endpoint, pid: process.pid };
-  await mkdir(discoveryDir, { recursive: true });
-  await writeFile(discoveryFilePath, JSON.stringify(record, null, 2), 'utf-8');
-  console.log(`[electrobun-dwn] Discovery file written: ${discoveryFilePath}`);
-}
-
-async function removeDiscoveryFile(): Promise<void> {
-  try {
-    await unlink(discoveryFilePath);
-    console.log(`[electrobun-dwn] Discovery file removed: ${discoveryFilePath}`);
-  } catch {
-    // File was already gone — nothing to clean up.
-  }
-}
+const discoveryFile = new DwnDiscoveryFile();
 
 // ─── Port selection ──────────────────────────────────────────────
 
@@ -165,13 +145,15 @@ if (!dwnServer || selectedPort === undefined) {
   );
 }
 
-const serverEndpoint = `http://localhost:${selectedPort}`;
+const serverEndpoint = `http://127.0.0.1:${selectedPort}`;
 console.log(
   `[electrobun-dwn] DWN server listening on ${serverEndpoint}`,
 );
 
 // Write the discovery file so CLI/native apps can find us.
-await writeDiscoveryFile(serverEndpoint);
+const capabilities = webSocketSupport ? ['http', 'ws'] : ['http'];
+await discoveryFile.write({ endpoint: serverEndpoint, pid: process.pid, capabilities });
+console.log(`[electrobun-dwn] Discovery file written: ${discoveryFile.path}`);
 
 const mainWindow = new BrowserWindow({
   title : 'Enbox DWN Server',
@@ -210,7 +192,12 @@ async function shutdown(): Promise<void> {
   isShuttingDown = true;
 
   // Remove the discovery file before stopping the server.
-  await removeDiscoveryFile();
+  try {
+    await discoveryFile.remove();
+    console.log(`[electrobun-dwn] Discovery file removed: ${discoveryFile.path}`);
+  } catch {
+    // Best-effort cleanup — the file may already be gone.
+  }
 
   try {
     await dwnServer.stop();
@@ -224,3 +211,7 @@ async function shutdown(): Promise<void> {
 mainWindow.on('close', () => {
   void shutdown();
 });
+
+// Clean up the discovery file on signal-based termination (e.g. `kill`).
+process.on('SIGTERM', () => { void shutdown(); });
+process.on('SIGINT', () => { void shutdown(); });

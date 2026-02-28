@@ -170,7 +170,16 @@ export function readDwnDiscoveryPayloadFromUrl(url: string): DwnDiscoveryPayload
 
 // ─── Internal helpers ─────────────────────────────────────────────
 
-/** Type guard for a valid {@link DwnDiscoveryPayload}. */
+/**
+ * Type guard for a valid {@link DwnDiscoveryPayload}.
+ *
+ * The endpoint MUST point to a loopback address (`127.0.0.1`, `[::1]`,
+ * or `localhost`) because the `dwn://register` payload is only intended
+ * for local DWN discovery. Accepting arbitrary hostnames would allow a
+ * malicious payload to redirect agent traffic to a remote server.
+ *
+ * @see https://github.com/enboxorg/enbox/issues/633
+ */
 function isValidPayload(value: unknown): value is DwnDiscoveryPayload {
   if (typeof value !== 'object' || value === null) {
     return false;
@@ -182,17 +191,65 @@ function isValidPayload(value: unknown): value is DwnDiscoveryPayload {
     return false;
   }
 
+  if (!isLoopbackEndpoint(record.endpoint)) {
+    return false;
+  }
+
   return true;
+}
+
+/**
+ * Returns `true` if the endpoint URL's hostname resolves to a loopback
+ * address.  Accepts `127.0.0.1`, `::1` (with or without brackets), and
+ * `localhost` (bare or with any subdomain suffix, per RFC 6761 §6.3).
+ *
+ * This is a security boundary: the `dwn://register` redirect flow MUST
+ * NOT allow payloads that point to non-local servers.
+ */
+function isLoopbackEndpoint(endpoint: string): boolean {
+  try {
+    const url = new URL(endpoint);
+    const hostname = url.hostname.toLowerCase();
+
+    // IPv4 loopback: 127.0.0.1
+    if (hostname === '127.0.0.1') {
+      return true;
+    }
+
+    // IPv6 loopback: [::1] — URL.hostname strips the brackets.
+    if (hostname === '::1' || hostname === '[::1]') {
+      return true;
+    }
+
+    // `localhost` or any subdomain (e.g. `foo.localhost`).
+    if (hostname === 'localhost' || hostname.endsWith('.localhost')) {
+      return true;
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 /**
  * Encode a UTF-8 string as unpadded base64url (RFC 4648 §5).
  *
- * Uses the standard `btoa` global available in all target runtimes
- * (browser, Bun, Node 16+).
+ * Uses `TextEncoder` to correctly handle all Unicode code points
+ * (including those above U+00FF that `btoa` cannot represent).
+ *
+ * This module MUST remain dependency-free — no imports from
+ * `@enbox/common` or any other package.
  */
 function stringToBase64Url(input: string): string {
-  return btoa(input)
+  const bytes = new TextEncoder().encode(input);
+  // Build a binary string from the UTF-8 byte array so `btoa` can
+  // consume it (btoa only accepts Latin-1 / code points ≤ U+00FF).
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary)
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '');
@@ -202,7 +259,8 @@ function stringToBase64Url(input: string): string {
  * Decode an unpadded base64url string back to a UTF-8 string.
  *
  * Re-adds padding and swaps base64url characters back to standard
- * base64 before calling the standard `atob` global.
+ * base64 before calling `atob`, then feeds the resulting bytes through
+ * `TextDecoder` for correct UTF-8 handling.
  */
 function base64UrlToString(input: string): string {
   // Restore standard base64 alphabet and padding.
@@ -213,5 +271,10 @@ function base64UrlToString(input: string): string {
   } else if (remainder === 3) {
     base64 += '=';
   }
-  return atob(base64);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new TextDecoder().decode(bytes);
 }
