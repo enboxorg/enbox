@@ -67,20 +67,24 @@ describe('Encryption — fuzz', () => {
     });
   });
 
-  describe('AES-256-GCM — ciphertext differs from plaintext', () => {
-    it('should produce ciphertext that is not equal to the plaintext (for non-empty input)', async () => {
+  describe('AES-256-GCM — authenticated output differs from plaintext', () => {
+    it('should produce authenticated output (ciphertext + tag) that differs from the plaintext', async () => {
       await fc.assert(
         fc.asyncProperty(
           aes256Key(),
           aesGcmIv(),
           fc.uint8Array({ minLength: 1, maxLength: 512 }),
           async (key, iv, plaintext) => {
-            const { ciphertext } = await Encryption.aeadEncrypt(
+            const { ciphertext, tag } = await Encryption.aeadEncrypt(
               ContentEncryptionAlgorithm.A256GCM, key, iv, plaintext
             );
-            // Ciphertext should not be identical to plaintext
-            const areEqual = plaintext.length === ciphertext.length &&
-              plaintext.every((byte, i) => byte === ciphertext[i]);
+            // The full AEAD output is ciphertext || tag.  The 16-byte tag
+            // guarantees the output is always longer than the input, so a
+            // byte-level match is impossible — unlike comparing raw
+            // ciphertext bytes alone, which can coincide for short inputs.
+            const authenticatedOutput = new Uint8Array([...ciphertext, ...tag]);
+            const areEqual = plaintext.length === authenticatedOutput.length &&
+              plaintext.every((byte, i) => byte === authenticatedOutput[i]);
             expect(areEqual).toBe(false);
           }
         ),
