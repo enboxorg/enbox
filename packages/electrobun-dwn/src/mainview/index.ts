@@ -8,8 +8,8 @@
  * pass the resolved endpoint to the mainview via Electrobun RPC/IPC.
  * The mainview runs in a BrowserWindow and cannot import `@enbox/agent`.
  */
-const candidatePorts = [3000, 55555, 55556, 55557, 55558, 55559];
-const candidateHosts = ['127.0.0.1', 'localhost'];
+const candidatePorts = [3000, 55500, 55501, 55502, 55503, 55504, 55505, 55506, 55507, 55508, 55509];
+const candidateHosts = ['127.0.0.1'];
 
 async function detectLocalDwnBaseUrl(): Promise<string> {
   for (const port of candidatePorts) {
@@ -23,7 +23,7 @@ async function detectLocalDwnBaseUrl(): Promise<string> {
 
         const serverInfo = await response.json();
         if (serverInfo?.server === '@enbox/dwn-server') {
-          return `http://localhost:${port}`;
+          return `http://127.0.0.1:${port}`;
         }
       } catch {
         // Keep probing candidate endpoints.
@@ -31,7 +31,7 @@ async function detectLocalDwnBaseUrl(): Promise<string> {
     }
   }
 
-  return 'http://localhost:3000';
+  return 'http://127.0.0.1:3000';
 }
 
 async function renderServerUrl(): Promise<void> {

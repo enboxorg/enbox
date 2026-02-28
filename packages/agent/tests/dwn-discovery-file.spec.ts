@@ -282,12 +282,106 @@ describe('DwnDiscoveryFile', () => {
     });
   });
 
+  describe('capabilities', () => {
+    it('should round-trip a record with capabilities', async () => {
+      const fs = createMemoryFs({ isProcessAlive: () => true });
+      const file = new DwnDiscoveryFile(fs, testFilePath);
+
+      const record: DwnDiscoveryRecord = {
+        endpoint     : 'http://127.0.0.1:55500',
+        pid          : 42,
+        capabilities : ['http', 'ws'],
+      };
+      await file.write(record);
+      const result = await file.read();
+
+      expect(result).toEqual(record);
+    });
+
+    it('should omit capabilities from the file when the array is empty', async () => {
+      const fs = createMemoryFs({ isProcessAlive: () => true });
+      const file = new DwnDiscoveryFile(fs, testFilePath);
+
+      await file.write({ endpoint: 'http://127.0.0.1:55500', pid: 42, capabilities: [] });
+
+      const raw = JSON.parse(fs.files.get(testFilePath)!);
+      expect(raw.capabilities).toBeUndefined();
+    });
+
+    it('should omit capabilities from the file when undefined', async () => {
+      const fs = createMemoryFs({ isProcessAlive: () => true });
+      const file = new DwnDiscoveryFile(fs, testFilePath);
+
+      await file.write({ endpoint: 'http://127.0.0.1:55500', pid: 42 });
+
+      const raw = JSON.parse(fs.files.get(testFilePath)!);
+      expect(raw.capabilities).toBeUndefined();
+    });
+
+    it('should read a record without capabilities (backward compatible)', async () => {
+      const fs = createMemoryFs({ isProcessAlive: () => true });
+      fs.files.set(testFilePath, JSON.stringify({ endpoint: 'http://127.0.0.1:55500', pid: 42 }));
+
+      const file = new DwnDiscoveryFile(fs, testFilePath);
+      const result = await file.read();
+
+      expect(result).toBeDefined();
+      expect(result!.endpoint).toBe('http://127.0.0.1:55500');
+      expect(result!.capabilities).toBeUndefined();
+    });
+
+    it('should reject a record with a non-array capabilities field', async () => {
+      const fs = createMemoryFs({ isProcessAlive: () => true });
+      fs.files.set(testFilePath, JSON.stringify({
+        endpoint     : 'http://127.0.0.1:55500',
+        pid          : 42,
+        capabilities : 'http',
+      }));
+
+      const file = new DwnDiscoveryFile(fs, testFilePath);
+      const result = await file.read();
+
+      expect(result).toBeUndefined();
+      expect(fs.files.has(testFilePath)).toBe(false);
+    });
+
+    it('should reject a record with non-string elements in capabilities', async () => {
+      const fs = createMemoryFs({ isProcessAlive: () => true });
+      fs.files.set(testFilePath, JSON.stringify({
+        endpoint     : 'http://127.0.0.1:55500',
+        pid          : 42,
+        capabilities : ['http', 123],
+      }));
+
+      const file = new DwnDiscoveryFile(fs, testFilePath);
+      const result = await file.read();
+
+      expect(result).toBeUndefined();
+      expect(fs.files.has(testFilePath)).toBe(false);
+    });
+  });
+
   describe('round-trip', () => {
     it('should write and then read the same record', async () => {
       const fs = createMemoryFs({ isProcessAlive: () => true });
       const file = new DwnDiscoveryFile(fs, testFilePath);
 
-      const record: DwnDiscoveryRecord = { endpoint: 'http://127.0.0.1:55557', pid: 42 };
+      const record: DwnDiscoveryRecord = { endpoint: 'http://127.0.0.1:55500', pid: 42 };
+      await file.write(record);
+      const result = await file.read();
+
+      expect(result).toEqual(record);
+    });
+
+    it('should round-trip a record with capabilities', async () => {
+      const fs = createMemoryFs({ isProcessAlive: () => true });
+      const file = new DwnDiscoveryFile(fs, testFilePath);
+
+      const record: DwnDiscoveryRecord = {
+        endpoint     : 'http://127.0.0.1:55500',
+        pid          : 42,
+        capabilities : ['http', 'ws'],
+      };
       await file.write(record);
       const result = await file.read();
 
@@ -298,7 +392,7 @@ describe('DwnDiscoveryFile', () => {
       const fs = createMemoryFs({ isProcessAlive: () => true });
       const file = new DwnDiscoveryFile(fs, testFilePath);
 
-      await file.write({ endpoint: 'http://127.0.0.1:55557', pid: 42 });
+      await file.write({ endpoint: 'http://127.0.0.1:55500', pid: 42 });
       await file.remove();
       const result = await file.read();
 

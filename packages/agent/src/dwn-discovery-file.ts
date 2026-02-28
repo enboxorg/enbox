@@ -18,12 +18,21 @@ import { normalizeBaseUrl } from './local-dwn.js';
 
 // ─── Types ────────────────────────────────────────────────────────
 
-/** The JSON shape persisted in the discovery file. */
+/**
+ * The JSON shape persisted in the discovery file.
+ *
+ * @see https://identity.foundation/dwn-transport/#discovery-file
+ */
 export interface DwnDiscoveryRecord {
-  /** Base URL of the running DWN server (e.g. `"http://127.0.0.1:55557"`). */
+  /** Base URL of the running DWN server (e.g. `"http://127.0.0.1:55500"`). */
   endpoint: string;
   /** OS process ID of the DWN server. Used for liveness checking. */
   pid: number;
+  /**
+   * Transport capabilities advertised by the server (e.g. `["http", "ws"]`).
+   * Optional per the DWN Transport Spec.
+   */
+  capabilities?: string[];
 }
 
 /**
@@ -59,7 +68,7 @@ export function createNodeDiscoveryFileFs(): DiscoveryFileFs | undefined {
     const nodeRequire = require;
     const fs = nodeRequire('node:fs/promises') as {
       readFile(path: string, encoding: string): Promise<string>;
-      writeFile(path: string, data: string, encoding: string): Promise<void>;
+      writeFile(path: string, data: string, options: { encoding: string; mode?: number }): Promise<void>;
       mkdir(path: string, options: { recursive: boolean }): Promise<string | undefined>;
       unlink(path: string): Promise<void>;
     };
@@ -82,7 +91,9 @@ export function createNodeDiscoveryFileFs(): DiscoveryFileFs | undefined {
 
       async writeFile(filePath: string, contents: string): Promise<void> {
         await fs.mkdir(path.dirname(filePath), { recursive: true });
-        await fs.writeFile(filePath, contents, 'utf-8');
+        // mode 0o600: owner read/write only — the file contains the PID
+        // and endpoint of a local DWN server.
+        await fs.writeFile(filePath, contents, { encoding: 'utf-8', mode: 0o600 });
       },
 
       async removeFile(filePath: string): Promise<void> {
@@ -220,7 +231,16 @@ export class DwnDiscoveryFile {
       return undefined;
     }
 
-    return { endpoint: normalizeBaseUrl(parsed.endpoint), pid: parsed.pid };
+    const result: DwnDiscoveryRecord = {
+      endpoint : normalizeBaseUrl(parsed.endpoint),
+      pid      : parsed.pid,
+    };
+
+    if (parsed.capabilities !== undefined) {
+      result.capabilities = parsed.capabilities;
+    }
+
+    return result;
   }
 
   /**
@@ -229,11 +249,16 @@ export class DwnDiscoveryFile {
    * @param record - The endpoint and PID to persist.
    */
   public async write(record: DwnDiscoveryRecord): Promise<void> {
-    const json = JSON.stringify(
-      { endpoint: normalizeBaseUrl(record.endpoint), pid: record.pid },
-      null,
-      2,
-    );
+    const serialized: Record<string, unknown> = {
+      endpoint : normalizeBaseUrl(record.endpoint),
+      pid      : record.pid,
+    };
+
+    if (record.capabilities !== undefined && record.capabilities.length > 0) {
+      serialized.capabilities = record.capabilities;
+    }
+
+    const json = JSON.stringify(serialized, null, 2);
     await this._fs.writeFile(this._filePath, json);
   }
 
@@ -261,6 +286,17 @@ function isValidRecord(value: unknown): value is DwnDiscoveryRecord {
 
   if (typeof record.pid !== 'number' || !Number.isInteger(record.pid) || record.pid <= 0) {
     return false;
+  }
+
+  // `capabilities` is optional, but when present must be a string array.
+  if (record.capabilities !== undefined) {
+    if (!Array.isArray(record.capabilities)) {
+      return false;
+    }
+
+    if (!record.capabilities.every((item: unknown) => typeof item === 'string')) {
+      return false;
+    }
   }
 
   return true;

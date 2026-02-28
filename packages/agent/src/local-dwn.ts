@@ -18,11 +18,25 @@ import type { EnboxRpc } from '@enbox/dwn-clients';
 
 import type { DwnDiscoveryFile } from './dwn-discovery-file.js';
 
-/** Well-known ports the local DWN desktop app may bind to. */
-export const localDwnPortCandidates = [3000, 55555, 55556, 55557, 55558, 55559] as const;
+/**
+ * Well-known ports the local DWN desktop app may bind to.
+ *
+ * Per the DWN Transport Spec, clients probe ports `55500` through `55509`
+ * (inclusive). Port `3000` is included as a development convenience.
+ *
+ * @see https://identity.foundation/dwn-transport/#port-probing
+ */
+export const localDwnPortCandidates = [3000, 55500, 55501, 55502, 55503, 55504, 55505, 55506, 55507, 55508, 55509] as const;
 
-/** Hosts probed when discovering a local DWN server. */
-export const localDwnHostCandidates = ['127.0.0.1', 'localhost'] as const;
+/**
+ * Hosts probed when discovering a local DWN server.
+ *
+ * Per the DWN Transport Spec, clients MUST use `127.0.0.1` rather than
+ * `localhost` to avoid DNS resolution ambiguity.
+ *
+ * @see https://identity.foundation/dwn-transport/#port-probing
+ */
+export const localDwnHostCandidates = ['127.0.0.1'] as const;
 
 /**
  * Controls how the agent discovers and routes to a local DWN server.
