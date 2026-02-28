@@ -149,7 +149,7 @@ describe('Compound index — fuzz', () => {
             const rangeIndex = rangeSeed % properties.length;
             for (let i = 0; i < properties.length; i++) {
               if (i === rangeIndex) {
-                filter[properties[i]] = { from: 'a', to: 'z' }; // range filter
+                filter[properties[i]] = { gte: 'a', lte: 'z' }; // range filter
               } else {
                 filter[properties[i]] = `val_${properties[i]}`;
               }

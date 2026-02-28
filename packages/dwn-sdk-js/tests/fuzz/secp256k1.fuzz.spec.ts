@@ -97,8 +97,10 @@ describe('Secp256k1 — fuzz', () => {
           const uncompressedKey = getPublicKey(privateKey, false);
           const jwkFromUncompressed = await Secp256k1.publicKeyToJwk(uncompressedKey);
 
-          expect(jwkFromCompressed.x).toBe(jwkFromUncompressed.x);
-          expect((jwkFromCompressed as { y?: string }).y).toBe((jwkFromUncompressed as { y?: string }).y);
+          const compressedEc = jwkFromCompressed as { x: string; y?: string };
+          const uncompressedEc = jwkFromUncompressed as { x: string; y?: string };
+          expect(compressedEc.x).toBe(uncompressedEc.x);
+          expect(compressedEc.y).toBe(uncompressedEc.y);
         }),
         { numRuns }
       );
