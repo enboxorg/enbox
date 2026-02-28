@@ -78,7 +78,7 @@ describe('Records utility functions — fuzz', () => {
         fc.property(
           fc.record({
             published     : fc.constantFrom(undefined, true, false),
-            datePublished : fc.constantFrom(undefined, { gte: '2024-01-01' }),
+            datePublished : fc.constantFrom(undefined, { from: '2024-01-01' }),
           }),
           (filter) => {
             const pub = Records.filterIncludesPublishedRecords(filter);
