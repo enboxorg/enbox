@@ -258,7 +258,7 @@ export class AgentDwnApi {
       if (!localDwnEndpoint) {
         throw new Error(
           `AgentDwnApi: Local DWN strategy is 'only' but no local server is available ` +
-          `on localhost/127.0.0.1:{3000,55555-55559}`
+          `on 127.0.0.1:{3000,55500-55509}`
         );
       }
 

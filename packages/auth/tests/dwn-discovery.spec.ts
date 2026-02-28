@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { encodeDwnDiscoveryPayload } from '@enbox/agent';
 
+import { AuthEventEmitter } from '../src/events.js';
 import { createMockAgent } from './helpers/mock-agent.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
@@ -10,6 +11,7 @@ import {
   checkUrlForDwnDiscoveryPayload,
   clearLocalDwnEndpoint,
   persistLocalDwnEndpoint,
+  requestLocalDwnDiscovery,
   restoreLocalDwnEndpoint,
 } from '../src/flows/dwn-discovery.js';
 
@@ -379,5 +381,172 @@ describe('applyLocalDwnDiscovery', () => {
 
     // The stale stored endpoint should be removed
     expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
+  });
+
+  test('should emit local-dwn-available when discovery succeeds via URL fragment', async () => {
+    const url = buildUrlWithPayload('http://127.0.0.1:55500');
+
+    Object.defineProperty(globalThis, 'location', {
+      value        : { href: url },
+      writable     : true,
+      configurable : true,
+    });
+    Object.defineProperty(globalThis, 'history', {
+      value        : { replaceState: (): void => {} },
+      writable     : true,
+      configurable : true,
+    });
+
+    const storage = new MemoryStorage();
+    const emitter = new AuthEventEmitter();
+    const events: { endpoint: string }[] = [];
+    emitter.on('local-dwn-available', (payload) => { events.push(payload); });
+
+    const agent = createMockAgent({
+      dwnSetCachedLocalDwnEndpoint: async (): Promise<boolean> => true,
+    });
+
+    await applyLocalDwnDiscovery(agent, storage, emitter);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].endpoint).toBe('http://127.0.0.1:55500');
+  });
+
+  test('should emit local-dwn-unavailable when no endpoint is found', async () => {
+    delete (globalThis as any).location;
+
+    const storage = new MemoryStorage();
+    const emitter = new AuthEventEmitter();
+    const events: Record<string, never>[] = [];
+    emitter.on('local-dwn-unavailable', (payload) => { events.push(payload); });
+
+    const agent = createMockAgent();
+
+    await applyLocalDwnDiscovery(agent, storage, emitter);
+
+    expect(events).toHaveLength(1);
+  });
+
+  test('should emit local-dwn-available when restoring from storage', async () => {
+    delete (globalThis as any).location;
+
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.LOCAL_DWN_ENDPOINT, 'http://127.0.0.1:3000');
+
+    const emitter = new AuthEventEmitter();
+    const events: { endpoint: string }[] = [];
+    emitter.on('local-dwn-available', (payload) => { events.push(payload); });
+
+    const agent = createMockAgent({
+      dwnSetCachedLocalDwnEndpoint: async (): Promise<boolean> => true,
+    });
+
+    await applyLocalDwnDiscovery(agent, storage, emitter);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].endpoint).toBe('http://127.0.0.1:3000');
+  });
+});
+
+// ─── requestLocalDwnDiscovery ───────────────────────────────────────
+
+describe('requestLocalDwnDiscovery', () => {
+  let originalLocation: Location | undefined;
+  let originalOpen: typeof globalThis.open | undefined;
+
+  beforeEach(() => {
+    originalLocation = globalThis.location;
+    originalOpen = globalThis.open;
+  });
+
+  afterEach(() => {
+    if (originalLocation !== undefined) {
+      Object.defineProperty(globalThis, 'location', {
+        value        : originalLocation,
+        writable     : true,
+        configurable : true,
+      });
+    } else {
+      delete (globalThis as any).location;
+    }
+    if (originalOpen !== undefined) {
+      Object.defineProperty(globalThis, 'open', {
+        value        : originalOpen,
+        writable     : true,
+        configurable : true,
+      });
+    } else {
+      delete (globalThis as any).open;
+    }
+  });
+
+  test('should return false when no location and no callback provided', () => {
+    delete (globalThis as any).location;
+    delete (globalThis as any).open;
+
+    expect(requestLocalDwnDiscovery()).toBe(false);
+  });
+
+  test('should open a dwn://register URL via globalThis.open', () => {
+    const openedUrls: string[] = [];
+    Object.defineProperty(globalThis, 'open', {
+      value        : (url: string): void => { openedUrls.push(url); },
+      writable     : true,
+      configurable : true,
+    });
+
+    const result = requestLocalDwnDiscovery('https://myapp.com/callback');
+
+    expect(result).toBe(true);
+    expect(openedUrls).toHaveLength(1);
+    expect(openedUrls[0]).toBe('dwn://register?callback=https%3A%2F%2Fmyapp.com%2Fcallback');
+  });
+
+  test('should default callback to current page URL', () => {
+    Object.defineProperty(globalThis, 'location', {
+      value        : { href: 'https://myapp.com/dashboard#old' },
+      writable     : true,
+      configurable : true,
+    });
+
+    const openedUrls: string[] = [];
+    Object.defineProperty(globalThis, 'open', {
+      value        : (url: string): void => { openedUrls.push(url); },
+      writable     : true,
+      configurable : true,
+    });
+
+    const result = requestLocalDwnDiscovery();
+
+    expect(result).toBe(true);
+    expect(openedUrls).toHaveLength(1);
+    // Should use the page URL without the fragment.
+    expect(openedUrls[0]).toBe('dwn://register?callback=https%3A%2F%2Fmyapp.com%2Fdashboard');
+  });
+
+  test('should fall back to location.href when open is unavailable', () => {
+    delete (globalThis as any).open;
+    const hrefValues: string[] = [];
+
+    Object.defineProperty(globalThis, 'location', {
+      value: {
+        href : 'https://myapp.com/page',
+        set  : undefined,
+      },
+      writable     : true,
+      configurable : true,
+    });
+    // Override href to be a setter.
+    Object.defineProperty(globalThis.location, 'href', {
+      set          : (v: string): void => { hrefValues.push(v); },
+      get          : (): string => 'https://myapp.com/page',
+      configurable : true,
+    });
+
+    const result = requestLocalDwnDiscovery('https://myapp.com/callback');
+
+    expect(result).toBe(true);
+    expect(hrefValues).toHaveLength(1);
+    expect(hrefValues[0]).toContain('dwn://register');
   });
 });

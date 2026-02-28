@@ -44,6 +44,34 @@ export const DWN_PROTOCOL_SCHEME = 'dwn';
 /** The `dwn://register` path that triggers the discovery handshake. */
 export const DWN_REGISTER_PATH = 'register';
 
+// ─── Register URL construction ───────────────────────────────────
+
+/**
+ * Build a `dwn://register?callback=<url>` URL that, when opened by the OS,
+ * triggers electrobun-dwn (or another `dwn://` scheme handler) to redirect
+ * back to `callbackUrl` with the local DWN endpoint in the URL fragment.
+ *
+ * This is the **trigger** side of the `dwn://register` browser flow.
+ * The web app opens this URL (e.g. via `window.open()` or `location.href`),
+ * the OS routes it to the registered handler, and the handler redirects
+ * back with the discovery payload.
+ *
+ * @param callbackUrl - The URL to redirect back to after discovery.
+ *   This should be the current page (or a dedicated callback page) that
+ *   will read the payload from `window.location.hash`.
+ * @returns The `dwn://register?callback=<encoded-url>` URL string.
+ *
+ * @example
+ * ```ts
+ * const registerUrl = buildDwnRegisterUrl('https://myapp.com/callback');
+ * // => 'dwn://register?callback=https%3A%2F%2Fmyapp.com%2Fcallback'
+ * window.open(registerUrl);
+ * ```
+ */
+export function buildDwnRegisterUrl(callbackUrl: string): string {
+  return `${DWN_PROTOCOL_SCHEME}://${DWN_REGISTER_PATH}?callback=${encodeURIComponent(callbackUrl)}`;
+}
+
 // ─── Payload encoding/decoding ───────────────────────────────────
 
 /**
