@@ -1,11 +1,22 @@
 /**
- * Local DWN discovery — probes well-known localhost ports for a running
- * `@enbox/dwn-server` instance so the agent can route traffic to it.
+ * Local DWN discovery — discovers a running `@enbox/dwn-server` instance
+ * so the agent can route traffic to it.
  *
+ * Discovery channels (tried in order):
+ * 1. **In-memory cache** — serves a recent positive or negative result.
+ * 2. **Discovery file** (`~/.enbox/dwn.json`) — written by `electrobun-dwn`
+ *    on startup. Fast filesystem read, no network. Available for CLI and
+ *    native apps; skipped in browsers.
+ * 3. **Port probing** (fallback) — sequential HTTP `GET /info` on well-known
+ *    localhost ports. Works everywhere but is slower.
+ *
+ * @see https://github.com/enboxorg/enbox/issues/585
  * @module
  */
 
 import type { Web5Rpc } from '@enbox/dwn-clients';
+
+import type { DwnDiscoveryFile } from './dwn-discovery-file.js';
 
 /** Well-known ports the local DWN desktop app may bind to. */
 export const localDwnPortCandidates = [3000, 55555, 55556, 55557, 55558, 55559] as const;
@@ -31,13 +42,25 @@ function normalizeBaseUrl(url: string): string {
 }
 
 /**
- * Probes well-known localhost ports for a running `@enbox/dwn-server` instance.
+ * Discovers a running local DWN server.
  *
  * Results are cached for {@link _cacheTtlMs} milliseconds (default 10 s) to
- * avoid repeated HTTP round-trips on hot paths such as sync.
+ * avoid repeated I/O on hot paths such as sync.
  *
- * TODO: Replace sequential port probing with an `enbox://` protocol-handler
- *       handshake (https://github.com/enboxorg/enbox/issues/287).
+ * @example Discovery with file-based channel
+ * ```ts
+ * import { DwnDiscoveryFile } from './dwn-discovery-file.js';
+ *
+ * const discoveryFile = new DwnDiscoveryFile();
+ * const discovery = new LocalDwnDiscovery(rpcClient, 10_000, discoveryFile);
+ * const endpoint = await discovery.getEndpoint();
+ * ```
+ *
+ * @example Browser: inject cached endpoint from `dwn://register` redirect
+ * ```ts
+ * const discovery = new LocalDwnDiscovery(rpcClient);
+ * discovery.setCachedEndpoint('http://127.0.0.1:55557');
+ * ```
  */
 export class LocalDwnDiscovery {
   private _cachedEndpoint?: string;
@@ -45,12 +68,20 @@ export class LocalDwnDiscovery {
 
   constructor(
     private _rpcClient: Web5Rpc,
-    private _cacheTtlMs = 10_000
+    private _cacheTtlMs = 10_000,
+    private _discoveryFile?: DwnDiscoveryFile,
   ) {}
 
   /**
-   * Returns the base URL of a local DWN server, or `undefined` if none is
-   * reachable on the well-known port candidates.
+   * Returns the base URL of a local DWN server, or `undefined` if none
+   * is discoverable.
+   *
+   * The discovery order is:
+   * 1. In-memory cache (if not expired).
+   * 2. `~/.enbox/dwn.json` discovery file (if a {@link DwnDiscoveryFile}
+   *    was provided). The endpoint from the file is validated via
+   *    `GET /info` to ensure the server is still running.
+   * 3. Sequential port probing on well-known localhost ports (fallback).
    */
   public async getEndpoint(): Promise<string | undefined> {
     const now = Date.now();
@@ -58,24 +89,105 @@ export class LocalDwnDiscovery {
       return this._cachedEndpoint;
     }
 
+    // Channel 1: file-based discovery.
+    const fileEndpoint = await this._tryDiscoveryFile();
+    if (fileEndpoint !== undefined) {
+      this._setCacheEntry(fileEndpoint, now);
+      return fileEndpoint;
+    }
+
+    // Channel 2: sequential port probing (fallback).
+    const probeEndpoint = await this._probePortCandidates();
+    // Cache both positive and negative results.
+    this._setCacheEntry(probeEndpoint, now);
+    return probeEndpoint;
+  }
+
+  /**
+   * Inject a cached endpoint (e.g. from a `dwn://register` browser redirect
+   * or from `localStorage`). The endpoint is validated via `GET /info` before
+   * caching.
+   *
+   * @returns `true` if the endpoint was validated and cached, `false` otherwise.
+   */
+  public async setCachedEndpoint(endpoint: string): Promise<boolean> {
+    const normalized = normalizeBaseUrl(endpoint);
+    const valid = await this._validateEndpoint(normalized);
+    if (valid) {
+      this._setCacheEntry(normalized, Date.now());
+    }
+    return valid;
+  }
+
+  /**
+   * Clear the in-memory cache, forcing the next {@link getEndpoint} call
+   * to perform a fresh discovery.
+   */
+  public clearCache(): void {
+    this._cachedEndpoint = undefined;
+    this._cacheExpiry = 0;
+  }
+
+  // ─── Private discovery channels ────────────────────────────────
+
+  /**
+   * Try the `~/.enbox/dwn.json` discovery file. Returns the endpoint if
+   * the file exists, is valid, and the endpoint passes `GET /info`
+   * validation. Returns `undefined` otherwise.
+   */
+  private async _tryDiscoveryFile(): Promise<string | undefined> {
+    if (!this._discoveryFile) {
+      return undefined;
+    }
+
+    try {
+      const record = await this._discoveryFile.read();
+      if (!record) {
+        return undefined;
+      }
+
+      // Validate that the server is actually alive and is ours.
+      const valid = await this._validateEndpoint(record.endpoint);
+      return valid ? record.endpoint : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Sequential HTTP probe on well-known localhost port candidates.
+   * Returns the first endpoint whose `GET /info` response identifies
+   * as `@enbox/dwn-server`, or `undefined` if none is found.
+   */
+  private async _probePortCandidates(): Promise<string | undefined> {
     for (const port of localDwnPortCandidates) {
       for (const host of localDwnHostCandidates) {
         const endpoint = `http://${host}:${port}`;
-        try {
-          const serverInfo = await this._rpcClient.getServerInfo(endpoint);
-          if (serverInfo.server === localDwnServerName) {
-            this._cachedEndpoint = normalizeBaseUrl(endpoint);
-            this._cacheExpiry = now + this._cacheTtlMs;
-            return this._cachedEndpoint;
-          }
-        } catch {
-          // keep probing candidate endpoints
+        const valid = await this._validateEndpoint(endpoint);
+        if (valid) {
+          return normalizeBaseUrl(endpoint);
         }
       }
     }
-
-    this._cachedEndpoint = undefined;
-    this._cacheExpiry = now + this._cacheTtlMs;
     return undefined;
+  }
+
+  /**
+   * Call `GET /info` on the endpoint and check that
+   * `serverInfo.server === '@enbox/dwn-server'`.
+   */
+  private async _validateEndpoint(endpoint: string): Promise<boolean> {
+    try {
+      const serverInfo = await this._rpcClient.getServerInfo(endpoint);
+      return serverInfo.server === localDwnServerName;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Update the in-memory cache entry. */
+  private _setCacheEntry(endpoint: string | undefined, now: number): void {
+    this._cachedEndpoint = endpoint;
+    this._cacheExpiry = now + this._cacheTtlMs;
   }
 }

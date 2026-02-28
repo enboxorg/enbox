@@ -13,6 +13,7 @@ export * from './bearer-identity.js';
 export * from './crypto-api.js';
 export * from './did-api.js';
 export * from './dwn-api.js';
+export * from './dwn-discovery-file.js';
 export * from './dwn-encryption.js';
 export * from './dwn-key-delivery.js';
 export * from './dwn-record-upgrade.js';
