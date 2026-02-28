@@ -1,6 +1,10 @@
 import { BrowserWindow, Utils } from 'electrobun/bun';
 import type { DwnServerConfig } from '@enbox/dwn-server';
 
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { mkdir, writeFile, unlink } from 'node:fs/promises';
+
 /**
  * Well-known ports the local DWN desktop app may bind to.
  *
@@ -73,6 +77,34 @@ function createDwnServerConfig(port: number): DwnServerConfig {
   };
 }
 
+// ─── Discovery file ──────────────────────────────────────────────
+//
+// Write ~/.enbox/dwn.json on startup so CLI/native apps can discover
+// the local DWN server without port probing.
+//
+// Keep the file format in sync with `DwnDiscoveryRecord` in
+// `@enbox/agent/src/dwn-discovery-file.ts`.
+
+const discoveryFilePath = join(homedir(), '.enbox', 'dwn.json');
+
+async function writeDiscoveryFile(endpoint: string): Promise<void> {
+  const record = { endpoint, pid: process.pid };
+  await mkdir(join(homedir(), '.enbox'), { recursive: true });
+  await writeFile(discoveryFilePath, JSON.stringify(record, null, 2), 'utf-8');
+  console.log(`[electrobun-dwn] Discovery file written: ${discoveryFilePath}`);
+}
+
+async function removeDiscoveryFile(): Promise<void> {
+  try {
+    await unlink(discoveryFilePath);
+    console.log(`[electrobun-dwn] Discovery file removed: ${discoveryFilePath}`);
+  } catch {
+    // File was already gone — nothing to clean up.
+  }
+}
+
+// ─── Port selection ──────────────────────────────────────────────
+
 function isAddressInUseError(error: unknown): boolean {
   if (!error || typeof error !== 'object') {
     return false;
@@ -136,9 +168,13 @@ if (!dwnServer || selectedPort === undefined) {
   );
 }
 
+const serverEndpoint = `http://localhost:${selectedPort}`;
 console.log(
-  `[electrobun-dwn] DWN server listening on http://localhost:${selectedPort}`,
+  `[electrobun-dwn] DWN server listening on ${serverEndpoint}`,
 );
+
+// Write the discovery file so CLI/native apps can find us.
+await writeDiscoveryFile(serverEndpoint);
 
 const mainWindow = new BrowserWindow({
   title : 'Enbox DWN Server',
@@ -156,6 +192,9 @@ let isShuttingDown = false;
 async function shutdown(): Promise<void> {
   if (isShuttingDown) { return; }
   isShuttingDown = true;
+
+  // Remove the discovery file before stopping the server.
+  await removeDiscoveryFile();
 
   try {
     await dwnServer.stop();

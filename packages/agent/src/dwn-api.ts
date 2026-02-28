@@ -48,6 +48,7 @@ import type {
   SendDwnRequest,
 } from './types/dwn.js';
 
+import { DwnDiscoveryFile } from './dwn-discovery-file.js';
 import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
 import { LocalDwnDiscovery } from './local-dwn.js';
 import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
@@ -177,7 +178,11 @@ export class AgentDwnApi {
 
     // If agent is already available, eagerly initialize the discovery instance.
     if (agent) {
-      this._localDwnDiscovery = new LocalDwnDiscovery(agent.rpc);
+      this._localDwnDiscovery = new LocalDwnDiscovery(
+        agent.rpc,
+        10_000,
+        AgentDwnApi._tryCreateDiscoveryFile(),
+      );
     }
   }
 
@@ -198,7 +203,11 @@ export class AgentDwnApi {
   set agent(agent: Web5PlatformAgent) {
     this._agent = agent;
     // Re-initialize local DWN discovery with the new agent's RPC client.
-    this._localDwnDiscovery = new LocalDwnDiscovery(agent.rpc);
+    this._localDwnDiscovery = new LocalDwnDiscovery(
+      agent.rpc,
+      10_000,
+      AgentDwnApi._tryCreateDiscoveryFile(),
+    );
     this._localManagedDidCache.clear();
   }
 
@@ -259,10 +268,28 @@ export class AgentDwnApi {
     return [...uniqueEndpoints];
   }
 
-  /** Lazily retrieves the local DWN server endpoint via discovery probing. */
+  /** Lazily retrieves the local DWN server endpoint via discovery. */
   private async getLocalDwnEndpoint(): Promise<string | undefined> {
-    this._localDwnDiscovery ??= new LocalDwnDiscovery(this.agent.rpc);
+    this._localDwnDiscovery ??= new LocalDwnDiscovery(
+      this.agent.rpc,
+      10_000,
+      AgentDwnApi._tryCreateDiscoveryFile(),
+    );
     return this._localDwnDiscovery.getEndpoint();
+  }
+
+  /**
+   * Attempt to create a {@link DwnDiscoveryFile} for file-based local DWN
+   * discovery. Returns `undefined` in environments where the filesystem
+   * is not available (e.g. browsers).
+   */
+  private static _tryCreateDiscoveryFile(): DwnDiscoveryFile | undefined {
+    try {
+      return new DwnDiscoveryFile();
+    } catch {
+      // Browser environment — node:fs/promises not available.
+      return undefined;
+    }
   }
 
   /**

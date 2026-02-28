@@ -166,3 +166,6 @@ TEST-COMPOUND-INDEX/
 
 # Local AI agent instructions (not committed)
 CLAUDE.local.md
+
+# AI agent working directories
+.opencode/

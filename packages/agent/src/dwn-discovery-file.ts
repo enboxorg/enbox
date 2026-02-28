@@ -1,0 +1,270 @@
+/**
+ * File-based local DWN discovery for CLI and native apps.
+ *
+ * When `electrobun-dwn` (or any local DWN server) starts, it writes a
+ * well-known file (`~/.enbox/dwn.json`) containing the DWN endpoint URL
+ * and the server PID. CLI tools and native apps read this file to discover
+ * the local DWN without port probing.
+ *
+ * The filesystem operations are abstracted behind {@link DiscoveryFileFs}
+ * so the module can be tested without touching the real filesystem, and
+ * adapted to runtimes that provide different I/O primitives.
+ *
+ * @see https://github.com/enboxorg/enbox/issues/587
+ * @module
+ */
+
+// ─── Types ────────────────────────────────────────────────────────
+
+/** The JSON shape persisted in the discovery file. */
+export interface DwnDiscoveryRecord {
+  /** Base URL of the running DWN server (e.g. `"http://127.0.0.1:55557"`). */
+  endpoint: string;
+  /** OS process ID of the DWN server. Used for liveness checking. */
+  pid: number;
+}
+
+/**
+ * Minimal filesystem interface required by {@link DwnDiscoveryFile}.
+ *
+ * Consumers can provide a custom implementation for testing or for
+ * runtimes that do not expose Node-compatible `fs` and `os` modules.
+ */
+export interface DiscoveryFileFs {
+  /** Read the file at `path` and return its UTF-8 contents, or `null` if not found. */
+  readFile(path: string): Promise<string | null>;
+  /** Write `contents` to the file at `path`, creating parent directories as needed. */
+  writeFile(path: string, contents: string): Promise<void>;
+  /** Delete the file at `path`. Must not throw if the file does not exist. */
+  removeFile(path: string): Promise<void>;
+  /** Return `true` if the process with the given PID is alive. */
+  isProcessAlive(pid: number): boolean;
+  /** Return the user's home directory (e.g. `/home/alice`). */
+  homedir(): string;
+}
+
+// ─── Default Node/Bun filesystem implementation ──────────────────
+
+/**
+ * Creates a {@link DiscoveryFileFs} backed by Node.js / Bun built-in
+ * modules. Returns `undefined` in environments where `node:fs/promises`
+ * or `node:os` are not available (e.g. browsers).
+ */
+export function createNodeDiscoveryFileFs(): DiscoveryFileFs | undefined {
+  try {
+    // Dynamic require avoids hard dependency on Node built-ins so bundlers
+    // can tree-shake this path away in browser builds.
+    const nodeRequire = require;
+    const fs = nodeRequire('node:fs/promises') as {
+      readFile(path: string, encoding: string): Promise<string>;
+      writeFile(path: string, data: string, encoding: string): Promise<void>;
+      mkdir(path: string, options: { recursive: boolean }): Promise<string | undefined>;
+      unlink(path: string): Promise<void>;
+    };
+    const path = nodeRequire('node:path') as {
+      join(...segments: string[]): string;
+      dirname(path: string): string;
+    };
+    const os = nodeRequire('node:os') as {
+      homedir(): string;
+    };
+
+    return {
+      async readFile(filePath: string): Promise<string | null> {
+        try {
+          return await fs.readFile(filePath, 'utf-8');
+        } catch {
+          return null;
+        }
+      },
+
+      async writeFile(filePath: string, contents: string): Promise<void> {
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        await fs.writeFile(filePath, contents, 'utf-8');
+      },
+
+      async removeFile(filePath: string): Promise<void> {
+        try {
+          await fs.unlink(filePath);
+        } catch {
+          // Ignore ENOENT — the file was already gone.
+        }
+      },
+
+      isProcessAlive(pid: number): boolean {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+
+      homedir(): string {
+        return os.homedir();
+      },
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+// ─── Constants ────────────────────────────────────────────────────
+
+/**
+ * Directory under the user's home where the discovery file lives.
+ * Shared with the `electrobun-dwn` app and other Enbox tooling.
+ */
+export const DISCOVERY_DIR = '.enbox';
+
+/** Filename of the discovery file. */
+export const DISCOVERY_FILENAME = 'dwn.json';
+
+// ─── DwnDiscoveryFile ────────────────────────────────────────────
+
+/**
+ * Reads, writes, and validates the `~/.enbox/dwn.json` discovery file.
+ *
+ * This is the **file-based discovery channel** for CLI and native apps.
+ * It is complementary to the `dwn://register` browser redirect flow.
+ *
+ * @example Reading the discovery file
+ * ```ts
+ * const discoveryFile = new DwnDiscoveryFile();
+ * const record = await discoveryFile.read();
+ *
+ * if (record) {
+ *   console.log(`Local DWN at ${record.endpoint}`);
+ * }
+ * ```
+ *
+ * @example Writing the discovery file (from electrobun-dwn)
+ * ```ts
+ * const discoveryFile = new DwnDiscoveryFile();
+ * await discoveryFile.write({
+ *   endpoint : 'http://127.0.0.1:55557',
+ *   pid      : process.pid,
+ * });
+ * ```
+ */
+export class DwnDiscoveryFile {
+  private readonly _fs: DiscoveryFileFs;
+  private readonly _filePath: string;
+
+  /**
+   * @param fs - Filesystem adapter. Defaults to Node/Bun built-ins.
+   * @param filePath - Override the discovery file path (mainly for testing).
+   * @throws If no filesystem adapter is available (e.g. in a browser).
+   */
+  constructor(fs?: DiscoveryFileFs, filePath?: string) {
+    const resolvedFs = fs ?? createNodeDiscoveryFileFs();
+    if (!resolvedFs) {
+      throw new Error(
+        'DwnDiscoveryFile: No filesystem adapter available. ' +
+        'Provide a DiscoveryFileFs implementation or run in Node.js / Bun.'
+      );
+    }
+    this._fs = resolvedFs;
+
+    if (filePath) {
+      this._filePath = filePath;
+    } else {
+      // Dynamic require so we can resolve the path at construction time.
+      const nodeRequire = require;
+      const path = nodeRequire('node:path') as { join(...segments: string[]): string };
+      this._filePath = path.join(resolvedFs.homedir(), DISCOVERY_DIR, DISCOVERY_FILENAME);
+    }
+  }
+
+  /** The absolute path of the discovery file. */
+  public get path(): string {
+    return this._filePath;
+  }
+
+  /**
+   * Read and validate the discovery file.
+   *
+   * Returns the parsed {@link DwnDiscoveryRecord} if:
+   * 1. The file exists and contains valid JSON.
+   * 2. The `endpoint` is a non-empty string.
+   * 3. The `pid` is a positive integer whose process is still alive.
+   *
+   * Returns `undefined` in all other cases (missing file, parse error,
+   * stale PID). Stale files are automatically removed.
+   */
+  public async read(): Promise<DwnDiscoveryRecord | undefined> {
+    const raw = await this._fs.readFile(this._filePath);
+    if (raw === null) {
+      return undefined;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      // Corrupted file — remove it.
+      await this._fs.removeFile(this._filePath);
+      return undefined;
+    }
+
+    if (!isValidRecord(parsed)) {
+      await this._fs.removeFile(this._filePath);
+      return undefined;
+    }
+
+    // Check that the server process is still alive.
+    if (!this._fs.isProcessAlive(parsed.pid)) {
+      await this._fs.removeFile(this._filePath);
+      return undefined;
+    }
+
+    return { endpoint: normalizeEndpoint(parsed.endpoint), pid: parsed.pid };
+  }
+
+  /**
+   * Write the discovery file. Creates the `~/.enbox/` directory if needed.
+   *
+   * @param record - The endpoint and PID to persist.
+   */
+  public async write(record: DwnDiscoveryRecord): Promise<void> {
+    const json = JSON.stringify(
+      { endpoint: normalizeEndpoint(record.endpoint), pid: record.pid },
+      null,
+      2,
+    );
+    await this._fs.writeFile(this._filePath, json);
+  }
+
+  /**
+   * Remove the discovery file. Does not throw if the file is already gone.
+   */
+  public async remove(): Promise<void> {
+    await this._fs.removeFile(this._filePath);
+  }
+}
+
+// ─── Internal helpers ─────────────────────────────────────────────
+
+/** Type guard for a valid {@link DwnDiscoveryRecord}. */
+function isValidRecord(value: unknown): value is DwnDiscoveryRecord {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  if (typeof record.endpoint !== 'string' || record.endpoint.length === 0) {
+    return false;
+  }
+
+  if (typeof record.pid !== 'number' || !Number.isInteger(record.pid) || record.pid <= 0) {
+    return false;
+  }
+
+  return true;
+}
+
+/** Strip trailing slashes for consistent endpoint comparison. */
+function normalizeEndpoint(url: string): string {
+  return url.endsWith('/') ? url.slice(0, -1) : url;
+}
