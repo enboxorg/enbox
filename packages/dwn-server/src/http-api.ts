@@ -30,10 +30,10 @@ import { existsSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
 
 import { config } from './config.js';
+import { ConnectServer } from './connect/connect-server.js';
 import { getDialectFromUrl } from './storage.js';
 import { jsonRpcRouter } from './json-rpc-api.js';
 import { validateAdminAuth } from './admin/admin-auth.js';
-import { Web5ConnectServer } from './web5-connect/web5-connect-server.js';
 import { requestCounter, responseHistogram } from './metrics.js';
 
 /** Property names that must never be used as keys when building objects from user input. */
@@ -68,7 +68,7 @@ export class HttpApi {
   #openAuthHandler: OpenAuthHandler | undefined;
   #sessionManager: AdminSessionManager | undefined;
   #adminUiPath: string | undefined;
-  web5ConnectServer: Web5ConnectServer;
+  connectServer: ConnectServer;
   registrationManager: RegistrationManager;
   dwn: Dwn;
 
@@ -137,7 +137,7 @@ export class HttpApi {
     // in-memory SQLite so that migrations and the TTL cache share the same
     // database instance). Falls back to creating a dialect from the URL.
     const ttlDialect = options?.ttlCacheDialect ?? getDialectFromUrl(new URL(config.ttlCacheUrl));
-    httpApi.web5ConnectServer = await Web5ConnectServer.create({
+    httpApi.connectServer = await ConnectServer.create({
       baseUrl    : config.baseUrl,
       sqlDialect : ttlDialect,
     });
@@ -270,8 +270,8 @@ export class HttpApi {
     if (this.#openAuthHandler) {
       this.#openAuthHandler.destroy();
     }
-    if (this.web5ConnectServer) {
-      this.web5ConnectServer.close();
+    if (this.connectServer) {
+      this.connectServer.close();
     }
     if (this.#server) {
       this.#server.stop(true); // close all connections immediately
@@ -399,8 +399,8 @@ export class HttpApi {
       return registrationResponse;
     }
 
-    // --- Web5 Connect routes ---
-    const connectResponse = await this.#matchWeb5ConnectRoutes(req, path, method);
+    // --- Connect routes ---
+    const connectResponse = await this.#matchConnectRoutes(req, path, method);
     if (connectResponse) {
       return connectResponse;
     }
@@ -806,10 +806,10 @@ export class HttpApi {
   }
 
   // ---------------------------------------------------------------------------
-  // Web5 Connect routes
+  // Connect routes
   // ---------------------------------------------------------------------------
 
-  async #matchWeb5ConnectRoutes(
+  async #matchConnectRoutes(
     req: Request, path: string, method: string
   ): Promise<Response | null> {
     // POST /connect/par
@@ -831,7 +831,7 @@ export class HttpApi {
         }, { status: 400 });
       }
 
-      const result = await this.web5ConnectServer.setWeb5ConnectRequest(body.request);
+      const result = await this.connectServer.setConnectRequest(body.request);
       return Response.json(result, { status: 201 });
     }
 
@@ -840,9 +840,9 @@ export class HttpApi {
       const match = path.match(/^\/connect\/authorize\/([^/]+)\.jwt$/);
       if (match && method === 'GET') {
         const requestId = match[1];
-        log.info(`Retrieving Web5 Connect Request object of ID: ${requestId}...`);
+        log.info(`Retrieving Connect Request object of ID: ${requestId}...`);
 
-        const requestObjectJwt = await this.web5ConnectServer.getWeb5ConnectRequest(requestId);
+        const requestObjectJwt = await this.connectServer.getConnectRequest(requestId);
         if (!requestObjectJwt) {
           return Response.json({
             ok     : false,
@@ -867,7 +867,7 @@ export class HttpApi {
       const state = body.state;
 
       if (idToken !== undefined && state != undefined) {
-        await this.web5ConnectServer.setWeb5ConnectResponse(state, idToken);
+        await this.connectServer.setConnectResponse(state, idToken);
         return Response.json({
           ok     : true,
           status : { code: 201, message: 'Created' },
@@ -887,7 +887,7 @@ export class HttpApi {
         const state = match[1];
         log.info(`Retrieving ID token for state: ${state}...`);
 
-        const idToken = await this.web5ConnectServer.getWeb5ConnectResponse(state);
+        const idToken = await this.connectServer.getConnectResponse(state);
         if (!idToken) {
           return Response.json({
             ok     : false,

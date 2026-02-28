@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 
 import { createMigratedInMemoryDialect } from '../utils.js';
-import { SqlTtlCache } from '../../src/web5-connect/sql-ttl-cache.js';
+import { SqlTtlCache } from '../../src/connect/sql-ttl-cache.js';
 
 describe('SqlTtlCache', () => {
   let cache: SqlTtlCache;

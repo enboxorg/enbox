@@ -629,7 +629,7 @@ export const allServerMigrations: ReadonlyArray<readonly [name: string, factory:
 1. runServerMigrationsIfNeeded(config)  → returns serverDialect
 2. RegistrationManager.create()         → health-checks registeredTenants
 3. getDwnConfig(config)                 → runs DWN migrations, then opens stores
-4. HttpApi.create(config, dwn, ...)     → creates Web5ConnectServer with TTL cache
+4. HttpApi.create(config, dwn, ...)     → creates ConnectServer with TTL cache
 5. AdminApi / audit-log / webhooks      → all use serverDialect
 ```
 
