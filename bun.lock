@@ -82,11 +82,12 @@
     },
     "packages/auth": {
       "name": "@enbox/auth",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@enbox/agent": "workspace:*",
         "@enbox/common": "workspace:*",
         "@enbox/dids": "workspace:*",
+        "level": "8.0.0",
       },
       "devDependencies": {
         "@types/node": "20.14.8",

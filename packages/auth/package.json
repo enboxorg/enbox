@@ -58,7 +58,8 @@
   "dependencies": {
     "@enbox/agent": "workspace:*",
     "@enbox/common": "workspace:*",
-    "@enbox/dids": "workspace:*"
+    "@enbox/dids": "workspace:*",
+    "level": "8.0.0"
   },
   "devDependencies": {
     "@types/node": "20.14.8",

@@ -1,6 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
 
-import { BrowserStorage, createDefaultStorage, MemoryStorage } from '../src/storage/storage.js';
+import { BrowserStorage, createDefaultStorage, LevelStorage, MemoryStorage } from '../src/storage/storage.js';
 
 describe('MemoryStorage', () => {
   test('get() returns null for missing keys', async () => {
@@ -132,6 +135,126 @@ describe('BrowserStorage', () => {
   });
 });
 
+describe('LevelStorage', () => {
+  const tmpDirs: string[] = [];
+
+  async function createTmpStorage(): Promise<LevelStorage> {
+    const dir = await mkdtemp(join(tmpdir(), 'enbox-auth-test-'));
+    tmpDirs.push(dir);
+    return new LevelStorage(dir);
+  }
+
+  afterAll(async () => {
+    // Clean up all temp directories
+    for (const dir of tmpDirs) {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('get() returns null for missing keys', async () => {
+    const storage = await createTmpStorage();
+    try {
+      expect(await storage.get('nonexistent')).toBeNull();
+    } finally {
+      await storage.close();
+    }
+  });
+
+  test('set() and get() round-trip', async () => {
+    const storage = await createTmpStorage();
+    try {
+      await storage.set('key', 'value');
+      expect(await storage.get('key')).toBe('value');
+    } finally {
+      await storage.close();
+    }
+  });
+
+  test('set() overwrites existing values', async () => {
+    const storage = await createTmpStorage();
+    try {
+      await storage.set('key', 'first');
+      await storage.set('key', 'second');
+      expect(await storage.get('key')).toBe('second');
+    } finally {
+      await storage.close();
+    }
+  });
+
+  test('data persists across instances', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'enbox-auth-test-'));
+    tmpDirs.push(dir);
+
+    // Write with one instance
+    const storage1 = new LevelStorage(dir);
+    await storage1.set('persistent', 'data');
+    await storage1.close();
+
+    // Read with a new instance
+    const storage2 = new LevelStorage(dir);
+    try {
+      expect(await storage2.get('persistent')).toBe('data');
+    } finally {
+      await storage2.close();
+    }
+  });
+
+  test('remove() deletes a key', async () => {
+    const storage = await createTmpStorage();
+    try {
+      await storage.set('key', 'value');
+      await storage.remove('key');
+      expect(await storage.get('key')).toBeNull();
+    } finally {
+      await storage.close();
+    }
+  });
+
+  test('remove() is a no-op for missing keys', async () => {
+    const storage = await createTmpStorage();
+    try {
+      // Should not throw
+      await storage.remove('nonexistent');
+    } finally {
+      await storage.close();
+    }
+  });
+
+  test('clear() removes all keys', async () => {
+    const storage = await createTmpStorage();
+    try {
+      await storage.set('a', '1');
+      await storage.set('b', '2');
+      await storage.set('c', '3');
+      await storage.clear();
+      expect(await storage.get('a')).toBeNull();
+      expect(await storage.get('b')).toBeNull();
+      expect(await storage.get('c')).toBeNull();
+    } finally {
+      await storage.close();
+    }
+  });
+
+  test('clear() handles empty database', async () => {
+    const storage = await createTmpStorage();
+    try {
+      // Should not throw on empty db
+      await storage.clear();
+    } finally {
+      await storage.close();
+    }
+  });
+
+  test('close() shuts down the database', async () => {
+    const storage = await createTmpStorage();
+    await storage.set('key', 'value');
+    await storage.close();
+
+    // After closing, operations should fail
+    await expect(storage.get('key')).rejects.toThrow();
+  });
+});
+
 describe('createDefaultStorage', () => {
   let originalLocalStorage: Storage | undefined;
 
@@ -165,7 +288,7 @@ describe('createDefaultStorage', () => {
     expect(storage).toBeInstanceOf(BrowserStorage);
   });
 
-  test('returns MemoryStorage when localStorage is undefined', () => {
+  test('returns LevelStorage when localStorage is undefined', () => {
     originalLocalStorage = globalThis.localStorage;
     Object.defineProperty(globalThis, 'localStorage', {
       value        : undefined,
@@ -174,6 +297,6 @@ describe('createDefaultStorage', () => {
     });
 
     const storage = createDefaultStorage();
-    expect(storage).toBeInstanceOf(MemoryStorage);
+    expect(storage).toBeInstanceOf(LevelStorage);
   });
 });
