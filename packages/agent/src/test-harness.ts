@@ -2,8 +2,8 @@ import type { AbstractLevel } from 'abstract-level';
 import type { BearerIdentity } from './bearer-identity.js';
 import type { DidResolverCache } from '@enbox/dids';
 import type { Dwn } from '@enbox/dwn-sdk-js';
+import type { EnboxPlatformAgent } from './types/agent.js';
 import type { KeyValueStore } from '@enbox/common';
-import type { Web5PlatformAgent } from './types/agent.js';
 
 import { Level } from 'level';
 import { DataStoreLevel, EventEmitterEventLog, MessageStoreLevel, ResumableTaskStoreLevel, StateIndexLevel } from '@enbox/dwn-sdk-js';
@@ -17,10 +17,10 @@ import { AgentDwnApi } from './dwn-api.js';
 import { AgentIdentityApi } from './identity-api.js';
 import { AgentPermissionsApi } from './permissions-api.js';
 import { AgentSyncApi } from './sync-api.js';
+import { EnboxRpcClient } from '@enbox/dwn-clients';
 import { HdIdentityVault } from './hd-identity-vault.js';
 import { LocalKeyManager } from './local-key-manager.js';
 import { SyncEngineLevel } from './sync-engine-level.js';
-import { Web5RpcClient } from '@enbox/dwn-clients';
 import { DwnDidStore, InMemoryDidStore } from './store-did.js';
 import { DwnIdentityStore, InMemoryIdentityStore } from './store-identity.js';
 import { DwnKeyStore, InMemoryKeyStore } from './store-key.js';
@@ -36,7 +36,7 @@ type StoreSetupResult = {
 };
 
 type PlatformAgentTestHarnessParams = {
-  agent: Web5PlatformAgent<LocalKeyManager>
+  agent: EnboxPlatformAgent<LocalKeyManager>
 
   agentStores: 'dwn' | 'memory';
   didResolverCache: DidResolverCache;
@@ -56,7 +56,7 @@ type PlatformAgentTestHarnessParams = {
 };
 
 export class PlatformAgentTestHarness {
-  public agent: Web5PlatformAgent<LocalKeyManager>;
+  public agent: EnboxPlatformAgent<LocalKeyManager>;
 
   public agentStores: 'dwn' | 'memory';
   public didResolverCache: DidResolverCache;
@@ -215,7 +215,7 @@ export class PlatformAgentTestHarness {
   }
 
   public static async setup({ agentClass, agentStores, testDataLocation }: {
-    agentClass: new (params: any) => Web5PlatformAgent<LocalKeyManager>
+    agentClass: new (params: any) => EnboxPlatformAgent<LocalKeyManager>
     agentStores?: 'dwn' | 'memory';
     testDataLocation?: string;
   }): Promise<PlatformAgentTestHarness> {
@@ -228,7 +228,7 @@ export class PlatformAgentTestHarness {
     const cryptoApi = new AgentCryptoApi();
 
     // Instantiate Agent's RPC Client.
-    const rpcClient = new Web5RpcClient();
+    const rpcClient = new EnboxRpcClient();
 
     const dwnStores = {
       keyStore      : new DwnKeyStore(),
@@ -285,7 +285,7 @@ export class PlatformAgentTestHarness {
     const syncEngine = new SyncEngineLevel({ db: syncStore });
     const syncApi = new AgentSyncApi({ syncEngine });
 
-    // Create Web5PlatformAgent instance
+    // Create EnboxPlatformAgent instance
     const agent = new agentClass({
       agentVault,
       cryptoApi,
@@ -314,7 +314,7 @@ export class PlatformAgentTestHarness {
   }
 
   private static useDiskStores({ agent, testDataLocation, stores }: {
-    agent?: Web5PlatformAgent<LocalKeyManager>;
+    agent?: EnboxPlatformAgent<LocalKeyManager>;
     stores: {
       keyStore: DwnKeyStore;
       identityStore: DwnIdentityStore;
@@ -350,7 +350,7 @@ export class PlatformAgentTestHarness {
     return { agentVault, didApi, didResolverCache, identityApi, keyManager, permissionsApi, vaultStore };
   }
 
-  private static useMemoryStores({ agent }: { agent?: Web5PlatformAgent<LocalKeyManager> } = {}): StoreSetupResult {
+  private static useMemoryStores({ agent }: { agent?: EnboxPlatformAgent<LocalKeyManager> } = {}): StoreSetupResult {
     const vaultStore = new MemoryStore<string, string>();
     const agentVault = new HdIdentityVault({ keyDerivationWorkFactor: 1, store: vaultStore });
 

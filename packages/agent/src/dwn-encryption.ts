@@ -9,7 +9,7 @@ import type {
 } from '@enbox/dwn-sdk-js';
 import type { KeyIdentifier, PublicKeyJwk } from '@enbox/crypto';
 
-import type { Web5PlatformAgent } from './types/agent.js';
+import type { EnboxPlatformAgent } from './types/agent.js';
 import type {
   DwnMessageReply,
   ProcessDwnRequest,
@@ -93,7 +93,7 @@ export async function encryptAndComputeCid(
  * @throws If the DID has no keyAgreement verification method or it's not X25519.
  */
 export async function getEncryptionKeyInfo(
-  agent: Web5PlatformAgent,
+  agent: EnboxPlatformAgent,
   didUri: string,
 ): Promise<{
   keyId: string;
@@ -172,7 +172,7 @@ export async function getEncryptionKeyInfo(
  * @param iv - Initialization vector
  */
 export async function deriveContextEncryptionInput(
-  agent: Web5PlatformAgent,
+  agent: EnboxPlatformAgent,
   didUri: string,
   contextId: string,
   dek: Uint8Array,
@@ -208,7 +208,7 @@ export async function deriveContextEncryptionInput(
  * @param derivationScheme - The key derivation scheme
  */
 export function buildKmsDecryptCallback(
-  agent: Web5PlatformAgent,
+  agent: EnboxPlatformAgent,
   keyId: string,
   keyUri: KeyIdentifier,
   derivationScheme: typeof KeyDerivationScheme.ProtocolPath | typeof KeyDerivationScheme.ProtocolContext,
@@ -240,7 +240,7 @@ export function buildKmsDecryptCallback(
  * @returns An EncryptionKeyDeriver callback object
  */
 export async function getEncryptionKeyDeriver(
-  agent: Web5PlatformAgent,
+  agent: EnboxPlatformAgent,
   didUri: string,
 ): Promise<EncryptionKeyDeriver> {
   const { keyId, keyUri } = await getEncryptionKeyInfo(agent, didUri);
@@ -266,7 +266,7 @@ export async function getEncryptionKeyDeriver(
  * @returns A KeyDecrypter callback object
  */
 export async function getKeyDecrypter(
-  agent: Web5PlatformAgent,
+  agent: EnboxPlatformAgent,
   didUri: string,
 ): Promise<KeyDecrypter> {
   const { keyId, keyUri } = await getEncryptionKeyInfo(agent, didUri);
@@ -311,7 +311,7 @@ export function buildContextKeyDecrypter(
  * @param fetchContextKeyRecordFn - Function to fetch context key records from key-delivery protocol
  */
 export async function resolveKeyDecrypter(
-  agent: Web5PlatformAgent,
+  agent: EnboxPlatformAgent,
   authorDid: string,
   recordsWrite: RecordsWriteMessage,
   targetDid: string | undefined,
@@ -409,7 +409,7 @@ export async function resolveKeyDecrypter(
 export async function maybeDecryptReply<T extends DwnInterface>(
   request: ProcessDwnRequest<T> | SendDwnRequest<T>,
   reply: DwnMessageReply[T],
-  agent: Web5PlatformAgent,
+  agent: EnboxPlatformAgent,
   contextDerivedKeyCache: { get(key: string): DerivedPrivateJwk | undefined; set(key: string, value: DerivedPrivateJwk): void },
   fetchContextKeyRecordFn: (params: {
     ownerDid: string;

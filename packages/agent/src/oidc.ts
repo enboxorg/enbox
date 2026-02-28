@@ -1,6 +1,6 @@
 import type { ConnectPermissionRequest } from './connect.js';
+import type { EnboxAgent } from './types/agent.js';
 import type { RequireOnly } from '@enbox/common';
-import type { Web5Agent } from './types/agent.js';
 import type { DidDocument, PortableDid } from '@enbox/dids';
 import type { DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnProtocolDefinition } from './types/dwn.js';
 import type {
@@ -34,7 +34,7 @@ import { isRecordPermissionScope } from './dwn-api.js';
  * @see {@link https://www.rfc-editor.org/rfc/rfc9126.html | OAuth 2.0 Pushed Authorization Requests}
  */
 export type PushedAuthRequest = {
-  /** The JWT which contains the {@link Web5ConnectAuthRequest} */
+  /** The JWT which contains the {@link EnboxConnectAuthRequest} */
   request: string;
 };
 
@@ -134,7 +134,7 @@ export type SIOPv2AuthRequest = {
  * An auth request that is compatible with both Web5 Connect and (hopefully, WIP) OIDC SIOPv2
  * The contents of this are inserted into a JWT inside of the {@link PushedAuthRequest}.
  */
-export type Web5ConnectAuthRequest = {
+export type EnboxConnectAuthRequest = {
   /** The user friendly name of the client/app to be displayed when prompting end-user with permission requests. */
   displayName: string;
 
@@ -168,16 +168,16 @@ export type SIOPv2AuthResponse = {
 };
 
 /** An auth response that is compatible with both Web5 Connect and (hopefully, WIP) OIDC SIOPv2 */
-export type Web5ConnectAuthResponse = {
+export type EnboxConnectAuthResponse = {
   delegateGrants: DwnDataEncodedRecordsWriteMessage[];
   delegatePortableDid: PortableDid;
 } & SIOPv2AuthResponse;
 
 /** Represents the different OIDC endpoint types.
  * 1. `pushedAuthorizationRequest`: client sends {@link PushedAuthRequest} receives {@link PushedAuthResponse}
- * 2. `authorize`: provider gets the {@link Web5ConnectAuthRequest} JWT that was stored by the PAR
- * 3. `callback`: provider sends {@link Web5ConnectAuthResponse} to this endpoint
- * 4. `token`: client gets {@link Web5ConnectAuthResponse} from this endpoint
+ * 2. `authorize`: provider gets the {@link EnboxConnectAuthRequest} JWT that was stored by the PAR
+ * 3. `callback`: provider sends {@link EnboxConnectAuthResponse} to this endpoint
+ * 4. `token`: client gets {@link EnboxConnectAuthResponse} from this endpoint
  */
 type OidcEndpoint =
   | 'pushedAuthorizationRequest'
@@ -210,17 +210,17 @@ function buildOidcUrl({
     /** 1. client sends {@link PushedAuthRequest} & client receives {@link PushedAuthResponse} */
     case 'pushedAuthorizationRequest':
       return concatenateUrl(baseURL, 'par');
-    /** 2. provider gets {@link Web5ConnectAuthRequest} */
+    /** 2. provider gets {@link EnboxConnectAuthRequest} */
     case 'authorize':
       if (!authParam)
       {throw new Error(
         `authParam must be providied when building a token URL`
       );}
       return concatenateUrl(baseURL, `authorize/${authParam}.jwt`);
-    /** 3. provider sends {@link Web5ConnectAuthResponse} */
+    /** 3. provider sends {@link EnboxConnectAuthResponse} */
     case 'callback':
       return concatenateUrl(baseURL, `callback`);
-    /**  4. client gets {@link Web5ConnectAuthResponse */
+    /**  4. client gets {@link EnboxConnectAuthResponse */
     case 'token':
       if (!tokenParam)
       {throw new Error(
@@ -248,20 +248,20 @@ async function generateCodeChallenge(): Promise<{ codeChallengeBytes: Uint8Array
   return { codeChallengeBytes, codeChallengeBase64Url };
 }
 
-/** Client creates the {@link Web5ConnectAuthRequest} */
+/** Client creates the {@link EnboxConnectAuthRequest} */
 async function createAuthRequest(
   options: RequireOnly<
-    Web5ConnectAuthRequest,
+    EnboxConnectAuthRequest,
     'client_id' | 'scope' | 'redirect_uri' | 'permissionRequests' | 'displayName'
   >
-): Promise<Web5ConnectAuthRequest> {
+): Promise<EnboxConnectAuthRequest> {
   // Generate a random state value to associate the authorization request with the response.
   const stateBytes = CryptoUtils.randomBytes(16);
 
   // Generate a random nonce value to associate the ID Token with the authorization request.
   const nonceBytes = CryptoUtils.randomBytes(16);
 
-  const requestObject: Web5ConnectAuthRequest = {
+  const requestObject: EnboxConnectAuthRequest = {
     ...options,
     nonce           : Convert.uint8Array(nonceBytes).toBase64Url(),
     response_type   : 'id_token',
@@ -313,13 +313,13 @@ async function encryptAuthRequest({
 /** Create a response object compatible with Web5 Connect and OIDC SIOPv2 */
 async function createResponseObject(
   options: RequireOnly<
-    Web5ConnectAuthResponse,
+    EnboxConnectAuthResponse,
     'iss' | 'sub' | 'aud' | 'delegateGrants' | 'delegatePortableDid'
   >
-): Promise<Web5ConnectAuthResponse> {
+): Promise<EnboxConnectAuthResponse> {
   const currentTimeInSeconds = Math.floor(Date.now() / 1000);
 
-  const responseObject: Web5ConnectAuthResponse = {
+  const responseObject: EnboxConnectAuthResponse = {
     ...options,
     iat : currentTimeInSeconds,
     exp : currentTimeInSeconds + 600, // Expires in 10 minutes.
@@ -406,10 +406,10 @@ async function verifyJwt({ jwt }: { jwt: string }): Promise<Record<string, unkno
 }
 
 /**
- * Fetches the {@Web5ConnectAuthRequest} from the authorize endpoint and decrypts it
+ * Fetches the {@EnboxConnectAuthRequest} from the authorize endpoint and decrypts it
  * using the encryption key passed via QR code.
  */
-const getAuthRequest = async (request_uri: string, encryption_key: string): Promise<Web5ConnectAuthRequest> => {
+const getAuthRequest = async (request_uri: string, encryption_key: string): Promise<EnboxConnectAuthRequest> => {
   const authRequest = await fetch(request_uri, { signal: AbortSignal.timeout(30_000) });
   const jwe = await authRequest.text();
   const jwt = await decryptAuthRequest({
@@ -418,7 +418,7 @@ const getAuthRequest = async (request_uri: string, encryption_key: string): Prom
   });
   const web5ConnectAuthRequest = (await verifyJwt({
     jwt,
-  })) as Web5ConnectAuthRequest;
+  })) as EnboxConnectAuthRequest;
 
   return web5ConnectAuthRequest;
 };
@@ -461,7 +461,7 @@ async function decryptAuthRequest({
 
 /**
  * The client uses to decrypt the jwe obtained from the auth server which contains
- * the {@link Web5ConnectAuthResponse} that was sent by the provider to the auth server.
+ * the {@link EnboxConnectAuthResponse} that was sent by the provider to the auth server.
  *
  * @async
  * @param {BearerDid} clientDid - The did that was initially used by the client for ECDH at connect init.
@@ -517,7 +517,7 @@ async function decryptAuthResponse(
   return jwt;
 }
 
-/** Derives a shared ECDH private key in order to encrypt the {@link Web5ConnectAuthResponse} */
+/** Derives a shared ECDH private key in order to encrypt the {@link EnboxConnectAuthResponse} */
 async function deriveSharedKey(
   privateKeyDid: BearerDid,
   publicKeyDid: DidDocument
@@ -616,12 +616,12 @@ function shouldUseDelegatePermission(scope: DwnPermissionScope): boolean {
 
 /**
  * Creates the permission grants that assign to the selectedDid the level of
- * permissions that the web app requested in the {@link Web5ConnectAuthRequest}
+ * permissions that the web app requested in the {@link EnboxConnectAuthRequest}
  */
 async function createPermissionGrants(
   selectedDid: string,
   delegateBearerDid: BearerDid,
-  agent: Web5Agent,
+  agent: EnboxAgent,
   scopes: DwnPermissionScope[],
 ): Promise<DwnDataEncodedRecordsWriteMessage[]> {
   const permissionsApi = new AgentPermissionsApi({ agent });
@@ -683,7 +683,7 @@ async function createPermissionGrants(
  */
 async function prepareProtocol(
   selectedDid: string,
-  agent: Web5Agent,
+  agent: EnboxAgent,
   protocolDefinition: DwnProtocolDefinition
 ): Promise<void> {
 
@@ -744,17 +744,17 @@ async function prepareProtocol(
 /**
  * Creates a delegate did which the web app will use as its future indentity.
  * Assigns to that DID the level of permissions that the web app requested in
- * the {@link Web5ConnectAuthRequest}. Encrypts via ECDH key that the web app
+ * the {@link EnboxConnectAuthRequest}. Encrypts via ECDH key that the web app
  * will have access to because the web app has the public key which it provided
- * in the {@link Web5ConnectAuthRequest}. Then sends the ciphertext of this
- * {@link Web5ConnectAuthResponse} to the callback endpoint. Which the
+ * in the {@link EnboxConnectAuthRequest}. Then sends the ciphertext of this
+ * {@link EnboxConnectAuthResponse} to the callback endpoint. Which the
  * web app will need to retrieve from the token endpoint and decrypt with the pin to access.
  */
 async function submitAuthResponse(
   selectedDid: string,
-  authRequest: Web5ConnectAuthRequest,
+  authRequest: EnboxConnectAuthRequest,
   randomPin: string,
-  agent: Web5Agent
+  agent: EnboxAgent
 ): Promise<void> {
   const delegateBearerDid = await DidJwk.create();
   const delegatePortableDid = await delegateBearerDid.export();
@@ -852,3 +852,13 @@ export const Oidc = {
   generateCodeChallenge,
   submitAuthResponse,
 };
+
+// ---------------------------------------------------------------------------
+// Deprecated aliases — migration aid
+// ---------------------------------------------------------------------------
+
+/** @deprecated Use {@link EnboxConnectAuthRequest} instead. */
+export type Web5ConnectAuthRequest = EnboxConnectAuthRequest;
+
+/** @deprecated Use {@link EnboxConnectAuthResponse} instead. */
+export type Web5ConnectAuthResponse = EnboxConnectAuthResponse;

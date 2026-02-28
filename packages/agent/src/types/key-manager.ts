@@ -16,7 +16,7 @@ import type {
   PublicKeyJwk,
 } from '@enbox/crypto';
 
-import type { Web5PlatformAgent } from './agent.js';
+import type { EnboxPlatformAgent } from './agent.js';
 
 export interface AgentKeyManager extends KeyManager,
   Cipher<KmsCipherParams, KmsCipherParams>,
@@ -25,7 +25,7 @@ export interface AgentKeyManager extends KeyManager,
   KeyDeleter<KmsDeleteKeyParams>,
   KeyWrapper<KmsUriWrapKeyParams, KmsUriUnwrapKeyParams> {
 
-  agent: Web5PlatformAgent;
+  agent: EnboxPlatformAgent;
 
   /**
    * Derives an HD child public key from a stored private key using HKDF-SHA256

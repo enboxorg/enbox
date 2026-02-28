@@ -3,8 +3,8 @@ import type {
   DwnPermissionConditions,
   DwnPermissionScope,
   DwnResponseStatus,
+  EnboxAgent,
   SendDwnRequest,
-  Web5Agent,
 } from '@enbox/agent';
 
 import { Convert } from '@enbox/common';
@@ -86,7 +86,7 @@ export class PermissionRequest implements PermissionRequestModel {
   /** parses the request given an agent, connectedDid and data encoded records write message  */
   static parse({ connectedDid, agent, message }:{
     connectedDid: string;
-    agent: Web5Agent;
+    agent: EnboxAgent;
     message: DwnDataEncodedRecordsWriteMessage;
   }): PermissionRequest {
     const request = DwnPermissionRequest.parse(message);
@@ -95,7 +95,7 @@ export class PermissionRequest implements PermissionRequestModel {
   }
 
   /** The agent to use for this instantiation of the request */
-  private get agent(): Web5Agent {
+  private get agent(): EnboxAgent {
     return this._permissions.agent;
   }
 

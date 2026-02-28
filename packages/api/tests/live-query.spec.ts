@@ -1,6 +1,6 @@
 import type { Record } from '../src/record.js';
 import type { RecordChange } from '../src/live-query.js';
-import type { DwnMessageSubscription, Web5Agent } from '@enbox/agent';
+import type { DwnMessageSubscription, EnboxAgent } from '@enbox/agent';
 
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
@@ -37,7 +37,7 @@ function createLiveQuery(options?: {
   subscription?: DwnMessageSubscription;
 }): LiveQuery {
   return new LiveQuery({
-    agent          : {} as Web5Agent,
+    agent          : {} as EnboxAgent,
     connectedDid   : 'did:test:alice',
     initialEntries : options?.initialEntries ?? [],
     subscription   : options?.subscription ?? createMockSubscription() as unknown as DwnMessageSubscription,

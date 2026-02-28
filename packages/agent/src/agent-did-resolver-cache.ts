@@ -1,6 +1,6 @@
 import type { DidResolutionResult, DidResolverCache, DidResolverCacheLevelParams } from '@enbox/dids';
 
-import type { Web5PlatformAgent } from './types/agent.js';
+import type { EnboxPlatformAgent } from './types/agent.js';
 
 import { DidResolverCacheLevel } from '@enbox/dids';
 import { logger } from '@enbox/common';
@@ -13,29 +13,29 @@ import { logger } from '@enbox/common';
 export class AgentDidResolverCache extends DidResolverCacheLevel implements DidResolverCache {
 
   /**
-   * Holds the instance of a `Web5PlatformAgent` that represents the current execution context for
+   * Holds the instance of a `EnboxPlatformAgent` that represents the current execution context for
    * the `AgentDidApi`. This agent is used to interact with other Web5 agent components. It's vital
    * to ensure this instance is set to correctly contextualize operations within the broader Web5
    * Agent framework.
    */
-  private _agent?: Web5PlatformAgent;
+  private _agent?: EnboxPlatformAgent;
 
   /** A map of DIDs that are currently in-flight. This helps avoid going into an infinite loop */
   private _resolving: Map<string, boolean> = new Map();
 
-  constructor({ agent, db, location, ttl }: DidResolverCacheLevelParams & { agent?: Web5PlatformAgent }) {
+  constructor({ agent, db, location, ttl }: DidResolverCacheLevelParams & { agent?: EnboxPlatformAgent }) {
     super ({ db, location, ttl });
     this._agent = agent;
   }
 
-  get agent(): Web5PlatformAgent {
+  get agent(): EnboxPlatformAgent {
     if (!this._agent) {
       throw new Error('Agent not initialized');
     }
     return this._agent;
   }
 
-  set agent(agent: Web5PlatformAgent) {
+  set agent(agent: EnboxPlatformAgent) {
     this._agent = agent;
   }
 

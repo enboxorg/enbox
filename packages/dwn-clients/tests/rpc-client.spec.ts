@@ -1,5 +1,5 @@
+import type { EnboxRpc } from '../src/rpc-client.js';
 import type { Persona } from '@enbox/dwn-sdk-js';
-import type { Web5Rpc } from '../src/rpc-client.js';
 
 import sinon from 'sinon';
 
@@ -10,7 +10,7 @@ import {
   createJsonRpcErrorResponse, createJsonRpcSuccessResponse,
   DwnServerInfoCacheMemory, HttpDwnRpcClient, JsonRpcErrorCodes,
 } from '../src/index.js';
-import { DidRpcMethod, HttpWeb5RpcClient, Web5RpcClient, WebSocketWeb5RpcClient } from '../src/rpc-client.js';
+import { DidRpcMethod, EnboxRpcClient, HttpEnboxRpcClient, WebSocketEnboxRpcClient } from '../src/rpc-client.js';
 
 const testDwnUrl = process.env.TEST_DWN_URL || 'http://localhost:3000';
 
@@ -65,7 +65,7 @@ describe('RPC Clients', () => {
     });
   });
 
-  describe('Web5RpcClient', () => {
+  describe('EnboxRpcClient', () => {
     let alice: Persona;
 
     beforeEach(async () => {
@@ -79,7 +79,7 @@ describe('RPC Clients', () => {
     });
 
     it('returns available transports', async () => {
-      const httpOnlyClient = new Web5RpcClient();
+      const httpOnlyClient = new EnboxRpcClient();
 
       expect(httpOnlyClient.transportProtocols).toEqual(expect.arrayContaining([
         'http:',
@@ -91,8 +91,8 @@ describe('RPC Clients', () => {
 
     describe('sendDidRequest', () => {
       it('should send to the client depending on transport', async () => {
-        const stubHttpClient = sinon.createStubInstance(HttpWeb5RpcClient);
-        const httpOnlyClient = new Web5RpcClient([ stubHttpClient ]);
+        const stubHttpClient = sinon.createStubInstance(HttpEnboxRpcClient);
+        const httpOnlyClient = new EnboxRpcClient([ stubHttpClient ]);
 
         // request with http
         const request = { method: DidRpcMethod.Resolve, url: 'http://127.0.0.1', data: 'some-data' };
@@ -102,7 +102,7 @@ describe('RPC Clients', () => {
       });
 
       it('should throw if transport client is not found', async () => {
-        const client = new Web5RpcClient();
+        const client = new EnboxRpcClient();
 
         // request with foo transport
         const request = { method: DidRpcMethod.Resolve, url: 'foo://127.0.0.1', data: 'some-data' };
@@ -115,7 +115,7 @@ describe('RPC Clients', () => {
       });
 
       it('should throw for a completely invalid URL', async () => {
-        const client = new Web5RpcClient();
+        const client = new EnboxRpcClient();
         const request = { method: DidRpcMethod.Resolve, url: 'not a valid url at all', data: 'some-data' };
         try {
           await client.sendDidRequest(request);
@@ -127,8 +127,8 @@ describe('RPC Clients', () => {
       });
 
       it('should throw if transport is sockets', async () => {
-        const socketClientSpy = sinon.spy(WebSocketWeb5RpcClient.prototype, 'sendDidRequest');
-        const client = new Web5RpcClient();
+        const socketClientSpy = sinon.spy(WebSocketEnboxRpcClient.prototype, 'sendDidRequest');
+        const client = new EnboxRpcClient();
 
         for (const transport of ['ws:', 'wss:']) {
         // request with ws transport
@@ -148,8 +148,8 @@ describe('RPC Clients', () => {
 
     describe('sendDwnRequest', () => {
       it('should send to the client depending on transport', async () => {
-        const stubHttpClient = sinon.createStubInstance(HttpWeb5RpcClient);
-        const httpOnlyClient = new Web5RpcClient([ stubHttpClient ]);
+        const stubHttpClient = sinon.createStubInstance(HttpEnboxRpcClient);
+        const httpOnlyClient = new EnboxRpcClient([ stubHttpClient ]);
         const { message } = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : {
@@ -169,7 +169,7 @@ describe('RPC Clients', () => {
       });
 
       it('should throw if transport client is not found', async () => {
-        const client = new Web5RpcClient();
+        const client = new EnboxRpcClient();
         const { message } = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : {
@@ -191,7 +191,7 @@ describe('RPC Clients', () => {
       });
 
       it('should throw for a completely invalid URL in sendDwnRequest', async () => {
-        const client = new Web5RpcClient();
+        const client = new EnboxRpcClient();
         const { message } = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : { schema: 'foo/bar' }
@@ -218,7 +218,7 @@ describe('RPC Clients', () => {
         };
 
         // Create a custom client that handles http: and returns a custom response
-        const customClient: Web5Rpc = {
+        const customClient: EnboxRpc = {
           get transportProtocols(): string[] { return ['http:', 'https:']; },
           sendDwnRequest : sinon.stub().resolves(customResponse),
           sendDidRequest : sinon.stub().resolves({ ok: true, status: { code: 200, message: 'OK' } }),
@@ -226,7 +226,7 @@ describe('RPC Clients', () => {
         };
 
         // Custom clients override the defaults since they're appended after defaults
-        const rpcClient = new Web5RpcClient([customClient as any]);
+        const rpcClient = new EnboxRpcClient([customClient as any]);
 
         const { message } = await TestDataGenerator.generateRecordsQuery({
           author : alice,
@@ -245,7 +245,7 @@ describe('RPC Clients', () => {
     });
 
     describe('getServerInfo',() => {
-      let client: Web5RpcClient;
+      let client: EnboxRpcClient;
 
       afterAll(() => {
         sinon.restore();
@@ -253,7 +253,7 @@ describe('RPC Clients', () => {
 
       beforeEach(async () => {
         sinon.restore();
-        client = new Web5RpcClient();
+        client = new EnboxRpcClient();
       });
 
       it('is able to get server info', async () => {
@@ -301,7 +301,7 @@ describe('RPC Clients', () => {
       });
 
       it('should throw if transport client is not found', async () => {
-        const client = new Web5RpcClient();
+        const client = new EnboxRpcClient();
 
         // request with foo transport
         try {
@@ -313,8 +313,8 @@ describe('RPC Clients', () => {
       });
 
       it('should throw if transport is sockets', async () => {
-        const socketClientSpy = sinon.spy(WebSocketWeb5RpcClient.prototype, 'getServerInfo');
-        const client = new Web5RpcClient();
+        const socketClientSpy = sinon.spy(WebSocketEnboxRpcClient.prototype, 'getServerInfo');
+        const client = new EnboxRpcClient();
 
         for (const transport of ['ws:', 'wss:']) {
         // request with ws transport
@@ -332,9 +332,9 @@ describe('RPC Clients', () => {
     });
   });
 
-  describe('HttpWeb5RpcClient', () => {
+  describe('HttpEnboxRpcClient', () => {
     let alice: Persona;
-    let client: HttpWeb5RpcClient;
+    let client: HttpEnboxRpcClient;
 
     afterAll(() => {
       sinon.restore();
@@ -343,7 +343,7 @@ describe('RPC Clients', () => {
     beforeEach(async () => {
       sinon.restore();
 
-      client = new HttpWeb5RpcClient();
+      client = new HttpEnboxRpcClient();
       alice = await TestDataGenerator.generateDidKeyPersona();
     });
 
@@ -423,9 +423,9 @@ describe('RPC Clients', () => {
     });
   });
 
-  describe('WebSocketWeb5RpcClient', () => {
+  describe('WebSocketEnboxRpcClient', () => {
     let alice: Persona;
-    const client = new WebSocketWeb5RpcClient();
+    const client = new WebSocketEnboxRpcClient();
     // we set the client to a websocket url
     const dwnUrl = new URL(testDwnUrl);
     dwnUrl.protocol = dwnUrl.protocol === 'http:' ? 'ws:' : 'wss:';

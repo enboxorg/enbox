@@ -4,7 +4,7 @@
  */
 /// <reference types="@enbox/dwn-sdk-js" />
 
-import type { DwnMessage, DwnResponseStatus, Web5Agent } from '@enbox/agent';
+import type { DwnMessage, DwnResponseStatus, EnboxAgent } from '@enbox/agent';
 
 import { DwnInterface } from '@enbox/agent';
 
@@ -30,8 +30,8 @@ export type ProtocolMetadata = {
  * protocols on remote DWNs.
  */
 export class Protocol {
-  /** The {@link Web5Agent} instance that handles DWNs requests. */
-  private _agent: Web5Agent;
+  /** The {@link EnboxAgent} instance that handles DWNs requests. */
+  private _agent: EnboxAgent;
 
   /** Metadata associated with the protocol, including the author and optional message CID. */
   private _metadata: ProtocolMetadata;
@@ -42,11 +42,11 @@ export class Protocol {
   /**
    * Constructs a new instance of the Protocol class.
    *
-   * @param agent - The Web5Agent instance used for network interactions.
+   * @param agent - The EnboxAgent instance used for network interactions.
    * @param protocolsConfigureMessage - The configuration message containing the protocol details.
    * @param metadata - Metadata associated with the protocol, including the author and optional message CID.
    */
-  constructor(agent: Web5Agent, protocolsConfigureMessage: DwnMessage[DwnInterface.ProtocolsConfigure], metadata: ProtocolMetadata) {
+  constructor(agent: EnboxAgent, protocolsConfigureMessage: DwnMessage[DwnInterface.ProtocolsConfigure], metadata: ProtocolMetadata) {
     this._agent = agent;
     this._metadata = metadata;
     this._protocolsConfigureMessage = protocolsConfigureMessage;

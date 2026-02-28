@@ -6,7 +6,7 @@ import type { ProtocolDefinition, RecordsDeleteMessage, RecordsWriteMessage } fr
 import { Convert } from '@enbox/common';
 import { DidJwk, isPortableDid } from '@enbox/dids';
 
-import type { Web5PlatformAgent } from '../src/types/agent.js';
+import type { EnboxPlatformAgent } from '../src/types/agent.js';
 import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreListParams, DataStoreSetParams } from '../src/store-data.js';
 
 import { AgentDidApi } from '../src/did-api.js';
@@ -60,7 +60,7 @@ class DwnTestStore extends DwnDataStore<PortableDid> implements AgentDataStore<P
   }
 
   protected async getAllRecords({ agent, tenantDid }: {
-    agent: Web5PlatformAgent;
+    agent: EnboxPlatformAgent;
     tenantDid: string;
   }): Promise<PortableDid[]> {
     // Clear the index since it will be rebuilt from the query results.

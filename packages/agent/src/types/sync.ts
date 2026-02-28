@@ -1,4 +1,4 @@
-import type { Web5PlatformAgent } from './agent.js';
+import type { EnboxPlatformAgent } from './agent.js';
 
 /**
  * The SyncEngine is responsible for syncing messages between the agent and the platform.
@@ -58,7 +58,7 @@ export interface SyncEngine {
   /**
    * The agent that the SyncEngine is attached to.
    */
-  agent: Web5PlatformAgent;
+  agent: EnboxPlatformAgent;
 
   /**
    * Current connectivity state as observed by the sync engine.

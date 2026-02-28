@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 
-import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
+import { EnboxUserAgent, PlatformAgentTestHarness } from '@enbox/agent';
 
 import { VcApi } from '../src/vc-api.js';
 
@@ -10,7 +10,7 @@ describe('VcApi', () => {
 
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
-      agentClass  : Web5UserAgent,
+      agentClass  : EnboxUserAgent,
       agentStores : 'memory'
     });
 

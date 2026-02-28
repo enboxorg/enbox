@@ -1,4 +1,4 @@
-import type { DwnDataEncodedRecordsWriteMessage, Web5Agent } from '@enbox/agent';
+import type { DwnDataEncodedRecordsWriteMessage, EnboxAgent } from '@enbox/agent';
 
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
@@ -33,7 +33,7 @@ function createFakeMessage(overrides: Partial<DwnDataEncodedRecordsWriteMessage>
   };
 }
 
-function createFakeAgent(overrides: Record<string, unknown> = {}): Web5Agent {
+function createFakeAgent(overrides: Record<string, unknown> = {}): EnboxAgent {
   return {
     sendDwnRequest    : sinon.stub().resolves({ reply: { status: { code: 202, detail: 'Accepted' } } }),
     processDwnRequest : sinon.stub().resolves({

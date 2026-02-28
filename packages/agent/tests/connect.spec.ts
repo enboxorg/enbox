@@ -13,9 +13,9 @@ import { testDwnUrl } from './utils/test-config.js';
 import { type BearerDid, DidDht, DidJwk } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 import {
+  type EnboxConnectAuthRequest,
+  type EnboxConnectAuthResponse,
   Oidc,
-  type Web5ConnectAuthRequest,
-  type Web5ConnectAuthResponse,
 } from '../src/oidc.js';
 
 import type { BearerIdentity, DwnMessage, DwnProtocolDefinition } from '../src/index.js';
@@ -163,11 +163,11 @@ describe('web5 connect', () => {
 
   let testHarness: PlatformAgentTestHarness;
 
-  let authRequest: Web5ConnectAuthRequest;
+  let authRequest: EnboxConnectAuthRequest;
   let authRequestJwt: string;
   let authRequestJwe: string;
 
-  let authResponse: Web5ConnectAuthResponse;
+  let authResponse: EnboxConnectAuthResponse;
   let authResponseJwt: string;
   let authResponseJwe: string;
 
@@ -445,7 +445,7 @@ describe('web5 connect', () => {
     it('should validate the jwt and parse it into an object', async () => {
       const result = (await Oidc.verifyJwt({
         jwt: authResponseJwt,
-      })) as Web5ConnectAuthResponse;
+      })) as EnboxConnectAuthResponse;
       expect(typeof result).toBe('object');
       expect(result.delegateGrants.length).toBeGreaterThan(0);
     });

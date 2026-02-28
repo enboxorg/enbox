@@ -6,7 +6,7 @@
  * @module
  */
 
-import type { Web5UserAgent } from '@enbox/agent';
+import type { EnboxUserAgent } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
 import type { LocalConnectOptions, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
@@ -18,7 +18,7 @@ import { INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../types.js';
 
 /** @internal */
 export interface LocalConnectContext {
-  userAgent: Web5UserAgent;
+  userAgent: EnboxUserAgent;
   emitter: AuthEventEmitter;
   storage: StorageAdapter;
   defaultPassword?: string;

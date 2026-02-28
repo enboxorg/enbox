@@ -1,6 +1,6 @@
 
 import type { PushedAuthResponse } from './oidc.js';
-import type { DwnPermissionScope, DwnProtocolDefinition, Web5ConnectAuthResponse } from './index.js';
+import type { DwnPermissionScope, DwnProtocolDefinition, EnboxConnectAuthResponse } from './index.js';
 
 import { CryptoUtils } from '@enbox/crypto';
 import { DidJwk } from '@enbox/dids';
@@ -21,8 +21,8 @@ async function initClient({
   onWalletUriReady,
   validatePin,
 }: WalletConnectOptions): Promise<{
-  delegateGrants: Web5ConnectAuthResponse['delegateGrants'];
-  delegatePortableDid: Web5ConnectAuthResponse['delegatePortableDid'];
+  delegateGrants: EnboxConnectAuthResponse['delegateGrants'];
+  delegatePortableDid: EnboxConnectAuthResponse['delegatePortableDid'];
   connectedDid: string;
 } | undefined> {
   // ephemeral client did for ECDH, signing, verification
@@ -112,7 +112,7 @@ async function initClient({
     tokenParam : request.state,
   });
 
-  // subscribe to receiving a response from the wallet with default TTL. receive ciphertext of {@link Web5ConnectAuthResponse}
+  // subscribe to receiving a response from the wallet with default TTL. receive ciphertext of {@link EnboxConnectAuthResponse}
   const authResponse = await pollWithTtl(() => fetch(tokenUrl, { signal: AbortSignal.timeout(30_000) }));
 
   if (authResponse) {
@@ -123,7 +123,7 @@ async function initClient({
     const jwt = await Oidc.decryptAuthResponse(clientDid, jwe, pin);
     const verifiedAuthResponse = (await Oidc.verifyJwt({
       jwt,
-    })) as Web5ConnectAuthResponse;
+    })) as EnboxConnectAuthResponse;
 
     return {
       delegateGrants      : verifiedAuthResponse.delegateGrants,
@@ -163,7 +163,7 @@ export type WalletConnectOptions = {
    * The link can either be used as a deep link on the same device or a QR code for cross device or both.
    * The query params are `{ request_uri: string; encryption_key: string; }`
    * The wallet will use the `request_uri to contact the intermediary server's `authorize` endpoint
-   * and pull down the {@link Web5ConnectAuthRequest} and use the `encryption_key` to decrypt it.
+   * and pull down the {@link EnboxConnectAuthRequest} and use the `encryption_key` to decrypt it.
    *
    * @param uri - The URI returned by the web5 connect API to be passed to a provider.
    */
@@ -171,7 +171,7 @@ export type WalletConnectOptions = {
 
   /**
    * Function that must be provided to submit the pin entered by the user on the client.
-   * The pin is used to decrypt the {@link Web5ConnectAuthResponse} that was retrieved from the
+   * The pin is used to decrypt the {@link EnboxConnectAuthResponse} that was retrieved from the
    * token endpoint by the client inside of web5 connect.
    *
    * @returns A promise that resolves to the PIN as a string.

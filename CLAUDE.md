@@ -366,7 +366,7 @@ Brief JSDoc on public methods and complex private methods. Use `@param`, `@retur
  * When any type in the protocol definition has `encryptionRequired: true`,
  * `$encryption` keys are derived and injected into the protocol definition.
  */
-private async installProtocol(tenant: string, agent: Web5PlatformAgent): Promise<void> {
+private async installProtocol(tenant: string, agent: EnboxPlatformAgent): Promise<void> {
 ```
 
 ### ESLint Rules Summary
@@ -463,13 +463,13 @@ describe('ComponentName', () => {
 });
 ```
 
-For full agent lifecycle tests (vault + DWN stores), use `Web5UserAgent` instead of `TestAgent`:
+For full agent lifecycle tests (vault + DWN stores), use `EnboxUserAgent` instead of `TestAgent`:
 
 ```typescript
-import { Web5UserAgent } from '../src/web5-user-agent.js';
+import { EnboxUserAgent } from '../src/enbox-user-agent.js';
 
 const harness = await PlatformAgentTestHarness.setup({
-  agentClass  : Web5UserAgent,
+  agentClass  : EnboxUserAgent,
   agentStores : 'dwn',
 });
 await harness.agent.initialize({ password: 'test' });

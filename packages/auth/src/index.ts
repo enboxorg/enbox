@@ -42,7 +42,7 @@ export { AuthEventEmitter } from './events.js';
 
 // Re-export agent classes so consumers can construct custom agents/vaults
 // without a direct @enbox/agent dependency.
-export { HdIdentityVault, Web5UserAgent } from '@enbox/agent';
+export { EnboxUserAgent, HdIdentityVault } from '@enbox/agent';
 
 // Wallet-connect helpers
 export { processConnectedGrants } from './flows/wallet-connect.js';

@@ -3,7 +3,7 @@ import type { PortableDid } from '@enbox/dids';
 import { Convert } from '@enbox/common';
 import { isPortableDid } from '@enbox/dids';
 
-import type { Web5PlatformAgent } from './types/agent.js';
+import type { EnboxPlatformAgent } from './types/agent.js';
 import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreListParams, DataStoreSetParams } from './store-data.js';
 
 import { DwnInterface } from './types/dwn.js';
@@ -43,7 +43,7 @@ export class DwnDidStore extends DwnDataStore<PortableDid> implements AgentDataS
   }
 
   protected async getAllRecords({ agent, tenantDid }: {
-    agent: Web5PlatformAgent;
+    agent: EnboxPlatformAgent;
     tenantDid: string;
   }): Promise<PortableDid[]> {
     // Clear the index since it will be rebuilt from the query results.

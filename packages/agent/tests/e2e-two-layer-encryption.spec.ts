@@ -4,9 +4,9 @@ import { Convert } from '@enbox/common';
 import { afterAll, describe, expect, it } from 'bun:test';
 
 import { DwnInterface } from '../src/types/dwn.js';
+import { EnboxUserAgent } from '../src/enbox-user-agent.js';
 import { JwkProtocolDefinition } from '../src/store-data-protocols.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
-import { Web5UserAgent } from '../src/web5-user-agent.js';
 
 /**
  * End-to-end test for two-layer encryption and recovery from seed phrase.
@@ -39,7 +39,7 @@ describe('e2e: two-layer encryption recovery', () => {
     // (e.g., when the entire suite was skipped due to DHT publish failures).
     try {
       const cleanupHarness = await PlatformAgentTestHarness.setup({
-        agentClass  : Web5UserAgent,
+        agentClass  : EnboxUserAgent,
         agentStores : 'dwn',
         testDataLocation,
       });
@@ -55,7 +55,7 @@ describe('e2e: two-layer encryption recovery', () => {
 
     it('should initialize the agent, returning a recovery phrase', async () => {
       harness = await PlatformAgentTestHarness.setup({
-        agentClass  : Web5UserAgent,
+        agentClass  : EnboxUserAgent,
         agentStores : 'dwn',
         testDataLocation,
       });
@@ -63,12 +63,12 @@ describe('e2e: two-layer encryption recovery', () => {
       // Initialize the vault — this creates the agent DID (did:dht with Ed25519 +
       // X25519) deterministically from a generated seed phrase, and encrypts
       // the PortableDid with the password (Layer 1).
-      recoveryPhrase = await (harness.agent as Web5UserAgent).initialize({ password });
+      recoveryPhrase = await (harness.agent as EnboxUserAgent).initialize({ password });
       expect(typeof recoveryPhrase).toBe('string');
       expect(recoveryPhrase.split(' ')).toHaveLength(12);
 
       // Start the agent (unlocks the vault).
-      await (harness.agent as Web5UserAgent).start({ password });
+      await (harness.agent as EnboxUserAgent).start({ password });
       originalAgentDidUri = harness.agent.agentDid.uri;
       expect(originalAgentDidUri).toMatch(/^did:dht:/);
     });
@@ -217,13 +217,13 @@ describe('e2e: two-layer encryption recovery', () => {
       // Create a fresh agent pointed at the same LevelDB paths. The DWN data is
       // still on disk; we need to unlock the vault and verify we can read it.
       harness = await PlatformAgentTestHarness.setup({
-        agentClass  : Web5UserAgent,
+        agentClass  : EnboxUserAgent,
         agentStores : 'dwn',
         testDataLocation,
       });
 
       // The vault should be locked since we just created a fresh agent instance.
-      expect((harness.agent as Web5UserAgent).vault.isLocked()).toBe(true);
+      expect((harness.agent as EnboxUserAgent).vault.isLocked()).toBe(true);
     });
 
     it('should recover the agent DID using the seed phrase (Layer 1)', async () => {
@@ -236,17 +236,17 @@ describe('e2e: two-layer encryption recovery', () => {
       // Re-initialize with the original recovery phrase but a NEW password.
       // The seed phrase deterministically re-derives the same agent DID, and the
       // new password re-encrypts the vault.
-      const returnedPhrase = await (harness.agent as Web5UserAgent).initialize({
+      const returnedPhrase = await (harness.agent as EnboxUserAgent).initialize({
         password: newPassword,
         recoveryPhrase,
       });
       expect(returnedPhrase).toBe(recoveryPhrase);
 
       // Verify the vault reports as initialized after recovery.
-      expect(await (harness.agent as Web5UserAgent).vault.isInitialized()).toBe(true);
+      expect(await (harness.agent as EnboxUserAgent).vault.isInitialized()).toBe(true);
 
       // Start the agent with the new password.
-      await (harness.agent as Web5UserAgent).start({ password: newPassword });
+      await (harness.agent as EnboxUserAgent).start({ password: newPassword });
 
       // The recovered agent DID should be identical to the original.
       expect(harness.agent.agentDid.uri).toBe(originalAgentDidUri);
@@ -258,10 +258,10 @@ describe('e2e: two-layer encryption recovery', () => {
       // re-encryption was effective.
 
       // Lock the vault first to simulate a fresh start attempt.
-      await (harness.agent as Web5UserAgent).vault.lock();
+      await (harness.agent as EnboxUserAgent).vault.lock();
 
       try {
-        await (harness.agent as Web5UserAgent).start({ password });
+        await (harness.agent as EnboxUserAgent).start({ password });
         throw new Error('Expected an error when using the old password');
       } catch (error: any) {
         // Re-throw Error from throw new Error() so it isn't swallowed.
@@ -270,7 +270,7 @@ describe('e2e: two-layer encryption recovery', () => {
       }
 
       // Re-unlock with the correct (new) password to continue the test.
-      await (harness.agent as Web5UserAgent).start({ password: newPassword });
+      await (harness.agent as EnboxUserAgent).start({ password: newPassword });
     });
 
     it('should read back all encrypted keys with exact match (Layer 2)', async () => {

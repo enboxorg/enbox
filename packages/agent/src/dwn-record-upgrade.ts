@@ -8,7 +8,7 @@ import type {
 } from '@enbox/dwn-sdk-js';
 
 import type { DwnSigner } from './types/dwn.js';
-import type { Web5PlatformAgent } from './types/agent.js';
+import type { EnboxPlatformAgent } from './types/agent.js';
 
 import {
   Encoder,
@@ -42,7 +42,7 @@ import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
  * @param contextKeyCache - Cache for context key info
  */
 export async function upgradeExternalRootRecord(
-  agent: Web5PlatformAgent,
+  agent: EnboxPlatformAgent,
   tenantDid: string,
   recordsWrite: RecordsWriteMessage,
   dwn: Dwn,

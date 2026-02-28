@@ -3,8 +3,8 @@ import type {
   DwnPermissionConditions,
   DwnPermissionScope,
   DwnResponseStatus,
-  SendDwnRequest,
-  Web5Agent
+  EnboxAgent,
+  SendDwnRequest
 } from '@enbox/agent';
 
 import { Convert } from '@enbox/common';
@@ -80,7 +80,7 @@ export interface PermissionGrantOptions {
   /** The underlying DWN `RecordsWrite` message along with encoded data that represent the grant */
   message: DwnDataEncodedRecordsWriteMessage;
   /** The agent to use when interacting with the underlying DWN record representing the grant */
-  agent: Web5Agent;
+  agent: EnboxAgent;
 }
 
 /**
@@ -127,7 +127,7 @@ export class PermissionGrant implements PermissionGrantModel {
   }
 
   /** The agent to use for this instantiation of the grant */
-  private get agent(): Web5Agent {
+  private get agent(): EnboxAgent {
     return this._permissions.agent;
   }
 

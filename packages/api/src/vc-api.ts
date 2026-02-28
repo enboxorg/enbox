@@ -1,4 +1,4 @@
-import type { Web5Agent } from '@enbox/agent';
+import type { EnboxAgent } from '@enbox/agent';
 
 /**
  * The VC API is used to issue, present and verify VCs
@@ -7,15 +7,15 @@ import type { Web5Agent } from '@enbox/agent';
  */
 export class VcApi {
   /**
-   * Holds the instance of a {@link Web5Agent} that represents the current execution context for
+   * Holds the instance of a {@link EnboxAgent} that represents the current execution context for
    * the `VcApi`. This agent is used to process VC requests.
    */
-  private agent: Web5Agent;
+  private agent: EnboxAgent;
 
   /** The DID of the tenant under which DID operations are being performed. */
   private connectedDid: string;
 
-  constructor(options: { agent: Web5Agent, connectedDid: string }) {
+  constructor(options: { agent: EnboxAgent, connectedDid: string }) {
     this.agent = options.agent;
     this.connectedDid = options.connectedDid;
   }

@@ -35,4 +35,4 @@ export * from './test-harness.js';
 export * from './utils.js';
 export * from './connect.js';
 export * from './oidc.js';
-export * from './web5-user-agent.js';
+export * from './enbox-user-agent.js';

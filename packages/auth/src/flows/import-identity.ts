@@ -6,7 +6,7 @@
  * @module
  */
 
-import type { Web5UserAgent } from '@enbox/agent';
+import type { EnboxUserAgent } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
 import { AuthSession } from '../identity-session.js';
@@ -22,7 +22,7 @@ import type {
 
 /** @internal */
 export interface ImportContext {
-  userAgent: Web5UserAgent;
+  userAgent: EnboxUserAgent;
   emitter: AuthEventEmitter;
   storage: StorageAdapter;
   defaultSync?: SyncOption;

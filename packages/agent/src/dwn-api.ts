@@ -33,8 +33,8 @@ import {
 import { CryptoUtils, X25519 } from '@enbox/crypto';
 import { DidDht, DidJwk, DidResolverCacheLevel, UniversalResolver } from '@enbox/dids';
 
+import type { EnboxPlatformAgent } from './types/agent.js';
 import type { LocalDwnStrategy } from './local-dwn.js';
-import type { Web5PlatformAgent } from './types/agent.js';
 import type {
   DwnMessage,
   DwnMessageInstance,
@@ -102,7 +102,7 @@ type DwnMessageWithBlob<T extends DwnInterface> = {
 };
 
 type DwnApiParams = {
-  agent?: Web5PlatformAgent;
+  agent?: EnboxPlatformAgent;
   dwn: Dwn;
   localDwnStrategy?: LocalDwnStrategy;
 };
@@ -113,12 +113,12 @@ interface DwnApiCreateDwnParams extends Partial<DwnConfig> {
 
 export class AgentDwnApi {
   /**
-   * Holds the instance of a `Web5PlatformAgent` that represents the current execution context for
+   * Holds the instance of a `EnboxPlatformAgent` that represents the current execution context for
    * the `AgentDwnApi`. This agent is used to interact with other Web5 agent components. It's vital
    * to ensure this instance is set to correctly contextualize operations within the broader Web5
    * Agent framework.
    */
-  private _agent?: Web5PlatformAgent;
+  private _agent?: EnboxPlatformAgent;
 
   /**
    * The DWN instance to use for this API.
@@ -187,12 +187,12 @@ export class AgentDwnApi {
   }
 
   /**
-   * Retrieves the `Web5PlatformAgent` execution context.
+   * Retrieves the `EnboxPlatformAgent` execution context.
    *
-   * @returns The `Web5PlatformAgent` instance that represents the current execution context.
+   * @returns The `EnboxPlatformAgent` instance that represents the current execution context.
    * @throws Will throw an error if the `agent` instance property is undefined.
    */
-  get agent(): Web5PlatformAgent {
+  get agent(): EnboxPlatformAgent {
     if (this._agent === undefined) {
       throw new Error('AgentDwnApi: Unable to determine agent execution context.');
     }
@@ -200,7 +200,7 @@ export class AgentDwnApi {
     return this._agent;
   }
 
-  set agent(agent: Web5PlatformAgent) {
+  set agent(agent: EnboxPlatformAgent) {
     this._agent = agent;
     // Re-initialize local DWN discovery with the new agent's RPC client.
     this._localDwnDiscovery = new LocalDwnDiscovery(
@@ -360,7 +360,7 @@ export class AgentDwnApi {
    *   However, it is recommended to use the `processRequest` method to interact with the DWN
    *   instance to ensure that the DWN message is constructed correctly.
    * - The getter is named `node` to avoid confusion with the `dwn` property of the
-   *   `Web5PlatformAgent`. In other words, so that a developer can call `agent.dwn.node` to access
+   *   `EnboxPlatformAgent`. In other words, so that a developer can call `agent.dwn.node` to access
    *   the DWN instance and not `agent.dwn.dwn`.
    */
   get node(): Dwn {

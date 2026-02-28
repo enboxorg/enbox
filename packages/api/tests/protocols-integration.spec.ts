@@ -27,7 +27,7 @@ import {
   SocialGraphProtocol,
   StatusProtocol,
 } from '@enbox/protocols';
-import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
+import { EnboxUserAgent, PlatformAgentTestHarness } from '@enbox/agent';
 
 import { DwnApi } from '../src/dwn-api.js';
 import { repository } from '../src/repository.js';
@@ -48,7 +48,7 @@ describe('@enbox/protocols integration', () => {
 
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
-      agentClass       : Web5UserAgent,
+      agentClass       : EnboxUserAgent,
       agentStores      : 'memory',
       testDataLocation : '__TESTDATA__/protocols-integration',
     });

@@ -2,7 +2,7 @@ import type { Jwk } from '@enbox/crypto';
 
 import { beforeEach, describe, expect, it } from 'bun:test';
 
-import type { Web5PlatformAgent } from '../../../../src/types/agent.js';
+import type { EnboxPlatformAgent } from '../../../../src/types/agent.js';
 
 import { AgentCryptoApi } from '../../../../src/crypto-api.js';
 import { CompactJwe } from '../../../../src/prototyping/crypto/jose/jwe-compact.js';
@@ -13,7 +13,7 @@ describe('CompactJwe', () => {
   let keyManager: LocalKeyManager;
 
   beforeEach(async () => {
-    keyManager = new LocalKeyManager({ agent: {} as Web5PlatformAgent });
+    keyManager = new LocalKeyManager({ agent: {} as EnboxPlatformAgent });
   });
 
   describe('decrypt()', () => {

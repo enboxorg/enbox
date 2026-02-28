@@ -6,7 +6,7 @@
  * @module
  */
 
-import { Web5UserAgent } from '@enbox/agent';
+import { EnboxUserAgent } from '@enbox/agent';
 import type { BearerIdentity, PortableIdentity } from '@enbox/agent';
 
 import { AuthEventEmitter } from './events.js';
@@ -69,7 +69,7 @@ import { importFromPhrase, importFromPortable } from './flows/import-identity.js
  * ```
  */
 export class AuthManager {
-  private _userAgent: Web5UserAgent;
+  private _userAgent: EnboxUserAgent;
   private _emitter: AuthEventEmitter;
   private _storage: StorageAdapter;
   private _vault: VaultManager;
@@ -84,7 +84,7 @@ export class AuthManager {
   private _registration?: RegistrationOptions;
 
   private constructor(params: {
-    userAgent: Web5UserAgent;
+    userAgent: EnboxUserAgent;
     emitter: AuthEventEmitter;
     storage: StorageAdapter;
     vault: VaultManager;
@@ -108,7 +108,7 @@ export class AuthManager {
    *
    * When a pre-built `agent` is provided, it is used as-is and
    * `dataPath`, `agentVault`, and `localDwnStrategy` are ignored.
-   * Otherwise, a new `Web5UserAgent` is created with the given options.
+   * Otherwise, a new `EnboxUserAgent` is created with the given options.
    *
    * @param options - Configuration options for the auth manager.
    * @returns A ready-to-use AuthManager instance.
@@ -118,7 +118,7 @@ export class AuthManager {
     const storage = options.storage ?? createDefaultStorage();
 
     // Use a pre-built agent or create one with the given options.
-    const userAgent = options.agent ?? await Web5UserAgent.create({
+    const userAgent = options.agent ?? await EnboxUserAgent.create({
       dataPath         : options.dataPath,
       agentVault       : options.agentVault,
       localDwnStrategy : options.localDwnStrategy,
@@ -544,8 +544,8 @@ export class AuthManager {
     return this._isConnecting;
   }
 
-  /** The underlying Web5UserAgent (for advanced usage). */
-  get agent(): Web5UserAgent {
+  /** The underlying EnboxUserAgent (for advanced usage). */
+  get agent(): EnboxUserAgent {
     return this._userAgent;
   }
 

@@ -7,19 +7,19 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 
 import { DidInterface } from '../src/did-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
+import { EnboxUserAgent } from '../src/enbox-user-agent.js';
 import freeForAllProtocolDefinition from './fixtures/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { Web5UserAgent } from '../src/web5-user-agent.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 
-describe('Web5UserAgent', () => {
+describe('EnboxUserAgent', () => {
 
   describe('agentDid', () => {
     it('throws an error if accessed before the Agent is initialized', async () => {
       // @ts-expect-error - Initializing with empty object to test error.
-      const userAgent = new Web5UserAgent({ didApi: {}, dwnApi: {}, identityApi: {}, keyManager: {}, permissionsApi: {}, syncApi: {} });
+      const userAgent = new EnboxUserAgent({ didApi: {}, dwnApi: {}, identityApi: {}, keyManager: {}, permissionsApi: {}, syncApi: {} });
       try {
         userAgent.agentDid;
         throw new Error('Expected an error');
@@ -31,9 +31,9 @@ describe('Web5UserAgent', () => {
 
   describe('create()', () => {
     it('should create an instance with default parameters when none are provided', async () => {
-      const userAgent = await Web5UserAgent.create({ dataPath: '__TESTDATA__/USERAGENT' });
+      const userAgent = await EnboxUserAgent.create({ dataPath: '__TESTDATA__/USERAGENT' });
 
-      expect(userAgent).toBeInstanceOf(Web5UserAgent);
+      expect(userAgent).toBeInstanceOf(EnboxUserAgent);
       expect(userAgent.crypto).toBeDefined();
       expect(userAgent.did).toBeDefined();
       expect(userAgent.dwn).toBeDefined();
@@ -53,7 +53,7 @@ describe('Web5UserAgent', () => {
 
       beforeAll(async () => {
         testHarness = await PlatformAgentTestHarness.setup({
-          agentClass  : Web5UserAgent,
+          agentClass  : EnboxUserAgent,
           agentStores : agentStoreType
         });
       });
@@ -413,7 +413,7 @@ describe('Web5UserAgent', () => {
             // Simulate terminating and restarting an app.
             await testHarness.closeStorage();
             testHarness = await PlatformAgentTestHarness.setup({
-              agentClass  : Web5UserAgent,
+              agentClass  : EnboxUserAgent,
               agentStores : 'dwn'
             });
             await testHarness.agent.start({ password: 'test' });

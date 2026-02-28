@@ -2,7 +2,7 @@ import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { DidDht } from '@enbox/dids';
-import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
+import { EnboxUserAgent, PlatformAgentTestHarness } from '@enbox/agent';
 
 import { DidApi } from '../src/did-api.js';
 
@@ -12,7 +12,7 @@ describe('DidApi', () => {
 
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
-      agentClass  : Web5UserAgent,
+      agentClass  : EnboxUserAgent,
       agentStores : 'memory'
     });
 

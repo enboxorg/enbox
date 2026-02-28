@@ -6,7 +6,7 @@ import type {
   RecordsReadReply,
 } from '@enbox/dwn-sdk-js';
 
-import type { Web5PlatformAgent } from './types/agent.js';
+import type { EnboxPlatformAgent } from './types/agent.js';
 import type {
   DwnMessage,
   DwnMessageReply,
@@ -65,7 +65,7 @@ type ProcessRequestFn = <T extends DwnInterface>(
  * @param installedCache - Cache for installation status
  */
 export async function ensureKeyDeliveryProtocol(
-  agent: Web5PlatformAgent,
+  agent: EnboxPlatformAgent,
   tenantDid: string,
   processRequest: ProcessRequestFn,
   getProtocolDefinition: (tenantDid: string, protocolUri: string) => Promise<any>,
@@ -120,7 +120,7 @@ export async function ensureKeyDeliveryProtocol(
  * @returns The recordId of the written contextKey record
  */
 export async function writeContextKeyRecord(
-  agent: Web5PlatformAgent,
+  agent: EnboxPlatformAgent,
   params: WriteContextKeyParams,
   processRequest: ProcessRequestFn,
   ensureProtocol: (tenantDid: string) => Promise<void>,
@@ -221,7 +221,7 @@ export async function writeContextKeyRecord(
  * @param getDwnEndpointUrlsForTarget - Function to resolve DWN endpoint URLs (with local discovery)
  */
 export async function eagerSendContextKeyRecord(
-  agent: Web5PlatformAgent,
+  agent: EnboxPlatformAgent,
   tenantDid: string,
   contextKeyMessage: DwnMessage[DwnInterface.RecordsWrite],
   getDwnMessage: (params: { author: string; messageType: DwnInterface; messageCid: string }) => Promise<{ message: any; data?: Blob }>,
@@ -271,7 +271,7 @@ export async function eagerSendContextKeyRecord(
  * @returns The decrypted `DerivedPrivateJwk`, or `undefined` if no matching record found
  */
 export async function fetchContextKeyRecord(
-  agent: Web5PlatformAgent,
+  agent: EnboxPlatformAgent,
   params: FetchContextKeyParams,
   processRequest: ProcessRequestFn,
   getSigner: (author: string) => Promise<any>,

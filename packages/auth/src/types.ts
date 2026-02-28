@@ -3,13 +3,13 @@
  * Public types for the authentication and identity management SDK.
  */
 
-import type { ConnectPermissionRequest, HdIdentityVault, LocalDwnStrategy, PortableIdentity, Web5UserAgent } from '@enbox/agent';
+import type { ConnectPermissionRequest, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
 // Re-export types that consumers will need
 export type { ConnectPermissionRequest, HdIdentityVault, IdentityVaultBackup, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
-// Re-export Web5UserAgent so consumers don't need a direct @enbox/agent dep
-export type { Web5UserAgent } from '@enbox/agent';
+// Re-export EnboxUserAgent so consumers don't need a direct @enbox/agent dep
+export type { EnboxUserAgent } from '@enbox/agent';
 
 // ─── Sync ────────────────────────────────────────────────────────
 
@@ -173,7 +173,7 @@ export interface RegistrationOptions {
 /** Options for {@link AuthManager.create}. */
 export interface AuthManagerOptions {
   /**
-   * Provide a pre-built {@link Web5UserAgent} instance.
+   * Provide a pre-built {@link EnboxUserAgent} instance.
    *
    * When provided, `dataPath`, `agentVault`, and `localDwnStrategy` are
    * ignored — the agent is used as-is. This is the escape hatch for
@@ -181,11 +181,11 @@ export interface AuthManagerOptions {
    *
    * @example
    * ```ts
-   * const agent = await Web5UserAgent.create({ dwnApi: myCustomDwnApi });
+   * const agent = await EnboxUserAgent.create({ dwnApi: myCustomDwnApi });
    * const auth = await AuthManager.create({ agent });
    * ```
    */
-  agent?: Web5UserAgent;
+  agent?: EnboxUserAgent;
 
   /**
    * Provide a custom {@link HdIdentityVault} implementation.

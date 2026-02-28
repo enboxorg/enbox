@@ -1,7 +1,7 @@
 import type { BearerDid } from '@enbox/dids';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
-import type { DwnPermissionScope, Web5PlatformAgent } from '../src/index.js';
+import type { DwnPermissionScope, EnboxPlatformAgent } from '../src/index.js';
 
 import { AgentPermissionsApi } from '../src/permissions-api.js';
 import { Convert } from '@enbox/common';
@@ -867,8 +867,8 @@ describe('AgentPermissionsApi', () => {
   describe('matchGrantFromArray', () => {
 
     const createRecordGrants = async ({ grantee, grantor, grantorAgent, protocol, protocolPath, contextId }:{
-      grantorAgent: Web5PlatformAgent;
-      granteeAgent: Web5PlatformAgent;
+      grantorAgent: EnboxPlatformAgent;
+      granteeAgent: EnboxPlatformAgent;
       grantor: string;
       grantee: string;
       protocol: string;
@@ -960,8 +960,8 @@ describe('AgentPermissionsApi', () => {
     };
 
     const createMessageGrants = async ({ grantee, grantor, grantorAgent, protocol }:{
-      grantorAgent: Web5PlatformAgent;
-      granteeAgent: Web5PlatformAgent;
+      grantorAgent: EnboxPlatformAgent;
+      granteeAgent: EnboxPlatformAgent;
       grantor: string;
       grantee: string;
       protocol?: string;
@@ -1027,8 +1027,8 @@ describe('AgentPermissionsApi', () => {
 
 
       const deviceXRecordGrantsFromAlice = await createRecordGrants({
-        grantorAgent : testHarness.agent as Web5PlatformAgent,
-        granteeAgent : testHarness.agent as Web5PlatformAgent,
+        grantorAgent : testHarness.agent as EnboxPlatformAgent,
+        granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
         protocol
@@ -1051,8 +1051,8 @@ describe('AgentPermissionsApi', () => {
       expect(notFoundGrantee).toBeUndefined();
 
       const deviceYRecordGrantsFromDeviceX = await createRecordGrants({
-        grantorAgent : testHarness.agent as Web5PlatformAgent,
-        granteeAgent : testHarness.agent as Web5PlatformAgent,
+        grantorAgent : testHarness.agent as EnboxPlatformAgent,
+        granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDeviceX.did.uri,
         grantee      : aliceDeviceY.did.uri,
         protocol
@@ -1082,8 +1082,8 @@ describe('AgentPermissionsApi', () => {
       });
 
       const messagesGrants = await createMessageGrants({
-        grantorAgent : testHarness.agent as Web5PlatformAgent,
-        granteeAgent : testHarness.agent as Web5PlatformAgent,
+        grantorAgent : testHarness.agent as EnboxPlatformAgent,
+        granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
       });
@@ -1111,8 +1111,8 @@ describe('AgentPermissionsApi', () => {
       // create delegated record grants
       const protocol = 'http://example.com/protocol';
       const recordsGrants = await createRecordGrants({
-        grantorAgent : testHarness.agent as Web5PlatformAgent,
-        granteeAgent : testHarness.agent as Web5PlatformAgent,
+        grantorAgent : testHarness.agent as EnboxPlatformAgent,
+        granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
         protocol
@@ -1143,8 +1143,8 @@ describe('AgentPermissionsApi', () => {
       });
 
       const messageGrants = await createMessageGrants({
-        grantorAgent : testHarness.agent as Web5PlatformAgent,
-        granteeAgent : testHarness.agent as Web5PlatformAgent,
+        grantorAgent : testHarness.agent as EnboxPlatformAgent,
+        granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri
       });
@@ -1237,16 +1237,16 @@ describe('AgentPermissionsApi', () => {
       const otherProtocol = 'http://example.com/other-protocol';
 
       const protocolMessageGrants = await createMessageGrants({
-        grantorAgent : testHarness.agent as Web5PlatformAgent,
-        granteeAgent : testHarness.agent as Web5PlatformAgent,
+        grantorAgent : testHarness.agent as EnboxPlatformAgent,
+        granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
         protocol
       });
 
       const otherProtocolMessageGrants = await createMessageGrants({
-        grantorAgent : testHarness.agent as Web5PlatformAgent,
-        granteeAgent : testHarness.agent as Web5PlatformAgent,
+        grantorAgent : testHarness.agent as EnboxPlatformAgent,
+        granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
         protocol     : otherProtocol
@@ -1354,16 +1354,16 @@ describe('AgentPermissionsApi', () => {
       const protocol2 = 'http://example.com/other-protocol';
 
       const protocol1Grants = await createRecordGrants({
-        grantorAgent : testHarness.agent as Web5PlatformAgent,
-        granteeAgent : testHarness.agent as Web5PlatformAgent,
+        grantorAgent : testHarness.agent as EnboxPlatformAgent,
+        granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
         protocol     : protocol1,
       });
 
       const otherProtocolGrants = await createRecordGrants({
-        grantorAgent : testHarness.agent as Web5PlatformAgent,
-        granteeAgent : testHarness.agent as Web5PlatformAgent,
+        grantorAgent : testHarness.agent as EnboxPlatformAgent,
+        granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
         protocol     : protocol2,
@@ -1443,8 +1443,8 @@ describe('AgentPermissionsApi', () => {
       const protocol = 'http://example.com/protocol';
 
       const fooGrants = await createRecordGrants({
-        grantorAgent : testHarness.agent as Web5PlatformAgent,
-        granteeAgent : testHarness.agent as Web5PlatformAgent,
+        grantorAgent : testHarness.agent as EnboxPlatformAgent,
+        granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
         protocol,
@@ -1452,8 +1452,8 @@ describe('AgentPermissionsApi', () => {
       });
 
       const barGrants = await createRecordGrants({
-        grantorAgent : testHarness.agent as Web5PlatformAgent,
-        granteeAgent : testHarness.agent as Web5PlatformAgent,
+        grantorAgent : testHarness.agent as EnboxPlatformAgent,
+        granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
         protocol,
@@ -1540,8 +1540,8 @@ describe('AgentPermissionsApi', () => {
       const protocol = 'http://example.com/protocol';
 
       const abcGrants = await createRecordGrants({
-        grantorAgent : testHarness.agent as Web5PlatformAgent,
-        granteeAgent : testHarness.agent as Web5PlatformAgent,
+        grantorAgent : testHarness.agent as EnboxPlatformAgent,
+        granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
         protocol,
@@ -1549,8 +1549,8 @@ describe('AgentPermissionsApi', () => {
       });
 
       const defGrants = await createRecordGrants({
-        grantorAgent : testHarness.agent as Web5PlatformAgent,
-        granteeAgent : testHarness.agent as Web5PlatformAgent,
+        grantorAgent : testHarness.agent as EnboxPlatformAgent,
+        granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
         protocol,

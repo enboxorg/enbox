@@ -11,7 +11,7 @@
  * - author/creator getters (lines 207-210)
  */
 
-import type { Web5Agent } from '@enbox/agent';
+import type { EnboxAgent } from '@enbox/agent';
 
 import sinon from 'sinon';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -24,11 +24,11 @@ import { Record } from '../src/record.js';
 // Helpers — create a minimal agent stub and Record constructor options
 // ---------------------------------------------------------------------------
 
-function createAgentStub(): sinon.SinonStubbedInstance<Web5Agent> {
+function createAgentStub(): sinon.SinonStubbedInstance<EnboxAgent> {
   return {
     processDwnRequest : sinon.stub(),
     sendDwnRequest    : sinon.stub(),
-  } as unknown as sinon.SinonStubbedInstance<Web5Agent>;
+  } as unknown as sinon.SinonStubbedInstance<EnboxAgent>;
 }
 
 function createValidAuthorization(did: string = 'did:example:alice'): any {
@@ -85,7 +85,7 @@ function createDeleteDescriptor(recordId: string): any {
 // ---------------------------------------------------------------------------
 
 describe('Record — coverage gaps (stubbed)', () => {
-  let agentStub: sinon.SinonStubbedInstance<Web5Agent>;
+  let agentStub: sinon.SinonStubbedInstance<EnboxAgent>;
 
   beforeEach(() => {
     agentStub = createAgentStub();
@@ -110,7 +110,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         encodedData : undefined,
       });
 
-      const record = new Record(agentStub as unknown as Web5Agent, options);
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
       expect(record.deleted).toBe(true);
 
       // Stub sendDwnRequest to succeed for all calls.
@@ -149,7 +149,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         initialWrite,
       });
 
-      const record = new Record(agentStub as unknown as Web5Agent, options);
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
       expect(record.deleted).toBe(false);
 
       agentStub.sendDwnRequest.resolves({
@@ -176,7 +176,7 @@ describe('Record — coverage gaps (stubbed)', () => {
   describe('send() — default target', () => {
     it('should default target to connectedDid when none is specified', async () => {
       const options = createRecordOptions({ connectedDid: 'did:example:myDid' });
-      const record = new Record(agentStub as unknown as Web5Agent, options);
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
 
       agentStub.sendDwnRequest.resolves({
         messageCid : 'cid-1',
@@ -194,7 +194,7 @@ describe('Record — coverage gaps (stubbed)', () => {
   describe('processRecord() — signAsOwner updates authorization', () => {
     it('should update authorization when signAsOwner is true (import)', async () => {
       const options = createRecordOptions();
-      const record = new Record(agentStub as unknown as Web5Agent, options);
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
 
       const newAuth = { signature: { payload: 'owner-sig', signatures: [{ protected: 'a', signature: 'b' }] } };
       agentStub.processDwnRequest.resolves({
@@ -226,7 +226,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         encodedData : undefined,
       });
 
-      const record = new Record(agentStub as unknown as Web5Agent, options);
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
       expect(record.deleted).toBe(true);
 
       agentStub.processDwnRequest.resolves({
@@ -254,7 +254,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         data         : undefined,
       });
 
-      const record = new Record(agentStub as unknown as Web5Agent, options);
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
 
       const mockStream = new ReadableStream({
         start(controller): void {
@@ -285,7 +285,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         data        : undefined,
       });
 
-      const record = new Record(agentStub as unknown as Web5Agent, options);
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
 
       const mockStream = new ReadableStream({
         start(controller): void {
@@ -322,7 +322,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         data        : undefined,
       });
 
-      const record = new Record(agentStub as unknown as Web5Agent, options, mockPermissionsApi as any);
+      const record = new Record(agentStub as unknown as EnboxAgent, options, mockPermissionsApi as any);
 
       const mockStream = new ReadableStream({
         start(controller): void {
@@ -357,7 +357,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         data        : undefined,
       });
 
-      const record = new Record(agentStub as unknown as Web5Agent, options);
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
 
       const mockStream = new ReadableStream({
         start(controller): void {
@@ -387,13 +387,13 @@ describe('Record — coverage gaps (stubbed)', () => {
   describe('author and creator getters', () => {
     it('should return the author from the constructor options', () => {
       const options = createRecordOptions({ author: 'did:example:alice' });
-      const record = new Record(agentStub as unknown as Web5Agent, options);
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
       expect(record.author).toBe('did:example:alice');
     });
 
     it('should return the creator from the constructor options', () => {
       const options = createRecordOptions({ author: 'did:example:alice' });
-      const record = new Record(agentStub as unknown as Web5Agent, options);
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
       // When no initialWrite, creator = author.
       expect(record.creator).toBe('did:example:alice');
     });
@@ -411,7 +411,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         encodedData: undefined,
       });
 
-      const record = new Record(agentStub as unknown as Web5Agent, options);
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
       expect(record.deleted).toBe(true);
 
       const cursor = await record.paginationCursor(DwnDateSort.CreatedAscending);
@@ -427,7 +427,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         encodedData: base64url,
       });
 
-      const record = new Record(agentStub as unknown as Web5Agent, options);
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
       const text = await record.data.text();
       expect(text).toBe('hello');
     });
@@ -447,7 +447,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         data        : stream,
       });
 
-      const record = new Record(agentStub as unknown as Web5Agent, options);
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
 
       // First access returns the stream.
       const text = await record.data.text();
@@ -487,7 +487,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         encodedData: undefined,
       });
 
-      const record = new Record(agentStub as unknown as Web5Agent, options);
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
       expect(record.deleted).toBe(true);
 
       await expect(record.data.text()).rejects.toThrow('Cannot access data of a deleted record.');
@@ -504,7 +504,7 @@ describe('Record — coverage gaps (stubbed)', () => {
 
       const { DwnApi } = await import('../src/dwn-api.js');
       const dwnApi = new DwnApi({
-        agent        : agentStub as unknown as Web5Agent,
+        agent        : agentStub as unknown as EnboxAgent,
         connectedDid : 'did:example:alice',
       });
 
@@ -545,7 +545,7 @@ describe('Record — coverage gaps (stubbed)', () => {
 
       const { DwnApi } = await import('../src/dwn-api.js');
       const dwnApi = new DwnApi({
-        agent        : agentStub as unknown as Web5Agent,
+        agent        : agentStub as unknown as EnboxAgent,
         connectedDid : 'did:example:alice',
       });
 
@@ -571,7 +571,7 @@ describe('Record — coverage gaps (stubbed)', () => {
 
       const { DwnApi } = await import('../src/dwn-api.js');
       const dwnApi = new DwnApi({
-        agent        : agentStub as unknown as Web5Agent,
+        agent        : agentStub as unknown as EnboxAgent,
         connectedDid : 'did:example:alice',
       });
 
@@ -615,7 +615,7 @@ describe('Record — coverage gaps (stubbed)', () => {
 
       const { DwnApi } = await import('../src/dwn-api.js');
       const dwnApi = new DwnApi({
-        agent        : agentStub as unknown as Web5Agent,
+        agent        : agentStub as unknown as EnboxAgent,
         connectedDid : 'did:example:alice',
       });
 
