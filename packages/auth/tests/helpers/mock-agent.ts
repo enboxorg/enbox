@@ -45,6 +45,7 @@ export interface MockAgentOverrides {
   syncStopSync?: (timeout: number) => Promise<void>;
   syncSync?: (direction: string) => Promise<void>;
   processDwnRequest?: (params: any) => Promise<any>;
+  rpcGetServerInfo?: (url: string) => Promise<any>;
   vaultIsInitialized?: () => Promise<boolean>;
   vaultIsLocked?: () => boolean;
   vaultUnlock?: (params: any) => Promise<void>;
@@ -93,6 +94,18 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): Web5UserAge
     processDwnRequest: overrides.processDwnRequest ?? (async (): Promise<any> => ({
       reply: { status: { code: 202, detail: 'Accepted' } },
     })),
+
+    rpc: {
+      getServerInfo: overrides.rpcGetServerInfo ?? (async (): Promise<any> => ({
+        registrationRequirements : [],
+        maxFileSize              : 10_000_000,
+        server                   : '@enbox/dwn-server',
+        sdkVersion               : '0.0.1',
+        url                      : 'https://enbox-dwn.fly.dev',
+        version                  : '0.0.1',
+        webSocketSupport         : true,
+      })),
+    },
 
     vault: {
       isInitialized  : overrides.vaultIsInitialized ?? (async (): Promise<boolean> => true),

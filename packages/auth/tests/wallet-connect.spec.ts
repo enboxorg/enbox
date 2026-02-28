@@ -656,4 +656,49 @@ describe('walletConnect', () => {
 
     expect(syncPulls).toContain('pull');
   });
+
+  test('calls registration when registration options are provided', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    mockInitClient.mockClear();
+    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
+      delegatePortableDid : { uri: 'did:dht:delegate123' },
+      connectedDid        : 'did:dht:connected456',
+      delegateGrants      : [],
+    }));
+
+    let registrationSucceeded = false;
+    const agent = createMockAgent({
+      identityImport: async () => createMockIdentity({
+        did      : { uri: 'did:dht:delegate123' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected456' },
+      }),
+      rpcGetServerInfo: async () => ({
+        registrationRequirements : [],
+        maxFileSize              : 10_000_000,
+      }),
+    });
+
+    await _walletConnect(
+      {
+        userAgent    : agent,
+        emitter,
+        storage,
+        defaultSync  : '15s',
+        registration : {
+          onSuccess : () => { registrationSucceeded = true; },
+          onFailure : () => {},
+        },
+      },
+      {
+        displayName        : 'Test App',
+        connectServerUrl   : 'https://relay.example.com',
+        permissionRequests : [],
+        onWalletUriReady   : () => {},
+        validatePin        : async () => '1234',
+      },
+    );
+
+    expect(registrationSucceeded).toBe(true);
+  });
 });
