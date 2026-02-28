@@ -18,8 +18,8 @@
  */
 
 import { DwnApi } from '../src/dwn-api.js';
+import { EnboxUserAgent } from '@enbox/agent';
 import { ProfileProtocol } from '@enbox/protocols';
-import { Web5UserAgent } from '@enbox/agent';
 import { repository, TypedEnbox } from '../src/index.js';
 
 const DWN_URL = process.env.E2E_DWN_URL!;
@@ -41,7 +41,7 @@ async function main(): Promise<void> {
   log('Recovering agent from seed phrase...');
 
   // Create agent and recover the deterministic agent DID from the seed phrase
-  const agent = await Web5UserAgent.create();
+  const agent = await EnboxUserAgent.create();
 
   // Initialize with the original seed phrase — deterministically re-derives the agent DID
   await agent.initialize({

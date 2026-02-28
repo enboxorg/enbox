@@ -1,4 +1,4 @@
-import type { DwnMessageSubscription, PermissionsApi, Web5Agent } from '@enbox/agent';
+import type { DwnMessageSubscription, EnboxAgent, PermissionsApi } from '@enbox/agent';
 import type { PaginationCursor, RecordsQueryReplyEntry } from '@enbox/dwn-sdk-js';
 
 import { getRecordAuthor } from '@enbox/agent';
@@ -40,7 +40,7 @@ export class RecordChangeEvent extends CustomEvent<RecordChange> {
  */
 export type LiveQueryOptions = {
   /** The agent instance used to construct Record objects. */
-  agent: Web5Agent;
+  agent: EnboxAgent;
 
   /** The DID of the connected user. */
   connectedDid: string;

@@ -6,8 +6,9 @@ import type { AgentIdentityApi } from '../identity-api.js';
 import type { AgentKeyManager } from './key-manager.js';
 import type { AgentPermissionsApi } from '../permissions-api.js';
 import type { AgentSyncApi } from '../sync-api.js';
+import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { IdentityVault } from './identity-vault.js';
-import type { Web5Rpc } from '@enbox/dwn-clients';
+import type { LocalKeyManager } from '../local-key-manager.js';
 import type { AgentDidApi, DidInterface, DidRequest, DidResponse } from '../did-api.js';
 import type { DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './dwn.js';
 import type { ProcessVcRequest, SendVcRequest, VcResponse } from './vc.js';
@@ -63,7 +64,7 @@ export type ResponseStatus = {
  * The `AgentDid` property represents the Web5 Agent's own DID, while the various process and send
  * methods enable the Agent to handle and initiate requests pertaining to DIDs, DWNs, and VCs.
  */
-export interface Web5Agent {
+export interface EnboxAgent {
   /**
    * The Decentralized Identifier (DID) of this Web5 Agent.
    */
@@ -109,18 +110,18 @@ export interface Web5Agent {
 
 /**
  * Represents a Web5 Platform Agent, an extended and more feature-rich implementation of a
- * {@link Web5Agent}.
+ * {@link EnboxAgent}.
  *
  * This Agent integrates a comprehensive set of APIs and functionalities, including cryptographic
  * operations, DID management, DWN interaction, identity handling, and data synchronization.
  *
- * The platform agent provides a higher-level abstraction over the core Web5Agent functionalities,
+ * The platform agent provides a higher-level abstraction over the core EnboxAgent functionalities,
  * facilitating a robust platform for developing Web5 applications. It includes lifecycle management
  * methods like initialization and startup, alongside a suite of specialized APIs and utilities.
  *
  * @typeParam TKeyManager - The type of Key Manager used to manage cryptographic keys.
  */
-export interface Web5PlatformAgent<TKeyManager extends AgentKeyManager = AgentKeyManager> extends Web5Agent {
+export interface EnboxPlatformAgent<TKeyManager extends AgentKeyManager = AgentKeyManager> extends EnboxAgent {
   /**
    * The cryptography API, essential for performing various cryptographic operations such
    * as encryption, decryption, signing, and verification, ensuring secure data handling and
@@ -161,7 +162,7 @@ export interface Web5PlatformAgent<TKeyManager extends AgentKeyManager = AgentKe
    * The RPC (Remote Procedure Call) client interface, facilitating communication with other Web5
    * Agents and services.
    */
-  rpc: Web5Rpc;
+  rpc: EnboxRpc;
 
   /**
    * The synchronization API, responsible for managing the consistency and real-time update of the
@@ -193,3 +194,13 @@ export interface Web5PlatformAgent<TKeyManager extends AgentKeyManager = AgentKe
    */
   start(params: unknown): Promise<unknown>;
 }
+
+// ---------------------------------------------------------------------------
+// Deprecated aliases — migration aid
+// ---------------------------------------------------------------------------
+
+/** @deprecated Use {@link EnboxAgent} instead. Will be removed in a future version. */
+export type Web5Agent = EnboxAgent;
+
+/** @deprecated Use {@link EnboxPlatformAgent} instead. Will be removed in a future version. */
+export type Web5PlatformAgent<TKeyManager extends AgentKeyManager = LocalKeyManager> = EnboxPlatformAgent<TKeyManager>;

@@ -1,7 +1,7 @@
 /**
  * Tests for AuthManager.create() and walletConnect() — the two uncovered methods.
  *
- * These need module-level mocking of Web5UserAgent.create() because the
+ * These need module-level mocking of EnboxUserAgent.create() because the
  * private constructor is not directly accessible. We use a dedicated test
  * file so mock.module() does not pollute other test files.
  */
@@ -11,7 +11,7 @@ import { MemoryStorage } from '../src/storage/storage.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 
 // ── Module-level mocks ──────────────────────────────────────────
-// Preserve all actual agent exports, only mock Web5UserAgent.create and
+// Preserve all actual agent exports, only mock EnboxUserAgent.create and
 // WalletConnect.initClient.
 
 const actualAgent = await import('@enbox/agent');
@@ -27,8 +27,8 @@ const mockInitClient = mock((): any => Promise.resolve({
 
 mock.module('@enbox/agent', () => ({
   ...actualAgent,
-  Web5UserAgent: {
-    ...actualAgent.Web5UserAgent,
+  EnboxUserAgent: {
+    ...actualAgent.EnboxUserAgent,
     create: mockUserAgentCreate,
   },
   WalletConnect: {
@@ -107,7 +107,7 @@ describe('AuthManager.create()', () => {
     expect(manager.state).toBe('unlocked');
   });
 
-  test('passes dataPath to Web5UserAgent.create', async () => {
+  test('passes dataPath to EnboxUserAgent.create', async () => {
     let capturedOptions: any;
     mockUserAgentCreate.mockImplementationOnce((...args: any[]): any => {
       capturedOptions = args[0];
@@ -128,7 +128,7 @@ describe('AuthManager.create()', () => {
       storage : new MemoryStorage(),
     });
 
-    // Web5UserAgent.create() should NOT have been called.
+    // EnboxUserAgent.create() should NOT have been called.
     expect(mockUserAgentCreate.mock.calls.length).toBe(callsBefore);
     expect(manager.agent).toBe(customAgent);
     expect(manager.state).toBe('uninitialized');
@@ -146,13 +146,13 @@ describe('AuthManager.create()', () => {
       storage          : new MemoryStorage(),
     });
 
-    // Web5UserAgent.create() should NOT have been called.
+    // EnboxUserAgent.create() should NOT have been called.
     expect(mockUserAgentCreate.mock.calls.length).toBe(callsBefore);
     expect(manager.agent).toBe(customAgent);
     expect(manager.state).toBe('unlocked');
   });
 
-  test('passes agentVault to Web5UserAgent.create', async () => {
+  test('passes agentVault to EnboxUserAgent.create', async () => {
     let capturedOptions: any;
     mockUserAgentCreate.mockImplementationOnce((...args: any[]): any => {
       capturedOptions = args[0];
@@ -165,7 +165,7 @@ describe('AuthManager.create()', () => {
     expect(capturedOptions.agentVault).toBe(fakeVault);
   });
 
-  test('passes localDwnStrategy to Web5UserAgent.create', async () => {
+  test('passes localDwnStrategy to EnboxUserAgent.create', async () => {
     let capturedOptions: any;
     mockUserAgentCreate.mockImplementationOnce((...args: any[]): any => {
       capturedOptions = args[0];

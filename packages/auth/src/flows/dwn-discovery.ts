@@ -15,7 +15,7 @@
  * @module
  */
 
-import type { Web5UserAgent } from '@enbox/agent';
+import type { EnboxUserAgent } from '@enbox/agent';
 
 import { readDwnDiscoveryPayloadFromUrl } from '@enbox/agent';
 
@@ -87,12 +87,12 @@ export async function clearLocalDwnEndpoint(
  * The endpoint is validated by the agent (via `GET /info`) before being
  * accepted. If validation fails, the stale entry is removed from storage.
  *
- * @param agent - The running Web5UserAgent.
+ * @param agent - The running EnboxUserAgent.
  * @param storage - The auth storage adapter.
  * @returns `true` if an endpoint was restored and validated, `false` otherwise.
  */
 export async function restoreLocalDwnEndpoint(
-  agent: Web5UserAgent,
+  agent: EnboxUserAgent,
   storage: StorageAdapter,
 ): Promise<boolean> {
   const endpoint = await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT);
@@ -121,12 +121,12 @@ export async function restoreLocalDwnEndpoint(
  * `agentDid` available) so that `setCachedLocalDwnEndpoint()` can
  * validate the endpoint.
  *
- * @param agent - The running Web5UserAgent.
+ * @param agent - The running EnboxUserAgent.
  * @param storage - The auth storage adapter.
  * @returns `true` if a local DWN endpoint was discovered and injected.
  */
 export async function applyLocalDwnDiscovery(
-  agent: Web5UserAgent,
+  agent: EnboxUserAgent,
   storage: StorageAdapter,
 ): Promise<boolean> {
   // Step 1: Check for a fresh payload in the URL fragment (redirect just happened).

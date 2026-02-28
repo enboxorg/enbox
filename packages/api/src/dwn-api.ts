@@ -12,10 +12,10 @@ import type {
   DwnPaginationCursor,
   DwnResponse,
   DwnResponseStatus,
+  EnboxAgent,
   FetchPermissionRequestParams,
   FetchPermissionsParams,
-  ProcessDwnRequest,
-  Web5Agent } from '@enbox/agent';
+  ProcessDwnRequest } from '@enbox/agent';
 
 import type { DwnSubscriptionMessage } from '@enbox/dwn-clients';
 
@@ -238,10 +238,10 @@ export type RecordsWriteResponse = DwnResponseStatus & {
  */
 export class DwnApi {
   /**
-   * Holds the instance of a {@link Web5Agent} that represents the current execution context for
+   * Holds the instance of a {@link EnboxAgent} that represents the current execution context for
    * the `DwnApi`. This agent is used to process DWN requests.
    */
-  private agent: Web5Agent;
+  private agent: EnboxAgent;
 
   /** The DID of the DWN tenant under which operations are being performed. */
   private connectedDid: string;
@@ -252,7 +252,7 @@ export class DwnApi {
   /** Holds the instance of {@link AgentPermissionsApi} that helps when dealing with permissions protocol records */
   private permissionsApi: AgentPermissionsApi;
 
-  constructor(options: { agent: Web5Agent, connectedDid: string, delegateDid?: string }) {
+  constructor(options: { agent: EnboxAgent, connectedDid: string, delegateDid?: string }) {
     this.agent = options.agent;
     this.connectedDid = options.connectedDid;
     this.delegateDid = options.delegateDid;

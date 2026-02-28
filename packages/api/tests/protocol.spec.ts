@@ -2,7 +2,7 @@ import type { BearerDid } from '@enbox/dids';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
+import { EnboxUserAgent, PlatformAgentTestHarness } from '@enbox/agent';
 
 import { DwnApi } from '../src/dwn-api.js';
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
@@ -18,7 +18,7 @@ describe('Protocol', () => {
 
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
-      agentClass  : Web5UserAgent,
+      agentClass  : EnboxUserAgent,
       agentStores : 'memory'
     });
 

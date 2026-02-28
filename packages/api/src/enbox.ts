@@ -6,13 +6,13 @@
 
 import type { AuthSession } from '@enbox/auth';
 import type { DidMethodResolver } from '@enbox/dids';
+import type { EnboxAgent } from '@enbox/agent';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { Web5Agent } from '@enbox/agent';
 
 import type { SchemaMap, TypedProtocol } from './protocol-types.js';
 
 import { AnonymousDwnApi } from '@enbox/agent';
-import { Web5RpcClient } from '@enbox/dwn-clients';
+import { EnboxRpcClient } from '@enbox/dwn-clients';
 import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 
 import { DidApi } from './did-api.js';
@@ -51,10 +51,10 @@ export type EnboxAnonymousApi = {
  */
 export type EnboxParams = {
   /**
-   * A {@link Web5Agent} instance that handles DIDs, DWNs and VCs requests. The agent manages the
+   * A {@link EnboxAgent} instance that handles DIDs, DWNs and VCs requests. The agent manages the
    * user keys and identities, and is responsible to sign and verify messages.
    */
-  agent: Web5Agent;
+  agent: EnboxAgent;
 
   /** The DID of the tenant under which all DID, DWN, and VC requests are being performed. */
   connectedDid: string;
@@ -86,10 +86,10 @@ export type EnboxParams = {
  */
 export class Enbox {
   /**
-   * A {@link Web5Agent} instance that handles DIDs, DWNs and VCs requests. The agent manages the
+   * A {@link EnboxAgent} instance that handles DIDs, DWNs and VCs requests. The agent manages the
    * user keys and identities, and is responsible to sign and verify messages.
    */
-  public agent: Web5Agent;
+  public agent: EnboxAgent;
 
   /** Exposed instance to the DID APIs, allow users to create and resolve DIDs. */
   public did: DidApi;
@@ -220,7 +220,7 @@ export class Enbox {
       cache        : new DidResolverCacheMemory(),
     });
 
-    const rpcClient = new Web5RpcClient();
+    const rpcClient = new EnboxRpcClient();
     const anonymousDwn = new AnonymousDwnApi({ didResolver, rpcClient });
 
     return {

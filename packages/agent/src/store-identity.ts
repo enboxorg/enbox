@@ -1,7 +1,7 @@
 import { Convert } from '@enbox/common';
 
+import type { EnboxPlatformAgent } from './types/agent.js';
 import type { IdentityMetadata } from './types/identity.js';
-import type { Web5PlatformAgent } from './types/agent.js';
 import type { AgentDataStore, DataStoreDeleteParams, DataStoreGetParams, DataStoreListParams, DataStoreSetParams } from './store-data.js';
 
 import { DwnInterface } from './types/dwn.js';
@@ -47,7 +47,7 @@ export class DwnIdentityStore extends DwnDataStore<IdentityMetadata> implements 
   }
 
   protected async getAllRecords({ agent, tenantDid }: {
-    agent: Web5PlatformAgent;
+    agent: EnboxPlatformAgent;
     tenantDid: string;
   }): Promise<IdentityMetadata[]> {
     // Clear the index since it will be rebuilt from the query results.

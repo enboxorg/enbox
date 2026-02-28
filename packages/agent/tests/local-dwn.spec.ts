@@ -1,4 +1,4 @@
-import type { Web5Rpc } from '@enbox/dwn-clients';
+import type { EnboxRpc } from '@enbox/dwn-clients';
 
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
@@ -13,7 +13,7 @@ import {
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-function createRpcStub(behavior: 'valid' | 'invalid' | 'error' = 'valid'): Web5Rpc {
+function createRpcStub(behavior: 'valid' | 'invalid' | 'error' = 'valid'): EnboxRpc {
   const stub = sinon.stub();
 
   if (behavior === 'valid') {
@@ -24,7 +24,7 @@ function createRpcStub(behavior: 'valid' | 'invalid' | 'error' = 'valid'): Web5R
     stub.rejects(new Error('connection refused'));
   }
 
-  return { getServerInfo: stub } as unknown as Web5Rpc;
+  return { getServerInfo: stub } as unknown as EnboxRpc;
 }
 
 function createDiscoveryFileStub(record?: DwnDiscoveryRecord | null): DwnDiscoveryFile {
@@ -153,7 +153,7 @@ describe('LocalDwnDiscovery', () => {
       rpcStub.onFirstCall().rejects(new Error('connection refused'));
       rpcStub.resolves({ server: localDwnServerName });
 
-      const rpcClient = { getServerInfo: rpcStub } as unknown as Web5Rpc;
+      const rpcClient = { getServerInfo: rpcStub } as unknown as EnboxRpc;
       const discoveryFile = createDiscoveryFileStub({
         endpoint : 'http://127.0.0.1:55557',
         pid      : 12345,
@@ -263,7 +263,7 @@ describe('LocalDwnDiscovery', () => {
       rpcStub.onFirstCall().resolves({ server: localDwnServerName });
       rpcStub.rejects(new Error('connection refused'));
 
-      const rpcClient = { getServerInfo: rpcStub } as unknown as Web5Rpc;
+      const rpcClient = { getServerInfo: rpcStub } as unknown as EnboxRpc;
       const discovery = new LocalDwnDiscovery(rpcClient);
 
       const first = await discovery.getEndpoint();

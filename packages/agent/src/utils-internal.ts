@@ -2,7 +2,7 @@ import type { Jwk, KeyIdentifier, KmsExportKeyParams, KmsGetPublicKeyParams, Kms
 
 import { computeJwkThumbprint, Ed25519, LocalKeyManager } from '@enbox/crypto';
 
-import type { Web5PlatformAgent } from './types/agent.js';
+import type { EnboxPlatformAgent } from './types/agent.js';
 
 /**
  * Internal utility functions used by the Web5 platform agent that are not intended for public use
@@ -128,7 +128,7 @@ export class DeterministicKeyGenerator extends LocalKeyManager {
  * @throws Throws an error if it fails to determine the tenant from the provided inputs.
  */
 export async function getDataStoreTenant({ agent, tenant, didUri }: {
-  agent: Web5PlatformAgent;
+  agent: EnboxPlatformAgent;
   tenant?: string;
   didUri?: string;
 }): Promise<string> {

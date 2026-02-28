@@ -4,7 +4,7 @@ import ms from 'ms';
 import { Convert, Stream, TtlCache } from '@enbox/common';
 
 import type { DwnMessageParams } from './types/dwn.js';
-import type { Web5PlatformAgent } from './types/agent.js';
+import type { EnboxPlatformAgent } from './types/agent.js';
 import type { ProtocolDefinition, RecordsReadReplyEntry } from '@enbox/dwn-sdk-js';
 
 import { Protocols } from '@enbox/dwn-sdk-js';
@@ -13,7 +13,7 @@ import { DwnInterface } from './types/dwn.js';
 import { getDataStoreTenant, TENANT_SEPARATOR } from './utils-internal.js';
 
 export type DataStoreTenantParams = {
-  agent: Web5PlatformAgent;
+  agent: EnboxPlatformAgent;
   tenant?: string;
 };
 
@@ -269,7 +269,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
   }
 
   protected async getAllRecords(_params: {
-    agent: Web5PlatformAgent;
+    agent: EnboxPlatformAgent;
     tenantDid: string;
   }): Promise<TStoreObject[]> {
     throw new Error('Not implemented: Classes extending DwnDataStore must implement getAllRecords()');
@@ -278,7 +278,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
   private async getRecord({ recordId, tenantDid, agent, useCache }: {
     recordId: string;
     tenantDid: string;
-    agent: Web5PlatformAgent;
+    agent: EnboxPlatformAgent;
     useCache: boolean;
   }): Promise<TStoreObject | undefined> {
     // If caching is enabled, check the cache for the record ID.
@@ -322,7 +322,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    * If the tenant DID lacks an X25519 keyAgreement key, the error propagates
    * — plaintext fallback is not allowed.
    */
-  private async installProtocol(tenant: string, agent: Web5PlatformAgent): Promise<void> {
+  private async installProtocol(tenant: string, agent: EnboxPlatformAgent): Promise<void> {
     let definition = this._recordProtocolDefinition;
     let encryptionActive = false;
 
@@ -353,7 +353,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
   private async lookupRecordId({ id, tenantDid, agent }: {
     id: string;
     tenantDid: string;
-    agent: Web5PlatformAgent;
+    agent: EnboxPlatformAgent;
   }): Promise<string | undefined> {
     // Check the index for a matching ID and extend the index TTL.
     let recordId = this._index.get(`${tenantDid}${TENANT_SEPARATOR}${id}`, { updateAgeOnGet: true });
@@ -373,7 +373,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
   private async getExistingRecordEntry({ id, tenantDid, agent }: {
     id: string;
     tenantDid: string;
-    agent: Web5PlatformAgent;
+    agent: EnboxPlatformAgent;
   }): Promise<RecordsReadReplyEntry | undefined> {
     // Look up the DWN record ID of the object in the store with the given `id`.
     const recordId = await this.lookupRecordId({ id, tenantDid, agent });

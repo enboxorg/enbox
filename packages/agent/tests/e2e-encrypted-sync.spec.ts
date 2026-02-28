@@ -6,11 +6,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 
 import { AgentSyncApi } from '../src/sync-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
+import { EnboxUserAgent } from '../src/enbox-user-agent.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { Web5UserAgent } from '../src/web5-user-agent.js';
 import { JwkProtocolDefinition, KeyDeliveryProtocolDefinition } from '../src/store-data-protocols.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
@@ -276,15 +276,15 @@ describe('e2e: agent lifecycle with encrypted stores', () => {
 
     it('should initialize the agent with a vault and encrypted key store', async () => {
       harness = await PlatformAgentTestHarness.setup({
-        agentClass  : Web5UserAgent,
+        agentClass  : EnboxUserAgent,
         agentStores : 'dwn',
         testDataLocation,
       });
 
-      recoveryPhrase = await (harness.agent as Web5UserAgent).initialize({ password });
+      recoveryPhrase = await (harness.agent as EnboxUserAgent).initialize({ password });
       expect(recoveryPhrase.split(' ')).toHaveLength(12);
 
-      await (harness.agent as Web5UserAgent).start({ password });
+      await (harness.agent as EnboxUserAgent).start({ password });
       agentDidUri = harness.agent.agentDid.uri;
       expect(agentDidUri).toMatch(/^did:dht:/);
     }, 30_000);
@@ -334,13 +334,13 @@ describe('e2e: agent lifecycle with encrypted stores', () => {
 
     it('should restart the agent with the same password', async () => {
       harness = await PlatformAgentTestHarness.setup({
-        agentClass  : Web5UserAgent,
+        agentClass  : EnboxUserAgent,
         agentStores : 'dwn',
         testDataLocation,
       });
 
       // The vault is already initialized — just start with the password.
-      await (harness.agent as Web5UserAgent).start({ password });
+      await (harness.agent as EnboxUserAgent).start({ password });
       expect(harness.agent.agentDid.uri).toBe(agentDidUri);
     }, 30_000);
 

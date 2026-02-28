@@ -1,4 +1,4 @@
-import type { DwnDataEncodedRecordsWriteMessage, DwnResponseStatus, SendDwnRequest, Web5Agent } from '@enbox/agent';
+import type { DwnDataEncodedRecordsWriteMessage, DwnResponseStatus, EnboxAgent, SendDwnRequest } from '@enbox/agent';
 
 import { Convert } from '@enbox/common';
 import { AgentPermissionsApi, DwnInterface, getRecordAuthor } from '@enbox/agent';
@@ -53,7 +53,7 @@ export class PermissionGrantRevocation implements GrantRevocationModel {
   /** parses the grant revocation given am agent, connectedDid and data encoded records write message  */
   static async parse({ connectedDid, agent, message }:{
     connectedDid: string;
-    agent: Web5Agent;
+    agent: EnboxAgent;
     message: DwnDataEncodedRecordsWriteMessage;
   }): Promise<PermissionGrantRevocation> {
     const permissions = new AgentPermissionsApi({ agent });
@@ -61,7 +61,7 @@ export class PermissionGrantRevocation implements GrantRevocationModel {
   }
 
   /** The agent to use for this instantiation of the grant revocation */
-  private get agent(): Web5Agent {
+  private get agent(): EnboxAgent {
     return this._permissions.agent;
   }
 

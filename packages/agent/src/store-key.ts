@@ -5,7 +5,7 @@ import { isPrivateJwk, KEY_URI_PREFIX_JWK } from '@enbox/crypto';
 
 import type { RecordsReadReply } from '@enbox/dwn-sdk-js';
 
-import type { Web5PlatformAgent } from './types/agent.js';
+import type { EnboxPlatformAgent } from './types/agent.js';
 
 import { DwnInterface } from './types/dwn.js';
 import { JwkProtocolDefinition } from './store-data-protocols.js';
@@ -45,7 +45,7 @@ export class DwnKeyStore extends DwnDataStore<Jwk> implements AgentDataStore<Jwk
   }
 
   protected async getAllRecords({ agent, tenantDid }: {
-    agent: Web5PlatformAgent;
+    agent: EnboxPlatformAgent;
     tenantDid: string;
   }): Promise<Jwk[]> {
     // Clear the index since it will be rebuilt from the query results.

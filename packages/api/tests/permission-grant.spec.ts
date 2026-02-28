@@ -4,7 +4,7 @@ import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { DwnErrorCode, DwnInterfaceName, DwnMethodName, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
-import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
+import { EnboxUserAgent, PlatformAgentTestHarness } from '@enbox/agent';
 
 import { DwnApi } from '../src/dwn-api.js';
 import { PermissionGrant } from '../src/permission-grant.js';
@@ -22,7 +22,7 @@ describe('PermissionGrant', () => {
 
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
-      agentClass  : Web5UserAgent,
+      agentClass  : EnboxUserAgent,
       agentStores : 'memory'
     });
 

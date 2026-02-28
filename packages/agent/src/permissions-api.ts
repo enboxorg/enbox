@@ -1,4 +1,4 @@
-import type { Web5Agent } from './types/agent.js';
+import type { EnboxAgent } from './types/agent.js';
 import type { CreateGrantParams, CreateRequestParams, CreateRevocationParams, FetchPermissionRequestParams, FetchPermissionsParams, GetPermissionParams, IsGrantRevokedParams, PermissionGrantEntry, PermissionRequestEntry, PermissionRevocationEntry, PermissionsApi } from './types/permissions.js';
 import type { DwnDataEncodedRecordsWriteMessage, DwnMessageParams, DwnMessagesPermissionScope, DwnPermissionScope, DwnProtocolPermissionScope, DwnRecordsPermissionScope, ProcessDwnRequest } from './types/dwn.js';
 import type { PermissionGrant, PermissionGrantData, PermissionRequestData, PermissionRevocationData } from '@enbox/dwn-sdk-js';
@@ -13,20 +13,20 @@ export class AgentPermissionsApi implements PermissionsApi {
   /** cache for fetching a permission {@link PermissionGrant}, keyed by a specific MessageType and protocol */
   private _cachedPermissions: TtlCache<string, PermissionGrantEntry> = new TtlCache({ ttl: 60 * 1000 });
 
-  private _agent?: Web5Agent;
+  private _agent?: EnboxAgent;
 
-  get agent(): Web5Agent {
+  get agent(): EnboxAgent {
     if (!this._agent) {
       throw new Error('AgentPermissionsApi: Agent is not set');
     }
     return this._agent;
   }
 
-  set agent(agent:Web5Agent) {
+  set agent(agent:EnboxAgent) {
     this._agent = agent;
   }
 
-  constructor({ agent }: { agent?: Web5Agent } = {}) {
+  constructor({ agent }: { agent?: EnboxAgent } = {}) {
     this._agent = agent;
   }
 

@@ -9,7 +9,7 @@
 
 import { Convert } from '@enbox/common';
 import { WalletConnect } from '@enbox/agent';
-import type { DwnDataEncodedRecordsWriteMessage, DwnMessagesPermissionScope, DwnRecordsPermissionScope, Web5UserAgent } from '@enbox/agent';
+import type { DwnDataEncodedRecordsWriteMessage, DwnMessagesPermissionScope, DwnRecordsPermissionScope, EnboxUserAgent } from '@enbox/agent';
 import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
@@ -20,7 +20,7 @@ import type { RegistrationOptions, StorageAdapter, SyncOption, WalletConnectOpti
 
 /** @internal */
 export interface WalletConnectContext {
-  userAgent: Web5UserAgent;
+  userAgent: EnboxUserAgent;
   emitter: AuthEventEmitter;
   storage: StorageAdapter;
   defaultSync?: SyncOption;
@@ -38,7 +38,7 @@ export interface WalletConnectContext {
  * @internal
  */
 export async function processConnectedGrants(params: {
-  agent: Web5UserAgent;
+  agent: EnboxUserAgent;
   delegateDid: string;
   grants: DwnDataEncodedRecordsWriteMessage[];
 }): Promise<string[]> {

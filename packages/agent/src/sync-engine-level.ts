@@ -7,8 +7,8 @@ import { Level } from 'level';
 import { hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-js';
 
 import type { PermissionsApi } from './types/permissions.js';
+import type { EnboxAgent, EnboxPlatformAgent } from './types/agent.js';
 import type { StartSyncParams, SyncConnectivityState, SyncEngine, SyncIdentityOptions, SyncMode } from './types/sync.js';
-import type { Web5Agent, Web5PlatformAgent } from './types/agent.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnInterface } from './types/dwn.js';
@@ -17,7 +17,7 @@ import { topologicalSort } from './sync-topological-sort.js';
 import { pullMessages, pushMessages } from './sync-messages.js';
 
 export type SyncEngineLevelParams = {
-  agent?: Web5PlatformAgent;
+  agent?: EnboxPlatformAgent;
   dataPath?: string;
   db?: AbstractLevel<string | Buffer | Uint8Array>;
 };
@@ -61,12 +61,12 @@ type LocalSubscription = {
 
 export class SyncEngineLevel implements SyncEngine {
   /**
-   * Holds the instance of a `Web5PlatformAgent` that represents the current execution context for
+   * Holds the instance of a `EnboxPlatformAgent` that represents the current execution context for
    * the `SyncEngineLevel`. This agent is used to interact with other Web5 agent components. It's
    * vital to ensure this instance is set to correctly contextualize operations within the broader
    * Web5 Agent framework.
    */
-  private _agent?: Web5PlatformAgent;
+  private _agent?: EnboxPlatformAgent;
 
   /**
    * An instance of the `AgentPermissionsApi` that is used to interact with permissions grants used during sync
@@ -117,17 +117,17 @@ export class SyncEngineLevel implements SyncEngine {
 
   constructor({ agent, dataPath, db }: SyncEngineLevelParams) {
     this._agent = agent;
-    this._permissionsApi = new AgentPermissionsApi({ agent: agent as Web5Agent });
+    this._permissionsApi = new AgentPermissionsApi({ agent: agent as EnboxAgent });
     this._db = (db) ? db : new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
   }
 
   /**
-   * Retrieves the `Web5PlatformAgent` execution context.
+   * Retrieves the `EnboxPlatformAgent` execution context.
    *
-   * @returns The `Web5PlatformAgent` instance that represents the current execution context.
+   * @returns The `EnboxPlatformAgent` instance that represents the current execution context.
    * @throws Will throw an error if the `agent` instance property is undefined.
    */
-  get agent(): Web5PlatformAgent {
+  get agent(): EnboxPlatformAgent {
     if (this._agent === undefined) {
       throw new Error('SyncEngineLevel: Unable to determine agent execution context.');
     }
@@ -135,9 +135,9 @@ export class SyncEngineLevel implements SyncEngine {
     return this._agent;
   }
 
-  set agent(agent: Web5PlatformAgent) {
+  set agent(agent: EnboxPlatformAgent) {
     this._agent = agent;
-    this._permissionsApi = new AgentPermissionsApi({ agent: agent as Web5Agent });
+    this._permissionsApi = new AgentPermissionsApi({ agent: agent as EnboxAgent });
   }
 
   get connectivityState(): SyncConnectivityState {

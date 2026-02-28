@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import type { BearerDid, PortableDid } from '@enbox/dids';
 import { DidDht, DidJwk } from '@enbox/dids';
 
-import type { Web5PlatformAgent } from '../src/types/agent.js';
+import type { EnboxPlatformAgent } from '../src/types/agent.js';
 
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
@@ -30,7 +30,7 @@ describe('AgentDidApi', () => {
   describe('get agent', () => {
     it(`returns the 'agent' instance property`, async () => {
       // @ts-expect-error because we are only mocking a single property.
-      const mockAgent: Web5PlatformAgent = {
+      const mockAgent: EnboxPlatformAgent = {
         agentDid: { uri: 'did:method:abc123' } as BearerDid
       };
       const didApi = new AgentDidApi({ didMethods: [DidJwk], agent: mockAgent });

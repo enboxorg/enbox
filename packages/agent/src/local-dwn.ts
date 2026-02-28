@@ -14,7 +14,7 @@
  * @module
  */
 
-import type { Web5Rpc } from '@enbox/dwn-clients';
+import type { EnboxRpc } from '@enbox/dwn-clients';
 
 import type { DwnDiscoveryFile } from './dwn-discovery-file.js';
 
@@ -67,7 +67,7 @@ export class LocalDwnDiscovery {
   private _cacheExpiry = 0;
 
   constructor(
-    private _rpcClient: Web5Rpc,
+    private _rpcClient: EnboxRpc,
     private _cacheTtlMs = 10_000,
     private _discoveryFile?: DwnDiscoveryFile,
   ) {}

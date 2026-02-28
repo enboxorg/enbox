@@ -4,7 +4,7 @@ import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import { PlatformAgentTestHarness, Web5UserAgent } from '@enbox/agent';
+import { EnboxUserAgent, PlatformAgentTestHarness } from '@enbox/agent';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
@@ -145,7 +145,7 @@ describe('repository()', () => {
 
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
-      agentClass       : Web5UserAgent,
+      agentClass       : EnboxUserAgent,
       agentStores      : 'memory',
       testDataLocation : '__TESTDATA__/repository',
     });

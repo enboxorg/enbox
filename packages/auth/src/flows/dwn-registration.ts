@@ -11,7 +11,7 @@
  * @module
  */
 
-import type { Web5UserAgent } from '@enbox/agent';
+import type { EnboxUserAgent } from '@enbox/agent';
 
 import { DwnRegistrar } from '@enbox/dwn-clients';
 
@@ -23,7 +23,7 @@ import type {
 /** @internal */
 export interface RegistrationContext {
   /** The user agent with RPC access for getServerInfo(). */
-  userAgent: Web5UserAgent;
+  userAgent: EnboxUserAgent;
 
   /** DWN endpoints to register with. */
   dwnEndpoints: string[];

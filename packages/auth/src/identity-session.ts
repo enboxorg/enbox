@@ -3,7 +3,7 @@
  * @module
  */
 
-import type { Web5Agent } from '@enbox/agent';
+import type { EnboxAgent } from '@enbox/agent';
 
 import type { IdentityInfo } from './types.js';
 
@@ -28,7 +28,7 @@ import type { IdentityInfo } from './types.js';
  */
 export class AuthSession {
   /** The authenticated Web5 agent managing keys, DIDs, and DWN access. */
-  readonly agent: Web5Agent;
+  readonly agent: EnboxAgent;
 
   /** The DID URI of the connected identity. */
   readonly did: string;
@@ -50,7 +50,7 @@ export class AuthSession {
   readonly identity: IdentityInfo;
 
   constructor(params: {
-    agent: Web5Agent;
+    agent: EnboxAgent;
     did: string;
     delegateDid?: string;
     recoveryPhrase?: string;

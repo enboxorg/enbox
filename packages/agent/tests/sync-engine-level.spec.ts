@@ -58,7 +58,7 @@ describe('SyncEngineLevel', () => {
     });
   });
 
-  describe('with Web5 Platform Agent', () => {
+  describe('with Enbox Platform Agent', () => {
     let alice: BearerIdentity;
     let randomSchema: string;
     let syncEngine: SyncEngineLevel;

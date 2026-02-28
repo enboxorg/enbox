@@ -1,5 +1,5 @@
+import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
-import type { Web5PlatformAgent } from './types/agent.js';
 import type { GenericMessage, MessagesReadReply, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
 import { DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
@@ -54,7 +54,7 @@ export async function pullMessages({ did, dwnUrl, delegateDid, protocol, message
   delegateDid?: string;
   protocol?: string;
   messageCids: string[];
-  agent: Web5PlatformAgent;
+  agent: EnboxPlatformAgent;
   permissionsApi: PermissionsApi;
 }): Promise<void> {
   // Step 1: Fetch all missing messages from the remote in parallel.
@@ -101,7 +101,7 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, 
   delegateDid?: string;
   protocol?: string;
   messageCids: string[];
-  agent: Web5PlatformAgent;
+  agent: EnboxPlatformAgent;
   permissionsApi: PermissionsApi;
 }): Promise<SyncMessageEntry[]> {
   const results: SyncMessageEntry[] = [];
@@ -189,7 +189,7 @@ export async function pushMessages({ did, dwnUrl, delegateDid, protocol, message
   delegateDid?: string;
   protocol?: string;
   messageCids: string[];
-  agent: Web5PlatformAgent;
+  agent: EnboxPlatformAgent;
   permissionsApi: PermissionsApi;
 }): Promise<void> {
   // Step 1: Fetch all local messages (streams are pull-based, not yet consumed).
@@ -234,7 +234,7 @@ export async function getLocalMessage({ author, delegateDid, protocol, messageCi
   delegateDid?: string;
   protocol?: string;
   messageCid: string;
-  agent: Web5PlatformAgent;
+  agent: EnboxPlatformAgent;
   permissionsApi: PermissionsApi;
 }): Promise<SyncMessageEntry | undefined> {
   let permissionGrantId: string | undefined;

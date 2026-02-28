@@ -1,9 +1,9 @@
 /**
- * Shared mock factory for Web5UserAgent used across tests.
+ * Shared mock factory for EnboxUserAgent used across tests.
  * @module
  */
 
-import type { Web5UserAgent } from '@enbox/agent';
+import type { EnboxUserAgent } from '@enbox/agent';
 
 /** Minimal BearerIdentity-like object for testing. */
 export interface MockIdentity {
@@ -57,11 +57,11 @@ export interface MockAgentOverrides {
 }
 
 /**
- * Create a fully-mocked Web5UserAgent with sensible defaults.
+ * Create a fully-mocked EnboxUserAgent with sensible defaults.
  *
  * All methods are mocked with no-op defaults that can be overridden.
  */
-export function createMockAgent(overrides: MockAgentOverrides = {}): Web5UserAgent {
+export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAgent {
   const defaultIdentity = createMockIdentity();
 
   return {
@@ -122,5 +122,5 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): Web5UserAge
       backup         : overrides.vaultBackup ?? (async (): Promise<any> => ({ data: 'backup' })),
       restore        : overrides.vaultRestore ?? (async (): Promise<void> => {}),
     },
-  } as unknown as Web5UserAgent;
+  } as unknown as EnboxUserAgent;
 }

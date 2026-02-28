@@ -8,7 +8,7 @@ import { HttpDwnRpcClient } from './http-dwn-rpc-client.js';
 import { WebSocketDwnRpcClient } from './web-socket-clients.js';
 
 /**
- * Interface that can be implemented to communicate with {@link Web5Agent | Web5 Agent}
+ * Interface that can be implemented to communicate with {@link EnboxAgent | Enbox Agent}
  * implementations via JSON-RPC.
  */
 export interface DidRpc {
@@ -38,20 +38,20 @@ export type RpcStatus = {
   message: string;
 };
 
-export interface Web5Rpc extends DwnRpc, DidRpc, DwnServerInfoRpc {}
+export interface EnboxRpc extends DwnRpc, DidRpc, DwnServerInfoRpc {}
 
 /**
  * Client used to communicate with Dwn Servers
  */
-export class Web5RpcClient implements Web5Rpc {
-  private transportClients: Map<string, Web5Rpc>;
+export class EnboxRpcClient implements EnboxRpc {
+  private transportClients: Map<string, EnboxRpc>;
 
-  constructor(clients: Web5Rpc[] = []) {
+  constructor(clients: EnboxRpc[] = []) {
     this.transportClients = new Map();
 
     // include http and socket clients as default.
     // can be overwritten for 'http:', 'https:', 'ws: or ':wss' if instantiated with other clients.
-    clients = [new HttpWeb5RpcClient(), new WebSocketWeb5RpcClient(), ...clients];
+    clients = [new HttpEnboxRpcClient(), new WebSocketEnboxRpcClient(), ...clients];
 
     for (const client of clients) {
       for (const transportScheme of client.transportProtocols) {
@@ -110,7 +110,7 @@ export class Web5RpcClient implements Web5Rpc {
   }
 }
 
-export class HttpWeb5RpcClient extends HttpDwnRpcClient implements Web5Rpc {
+export class HttpEnboxRpcClient extends HttpDwnRpcClient implements EnboxRpc {
   async sendDidRequest(request: DidRpcRequest): Promise<DidRpcResponse> {
     const requestId = CryptoUtils.randomUuid();
     const jsonRpcRequest = createJsonRpcRequest(requestId, request.method, {
@@ -149,7 +149,7 @@ export class HttpWeb5RpcClient extends HttpDwnRpcClient implements Web5Rpc {
   }
 }
 
-export class WebSocketWeb5RpcClient extends WebSocketDwnRpcClient implements Web5Rpc {
+export class WebSocketEnboxRpcClient extends WebSocketDwnRpcClient implements EnboxRpc {
   async sendDidRequest(_request: DidRpcRequest): Promise<DidRpcResponse> {
     throw new Error(`not implemented for transports [${this.transportProtocols.join(', ')}]`);
   }
@@ -158,3 +158,19 @@ export class WebSocketWeb5RpcClient extends WebSocketDwnRpcClient implements Web
     throw new Error(`not implemented for transports [${this.transportProtocols.join(', ')}]`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Deprecated aliases — migration aid
+// ---------------------------------------------------------------------------
+
+/** @deprecated Use {@link EnboxRpc} instead. Will be removed in a future version. */
+export type Web5Rpc = EnboxRpc;
+
+/** @deprecated Use {@link EnboxRpcClient} instead. Will be removed in a future version. */
+export const Web5RpcClient = EnboxRpcClient;
+
+/** @deprecated Use {@link HttpEnboxRpcClient} instead. Will be removed in a future version. */
+export const HttpWeb5RpcClient = HttpEnboxRpcClient;
+
+/** @deprecated Use {@link WebSocketEnboxRpcClient} instead. Will be removed in a future version. */
+export const WebSocketWeb5RpcClient = WebSocketEnboxRpcClient;

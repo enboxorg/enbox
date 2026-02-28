@@ -16,7 +16,7 @@ import { BearerDid, Did, DidDht, UniversalResolver } from '@enbox/dids';
 
 import type { AgentDataStore } from './store-data.js';
 import type { AgentKeyManager } from './types/key-manager.js';
-import type { ResponseStatus, Web5PlatformAgent } from './types/agent.js';
+import type { EnboxPlatformAgent, ResponseStatus } from './types/agent.js';
 
 import { AgentDidResolverCache } from './agent-did-resolver-cache.js';
 import { canonicalize } from '@enbox/crypto';
@@ -84,7 +84,7 @@ export interface DidMethodCreateOptions<TKeyManager> {
 export interface DidApiParams {
   didMethods: DidMethodApi[];
 
-  agent?: Web5PlatformAgent;
+  agent?: EnboxPlatformAgent;
 
   /**
    * An optional `DidResolverCache` instance used for caching resolved DID documents.
@@ -114,12 +114,12 @@ export function isDidRequest<T extends DidInterface>(
  */
 export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> extends UniversalResolver {
   /**
-   * Holds the instance of a `Web5PlatformAgent` that represents the current execution context for
+   * Holds the instance of a `EnboxPlatformAgent` that represents the current execution context for
    * the `AgentDidApi`. This agent is used to interact with other Web5 agent components. It's vital
    * to ensure this instance is set to correctly contextualize operations within the broader Web5
    * Agent framework.
    */
-  private _agent?: Web5PlatformAgent;
+  private _agent?: EnboxPlatformAgent;
 
   private _didMethods: Map<string, DidMethodApi> = new Map();
 
@@ -148,12 +148,12 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
   }
 
   /**
-   * Retrieves the `Web5PlatformAgent` execution context.
+   * Retrieves the `EnboxPlatformAgent` execution context.
    *
-   * @returns The `Web5PlatformAgent` instance that represents the current execution context.
+   * @returns The `EnboxPlatformAgent` instance that represents the current execution context.
    * @throws Will throw an error if the `agent` instance property is undefined.
    */
-  get agent(): Web5PlatformAgent {
+  get agent(): EnboxPlatformAgent {
     if (this._agent === undefined) {
       throw new Error('AgentDidApi: Unable to determine agent execution context.');
     }
@@ -161,7 +161,7 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
     return this._agent;
   }
 
-  set agent(agent: Web5PlatformAgent) {
+  set agent(agent: EnboxPlatformAgent) {
     this._agent = agent;
 
     // AgentDidResolverCache should set the agent if it is the type of cache being used

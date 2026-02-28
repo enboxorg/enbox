@@ -13,7 +13,7 @@ import type {
   RecordsSubscribeReply,
   SubscriptionListener,
 } from '@enbox/dwn-sdk-js';
-import type { DwnRpcRequest, Web5Rpc } from '@enbox/dwn-clients';
+import type { DwnRpcRequest, EnboxRpc } from '@enbox/dwn-clients';
 
 import { ProtocolsQuery, RecordsCount, RecordsQuery, RecordsRead, RecordsSubscribe } from '@enbox/dwn-sdk-js';
 
@@ -26,7 +26,7 @@ export type AnonymousDwnApiParams = {
   /** A DID URL dereferencer for resolving target DID service endpoints. */
   didResolver: DidUrlDereferencer;
   /** An RPC client for sending messages to remote DWNs. */
-  rpcClient: Web5Rpc;
+  rpcClient: EnboxRpc;
 };
 
 /**
@@ -89,7 +89,7 @@ export type AnonymousProtocolsQueryParams = {
  * @example
  * ```ts
  * const resolver = new UniversalResolver({ didResolvers: [DidDht, DidJwk] });
- * const rpcClient = new Web5RpcClient();
+ * const rpcClient = new EnboxRpcClient();
  * const anonymousDwn = new AnonymousDwnApi({ didResolver: resolver, rpcClient });
  *
  * const reply = await anonymousDwn.recordsQuery('did:dht:alice...', {
@@ -99,7 +99,7 @@ export type AnonymousProtocolsQueryParams = {
  */
 export class AnonymousDwnApi {
   private _didResolver: DidUrlDereferencer;
-  private _rpcClient: Web5Rpc;
+  private _rpcClient: EnboxRpc;
 
   constructor({ didResolver, rpcClient }: AnonymousDwnApiParams) {
     this._didResolver = didResolver;

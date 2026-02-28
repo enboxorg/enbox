@@ -11,10 +11,10 @@ import type {
   DwnMessageParams,
   DwnPaginationCursor,
   DwnResponseStatus,
+  EnboxAgent,
   PermissionsApi,
   ProcessDwnRequest,
   SendDwnRequest,
-  Web5Agent,
 } from '@enbox/agent';
 
 import type {
@@ -94,8 +94,8 @@ export class Record implements RecordModel {
 
   // Record instance metadata.
 
-  /** The {@link Web5Agent} instance that handles DWNs requests. */
-  private _agent: Web5Agent;
+  /** The {@link EnboxAgent} instance that handles DWNs requests. */
+  private _agent: EnboxAgent;
   /** The DID of the DWN tenant under which operations are being performed. */
   private _connectedDid: string;
   /** The optional DID that is delegated to act on behalf of the connectedDid */
@@ -264,7 +264,7 @@ export class Record implements RecordModel {
     return message;
   }
 
-  constructor(agent: Web5Agent, options: RecordOptions, permissionsApi?: PermissionsApi) {
+  constructor(agent: EnboxAgent, options: RecordOptions, permissionsApi?: PermissionsApi) {
 
     this._agent = agent;
 

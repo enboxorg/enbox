@@ -9,8 +9,8 @@ import { processConnectedGrants } from '@enbox/auth';
 import { Stream } from '@enbox/common';
 import {
   DwnConstant, DwnContentEncryptionAlgorithm, DwnDateSort, DwnInterface, DwnKeyDerivationScheme,
-  dwnMessageConstructors, getRecordAuthor, getRecordProtocolRole, Oidc,
-  PlatformAgentTestHarness, WalletConnect, Web5UserAgent,
+  dwnMessageConstructors, EnboxUserAgent, getRecordAuthor, getRecordProtocolRole,
+  Oidc, PlatformAgentTestHarness, WalletConnect,
 } from '@enbox/agent';
 import { Jws, Message, Poller } from '@enbox/dwn-sdk-js';
 
@@ -45,7 +45,7 @@ describe('Record', () => {
     console.warn = (): void => {};
 
     testHarness = await PlatformAgentTestHarness.setup({
-      agentClass  : Web5UserAgent,
+      agentClass  : EnboxUserAgent,
       agentStores : 'memory'
     });
 
@@ -133,7 +133,7 @@ describe('Record', () => {
 
     beforeAll(async () => {
       delegateHarness = await PlatformAgentTestHarness.setup({
-        agentClass       : Web5UserAgent,
+        agentClass       : EnboxUserAgent,
         agentStores      : 'memory',
         testDataLocation : '__TESTDATA__/delegateDid'
       });
@@ -212,18 +212,18 @@ describe('Record', () => {
 
       // Process the connected grants (stores them in the delegate agent's DWN).
       const connectedProtocols = await processConnectedGrants({
-        grants, delegateDid: delegateDid.uri, agent: delegateHarness.agent as Web5UserAgent,
+        grants, delegateDid: delegateDid.uri, agent: delegateHarness.agent as EnboxUserAgent,
       });
 
       // Register sync for Alice's DID and pull the protocol configuration.
-      await (delegateHarness.agent as Web5UserAgent).sync.registerIdentity({
+      await (delegateHarness.agent as EnboxUserAgent).sync.registerIdentity({
         did     : aliceDid.uri,
         options : {
           delegateDid : delegateDid.uri,
           protocols   : connectedProtocols,
         }
       });
-      await (delegateHarness.agent as Web5UserAgent).sync.sync('pull');
+      await (delegateHarness.agent as EnboxUserAgent).sync.sync('pull');
 
       // Construct the Enbox instance directly with delegate support.
       const enbox = new Enbox({ agent: delegateHarness.agent, connectedDid: aliceDid.uri, delegateDid: delegateDid.uri });
@@ -1739,7 +1739,7 @@ describe('Record', () => {
       beforeAll(async () => {
         // Create a second `TestManagedAgent` that only Carol will use.
         testHarnessCarol = await PlatformAgentTestHarness.setup({
-          agentClass       : Web5UserAgent,
+          agentClass       : EnboxUserAgent,
           agentStores      : 'memory',
           testDataLocation : '__TESTDATA__/AGENT_BOB'
         });

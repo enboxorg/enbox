@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
+import { EnboxUserAgent } from '../src/enbox-user-agent.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
-import { Web5UserAgent } from '../src/web5-user-agent.js';
 
 describe('Managing Identities', () => {
 
@@ -13,7 +13,7 @@ describe('Managing Identities', () => {
 
       beforeAll(async () => {
         testHarness = await PlatformAgentTestHarness.setup({
-          agentClass  : Web5UserAgent,
+          agentClass  : EnboxUserAgent,
           agentStores : agentStoreType
         });
       });

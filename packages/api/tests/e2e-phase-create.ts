@@ -10,7 +10,7 @@
  *   E2E_ADMIN_TOKEN — (Optional) DWN admin token for tenant registration
  */
 
-import { Web5UserAgent } from '@enbox/agent';
+import { EnboxUserAgent } from '@enbox/agent';
 import { ProfileProtocol, SocialGraphProtocol } from '@enbox/protocols';
 
 import { Enbox, repository } from '../src/index.js';
@@ -58,7 +58,7 @@ async function main(): Promise<void> {
   log('Connecting to create new agent + identity...');
 
   // Create the agent, initialize the vault, and start it.
-  const agent = await Web5UserAgent.create();
+  const agent = await EnboxUserAgent.create();
   const recoveryPhrase = await agent.initialize({ password, dwnEndpoints: [DWN_URL] });
   await agent.start({ password });
 

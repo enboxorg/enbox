@@ -1,4 +1,4 @@
-import type { Web5Rpc } from '@enbox/dwn-clients';
+import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { DidDereferencingResult, DidUrlDereferencer } from '@enbox/dids';
 
 import sinon from 'sinon';
@@ -9,7 +9,7 @@ import { AnonymousDwnApi } from '../src/anonymous-dwn-api.js';
 describe('AnonymousDwnApi', () => {
 
   let anonymousDwn: AnonymousDwnApi;
-  let rpcStub: sinon.SinonStubbedInstance<Web5Rpc>;
+  let rpcStub: sinon.SinonStubbedInstance<EnboxRpc>;
   let resolverStub: sinon.SinonStubbedInstance<DidUrlDereferencer>;
 
   const targetDid = 'did:example:alice';
@@ -34,9 +34,9 @@ describe('AnonymousDwnApi', () => {
   }
 
   /**
-   * Helper: create a stubbed Web5Rpc client.
+   * Helper: create a stubbed EnboxRpc client.
    */
-  function createRpcStub(): sinon.SinonStubbedInstance<Web5Rpc> {
+  function createRpcStub(): sinon.SinonStubbedInstance<EnboxRpc> {
     return {
       transportProtocols : [],
       sendDwnRequest     : sinon.stub(),
@@ -46,7 +46,7 @@ describe('AnonymousDwnApi', () => {
         maxFileSize              : 10_000_000,
         webSocketSupport         : false,
       }),
-    } as unknown as sinon.SinonStubbedInstance<Web5Rpc>;
+    } as unknown as sinon.SinonStubbedInstance<EnboxRpc>;
   }
 
   beforeEach(() => {

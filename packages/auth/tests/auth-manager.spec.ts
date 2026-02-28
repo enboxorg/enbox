@@ -1,4 +1,4 @@
-import type { Web5UserAgent } from '@enbox/agent';
+import type { EnboxUserAgent } from '@enbox/agent';
 import { describe, expect, test } from 'bun:test';
 
 import { AuthManager } from '../src/auth-manager.js';
@@ -10,11 +10,11 @@ import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
  * Construct an AuthManager instance with a pre-built mock agent.
  *
  * We use `Object.create()` + manual assignment to bypass the private
- * constructor and `Web5UserAgent.create()` call, testing orchestration
+ * constructor and `EnboxUserAgent.create()` call, testing orchestration
  * logic in isolation.
  */
 function createTestManager(
-  agent: Web5UserAgent,
+  agent: EnboxUserAgent,
   overrides: {
     storage?: MemoryStorage;
     password?: string;
@@ -26,7 +26,7 @@ function createTestManager(
   const storage = overrides.storage ?? new MemoryStorage();
 
   // Use the static create path with a module mock — but that requires
-  // mocking Web5UserAgent.create. Instead, craft the instance manually.
+  // mocking EnboxUserAgent.create. Instead, craft the instance manually.
   const manager = Object.create(AuthManager.prototype) as any;
   manager._userAgent = agent;
   manager._emitter = new (require('../src/events.js').AuthEventEmitter)();

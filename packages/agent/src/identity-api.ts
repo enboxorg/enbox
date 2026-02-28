@@ -3,7 +3,7 @@ import type { RequireOnly } from '@enbox/common';
 import type { AgentDataStore } from './store-data.js';
 import type { AgentKeyManager } from './types/key-manager.js';
 import type { DidMethodCreateOptions } from './did-api.js';
-import type { Web5PlatformAgent } from './types/agent.js';
+import type { EnboxPlatformAgent } from './types/agent.js';
 import type { IdentityMetadata, PortableIdentity } from './types/identity.js';
 
 import { isPortableDid } from '@enbox/dids';
@@ -12,7 +12,7 @@ import { BearerIdentity } from './bearer-identity.js';
 import { InMemoryIdentityStore } from './store-identity.js';
 
 export interface IdentityApiParams<TKeyManager extends AgentKeyManager> {
-  agent?: Web5PlatformAgent<TKeyManager>;
+  agent?: EnboxPlatformAgent<TKeyManager>;
 
   store?: AgentDataStore<IdentityMetadata>;
 }
@@ -47,12 +47,12 @@ export function isPortableIdentity(obj: unknown): obj is PortableIdentity {
  */
 export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyManager> {
   /**
-   * Holds the instance of a `Web5PlatformAgent` that represents the current execution context for
+   * Holds the instance of a `EnboxPlatformAgent` that represents the current execution context for
    * the `AgentIdentityApi`. This agent is used to interact with other Web5 agent components. It's
    * vital to ensure this instance is set to correctly contextualize operations within the broader
    * Web5 Agent framework.
    */
-  private _agent?: Web5PlatformAgent<TKeyManager>;
+  private _agent?: EnboxPlatformAgent<TKeyManager>;
 
   private _store: AgentDataStore<IdentityMetadata>;
 
@@ -64,12 +64,12 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
   }
 
   /**
-   * Retrieves the `Web5PlatformAgent` execution context.
+   * Retrieves the `EnboxPlatformAgent` execution context.
    *
-   * @returns The `Web5PlatformAgent` instance that represents the current execution context.
+   * @returns The `EnboxPlatformAgent` instance that represents the current execution context.
    * @throws Will throw an error if the `agent` instance property is undefined.
    */
-  get agent(): Web5PlatformAgent<TKeyManager> {
+  get agent(): EnboxPlatformAgent<TKeyManager> {
     if (this._agent === undefined) {
       throw new Error('AgentIdentityApi: Unable to determine agent execution context.');
     }
@@ -77,7 +77,7 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
     return this._agent;
   }
 
-  set agent(agent: Web5PlatformAgent<TKeyManager>) {
+  set agent(agent: EnboxPlatformAgent<TKeyManager>) {
     this._agent = agent;
   }
 

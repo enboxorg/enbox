@@ -1,8 +1,8 @@
 import type { AgentKeyManager } from './types/key-manager.js';
 import type { BearerDid } from '@enbox/dids';
+import type { EnboxPlatformAgent } from './types/agent.js';
+import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { LocalDwnStrategy } from './local-dwn.js';
-import type { Web5PlatformAgent } from './types/agent.js';
-import type { Web5Rpc } from '@enbox/dwn-clients';
 import type { DidInterface, DidRequest, DidResponse } from './did-api.js';
 import type { DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './types/dwn.js';
 import type { ProcessVcRequest, SendVcRequest, VcResponse } from './types/vc.js';
@@ -17,15 +17,15 @@ import { AgentSyncApi } from './sync-api.js';
 import { DwnDidStore } from './store-did.js';
 import { DwnIdentityStore } from './store-identity.js';
 import { DwnKeyStore } from './store-key.js';
+import { EnboxRpcClient } from '@enbox/dwn-clients';
 import { HdIdentityVault } from './hd-identity-vault.js';
 import { LevelStore } from '@enbox/common';
 import { LocalKeyManager } from './local-key-manager.js';
 import { SyncEngineLevel } from './sync-engine-level.js';
-import { Web5RpcClient } from '@enbox/dwn-clients';
 import { DidDht, DidJwk } from '@enbox/dids';
 
 /**
- * Initialization parameters for {@link Web5UserAgent}, including an optional recovery phrase that
+ * Initialization parameters for {@link EnboxUserAgent}, including an optional recovery phrase that
  * can be used to derive keys to encrypt the vault and generate a DID.
  */
 export type AgentInitializeParams = {
@@ -46,10 +46,10 @@ export type AgentInitializeParams = {
    recoveryPhrase?: string;
 
   /**
-   * Optional dwnEndpoints to register didService endpoints during Web5UserAgent initialization
+   * Optional dwnEndpoints to register didService endpoints during EnboxUserAgent initialization
    *
    * The dwnEndpoints are used to register DWN endpoints against the agent DID created during
-   * Web5UserAgent.initialize() =>  DidDht.create(). This allows the
+   * EnboxUserAgent.initialize() =>  DidDht.create(). This allows the
    * agent to properly recover connectedDids from DWN. Also, this pattern can be used on the server
    * side in place of the agentDid-->connectedDids pattern.
    */
@@ -83,7 +83,7 @@ export type AgentParams<TKeyManager extends AgentKeyManager = LocalKeyManager> =
   /** Facilitates fetching, requesting, creating, revoking and validating revocation status of permissions */
   permissionsApi: AgentPermissionsApi;
   /** Remote procedure call (RPC) client used to communicate with other Web5 services. */
-  rpcClient: Web5Rpc;
+  rpcClient: EnboxRpc;
   /** Facilitates data synchronization of DWN records between nodes. */
   syncApi: AgentSyncApi;
 };
@@ -92,14 +92,14 @@ export type CreateUserAgentParams = Partial<AgentParams> & {
   localDwnStrategy?: LocalDwnStrategy;
 };
 
-export class Web5UserAgent<TKeyManager extends AgentKeyManager = LocalKeyManager> implements Web5PlatformAgent<TKeyManager> {
+export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManager> implements EnboxPlatformAgent<TKeyManager> {
   public crypto: AgentCryptoApi;
   public did: AgentDidApi<TKeyManager>;
   public dwn: AgentDwnApi;
   public identity: AgentIdentityApi<TKeyManager>;
   public keyManager: TKeyManager;
   public permissions: AgentPermissionsApi;
-  public rpc: Web5Rpc;
+  public rpc: EnboxRpc;
   public sync: AgentSyncApi;
   public vault: HdIdentityVault;
 
@@ -129,7 +129,7 @@ export class Web5UserAgent<TKeyManager extends AgentKeyManager = LocalKeyManager
   get agentDid(): BearerDid {
     if (this._agentDid === undefined) {
       throw new Error(
-        'Web5UserAgent: The "agentDid" property is not set. Ensure the agent is properly ' +
+        'EnboxUserAgent: The "agentDid" property is not set. Ensure the agent is properly ' +
         'initialized and a DID is assigned.'
       );
     }
@@ -148,7 +148,7 @@ export class Web5UserAgent<TKeyManager extends AgentKeyManager = LocalKeyManager
     localDwnStrategy,
     agentDid, agentVault, cryptoApi, didApi, dwnApi, identityApi, keyManager, permissionsApi, rpcClient, syncApi
   }: CreateUserAgentParams = {}
-  ): Promise<Web5UserAgent> {
+  ): Promise<EnboxUserAgent> {
 
     agentVault ??= new HdIdentityVault({
       keyDerivationWorkFactor : 210_000,
@@ -177,12 +177,12 @@ export class Web5UserAgent<TKeyManager extends AgentKeyManager = LocalKeyManager
 
     permissionsApi ??= new AgentPermissionsApi();
 
-    rpcClient ??= new Web5RpcClient();
+    rpcClient ??= new EnboxRpcClient();
 
     syncApi ??= new AgentSyncApi({ syncEngine: new SyncEngineLevel({ dataPath }) });
 
     // Instantiate the Agent using the provided or default components.
-    return new Web5UserAgent({
+    return new EnboxUserAgent({
       agentDid,
       agentVault,
       cryptoApi,
@@ -261,3 +261,13 @@ export class Web5UserAgent<TKeyManager extends AgentKeyManager = LocalKeyManager
     this.agentDid = await this.vault.getDid();
   }
 }
+
+// ---------------------------------------------------------------------------
+// Deprecated aliases — migration aid
+// ---------------------------------------------------------------------------
+
+/** @deprecated Use {@link EnboxUserAgent} instead. Will be removed in a future version. */
+export const Web5UserAgent = EnboxUserAgent;
+
+/** @deprecated Use {@link EnboxUserAgent} instead. Will be removed in a future version. */
+export type Web5UserAgent = EnboxUserAgent;

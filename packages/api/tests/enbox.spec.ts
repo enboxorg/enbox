@@ -5,8 +5,8 @@ import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import {
   DwnInterface,
+  EnboxUserAgent,
   PlatformAgentTestHarness,
-  Web5UserAgent,
 } from '@enbox/agent';
 
 import { defineProtocol } from '../src/define-protocol.js';
@@ -32,7 +32,7 @@ describe('Enbox API', () => {
 
     beforeAll(async () => {
       testHarness = await PlatformAgentTestHarness.setup({
-        agentClass  : Web5UserAgent,
+        agentClass  : EnboxUserAgent,
         agentStores : 'memory',
       });
     });
@@ -330,7 +330,7 @@ describe('Enbox API', () => {
 
     beforeAll(async () => {
       testHarness = await PlatformAgentTestHarness.setup({
-        agentClass  : Web5UserAgent,
+        agentClass  : EnboxUserAgent,
         agentStores : 'memory',
       });
     });

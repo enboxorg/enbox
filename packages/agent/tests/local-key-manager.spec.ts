@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { CryptoErrorCode, CryptoUtils, Ed25519, X25519 } from '@enbox/crypto';
 import { Encryption, HdKey } from '@enbox/dwn-sdk-js';
 
-import type { Web5PlatformAgent } from '../src/types/agent.js';
+import type { EnboxPlatformAgent } from '../src/types/agent.js';
 
 import { isChrome } from './utils/runtimes.js';
 import { LocalKeyManager } from '../src/local-key-manager.js';
@@ -18,7 +18,7 @@ describe('LocalKeyManager', () => {
   describe('get agent', () => {
     it(`returns the 'agent' instance property`, async () => {
       // @ts-expect-error because we are only mocking a single property.
-      const mockAgent: Web5PlatformAgent = {
+      const mockAgent: EnboxPlatformAgent = {
         agentDid: { uri: 'did:method:abc123' } as BearerDid
       };
       const keyManager = new LocalKeyManager({ agent: mockAgent });

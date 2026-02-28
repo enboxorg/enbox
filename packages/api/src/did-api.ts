@@ -1,4 +1,4 @@
-import type { DidCreateParams, DidMessageResult, DidResolveParams, ResponseStatus, Web5Agent } from '@enbox/agent';
+import type { DidCreateParams, DidMessageResult, DidResolveParams, EnboxAgent, ResponseStatus } from '@enbox/agent';
 
 import { DidInterface } from '@enbox/agent';
 
@@ -37,15 +37,15 @@ export type DidResolveResponse = DidMessageResult[DidInterface.Resolve];
  */
 export class DidApi {
   /**
-   * Holds the instance of a {@link Web5Agent} that represents the current execution context for
+   * Holds the instance of a {@link EnboxAgent} that represents the current execution context for
    * the `DidApi`. This agent is used to process DID requests.
    */
-  private agent: Web5Agent;
+  private agent: EnboxAgent;
 
   /** The DID of the tenant under which DID operations are being performed. */
   private connectedDid: string;
 
-  constructor(options: { agent: Web5Agent, connectedDid: string }) {
+  constructor(options: { agent: EnboxAgent, connectedDid: string }) {
     this.agent = options.agent;
     this.connectedDid = options.connectedDid;
   }

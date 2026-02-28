@@ -6,9 +6,9 @@ import type { AgentIdentityApi } from '../../src/identity-api.js';
 import type { AgentKeyManager } from '../../src/types/key-manager.js';
 import type { AgentPermissionsApi } from '../../src/permissions-api.js';
 import type { AgentSyncApi } from '../../src/sync-api.js';
+import type { EnboxPlatformAgent } from '../../src/types/agent.js';
+import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { IdentityVault } from '../../src/types/identity-vault.js';
-import type { Web5PlatformAgent } from '../../src/types/agent.js';
-import type { Web5Rpc } from '@enbox/dwn-clients';
 import type { AgentDidApi, DidInterface } from '../../src/did-api.js';
 import type { DidRequest, DidResponse } from '../../src/did-api.js';
 import type {
@@ -27,18 +27,18 @@ type TestAgentParams<TKeyManager extends AgentKeyManager> = {
   identityApi: AgentIdentityApi<TKeyManager>;
   keyManager: TKeyManager;
   permissionsApi: AgentPermissionsApi;
-  rpcClient: Web5Rpc;
+  rpcClient: EnboxRpc;
   syncApi: AgentSyncApi;
 };
 
-export class TestAgent<TKeyManager extends AgentKeyManager> implements Web5PlatformAgent<TKeyManager> {
+export class TestAgent<TKeyManager extends AgentKeyManager> implements EnboxPlatformAgent<TKeyManager> {
   public crypto: AgentCryptoApi;
   public did: AgentDidApi;
   public dwn: AgentDwnApi;
   public identity: AgentIdentityApi<TKeyManager>;
   public keyManager: TKeyManager;
   public permissions: AgentPermissionsApi;
-  public rpc: Web5Rpc;
+  public rpc: EnboxRpc;
   public sync: AgentSyncApi;
   public vault: IdentityVault;
 
