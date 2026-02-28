@@ -37,7 +37,7 @@ export type LocalDwnStrategy = 'prefer' | 'only' | 'off';
 export const localDwnServerName = '@enbox/dwn-server';
 
 /** Strips a trailing slash from a URL so endpoint comparisons are consistent. */
-function normalizeBaseUrl(url: string): string {
+export function normalizeBaseUrl(url: string): string {
   return url.endsWith('/') ? url.slice(0, -1) : url;
 }
 

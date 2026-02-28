@@ -3,18 +3,15 @@ import type { DwnServerConfig } from '@enbox/dwn-server';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { buildDwnDiscoveryRedirectUrl, parseDwnRegisterUrl } from '@enbox/agent';
+import {
+  buildDwnDiscoveryRedirectUrl,
+  DISCOVERY_DIR,
+  DISCOVERY_FILENAME,
+  localDwnPortCandidates,
+  parseDwnRegisterUrl,
+} from '@enbox/agent';
 import Electrobun, { BrowserWindow, Utils } from 'electrobun/bun';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
-
-/**
- * Well-known ports the local DWN desktop app may bind to.
- *
- * Keep in sync with `localDwnPortCandidates` in
- * `@enbox/agent/src/local-dwn.ts` — the agent probes these same ports
- * when discovering a running local DWN server.
- */
-const preferredPorts = [3000, 55555, 55556, 55557, 55558, 55559];
 
 function selectPortCandidates(): number[] {
   const envPort = Bun.env.DS_PORT;
@@ -25,7 +22,7 @@ function selectPortCandidates(): number[] {
     }
   }
 
-  return preferredPorts;
+  return [...localDwnPortCandidates];
 }
 
 const webSocketSupport = (
@@ -83,15 +80,13 @@ function createDwnServerConfig(port: number): DwnServerConfig {
 //
 // Write ~/.enbox/dwn.json on startup so CLI/native apps can discover
 // the local DWN server without port probing.
-//
-// Keep the file format in sync with `DwnDiscoveryRecord` in
-// `@enbox/agent/src/dwn-discovery-file.ts`.
 
-const discoveryFilePath = join(homedir(), '.enbox', 'dwn.json');
+const discoveryDir = join(homedir(), DISCOVERY_DIR);
+const discoveryFilePath = join(discoveryDir, DISCOVERY_FILENAME);
 
 async function writeDiscoveryFile(endpoint: string): Promise<void> {
   const record = { endpoint, pid: process.pid };
-  await mkdir(join(homedir(), '.enbox'), { recursive: true });
+  await mkdir(discoveryDir, { recursive: true });
   await writeFile(discoveryFilePath, JSON.stringify(record, null, 2), 'utf-8');
   console.log(`[electrobun-dwn] Discovery file written: ${discoveryFilePath}`);
 }
@@ -166,7 +161,7 @@ for (const port of portCandidates) {
 
 if (!dwnServer || selectedPort === undefined) {
   throw new Error(
-    `No available port found in ${preferredPorts.join(', ')} for local DWN server.`,
+    `No available port found in ${portCandidates.join(', ')} for local DWN server.`,
   );
 }
 
