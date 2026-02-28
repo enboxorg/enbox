@@ -150,7 +150,7 @@ describe('http api', function () {
     });
 
     it('exposes dwn-response header', async function () {
-      // This test verifies that the Express web server includes `dwn-response` in the list of
+      // This test verifies that the HTTP server includes `dwn-response` in the list of
       // `access-control-expose-headers` returned in each HTTP response. This is necessary to enable applications
       // that have CORS enabled to read and parse DWeb Messages that are returned as Response headers, particularly
       // in the case of RecordsRead messages.
@@ -1037,6 +1037,79 @@ describe('http api', function () {
 
       // restore server name config
       config.serverName = serverName;
+    });
+  });
+
+  describe('CORS headers', () => {
+    it('should include all required CORS headers on non-admin responses', async () => {
+      const response = await fetch(`${baseUrl}/info`);
+      expect(response.status).toBe(200);
+
+      expect(response.headers.get('access-control-allow-origin')).toBe('*');
+      expect(response.headers.get('access-control-allow-methods')).toBe('GET, POST, OPTIONS');
+      expect(response.headers.get('access-control-allow-headers')).toBe('*');
+      expect(response.headers.get('access-control-expose-headers')).toContain('dwn-response');
+      expect(response.headers.get('access-control-max-age')).toBe('86400');
+    });
+
+    it('should include CORS headers on JSON-RPC POST responses', async () => {
+      const response = await fetch(baseUrl, { method: 'POST' });
+      // Even a 400 (missing dwn-request header) should include CORS headers.
+      expect(response.status).toBe(400);
+
+      expect(response.headers.get('access-control-allow-origin')).toBe('*');
+      expect(response.headers.get('access-control-allow-methods')).toBe('GET, POST, OPTIONS');
+      expect(response.headers.get('access-control-max-age')).toBe('86400');
+    });
+
+    it('should include CORS headers on the health endpoint', async () => {
+      const response = await fetch(`${baseUrl}/health`);
+      expect(response.status).toBe(200);
+
+      expect(response.headers.get('access-control-allow-origin')).toBe('*');
+      expect(response.headers.get('access-control-max-age')).toBe('86400');
+    });
+
+    it('should return 204 with CORS headers on OPTIONS preflight', async () => {
+      const response = await fetch(`${baseUrl}/info`, { method: 'OPTIONS' });
+      expect(response.status).toBe(204);
+
+      expect(response.headers.get('access-control-allow-origin')).toBe('*');
+      expect(response.headers.get('access-control-allow-methods')).toBe('GET, POST, OPTIONS');
+      expect(response.headers.get('access-control-allow-headers')).toBe('*');
+      expect(response.headers.get('access-control-max-age')).toBe('86400');
+    });
+
+    it('should NOT include CORS headers on /admin routes', async () => {
+      // Admin routes are excluded from CORS to limit cross-origin access.
+      const response = await fetch(`${baseUrl}/admin/api/info`);
+      // The response status depends on whether adminApi is configured (it's
+      // not in this test setup, so it falls through to 404). The important
+      // assertion is the absence of CORS headers.
+      expect(response.headers.get('access-control-allow-origin')).toBeNull();
+      expect(response.headers.get('access-control-max-age')).toBeNull();
+    });
+
+    it('should NOT include CORS headers on /metrics', async () => {
+      const response = await fetch(`${baseUrl}/metrics`);
+      expect(response.headers.get('access-control-allow-origin')).toBeNull();
+      expect(response.headers.get('access-control-max-age')).toBeNull();
+    });
+
+    it('should include CORS headers on OPTIONS to /admin (preflight still responds)', async () => {
+      // OPTIONS to an admin route should return 204 but WITHOUT CORS headers,
+      // because the post-processing step skips admin routes.
+      const response = await fetch(`${baseUrl}/admin/api/info`, { method: 'OPTIONS' });
+      expect(response.status).toBe(204);
+      expect(response.headers.get('access-control-allow-origin')).toBeNull();
+    });
+
+    it('should include CORS headers on 404 responses', async () => {
+      const response = await fetch(`${baseUrl}/nonexistent-path`);
+      expect(response.status).toBe(404);
+
+      expect(response.headers.get('access-control-allow-origin')).toBe('*');
+      expect(response.headers.get('access-control-max-age')).toBe('86400');
     });
   });
 

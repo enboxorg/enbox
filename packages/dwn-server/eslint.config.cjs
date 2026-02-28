@@ -25,7 +25,6 @@ module.exports = [
       'tests/compiled/**',
       'tests/fixtures/**',
       'tests/**/*.js',
-      'tests/cors.spec.ts',
     ],
   },
 ];
