@@ -353,7 +353,7 @@ export class HttpApi {
 
     if (method === 'GET' && path === '/') {
       return new Response(
-        'please use am enbox client, for example: https://github.com/enboxorg/enbox ',
+        'please use an enbox client, for example: https://github.com/enboxorg/enbox ',
         { headers: { 'content-type': 'text/plain' } },
       );
     }

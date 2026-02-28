@@ -12,7 +12,7 @@
  *
  * @example
  * ```ts
- * const social = repository(web5.using(SocialGraphProtocol));
+ * const social = repository(enbox.using(SocialGraphProtocol));
  * await social.configure();
  *
  * // Root collection
@@ -334,12 +334,12 @@ function buildNode(
  * - Singletons: `repo.profile.set()`, `repo.profile.get()`
  * - Protocol install: `repo.configure()`
  *
- * @param typed - A `TypedEnbox` instance from `web5.using(protocol)`.
+ * @param typed - A `TypedEnbox` instance from `enbox.using(protocol)`.
  * @returns A typed repository object.
  *
  * @example
  * ```ts
- * const social = repository(web5.using(SocialGraphProtocol));
+ * const social = repository(enbox.using(SocialGraphProtocol));
  * await social.configure();
  *
  * const rec = await social.friend.create({

@@ -2,7 +2,7 @@
  * Advanced API surface for power users who need direct access to
  * the underlying {@link DwnApi}.
  *
- * Most applications should use `web5.using(protocol)` instead.
+ * Most applications should use `enbox.using(protocol)` instead.
  * Import from `@enbox/api/advanced` to access these exports.
  *
  * @packageDocumentation

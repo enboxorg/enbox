@@ -12,7 +12,7 @@
  *
  * @example
  * ```ts
- * const social = web5.using(SocialProtocol);
+ * const social = enbox.using(SocialProtocol);
  *
  * // Install the protocol
  * await social.configure();
@@ -525,11 +525,11 @@ export type TypedSubscribeResponse<T = unknown> = DwnResponseStatus & {
  * the data type `T` (resolved from the schema map) flows end-to-end — from
  * write through read, query, update, and subscribe — without manual casts.
  *
- * Obtain an instance via `web5.using(typedProtocol)`.
+ * Obtain an instance via `enbox.using(typedProtocol)`.
  *
  * @example
  * ```ts
- * const social = web5.using(SocialProtocol);
+ * const social = enbox.using(SocialProtocol);
  *
  * await social.configure();
  *
@@ -564,7 +564,7 @@ export class TypedEnbox<
   private _records?: TypedEnbox<D, M>['records'];
 
   /**
-   * @internal Create a new `TypedEnbox` instance. Use `web5.using(protocol)` instead.
+   * @internal Create a new `TypedEnbox` instance. Use `enbox.using(protocol)` instead.
    * @param dwn - The underlying DWN API instance.
    * @param protocol - The typed protocol containing the definition and schema map.
    */
@@ -614,7 +614,7 @@ export class TypedEnbox<
    *
    * @example
    * ```ts
-   * const proto = web5.using(NotebookProtocol);
+   * const proto = enbox.using(NotebookProtocol);
    *
    * const { status, protocol } = await proto.configure();
    * console.log(status.code); // 202 (first install) or 200 (already installed)

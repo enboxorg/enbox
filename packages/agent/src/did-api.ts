@@ -107,7 +107,7 @@ export function isDidRequest<T extends DidInterface>(
 }
 
 /**
- * This API is used to manage and interact with DIDs within the Web5 Agent framework.
+ * This API is used to manage and interact with DIDs within the Enbox Agent framework.
  *
  * If a DWN Data Store is used, the DID information is stored under DID's own tenant by default.
  * If a tenant property is passed, that tenant will be used to store the DID information.
@@ -115,8 +115,8 @@ export function isDidRequest<T extends DidInterface>(
 export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> extends UniversalResolver {
   /**
    * Holds the instance of a `EnboxPlatformAgent` that represents the current execution context for
-   * the `AgentDidApi`. This agent is used to interact with other Web5 agent components. It's vital
-   * to ensure this instance is set to correctly contextualize operations within the broader Web5
+   * the `AgentDidApi`. This agent is used to interact with other Enbox agent components. It's vital
+   * to ensure this instance is set to correctly contextualize operations within the broader Enbox
    * Agent framework.
    */
   private _agent?: EnboxPlatformAgent;

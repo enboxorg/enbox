@@ -93,8 +93,8 @@ async function initClient({
 
   const parData: PushedAuthResponse = await parResponse.json();
 
-  // a deeplink to a web5 compatible wallet. if the wallet scans this link it should receive
-  // a route to its web5 connect provider flow and the params of where to fetch the auth request.
+  // a deeplink to a compatible wallet. if the wallet scans this link it should receive
+  // a route to its Connect provider flow and the params of where to fetch the auth request.
   logger.log(`Wallet URI: ${walletUri}`);
   const generatedWalletUri = new URL(walletUri);
   generatedWalletUri.searchParams.set('request_uri', parData.request_uri);
@@ -159,20 +159,20 @@ export type WalletConnectOptions = {
   permissionRequests: ConnectPermissionRequest[];
 
   /**
-   * The Web5 API provides a URI to the wallet based on the `walletUri` plus a query params payload valid for 5 minutes.
+   * The Connect API provides a URI to the wallet based on the `walletUri` plus a query params payload valid for 5 minutes.
    * The link can either be used as a deep link on the same device or a QR code for cross device or both.
    * The query params are `{ request_uri: string; encryption_key: string; }`
    * The wallet will use the `request_uri to contact the intermediary server's `authorize` endpoint
    * and pull down the {@link EnboxConnectAuthRequest} and use the `encryption_key` to decrypt it.
    *
-   * @param uri - The URI returned by the web5 connect API to be passed to a provider.
+   * @param uri - The URI returned by the Connect API to be passed to a provider.
    */
   onWalletUriReady: (uri: string) => void;
 
   /**
    * Function that must be provided to submit the pin entered by the user on the client.
    * The pin is used to decrypt the {@link EnboxConnectAuthResponse} that was retrieved from the
-   * token endpoint by the client inside of web5 connect.
+   * token endpoint by the client inside of Connect.
    *
    * @returns A promise that resolves to the PIN as a string.
    */

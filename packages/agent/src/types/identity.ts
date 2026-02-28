@@ -1,7 +1,7 @@
 import type { PortableDid } from '@enbox/dids';
 
 /**
- * Represents metadata about a Web5 Identity.
+ * Represents metadata about an Enbox Identity.
  */
 export interface IdentityMetadata {
   name: string;

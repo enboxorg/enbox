@@ -36,7 +36,7 @@ export function isPortableIdentity(obj: unknown): obj is PortableIdentity {
 }
 
 /**
- * This API is used to manage and interact with Identities within the Web5 Agent framework.
+ * This API is used to manage and interact with Identities within the Enbox Agent framework.
  * An Identity is a DID that is associated with metadata that describes the Identity.
  * Metadata includes A name(label), and whether or not the Identity is connected (delegated to act on the behalf of another DID).
  *
@@ -48,9 +48,9 @@ export function isPortableIdentity(obj: unknown): obj is PortableIdentity {
 export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyManager> {
   /**
    * Holds the instance of a `EnboxPlatformAgent` that represents the current execution context for
-   * the `AgentIdentityApi`. This agent is used to interact with other Web5 agent components. It's
+   * the `AgentIdentityApi`. This agent is used to interact with other Enbox agent components. It's
    * vital to ensure this instance is set to correctly contextualize operations within the broader
-   * Web5 Agent framework.
+   * Enbox Agent framework.
    */
   private _agent?: EnboxPlatformAgent<TKeyManager>;
 

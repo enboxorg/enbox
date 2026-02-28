@@ -16,7 +16,7 @@ import type { ProcessVcRequest, SendVcRequest, VcResponse } from './vc.js';
 
 /**
  * Defines the structure for response status in the context of an Agent's interaction within the
- * Web5 framework.
+ * Enbox framework.
  *
  * This type is utilized to convey the success or failure of an operation performed by the Agent,
  * providing feedback that can be programmatically interpreted and acted upon.
@@ -55,18 +55,18 @@ export type ResponseStatus = {
 };
 
 /**
- * Defines the interface for a Web5 Agent, encapsulating the core functionality all implementations
+ * Defines the interface for an Enbox Agent, encapsulating the core functionality all implementations
  * must include.
  *
  * The Agent is responsible for handling decentralized identifier (DID) requests, decentralized web
  * node (DWN) requests, and verifiable credential (VC) requests.
  *
- * The `AgentDid` property represents the Web5 Agent's own DID, while the various process and send
+ * The `AgentDid` property represents the Enbox Agent's own DID, while the various process and send
  * methods enable the Agent to handle and initiate requests pertaining to DIDs, DWNs, and VCs.
  */
 export interface EnboxAgent {
   /**
-   * The Decentralized Identifier (DID) of this Web5 Agent.
+   * The Decentralized Identifier (DID) of this Enbox Agent.
    */
   agentDid: BearerDid;
 
@@ -109,14 +109,14 @@ export interface EnboxAgent {
 }
 
 /**
- * Represents a Web5 Platform Agent, an extended and more feature-rich implementation of a
+ * Represents an Enbox Platform Agent, an extended and more feature-rich implementation of a
  * {@link EnboxAgent}.
  *
  * This Agent integrates a comprehensive set of APIs and functionalities, including cryptographic
  * operations, DID management, DWN interaction, identity handling, and data synchronization.
  *
  * The platform agent provides a higher-level abstraction over the core EnboxAgent functionalities,
- * facilitating a robust platform for developing Web5 applications. It includes lifecycle management
+ * facilitating a robust platform for developing Enbox applications. It includes lifecycle management
  * methods like initialization and startup, alongside a suite of specialized APIs and utilities.
  *
  * @typeParam TKeyManager - The type of Key Manager used to manage cryptographic keys.
@@ -125,7 +125,7 @@ export interface EnboxPlatformAgent<TKeyManager extends AgentKeyManager = AgentK
   /**
    * The cryptography API, essential for performing various cryptographic operations such
    * as encryption, decryption, signing, and verification, ensuring secure data handling and
-   * communication within the Web5 Platform.
+   * communication within the Enbox platform.
    */
   crypto: AgentCryptoApi;
 
@@ -137,13 +137,13 @@ export interface EnboxPlatformAgent<TKeyManager extends AgentKeyManager = AgentK
 
   /**
    * The DWN API, enabling the Agent to interact with Decentralized Web Nodes (DWNs) and handle
-   * requests from Web5 applications.
+   * requests from Enbox applications.
    */
   dwn: AgentDwnApi;
 
   /**
    * The identity management API, handling identity-related operations and allowing the agent to
-   * manage Web5 identities, supporting operations like identity creation and update.
+   * manage Enbox identities, supporting operations like identity creation and update.
    */
   identity: AgentIdentityApi<TKeyManager>;
 
@@ -159,8 +159,8 @@ export interface EnboxPlatformAgent<TKeyManager extends AgentKeyManager = AgentK
   permissions: AgentPermissionsApi;
 
   /**
-   * The RPC (Remote Procedure Call) client interface, facilitating communication with other Web5
-   * Agents and services.
+   * The RPC (Remote Procedure Call) client interface, facilitating communication with other Enbox
+   * agents and services.
    */
   rpc: EnboxRpc;
 
@@ -171,7 +171,7 @@ export interface EnboxPlatformAgent<TKeyManager extends AgentKeyManager = AgentK
   sync: AgentSyncApi;
 
   /**
-   * An instance of {@link IdentityVault}, providing secure storage and management of a Web5 Agent's
+   * An instance of {@link IdentityVault}, providing secure storage and management of an Enbox Agent's
    * DID and cryptographic keys.
    */
   vault: IdentityVault;
@@ -184,7 +184,7 @@ export interface EnboxPlatformAgent<TKeyManager extends AgentKeyManager = AgentK
 
   /**
    * Initializes the agent with essential parameters (e.g., a passphrase) and prepares it for
-   * processing Web5 requests.
+   * processing requests.
    */
   initialize(params: unknown): Promise<unknown>;
 
