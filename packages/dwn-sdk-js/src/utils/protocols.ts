@@ -62,10 +62,10 @@ export function getRuleSetAtPath(protocolPath: string, structure: { [key: string
   let currentLevel: { [key: string]: ProtocolRuleSet } = structure;
 
   for (const segment of segments) {
-    current = currentLevel[segment];
-    if (current === undefined) {
+    if (!Object.hasOwn(currentLevel, segment)) {
       return undefined;
     }
+    current = currentLevel[segment];
     currentLevel = current as { [key: string]: ProtocolRuleSet };
   }
 

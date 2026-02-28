@@ -1,26 +1,22 @@
+import type { ProtocolRuleSet } from '../../src/types/protocols-types.js';
+
 import { describe, expect, it } from 'bun:test';
 
 import fc from 'fast-check';
 
 import { getRuleSetAtPath } from '../../src/utils/protocols.js';
 
-import type { ProtocolRuleSet } from '../../src/types/protocols-types.js';
-
 const numRuns = Number(process.env.FAST_CHECK_NUM_RUNS) || 100;
 
 describe('getRuleSetAtPath — fuzz', () => {
 
   /**
-   * Strings that exist on Object.prototype and would collide with structure lookups.
-   */
-  const prototypeNames = new Set(Object.getOwnPropertyNames(Object.prototype));
-
-  /**
-   * Arbitrary for a valid type name segment (no slashes, non-empty, no $ prefix,
-   * no Object.prototype collisions like "toString", "valueOf", "constructor").
+   * Arbitrary for a valid type name segment (no slashes, non-empty, no $ prefix).
+   * Deliberately includes Object.prototype names like "toString" and "valueOf"
+   * to verify that the function is immune to prototype pollution.
    */
   const arbTypeName = fc.string({ minLength: 1, maxLength: 10 })
-    .filter((s) => !s.includes('/') && !s.startsWith('$') && !prototypeNames.has(s));
+    .filter((s) => !s.includes('/') && !s.startsWith('$'));
 
   describe('single-level path resolution', () => {
     it('should return the rule set for a root-level type', () => {
@@ -105,6 +101,20 @@ describe('getRuleSetAtPath — fuzz', () => {
         ),
         { numRuns }
       );
+    });
+  });
+
+  describe('prototype pollution immunity', () => {
+    it('should return undefined for Object.prototype property names not in the structure', () => {
+      const prototypeNames = Object.getOwnPropertyNames(Object.prototype)
+        .filter((name) => /^[a-zA-Z]+$/.test(name)); // only names valid as protocolPath segments
+
+      const structure = { message: { $size: { min: 0 } } as ProtocolRuleSet };
+
+      for (const name of prototypeNames) {
+        const result = getRuleSetAtPath(name, structure);
+        expect(result).toBeUndefined();
+      }
     });
   });
 });
