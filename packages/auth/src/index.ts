@@ -41,7 +41,7 @@ export { VaultManager } from './vault/vault-manager.js';
 export { AuthEventEmitter } from './events.js';
 
 // Storage adapters
-export { BrowserStorage, MemoryStorage, createDefaultStorage } from './storage/storage.js';
+export { BrowserStorage, LevelStorage, MemoryStorage, createDefaultStorage } from './storage/storage.js';
 
 // Types
 export type {

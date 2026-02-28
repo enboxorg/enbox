@@ -3,6 +3,8 @@
  * @module
  */
 
+import { Level } from 'level';
+
 import type { StorageAdapter } from '../types.js';
 
 /**
@@ -67,20 +69,68 @@ export class MemoryStorage implements StorageAdapter {
 }
 
 /**
+ * LevelDB-backed storage adapter for Node / CLI environments.
+ *
+ * Uses the `level` package (v8), which selects `classic-level` (LevelDB)
+ * in Node and `browser-level` (IndexedDB) in browsers.  Level auto-opens
+ * on construction and queues operations until ready, so no explicit
+ * `open()` call is required.
+ */
+export class LevelStorage implements StorageAdapter {
+  private readonly _db: Level<string, string>;
+
+  constructor(dataPath = 'DATA/AGENT/AUTH_STORE') {
+    this._db = new Level<string, string>(dataPath);
+  }
+
+  async get(key: string): Promise<string | null> {
+    try {
+      return await this._db.get(key);
+    } catch (error) {
+      const e = error as { code?: string };
+      if (e.code === 'LEVEL_NOT_FOUND') {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async set(key: string, value: string): Promise<void> {
+    await this._db.put(key, value);
+  }
+
+  async remove(key: string): Promise<void> {
+    try {
+      await this._db.del(key);
+    } catch (error) {
+      const e = error as { code?: string };
+      // Silently ignore deleting a key that doesn't exist.
+      if (e.code !== 'LEVEL_NOT_FOUND') {
+        throw error;
+      }
+    }
+  }
+
+  async clear(): Promise<void> {
+    await this._db.clear();
+  }
+
+  /** Close the underlying LevelDB database. */
+  async close(): Promise<void> {
+    await this._db.close();
+  }
+}
+
+/**
  * Detect the runtime environment and return an appropriate default storage adapter.
  *
  * - If `localStorage` is available → `BrowserStorage`
- * - Otherwise → `MemoryStorage` (with a console warning)
+ * - Otherwise → `LevelStorage` (persistent on disk via LevelDB)
  */
 export function createDefaultStorage(): StorageAdapter {
   if (typeof globalThis.localStorage !== 'undefined') {
     return new BrowserStorage();
   }
 
-  console.warn(
-    '[@enbox/auth] No localStorage available. Using in-memory storage. ' +
-    'Session data will not persist across restarts. ' +
-    'Pass a custom StorageAdapter to AuthManager.create() for persistence.'
-  );
-  return new MemoryStorage();
+  return new LevelStorage();
 }
