@@ -3,7 +3,7 @@
  *
  * Connects to an external wallet via the WalletConnect relay protocol,
  * importing a delegated DID with permission grants.
- * This replaces the "Mode B/C" paths in Web5.connect().
+ * This replaces the "Mode B/C" paths in Enbox.connect().
  * @module
  */
 
@@ -31,7 +31,7 @@ export interface WalletConnectContext {
 /**
  * Process connected grants by storing them in the local DWN as the owner.
  *
- * This is the agent-level equivalent of `Web5.processConnectedGrants()`.
+ * This is the agent-level equivalent of `Enbox.processConnectedGrants()`.
  * It stores each grant, signed as owner, and returns the deduplicated
  * list of protocol URIs represented by the grants.
  *

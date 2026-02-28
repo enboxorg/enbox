@@ -12,14 +12,14 @@ import type { IdentityInfo } from './types.js';
  *
  * The session exposes the authenticated **agent**, **did**, and
  * **delegateDid** — the primitives needed to interact with the DWN
- * network. Consumers that use `@enbox/api` can construct a `Web5`
+ * network. Consumers that use `@enbox/api` can construct an `Enbox`
  * instance from these properties:
  *
  * ```ts
- * import { Web5 } from '@enbox/api';
+ * import { Enbox } from '@enbox/api';
  *
  * const session = await auth.connect();
- * const web5 = new Web5({
+ * const enbox = Enbox.connect({
  *   agent: session.agent,
  *   connectedDid: session.did,
  *   delegateDid: session.delegateDid,
@@ -27,7 +27,7 @@ import type { IdentityInfo } from './types.js';
  * ```
  */
 export class AuthSession {
-  /** The authenticated Web5 agent managing keys, DIDs, and DWN access. */
+  /** The authenticated Enbox agent managing keys, DIDs, and DWN access. */
   readonly agent: EnboxAgent;
 
   /** The DID URI of the connected identity. */

@@ -31,7 +31,7 @@ export default defineConfig({
   },
   test: {
     // Only utils.spec.ts is browser-safe.
-    // All other test files depend on PlatformAgentTestHarness / Web5UserAgent (LevelDB).
+    // All other test files depend on PlatformAgentTestHarness / EnboxUserAgent (LevelDB).
     include: [
       'tests/utils.spec.ts',
     ],

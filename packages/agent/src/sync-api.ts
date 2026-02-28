@@ -9,8 +9,8 @@ export type SyncApiParams = {
 export class AgentSyncApi implements SyncEngine {
   /**
    * Holds the instance of a `EnboxPlatformAgent` that represents the current execution context for
-   * the `AgentSyncApi`. This agent is used to interact with other Web5 agent components. It's vital
-   * to ensure this instance is set to correctly contextualize operations within the broader Web5
+   * the `AgentSyncApi`. This agent is used to interact with other Enbox agent components. It's vital
+   * to ensure this instance is set to correctly contextualize operations within the broader Enbox
    * Agent framework.
    */
   private _agent?: EnboxPlatformAgent;

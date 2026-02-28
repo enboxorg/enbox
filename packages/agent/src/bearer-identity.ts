@@ -2,7 +2,7 @@ import type { BearerDid } from '@enbox/dids';
 import type { IdentityMetadata, PortableIdentity } from './types/identity.js';
 
 /**
- * Represents a Web5 Identity with its DID and metadata.
+ * Represents an Enbox Identity with its DID and metadata.
  */
 export class BearerIdentity {
   /** {@inheritDoc BearerDid} */

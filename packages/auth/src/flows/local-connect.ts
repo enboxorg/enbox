@@ -2,7 +2,7 @@
  * Local DID connect flow.
  *
  * Creates or reconnects a local identity with vault-protected keys.
- * This replaces the "Mode D/E" paths in Web5.connect().
+ * This replaces the "Mode D/E" paths in Enbox.connect().
  * @module
  */
 

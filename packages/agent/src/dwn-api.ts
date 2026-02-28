@@ -114,8 +114,8 @@ interface DwnApiCreateDwnParams extends Partial<DwnConfig> {
 export class AgentDwnApi {
   /**
    * Holds the instance of a `EnboxPlatformAgent` that represents the current execution context for
-   * the `AgentDwnApi`. This agent is used to interact with other Web5 agent components. It's vital
-   * to ensure this instance is set to correctly contextualize operations within the broader Web5
+   * the `AgentDwnApi`. This agent is used to interact with other Enbox agent components. It's vital
+   * to ensure this instance is set to correctly contextualize operations within the broader Enbox
    * Agent framework.
    */
   private _agent?: EnboxPlatformAgent;

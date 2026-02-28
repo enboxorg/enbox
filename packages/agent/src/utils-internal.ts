@@ -5,7 +5,7 @@ import { computeJwkThumbprint, Ed25519, LocalKeyManager } from '@enbox/crypto';
 import type { EnboxPlatformAgent } from './types/agent.js';
 
 /**
- * Internal utility functions used by the Web5 platform agent that are not intended for public use
+ * Internal utility functions used by the Enbox platform agent that are not intended for public use
  * and are not exported in the public API.
  */
 
@@ -121,7 +121,7 @@ export class DeterministicKeyGenerator extends LocalKeyManager {
  * This approach ensures operations are isolated by DID, supporting multi-tenancy.
  *
  * @param params - The parameters for determining the tenant.
- * @param params.agent - The Web5 platform agent instance.
+ * @param params.agent - The Enbox platform agent instance.
  * @param [params.tenant] - An optional tenant DID. If provided, it takes precedence.
  * @param [params.didUri] - An optional DID URI to use if no tenant DID or agent DID is available.
  * @returns A promise that resolves to the tenant DID.

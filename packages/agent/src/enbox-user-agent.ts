@@ -64,7 +64,7 @@ export type AgentStartParams = {
  };
 
 export type AgentParams<TKeyManager extends AgentKeyManager = LocalKeyManager> = {
-  /** Optional. The Decentralized Identifier (DID) representing this Web5 User Agent. */
+  /** Optional. The Decentralized Identifier (DID) representing this Enbox User Agent. */
   agentDid?: BearerDid;
   /** Encrypted vault used for managing the Agent's DID and associated keys. */
   agentVault: HdIdentityVault;
@@ -82,7 +82,7 @@ export type AgentParams<TKeyManager extends AgentKeyManager = LocalKeyManager> =
   keyManager: TKeyManager;
   /** Facilitates fetching, requesting, creating, revoking and validating revocation status of permissions */
   permissionsApi: AgentPermissionsApi;
-  /** Remote procedure call (RPC) client used to communicate with other Web5 services. */
+  /** Remote procedure call (RPC) client used to communicate with other Enbox services. */
   rpcClient: EnboxRpc;
   /** Facilitates data synchronization of DWN records between nodes. */
   syncApi: AgentSyncApi;
@@ -206,7 +206,7 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
    *
    * This method is typically called once, the first time the Agent is launched, and is responsible
    * for setting up the agent's operational environment, cryptographic key material, and readiness
-   * for processing Web5 requests.
+   * for processing requests.
    *
    * The password is used to secure the Agent vault, and the recovery phrase is used to derive the
    * cryptographic keys for the vault. If a recovery phrase is not provided, a new recovery phrase

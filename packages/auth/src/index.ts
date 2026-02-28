@@ -12,19 +12,19 @@
  * const auth = await AuthManager.create({ sync: '15s' });
  * const session = await auth.restoreSession() ?? await auth.connect();
  *
- * // session.agent — the authenticated Web5 agent
+ * // session.agent — the authenticated Enbox agent
  * // session.did   — the connected DID URI
  * ```
  *
  * @example With @enbox/api
  * ```ts
  * import { AuthManager } from '@enbox/auth';
- * import { Web5 } from '@enbox/api';
+ * import { Enbox } from '@enbox/api';
  *
  * const auth = await AuthManager.create({ sync: '15s' });
  * const session = await auth.connect();
  *
- * const web5 = new Web5({
+ * const enbox = Enbox.connect({
  *   agent: session.agent,
  *   connectedDid: session.did,
  *   delegateDid: session.delegateDid,

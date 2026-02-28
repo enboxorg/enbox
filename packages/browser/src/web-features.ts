@@ -545,7 +545,7 @@ async function resetContextMenuTarget(e?: Event): Promise<void> {
 }
 
 /**
- * Activates various polyfills to enable Web5 features in Web environments.
+ * Activates various polyfills to enable Enbox features in Web environments.
  *
  * @param options - Configuration options to control the activation of polyfills.
  *

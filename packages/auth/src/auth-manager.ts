@@ -1,8 +1,8 @@
 /**
  * AuthManager — the primary entry point for `@enbox/auth`.
  *
- * Replaces `Web5.connect()` with a composable, multi-identity-aware
- * auth system that works in both browser and CLI environments.
+ * Replaces `Enbox.connect()` (formerly `Web5.connect()`) with a composable,
+ * multi-identity-aware auth system that works in both browser and CLI environments.
  * @module
  */
 
@@ -38,7 +38,7 @@ import { importFromPhrase, importFromPortable } from './flows/import-identity.js
 /**
  * The primary entry point for authentication and identity management.
  *
- * `AuthManager` replaces `Web5.connect()` with a composable, multi-identity-aware
+ * `AuthManager` replaces `Enbox.connect()` (formerly `Web5.connect()`) with a composable, multi-identity-aware
  * system. It manages vault lifecycle, identity CRUD, session persistence,
  * and all connection flows (local DID, wallet connect, import, restore).
  *
@@ -52,7 +52,7 @@ import { importFromPhrase, importFromPortable } from './flows/import-identity.js
  * // Subsequent times: restores the previous session
  * const session = await auth.restoreSession() ?? await auth.connect();
  *
- * // session.agent  — the authenticated Web5 agent
+ * // session.agent  — the authenticated Enbox agent
  * // session.did    — the connected DID URI
  * // session.identity — metadata about the connected identity
  * ```

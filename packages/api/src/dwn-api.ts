@@ -496,7 +496,7 @@ export class DwnApi {
 
         const agentRequest: ProcessDwnRequest<DwnInterface.RecordsDelete> = {
           /**
-           * The `author` is the DID that will sign the message and must be the DID the Web5 app is
+           * The `author` is the DID that will sign the message and must be the DID the Enbox app is
            * connected with and is authorized to access the signing private key of.
            */
           author      : this.connectedDid,
@@ -548,7 +548,7 @@ export class DwnApi {
 
         const agentRequest: ProcessDwnRequest<DwnInterface.RecordsQuery> = {
           /**
-           * The `author` is the DID that will sign the message and must be the DID the Web5 app is
+           * The `author` is the DID that will sign the message and must be the DID the Enbox app is
            * connected with and is authorized to access the signing private key of.
            */
           author      : this.connectedDid,
@@ -640,7 +640,7 @@ export class DwnApi {
 
         const agentRequest: ProcessDwnRequest<DwnInterface.RecordsRead> = {
           /**
-           * The `author` is the DID that will sign the message and must be the DID the Web5 app is
+           * The `author` is the DID that will sign the message and must be the DID the Enbox app is
            * connected with and is authorized to access the signing private key of.
            */
           author      : this.connectedDid,
