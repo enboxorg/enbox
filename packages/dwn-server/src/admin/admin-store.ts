@@ -161,10 +161,14 @@ export class AdminStore {
 
   /**
    * Returns the total data storage in bytes for a tenant.
+   *
+   * Uses `messageStoreMessages.dataSize` rather than `dataRefs.dataSize` so that
+   * **all** data is accounted for — including small payloads (<=30 KB) that the
+   * DWN SDK stores inline as `encodedData` and never writes to the data store.
    */
   public async getTenantStorageSize(did: string): Promise<number> {
     const result = await this.db
-      .selectFrom('dataRefs')
+      .selectFrom('messageStoreMessages')
       .select(this.db.fn.sum<number>('dataSize').as('totalBytes'))
       .where('tenant', '=', did)
       .executeTakeFirstOrThrow();
@@ -212,7 +216,7 @@ export class AdminStore {
         .select(this.db.fn.countAll<number>().as('count'))
         .executeTakeFirstOrThrow(),
       this.db
-        .selectFrom('dataRefs')
+        .selectFrom('messageStoreMessages')
         .select(this.db.fn.sum<number>('dataSize').as('totalBytes'))
         .executeTakeFirstOrThrow(),
       this.db

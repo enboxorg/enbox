@@ -23,9 +23,9 @@ import { runServerMigrations } from '../../src/server-migration-runner.js';
 
 /**
  * Minimal Kysely type for direct SQL verification queries.
- * Matches the `dataRefs` and `dataBlocks` tables created by `DataStoreSql`.
  */
 interface TestDatabase {
+  messageStoreMessages: { tenant: string; dataSize: number | null };
   dataRefs: { tenant: string; recordId: string; dataCid: string; dataSize: number };
   dataBlocks: { rootDataCid: string; blockCid: string; data: Uint8Array };
 }
@@ -423,16 +423,17 @@ describe('AdminStore', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // getTenantStorageSize() — content-addressed datastore
+  // getTenantStorageSize() — uses messageStoreMessages.dataSize
   // ---------------------------------------------------------------------------
 
   // Data must exceed DwnConstant.maxDataSizeAllowedToBeEncoded (30_000 bytes) to be
   // stored in the DataStore (dataRefs/dataBlocks). Smaller data is stored inline in
   // messageStoreMessages.encodedData and never touches dataRefs.
   const LARGE_DATA_SIZE = 40_000;
+  const SMALL_DATA_SIZE = 1_000;
 
   describe('getTenantStorageSize()', () => {
-    it('should return the correct byte total for a tenant with data records', async () => {
+    it('should return the correct byte total for a tenant with large data records', async () => {
       const persona = await TestDataGenerator.generateDidKeyPersona();
       await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
 
@@ -441,6 +442,25 @@ describe('AdminStore', () => {
       const result = await dwn.processMessage(persona.did, recordsWrite.message, { dataStream });
       expect(result.status.code).toBe(202);
 
+      const storageSize = await adminStore.getTenantStorageSize(persona.did);
+      expect(storageSize).toBe(data.length);
+    });
+
+    it('should include small inline data that never reaches the data store', async () => {
+      const persona = await TestDataGenerator.generateDidKeyPersona();
+      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+
+      // Small data is stored inline in encodedData, NOT in dataRefs.
+      const data = TestDataGenerator.randomBytes(SMALL_DATA_SIZE);
+      const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona, data });
+      const result = await dwn.processMessage(persona.did, recordsWrite.message, { dataStream });
+      expect(result.status.code).toBe(202);
+
+      // Verify no rows in dataRefs — the data is inline.
+      const refs = await rawDb.selectFrom('dataRefs').select('dataCid').where('tenant', '=', persona.did).execute();
+      expect(refs.length).toBe(0);
+
+      // Storage size should still reflect the small data.
       const storageSize = await adminStore.getTenantStorageSize(persona.did);
       expect(storageSize).toBe(data.length);
     });
@@ -554,10 +574,11 @@ describe('AdminStore', () => {
       expect(stats.tenantCount).toBeGreaterThan(0);
     });
 
-    it('should return correct totalDataBytes from dataRefs', async () => {
-      // Sum all dataSize values from dataRefs as ground truth.
+    it('should return correct totalDataBytes from messageStoreMessages', async () => {
+      // Sum all dataSize values from messageStoreMessages as ground truth
+      // (includes both inline and data-store-backed records).
       const groundTruth = await rawDb
-        .selectFrom('dataRefs')
+        .selectFrom('messageStoreMessages')
         .select(rawDb.fn.sum<number>('dataSize').as('total'))
         .executeTakeFirstOrThrow();
 
@@ -605,7 +626,7 @@ describe('AdminStore', () => {
 
       await adminStore.purgeTenantData(persona.did);
 
-      // dataRefs should be empty for this tenant.
+      // Storage should be 0 after purge (messages deleted).
       expect(await adminStore.getTenantStorageSize(persona.did)).toBe(0);
     });
 
