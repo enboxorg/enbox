@@ -1,20 +1,20 @@
 /**
- * Web5 logger level.
+ * Enbox logger level.
  */
-export enum Web5LogLevel {
+export enum LogLevel {
   Debug = 'debug',
   Silent = 'silent',
 }
 
 /**
- * Web5 logger interface.
+ * Enbox logger interface.
  */
-export interface Web5LoggerInterface {
+export interface LoggerInterface {
 
   /**
    * Sets the log verbose level.
    */
-  setLogLevel(logLevel: Web5LogLevel): void;
+  setLogLevel(logLevel: LogLevel): void;
 
   /**
    * Same as `info()`.
@@ -34,12 +34,12 @@ export interface Web5LoggerInterface {
 }
 
 /**
- * A Web5 logger implementation.
+ * An Enbox logger implementation.
  */
-class Web5Logger implements Web5LoggerInterface {
-  private logLevel: Web5LogLevel = Web5LogLevel.Silent; // Default to silent/no-op log level
+class EnboxLogger implements LoggerInterface {
+  private logLevel: LogLevel = LogLevel.Silent; // Default to silent/no-op log level
 
-  setLogLevel(logLevel: Web5LogLevel): void {
+  setLogLevel(logLevel: LogLevel): void {
     this.logLevel = logLevel;
   }
 
@@ -48,27 +48,39 @@ class Web5Logger implements Web5LoggerInterface {
   }
 
   public info(message: string): void {
-    if (this.logLevel === Web5LogLevel.Silent) { return; }
+    if (this.logLevel === LogLevel.Silent) { return; }
 
     console.info(message);
   }
 
   public error(message: string): void {
-    if (this.logLevel === Web5LogLevel.Silent) { return; }
+    if (this.logLevel === LogLevel.Silent) { return; }
 
     console.error(message);
   }
 }
 
 // Export a singleton logger instance
-export const logger = new Web5Logger();
+export const logger = new EnboxLogger();
 
 // Attach logger to the global window object in browser environment for easy access to the logger instance.
-// e.g. can call `web5logger.setLogLevel('debug');` directly in browser console.
+// e.g. can call `enboxLogger.setLogLevel('debug');` directly in browser console.
 declare global {
-  interface Window { web5logger?: Web5Logger }
+  interface Window { enboxLogger?: EnboxLogger }
 }
 
 if (typeof window !== 'undefined') {
-  window.web5logger = logger;
+  window.enboxLogger = logger;
 }
+
+// ---------------------------------------------------------------------------
+// Deprecated aliases — migration aid
+// ---------------------------------------------------------------------------
+
+/** @deprecated Use {@link LogLevel} instead. Will be removed in a future version. */
+export const Web5LogLevel = LogLevel;
+/** @deprecated Use {@link LogLevel} instead. Will be removed in a future version. */
+export type Web5LogLevel = LogLevel;
+
+/** @deprecated Use {@link LoggerInterface} instead. Will be removed in a future version. */
+export type Web5LoggerInterface = LoggerInterface;
