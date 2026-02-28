@@ -51,7 +51,9 @@ export type AuthEvent =
   | 'identity-added'
   | 'identity-removed'
   | 'vault-locked'
-  | 'vault-unlocked';
+  | 'vault-unlocked'
+  | 'local-dwn-available'
+  | 'local-dwn-unavailable';
 
 /** Payload type for each event, keyed by event name. */
 export interface AuthEventMap {
@@ -62,6 +64,10 @@ export interface AuthEventMap {
   'identity-removed': { didUri: string };
   'vault-locked': Record<string, never>;
   'vault-unlocked': Record<string, never>;
+  /** Emitted when a local DWN server is discovered and validated. */
+  'local-dwn-available': { endpoint: string };
+  /** Emitted when no local DWN server could be discovered or a previously known one is no longer reachable. */
+  'local-dwn-unavailable': Record<string, never>;
 }
 
 /** A type-safe event handler for a specific event. */

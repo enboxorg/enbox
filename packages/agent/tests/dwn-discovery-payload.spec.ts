@@ -4,6 +4,7 @@ import type { DwnDiscoveryPayload } from '../src/dwn-discovery-payload.js';
 
 import {
   buildDwnDiscoveryRedirectUrl,
+  buildDwnRegisterUrl,
   decodeDwnDiscoveryPayload,
   DWN_PROTOCOL_SCHEME,
   DWN_REGISTER_PATH,
@@ -289,6 +290,34 @@ describe('DwnDiscoveryPayload', () => {
 
       expect(result).toBeDefined();
       expect(result!.callback).toBe('https://notes.sh/dwn');
+    });
+  });
+
+  describe('buildDwnRegisterUrl', () => {
+    it('should build a valid dwn://register URL', () => {
+      const url = buildDwnRegisterUrl('https://notes.sh/dwn');
+
+      expect(url).toBe('dwn://register?callback=https%3A%2F%2Fnotes.sh%2Fdwn');
+    });
+
+    it('should encode query parameters in the callback', () => {
+      const url = buildDwnRegisterUrl('https://app.example.com/dwn?session=abc123');
+
+      // The entire callback URL should be percent-encoded.
+      expect(url).toContain('callback=');
+      // Verify round-trip: parseDwnRegisterUrl should recover the original callback.
+      const parsed = parseDwnRegisterUrl(url);
+      expect(parsed).toBeDefined();
+      expect(parsed!.callback).toBe('https://app.example.com/dwn?session=abc123');
+    });
+
+    it('should produce a URL that parseDwnRegisterUrl can parse', () => {
+      const callback = 'https://myapp.com/callback';
+      const url = buildDwnRegisterUrl(callback);
+      const parsed = parseDwnRegisterUrl(url);
+
+      expect(parsed).toBeDefined();
+      expect(parsed!.callback).toBe(callback);
     });
   });
 
