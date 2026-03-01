@@ -1,5 +1,5 @@
 ---
-"@enbox/api": major
+"@enbox/api": minor
 ---
 
 BREAKING: Rename `Web5` class to `Enbox` and delegate auth to `@enbox/auth`

@@ -1,6 +1,6 @@
 ---
-"@enbox/agent": major
-"@enbox/dwn-clients": major
+"@enbox/agent": minor
+"@enbox/dwn-clients": minor
 "@enbox/api": patch
 "@enbox/auth": patch
 ---
