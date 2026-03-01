@@ -68,21 +68,16 @@ async function initClient({
     encryptionKey,
   });
 
-  // Convert the encrypted Request Object to URLSearchParams for form encoding.
-  const formEncodedRequest = new URLSearchParams({
-    request: requestObjectJwe,
-  });
-
   const pushedAuthorizationRequestEndpoint = Oidc.buildOidcUrl({
     baseURL  : connectServerUrl,
     endpoint : 'pushedAuthorizationRequest',
   });
 
   const parResponse = await fetch(pushedAuthorizationRequestEndpoint, {
-    body    : formEncodedRequest,
+    body    : JSON.stringify({ request: requestObjectJwe }),
     method  : 'POST',
     headers : {
-      'Content-Type': 'application/x-www-form-urlencoded',
+      'Content-Type': 'application/json',
     },
     signal: AbortSignal.timeout(30_000),
   });
