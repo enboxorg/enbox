@@ -27,6 +27,7 @@ PACKAGES=(
   "packages/dwn-sdk-js"
   "packages/dwn-clients"
   "packages/agent"
+  "packages/auth"
   "packages/api"
   "packages/protocols"
   "packages/browser"
