@@ -1,5 +1,12 @@
 # @enbox/protocols
 
+## 0.2.11
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @enbox/api@0.4.1
+
 ## 0.2.10
 
 ### Patch Changes

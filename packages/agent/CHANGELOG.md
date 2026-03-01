@@ -1,5 +1,15 @@
 # @enbox/agent
 
+## 0.3.1
+
+### Patch Changes
+
+- [#658](https://github.com/enboxorg/enbox/pull/658) [`22d724e`](https://github.com/enboxorg/enbox/commit/22d724eb415b3eea71983ab6aecd5810efa8c6bc) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Fix WalletConnect PAR request to send JSON instead of form-urlencoded
+
+  The dwn-server's /connect/par endpoint parses the request body with
+  req.json(), so sending application/x-www-form-urlencoded would fail
+  with a JSON parse error.
+
 ## 0.3.0
 
 ### Minor Changes
