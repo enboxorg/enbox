@@ -1,5 +1,14 @@
 # @enbox/electrobun-dwn
 
+## 0.0.4
+
+### Patch Changes
+
+- [#659](https://github.com/enboxorg/enbox/pull/659) [`ca95fa0`](https://github.com/enboxorg/enbox/commit/ca95fa0300ea4cd42e3c20d8784017486f47fbff) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Fix port range documentation and config field name
+
+- Updated dependencies [[`22d724e`](https://github.com/enboxorg/enbox/commit/22d724eb415b3eea71983ab6aecd5810efa8c6bc)]:
+  - @enbox/agent@0.3.1
+
 ## 0.0.3
 
 ### Patch Changes
