@@ -1,5 +1,31 @@
 # @enbox/dwn-server
 
+## 0.0.9
+
+### Patch Changes
+
+- [#642](https://github.com/enboxorg/enbox/pull/642) [`ee033b4`](https://github.com/enboxorg/enbox/commit/ee033b41f7e9f1c3f9bbc1dc4e6448b911deafde) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: rename Web5-prefixed symbols in common and dwn-server packages
+
+  - `@enbox/common`: `Web5LogLevel` -> `LogLevel`, `Web5LoggerInterface` -> `LoggerInterface`, `Web5Logger` -> `EnboxLogger`, `window.web5logger` -> `window.enboxLogger`
+  - `@enbox/dwn-server`: `Web5ConnectServer` -> `ConnectServer`, `Web5ConnectRequest` -> `ConnectRequest`, `Web5ConnectResponse` -> `ConnectResponse`, `SetWeb5ConnectRequestResult` -> `SetConnectRequestResult`
+  - Moved `src/web5-connect/` -> `src/connect/` and `tests/web5-connect/` -> `tests/connect/`
+  - Deprecated aliases preserved for backward compatibility
+
+- [#643](https://github.com/enboxorg/enbox/pull/643) [`5982088`](https://github.com/enboxorg/enbox/commit/5982088c868ec20cce1949afbe042805d412e60d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Update remaining Web5 references in JSDoc, comments, and package metadata to Enbox
+
+  - Replace ~60 stale "Web5" references in JSDoc/comments across agent, api, auth, browser, crypto, and dwn-server packages
+  - Update package.json descriptions for @enbox/crypto and @enbox/browser
+  - Fix typo in dwn-server http-api.ts ("am enbox" → "an enbox")
+  - Update code examples in @enbox/auth to use `Enbox.connect()` instead of `new Web5()`
+
+- Updated dependencies [[`652f5bd`](https://github.com/enboxorg/enbox/commit/652f5bd8f5ac1017405099dee337821a8b731c4b), [`ee033b4`](https://github.com/enboxorg/enbox/commit/ee033b41f7e9f1c3f9bbc1dc4e6448b911deafde), [`5982088`](https://github.com/enboxorg/enbox/commit/5982088c868ec20cce1949afbe042805d412e60d)]:
+  - @enbox/dwn-clients@0.1.0
+  - @enbox/common@0.0.7
+  - @enbox/crypto@0.0.8
+  - @enbox/dids@0.0.9
+  - @enbox/dwn-sdk-js@0.1.2
+  - @enbox/dwn-sql-store@0.0.11
+
 ## 0.0.8
 
 ### Patch Changes
