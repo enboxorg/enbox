@@ -42,7 +42,14 @@ export async function restoreSession(
     return undefined;
   }
 
-  const password = options.password ?? ctx.defaultPassword ?? INSECURE_DEFAULT_PASSWORD;
+  // Resolve password: explicit option → callback → manager default → insecure fallback.
+  let password = options.password ?? ctx.defaultPassword;
+
+  if (!password && options.onPasswordRequired) {
+    password = await options.onPasswordRequired();
+  }
+
+  password ??= INSECURE_DEFAULT_PASSWORD;
 
   // Warn if using insecure default.
   if (password === INSECURE_DEFAULT_PASSWORD) {

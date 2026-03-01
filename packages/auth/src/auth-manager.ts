@@ -330,6 +330,43 @@ export class AuthManager {
   }
 
   /**
+   * Lock the auth manager.
+   *
+   * Stops sync, clears the active session, and locks the underlying vault
+   * so the password must be provided again to resume. Session storage
+   * markers are preserved so {@link restoreSession} can reconnect after
+   * the vault is unlocked again.
+   *
+   * After locking, the state transitions to `'locked'`.
+   *
+   * @param options - Optional lock configuration.
+   * @param options.timeout - Milliseconds to wait for sync to stop. Default: `2000`.
+   */
+  async lock(options: { timeout?: number } = {}): Promise<void> {
+    const { timeout = 2000 } = options;
+    const did = this._session?.did;
+
+    // 1. Stop sync.
+    if ('sync' in this._userAgent && typeof (this._userAgent as any).sync?.stopSync === 'function') {
+      await (this._userAgent as any).sync.stopSync(timeout);
+    }
+
+    // 2. Clear the session (but keep storage markers for restore).
+    this._session = undefined;
+
+    // 3. Lock the vault (also emits 'vault-locked').
+    await this._vault.lock();
+
+    // 4. Transition state.
+    this._setState('locked');
+
+    // 5. Emit session-end if there was an active session.
+    if (did) {
+      this._emitter.emit('session-end', { did });
+    }
+  }
+
+  /**
    * Disconnect the current session.
    *
    * @param options - Disconnect options.
@@ -432,9 +469,19 @@ export class AuthManager {
       connectedDid : identity.metadata.connectedDid,
     };
 
-    // Restart sync.
+    // Register the identity for sync and restart sync.
     const sync = this._defaultSync;
     if (sync !== 'off') {
+      // Register the identity for sync (idempotent — ignores "already registered" errors).
+      try {
+        await this._userAgent.sync.registerIdentity({
+          did     : connectedDid,
+          options : { delegateDid, protocols: [] },
+        });
+      } catch {
+        // Already registered — safe to ignore.
+      }
+
       const syncMode = sync === undefined ? 'live' : 'poll';
       const syncInterval = sync ?? (syncMode === 'live' ? '5m' : '2m');
       this._userAgent.sync.startSync({ mode: syncMode, interval: syncInterval })
