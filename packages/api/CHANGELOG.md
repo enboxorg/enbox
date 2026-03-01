@@ -1,5 +1,11 @@
 # @enbox/api
 
+## 0.4.2
+
+### Patch Changes
+
+- [#664](https://github.com/enboxorg/enbox/pull/664) [`34f02a8`](https://github.com/enboxorg/enbox/commit/34f02a8a7883fbdff925c2191dc7486b01909711) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Fix @enbox/auth dependency version (0.2.0 was never published, now points to 0.3.1)
+
 ## 0.4.1
 
 ### Patch Changes
