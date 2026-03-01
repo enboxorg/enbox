@@ -52,7 +52,7 @@ function createDwnServerConfig(port: number): DwnServerConfig {
     packageJsonPath       : resolveDwnServerPackageJsonPath(),
     maxRecordDataSize     : 1_073_741_824, // 1 GB
     webSocketSupport,
-    eventStreamPluginPath : process.env.DWN_EVENT_STREAM_PLUGIN_PATH,
+    eventLogPluginPath    : process.env.DWN_EVENT_LOG_PLUGIN_PATH || process.env.DWN_EVENT_STREAM_PLUGIN_PATH,
     messageStore          : process.env.DWN_STORAGE_MESSAGES || process.env.DWN_STORAGE || 'level://data',
     dataStore             : process.env.DWN_STORAGE_DATA || process.env.DWN_STORAGE || 'level://data',
     stateIndex            : process.env.DWN_STORAGE_STATE_INDEX || process.env.DWN_STORAGE || 'level://data',
@@ -157,7 +157,7 @@ console.log(`[electrobun-dwn] Discovery file written: ${discoveryFile.path}`);
 
 const mainWindow = new BrowserWindow({
   title : 'Enbox DWN Server',
-  url   : 'views://mainview/index.html',
+  url   : `views://mainview/index.html?endpoint=${encodeURIComponent(serverEndpoint)}`,
   frame : {
     width  : 860,
     height : 620,
