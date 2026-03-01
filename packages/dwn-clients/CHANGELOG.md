@@ -1,5 +1,25 @@
 # @enbox/dwn-clients
 
+## 0.1.0
+
+### Minor Changes
+
+- [#628](https://github.com/enboxorg/enbox/pull/628) [`652f5bd`](https://github.com/enboxorg/enbox/commit/652f5bd8f5ac1017405099dee337821a8b731c4b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - BREAKING: Rename Web5-prefixed symbols to Enbox-prefixed across agent and dwn-clients
+
+  - `Web5Agent` → `EnboxAgent`, `Web5UserAgent` → `EnboxUserAgent`, `Web5PlatformAgent` → `EnboxPlatformAgent`
+  - `Web5RpcClient` → `EnboxRpcClient`, `Web5Rpc` → `EnboxRpc`, `HttpWeb5RpcClient` → `HttpEnboxRpcClient`, `WebSocketWeb5RpcClient` → `WebSocketEnboxRpcClient`
+  - `Web5ConnectAuthRequest` → `EnboxConnectAuthRequest`, `Web5ConnectAuthResponse` → `EnboxConnectAuthResponse`
+  - Deprecated aliases preserved for all renamed symbols
+  - File renamed: `web5-user-agent.ts` → `enbox-user-agent.ts`
+  - All downstream packages updated: @enbox/api, @enbox/auth
+
+### Patch Changes
+
+- Updated dependencies [[`ee033b4`](https://github.com/enboxorg/enbox/commit/ee033b41f7e9f1c3f9bbc1dc4e6448b911deafde), [`5982088`](https://github.com/enboxorg/enbox/commit/5982088c868ec20cce1949afbe042805d412e60d)]:
+  - @enbox/common@0.0.7
+  - @enbox/crypto@0.0.8
+  - @enbox/dwn-sdk-js@0.1.2
+
 ## 0.0.9
 
 ### Patch Changes

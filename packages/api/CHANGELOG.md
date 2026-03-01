@@ -1,5 +1,41 @@
 # @enbox/api
 
+## 0.4.0
+
+### Minor Changes
+
+- [#615](https://github.com/enboxorg/enbox/pull/615) [`dc0b65d`](https://github.com/enboxorg/enbox/commit/dc0b65da49fca793b5ec5737aa6a584f3a4edf47) Thanks [@LiranCohen](https://github.com/LiranCohen)! - BREAKING: Rename `Web5` class to `Enbox` and delegate auth to `@enbox/auth`
+
+  - Rename `Web5` to `Enbox`, `TypedWeb5` to `TypedEnbox`, and all associated types
+  - Replace the 267-line `connect()` monolith with a thin synchronous factory that accepts `{ session: AuthSession }` or raw `{ agent, connectedDid, delegateDid? }` parameters
+  - Remove `processConnectedGrants`, `cleanUpIdentity`, and all auth/registration/vault logic from `@enbox/api` (now lives in `@enbox/auth`)
+  - Add `@enbox/auth` as a dependency
+  - Preserve deprecated `Web5` and `TypedWeb5` re-exports for migration
+
+### Patch Changes
+
+- [#628](https://github.com/enboxorg/enbox/pull/628) [`652f5bd`](https://github.com/enboxorg/enbox/commit/652f5bd8f5ac1017405099dee337821a8b731c4b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - BREAKING: Rename Web5-prefixed symbols to Enbox-prefixed across agent and dwn-clients
+
+  - `Web5Agent` → `EnboxAgent`, `Web5UserAgent` → `EnboxUserAgent`, `Web5PlatformAgent` → `EnboxPlatformAgent`
+  - `Web5RpcClient` → `EnboxRpcClient`, `Web5Rpc` → `EnboxRpc`, `HttpWeb5RpcClient` → `HttpEnboxRpcClient`, `WebSocketWeb5RpcClient` → `WebSocketEnboxRpcClient`
+  - `Web5ConnectAuthRequest` → `EnboxConnectAuthRequest`, `Web5ConnectAuthResponse` → `EnboxConnectAuthResponse`
+  - Deprecated aliases preserved for all renamed symbols
+  - File renamed: `web5-user-agent.ts` → `enbox-user-agent.ts`
+  - All downstream packages updated: @enbox/api, @enbox/auth
+
+- [#643](https://github.com/enboxorg/enbox/pull/643) [`5982088`](https://github.com/enboxorg/enbox/commit/5982088c868ec20cce1949afbe042805d412e60d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Update remaining Web5 references in JSDoc, comments, and package metadata to Enbox
+
+  - Replace ~60 stale "Web5" references in JSDoc/comments across agent, api, auth, browser, crypto, and dwn-server packages
+  - Update package.json descriptions for @enbox/crypto and @enbox/browser
+  - Fix typo in dwn-server http-api.ts ("am enbox" → "an enbox")
+  - Update code examples in @enbox/auth to use `Enbox.connect()` instead of `new Web5()`
+
+- Updated dependencies [[`d20a8b9`](https://github.com/enboxorg/enbox/commit/d20a8b9299db09290303e679115a5eeb144c2469), [`b147be2`](https://github.com/enboxorg/enbox/commit/b147be2d2e5cb20d9265b86bf38cedc42b19b178), [`a48bdd4`](https://github.com/enboxorg/enbox/commit/a48bdd4b6f9261821ad9470ce849699bc045c80f), [`652f5bd`](https://github.com/enboxorg/enbox/commit/652f5bd8f5ac1017405099dee337821a8b731c4b), [`ee033b4`](https://github.com/enboxorg/enbox/commit/ee033b41f7e9f1c3f9bbc1dc4e6448b911deafde), [`5982088`](https://github.com/enboxorg/enbox/commit/5982088c868ec20cce1949afbe042805d412e60d)]:
+  - @enbox/auth@0.3.0
+  - @enbox/agent@0.3.0
+  - @enbox/dwn-clients@0.1.0
+  - @enbox/common@0.0.7
+
 ## 0.3.2
 
 ### Patch Changes

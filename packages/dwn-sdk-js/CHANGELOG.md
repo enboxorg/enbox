@@ -1,5 +1,13 @@
 # @enbox/dwn-sdk-js
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies [[`5982088`](https://github.com/enboxorg/enbox/commit/5982088c868ec20cce1949afbe042805d412e60d)]:
+  - @enbox/crypto@0.0.8
+  - @enbox/dids@0.0.9
+
 ## 0.1.1
 
 ### Patch Changes

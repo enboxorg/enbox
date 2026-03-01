@@ -1,5 +1,16 @@
 # @enbox/common
 
+## 0.0.7
+
+### Patch Changes
+
+- [#642](https://github.com/enboxorg/enbox/pull/642) [`ee033b4`](https://github.com/enboxorg/enbox/commit/ee033b41f7e9f1c3f9bbc1dc4e6448b911deafde) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: rename Web5-prefixed symbols in common and dwn-server packages
+
+  - `@enbox/common`: `Web5LogLevel` -> `LogLevel`, `Web5LoggerInterface` -> `LoggerInterface`, `Web5Logger` -> `EnboxLogger`, `window.web5logger` -> `window.enboxLogger`
+  - `@enbox/dwn-server`: `Web5ConnectServer` -> `ConnectServer`, `Web5ConnectRequest` -> `ConnectRequest`, `Web5ConnectResponse` -> `ConnectResponse`, `SetWeb5ConnectRequestResult` -> `SetConnectRequestResult`
+  - Moved `src/web5-connect/` -> `src/connect/` and `tests/web5-connect/` -> `tests/connect/`
+  - Deprecated aliases preserved for backward compatibility
+
 ## 0.0.6
 
 ### Patch Changes
