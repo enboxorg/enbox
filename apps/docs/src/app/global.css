@@ -73,9 +73,9 @@
   --color-fd-ring: var(--enbox-gray-400);
 }
 
-/* ---- Layout width (match Enbox content-width) ---- */
+/* ---- Layout width ---- */
 :root {
-  --fd-layout-width: 1080px;
+  --fd-layout-width: 1400px;
 }
 
 /* ---- Selection ---- */

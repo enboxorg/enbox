@@ -82,7 +82,7 @@
     },
     "packages/api": {
       "name": "@enbox/api",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "dependencies": {
         "@enbox/agent": "workspace:*",
         "@enbox/auth": "workspace:*",
@@ -110,7 +110,7 @@
     },
     "packages/auth": {
       "name": "@enbox/auth",
-      "version": "0.3.1",
+      "version": "0.4.0",
       "dependencies": {
         "@enbox/agent": "workspace:*",
         "@enbox/common": "workspace:*",
@@ -424,7 +424,7 @@
     },
     "packages/protocols": {
       "name": "@enbox/protocols",
-      "version": "0.2.12",
+      "version": "0.2.13",
       "dependencies": {
         "@enbox/api": "workspace:*",
         "@enbox/dwn-sdk-js": "workspace:*",

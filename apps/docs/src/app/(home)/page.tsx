@@ -284,8 +284,8 @@ export default function HomePage() {
           </div>
 
           {/* Bun note */}
-          <p className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--enbox-gray-500)' }}>
-            Built with <BunLogo size={14} /> Bun
+          <p className="flex items-center gap-2 text-sm font-medium" style={{ color: 'var(--enbox-gray-300)' }}>
+            Built with <BunLogo size={20} /> Bun
           </p>
         </div>
       </section>
@@ -312,10 +312,9 @@ const Notes = defineProtocol({
   structure: { note: {} },
 });
 
-// Connect to an Enbox instance
+// Connect and use the protocol
 const enbox = Enbox.connect({ agent, connectedDid: did });
 const notes = enbox.using(Notes);
-await notes.configure();
 
 // Create
 const { record } = await notes.records.create('note', {

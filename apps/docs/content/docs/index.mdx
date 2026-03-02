@@ -51,10 +51,9 @@ import { Enbox } from '@enbox/api';
 
 const enbox = Enbox.connect({ agent, connectedDid: did });
 const tasks = enbox.using(TaskProtocol);
-await tasks.configure();
 ```
 
-`Enbox.connect()` takes an `agent` and `connectedDid` — the agent manages signing keys and DWN sync, while `connectedDid` is the user's DID. If you use `@enbox/auth`, you can pass the session directly:
+`Enbox.connect()` takes an `agent` and `connectedDid` — the agent manages signing keys and DWN sync, while `connectedDid` is the user's DID. The protocol is automatically configured on the first operation. If you use `@enbox/auth`, you can pass the session directly:
 
 ```ts
 const enbox = Enbox.connect({ session });
