@@ -17,12 +17,10 @@ The SDK handles:
 ## Installation
 
 ```bash
-npm install @enbox/api @enbox/auth
+bun add @enbox/api
 ```
 
 ## Quick start
-
-The main workflow is: **authenticate** with `@enbox/auth`, then **use protocols** with `@enbox/api`.
 
 ### 1. Define a protocol
 
@@ -46,23 +44,25 @@ const TaskProtocol = defineProtocol({
 });
 ```
 
-### 2. Authenticate and connect
+### 2. Connect and use
 
 ```ts
-import { AuthManager } from '@enbox/auth';
 import { Enbox } from '@enbox/api';
 
-const auth = await AuthManager.create();
-const session = await auth.connect();
+const enbox = Enbox.connect({ agent, connectedDid: did });
+const tasks = enbox.using(TaskProtocol);
+await tasks.configure();
+```
+
+`Enbox.connect()` takes an `agent` and `connectedDid` — the agent manages signing keys and DWN sync, while `connectedDid` is the user's DID. If you use `@enbox/auth`, you can pass the session directly:
+
+```ts
 const enbox = Enbox.connect({ session });
 ```
 
 ### 3. CRUD operations
 
 ```ts
-const tasks = enbox.using(TaskProtocol);
-await tasks.configure();
-
 // Create
 const { record } = await tasks.records.create('task', {
   data: { title: 'Buy milk', done: false },

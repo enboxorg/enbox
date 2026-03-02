@@ -8,28 +8,25 @@ description: The high-level TypeScript SDK for decentralised identity and data â
 ## Installation
 
 ```bash
-npm install @enbox/api @enbox/auth
+bun add @enbox/api
 ```
 
 ## Core concepts
 
 ### Enbox
 
-The `Enbox` class is the entry point. You create an instance by connecting with an `AuthSession` from `@enbox/auth`:
+The `Enbox` class is the entry point. You create an instance with `Enbox.connect()`:
 
 ```ts
-import { AuthManager } from '@enbox/auth';
 import { Enbox } from '@enbox/api';
 
-const auth = await AuthManager.create({ sync: '15s' });
-const session = await auth.connect();
-const enbox = Enbox.connect({ session });
+const enbox = Enbox.connect({ agent, connectedDid: did });
 ```
 
-`Enbox.connect()` also accepts raw parameters if you manage the agent yourself:
+The `agent` manages signing keys, DWN sync, and identity storage. The `connectedDid` is the user's DID. If you use `@enbox/auth` for authentication, you can pass the session directly:
 
 ```ts
-const enbox = Enbox.connect({ agent, connectedDid: did });
+const enbox = Enbox.connect({ session });
 ```
 
 The `Enbox` instance exposes:
