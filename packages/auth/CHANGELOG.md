@@ -1,5 +1,15 @@
 # @enbox/auth
 
+## 0.4.0
+
+### Minor Changes
+
+- [#667](https://github.com/enboxorg/enbox/pull/667) [`2d2d4b1`](https://github.com/enboxorg/enbox/commit/2d2d4b1fd1400d1d8983ed17576a329da226b104) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add `lock()`, `switchIdentity()` sync registration, and `onPasswordRequired` callback
+
+  - **`AuthManager.lock()`**: New top-level method that stops sync, clears the active session, locks the vault, and transitions to `'locked'` state. Session storage markers are preserved so `restoreSession()` can reconnect after unlock.
+  - **`switchIdentity()` sync registration**: Now calls `sync.registerIdentity()` for the target identity before starting sync, ensuring imported or newly-switched identities are properly registered for DWN synchronization.
+  - **`onPasswordRequired` callback**: New optional callback on `RestoreSessionOptions` that is invoked when the vault is locked and a password is needed. This enables interactive password prompts (PIN dialogs, CLI prompts) without pre-supplying a password.
+
 ## 0.3.1
 
 ### Patch Changes
