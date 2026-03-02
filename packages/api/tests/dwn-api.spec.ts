@@ -7,7 +7,10 @@ import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { processConnectedGrants } from '@enbox/auth';
-import { AgentPermissionsApi, DwnDateSort, DwnInterface, EnboxUserAgent, getRecordAuthor, EnboxConnectProtocol, PlatformAgentTestHarness, WalletConnect } from '@enbox/agent';
+import {
+  AgentPermissionsApi, DwnDateSort, DwnInterface, EnboxConnectProtocol,
+  EnboxUserAgent, getRecordAuthor, PlatformAgentTestHarness, WalletConnect,
+} from '@enbox/agent';
 import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, PermissionsProtocol, Poller, Time } from '@enbox/dwn-sdk-js';
 
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
@@ -153,7 +156,9 @@ describe('DwnApi', () => {
       const { status: bobNotesProtocolSend } = await bobNotesProtocol.send(bobDid.uri);
       expect(bobNotesProtocolSend.code).toBe(202);
 
-      const grants = await EnboxConnectProtocol.createPermissionGrants(aliceDid.uri, delegatedBearerDid, testHarness.agent, grantRequest.permissionScopes);
+      const grants = await EnboxConnectProtocol.createPermissionGrants(
+        aliceDid.uri, delegatedBearerDid, testHarness.agent, grantRequest.permissionScopes
+      );
 
       // Import the delegate DID as a full identity (with connectedDid metadata)
       // so the delegate agent can resolve it and sign on behalf of Alice.

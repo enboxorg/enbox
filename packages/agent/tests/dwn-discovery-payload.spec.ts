@@ -3,11 +3,11 @@ import { describe, expect, it } from 'bun:test';
 import type { DwnDiscoveryPayload } from '../src/dwn-discovery-payload.js';
 
 import {
-  buildDwnDiscoveryRedirectUrl,
   buildDwnConnectUrl,
+  buildDwnDiscoveryRedirectUrl,
   decodeDwnDiscoveryPayload,
-  DWN_PROTOCOL_SCHEME,
   DWN_CONNECT_PATH,
+  DWN_PROTOCOL_SCHEME,
   encodeDwnDiscoveryPayload,
   parseDwnConnectUrl,
   readDwnDiscoveryPayloadFromUrl,
