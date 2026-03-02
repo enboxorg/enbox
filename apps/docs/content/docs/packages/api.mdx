@@ -1,0 +1,420 @@
+---
+title: "@enbox/api"
+description: The high-level TypeScript SDK for decentralised identity and data — typed protocols, records CRUD, real-time subscriptions, and anonymous queries.
+---
+
+`@enbox/api` is the main package developers use to interact with the Enbox network. It provides a type-safe, protocol-scoped API for creating, reading, updating, deleting, and subscribing to records stored in Decentralised Web Nodes (DWNs).
+
+## Installation
+
+```bash
+npm install @enbox/api @enbox/auth
+```
+
+## Core concepts
+
+### Enbox
+
+The `Enbox` class is the entry point. You create an instance by connecting with an `AuthSession` from `@enbox/auth`:
+
+```ts
+import { AuthManager } from '@enbox/auth';
+import { Enbox } from '@enbox/api';
+
+const auth = await AuthManager.create({ sync: '15s' });
+const session = await auth.connect();
+const enbox = Enbox.connect({ session });
+```
+
+`Enbox.connect()` also accepts raw parameters if you manage the agent yourself:
+
+```ts
+const enbox = Enbox.connect({ agent, connectedDid: did });
+```
+
+The `Enbox` instance exposes:
+
+| Property / Method | Description |
+|---|---|
+| `enbox.using(protocol)` | Returns a `TypedEnbox` scoped to a protocol |
+| `enbox.did` | DID API — create and resolve DIDs |
+| `enbox.vc` | Verifiable Credentials API |
+| `enbox.agent` | The underlying `EnboxAgent` |
+| `enbox.disconnect()` | Stops sync and clears cached instances |
+
+There is **no public `dwn` property** on the `Enbox` instance. All DWN access goes through `enbox.using(protocol)`.
+
+### defineProtocol
+
+`defineProtocol()` creates a typed protocol definition that carries compile-time type metadata:
+
+```ts
+import { defineProtocol } from '@enbox/api';
+
+interface TaskData {
+  title: string;
+  done: boolean;
+}
+
+const TaskProtocol = defineProtocol({
+  protocol:  'https://example.com/tasks',
+  published: true,
+  types: {
+    task: {
+      schema:      'https://example.com/schemas/task',
+      dataFormats: ['application/json'],
+    },
+  },
+  structure: {
+    task: {},
+  },
+}, {} as {
+  task: TaskData;
+});
+```
+
+The second argument is a **phantom schema map** — it exists only at compile time to map protocol type names to TypeScript interfaces. The runtime value (`{}`) is ignored.
+
+### TypedEnbox
+
+`TypedEnbox` is the **primary developer interface**. You get one by calling `enbox.using(protocol)`:
+
+```ts
+const tasks = enbox.using(TaskProtocol);
+```
+
+Instances are **cached by protocol URI** — calling `using()` multiple times with the same protocol returns the same instance.
+
+Before performing record operations, call `configure()` to install the protocol on the local DWN:
+
+```ts
+const { status } = await tasks.configure();
+// status.code: 200 (already installed) or 202 (newly installed)
+```
+
+If you skip `configure()`, `TypedEnbox` will **auto-configure** on the first record operation by querying for an existing installation and installing if needed.
+
+### TypedEnbox.records
+
+All record methods auto-inject `protocol`, `protocolPath`, and `schema` — you only provide the path and your data:
+
+#### create
+
+```ts
+const { status, record } = await tasks.records.create('task', {
+  data: { title: 'Buy milk', done: false },
+});
+// record is TypedRecord<TaskData>
+```
+
+Create options:
+
+| Field | Type | Description |
+|---|---|---|
+| `data` | `T` (type-checked) | The record payload |
+| `parentContextId` | `string?` | Link to a parent record's `contextId` |
+| `published` | `boolean?` | Whether the record is publicly readable |
+| `recipient` | `string?` | DID of the intended recipient |
+| `protocolRole` | `string?` | Role for permission-scoped writes |
+| `tags` | `Record<string, ...>?` | Indexed key-value metadata |
+| `store` | `boolean?` | Persist locally (default `true`) |
+| `encryption` | `boolean?` | Force or skip encryption |
+| `dataFormat` | `string?` | MIME type override |
+
+#### query
+
+```ts
+const { records, cursor } = await tasks.records.query('task');
+
+for (const r of records) {
+  const data = await r.data.json(); // TaskData
+  console.log(data.title, data.done);
+}
+```
+
+Query with filters, sorting, and pagination:
+
+```ts
+import { DateSort } from '@enbox/dwn-sdk-js';
+
+const { records, cursor } = await tasks.records.query('task', {
+  filter: { tags: { done: false } },
+  dateSort: DateSort.CreatedDescending,
+  pagination: { limit: 25 },
+});
+
+// Fetch next page
+if (cursor) {
+  const { records: next } = await tasks.records.query('task', {
+    pagination: { limit: 25, cursor },
+  });
+}
+```
+
+#### read
+
+Read a specific record by ID:
+
+```ts
+const { record } = await tasks.records.read('task', {
+  filter: { recordId: taskId },
+});
+
+const data = await record.data.json(); // TaskData
+```
+
+Read from a remote DWN:
+
+```ts
+const { record } = await tasks.records.read('task', {
+  from: 'did:dht:alice...',
+  filter: { recordId: taskId },
+});
+```
+
+#### delete
+
+Delete via the `TypedEnbox` API:
+
+```ts
+const { status } = await tasks.records.delete('task', {
+  recordId: record.id,
+});
+```
+
+Or delete via the record instance:
+
+```ts
+await record.delete();
+```
+
+#### subscribe
+
+Subscribe to real-time changes:
+
+```ts
+const { liveQuery } = await tasks.records.subscribe('task');
+```
+
+See the [LiveQuery](#livequery) section below for event handling.
+
+## TypedRecord
+
+Every record returned by `TypedEnbox` is wrapped in `TypedRecord<T>`, which provides type-safe data access and lifecycle methods.
+
+### Data accessors
+
+```ts
+const task = await record.data.json();    // Promise<TaskData>
+const raw  = await record.data.text();    // Promise<string>
+const blob = await record.data.blob();    // Promise<Blob>
+const bytes = await record.data.bytes();  // Promise<Uint8Array>
+const stream = await record.data.stream(); // Promise<ReadableStream>
+```
+
+Data is cached in memory up to 10 MB — subsequent calls to any accessor return the cached value without re-reading from the DWN.
+
+### Metadata
+
+| Property | Type | Description |
+|---|---|---|
+| `record.id` | `string` | Unique, stable record ID |
+| `record.contextId` | `string?` | Hierarchical grouping ID |
+| `record.dateCreated` | `string` | ISO 8601 creation timestamp (immutable) |
+| `record.timestamp` | `string` | ISO 8601 timestamp of last mutation |
+| `record.author` | `string` | DID of the current message signer |
+| `record.creator` | `string` | DID of the original author |
+| `record.protocol` | `string?` | Protocol URI |
+| `record.protocolPath` | `string?` | Path within the protocol structure |
+| `record.schema` | `string?` | Schema URI from the protocol type |
+| `record.dataFormat` | `string?` | MIME type of the payload |
+| `record.dataSize` | `number?` | Payload size in bytes |
+| `record.tags` | `object?` | Indexed key-value metadata |
+| `record.published` | `boolean?` | Whether publicly readable |
+| `record.deleted` | `boolean` | Whether the record has been deleted |
+| `record.parentId` | `string?` | Parent record ID |
+| `record.recipient` | `string?` | Recipient DID |
+
+### Mutation methods
+
+#### update
+
+```ts
+const { status, record: updated } = await record.update({
+  data: { title: 'Buy oat milk', done: false },  // Partial<TaskData>
+  tags: { priority: 'high' },
+});
+```
+
+The `data` field accepts `Partial<T>` — only supply the fields you want to change. Both the returned record and the original instance reflect the updated state.
+
+#### delete
+
+```ts
+const { status } = await record.delete();
+// status.code: 202 on success
+```
+
+Delete with options:
+
+```ts
+await record.delete({ prune: true });  // also delete child records
+```
+
+### Lifecycle methods
+
+| Method | Description |
+|---|---|
+| `record.send(target?)` | Push the record to a remote DWN. Defaults to your own remote DWN. |
+| `record.store(importRecord?)` | Persist to local DWN (for records created with `store: false`) |
+| `record.import(store?)` | Re-sign under your identity and optionally store (for importing others' records) |
+| `record.rawRecord` | Escape hatch to the underlying untyped `Record` |
+
+## LiveQuery
+
+`LiveQuery` (and its typed wrapper `TypedLiveQuery<T>`) provides an initial snapshot plus a real-time stream of deduplicated change events.
+
+```ts
+const { liveQuery } = await tasks.records.subscribe('task');
+
+// Initial snapshot
+for (const record of liveQuery.records) {
+  console.log(await record.data.json());
+}
+
+// Real-time events
+liveQuery.on('create', (record) => {
+  console.log('New task:', record.id);
+});
+
+liveQuery.on('update', (record) => {
+  console.log('Updated:', record.id);
+});
+
+liveQuery.on('delete', (record) => {
+  console.log('Deleted:', record.id);
+});
+
+// Catch-all
+liveQuery.on('change', (change) => {
+  console.log(change.type, change.record.id);
+});
+```
+
+### Events
+
+| Event | Callback argument | Description |
+|---|---|---|
+| `create` | `TypedRecord<T>` | A new record was written |
+| `update` | `TypedRecord<T>` | An existing record was updated |
+| `delete` | `TypedRecord<T>` | A record was deleted |
+| `change` | `{ type, record }` | Catch-all for any of the above |
+| `disconnected` | *(none)* | Transport connection lost |
+| `reconnecting` | `{ attempt: number }` | Reconnection attempt in progress |
+| `reconnected` | *(none)* | Connection restored |
+| `eose` | *(none)* | End of stored events — catch-up complete, events are now live |
+
+The `.on()` method returns an unsubscribe function:
+
+```ts
+const off = liveQuery.on('create', handler);
+off(); // stop listening
+```
+
+Close the subscription when done:
+
+```ts
+await liveQuery.close();
+```
+
+### Connection lifecycle
+
+`liveQuery.isConnected` reflects the current transport state. Use the lifecycle events to show connection status in your UI:
+
+```ts
+liveQuery.on('disconnected', () => showOfflineBanner());
+liveQuery.on('reconnecting', ({ attempt }) => {
+  console.log(`Reconnection attempt ${attempt}...`);
+});
+liveQuery.on('reconnected', () => hideOfflineBanner());
+```
+
+## Anonymous queries
+
+`Enbox.anonymous()` creates a lightweight, read-only instance for querying **published** records without authentication:
+
+```ts
+const { dwn } = Enbox.anonymous();
+
+const { records } = await dwn.records.query({
+  from: 'did:dht:alice...',
+  filter: {
+    protocol: 'https://social.example/posts',
+    protocolPath: 'post',
+  },
+});
+
+for (const record of records) {
+  console.log(record.id, await record.data.text());
+}
+```
+
+No identity, vault, password, or signing keys are required. Only unsigned (anonymous) DWN messages are supported — you can query and read, but not write.
+
+## Hierarchical records
+
+Protocols can define nested structures. Use `parentContextId` to create child records:
+
+```ts
+const NotebookProtocol = defineProtocol({
+  protocol:  'https://example.com/notebooks',
+  published: true,
+  types: {
+    notebook: {
+      schema:      'https://example.com/schemas/notebook',
+      dataFormats: ['application/json'],
+    },
+    page: {
+      schema:      'https://example.com/schemas/page',
+      dataFormats: ['application/json'],
+    },
+  },
+  structure: {
+    notebook: {
+      page: {},
+    },
+  },
+}, {} as {
+  notebook: { name: string };
+  page: { title: string; body: string };
+});
+
+const notebooks = enbox.using(NotebookProtocol);
+await notebooks.configure();
+
+// Create a parent
+const { record: notebook } = await notebooks.records.create('notebook', {
+  data: { name: 'Travel Notes' },
+});
+
+// Create a child under the parent
+const { record: page } = await notebooks.records.create('notebook/page', {
+  data: { title: 'Day 1', body: 'Arrived in Tokyo...' },
+  parentContextId: notebook.contextId,
+});
+
+// Query children of a specific parent
+const { records: pages } = await notebooks.records.query('notebook/page', {
+  filter: { parentId: notebook.contextId },
+});
+```
+
+## Disconnecting
+
+When your application shuts down or the user signs out, call `disconnect()` to stop background sync and release resources:
+
+```ts
+await enbox.disconnect();
+```
+
+After calling `disconnect()`, the `Enbox` instance should not be reused. Create a new one with `Enbox.connect()` for the next session.

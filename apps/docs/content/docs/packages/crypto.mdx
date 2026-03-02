@@ -1,0 +1,33 @@
+---
+title: "@enbox/crypto"
+description: Cryptographic primitives — JOSE, key wrapping, ECDH key agreement, and signature algorithms.
+---
+
+`@enbox/crypto` provides the cryptographic building blocks used throughout the Enbox SDK. It implements JOSE (JSON Object Signing and Encryption) standards and the key agreement protocols needed for end-to-end encrypted DWN records.
+
+## What it does
+
+- **JOSE implementation** — JWS (JSON Web Signature) and JWE (JSON Web Encryption) operations for signing and encrypting DWN messages and record data.
+- **Key wrapping** — AES key wrapping for protecting content encryption keys within encrypted records.
+- **ECDH key agreement** — Elliptic Curve Diffie-Hellman key agreement for deriving shared secrets between DIDs, enabling end-to-end encryption where only the intended recipient can decrypt.
+- **Signature algorithms** — EdDSA (Ed25519) and ECDSA (secp256k1) signature schemes used for DWN message signing and DID authentication.
+- **Key generation** — Utilities for generating cryptographic key pairs in JWK (JSON Web Key) format.
+
+## When to use it
+
+Most applications never need to import from `@enbox/crypto` directly — encryption, signing, and key agreement are handled automatically by `@enbox/api` and `@enbox/agent`. Use this package when you need:
+
+- Standalone JOSE operations outside the Enbox SDK context
+- Custom encryption or signature logic
+- Direct key generation or manipulation
+- Building a cryptographic layer for a non-Enbox application
+
+## Key exports
+
+| Export | Description |
+|---|---|
+| JWS utilities | Sign and verify JSON Web Signatures |
+| JWE utilities | Encrypt and decrypt JSON Web Encryption payloads |
+| ECDH key agreement | Derive shared secrets from key pairs |
+| AES key wrapping | Wrap and unwrap content encryption keys |
+| Key generation | Generate Ed25519 and secp256k1 key pairs |

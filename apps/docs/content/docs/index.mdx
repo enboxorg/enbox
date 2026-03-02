@@ -1,58 +1,132 @@
 ---
 title: Introduction
-description: Getting started with the Enbox SDK for decentralised identity, data, and authentication.
+description: Getting started with the Enbox SDK — decentralised identity, data, and authentication for TypeScript.
 ---
 
 ## What is Enbox?
 
-Enbox is a JavaScript/TypeScript SDK for building applications with **decentralised identity** and **personal data storage**. It gives your users:
+Enbox is a TypeScript SDK for building applications where **users own their data**. Instead of storing user data in your database, Enbox gives each user a [Decentralized Web Node](https://identity.foundation/decentralized-web-node/spec/) (DWN) — a personal data vault they control. Your app reads and writes to it with their permission.
 
-- **Self-sovereign identity** via Decentralized Identifiers (DIDs)
-- **Personal data vaults** powered by Decentralized Web Nodes (DWNs)
-- **Passwordless authentication** with the `@enbox/auth` manager
-- **End-to-end encryption** and selective data sharing
+The SDK handles:
 
-## Packages
+- **Identity** — Decentralized Identifiers (DIDs) that users own, not your server
+- **Storage** — Protocol-defined records in personal DWN vaults, synced across devices
+- **Authentication** — Passwordless auth with vault encryption, recovery phrases, and multi-identity
+- **Encryption** — End-to-end encrypted records with ECDH key agreement
 
-The SDK is published as a set of npm packages:
-
-| Package | Description |
-|---|---|
-| `@enbox/api` | High-level API — `Enbox.connect()`, records, protocols |
-| `@enbox/auth` | Authentication manager — connect, lock, disconnect flows |
-| `@enbox/agent` | Low-level agent runtime for DID and DWN operations |
-| `@enbox/protocols` | Protocol definitions and type-safe schema helpers |
-| `@enbox/dids` | DID creation, resolution, and key management |
-| `@enbox/crypto` | Cryptographic primitives (JOSE, key wrapping) |
-| `@enbox/common` | Shared utilities and types |
-| `@enbox/dwn-sdk-js` | Decentralized Web Node reference implementation |
-
-## Quick start
+## Installation
 
 ```bash
 npm install @enbox/api @enbox/auth
 ```
 
+## Quick start
+
+The main workflow is: **authenticate** with `@enbox/auth`, then **use protocols** with `@enbox/api`.
+
+### 1. Define a protocol
+
+A protocol describes the data your app works with — its schema, structure, and access rules.
+
 ```ts
-import { Enbox } from '@enbox/api';
+import { defineProtocol } from '@enbox/api';
 
-const enbox = new Enbox();
-await enbox.connect();
-
-// Write a record
-const { record } = await enbox.dwn.records.create({
-  data: 'Hello from Enbox!',
-  message: {
-    dataFormat: 'text/plain',
+const TaskProtocol = defineProtocol({
+  protocol:  'https://example.com/tasks',
+  published: true,
+  types: {
+    task: {
+      schema:      'https://example.com/schemas/task',
+      dataFormats: ['application/json'],
+    },
+  },
+  structure: {
+    task: {},
   },
 });
-
-console.log(await record.data.text());
 ```
+
+### 2. Authenticate and connect
+
+```ts
+import { AuthManager } from '@enbox/auth';
+import { Enbox } from '@enbox/api';
+
+const auth = await AuthManager.create();
+const session = await auth.connect();
+const enbox = Enbox.connect({ session });
+```
+
+### 3. CRUD operations
+
+```ts
+const tasks = enbox.using(TaskProtocol);
+await tasks.configure();
+
+// Create
+const { record } = await tasks.records.create('task', {
+  data: { title: 'Buy milk', done: false },
+});
+
+// Read
+const task = await record.data.json();    // { title: 'Buy milk', done: false }
+const raw  = await record.data.text();    // raw JSON string
+const blob = await record.data.blob();    // Blob
+const bytes = await record.data.bytes();  // Uint8Array
+
+// Update
+await record.update({
+  data: { title: 'Buy milk', done: true },
+});
+
+// Query all tasks
+const { records } = await tasks.records.query('task');
+for (const r of records) {
+  console.log(await r.data.json());
+}
+
+// Delete
+await record.delete();
+```
+
+### 4. Real-time subscriptions
+
+```ts
+const { liveQuery } = await tasks.records.subscribe('task');
+
+liveQuery.on('create', (record) => {
+  console.log('New task:', record.id);
+});
+
+liveQuery.on('update', (record) => {
+  console.log('Task updated:', record.id);
+});
+
+liveQuery.on('delete', (record) => {
+  console.log('Task deleted:', record.id);
+});
+```
+
+## Packages
+
+| Package | Description |
+|---|---|
+| [`@enbox/api`](/docs/packages/api) | High-level SDK — `Enbox.connect()`, typed protocols, records CRUD |
+| [`@enbox/auth`](/docs/guides/auth) | Authentication — connect, lock, disconnect, multi-identity |
+| [`@enbox/dwn-server`](/docs/packages/dwn-server) | Self-hostable DWN server with PostgreSQL, MySQL, SQLite |
+| [`@enbox/agent`](/docs/packages/agent) | Low-level agent runtime for DID and DWN operations |
+| [`@enbox/protocols`](/docs/packages/protocols) | Protocol definitions and type-safe schema helpers |
+| [`@enbox/dids`](/docs/packages/dids) | DID creation, resolution, and key management |
+| [`@enbox/crypto`](/docs/packages/crypto) | Cryptographic primitives (JOSE, key wrapping, ECDH) |
+| [`@enbox/common`](/docs/packages/common) | Shared utilities (TTL cache, LevelStore) |
+| [`@enbox/dwn-sdk-js`](/docs/packages/dwn-sdk-js) | Decentralized Web Node protocol engine |
+| `@enbox/dwn-sql-store` | SQL storage backends for the DWN |
+| `@enbox/dwn-clients` | HTTP and WebSocket DWN transport clients |
 
 ## Next steps
 
 <Cards>
+  <Card title="@enbox/api" href="/docs/packages/api" />
+  <Card title="DWN Server" href="/docs/packages/dwn-server" />
   <Card title="Authentication" href="/docs/guides/auth" />
-  <Card title="API Reference" href="/docs/api" />
 </Cards>

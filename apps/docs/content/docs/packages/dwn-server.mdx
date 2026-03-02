@@ -1,0 +1,225 @@
+---
+title: "@enbox/dwn-server"
+description: Self-hostable Decentralised Web Node server with PostgreSQL, MySQL, SQLite, and LevelDB storage backends.
+---
+
+`@enbox/dwn-server` is a standalone HTTP + WebSocket server that hosts Decentralised Web Nodes (DWNs) for multiple tenants. It implements the [DWN specification](https://identity.foundation/decentralized-web-node/spec/) and is designed to run as a long-lived service — in Docker, on bare metal, or in a cloud environment.
+
+## Quick start
+
+### Docker (recommended)
+
+```bash
+docker run -d \
+  --name dwn-server \
+  -p 3000:3000 \
+  -e DWN_STORAGE=level://data \
+  -v dwn-data:/data \
+  ghcr.io/enboxorg/dwn-server:latest
+```
+
+### From source
+
+```bash
+git clone https://github.com/enboxorg/enbox.git
+cd enbox
+bun install
+bun run --filter @enbox/dwn-server start
+```
+
+### Verify
+
+```bash
+curl http://localhost:3000/health
+# {"ok":true}
+
+curl http://localhost:3000/info
+# {"server":"@enbox/dwn-server","version":"...","sdkVersion":"...","webSocketSupport":true,...}
+```
+
+## Configuration
+
+All configuration is via **environment variables**. There are no CLI flags.
+
+### Server
+
+| Variable | Default | Description |
+|---|---|---|
+| `DS_PORT` | `3000` | Port the server listens on |
+| `DWN_BASE_URL` | `http://localhost:3000` | External base URL (used in Connect flow URIs) |
+| `DWN_SERVER_PACKAGE_NAME` | `@enbox/dwn-server` | Name returned by `/info` |
+| `DWN_SERVER_LOG_LEVEL` | `INFO` | Log level: `trace`, `debug`, `info`, `warn`, `error` |
+| `DS_WEBSOCKET_SERVER` | `on` | Enable WebSocket support (`on` / `off`) |
+| `MAX_RECORD_DATA_SIZE` | `100mb` | Maximum payload size per `RecordsWrite` |
+| `DWN_MAX_IN_FLIGHT` | `32` | Max unacknowledged subscription events per subscription |
+
+### Storage
+
+Storage URLs use a scheme prefix to select the backend:
+
+| Scheme | Example | Description |
+|---|---|---|
+| `level://` | `level://data` | LevelDB (default, file-based) |
+| `sqlite://` | `sqlite://dwn.db` | SQLite (single file, good for dev) |
+| `postgres://` | `postgres://user:pass@host:5432/dwn` | PostgreSQL (recommended for production) |
+| `mysql://` | `mysql://user:pass@host:3306/dwn` | MySQL |
+
+| Variable | Default | Description |
+|---|---|---|
+| `DWN_STORAGE` | `level://data` | Default storage URL for all stores |
+| `DWN_STORAGE_MESSAGES` | `DWN_STORAGE` | Override for the message store |
+| `DWN_STORAGE_DATA` | `DWN_STORAGE` | Override for the data (blob) store |
+| `DWN_STORAGE_STATE_INDEX` | `DWN_STORAGE` | Override for the state/event index |
+| `DWN_STORAGE_RESUMABLE_TASKS` | `DWN_STORAGE` | Override for resumable task storage |
+| `DWN_TTL_CACHE_URL` | `sqlite://` | TTL cache (session/state). SQL only. |
+
+You can point different stores at different backends — for example, keep messages in PostgreSQL but store blobs on the filesystem with LevelDB.
+
+### PostgreSQL pool tuning
+
+When multiple stores share the same PostgreSQL connection URL, a single shared pool is used instead of one pool per store (which would be 4 pools x 10 connections = 40 connections by default).
+
+| Variable | Default | Description |
+|---|---|---|
+| `DWN_PG_POOL_MIN` | `5` | Minimum pool connections |
+| `DWN_PG_POOL_MAX` | `30` | Maximum pool connections |
+| `DWN_PG_POOL_IDLE_TIMEOUT` | `30000` | Idle connection timeout (ms) |
+
+### Tenant registration
+
+By default, any DID can use the server (open registration). You can require registration via Proof-of-Work, Provider Auth (OAuth), or both.
+
+| Variable | Default | Description |
+|---|---|---|
+| `DWN_REGISTRATION_STORE_URL` | `DWN_STORAGE` | Storage URL for registration data |
+| `DWN_REGISTRATION_PROOF_OF_WORK_ENABLED` | `false` | Enable Proof-of-Work registration |
+| `DWN_REGISTRATION_PROOF_OF_WORK_SEED` | *(none)* | Seed for PoW challenge generation |
+| `DWN_REGISTRATION_PROOF_OF_WORK_INITIAL_MAX_HASH` | *(none)* | Initial difficulty ceiling |
+| `DWN_TERMS_OF_SERVICE_FILE_PATH` | *(none)* | Path to a ToS file tenants must accept |
+
+#### Provider Auth (OAuth)
+
+For paid or managed DWN hosting, Provider Auth gates registration behind an OAuth flow:
+
+| Variable | Default | Description |
+|---|---|---|
+| `DWN_PROVIDER_AUTH_ENABLED` | `false` | Enable Provider Auth |
+| `DWN_PROVIDER_AUTH_AUTHORIZE_URL` | *(none)* | OAuth authorise endpoint |
+| `DWN_PROVIDER_AUTH_TOKEN_URL` | *(none)* | OAuth token endpoint |
+| `DWN_PROVIDER_AUTH_REFRESH_URL` | *(none)* | OAuth refresh endpoint |
+| `DWN_PROVIDER_AUTH_MANAGEMENT_URL` | *(none)* | Management portal URL |
+| `DWN_PROVIDER_AUTH_PLUGIN_PATH` | *(none)* | Path to a custom auth plugin |
+| `DWN_PROVIDER_AUTH_JWT_SECRET` | *(none)* | JWT signing secret |
+| `DWN_PROVIDER_AUTH_JWT_JWKS_URL` | *(none)* | JWKS URL for JWT verification |
+
+### Admin API
+
+The admin API is **disabled by default**. Set `DWN_ADMIN_TOKEN` to enable it.
+
+| Variable | Default | Description |
+|---|---|---|
+| `DWN_ADMIN_TOKEN` | *(none)* | Bearer token for admin endpoints. If unset, admin API is disabled. |
+| `DWN_ADMIN_TOKEN_FILE` | *(none)* | Read the admin token from a file (useful for Docker secrets) |
+| `DWN_ADMIN_ACTIVITY_LOG_CAPACITY` | `10000` | Max events in the admin activity ring buffer |
+| `DWN_ADMIN_METRICS_UPDATE_INTERVAL` | `30` | Prometheus gauge update interval (seconds) |
+| `DWN_ADMIN_WEBAUTHN_RP_ID` | *(from DWN_BASE_URL)* | WebAuthn Relying Party ID for passkey auth |
+| `DWN_ADMIN_WEBAUTHN_RP_NAME` | `DWN Admin` | WebAuthn Relying Party display name |
+| `DWN_ADMIN_SESSION_TTL` | `86400` | Passkey session TTL (seconds, default 24 hours) |
+
+### Quotas
+
+Per-tenant storage quotas limit resource usage. Defaults are unlimited; per-tenant overrides are managed via the admin API.
+
+| Variable | Default | Description |
+|---|---|---|
+| `DWN_QUOTA_MAX_MESSAGES` | `0` (unlimited) | Default max messages per tenant |
+| `DWN_QUOTA_MAX_STORAGE_BYTES` | `0` (unlimited) | Default max data storage per tenant (bytes) |
+
+### Rate limiting
+
+| Variable | Default | Description |
+|---|---|---|
+| `DWN_RATE_LIMIT_REQUESTS_PER_SECOND` | `30` | Max HTTP requests/sec per IP. `0` disables. |
+| `DWN_RATE_LIMIT_BURST` | `50` | Burst allowance per IP |
+| `DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND` | `20` | Max DWN requests/sec per tenant DID. `0` disables. |
+| `DWN_RATE_LIMIT_TENANT_BURST` | `50` | Burst allowance per tenant |
+
+### Audit log
+
+| Variable | Default | Description |
+|---|---|---|
+| `DWN_AUDIT_LOG_MAX_AGE_DAYS` | `90` | Max age of audit entries (days). `0` = no limit. |
+| `DWN_AUDIT_LOG_MAX_ROWS` | `100000` | Max number of audit rows. Oldest purged when exceeded. |
+
+### Record delivery and forwarding
+
+| Variable | Default | Description |
+|---|---|---|
+| `DWN_FORWARDING_ENABLED` | `false` | Forward signed messages to tenant's other DWN endpoints |
+| `DWN_DELIVERY_ENABLED` | `false` | Protocol-aware `$delivery` to participants' DWNs |
+| `DWN_DELIVERY_MAX_CONCURRENCY` | `10` | Max concurrent outbound delivery requests |
+| `DWN_DELIVERY_ENDPOINT_CACHE_TTL` | `300` | DID endpoint resolution cache TTL (seconds) |
+| `DWN_FORWARDING_DEDUP_TTL` | `60` | Deduplication cache TTL for forwarded messages (seconds) |
+
+## HTTP endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Health check. Returns `{ "ok": true }`. |
+| `GET` | `/info` | Server info: name, version, SDK version, registration requirements |
+| `POST` | `/` | JSON-RPC endpoint for all DWN messages |
+| `GET` | `/:did/read/records/:id` | Direct HTTP read for a specific record |
+
+### WebSocket
+
+When `DS_WEBSOCKET_SERVER=on` (the default), the server accepts WebSocket upgrades on the root path (`/`). The WebSocket transport supports:
+
+- JSON-RPC DWN messages (same as HTTP)
+- Real-time subscription events
+- Flow control via `rpc.ack` messages (controlled by `DWN_MAX_IN_FLIGHT`)
+
+### Registration routes
+
+When Proof-of-Work or Provider Auth is enabled, additional routes are exposed for tenant registration and terms-of-service acceptance.
+
+## Production deployment
+
+### PostgreSQL example
+
+```bash
+docker run -d \
+  --name dwn-server \
+  -p 3000:3000 \
+  -e DWN_STORAGE=postgres://dwn:secret@db:5432/dwn \
+  -e DWN_BASE_URL=https://dwn.example.com \
+  -e DWN_ADMIN_TOKEN=your-secret-token \
+  -e DWN_RATE_LIMIT_REQUESTS_PER_SECOND=30 \
+  -e DWN_QUOTA_MAX_STORAGE_BYTES=1073741824 \
+  ghcr.io/enboxorg/dwn-server:latest
+```
+
+### Split storage
+
+Store messages and state in PostgreSQL, but keep large binary data on the filesystem:
+
+```bash
+DWN_STORAGE_MESSAGES=postgres://dwn:secret@db:5432/dwn
+DWN_STORAGE_DATA=level:///mnt/blobs
+DWN_STORAGE_STATE_INDEX=postgres://dwn:secret@db:5432/dwn
+```
+
+### Health checks
+
+Use the `/health` endpoint for container orchestration liveness probes:
+
+```yaml
+# docker-compose.yml
+services:
+  dwn:
+    image: ghcr.io/enboxorg/dwn-server:latest
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+```
