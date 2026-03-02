@@ -82,14 +82,14 @@ const tasks = enbox.using(TaskProtocol);
 
 Instances are **cached by protocol URI** — calling `using()` multiple times with the same protocol returns the same instance.
 
-Before performing record operations, call `configure()` to install the protocol on the local DWN:
+`TypedEnbox` **auto-configures** the protocol on the first record operation — it queries the local DWN for an existing installation and installs one if needed. You can start using records immediately without any setup step.
+
+If you need explicit control (for example, to check the status code or to pre-install before any reads), call `configure()` manually:
 
 ```ts
 const { status } = await tasks.configure();
 // status.code: 200 (already installed) or 202 (newly installed)
 ```
-
-If you skip `configure()`, `TypedEnbox` will **auto-configure** on the first record operation by querying for an existing installation and installing if needed.
 
 ### TypedEnbox.records
 
@@ -387,7 +387,6 @@ const NotebookProtocol = defineProtocol({
 });
 
 const notebooks = enbox.using(NotebookProtocol);
-await notebooks.configure();
 
 // Create a parent
 const { record: notebook } = await notebooks.records.create('notebook', {
