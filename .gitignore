@@ -169,3 +169,6 @@ CLAUDE.local.md
 
 # AI agent working directories
 .opencode/
+
+# Generated API documentation (regenerated via `bun run docs`)
+docs/api/

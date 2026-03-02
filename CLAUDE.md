@@ -272,6 +272,53 @@ Use `bunx changeset status` to verify the changeset is valid before committing.
 feat: add provider-auth-v0 client methods and Web5.connect() integration
 ```
 
+## API Documentation
+
+Auto-generated API reference lives in `docs/api/` (git-ignored). It is produced by [TypeDoc](https://typedoc.org/) with the `typedoc-plugin-markdown` plugin, configured in `typedoc.json`.
+
+### Generating docs locally
+
+```bash
+# Build packages first (TypeDoc needs the compiled .d.ts files):
+bun run build
+
+# Generate Markdown API reference into docs/api/:
+bun run docs
+
+# Clean and regenerate from scratch:
+bun run docs:clean
+```
+
+### How it works
+
+- `typedoc.json` at the repo root uses `entryPointStrategy: "packages"` to document 13 library packages.
+- Each package page is generated from its `src/index.ts` entry point (except `dwn-sql-store` which uses `src/main.ts` via a local `typedoc.json` override).
+- Output goes to `docs/api/` with one Markdown file per package, organized under `docs/api/@enbox/`.
+- Source links point to the GitHub repo at the current git revision.
+- `excludeInternal`, `excludePrivate`, and `excludeProtected` are enabled — only the public API surface is documented.
+- Two packages are excluded: `electrobun-dwn` (private desktop app) and `dwn-server-admin-ui` (Preact UI, not a library).
+
+### CI auto-regeneration
+
+The `.github/workflows/docs.yml` workflow runs on every push to `main` that touches `packages/*/src/**`. It builds all packages, runs TypeDoc, and commits any changes back to `main` with `[skip ci]` to avoid retriggering. It can also be triggered manually via `workflow_dispatch`.
+
+### Adding a new package to the docs
+
+1. Add the package directory to the `entryPoints` array in `typedoc.json`.
+2. If the package entry point is NOT `src/index.ts`, create a `typedoc.json` in the package directory with `{ "entryPoints": ["src/your-entry.ts"] }`.
+3. Run `bun run docs` to verify.
+
+### JSDoc conventions for TypeDoc
+
+TypeDoc reads JSDoc/TSDoc comments from source. Keep these conventions for good output:
+
+- `@param name - Description` for parameters (do NOT include the type in braces — TypeScript provides it).
+- `@returns Description` for return values.
+- `@throws Description` for thrown errors.
+- `@example` for code examples (fenced code blocks).
+- `@internal` on symbols that should be excluded from public docs.
+- `{@link ClassName.methodName}` for cross-references within the same package.
+
 ## Coding Style
 
 Style is derived from `dwn-sdk-js` (gold standard). ESLint enforces most rules.
@@ -358,7 +405,7 @@ throw new Error(`AgentDwnApi: DID '${didUri}' does not have a keyAgreement verif
 
 ### JSDoc
 
-Brief JSDoc on public methods and complex private methods. Use `@param`, `@returns`, `@throws` where appropriate.
+Brief JSDoc on public methods and complex private methods. Use `@param`, `@returns`, `@throws` where appropriate. These comments are consumed by TypeDoc to generate the API reference in `docs/api/` — see [API Documentation](#api-documentation) above.
 
 ```typescript
 /**

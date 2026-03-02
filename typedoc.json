@@ -1,0 +1,36 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPointStrategy": "packages",
+  "entryPoints": [
+    "packages/common",
+    "packages/crypto",
+    "packages/dids",
+    "packages/dwn-sdk-js",
+    "packages/dwn-clients",
+    "packages/agent",
+    "packages/api",
+    "packages/auth",
+    "packages/protocols",
+    "packages/browser",
+    "packages/protocol-codegen",
+    "packages/dwn-sql-store",
+    "packages/dwn-server"
+  ],
+  "packageOptions": {
+    "entryPoints": ["src/index.ts"],
+    "excludeInternal": true,
+    "excludePrivate": true,
+    "excludeProtected": true
+  },
+  "plugin": ["typedoc-plugin-markdown"],
+  "out": "docs/api",
+  "name": "Enbox SDK",
+  "includeVersion": true,
+  "categorizeByGroup": true,
+  "excludeExternals": true,
+  "sourceLinkTemplate": "https://github.com/enboxorg/enbox/blob/{gitRevision}/{path}#L{line}",
+  "readme": "none",
+  "outputFileStrategy": "modules",
+  "hidePageHeader": false,
+  "hideGroupHeadings": false
+}
