@@ -306,7 +306,7 @@ describe('walletConnect', () => {
 
     expect(capturedOptions.displayName).toBe('Test App');
     expect(capturedOptions.connectServerUrl).toBe('https://relay.example.com');
-    expect(capturedOptions.walletUri).toBe('web5://connect');
+    expect(capturedOptions.walletUri).toBe('enbox://connect');
   });
 
   test('uses custom walletUri when provided', async () => {

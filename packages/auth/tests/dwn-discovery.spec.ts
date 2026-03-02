@@ -488,7 +488,7 @@ describe('requestLocalDwnDiscovery', () => {
     expect(requestLocalDwnDiscovery()).toBe(false);
   });
 
-  test('should open a dwn://register URL via globalThis.open', () => {
+  test('should open a dwn://connect URL via globalThis.open', () => {
     const openedUrls: string[] = [];
     Object.defineProperty(globalThis, 'open', {
       value        : (url: string): void => { openedUrls.push(url); },
@@ -500,7 +500,7 @@ describe('requestLocalDwnDiscovery', () => {
 
     expect(result).toBe(true);
     expect(openedUrls).toHaveLength(1);
-    expect(openedUrls[0]).toBe('dwn://register?callback=https%3A%2F%2Fmyapp.com%2Fcallback');
+    expect(openedUrls[0]).toBe('dwn://connect?callback=https%3A%2F%2Fmyapp.com%2Fcallback');
   });
 
   test('should default callback to current page URL', () => {
@@ -522,7 +522,7 @@ describe('requestLocalDwnDiscovery', () => {
     expect(result).toBe(true);
     expect(openedUrls).toHaveLength(1);
     // Should use the page URL without the fragment.
-    expect(openedUrls[0]).toBe('dwn://register?callback=https%3A%2F%2Fmyapp.com%2Fdashboard');
+    expect(openedUrls[0]).toBe('dwn://connect?callback=https%3A%2F%2Fmyapp.com%2Fdashboard');
   });
 
   test('should fall back to location.href when open is unavailable', () => {
@@ -548,7 +548,7 @@ describe('requestLocalDwnDiscovery', () => {
 
     expect(result).toBe(true);
     expect(hrefValues).toHaveLength(1);
-    expect(hrefValues[0]).toContain('dwn://register');
+    expect(hrefValues[0]).toContain('dwn://connect');
   });
 });
 

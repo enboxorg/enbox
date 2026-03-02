@@ -1,7 +1,7 @@
 /**
- * Wallet connect (OIDC/QR) flow.
+ * Wallet connect (Enbox Connect relay) flow.
  *
- * Connects to an external wallet via the WalletConnect relay protocol,
+ * Connects to an external wallet via the Enbox Connect relay protocol,
  * importing a delegated DID with permission grants.
  * This replaces the "Mode B/C" paths in Enbox.connect().
  * @module
@@ -99,12 +99,12 @@ export async function walletConnect(
     );
   }
 
-  // Run the full OIDC wallet connect flow.
+  // Run the Enbox Connect relay flow.
   // permissionRequests are already agent-level ConnectPermissionRequest objects.
   const result = await WalletConnect.initClient({
     displayName        : options.displayName,
     connectServerUrl   : options.connectServerUrl,
-    walletUri          : options.walletUri ?? 'web5://connect',
+    walletUri          : options.walletUri ?? 'enbox://connect',
     permissionRequests : options.permissionRequests,
     onWalletUriReady   : options.onWalletUriReady,
     validatePin        : options.validatePin,

@@ -1,8 +1,8 @@
 /**
- * Shared types and utilities for the `dwn://register` discovery protocol.
+ * Shared types and utilities for the `dwn://connect` discovery protocol.
  *
  * The payload is the JSON data exchanged between the local DWN server
- * (electrobun-dwn) and the requesting app during the `dwn://register`
+ * (electrobun-dwn) and the requesting app during the `dwn://connect`
  * redirect flow. It is encoded as base64url and placed in the URL
  * fragment (`#`) of the callback URL.
  *
@@ -10,14 +10,13 @@
  * consumed from any environment (Bun, browser, Electrobun) without
  * triggering transitive dependency resolution issues.
  *
- * @see https://github.com/enboxorg/enbox/issues/586
  * @module
  */
 
 // ─── Types ────────────────────────────────────────────────────────
 
 /**
- * The JSON payload delivered via the URL fragment in a `dwn://register`
+ * The JSON payload delivered via the URL fragment in a `dwn://connect`
  * callback redirect.
  *
  * Intentionally minimal — everything beyond the endpoint (version,
@@ -29,9 +28,9 @@ export type DwnDiscoveryPayload = {
 };
 
 /**
- * Parsed result from a `dwn://register` URL.
+ * Parsed result from a `dwn://connect` URL.
  */
-export type DwnRegisterUrlParams = {
+export type DwnConnectUrlParams = {
   /** The callback URL to redirect to with the discovery payload. */
   callback: string;
 };
@@ -41,17 +40,17 @@ export type DwnRegisterUrlParams = {
 /** The URL scheme for DWN discovery protocol handlers. */
 export const DWN_PROTOCOL_SCHEME = 'dwn';
 
-/** The `dwn://register` path that triggers the discovery handshake. */
-export const DWN_REGISTER_PATH = 'register';
+/** The `dwn://connect` path that triggers the discovery handshake. */
+export const DWN_CONNECT_PATH = 'connect';
 
 // ─── Register URL construction ───────────────────────────────────
 
 /**
- * Build a `dwn://register?callback=<url>` URL that, when opened by the OS,
+ * Build a `dwn://connect?callback=<url>` URL that, when opened by the OS,
  * triggers electrobun-dwn (or another `dwn://` scheme handler) to redirect
  * back to `callbackUrl` with the local DWN endpoint in the URL fragment.
  *
- * This is the **trigger** side of the `dwn://register` browser flow.
+ * This is the **trigger** side of the `dwn://connect` browser flow.
  * The web app opens this URL (e.g. via `window.open()` or `location.href`),
  * the OS routes it to the registered handler, and the handler redirects
  * back with the discovery payload.
@@ -59,17 +58,17 @@ export const DWN_REGISTER_PATH = 'register';
  * @param callbackUrl - The URL to redirect back to after discovery.
  *   This should be the current page (or a dedicated callback page) that
  *   will read the payload from `window.location.hash`.
- * @returns The `dwn://register?callback=<encoded-url>` URL string.
+ * @returns The `dwn://connect?callback=<encoded-url>` URL string.
  *
  * @example
  * ```ts
- * const registerUrl = buildDwnRegisterUrl('https://myapp.com/callback');
- * // => 'dwn://register?callback=https%3A%2F%2Fmyapp.com%2Fcallback'
+ * const registerUrl = buildDwnConnectUrl('https://myapp.com/callback');
+ * // => 'dwn://connect?callback=https%3A%2F%2Fmyapp.com%2Fcallback'
  * window.open(registerUrl);
  * ```
  */
-export function buildDwnRegisterUrl(callbackUrl: string): string {
-  return `${DWN_PROTOCOL_SCHEME}://${DWN_REGISTER_PATH}?callback=${encodeURIComponent(callbackUrl)}`;
+export function buildDwnConnectUrl(callbackUrl: string): string {
+  return `${DWN_PROTOCOL_SCHEME}://${DWN_CONNECT_PATH}?callback=${encodeURIComponent(callbackUrl)}`;
 }
 
 // ─── Payload encoding/decoding ───────────────────────────────────
@@ -110,15 +109,15 @@ export function decodeDwnDiscoveryPayload(encoded: string): DwnDiscoveryPayload 
 // ─── URL parsing ─────────────────────────────────────────────────
 
 /**
- * Parse a `dwn://register?callback=<url>` URL into its components.
+ * Parse a `dwn://connect?callback=<url>` URL into its components.
  *
- * @param url - The full `dwn://register?callback=...` URL.
+ * @param url - The full `dwn://connect?callback=...` URL.
  * @returns The parsed parameters, or `undefined` if the URL is not a
- *   valid `dwn://register` URL or is missing the `callback` parameter.
+ *   valid `dwn://connect` URL or is missing the `callback` parameter.
  */
-export function parseDwnRegisterUrl(url: string): DwnRegisterUrlParams | undefined {
+export function parseDwnConnectUrl(url: string): DwnConnectUrlParams | undefined {
   try {
-    // dwn://register?callback=... is not a standard hierarchical URL, so
+    // dwn://connect?callback=... is not a standard hierarchical URL, so
     // we parse it manually to avoid URL constructor quirks with custom schemes.
     const schemePrefix = `${DWN_PROTOCOL_SCHEME}://`;
     if (!url.startsWith(schemePrefix)) {
@@ -134,7 +133,7 @@ export function parseDwnRegisterUrl(url: string): DwnRegisterUrlParams | undefin
     }
 
     const path = withoutScheme.slice(0, questionIndex);
-    if (path !== DWN_REGISTER_PATH) {
+    if (path !== DWN_CONNECT_PATH) {
       return undefined;
     }
 
@@ -156,7 +155,7 @@ export function parseDwnRegisterUrl(url: string): DwnRegisterUrlParams | undefin
  * Build the full callback redirect URL with the discovery payload
  * encoded in the URL fragment.
  *
- * @param callbackUrl - The callback URL from the `dwn://register` request.
+ * @param callbackUrl - The callback URL from the `dwn://connect` request.
  * @param payload - The discovery payload to encode in the fragment.
  * @returns The full redirect URL (e.g. `https://notes.sh/dwn#eyJ...`).
  */
@@ -202,7 +201,7 @@ export function readDwnDiscoveryPayloadFromUrl(url: string): DwnDiscoveryPayload
  * Type guard for a valid {@link DwnDiscoveryPayload}.
  *
  * The endpoint MUST point to a loopback address (`127.0.0.1`, `[::1]`,
- * or `localhost`) because the `dwn://register` payload is only intended
+ * or `localhost`) because the `dwn://connect` payload is only intended
  * for local DWN discovery. Accepting arbitrary hostnames would allow a
  * malicious payload to redirect agent traffic to a remote server.
  *
@@ -231,7 +230,7 @@ function isValidPayload(value: unknown): value is DwnDiscoveryPayload {
  * address.  Accepts `127.0.0.1`, `::1` (with or without brackets), and
  * `localhost` (bare or with any subdomain suffix, per RFC 6761 §6.3).
  *
- * This is a security boundary: the `dwn://register` redirect flow MUST
+ * This is a security boundary: the `dwn://connect` redirect flow MUST
  * NOT allow payloads that point to non-local servers.
  */
 function isLoopbackEndpoint(endpoint: string): boolean {

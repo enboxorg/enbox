@@ -399,7 +399,7 @@ export const STORAGE_KEYS = {
   CONNECTED_DID: 'enbox:auth:connectedDid',
 
   /**
-   * The base URL of the local DWN server discovered via the `dwn://register`
+   * The base URL of the local DWN server discovered via the `dwn://connect`
    * browser redirect flow. Persisted so subsequent page loads can skip the
    * redirect and inject the endpoint directly.
    *

@@ -1,10 +1,10 @@
 
-import type { PushedAuthResponse } from './oidc.js';
-import type { DwnPermissionScope, DwnProtocolDefinition, EnboxConnectAuthResponse } from './index.js';
+import type { ConnectPushedResponse, EnboxConnectResponse } from './enbox-connect-protocol.js';
+import type { DwnPermissionScope, DwnProtocolDefinition } from './index.js';
 
 import { CryptoUtils } from '@enbox/crypto';
 import { DidJwk } from '@enbox/dids';
-import { Oidc } from './oidc.js';
+import { EnboxConnectProtocol } from './enbox-connect-protocol.js';
 import { pollWithTtl } from './utils.js';
 import { Convert, logger } from '@enbox/common';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
@@ -21,8 +21,8 @@ async function initClient({
   onWalletUriReady,
   validatePin,
 }: WalletConnectOptions): Promise<{
-  delegateGrants: EnboxConnectAuthResponse['delegateGrants'];
-  delegatePortableDid: EnboxConnectAuthResponse['delegatePortableDid'];
+  delegateGrants: EnboxConnectResponse['delegateGrants'];
+  delegatePortableDid: EnboxConnectResponse['delegatePortableDid'];
   connectedDid: string;
 } | undefined> {
   // ephemeral client did for ECDH, signing, verification
@@ -35,40 +35,36 @@ async function initClient({
   //   await Oidc.generateCodeChallenge();
   const encryptionKey = CryptoUtils.randomBytes(32);
 
-  // build callback URL to pass into the auth request
-  const callbackEndpoint = Oidc.buildOidcUrl({
+  // Build callback URL for the connect request.
+  const callbackEndpoint = EnboxConnectProtocol.buildConnectUrl({
     baseURL  : connectServerUrl,
     endpoint : 'callback',
   });
 
-  // build the PAR request
-  const request = await Oidc.createAuthRequest({
-    client_id          : clientDid.uri,
-    scope              : 'openid did:jwk',
-    redirect_uri       : callbackEndpoint,
-    // custom properties:
-    // code_challenge        : codeChallengeBase64Url,
-    // code_challenge_method : 'S256',
+  // Build the connect request.
+  const request = await EnboxConnectProtocol.createConnectRequest({
+    clientDid          : clientDid.uri,
+    callbackUrl        : callbackEndpoint,
     permissionRequests : permissionRequests,
-    displayName,
+    appName            : displayName,
   });
 
-  // Sign the Request Object using the Client DID's signing key.
-  const requestJwt = await Oidc.signJwt({
+  // Sign the request as a JWT.
+  const requestJwt = await EnboxConnectProtocol.signJwt({
     did  : clientDid,
-    data : request,
+    data : request as unknown as Record<string, unknown>,
   });
 
   if (!requestJwt) {
     throw new Error('Unable to sign requestObject');
   }
-  // Encrypt the Request Object JWT using the code challenge.
-  const requestObjectJwe = await Oidc.encryptAuthRequest({
+  // Encrypt the request JWT with the symmetric key.
+  const requestObjectJwe = await EnboxConnectProtocol.encryptRequest({
     jwt: requestJwt,
     encryptionKey,
   });
 
-  const pushedAuthorizationRequestEndpoint = Oidc.buildOidcUrl({
+  const pushedAuthorizationRequestEndpoint = EnboxConnectProtocol.buildConnectUrl({
     baseURL  : connectServerUrl,
     endpoint : 'pushedAuthorizationRequest',
   });
@@ -86,7 +82,7 @@ async function initClient({
     throw new Error(`${parResponse.status}: ${parResponse.statusText}`);
   }
 
-  const parData: PushedAuthResponse = await parResponse.json();
+  const parData: ConnectPushedResponse = await parResponse.json();
 
   // a deeplink to a compatible wallet. if the wallet scans this link it should receive
   // a route to its Connect provider flow and the params of where to fetch the auth request.
@@ -101,7 +97,7 @@ async function initClient({
   // call user's callback so they can send the URI to the wallet as they see fit
   onWalletUriReady(generatedWalletUri.toString());
 
-  const tokenUrl = Oidc.buildOidcUrl({
+  const tokenUrl = EnboxConnectProtocol.buildConnectUrl({
     baseURL    : connectServerUrl,
     endpoint   : 'token',
     tokenParam : request.state,
@@ -113,36 +109,35 @@ async function initClient({
   if (authResponse) {
     const jwe = await authResponse?.text();
 
-    // get the pin from the user and use it as AAD to decrypt
+    // Get the PIN from the user and use it as AAD to decrypt.
     const pin = await validatePin();
-    const jwt = await Oidc.decryptAuthResponse(clientDid, jwe, pin);
-    const verifiedAuthResponse = (await Oidc.verifyJwt({
+    const jwt = await EnboxConnectProtocol.decryptResponse(clientDid, jwe, pin);
+    const verifiedResponse = (await EnboxConnectProtocol.verifyJwt({
       jwt,
-    })) as EnboxConnectAuthResponse;
+    })) as unknown as EnboxConnectResponse;
 
     return {
-      delegateGrants      : verifiedAuthResponse.delegateGrants,
-      delegatePortableDid : verifiedAuthResponse.delegatePortableDid,
-      connectedDid        : verifiedAuthResponse.iss,
+      delegateGrants      : verifiedResponse.delegateGrants,
+      delegatePortableDid : verifiedResponse.delegatePortableDid,
+      connectedDid        : verifiedResponse.providerDid,
     };
   }
 }
 
 /**
- * Initiates the wallet connect process. Used when a client wants to obtain
- * a did from a provider.
+ * Options for initiating a wallet connect flow (remote, relay-mediated).
  */
 export type WalletConnectOptions = {
-  /** The user friendly name of the client/app to be displayed when prompting end-user with permission requests. */
+  /** The user-friendly name of the app, displayed in the wallet consent UI. */
   displayName: string;
 
-  /** The URL of the intermediary server which relays messages between the client and provider. */
+  /** The URL of the connect server which relays messages between the app and wallet. */
   connectServerUrl: string;
 
   /**
-   * The URI of the Provider (wallet).The `onWalletUriReady` will take this wallet
-   * uri and add a payload to it which will be used to obtain and decrypt from the `request_uri`.
-   * @example `web5://` or `http://localhost:3000/`.
+   * The URI of the wallet app. Query params (`request_uri`, `encryption_key`)
+   * are appended and passed to `onWalletUriReady`.
+   * @example `enbox://connect` or `http://localhost:3000/`
    */
   walletUri: string;
 
@@ -154,20 +149,16 @@ export type WalletConnectOptions = {
   permissionRequests: ConnectPermissionRequest[];
 
   /**
-   * The Connect API provides a URI to the wallet based on the `walletUri` plus a query params payload valid for 5 minutes.
-   * The link can either be used as a deep link on the same device or a QR code for cross device or both.
-   * The query params are `{ request_uri: string; encryption_key: string; }`
-   * The wallet will use the `request_uri to contact the intermediary server's `authorize` endpoint
-   * and pull down the {@link EnboxConnectAuthRequest} and use the `encryption_key` to decrypt it.
+   * Called with the wallet URI including query params (`request_uri`, `encryption_key`).
+   * The app should render this as a QR code or use it as a deep link.
    *
-   * @param uri - The URI returned by the Connect API to be passed to a provider.
+   * @param uri - The wallet URI with connect payload.
    */
   onWalletUriReady: (uri: string) => void;
 
   /**
-   * Function that must be provided to submit the pin entered by the user on the client.
-   * The pin is used to decrypt the {@link EnboxConnectAuthResponse} that was retrieved from the
-   * token endpoint by the client inside of Connect.
+   * Called to collect the PIN from the user. The PIN is used as AAD
+   * when decrypting the connect response from the relay.
    *
    * @returns A promise that resolves to the PIN as a string.
    */

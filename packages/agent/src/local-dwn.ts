@@ -70,7 +70,7 @@ export function normalizeBaseUrl(url: string): string {
  * const endpoint = await discovery.getEndpoint();
  * ```
  *
- * @example Browser: inject cached endpoint from `dwn://register` redirect
+ * @example Browser: inject cached endpoint from `dwn://connect` redirect
  * ```ts
  * const discovery = new LocalDwnDiscovery(rpcClient);
  * discovery.setCachedEndpoint('http://127.0.0.1:55557');
@@ -118,7 +118,7 @@ export class LocalDwnDiscovery {
   }
 
   /**
-   * Inject a cached endpoint (e.g. from a `dwn://register` browser redirect
+   * Inject a cached endpoint (e.g. from a `dwn://connect` browser redirect
    * or from `localStorage`). The endpoint is validated via `GET /info` before
    * caching.
    *

@@ -16,12 +16,12 @@ import {
   type EnboxConnectAuthRequest,
   type EnboxConnectAuthResponse,
   Oidc,
-} from '../src/oidc.js';
+} from '../src/enbox-connect-protocol.js';
 
 import type { BearerIdentity, DwnMessage, DwnProtocolDefinition } from '../src/index.js';
 import { DwnInterface, WalletConnect } from '../src/index.js';
 
-describe('web5 connect', () => {
+describe('enbox connect', () => {
 
   /** The temporary DID that web5 connect created on behalf of the client */
   let clientEphemeralBearerDid: BearerDid;
@@ -163,17 +163,17 @@ describe('web5 connect', () => {
 
   let testHarness: PlatformAgentTestHarness;
 
-  let authRequest: EnboxConnectAuthRequest;
-  let authRequestJwt: string;
-  let authRequestJwe: string;
+  let connectRequest: EnboxConnectAuthRequest;
+  let connectRequestJwt: string;
+  let connectRequestJwe: string;
 
-  let authResponse: EnboxConnectAuthResponse;
-  let authResponseJwt: string;
-  let authResponseJwe: string;
+  let connectResponse: EnboxConnectAuthResponse;
+  let connectResponseJwt: string;
+  let connectResponseJwe: string;
 
   let sharedECDHPrivateKey: Uint8Array;
 
-  const authRequestEncryptionKey = CryptoUtils.randomBytes(32);
+  const connectRequestEncryptionKey = CryptoUtils.randomBytes(32);
   const encryptionNonce = CryptoUtils.randomBytes(24);
   const randomPin = '9999';
 
@@ -211,17 +211,17 @@ describe('web5 connect', () => {
     sinon.restore();
   });
 
-  describe('client authrequest phase', () => {
+  describe('client connect request phase', () => {
     // it('should create a code challenge', async () => {
     //   const result = await Oidc.generateCodeChallenge();
     //   expect(result.codeChallengeBytes).toBeInstanceOf(Uint8Array);
     //   expect(typeof result.codeChallengeBase64Url).toBe('string');
     // });
 
-    it('should create an authrequest with the code challenge and client did', async () => {
+    it('should create a connect request with the client DID', async () => {
       const _randomBytesStub = sinon
         .stub(CryptoUtils, 'randomBytes')
-        .returns(authRequestEncryptionKey);
+        .returns(connectRequestEncryptionKey);
 
       const callbackUrl = Oidc.buildOidcUrl({
         baseURL  : 'http://localhost:3000',
@@ -229,48 +229,45 @@ describe('web5 connect', () => {
       });
 
       const options = {
-        displayName        : 'Sample App',
-        client_id          : clientEphemeralPortableDid.uri,
-        scope              : 'openid did:jwk',
-        // code_challenge        : Convert.uint8Array(codeChallenge).toBase64Url(),
-        // code_challenge_method : 'S256' as const,
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
         permissionRequests : [{ protocolDefinition, permissionScopes }],
-        redirect_uri       : callbackUrl,
+        callbackUrl        : callbackUrl,
       };
-      authRequest = await Oidc.createAuthRequest(options);
-      expect(authRequest).toEqual(expect.objectContaining(options));
-      expect(typeof authRequest.nonce).toBe('string');
-      expect(typeof authRequest.state).toBe('string');
-      expect(authRequest.redirect_uri).toBe(
+      connectRequest = await Oidc.createAuthRequest(options);
+      expect(connectRequest).toEqual(expect.objectContaining(options));
+      expect(typeof connectRequest.nonce).toBe('string');
+      expect(typeof connectRequest.state).toBe('string');
+      expect(connectRequest.callbackUrl).toBe(
         'http://localhost:3000/callback'
       );
     });
 
-    it('should construct a signed jwt of an authrequest', async () => {
-      authRequestJwt = await Oidc.signJwt({
+    it('should construct a signed JWT of a connect request', async () => {
+      connectRequestJwt = await Oidc.signJwt({
         did  : clientEphemeralBearerDid,
-        data : authRequest,
+        data : connectRequest,
       });
-      expect(typeof authRequestJwt).toBe('string');
+      expect(typeof connectRequestJwt).toBe('string');
     });
 
-    it('should encrypt an authrequest using the code challenge', async () => {
-      authRequestJwe = await Oidc.encryptAuthRequest({
-        jwt           : authRequestJwt,
-        encryptionKey : authRequestEncryptionKey
+    it('should encrypt a connect request', async () => {
+      connectRequestJwe = await Oidc.encryptAuthRequest({
+        jwt           : connectRequestJwt,
+        encryptionKey : connectRequestEncryptionKey
       });
-      expect(typeof authRequestJwe).toBe('string');
-      expect(authRequestJwe.split('.')).toHaveLength(5);
+      expect(typeof connectRequestJwe).toBe('string');
+      expect(connectRequestJwe.split('.')).toHaveLength(5);
     });
   });
 
-  describe('provider authresponse phase', () => {
-    it('should get authrequest from server, decrypt and verify the jwt', async () => {
+  describe('provider connect response phase', () => {
+    it('should get connect request from server, decrypt and verify the JWT', async () => {
       const fetchStub = sinon
         .stub(globalThis, 'fetch')
         .onFirstCall()
         .resolves({
-          text: sinon.stub().resolves(authRequestJwe),
+          text: sinon.stub().resolves(connectRequestJwe),
         } as any);
       fetchStub.callThrough();
 
@@ -285,9 +282,9 @@ describe('web5 connect', () => {
 
       const result = await Oidc.getAuthRequest(
         authorizeUrl,
-        Convert.uint8Array(authRequestEncryptionKey).toBase64Url()
+        Convert.uint8Array(connectRequestEncryptionKey).toBase64Url()
       );
-      expect(result).toEqual(authRequest);
+      expect(result).toEqual(connectRequest);
     });
 
     it('should create permission grants for each selected did', async () => {
@@ -302,29 +299,29 @@ describe('web5 connect', () => {
       expect(typeof results[0]).toBe('object');
     });
 
-    it('should create the authresponse which includes the permissionGrants, nonce, private key material', async () => {
+    it('should create the connect response which includes the permissionGrants, nonce, private key material', async () => {
       const options = {
-        iss            : providerIdentity.did.uri,
-        sub            : delegateBearerDid.uri,
-        aud            : authRequest.client_id,
-        nonce          : authRequest.nonce,
+        providerDid    : providerIdentity.did.uri,
+        delegateDid    : delegateBearerDid.uri,
+        aud            : connectRequest.clientDid,
+        nonce          : connectRequest.nonce,
         delegateGrants : permissionGrants,
         delegatePortableDid,
       };
-      authResponse = await Oidc.createResponseObject(options);
+      connectResponse = await Oidc.createResponseObject(options);
 
-      expect(authResponse).toEqual(expect.objectContaining(options));
-      expect(typeof authResponse.iat).toBe('number');
-      expect(typeof authResponse.exp).toBe('number');
-      expect(authResponse.exp - authResponse.iat).toBe(600);
+      expect(connectResponse).toEqual(expect.objectContaining(options));
+      expect(typeof connectResponse.iat).toBe('number');
+      expect(typeof connectResponse.exp).toBe('number');
+      expect(connectResponse.exp - connectResponse.iat).toBe(600);
     });
 
-    it('should sign the authresponse with its provider did', async () => {
-      authResponseJwt = await Oidc.signJwt({
+    it('should sign the connect response with the delegate DID', async () => {
+      connectResponseJwt = await Oidc.signJwt({
         did  : delegateBearerDid,
-        data : authResponse,
+        data : connectResponse,
       });
-      expect(typeof authResponseJwt).toBe('string');
+      expect(typeof connectResponseJwt).toBe('string');
     });
 
     it('should derive a valid ECDH private key for both provider and client which is identical', async () => {
@@ -350,21 +347,21 @@ describe('web5 connect', () => {
       sharedECDHPrivateKey = clientECDHDerivedPrivateKey;
     });
 
-    it('should encrypt the jwt authresponse to pass back to the client', async () => {
+    it('should encrypt the JWT connect response to pass back to the client', async () => {
       const randomBytesStub = sinon
         .stub(CryptoUtils, 'randomBytes')
         .returns(encryptionNonce);
-      authResponseJwe = await Oidc.encryptAuthResponse({
-        jwt              : authResponseJwt,
+      connectResponseJwe = await Oidc.encryptAuthResponse({
+        jwt              : connectResponseJwt,
         encryptionKey    : sharedECDHPrivateKey,
-        randomPin,
+        pin              : randomPin,
         delegateDidKeyId : delegateBearerDid.document.verificationMethod![0].id,
       });
-      expect(typeof authResponseJwe).toBe('string');
+      expect(typeof connectResponseJwe).toBe('string');
       expect(randomBytesStub.calledOnce).toBe(true);
     });
 
-    it('should send the encrypted jwe authresponse to the server', async () => {
+    it('should send the encrypted JWE connect response to the server', async () => {
       sinon.stub(Oidc, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
@@ -394,7 +391,7 @@ describe('web5 connect', () => {
       const selectedDid = providerIdentity.did.uri;
       await Oidc.submitAuthResponse(
         selectedDid,
-        authRequest,
+        connectRequest,
         randomPin,
         testHarness.agent
       );
@@ -411,29 +408,29 @@ describe('web5 connect', () => {
       });
       // Verify the body contains the expected state and an id_token
       const body = new URLSearchParams(options.body as string);
-      expect(body.get('state')).toBe(authRequest.state);
+      expect(body.get('state')).toBe(connectRequest.state);
       const idToken = body.get('id_token');
       expect(typeof idToken).toBe('string');
       expect(idToken!.length).toBeGreaterThan(0);
     });
   });
 
-  describe('client pin entry final phase', () => {
-    it('should get the authresponse from server and decrypt the jwe using the pin', async () => {
+  describe('client PIN entry final phase', () => {
+    it('should get the connect response from server and decrypt the JWE using the PIN', async () => {
       const result = await Oidc.decryptAuthResponse(
         clientEphemeralBearerDid,
-        authResponseJwe,
+        connectResponseJwe,
         randomPin
       );
       expect(typeof result).toBe('string');
-      expect(result).toBe(authResponseJwt);
+      expect(result).toBe(connectResponseJwt);
     });
 
     it('should fail decrypting the jwe if the wrong pin is entered', async () => {
       try {
         await Oidc.decryptAuthResponse(
           clientEphemeralBearerDid,
-          authResponseJwe,
+          connectResponseJwe,
           '87383837583757835737537734783'
         );
       } catch (e: any) {
@@ -444,7 +441,7 @@ describe('web5 connect', () => {
 
     it('should validate the jwt and parse it into an object', async () => {
       const result = (await Oidc.verifyJwt({
-        jwt: authResponseJwt,
+        jwt: connectResponseJwt,
       })) as EnboxConnectAuthResponse;
       expect(typeof result).toBe('object');
       expect(result.delegateGrants.length).toBeGreaterThan(0);
@@ -467,14 +464,14 @@ describe('web5 connect', () => {
         headers : { 'Content-type': 'application/json' },
       });
 
-      const authResponse = new Response(authResponseJwe, {
+      const connectResponse = new Response(connectResponseJwe, {
         status  : 200,
         headers : { 'Content-Type': 'application/x-www-form-urlencoded' },
       });
 
       fetchStub.onFirstCall().resolves(parResponse);
       fetchStub.callThrough();
-      fetchStub.onThirdCall().resolves(authResponse);
+      fetchStub.onThirdCall().resolves(connectResponse);
       fetchStub.callThrough();
 
       const results = await WalletConnect.initClient({
@@ -547,7 +544,7 @@ describe('web5 connect', () => {
     });
   });
 
-  describe('submitAuthResponse', () => {
+  describe('submitConnectResponse', () => {
     it('should not attempt to configure the protocol if it already exists', async () => {
       // scenario: the wallet gets a request for a protocol that it already has configured
       // the wallet should not attempt to re-configure, but instead ensure that the protocol is
@@ -563,15 +560,12 @@ describe('web5 connect', () => {
       });
 
       const options = {
-        displayName        : 'Sample App',
-        client_id          : clientEphemeralPortableDid.uri,
-        scope              : 'openid did:jwk',
-        // code_challenge        : Convert.uint8Array(codeChallenge).toBase64Url(),
-        // code_challenge_method : 'S256' as const,
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
         permissionRequests : [{ protocolDefinition, permissionScopes }],
-        redirect_uri       : callbackUrl,
+        callbackUrl        : callbackUrl,
       };
-      authRequest = await Oidc.createAuthRequest(options);
+      connectRequest = await Oidc.createAuthRequest(options);
 
       // stub the processDwnRequest method to return a protocol entry
       const protocolMessage = {} as DwnMessage[DwnInterface.ProtocolsConfigure];
@@ -589,7 +583,7 @@ describe('web5 connect', () => {
       // call submitAuthResponse
       await Oidc.submitAuthResponse(
         providerIdentity.did.uri,
-        authRequest,
+        connectRequest,
         randomPin,
         testHarness.agent
       );
@@ -619,15 +613,12 @@ describe('web5 connect', () => {
       });
 
       const options = {
-        displayName        : 'Sample App',
-        client_id          : clientEphemeralPortableDid.uri,
-        scope              : 'openid did:jwk',
-        // code_challenge        : Convert.uint8Array(codeChallenge).toBase64Url(),
-        // code_challenge_method : 'S256' as const,
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
         permissionRequests : [{ protocolDefinition, permissionScopes }],
-        redirect_uri       : callbackUrl,
+        callbackUrl        : callbackUrl,
       };
-      authRequest = await Oidc.createAuthRequest(options);
+      connectRequest = await Oidc.createAuthRequest(options);
 
       // spy send request
       const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
@@ -642,7 +633,7 @@ describe('web5 connect', () => {
       // call submitAuthResponse
       await Oidc.submitAuthResponse(
         providerIdentity.did.uri,
-        authRequest,
+        connectRequest,
         randomPin,
         testHarness.agent
       );
@@ -666,7 +657,7 @@ describe('web5 connect', () => {
       // call submitAuthResponse
       await Oidc.submitAuthResponse(
         providerIdentity.did.uri,
-        authRequest,
+        connectRequest,
         randomPin,
         testHarness.agent
       );
@@ -692,15 +683,12 @@ describe('web5 connect', () => {
       });
 
       const options = {
-        displayName        : 'Sample App',
-        client_id          : clientEphemeralPortableDid.uri,
-        scope              : 'openid did:jwk',
-        // code_challenge        : Convert.uint8Array(codeChallenge).toBase64Url(),
-        // code_challenge_method : 'S256' as const,
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
         permissionRequests : [{ protocolDefinition, permissionScopes }],
-        redirect_uri       : callbackUrl,
+        callbackUrl        : callbackUrl,
       };
-      authRequest = await Oidc.createAuthRequest(options);
+      connectRequest = await Oidc.createAuthRequest(options);
 
       // spy send request
       const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
@@ -717,7 +705,7 @@ describe('web5 connect', () => {
         // call submitAuthResponse
         await Oidc.submitAuthResponse(
           providerIdentity.did.uri,
-          authRequest,
+          connectRequest,
           randomPin,
           testHarness.agent
         );
@@ -740,15 +728,12 @@ describe('web5 connect', () => {
       });
 
       const options = {
-        displayName        : 'Sample App',
-        client_id          : clientEphemeralPortableDid.uri,
-        scope              : 'openid did:jwk',
-        // code_challenge        : Convert.uint8Array(codeChallenge).toBase64Url(),
-        // code_challenge_method : 'S256' as const,
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
         permissionRequests : [{ protocolDefinition, permissionScopes }],
-        redirect_uri       : callbackUrl,
+        callbackUrl        : callbackUrl,
       };
-      authRequest = await Oidc.createAuthRequest(options);
+      connectRequest = await Oidc.createAuthRequest(options);
 
       // stub the processDwnRequest method to return a protocol entry
       const protocolMessage = {} as DwnMessage[DwnInterface.ProtocolsConfigure];
@@ -768,7 +753,7 @@ describe('web5 connect', () => {
         // call submitAuthResponse
         await Oidc.submitAuthResponse(
           providerIdentity.did.uri,
-          authRequest,
+          connectRequest,
           randomPin,
           testHarness.agent
         );
@@ -792,15 +777,12 @@ describe('web5 connect', () => {
       });
 
       const options = {
-        displayName        : 'Sample App',
-        client_id          : clientEphemeralPortableDid.uri,
-        scope              : 'openid did:jwk',
-        // code_challenge        : Convert.uint8Array(codeChallenge).toBase64Url(),
-        // code_challenge_method : 'S256' as const,
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
         permissionRequests : [{ protocolDefinition, permissionScopes }],
-        redirect_uri       : callbackUrl,
+        callbackUrl        : callbackUrl,
       };
-      authRequest = await Oidc.createAuthRequest(options);
+      connectRequest = await Oidc.createAuthRequest(options);
 
       // spy send request
       const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
@@ -817,7 +799,7 @@ describe('web5 connect', () => {
         // call submitAuthResponse
         await Oidc.submitAuthResponse(
           providerIdentity.did.uri,
-          authRequest,
+          connectRequest,
           randomPin,
           testHarness.agent
         );
@@ -844,21 +826,18 @@ describe('web5 connect', () => {
       mismatchedScopes[0].protocol = 'http://profile-protocol.xyz/other';
 
       const options = {
-        displayName        : 'Sample App',
-        client_id          : clientEphemeralPortableDid.uri,
-        scope              : 'openid did:jwk',
-        // code_challenge        : Convert.uint8Array(codeChallenge).toBase64Url(),
-        // code_challenge_method : 'S256' as const,
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
         permissionRequests : [{ protocolDefinition, permissionScopes }],
-        redirect_uri       : callbackUrl,
+        callbackUrl        : callbackUrl,
       };
-      authRequest = await Oidc.createAuthRequest(options);
+      connectRequest = await Oidc.createAuthRequest(options);
 
       try {
         // call submitAuthResponse
         await Oidc.submitAuthResponse(
           providerIdentity.did.uri,
-          authRequest,
+          connectRequest,
           randomPin,
           testHarness.agent
         );
