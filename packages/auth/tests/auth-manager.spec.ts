@@ -531,6 +531,172 @@ describe('AuthManager', () => {
     });
   });
 
+  describe('lock()', () => {
+    test('stops sync, clears session, locks vault, transitions to locked', async () => {
+      const lockCalls: any[] = [];
+      const stopCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+        vaultLock    : async () => { lockCalls.push('locked'); },
+      });
+      (agent as any).sync.stopSync = async (timeout: number): Promise<void> => { stopCalls.push(timeout); };
+
+      const manager = createTestManager(agent);
+      await manager.connect({ password: 'test' });
+      expect(manager.state).toBe('connected');
+
+      await manager.lock();
+
+      expect(manager.state).toBe('locked');
+      expect(manager.session).toBeUndefined();
+      expect(lockCalls).toHaveLength(1);
+      expect(stopCalls).toHaveLength(1);
+    });
+
+    test('emits session-end event when session was active', async () => {
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+      });
+      const manager = createTestManager(agent);
+      await manager.connect({ password: 'test' });
+
+      const events: any[] = [];
+      manager.on('session-end', (payload) => { events.push(payload); });
+
+      await manager.lock();
+
+      expect(events).toHaveLength(1);
+      expect(events[0].did).toBe('did:dht:testuser123');
+    });
+
+    test('does not emit session-end when no active session', async () => {
+      const agent = createMockAgent();
+      const manager = createTestManager(agent, { initialState: 'unlocked' });
+      const events: any[] = [];
+      manager.on('session-end', (payload) => { events.push(payload); });
+
+      await manager.lock();
+
+      expect(events).toHaveLength(0);
+      expect(manager.state).toBe('locked');
+    });
+
+    test('emits vault-locked event', async () => {
+      const agent = createMockAgent();
+      const manager = createTestManager(agent, { initialState: 'unlocked' });
+      const events: any[] = [];
+      manager.on('vault-locked', (payload) => { events.push(payload); });
+
+      await manager.lock();
+
+      expect(events).toHaveLength(1);
+    });
+
+    test('uses custom timeout for sync stop', async () => {
+      const stopCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+      });
+      (agent as any).sync.stopSync = async (timeout: number): Promise<void> => { stopCalls.push(timeout); };
+
+      const manager = createTestManager(agent);
+      await manager.connect({ password: 'test' });
+
+      await manager.lock({ timeout: 5000 });
+
+      expect(stopCalls).toHaveLength(1);
+      expect(stopCalls[0]).toBe(5000);
+    });
+
+    test('preserves session storage markers for subsequent restore', async () => {
+      const storage = new MemoryStorage();
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+      });
+      const manager = createTestManager(agent, { storage });
+      await manager.connect({ password: 'test' });
+
+      // Verify markers exist after connect
+      expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
+
+      await manager.lock();
+
+      // Markers should still be present (unlike disconnect)
+      expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
+    });
+  });
+
+  describe('switchIdentity() — sync registration', () => {
+    test('calls sync.registerIdentity for the target identity', async () => {
+      const registerCalls: any[] = [];
+      const identity = createMockIdentity();
+      const agent = createMockAgent({
+        identityGet          : async () => identity,
+        syncRegisterIdentity : async (params) => { registerCalls.push(params); },
+        syncStartSync        : async () => {},
+      });
+      const manager = createTestManager(agent, { sync: '10s' });
+
+      await manager.switchIdentity('did:dht:testuser123');
+
+      expect(registerCalls).toHaveLength(1);
+      expect(registerCalls[0].did).toBe('did:dht:testuser123');
+      expect(registerCalls[0].options.protocols).toEqual([]);
+    });
+
+    test('passes delegateDid for wallet-connected identity', async () => {
+      const registerCalls: any[] = [];
+      const identity = createMockIdentity({
+        did      : { uri: 'did:delegate' },
+        metadata : { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:external' },
+      });
+      const agent = createMockAgent({
+        identityGet          : async () => identity,
+        syncRegisterIdentity : async (params) => { registerCalls.push(params); },
+        syncStartSync        : async () => {},
+      });
+      const manager = createTestManager(agent, { sync: '10s' });
+
+      await manager.switchIdentity('did:delegate');
+
+      expect(registerCalls).toHaveLength(1);
+      expect(registerCalls[0].did).toBe('did:external');
+      expect(registerCalls[0].options.delegateDid).toBe('did:delegate');
+    });
+
+    test('handles already-registered identity gracefully', async () => {
+      const identity = createMockIdentity();
+      const agent = createMockAgent({
+        identityGet          : async () => identity,
+        syncRegisterIdentity : async () => { throw new Error('Identity already registered'); },
+        syncStartSync        : async () => {},
+      });
+      const manager = createTestManager(agent, { sync: '10s' });
+
+      // Should not throw
+      const session = await manager.switchIdentity('did:dht:testuser123');
+      expect(session.did).toBe('did:dht:testuser123');
+    });
+
+    test('skips registration when sync is off', async () => {
+      const registerCalls: any[] = [];
+      const identity = createMockIdentity();
+      const agent = createMockAgent({
+        identityGet          : async () => identity,
+        syncRegisterIdentity : async (params) => { registerCalls.push(params); },
+      });
+      const manager = createTestManager(agent, { sync: 'off' });
+
+      await manager.switchIdentity('did:dht:testuser123');
+
+      expect(registerCalls).toHaveLength(0);
+    });
+  });
+
   describe('state machine', () => {
     test('state changes emit state-change events', async () => {
       const agent = createMockAgent({

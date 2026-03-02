@@ -317,6 +317,27 @@ export interface ImportFromPortableOptions {
 export interface RestoreSessionOptions {
   /** Password to unlock the vault (needed if vault is locked). */
   password?: string;
+
+  /**
+   * Called when the vault is locked and a password is required to proceed.
+   *
+   * If provided, this callback is invoked instead of falling back to the
+   * default password or the insecure static phrase. This is the recommended
+   * way to implement interactive password prompts (e.g., a PIN entry dialog
+   * or CLI prompt).
+   *
+   * @returns The password entered by the user.
+   *
+   * @example Browser PIN dialog
+   * ```ts
+   * const session = await auth.restoreSession({
+   *   onPasswordRequired: async () => {
+   *     return await showPinDialog();
+   *   },
+   * });
+   * ```
+   */
+  onPasswordRequired?: () => Promise<string>;
 }
 
 /** Options for {@link AuthManager.disconnect}. */

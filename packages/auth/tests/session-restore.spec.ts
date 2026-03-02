@@ -221,4 +221,89 @@ describe('restoreSession', () => {
 
     expect(syncCalls).toHaveLength(0);
   });
+
+  describe('onPasswordRequired callback', () => {
+    test('calls onPasswordRequired when no password is provided', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      const startCalls: any[] = [];
+
+      const agent = createMockAgent({
+        firstLaunch : async () => false,
+        start       : async (params) => { startCalls.push(params); },
+      });
+
+      await restoreSession(
+        { userAgent: agent, emitter, storage },
+        { onPasswordRequired: async () => 'callback-password' },
+      );
+
+      expect(startCalls[0].password).toBe('callback-password');
+    });
+
+    test('prefers explicit password over onPasswordRequired', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      const startCalls: any[] = [];
+      let callbackCalled = false;
+
+      const agent = createMockAgent({
+        firstLaunch : async () => false,
+        start       : async (params) => { startCalls.push(params); },
+      });
+
+      await restoreSession(
+        { userAgent: agent, emitter, storage },
+        {
+          password           : 'explicit-password',
+          onPasswordRequired : async () => { callbackCalled = true; return 'callback-password'; },
+        },
+      );
+
+      expect(startCalls[0].password).toBe('explicit-password');
+      expect(callbackCalled).toBe(false);
+    });
+
+    test('prefers manager default password over onPasswordRequired', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      const startCalls: any[] = [];
+      let callbackCalled = false;
+
+      const agent = createMockAgent({
+        firstLaunch : async () => false,
+        start       : async (params) => { startCalls.push(params); },
+      });
+
+      await restoreSession(
+        { userAgent: agent, emitter, storage, defaultPassword: 'manager-default' },
+        { onPasswordRequired: async () => { callbackCalled = true; return 'callback-password'; } },
+      );
+
+      expect(startCalls[0].password).toBe('manager-default');
+      expect(callbackCalled).toBe(false);
+    });
+
+    test('falls back to insecure default when callback not provided', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      const startCalls: any[] = [];
+
+      const agent = createMockAgent({
+        firstLaunch : async () => false,
+        start       : async (params) => { startCalls.push(params); },
+      });
+
+      await restoreSession(
+        { userAgent: agent, emitter, storage },
+        {},
+      );
+
+      expect(startCalls[0].password).toBe('insecure-static-phrase');
+    });
+  });
 });
