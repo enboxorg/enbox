@@ -34,5 +34,5 @@ export * from './sync-engine-level.js';
 export * from './test-harness.js';
 export * from './utils.js';
 export * from './connect.js';
-export * from './oidc.js';
+export * from './enbox-connect-protocol.js';
 export * from './enbox-user-agent.js';

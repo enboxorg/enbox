@@ -220,7 +220,7 @@ export class AgentDwnApi {
   }
 
   /**
-   * Inject a cached local DWN endpoint (e.g. from a `dwn://register`
+   * Inject a cached local DWN endpoint (e.g. from a `dwn://connect`
    * browser redirect or from persisted storage). The endpoint is validated
    * via `GET /info` before being accepted.
    *

@@ -10,7 +10,7 @@ import { SqlTtlCache } from './sql-ttl-cache.js';
 export type ConnectRequest = any; // TODO: define type in common repo for reuse (https://github.com/enboxorg/enbox/issues/138)
 
 /**
- * The Connect Response object, which is also an OIDC ID token
+ * The Connect Response object.
  */
 export type ConnectResponse = any; // TODO: define type in common repo for reuse (https://github.com/enboxorg/enbox/issues/138)
 
@@ -99,7 +99,7 @@ export class ConnectServer {
   }
 
   /**
-   * Sets the Connect Response object, which is also an OIDC ID token.
+   * Sets the Connect Response object.
    */
   public async setConnectResponse(state: string, response: ConnectResponse): Promise<any> {
     this.cache.insert(`response:${state}`, response, ConnectServer.ttlInSeconds);

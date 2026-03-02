@@ -1,9 +1,9 @@
 import { Convert } from '@enbox/common';
 import { describe, expect, it } from 'bun:test';
 
-import { Oidc } from '../src/oidc.js';
+import { Oidc } from '../src/enbox-connect-protocol.js';
 
-describe('Oidc — edge cases', () => {
+describe('EnboxConnectProtocol — edge cases', () => {
   describe('buildOidcUrl', () => {
     it('should build pushedAuthorizationRequest URL', () => {
       const url = Oidc.buildOidcUrl({
@@ -26,7 +26,7 @@ describe('Oidc — edge cases', () => {
       expect((): string => Oidc.buildOidcUrl({
         baseURL  : 'https://auth.example.com',
         endpoint : 'authorize',
-      })).toThrow('authParam must be providied');
+      })).toThrow('authParam must be provided when building an authorize URL');
     });
 
     it('should build callback URL', () => {
@@ -50,32 +50,18 @@ describe('Oidc — edge cases', () => {
       expect((): string => Oidc.buildOidcUrl({
         baseURL  : 'https://auth.example.com',
         endpoint : 'token',
-      })).toThrow('tokenParam must be providied');
+      })).toThrow('tokenParam must be provided when building a token URL');
     });
 
     it('should throw for unknown endpoint', () => {
       expect((): string => Oidc.buildOidcUrl({
         baseURL  : 'https://auth.example.com',
         endpoint : 'unknown' as any,
-      })).toThrow('No matches for endpoint specified');
+      })).toThrow('Unknown connect endpoint:');
     });
   });
 
-  describe('generateCodeChallenge', () => {
-    it('should return codeChallengeBytes and codeChallengeBase64Url', async () => {
-      const result = await Oidc.generateCodeChallenge();
-      expect(result.codeChallengeBytes).toBeInstanceOf(Uint8Array);
-      expect(result.codeChallengeBytes.length).toBe(32);
-      expect(typeof result.codeChallengeBase64Url).toBe('string');
-      expect(result.codeChallengeBase64Url.length).toBeGreaterThan(0);
-    });
-
-    it('should produce different challenges on each call', async () => {
-      const result1 = await Oidc.generateCodeChallenge();
-      const result2 = await Oidc.generateCodeChallenge();
-      expect(result1.codeChallengeBase64Url).not.toBe(result2.codeChallengeBase64Url);
-    });
-  });
+  // generateCodeChallenge tests removed — PKCE was never functional and has been stripped.
 
   describe('verifyJwt', () => {
     it('should throw when JWT header is missing kid', async () => {
@@ -84,7 +70,7 @@ describe('Oidc — edge cases', () => {
       const payload = Convert.object({ test: true }).toBase64Url();
       const fakeJwt = `${header}.${payload}.fakesignature`;
 
-      await expect(Oidc.verifyJwt({ jwt: fakeJwt })).rejects.toThrow('missing \'kid\'');
+      await expect(Oidc.verifyJwt({ jwt: fakeJwt })).rejects.toThrow('missing required "kid"');
     });
 
     it('should throw when DID resolution fails', async () => {

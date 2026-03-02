@@ -4,7 +4,7 @@ import {
   buildDwnDiscoveryRedirectUrl,
   DwnDiscoveryFile,
   localDwnPortCandidates,
-  parseDwnRegisterUrl,
+  parseDwnConnectUrl,
 } from '@enbox/agent';
 import Electrobun, { BrowserWindow, Utils } from 'electrobun/bun';
 
@@ -168,19 +168,19 @@ const mainWindow = new BrowserWindow({
 
 // ─── dwn:// protocol handler ────────────────────────────────────
 //
-// When the OS opens a `dwn://register?callback=<url>` URL, we parse
+// When the OS opens a `dwn://connect?callback=<url>` URL, we parse
 // the callback, build a redirect URL with the local DWN endpoint
 // encoded in the fragment, and open it in the user's default browser.
 
 Electrobun.events.on('open-url', (e: { data: { url: string } }) => {
-  const params = parseDwnRegisterUrl(e.data.url);
+  const params = parseDwnConnectUrl(e.data.url);
   if (!params) {
     console.warn(`[electrobun-dwn] Ignoring unrecognised dwn:// URL: ${e.data.url}`);
     return;
   }
 
   const redirectUrl = buildDwnDiscoveryRedirectUrl(params.callback, { endpoint: serverEndpoint });
-  console.log(`[electrobun-dwn] dwn://register redirect → ${redirectUrl}`);
+  console.log(`[electrobun-dwn] dwn://connect redirect → ${redirectUrl}`);
 
   Utils.openExternal(redirectUrl);
 });

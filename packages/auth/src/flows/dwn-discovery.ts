@@ -7,7 +7,7 @@
  *
  * ## Discovery channels (browser, highest to lowest priority)
  *
- * 1. **URL fragment payload** — A `dwn://register` redirect just landed
+ * 1. **URL fragment payload** — A `dwn://connect` redirect just landed
  *    on the page with the endpoint in `#`. Highest priority because it's
  *    fresh and explicit.
  * 2. **Persisted endpoint** (localStorage) — A previously discovered
@@ -32,7 +32,7 @@
 
 import type { EnboxUserAgent } from '@enbox/agent';
 
-import { buildDwnRegisterUrl, readDwnDiscoveryPayloadFromUrl } from '@enbox/agent';
+import { buildDwnConnectUrl, readDwnDiscoveryPayloadFromUrl } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
 import { STORAGE_KEYS } from '../types.js';
@@ -42,7 +42,7 @@ import type { StorageAdapter } from '../types.js';
  * Check the current page URL for a `DwnDiscoveryPayload` in the fragment.
  *
  * This is called once at the start of a connection flow to detect whether
- * the user was just redirected back from a `dwn://register` handler. If a
+ * the user was just redirected back from a `dwn://connect` handler. If a
  * valid payload is found, the endpoint is persisted and the fragment is
  * cleared to prevent double-reads.
  *
@@ -135,7 +135,7 @@ export async function restoreLocalDwnEndpoint(
  *
  * The discovery channels, from highest to lowest priority:
  *
- * 1. **URL fragment payload** — A `dwn://register` redirect just landed on
+ * 1. **URL fragment payload** — A `dwn://connect` redirect just landed on
  *    this page with the DWN endpoint in `#`. This is the highest-priority
  *    signal because it's fresh and explicit.
  *
@@ -191,12 +191,12 @@ export async function applyLocalDwnDiscovery(
   return restored;
 }
 
-// ─── dwn://register trigger ─────────────────────────────────────
+// ─── dwn://connect trigger ──────────────────────────────────────
 
 /**
- * Initiate the `dwn://register` flow by opening the register URL.
+ * Initiate the `dwn://connect` flow by opening the connect URL.
  *
- * This asks the operating system to route `dwn://register?callback=<url>`
+ * This asks the operating system to route `dwn://connect?callback=<url>`
  * to the registered handler (electrobun-dwn), which will redirect the
  * user's browser back to `callbackUrl` with the local DWN endpoint
  * encoded in the URL fragment.
@@ -205,12 +205,12 @@ export async function applyLocalDwnDiscovery(
  * a `dwn://` handler is installed. If no handler is registered, this call
  * will silently fail or show an OS-level error dialog. Use
  * {@link probeLocalDwn} first to check if a local DWN is already
- * reachable via port probing — if it is, you can skip the register flow
+ * reachable via port probing — if it is, you can skip the connect flow
  * entirely and call {@link applyLocalDwnDiscovery} instead.
  *
  * @param callbackUrl - The URL to redirect back to. Defaults to the
  *   current page URL (without its fragment) if running in a browser.
- * @returns `true` if the register URL was opened, `false` if no
+ * @returns `true` if the connect URL was opened, `false` if no
  *   callback URL could be determined (e.g. no `globalThis.location`).
  *
  * @example
@@ -218,7 +218,7 @@ export async function applyLocalDwnDiscovery(
  * // Check if local DWN is already available via direct probe.
  * const alreadyAvailable = await probeLocalDwn();
  * if (!alreadyAvailable) {
- *   // No local DWN found — trigger the dwn://register flow.
+ *   // No local DWN found — trigger the dwn://connect flow.
  *   requestLocalDwnDiscovery();
  *   // The page will reload with the endpoint in the URL fragment.
  * }
@@ -230,7 +230,7 @@ export function requestLocalDwnDiscovery(callbackUrl?: string): boolean {
     return false;
   }
 
-  const registerUrl = buildDwnRegisterUrl(resolvedCallback);
+  const registerUrl = buildDwnConnectUrl(resolvedCallback);
 
   // Open the dwn:// URL. Use window.open() rather than location.href
   // assignment to avoid navigating away from the current page if the
@@ -257,7 +257,7 @@ export function requestLocalDwnDiscovery(callbackUrl?: string): boolean {
  * responds with a valid `@enbox/dwn-server` identity.
  *
  * This is useful in browsers to check if a local DWN is available
- * *before* triggering the `dwn://register` redirect flow — if the
+ * *before* triggering the `dwn://connect` redirect flow — if the
  * server is already reachable (CORS permitting), the redirect is
  * unnecessary.
  *

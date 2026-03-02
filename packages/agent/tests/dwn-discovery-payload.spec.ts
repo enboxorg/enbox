@@ -3,13 +3,13 @@ import { describe, expect, it } from 'bun:test';
 import type { DwnDiscoveryPayload } from '../src/dwn-discovery-payload.js';
 
 import {
+  buildDwnConnectUrl,
   buildDwnDiscoveryRedirectUrl,
-  buildDwnRegisterUrl,
   decodeDwnDiscoveryPayload,
+  DWN_CONNECT_PATH,
   DWN_PROTOCOL_SCHEME,
-  DWN_REGISTER_PATH,
   encodeDwnDiscoveryPayload,
-  parseDwnRegisterUrl,
+  parseDwnConnectUrl,
   readDwnDiscoveryPayloadFromUrl,
 } from '../src/dwn-discovery-payload.js';
 
@@ -26,8 +26,8 @@ describe('DwnDiscoveryPayload', () => {
       expect(DWN_PROTOCOL_SCHEME).toBe('dwn');
     });
 
-    it('should export the register path', () => {
-      expect(DWN_REGISTER_PATH).toBe('register');
+    it('should export the connect path', () => {
+      expect(DWN_CONNECT_PATH).toBe('connect');
     });
   });
 
@@ -218,11 +218,11 @@ describe('DwnDiscoveryPayload', () => {
     });
   });
 
-  describe('parseDwnRegisterUrl', () => {
-    it('should parse a valid dwn://register URL', () => {
-      const url = 'dwn://register?callback=https%3A%2F%2Fnotes.sh%2Fdwn';
+  describe('parseDwnConnectUrl', () => {
+    it('should parse a valid dwn://connect URL', () => {
+      const url = 'dwn://connect?callback=https%3A%2F%2Fnotes.sh%2Fdwn';
 
-      const result = parseDwnRegisterUrl(url);
+      const result = parseDwnConnectUrl(url);
 
       expect(result).toBeDefined();
       expect(result!.callback).toBe('https://notes.sh/dwn');
@@ -230,91 +230,91 @@ describe('DwnDiscoveryPayload', () => {
 
     it('should parse a callback with query parameters', () => {
       const callback = 'https://app.example.com/dwn?session=abc123';
-      const url = `dwn://register?callback=${encodeURIComponent(callback)}`;
+      const url = `dwn://connect?callback=${encodeURIComponent(callback)}`;
 
-      const result = parseDwnRegisterUrl(url);
+      const result = parseDwnConnectUrl(url);
 
       expect(result).toBeDefined();
       expect(result!.callback).toBe(callback);
     });
 
     it('should parse a callback with a port', () => {
-      const url = 'dwn://register?callback=http%3A%2F%2Flocalhost%3A8080%2Fdwn';
+      const url = 'dwn://connect?callback=http%3A%2F%2Flocalhost%3A8080%2Fdwn';
 
-      const result = parseDwnRegisterUrl(url);
+      const result = parseDwnConnectUrl(url);
 
       expect(result).toBeDefined();
       expect(result!.callback).toBe('http://localhost:8080/dwn');
     });
 
     it('should return undefined for a non-dwn scheme', () => {
-      const result = parseDwnRegisterUrl('https://register?callback=https%3A%2F%2Fnotes.sh');
+      const result = parseDwnConnectUrl('https://register?callback=https%3A%2F%2Fnotes.sh');
 
       expect(result).toBeUndefined();
     });
 
     it('should return undefined for a different path', () => {
-      const result = parseDwnRegisterUrl('dwn://connect?callback=https%3A%2F%2Fnotes.sh');
+      const result = parseDwnConnectUrl('dwn://register?callback=https%3A%2F%2Fnotes.sh');
 
       expect(result).toBeUndefined();
     });
 
     it('should return undefined when the callback parameter is missing', () => {
-      const result = parseDwnRegisterUrl('dwn://register?other=value');
+      const result = parseDwnConnectUrl('dwn://connect?other=value');
 
       expect(result).toBeUndefined();
     });
 
     it('should return undefined when there are no query parameters', () => {
-      const result = parseDwnRegisterUrl('dwn://register');
+      const result = parseDwnConnectUrl('dwn://connect');
 
       expect(result).toBeUndefined();
     });
 
     it('should return undefined for an empty string', () => {
-      const result = parseDwnRegisterUrl('');
+      const result = parseDwnConnectUrl('');
 
       expect(result).toBeUndefined();
     });
 
     it('should return undefined when the callback is empty', () => {
-      const result = parseDwnRegisterUrl('dwn://register?callback=');
+      const result = parseDwnConnectUrl('dwn://connect?callback=');
 
       expect(result).toBeUndefined();
     });
 
     it('should ignore extra query parameters and only extract callback', () => {
-      const url = 'dwn://register?extra=ignored&callback=https%3A%2F%2Fnotes.sh%2Fdwn&foo=bar';
+      const url = 'dwn://connect?extra=ignored&callback=https%3A%2F%2Fnotes.sh%2Fdwn&foo=bar';
 
-      const result = parseDwnRegisterUrl(url);
+      const result = parseDwnConnectUrl(url);
 
       expect(result).toBeDefined();
       expect(result!.callback).toBe('https://notes.sh/dwn');
     });
   });
 
-  describe('buildDwnRegisterUrl', () => {
-    it('should build a valid dwn://register URL', () => {
-      const url = buildDwnRegisterUrl('https://notes.sh/dwn');
+  describe('buildDwnConnectUrl', () => {
+    it('should build a valid dwn://connect URL', () => {
+      const url = buildDwnConnectUrl('https://notes.sh/dwn');
 
-      expect(url).toBe('dwn://register?callback=https%3A%2F%2Fnotes.sh%2Fdwn');
+      expect(url).toBe('dwn://connect?callback=https%3A%2F%2Fnotes.sh%2Fdwn');
     });
 
     it('should encode query parameters in the callback', () => {
-      const url = buildDwnRegisterUrl('https://app.example.com/dwn?session=abc123');
+      const url = buildDwnConnectUrl('https://app.example.com/dwn?session=abc123');
 
       // The entire callback URL should be percent-encoded.
       expect(url).toContain('callback=');
-      // Verify round-trip: parseDwnRegisterUrl should recover the original callback.
-      const parsed = parseDwnRegisterUrl(url);
+      // Verify round-trip: parseDwnConnectUrl should recover the original callback.
+      const parsed = parseDwnConnectUrl(url);
       expect(parsed).toBeDefined();
       expect(parsed!.callback).toBe('https://app.example.com/dwn?session=abc123');
     });
 
-    it('should produce a URL that parseDwnRegisterUrl can parse', () => {
+    it('should produce a URL that parseDwnConnectUrl can parse', () => {
       const callback = 'https://myapp.com/callback';
-      const url = buildDwnRegisterUrl(callback);
-      const parsed = parseDwnRegisterUrl(url);
+      const url = buildDwnConnectUrl(callback);
+      const parsed = parseDwnConnectUrl(url);
 
       expect(parsed).toBeDefined();
       expect(parsed!.callback).toBe(callback);
@@ -409,14 +409,14 @@ describe('DwnDiscoveryPayload', () => {
     });
   });
 
-  describe('end-to-end: register URL → redirect → payload extraction', () => {
-    it('should complete the full dwn://register flow', () => {
-      // 1. Web app builds the register URL.
+  describe('end-to-end: connect URL → redirect → payload extraction', () => {
+    it('should complete the full dwn://connect flow', () => {
+      // 1. Web app builds the connect URL.
       const callback = 'https://notes.sh/dwn';
-      const registerUrl = `${DWN_PROTOCOL_SCHEME}://register?callback=${encodeURIComponent(callback)}`;
+      const connectUrl = `${DWN_PROTOCOL_SCHEME}://${DWN_CONNECT_PATH}?callback=${encodeURIComponent(callback)}`;
 
-      // 2. electrobun-dwn parses the register URL.
-      const params = parseDwnRegisterUrl(registerUrl);
+      // 2. electrobun-dwn parses the connect URL.
+      const params = parseDwnConnectUrl(connectUrl);
       expect(params).toBeDefined();
       expect(params!.callback).toBe(callback);
 

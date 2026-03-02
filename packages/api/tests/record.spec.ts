@@ -9,8 +9,8 @@ import { processConnectedGrants } from '@enbox/auth';
 import { Stream } from '@enbox/common';
 import {
   DwnConstant, DwnContentEncryptionAlgorithm, DwnDateSort, DwnInterface, DwnKeyDerivationScheme,
-  dwnMessageConstructors, EnboxUserAgent, getRecordAuthor, getRecordProtocolRole,
-  Oidc, PlatformAgentTestHarness, WalletConnect,
+  dwnMessageConstructors, EnboxConnectProtocol, EnboxUserAgent, getRecordAuthor,
+  getRecordProtocolRole, PlatformAgentTestHarness, WalletConnect,
 } from '@enbox/agent';
 import { Jws, Message, Poller } from '@enbox/dwn-sdk-js';
 
@@ -196,7 +196,9 @@ describe('Record', () => {
       const { status: bobNotesProtocolSend } = await bobNotesProtocol!.send(bobDid.uri);
       expect(bobNotesProtocolSend.code).toBe(202);
 
-      const grants = await Oidc.createPermissionGrants(aliceDid.uri, delegatedBearerDid, testHarness.agent, grantRequest.permissionScopes);
+      const grants = await EnboxConnectProtocol.createPermissionGrants(
+        aliceDid.uri, delegatedBearerDid, testHarness.agent, grantRequest.permissionScopes
+      );
 
       // Import the delegate DID as a full identity (with connectedDid metadata)
       // so the delegate agent can resolve it and sign on behalf of Alice.

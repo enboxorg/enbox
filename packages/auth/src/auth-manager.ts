@@ -186,7 +186,7 @@ export class AuthManager {
   }
 
   /**
-   * Connect to an external wallet via the OIDC/QR relay protocol.
+   * Connect to an external wallet via the Enbox Connect relay protocol.
    *
    * This runs the full WalletConnect flow: generates a URI for QR display,
    * validates the PIN, imports the delegated DID, and processes grants.
