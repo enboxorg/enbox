@@ -1,0 +1,52 @@
+---
+title: Testing
+description: How to test Enbox applications with mocked agents and in-memory DWNs.
+---
+
+## Overview
+
+Enbox provides test utilities for running DWN operations against in-memory stores, so your tests run fast without network dependencies.
+
+## Setup
+
+```bash
+npm install --save-dev @enbox/agent @enbox/dwn-sdk-js
+```
+
+## In-memory agent
+
+Create a test agent with ephemeral storage:
+
+```ts
+import { TestAgent } from '@enbox/agent/test';
+
+let agent: TestAgent;
+
+beforeEach(async () => {
+  agent = await TestAgent.create();
+});
+
+afterEach(async () => {
+  await agent.close();
+});
+```
+
+## Writing tests
+
+```ts
+it('should create and read a record', async () => {
+  const { record } = await agent.dwn.records.create({
+    data: 'test data',
+    message: {
+      dataFormat: 'text/plain',
+    },
+  });
+
+  expect(record).toBeDefined();
+  expect(await record.data.text()).toBe('test data');
+});
+```
+
+## Further reading
+
+See the [TESTING.md](https://github.com/enboxorg/enbox/blob/main/docs/TESTING.md) guide in the Enbox repository for advanced testing patterns including protocol testing, permission testing, and CI configuration.

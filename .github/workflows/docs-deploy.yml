@@ -1,0 +1,47 @@
+name: Docs Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/docs/**'
+      - 'docs/**'
+      - 'packages/*/src/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/docs/**'
+      - 'docs/**'
+  workflow_dispatch:
+
+concurrency:
+  group: docs-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build docs
+        run: bun run docs:build
+
+      - name: Deploy to Cloudflare Pages
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy apps/docs/out --project-name=enbox-docs

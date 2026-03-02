@@ -1,0 +1,8 @@
+{
+  "title": "Guides",
+  "pages": [
+    "auth",
+    "hosting",
+    "testing"
+  ]
+}

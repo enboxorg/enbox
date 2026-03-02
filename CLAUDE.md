@@ -47,6 +47,10 @@ bun run --filter @enbox/agent build
 | `packages/agent/src/test-harness.ts` | `PlatformAgentTestHarness` — test infrastructure (exported as public API) |
 | `packages/dwn-sdk-js/src/` | DWN SDK source (gold-standard for style) |
 | `packages/dwn-sdk-js/json-schemas/` | JSON Schema definitions for DWN messages |
+| `apps/docs/` | Documentation site (Fumadocs + Next.js, deployed to Cloudflare Pages) |
+| `apps/docs/content/docs/` | MDX content (guides + API reference) |
+| `apps/docs/src/` | Next.js app source (layouts, components, styles) |
+| `docs/` | Existing markdown docs (HOSTING.md, TESTING.md, architecture/) |
 
 ## Pre-Push Requirements
 
@@ -751,3 +755,30 @@ terraform apply -var certificate_arn="..." -var dwn_image="..."
 ```
 
 State is stored in S3 (`enbox-terraform-state` bucket, `env/dev/terraform.tfstate` key) with DynamoDB locking (`enbox-terraform-locks` table).
+
+## Documentation Site
+
+The docs site lives at `apps/docs/` and is a **Fumadocs + Next.js** static site deployed to **Cloudflare Pages** at `https://enbox-docs.pages.dev` (future: `docs.enbox.id`).
+
+### Build & Dev
+
+```bash
+bun run docs:dev        # Dev server on localhost:3000
+bun run docs:build      # Static export to apps/docs/out/
+```
+
+The docs site is excluded from the monorepo-wide `bun run build`, `bun run lint`, and `bun run test:node` commands. It uses Biome (not ESLint) and Next.js (not esbuild).
+
+### Content
+
+- `apps/docs/content/docs/` — MDX files (guides + API reference)
+- Sidebar ordering via `meta.json` files in each directory
+- Fumadocs MDX components: `<Cards>`, `<Card>`, `<Callout>`, `<Steps>`, `<Tabs>`
+
+### Design System
+
+The Fumadocs theme is overridden in `apps/docs/src/app/global.css` to map `--color-fd-*` CSS variables to Enbox design tokens. Dark mode is default. Fonts: Inter + JetBrains Mono.
+
+### Deployment
+
+CI workflow `.github/workflows/docs-deploy.yml` triggers on changes to `apps/docs/`, `docs/`, or `packages/*/src/**`. On push to `main`, it builds and deploys to Cloudflare Pages via `wrangler pages deploy`. Requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets.
