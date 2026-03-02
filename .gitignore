@@ -65,6 +65,11 @@ pids
 
 # next.js build output
 .next
+out/
+next-env.d.ts
+
+# fumadocs generated content
+.source
 
 # nuxt.js build output
 .nuxt

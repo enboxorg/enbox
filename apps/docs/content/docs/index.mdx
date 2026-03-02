@@ -1,0 +1,58 @@
+---
+title: Introduction
+description: Getting started with the Enbox SDK for decentralised identity, data, and authentication.
+---
+
+## What is Enbox?
+
+Enbox is a JavaScript/TypeScript SDK for building applications with **decentralised identity** and **personal data storage**. It gives your users:
+
+- **Self-sovereign identity** via Decentralized Identifiers (DIDs)
+- **Personal data vaults** powered by Decentralized Web Nodes (DWNs)
+- **Passwordless authentication** with the `@enbox/auth` manager
+- **End-to-end encryption** and selective data sharing
+
+## Packages
+
+The SDK is published as a set of npm packages:
+
+| Package | Description |
+|---|---|
+| `@enbox/api` | High-level API — `Enbox.connect()`, records, protocols |
+| `@enbox/auth` | Authentication manager — connect, lock, disconnect flows |
+| `@enbox/agent` | Low-level agent runtime for DID and DWN operations |
+| `@enbox/protocols` | Protocol definitions and type-safe schema helpers |
+| `@enbox/dids` | DID creation, resolution, and key management |
+| `@enbox/crypto` | Cryptographic primitives (JOSE, key wrapping) |
+| `@enbox/common` | Shared utilities and types |
+| `@enbox/dwn-sdk-js` | Decentralized Web Node reference implementation |
+
+## Quick start
+
+```bash
+npm install @enbox/api @enbox/auth
+```
+
+```ts
+import { Enbox } from '@enbox/api';
+
+const enbox = new Enbox();
+await enbox.connect();
+
+// Write a record
+const { record } = await enbox.dwn.records.create({
+  data: 'Hello from Enbox!',
+  message: {
+    dataFormat: 'text/plain',
+  },
+});
+
+console.log(await record.data.text());
+```
+
+## Next steps
+
+<Cards>
+  <Card title="Authentication" href="/docs/guides/auth" />
+  <Card title="API Reference" href="/docs/api" />
+</Cards>

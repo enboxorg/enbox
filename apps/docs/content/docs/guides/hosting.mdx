@@ -1,0 +1,26 @@
+---
+title: Hosting
+description: How to host your own Decentralized Web Node (DWN) server.
+---
+
+## Overview
+
+A DWN (Decentralized Web Node) server stores and relays data for DID owners. While Enbox provides public DWN endpoints for development, production applications should host their own DWN infrastructure.
+
+## Quick start
+
+```bash
+npx @enbox/dwn-server
+```
+
+This starts a DWN server on `http://localhost:3000` with an in-memory store. For production, configure a persistent database backend.
+
+## Configuration
+
+The DWN server supports multiple storage backends:
+
+- **SQLite** — Good for development and single-node deployments
+- **PostgreSQL** — Recommended for production
+- **MySQL** — Alternative production option
+
+See the [HOSTING.md](https://github.com/enboxorg/enbox/blob/main/docs/HOSTING.md) guide in the Enbox repository for detailed configuration instructions.
