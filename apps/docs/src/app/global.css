@@ -105,3 +105,17 @@
 [data-theme="light"] ::-webkit-scrollbar-thumb {
   background: var(--enbox-gray-300);
 }
+
+/* ---- Sidebar refinements ---- */
+#nd-sidebar {
+  transition: width 250ms ease;
+}
+
+/* Reduce sidebar border weight to match design system --border-subtle */
+#nd-sidebar {
+  border-color: rgba(255, 255, 255, 0.06);
+}
+.light #nd-sidebar,
+[data-theme="light"] #nd-sidebar {
+  border-color: rgba(80, 60, 30, 0.06);
+}
