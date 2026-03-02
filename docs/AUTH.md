@@ -598,15 +598,9 @@ const auth = await AuthManager.create({
 
 ## AuthSession
 
-The session object returned by all connection flows:
-
-| Property | Type | Description |
-|---|---|---|
-| `agent` | `EnboxAgent` | The authenticated agent |
-| `did` | `string` | The DID URI of the connected identity |
-| `delegateDid` | `string \| undefined` | Present for wallet-connected sessions |
-| `recoveryPhrase` | `string \| undefined` | Present only on first local connect |
-| `identity` | `IdentityInfo` | `{ didUri, name, connectedDid? }` |
+The session object returned by all connection flows contains the authenticated
+`agent`, the connected `did`, and optionally a `delegateDid` (for wallet-connected
+sessions) or a `recoveryPhrase` (on first local connect only).
 
 Pass the session to `@enbox/api`:
 
@@ -724,79 +718,7 @@ const typed = enbox.using(MyProtocol);
 
 ---
 
-## AuthManager API Reference
+## API Reference
 
-### Static Methods
-
-| Method | Returns | Description |
-|---|---|---|
-| `AuthManager.create(options?)` | `Promise<AuthManager>` | Factory. Creates agent, vault, storage, emitter. |
-
-### Properties
-
-| Property | Type | Description |
-|---|---|---|
-| `session` | `AuthSession \| undefined` | Current active session |
-| `state` | `AuthState` | Current auth state |
-| `isConnected` | `boolean` | Whether a session is active |
-| `isLocked` | `boolean` | Whether the vault is locked |
-| `isConnecting` | `boolean` | Whether a connection attempt is in progress |
-| `agent` | `EnboxUserAgent` | The underlying agent |
-| `vault` | `VaultManager` | Vault lifecycle manager |
-
-### Connection Methods
-
-| Method | Returns | Description |
-|---|---|---|
-| `connect(options?)` | `Promise<AuthSession>` | Local connect (create or reconnect) |
-| `walletConnect(options)` | `Promise<AuthSession>` | Wallet connect via OIDC/QR relay |
-| `restoreSession(options?)` | `Promise<AuthSession \| undefined>` | Restore from storage |
-| `importFromPhrase(options)` | `Promise<AuthSession>` | Import from BIP-39 recovery phrase |
-| `importFromPortable(options)` | `Promise<AuthSession>` | Import from PortableIdentity JSON |
-
-### Session Management
-
-| Method | Returns | Description |
-|---|---|---|
-| `disconnect(options?)` | `Promise<void>` | End session, optionally wipe storage |
-| `lock()` | `Promise<void>` | Disconnect + lock vault |
-
-### Multi-Identity
-
-| Method | Returns | Description |
-|---|---|---|
-| `listIdentities()` | `Promise<IdentityInfo[]>` | List all stored identities |
-| `switchIdentity(didUri)` | `Promise<AuthSession>` | Switch active identity |
-| `deleteIdentity(didUri)` | `Promise<void>` | Delete an identity and its keys |
-| `exportIdentity(didUri)` | `Promise<PortableIdentity>` | Export identity for backup |
-
-### Events
-
-| Method | Returns | Description |
-|---|---|---|
-| `on(event, handler)` | `() => void` | Subscribe; returns unsubscribe function |
-
----
-
-## AuthManagerOptions Reference
-
-```ts
-interface AuthManagerOptions {
-  agent?: EnboxUserAgent;             // pre-built agent (advanced)
-  agentVault?: HdIdentityVault;       // custom vault (ignored if agent is set)
-  localDwnStrategy?: LocalDwnStrategy; // 'off' | 'prefer' | 'only'
-  dataPath?: string;                  // agent storage path
-  storage?: StorageAdapter;           // session persistence
-  password?: string;                  // default vault password
-  sync?: SyncOption;                  // sync interval
-  dwnEndpoints?: string[];            // default DWN endpoints
-  registration?: RegistrationOptions; // DWN registration config
-}
-```
-
-When `agent` is provided, the `agentVault`, `localDwnStrategy`, and `dataPath`
-options are ignored — the pre-built agent's configuration is used as-is.
-
-When `password` is omitted, a static insecure default is used and a console
-warning is printed. This is acceptable for development but should never be used
-in production.
+For the full `AuthManager` API (methods, properties, options, types), see the
+[API reference documentation](https://enbox-docs.pages.dev/docs/api).
