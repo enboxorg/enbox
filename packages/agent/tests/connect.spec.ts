@@ -15,6 +15,7 @@ import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 import {
   type EnboxConnectAuthRequest,
   type EnboxConnectAuthResponse,
+  EnboxConnectProtocol,
   Oidc,
 } from '../src/enbox-connect-protocol.js';
 
@@ -362,7 +363,7 @@ describe('enbox connect', () => {
     });
 
     it('should send the encrypted JWE connect response to the server', async () => {
-      sinon.stub(Oidc, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -510,7 +511,7 @@ describe('enbox connect', () => {
 
   describe('initClient — error paths', () => {
     it('should throw when signJwt returns undefined', async () => {
-      sinon.stub(Oidc, 'signJwt').resolves(undefined as any);
+      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves(undefined as any);
 
       await expect(
         WalletConnect.initClient({
@@ -525,8 +526,8 @@ describe('enbox connect', () => {
     });
 
     it('should throw when PAR response is not ok', async () => {
-      sinon.stub(Oidc, 'signJwt').resolves('signed.jwt.value');
-      sinon.stub(Oidc, 'encryptAuthRequest').resolves('encrypted-jwe');
+      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves('signed.jwt.value');
+      sinon.stub(EnboxConnectProtocol, 'encryptRequest').resolves('encrypted-jwe');
       sinon.stub(globalThis, 'fetch').resolves(
         new Response('Bad Request', { status: 400, statusText: 'Bad Request' })
       );
@@ -550,7 +551,7 @@ describe('enbox connect', () => {
       // the wallet should not attempt to re-configure, but instead ensure that the protocol is
       // sent to the remote DWN for the requesting client to be able to sync it down later
 
-      sinon.stub(Oidc, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -603,7 +604,7 @@ describe('enbox connect', () => {
 
       // looks for a response of 404, empty entries array or missing entries array
 
-      sinon.stub(Oidc, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -673,7 +674,7 @@ describe('enbox connect', () => {
     });
 
     it('should fail if the send request fails for newly configured protocol', async () => {
-      sinon.stub(Oidc, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -718,7 +719,7 @@ describe('enbox connect', () => {
     });
 
     it('should fail if the send request fails for existing protocol', async () => {
-      sinon.stub(Oidc, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -767,7 +768,7 @@ describe('enbox connect', () => {
     });
 
     it('should throw if protocol could not be fetched at all', async () => {
-      sinon.stub(Oidc, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -813,7 +814,7 @@ describe('enbox connect', () => {
     });
 
     it('should throw if a grant that is included in the request does not match the protocol definition', async () => {
-      sinon.stub(Oidc, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -844,7 +845,7 @@ describe('enbox connect', () => {
 
         throw new Error('should have thrown an error');
       } catch (error: any) {
-        expect(error.message).toBe('All permission scopes must match the protocol uri they are provided with.');
+        expect(error.message).toBe('All permission scopes must match the protocol URI they are provided with.');
       }
     });
   });
