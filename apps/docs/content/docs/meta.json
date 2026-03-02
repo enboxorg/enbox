@@ -3,6 +3,8 @@
   "pages": [
     "---Introduction---",
     "index",
+    "---Packages---",
+    "packages",
     "---Guides---",
     "guides",
     "---API Reference---",

@@ -1,0 +1,13 @@
+{
+  "title": "Packages",
+  "pages": [
+    "api",
+    "dwn-server",
+    "agent",
+    "protocols",
+    "dids",
+    "crypto",
+    "common",
+    "dwn-sdk-js"
+  ]
+}

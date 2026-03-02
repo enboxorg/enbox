@@ -1,0 +1,28 @@
+---
+title: "@enbox/common"
+description: Shared utilities used across the Enbox SDK — TTL cache, LevelStore, and common helpers.
+---
+
+`@enbox/common` contains shared utilities and abstractions used by multiple Enbox packages. It is an internal dependency — most applications do not need to import from it directly.
+
+## What it provides
+
+- **TTL cache** — A time-to-live cache implementation used for DID resolution caching, deduplication, and session state management.
+- **LevelStore** — A key-value store abstraction backed by LevelDB (Node.js) or IndexedDB (browser). Used by the agent for identity vaults, key storage, and local DWN data.
+- **Common helpers** — Shared utility functions for encoding, type checking, and data manipulation used across SDK packages.
+
+## When to use it
+
+This package is primarily an internal dependency. You might import from it if you are:
+
+- Building a custom storage backend that needs to implement the same store interfaces
+- Using the TTL cache for your own application-level caching
+- Extending or forking Enbox SDK packages
+
+## Key exports
+
+| Export | Description |
+|---|---|
+| `TtlCache` | Generic time-to-live cache |
+| `LevelStore` | Key-value store backed by LevelDB/IndexedDB |
+| Utility functions | Encoding, type checking, and data helpers |

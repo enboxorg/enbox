@@ -1,0 +1,42 @@
+---
+title: "@enbox/dwn-sdk-js"
+description: The Decentralised Web Node protocol engine — message processing, storage interfaces, and protocol rule enforcement.
+---
+
+`@enbox/dwn-sdk-js` is the core DWN protocol engine. It implements the [DWN specification](https://identity.foundation/decentralized-web-node/spec/) — processing DWN messages, enforcing protocol rules, managing record storage, and handling subscriptions.
+
+## What it does
+
+- **Message processing** — Parses, validates, and processes all DWN message types: `RecordsWrite`, `RecordsQuery`, `RecordsRead`, `RecordsDelete`, `RecordsSubscribe`, `ProtocolsConfigure`, `ProtocolsQuery`, and more.
+- **Protocol rule enforcement** — Evaluates protocol definitions (types, structure, `$actions`) to determine whether a given message is authorised. This includes role-based access control, recipient scoping, and hierarchical record permissions.
+- **Storage interfaces** — Defines abstract interfaces (`MessageStore`, `DataStore`, `EventLog`, `ResumableTaskStore`) that storage backends implement. The DWN engine is storage-agnostic.
+- **Event system** — Produces events when records are created, updated, or deleted, enabling the subscription and sync mechanisms used by the agent and server.
+- **Encryption support** — Handles protocol-level encryption rules, key derivation paths, and encrypted record processing.
+
+## Relationship to other packages
+
+| Package | Uses dwn-sdk-js for... |
+|---|---|
+| `@enbox/dwn-server` | Running a DWN instance that processes incoming messages |
+| `@enbox/agent` | Processing local DWN operations and maintaining the local store |
+| `@enbox/api` | Type definitions (`ProtocolDefinition`, `DateSort`, `RecordsFilter`, etc.) |
+
+## When to use it
+
+Most applications do not import from `@enbox/dwn-sdk-js` directly. Use it when you need:
+
+- Access to DWN type definitions like `ProtocolDefinition`, `DateSort`, or `RecordsFilter`
+- To build a custom DWN implementation or storage backend
+- To understand or extend the protocol rule engine
+- Low-level message construction for testing or tooling
+
+## Key exports
+
+| Export | Description |
+|---|---|
+| `ProtocolDefinition` | Type describing a DWN protocol's types, structure, and rules |
+| `DateSort` | Enum for record sort ordering (`CreatedAscending`, `CreatedDescending`, etc.) |
+| `RecordsFilter` | Filter type for record queries |
+| `MessageStore`, `DataStore` | Storage backend interfaces |
+| `EventLog` | Event log interface for change tracking |
+| `Dwn` | The DWN engine class itself |

@@ -1,0 +1,41 @@
+---
+title: "@enbox/dids"
+description: DID creation, resolution, and key management — supporting did:dht, did:jwk, did:key, and did:web methods.
+---
+
+`@enbox/dids` handles everything related to Decentralised Identifiers (DIDs) — creating them, resolving them, and managing the cryptographic keys they contain.
+
+## What it does
+
+- **DID creation** — Generates new DIDs using supported methods. Each method produces a DID document with verification methods (public keys) and service endpoints.
+- **DID resolution** — Resolves any DID URI to its DID document, discovering the subject's public keys, service endpoints, and authentication methods.
+- **Key management** — Manages the key pairs associated with DIDs, including key generation, export, and storage in encrypted vaults.
+- **Universal resolver** — A `UniversalResolver` that delegates to method-specific resolvers and caches results.
+
+## Supported DID methods
+
+| Method | Class | Description |
+|---|---|---|
+| `did:dht` | `DidDht` | DIDs anchored to the Mainline DHT network. Recommended for production use. |
+| `did:jwk` | `DidJwk` | Self-contained DIDs where the DID string encodes the public key directly. |
+| `did:key` | `DidKey` | Similar to `did:jwk` but uses the Multicodec encoding format. |
+| `did:web` | `DidWeb` | DIDs resolved via HTTPS from a web domain (e.g. `did:web:example.com`). |
+
+## When to use it
+
+Most applications interact with DIDs through `@enbox/api` and `@enbox/auth`, which handle DID creation and resolution internally. Use `@enbox/dids` directly when you need:
+
+- Custom DID method support or resolver configuration
+- Standalone DID resolution without the full Enbox SDK
+- Direct key management operations (export, rotation, etc.)
+- Building a DID-aware service or verifier
+
+## Key exports
+
+| Export | Description |
+|---|---|
+| `DidDht`, `DidJwk`, `DidKey`, `DidWeb` | Method-specific DID handlers |
+| `UniversalResolver` | Multi-method DID resolver with caching |
+| `DidResolverCacheMemory` | In-memory resolver cache |
+| `DidMethodResolver` | Interface for custom DID method resolvers |
+| `DidDocument` | The W3C DID Document type |

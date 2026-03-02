@@ -1,0 +1,30 @@
+---
+title: "@enbox/protocols"
+description: Protocol definitions and type-safe schema helpers for structuring data in Decentralised Web Nodes.
+---
+
+`@enbox/protocols` provides pre-built protocol definitions and utilities for defining the data structures, access rules, and schemas that govern records in a DWN.
+
+## What it does
+
+- **Protocol definitions** — Ships ready-to-use protocol definitions for common use cases (social graphs, messaging, profiles, etc.) that can be passed directly to `defineProtocol()` or used with the lower-level DWN API.
+- **Schema helpers** — Utilities for constructing well-formed protocol definitions with proper `types`, `structure`, and `$actions` configurations.
+- **Type generation** — TypeScript type utilities that derive compile-time types from protocol definitions, enabling the type-safe path autocompletion in `TypedEnbox`.
+
+## When to use it
+
+- When you want to reuse a well-tested protocol definition rather than writing one from scratch
+- When building protocol tooling or code generators
+- When you need the low-level protocol type utilities that power `defineProtocol()`
+
+## Relationship to @enbox/api
+
+`@enbox/api`'s `defineProtocol()` function uses the type utilities from this package internally. If you are using `defineProtocol()` with inline definitions, you typically do not need to import from `@enbox/protocols` directly.
+
+## Key exports
+
+| Export | Description |
+|---|---|
+| Protocol definitions | Pre-built definitions for common data patterns |
+| `ProtocolDefinition` | The core type describing a DWN protocol (re-exported from `@enbox/dwn-sdk-js`) |
+| Type utilities | Helpers for deriving TypeScript types from protocol structures |

@@ -1,0 +1,35 @@
+---
+title: "@enbox/agent"
+description: Low-level agent runtime for DID and DWN operations — identity management, key storage, message signing, and sync.
+---
+
+`@enbox/agent` is the low-level runtime that underpins `@enbox/api`. It manages identities, keys, DWN message signing/verification, and background sync with remote DWNs.
+
+## What it does
+
+- **Identity management** — Creates and stores DID-based identities in an encrypted vault. Each identity owns a set of cryptographic keys and is bound to one or more DWN endpoints.
+- **Message signing and verification** — Signs outbound DWN messages (RecordsWrite, RecordsQuery, etc.) using the active identity's keys, and verifies inbound messages.
+- **DWN sync** — Runs a background sync loop that pushes local changes to the user's remote DWN and pulls remote changes down. Sync interval is configurable (e.g. `'15s'`).
+- **Key storage** — Wraps cryptographic keys in an encrypted vault (backed by LevelDB or IndexedDB depending on the environment). Keys never leave the vault in plaintext.
+- **Permissions** — Manages permission grants and requests between DIDs, including delegated access patterns.
+- **Anonymous access** — Provides an `AnonymousDwnApi` for unsigned read-only queries against remote DWNs.
+
+## When to use it
+
+Most applications should use `@enbox/api` (which wraps the agent internally) rather than interacting with the agent directly. Use `@enbox/agent` when you need:
+
+- Direct control over the sync loop (start, stop, force-sync)
+- Custom identity or key management beyond what `@enbox/auth` provides
+- Low-level access to DWN message construction and signing
+- Building a custom SDK or framework on top of Enbox primitives
+
+## Key exports
+
+| Export | Description |
+|---|---|
+| `EnboxAgent` | The agent interface — identity, DWN, and VC operations |
+| `AnonymousDwnApi` | Read-only DWN API for unsigned queries |
+| `DwnInterface` | Enum of DWN message types (RecordsWrite, RecordsQuery, etc.) |
+| `DwnResponseStatus` | Standard `{ code, detail }` response from DWN operations |
+| `DwnPaginationCursor` | Cursor type for paginated queries |
+| `PermissionsApi` | Permission grant management |
