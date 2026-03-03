@@ -40,6 +40,10 @@ export { AuthSession } from './identity-session.js';
 export { VaultManager } from './vault/vault-manager.js';
 export { AuthEventEmitter } from './events.js';
 
+// Password providers
+export { PasswordProvider } from './password-provider.js';
+export type { PasswordContext } from './password-provider.js';
+
 // Re-export agent classes so consumers can construct custom agents/vaults
 // without a direct @enbox/agent dependency.
 export { EnboxUserAgent, HdIdentityVault } from '@enbox/agent';

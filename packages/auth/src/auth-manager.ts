@@ -17,6 +17,8 @@ import { restoreSession } from './flows/session-restore.js';
 import { STORAGE_KEYS } from './types.js';
 import { VaultManager } from './vault/vault-manager.js';
 import { walletConnect } from './flows/wallet-connect.js';
+
+import type { PasswordProvider } from './password-provider.js';
 import type {
   AuthEvent,
   AuthEventHandler,
@@ -82,6 +84,7 @@ export class AuthManager {
 
   // Default options from create()
   private _defaultPassword?: string;
+  private _passwordProvider?: PasswordProvider;
   private _defaultSync?: SyncOption;
   private _defaultDwnEndpoints?: string[];
   private _registration?: RegistrationOptions;
@@ -92,6 +95,7 @@ export class AuthManager {
     storage: StorageAdapter;
     vault: VaultManager;
     defaultPassword?: string;
+    passwordProvider?: PasswordProvider;
     defaultSync?: SyncOption;
     defaultDwnEndpoints?: string[];
     registration?: RegistrationOptions;
@@ -101,6 +105,7 @@ export class AuthManager {
     this._storage = params.storage;
     this._vault = params.vault;
     this._defaultPassword = params.defaultPassword;
+    this._passwordProvider = params.passwordProvider;
     this._defaultSync = params.defaultSync;
     this._defaultDwnEndpoints = params.defaultDwnEndpoints;
     this._registration = params.registration;
@@ -135,6 +140,7 @@ export class AuthManager {
       storage,
       vault,
       defaultPassword     : options.password,
+      passwordProvider    : options.passwordProvider,
       defaultSync         : options.sync,
       defaultDwnEndpoints : options.dwnEndpoints,
       registration        : options.registration,
@@ -173,6 +179,7 @@ export class AuthManager {
           emitter             : this._emitter,
           storage             : this._storage,
           defaultPassword     : this._defaultPassword,
+          passwordProvider    : this._passwordProvider,
           defaultSync         : this._defaultSync,
           defaultDwnEndpoints : this._defaultDwnEndpoints,
           registration        : this._registration,
@@ -205,8 +212,22 @@ export class AuthManager {
 
     try {
       // Ensure the agent is initialized and started before wallet connect.
-      const password = this._defaultPassword ?? 'insecure-static-phrase';
-      if (await this._userAgent.firstLaunch()) {
+      const isFirstLaunch = await this._userAgent.firstLaunch();
+      let password = this._defaultPassword;
+
+      if (!password && this._passwordProvider) {
+        try {
+          password = await this._passwordProvider.getPassword({
+            reason: isFirstLaunch ? 'create' : 'unlock',
+          });
+        } catch {
+          // Provider failed — fall through to insecure default.
+        }
+      }
+
+      password ??= 'insecure-static-phrase';
+
+      if (isFirstLaunch) {
         await this._userAgent.initialize({ password });
       }
       await this._userAgent.start({ password });
@@ -306,11 +327,12 @@ export class AuthManager {
     try {
       const session = await restoreSession(
         {
-          userAgent       : this._userAgent,
-          emitter         : this._emitter,
-          storage         : this._storage,
-          defaultPassword : this._defaultPassword,
-          defaultSync     : this._defaultSync,
+          userAgent        : this._userAgent,
+          emitter          : this._emitter,
+          storage          : this._storage,
+          defaultPassword  : this._defaultPassword,
+          passwordProvider : this._passwordProvider,
+          defaultSync      : this._defaultSync,
         },
         options,
       );
@@ -349,12 +371,20 @@ export class AuthManager {
    * ```
    */
   async connectHeadless(options?: HeadlessConnectOptions): Promise<AuthSession> {
-    const password = options?.password ?? this._defaultPassword;
+    let password = options?.password ?? this._defaultPassword;
+
+    // Try the password provider if no explicit password.
+    if (!password && this._passwordProvider) {
+      const isFirstLaunch = await this._userAgent.firstLaunch();
+      password = await this._passwordProvider.getPassword({
+        reason: isFirstLaunch ? 'create' : 'unlock',
+      });
+    }
 
     if (!password) {
       throw new Error(
         '[@enbox/auth] connectHeadless() requires a password. ' +
-        'Provide one via options.password or the AuthManager default.'
+        'Provide one via options.password, a passwordProvider, or the AuthManager default.'
       );
     }
 

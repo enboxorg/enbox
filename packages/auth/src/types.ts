@@ -5,6 +5,8 @@
 
 import type { ConnectPermissionRequest, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
+import type { PasswordProvider } from './password-provider.js';
+
 // Re-export types that consumers will need
 export type { ConnectPermissionRequest, HdIdentityVault, IdentityVaultBackup, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
@@ -223,8 +225,33 @@ export interface AuthManagerOptions {
   /**
    * Default password for vault operations.
    * If not provided, an insecure default is used (with a console warning).
+   *
+   * For more flexible password acquisition (env vars, TTY prompts,
+   * chained fallbacks), use {@link passwordProvider} instead.
    */
   password?: string;
+
+  /**
+   * A composable password provider for obtaining the vault password.
+   *
+   * When set, this provider is consulted by `connect()`,
+   * `restoreSession()`, and `connectHeadless()` whenever a password
+   * is needed and none was given explicitly. It takes precedence over
+   * the static {@link password} option.
+   *
+   * @example
+   * ```ts
+   * import { AuthManager, PasswordProvider } from '@enbox/auth';
+   *
+   * const auth = await AuthManager.create({
+   *   passwordProvider: PasswordProvider.chain([
+   *     PasswordProvider.fromEnv('ENBOX_PASSWORD'),
+   *     PasswordProvider.fromTty(),
+   *   ]),
+   * });
+   * ```
+   */
+  passwordProvider?: PasswordProvider;
 
   /**
    * Sync interval for DWN synchronization.

@@ -9,6 +9,7 @@
 import type { EnboxUserAgent } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
+import type { PasswordProvider } from '../password-provider.js';
 import type { RestoreSessionOptions, StorageAdapter, SyncOption } from '../types.js';
 
 import { applyLocalDwnDiscovery } from './dwn-discovery.js';
@@ -21,6 +22,7 @@ export interface SessionRestoreContext {
   emitter: AuthEventEmitter;
   storage: StorageAdapter;
   defaultPassword?: string;
+  passwordProvider?: PasswordProvider;
   defaultSync?: SyncOption;
 }
 
@@ -42,11 +44,19 @@ export async function restoreSession(
     return undefined;
   }
 
-  // Resolve password: explicit option → callback → manager default → insecure fallback.
+  // Resolve password: explicit option → callback → provider → manager default → insecure fallback.
   let password = options.password ?? ctx.defaultPassword;
 
   if (!password && options.onPasswordRequired) {
     password = await options.onPasswordRequired();
+  }
+
+  if (!password && ctx.passwordProvider) {
+    try {
+      password = await ctx.passwordProvider.getPassword({ reason: 'unlock' });
+    } catch {
+      // Provider failed — fall through to insecure default.
+    }
   }
 
   password ??= INSECURE_DEFAULT_PASSWORD;
