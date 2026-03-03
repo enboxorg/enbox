@@ -51,6 +51,9 @@ export { EnboxUserAgent, HdIdentityVault } from '@enbox/agent';
 // Wallet-connect helpers
 export { processConnectedGrants } from './flows/wallet-connect.js';
 
+// Registration token storage helpers
+export { loadTokensFromStorage, saveTokensToStorage } from './flows/dwn-registration.js';
+
 // Local DWN discovery (browser dwn:// protocol integration)
 export {
   applyLocalDwnDiscovery,

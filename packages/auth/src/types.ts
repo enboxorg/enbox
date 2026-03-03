@@ -168,14 +168,46 @@ export interface RegistrationOptions {
    * Pre-existing registration tokens from a previous session, keyed by
    * DWN endpoint URL. If a valid (non-expired) token exists for an
    * endpoint, it is used directly without re-running the auth flow.
+   *
+   * When {@link persistTokens} is `true`, this field is ignored —
+   * tokens are loaded automatically from the `StorageAdapter`.
    */
   registrationTokens?: Record<string, RegistrationTokenData>;
 
   /**
    * Called when new or refreshed registration tokens are obtained.
    * The app should persist these for future sessions.
+   *
+   * When {@link persistTokens} is `true`, tokens are saved automatically
+   * to the `StorageAdapter`. This callback is still invoked (if provided)
+   * **after** the automatic save, so consumers can observe token changes
+   * without handling persistence themselves.
    */
   onRegistrationTokens?: (tokens: Record<string, RegistrationTokenData>) => void;
+
+  /**
+   * Automatically persist and restore registration tokens using the
+   * auth manager's `StorageAdapter`.
+   *
+   * When `true`, tokens are loaded from storage before registration and
+   * saved back after new or refreshed tokens are obtained. This removes
+   * the need for consumers to implement their own token I/O via
+   * {@link registrationTokens} and {@link onRegistrationTokens}.
+   *
+   * Defaults to `false` for backward compatibility.
+   *
+   * @example
+   * ```ts
+   * const auth = await AuthManager.create({
+   *   registration: {
+   *     onSuccess: () => {},
+   *     onFailure: (err) => console.error(err),
+   *     persistTokens: true,
+   *   },
+   * });
+   * ```
+   */
+  persistTokens?: boolean;
 }
 
 /** Options for {@link AuthManager.create}. */
@@ -457,4 +489,13 @@ export const STORAGE_KEYS = {
    * @see https://github.com/enboxorg/enbox/issues/589
    */
   LOCAL_DWN_ENDPOINT: 'enbox:auth:localDwnEndpoint',
+
+  /**
+   * JSON-serialised `Record<string, RegistrationTokenData>` for DWN endpoint
+   * registration tokens. Automatically loaded before registration and saved
+   * after new/refreshed tokens are obtained when `persistTokens` is enabled.
+   *
+   * @see https://github.com/enboxorg/enbox/issues/690
+   */
+  REGISTRATION_TOKENS: 'enbox:auth:registrationTokens',
 } as const;
