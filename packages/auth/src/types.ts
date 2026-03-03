@@ -340,6 +340,21 @@ export interface RestoreSessionOptions {
   onPasswordRequired?: () => Promise<string>;
 }
 
+/** Options for {@link AuthManager.connectHeadless}. */
+export interface HeadlessConnectOptions {
+  /** Vault password (overrides manager default). */
+  password?: string;
+}
+
+/** Options for {@link AuthManager.shutdown}. */
+export interface ShutdownOptions {
+  /**
+   * Milliseconds to wait for pending sync operations before shutting down.
+   * Default: `2000`.
+   */
+  timeout?: number;
+}
+
 /** Options for {@link AuthManager.disconnect}. */
 export interface DisconnectOptions {
   /**
@@ -374,6 +389,15 @@ export interface StorageAdapter {
 
   /** Clear all stored data. */
   clear(): Promise<void>;
+
+  /**
+   * Close the underlying storage resources (e.g. LevelDB handles).
+   *
+   * Optional — not all adapters need cleanup. Called by
+   * {@link AuthManager.shutdown} to release resources so the process
+   * can exit cleanly.
+   */
+  close?(): Promise<void>;
 }
 
 // ─── Internal helpers ────────────────────────────────────────────
