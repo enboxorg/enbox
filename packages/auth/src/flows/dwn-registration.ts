@@ -15,9 +15,12 @@ import type { EnboxUserAgent } from '@enbox/agent';
 
 import { DwnRegistrar } from '@enbox/dwn-clients';
 
+import { STORAGE_KEYS } from '../types.js';
+
 import type {
   RegistrationOptions,
   RegistrationTokenData,
+  StorageAdapter,
 } from '../types.js';
 
 /** @internal */
@@ -33,6 +36,12 @@ export interface RegistrationContext {
 
   /** The connected DID URI (the identity's DID). */
   connectedDid: string;
+
+  /**
+   * Storage adapter for automatic token persistence.
+   * Only used when `registration.persistTokens` is `true`.
+   */
+  storage?: StorageAdapter;
 }
 
 /**
@@ -51,11 +60,19 @@ export async function registerWithDwnEndpoints(
   ctx: RegistrationContext,
   registration: RegistrationOptions,
 ): Promise<void> {
-  const { userAgent, dwnEndpoints, agentDid, connectedDid } = ctx;
+  const { userAgent, dwnEndpoints, agentDid, connectedDid, storage } = ctx;
 
-  const updatedTokens: Record<string, RegistrationTokenData> = {
-    ...(registration.registrationTokens ?? {}),
-  };
+  // Load initial tokens: when persistTokens is enabled, load from storage
+  // (ignoring any explicit registrationTokens). Otherwise use the explicit map.
+  let seedTokens: Record<string, RegistrationTokenData> = {};
+
+  if (registration.persistTokens && storage) {
+    seedTokens = await loadTokensFromStorage(storage);
+  } else {
+    seedTokens = registration.registrationTokens ?? {};
+  }
+
+  const updatedTokens: Record<string, RegistrationTokenData> = { ...seedTokens };
 
   try {
     for (const dwnEndpoint of dwnEndpoints) {
@@ -145,7 +162,12 @@ export async function registerWithDwnEndpoints(
       }
     }
 
-    // Notify app of updated tokens for persistence.
+    // Persist tokens to storage when auto-persistence is enabled.
+    if (registration.persistTokens && storage) {
+      await saveTokensToStorage(storage, updatedTokens);
+    }
+
+    // Notify app of updated tokens (always, even when auto-persisting).
     if (registration.onRegistrationTokens) {
       registration.onRegistrationTokens(updatedTokens);
     }
@@ -154,4 +176,37 @@ export async function registerWithDwnEndpoints(
   } catch (error: unknown) {
     registration.onFailure(error);
   }
+}
+
+// ─── Storage helpers ──────────────────────────────────────────────
+
+/**
+ * Load registration tokens from a `StorageAdapter`.
+ *
+ * Returns an empty record if no tokens are stored or the stored value
+ * is corrupt (best-effort — never throws).
+ *
+ * @internal
+ */
+export async function loadTokensFromStorage(
+  storage: StorageAdapter,
+): Promise<Record<string, RegistrationTokenData>> {
+  try {
+    const raw = await storage.get(STORAGE_KEYS.REGISTRATION_TOKENS);
+    if (!raw) { return {}; }
+    return JSON.parse(raw) as Record<string, RegistrationTokenData>;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Save registration tokens to a `StorageAdapter`.
+ * @internal
+ */
+export async function saveTokensToStorage(
+  storage: StorageAdapter,
+  tokens: Record<string, RegistrationTokenData>,
+): Promise<void> {
+  await storage.set(STORAGE_KEYS.REGISTRATION_TOKENS, JSON.stringify(tokens));
 }

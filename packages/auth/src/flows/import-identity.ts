@@ -105,6 +105,7 @@ export async function importFromPhrase(
         dwnEndpoints,
         agentDid  : userAgent.agentDid.uri,
         connectedDid,
+        storage   : storage,
       },
       ctx.registration,
     );
@@ -174,6 +175,7 @@ export async function importFromPortable(
         dwnEndpoints,
         agentDid  : userAgent.agentDid.uri,
         connectedDid,
+        storage   : storage,
       },
       ctx.registration,
     );

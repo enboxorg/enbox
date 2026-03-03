@@ -134,6 +134,7 @@ export async function localConnect(
         dwnEndpoints,
         agentDid  : userAgent.agentDid.uri,
         connectedDid,
+        storage   : storage,
       },
       ctx.registration,
     );

@@ -1,7 +1,14 @@
 import { describe, expect, mock, test } from 'bun:test';
 
 import { createMockAgent } from './helpers/mock-agent.js';
-import { registerWithDwnEndpoints } from '../src/flows/dwn-registration.js';
+import { MemoryStorage } from '../src/storage/storage.js';
+import { STORAGE_KEYS } from '../src/types.js';
+
+import {
+  loadTokensFromStorage,
+  registerWithDwnEndpoints,
+  saveTokensToStorage,
+} from '../src/flows/dwn-registration.js';
 
 import type { RegistrationTokenData } from '../src/types.js';
 
@@ -559,5 +566,396 @@ describe('registerWithDwnEndpoints', () => {
     // Should use the existing token
     expect(mockRegisterTenantWithToken.mock.calls.length).toBe(1);
     expect(mockRegisterTenantWithToken.mock.calls[0][2]).toBe('no-expiry-token');
+  });
+});
+
+// ─── Token Storage Helpers ───────────────────────────────────────
+
+describe('loadTokensFromStorage', () => {
+  test('returns empty record when no tokens are stored', async () => {
+    const storage = new MemoryStorage();
+    const tokens = await loadTokensFromStorage(storage);
+    expect(tokens).toEqual({});
+  });
+
+  test('parses stored JSON tokens', async () => {
+    const storage = new MemoryStorage();
+    const expected: Record<string, RegistrationTokenData> = {
+      'https://dwn1.example.com': {
+        registrationToken : 'tok-1',
+        tokenUrl          : 'https://auth.example.com/token',
+        expiresAt         : Date.now() + 60_000,
+      },
+    };
+    await storage.set(STORAGE_KEYS.REGISTRATION_TOKENS, JSON.stringify(expected));
+
+    const tokens = await loadTokensFromStorage(storage);
+    expect(tokens).toEqual(expected);
+  });
+
+  test('returns empty record when stored value is corrupt JSON', async () => {
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.REGISTRATION_TOKENS, '{bad json!!!');
+
+    const tokens = await loadTokensFromStorage(storage);
+    expect(tokens).toEqual({});
+  });
+
+  test('returns empty record when storage.get throws', async () => {
+    const storage = new MemoryStorage();
+    storage.get = async (): Promise<string | null> => { throw new Error('disk error'); };
+
+    const tokens = await loadTokensFromStorage(storage);
+    expect(tokens).toEqual({});
+  });
+});
+
+describe('saveTokensToStorage', () => {
+  test('serialises tokens to JSON in storage', async () => {
+    const storage = new MemoryStorage();
+    const tokens: Record<string, RegistrationTokenData> = {
+      'https://dwn1.example.com': {
+        registrationToken : 'tok-1',
+        refreshToken      : 'ref-1',
+        tokenUrl          : 'https://auth.example.com/token',
+        refreshUrl        : 'https://auth.example.com/refresh',
+        expiresAt         : 1_700_000_000_000,
+      },
+    };
+
+    await saveTokensToStorage(storage, tokens);
+
+    const raw = await storage.get(STORAGE_KEYS.REGISTRATION_TOKENS);
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw!)).toEqual(tokens);
+  });
+
+  test('overwrites previously stored tokens', async () => {
+    const storage = new MemoryStorage();
+    await saveTokensToStorage(storage, {
+      'https://old.example.com': {
+        registrationToken : 'old-tok',
+        tokenUrl          : 'https://old.example.com/token',
+      },
+    });
+
+    const newTokens: Record<string, RegistrationTokenData> = {
+      'https://new.example.com': {
+        registrationToken : 'new-tok',
+        tokenUrl          : 'https://new.example.com/token',
+      },
+    };
+    await saveTokensToStorage(storage, newTokens);
+
+    const raw = await storage.get(STORAGE_KEYS.REGISTRATION_TOKENS);
+    expect(JSON.parse(raw!)).toEqual(newTokens);
+  });
+});
+
+// ─── persistTokens Integration ───────────────────────────────────
+
+describe('registerWithDwnEndpoints with persistTokens', () => {
+  test('loads tokens from storage when persistTokens is true', async () => {
+    mockRegisterTenantWithToken.mockClear();
+    mockExchangeAuthCode.mockClear();
+
+    const agent = createMockAgent({
+      rpcGetServerInfo: async () => ({
+        registrationRequirements : ['provider-auth-v0'],
+        providerAuth             : {
+          authorizeUrl : 'https://auth.example.com/authorize',
+          tokenUrl     : 'https://auth.example.com/token',
+        },
+        maxFileSize: 10_000_000,
+      }),
+    });
+
+    // Pre-populate storage with a valid token.
+    const storage = new MemoryStorage();
+    const storedTokens: Record<string, RegistrationTokenData> = {
+      'https://dwn1.example.com': {
+        registrationToken : 'stored-token',
+        tokenUrl          : 'https://auth.example.com/token',
+        expiresAt         : Date.now() + 60_000,
+      },
+    };
+    await storage.set(STORAGE_KEYS.REGISTRATION_TOKENS, JSON.stringify(storedTokens));
+
+    let successCalled = false;
+    const authCallCount = { value: 0 };
+    await registerWithDwnEndpoints(
+      {
+        userAgent    : agent,
+        dwnEndpoints : ['https://dwn1.example.com'],
+        agentDid     : 'did:dht:agent1',
+        connectedDid : 'did:dht:user1',
+        storage,
+      },
+      {
+        onSuccess              : () => { successCalled = true; },
+        onFailure              : () => {},
+        onProviderAuthRequired : async (params) => {
+          authCallCount.value++;
+          return { code: 'code', state: params.state };
+        },
+        persistTokens: true,
+      },
+    );
+
+    expect(successCalled).toBe(true);
+    // Should NOT have run the auth flow — used stored token
+    expect(authCallCount.value).toBe(0);
+    expect(mockExchangeAuthCode.mock.calls.length).toBe(0);
+    // Should have registered using the stored token
+    expect(mockRegisterTenantWithToken.mock.calls.length).toBe(2);
+    expect(mockRegisterTenantWithToken.mock.calls[0][2]).toBe('stored-token');
+  });
+
+  test('saves new tokens to storage after registration', async () => {
+    mockRegisterTenantWithToken.mockClear();
+    mockExchangeAuthCode.mockClear();
+    mockExchangeAuthCode.mockImplementation(async () => ({
+      registrationToken : 'fresh-token',
+      refreshToken      : 'fresh-refresh',
+      expiresIn         : 7200,
+    }));
+
+    const agent = createMockAgent({
+      rpcGetServerInfo: async () => ({
+        registrationRequirements : ['provider-auth-v0'],
+        providerAuth             : {
+          authorizeUrl : 'https://auth.example.com/authorize',
+          tokenUrl     : 'https://auth.example.com/token',
+          refreshUrl   : 'https://auth.example.com/refresh',
+        },
+        maxFileSize: 10_000_000,
+      }),
+    });
+
+    const storage = new MemoryStorage();
+    let successCalled = false;
+    await registerWithDwnEndpoints(
+      {
+        userAgent    : agent,
+        dwnEndpoints : ['https://dwn1.example.com'],
+        agentDid     : 'did:dht:agent1',
+        connectedDid : 'did:dht:user1',
+        storage,
+      },
+      {
+        onSuccess              : () => { successCalled = true; },
+        onFailure              : () => {},
+        onProviderAuthRequired : async (params) => ({
+          code: 'auth-code', state: params.state,
+        }),
+        persistTokens: true,
+      },
+    );
+
+    expect(successCalled).toBe(true);
+
+    // Verify tokens were persisted to storage.
+    const raw = await storage.get(STORAGE_KEYS.REGISTRATION_TOKENS);
+    expect(raw).not.toBeNull();
+    const persisted = JSON.parse(raw!) as Record<string, RegistrationTokenData>;
+    expect(persisted['https://dwn1.example.com']).toBeDefined();
+    expect(persisted['https://dwn1.example.com'].registrationToken).toBe('fresh-token');
+    expect(persisted['https://dwn1.example.com'].refreshToken).toBe('fresh-refresh');
+    expect(persisted['https://dwn1.example.com'].tokenUrl).toBe('https://auth.example.com/token');
+    expect(persisted['https://dwn1.example.com'].refreshUrl).toBe('https://auth.example.com/refresh');
+  });
+
+  test('still invokes onRegistrationTokens callback when persistTokens is true', async () => {
+    mockRegisterTenant.mockClear();
+    mockRegisterTenant.mockImplementation(async () => {});
+
+    const agent = createMockAgent({
+      rpcGetServerInfo: async () => ({
+        registrationRequirements : ['proof-of-work-sha256-v0'],
+        maxFileSize              : 10_000_000,
+      }),
+    });
+
+    const storage = new MemoryStorage();
+    let callbackTokens: Record<string, RegistrationTokenData> | undefined;
+    let successCalled = false;
+
+    await registerWithDwnEndpoints(
+      {
+        userAgent    : agent,
+        dwnEndpoints : ['https://dwn1.example.com'],
+        agentDid     : 'did:dht:agent1',
+        connectedDid : 'did:dht:user1',
+        storage,
+      },
+      {
+        onSuccess            : () => { successCalled = true; },
+        onFailure            : () => {},
+        onRegistrationTokens : (tokens) => { callbackTokens = tokens; },
+        persistTokens        : true,
+      },
+    );
+
+    expect(successCalled).toBe(true);
+    // The callback should still be invoked
+    expect(callbackTokens).toBeDefined();
+  });
+
+  test('ignores explicit registrationTokens when persistTokens is true', async () => {
+    mockRegisterTenantWithToken.mockClear();
+    mockExchangeAuthCode.mockClear();
+
+    const agent = createMockAgent({
+      rpcGetServerInfo: async () => ({
+        registrationRequirements : ['provider-auth-v0'],
+        providerAuth             : {
+          authorizeUrl : 'https://auth.example.com/authorize',
+          tokenUrl     : 'https://auth.example.com/token',
+        },
+        maxFileSize: 10_000_000,
+      }),
+    });
+
+    // Storage has a different token than the explicit one.
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.REGISTRATION_TOKENS, JSON.stringify({
+      'https://dwn1.example.com': {
+        registrationToken : 'from-storage',
+        tokenUrl          : 'https://auth.example.com/token',
+        expiresAt         : Date.now() + 60_000,
+      },
+    }));
+
+    let successCalled = false;
+    await registerWithDwnEndpoints(
+      {
+        userAgent    : agent,
+        dwnEndpoints : ['https://dwn1.example.com'],
+        agentDid     : 'did:dht:agent1',
+        connectedDid : 'did:dht:user1',
+        storage,
+      },
+      {
+        onSuccess              : () => { successCalled = true; },
+        onFailure              : () => {},
+        onProviderAuthRequired : async (params) => ({
+          code: 'code', state: params.state,
+        }),
+        // This should be ignored when persistTokens is true
+        registrationTokens: {
+          'https://dwn1.example.com': {
+            registrationToken : 'from-explicit',
+            tokenUrl          : 'https://auth.example.com/token',
+            expiresAt         : Date.now() + 60_000,
+          },
+        },
+        persistTokens: true,
+      },
+    );
+
+    expect(successCalled).toBe(true);
+    // Should have used the token from storage, not the explicit one
+    expect(mockRegisterTenantWithToken.mock.calls[0][2]).toBe('from-storage');
+  });
+
+  test('does not save to storage when persistTokens is false', async () => {
+    mockRegisterTenant.mockClear();
+    mockRegisterTenant.mockImplementation(async () => {});
+
+    const agent = createMockAgent({
+      rpcGetServerInfo: async () => ({
+        registrationRequirements : ['proof-of-work-sha256-v0'],
+        maxFileSize              : 10_000_000,
+      }),
+    });
+
+    const storage = new MemoryStorage();
+    let successCalled = false;
+
+    await registerWithDwnEndpoints(
+      {
+        userAgent    : agent,
+        dwnEndpoints : ['https://dwn1.example.com'],
+        agentDid     : 'did:dht:agent1',
+        connectedDid : 'did:dht:user1',
+        storage,
+      },
+      {
+        onSuccess     : () => { successCalled = true; },
+        onFailure     : () => {},
+        persistTokens : false,
+      },
+    );
+
+    expect(successCalled).toBe(true);
+    // Storage should be empty — no auto-save
+    const raw = await storage.get(STORAGE_KEYS.REGISTRATION_TOKENS);
+    expect(raw).toBeNull();
+  });
+
+  test('does not save to storage when persistTokens is true but no storage provided', async () => {
+    mockRegisterTenant.mockClear();
+    mockRegisterTenant.mockImplementation(async () => {});
+
+    const agent = createMockAgent({
+      rpcGetServerInfo: async () => ({
+        registrationRequirements : ['proof-of-work-sha256-v0'],
+        maxFileSize              : 10_000_000,
+      }),
+    });
+
+    let successCalled = false;
+
+    await registerWithDwnEndpoints(
+      {
+        userAgent    : agent,
+        dwnEndpoints : ['https://dwn1.example.com'],
+        agentDid     : 'did:dht:agent1',
+        connectedDid : 'did:dht:user1',
+        // No storage provided
+      },
+      {
+        onSuccess     : () => { successCalled = true; },
+        onFailure     : () => {},
+        persistTokens : true,
+      },
+    );
+
+    // Should still succeed — just without persistence
+    expect(successCalled).toBe(true);
+  });
+
+  test('handles storage load failure gracefully during registration', async () => {
+    mockRegisterTenant.mockClear();
+    mockRegisterTenant.mockImplementation(async () => {});
+
+    const agent = createMockAgent({
+      rpcGetServerInfo: async () => ({
+        registrationRequirements : ['proof-of-work-sha256-v0'],
+        maxFileSize              : 10_000_000,
+      }),
+    });
+
+    const storage = new MemoryStorage();
+    storage.get = async (): Promise<string | null> => { throw new Error('disk read error'); };
+
+    let successCalled = false;
+    await registerWithDwnEndpoints(
+      {
+        userAgent    : agent,
+        dwnEndpoints : ['https://dwn1.example.com'],
+        agentDid     : 'did:dht:agent1',
+        connectedDid : 'did:dht:user1',
+        storage,
+      },
+      {
+        onSuccess     : () => { successCalled = true; },
+        onFailure     : () => {},
+        persistTokens : true,
+      },
+    );
+
+    // Should still succeed — loadTokensFromStorage returns {} on error
+    expect(successCalled).toBe(true);
   });
 });
