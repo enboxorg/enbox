@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { AuthManager } from '../src/auth-manager.js';
 import { MemoryStorage } from '../src/storage/storage.js';
+import { PasswordProvider } from '../src/password-provider.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 
@@ -18,6 +19,7 @@ function createTestManager(
   overrides: {
     storage?: MemoryStorage;
     password?: string;
+    passwordProvider?: PasswordProvider;
     sync?: any;
     dwnEndpoints?: string[];
     initialState?: string;
@@ -37,6 +39,7 @@ function createTestManager(
   manager._isConnecting = false;
   manager._isShutDown = false;
   manager._defaultPassword = overrides.password;
+  manager._passwordProvider = overrides.passwordProvider;
   manager._defaultSync = overrides.sync;
   manager._defaultDwnEndpoints = overrides.dwnEndpoints;
 
@@ -1051,6 +1054,207 @@ describe('AuthManager', () => {
       // Should not throw even with no session/vault
       await manager.shutdown();
       expect(manager.state).toBe('locked');
+    });
+  });
+
+  describe('passwordProvider integration', () => {
+    test('connect() uses provider when no explicit password', async () => {
+      const startCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        start        : async (params) => { startCalls.push(params); },
+        identityList : async () => [createMockIdentity()],
+      });
+      const provider = PasswordProvider.fromCallback(async () => 'provider-pw');
+      const manager = createTestManager(agent, { passwordProvider: provider });
+
+      await manager.connect();
+
+      expect(startCalls).toHaveLength(1);
+      expect(startCalls[0].password).toBe('provider-pw');
+    });
+
+    test('connect() prefers explicit password over provider', async () => {
+      const startCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        start        : async (params) => { startCalls.push(params); },
+        identityList : async () => [createMockIdentity()],
+      });
+      const provider = PasswordProvider.fromCallback(async () => 'provider-pw');
+      const manager = createTestManager(agent, { passwordProvider: provider });
+
+      await manager.connect({ password: 'explicit-pw' });
+
+      expect(startCalls).toHaveLength(1);
+      expect(startCalls[0].password).toBe('explicit-pw');
+    });
+
+    test('connect() prefers defaultPassword over provider', async () => {
+      const startCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        start        : async (params) => { startCalls.push(params); },
+        identityList : async () => [createMockIdentity()],
+      });
+      const provider = PasswordProvider.fromCallback(async () => 'provider-pw');
+      const manager = createTestManager(agent, { password: 'default-pw', passwordProvider: provider });
+
+      await manager.connect();
+
+      expect(startCalls).toHaveLength(1);
+      expect(startCalls[0].password).toBe('default-pw');
+    });
+
+    test('connect() passes create reason on first launch', async () => {
+      const reasons: string[] = [];
+      const agent = createMockAgent({
+        firstLaunch  : async () => true,
+        identityList : async () => [createMockIdentity()],
+      });
+      const provider = PasswordProvider.fromCallback(async (ctx) => {
+        reasons.push(ctx.reason);
+        return 'pw';
+      });
+      const manager = createTestManager(agent, { passwordProvider: provider });
+
+      await manager.connect();
+
+      expect(reasons).toEqual(['create']);
+    });
+
+    test('connect() passes unlock reason on subsequent launch', async () => {
+      const reasons: string[] = [];
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+      });
+      const provider = PasswordProvider.fromCallback(async (ctx) => {
+        reasons.push(ctx.reason);
+        return 'pw';
+      });
+      const manager = createTestManager(agent, { passwordProvider: provider });
+
+      await manager.connect();
+
+      expect(reasons).toEqual(['unlock']);
+    });
+
+    test('connectHeadless() uses provider when no explicit password', async () => {
+      const startCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        start        : async (params) => { startCalls.push(params); },
+        identityList : async () => [createMockIdentity()],
+      });
+      const provider = PasswordProvider.fromCallback(async () => 'headless-pw');
+      const manager = createTestManager(agent, { passwordProvider: provider });
+
+      await manager.connectHeadless();
+
+      expect(startCalls).toHaveLength(1);
+      expect(startCalls[0].password).toBe('headless-pw');
+    });
+
+    test('connectHeadless() throws when provider also fails', async () => {
+      const agent = createMockAgent();
+      const provider = PasswordProvider.fromCallback(async () => {
+        throw new Error('provider failed');
+      });
+      const manager = createTestManager(agent, { passwordProvider: provider });
+
+      await expect(manager.connectHeadless()).rejects.toThrow(
+        'provider failed'
+      );
+    });
+
+    test('restoreSession() uses provider when no explicit password', async () => {
+      const startCalls: any[] = [];
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        start        : async (params) => { startCalls.push(params); },
+        identityList : async () => [createMockIdentity()],
+      });
+      const provider = PasswordProvider.fromCallback(async () => 'restore-pw');
+      const manager = createTestManager(agent, { storage, passwordProvider: provider });
+
+      await manager.restoreSession();
+
+      expect(startCalls).toHaveLength(1);
+      expect(startCalls[0].password).toBe('restore-pw');
+    });
+
+    test('restoreSession() prefers onPasswordRequired over provider', async () => {
+      const startCalls: any[] = [];
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        start        : async (params) => { startCalls.push(params); },
+        identityList : async () => [createMockIdentity()],
+      });
+      const provider = PasswordProvider.fromCallback(async () => 'provider-pw');
+      const manager = createTestManager(agent, { storage, passwordProvider: provider });
+
+      await manager.restoreSession({
+        onPasswordRequired: async () => 'callback-pw',
+      });
+
+      expect(startCalls).toHaveLength(1);
+      expect(startCalls[0].password).toBe('callback-pw');
+    });
+
+    test('connect() falls back to insecure default when provider fails', async () => {
+      const startCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        start        : async (params) => { startCalls.push(params); },
+        identityList : async () => [createMockIdentity()],
+      });
+      const provider = PasswordProvider.fromCallback(async () => {
+        throw new Error('provider failed');
+      });
+      const manager = createTestManager(agent, { passwordProvider: provider });
+
+      await manager.connect();
+
+      // Falls back to insecure-static-phrase
+      expect(startCalls).toHaveLength(1);
+      expect(startCalls[0].password).toBe('insecure-static-phrase');
+    });
+
+    test('walletConnect() uses provider', async () => {
+      const startCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        start        : async (params) => { startCalls.push(params); },
+        identityList : async () => [createMockIdentity()],
+      });
+      const provider = PasswordProvider.fromCallback(async () => 'wallet-pw');
+      const manager = createTestManager(agent, { passwordProvider: provider });
+
+      // walletConnect requires specific options — we mock the flow
+      // by testing that the password resolution happens before the
+      // walletConnect flow starts (which we can verify via start() calls)
+      try {
+        await manager.walletConnect({
+          displayName        : 'Test',
+          connectServerUrl   : 'https://relay.example.com',
+          permissionRequests : [],
+          onWalletUriReady   : () => {},
+          validatePin        : async () => '1234',
+        });
+      } catch {
+        // walletConnect flow will fail since we're using mocks,
+        // but the password resolution should have happened
+      }
+
+      expect(startCalls).toHaveLength(1);
+      expect(startCalls[0].password).toBe('wallet-pw');
     });
   });
 });

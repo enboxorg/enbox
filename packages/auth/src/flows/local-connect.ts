@@ -9,6 +9,7 @@
 import type { EnboxUserAgent } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
+import type { PasswordProvider } from '../password-provider.js';
 import type { LocalConnectOptions, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
 
 import { applyLocalDwnDiscovery } from './dwn-discovery.js';
@@ -22,6 +23,7 @@ export interface LocalConnectContext {
   emitter: AuthEventEmitter;
   storage: StorageAdapter;
   defaultPassword?: string;
+  passwordProvider?: PasswordProvider;
   defaultSync?: SyncOption;
   defaultDwnEndpoints?: string[];
   registration?: RegistrationOptions;
@@ -39,7 +41,22 @@ export async function localConnect(
 ): Promise<AuthSession> {
   const { userAgent, emitter, storage } = ctx;
 
-  const password = options.password ?? ctx.defaultPassword ?? INSECURE_DEFAULT_PASSWORD;
+  // Resolve password: explicit option → provider → manager default → insecure fallback.
+  const isFirstLaunch = await userAgent.firstLaunch();
+  let password = options.password ?? ctx.defaultPassword;
+
+  if (!password && ctx.passwordProvider) {
+    try {
+      password = await ctx.passwordProvider.getPassword({
+        reason: isFirstLaunch ? 'create' : 'unlock',
+      });
+    } catch {
+      // Provider failed — fall through to insecure default.
+    }
+  }
+
+  password ??= INSECURE_DEFAULT_PASSWORD;
+
   const sync = options.sync ?? ctx.defaultSync;
   const dwnEndpoints = options.dwnEndpoints ?? ctx.defaultDwnEndpoints ?? ['https://enbox-dwn.fly.dev'];
 
@@ -55,7 +72,7 @@ export async function localConnect(
   let recoveryPhrase: string | undefined;
 
   // Initialize vault on first launch.
-  if (await userAgent.firstLaunch()) {
+  if (isFirstLaunch) {
     recoveryPhrase = await userAgent.initialize({
       password,
       recoveryPhrase: options.recoveryPhrase,
