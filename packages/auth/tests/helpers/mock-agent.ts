@@ -45,6 +45,7 @@ export interface MockAgentOverrides {
   syncStartSync?: (params: any) => Promise<void>;
   syncStopSync?: (timeout: number) => Promise<void>;
   syncSync?: (direction: string) => Promise<void>;
+  syncClose?: () => Promise<void>;
   processDwnRequest?: (params: any) => Promise<any>;
   rpcGetServerInfo?: (url: string) => Promise<any>;
   vaultIsInitialized?: () => Promise<boolean>;
@@ -95,6 +96,7 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
       startSync        : overrides.syncStartSync ?? (async (): Promise<void> => {}),
       stopSync         : overrides.syncStopSync ?? (async (): Promise<void> => {}),
       sync             : overrides.syncSync ?? (async (): Promise<void> => {}),
+      close            : overrides.syncClose ?? (async (): Promise<void> => {}),
     },
 
     processDwnRequest: overrides.processDwnRequest ?? (async (): Promise<any> => ({

@@ -23,12 +23,14 @@ import type {
   AuthManagerOptions,
   AuthState,
   DisconnectOptions,
+  HeadlessConnectOptions,
   IdentityInfo,
   ImportFromPhraseOptions,
   ImportFromPortableOptions,
   LocalConnectOptions,
   RegistrationOptions,
   RestoreSessionOptions,
+  ShutdownOptions,
   StorageAdapter,
   SyncOption,
   WalletConnectOptions,
@@ -76,6 +78,7 @@ export class AuthManager {
   private _session: AuthSession | undefined;
   private _state: AuthState = 'uninitialized';
   private _isConnecting = false;
+  private _isShutDown = false;
 
   // Default options from create()
   private _defaultPassword?: string;
@@ -322,6 +325,82 @@ export class AuthManager {
     }
   }
 
+  /**
+   * Lightweight vault unlock for one-shot utilities and subprocesses.
+   *
+   * Unlocks the vault and retrieves the active (or first available)
+   * identity **without** starting sync, DWN registration, or persisting
+   * session markers. This is the recommended replacement for calling
+   * `agent.start({ password })` directly.
+   *
+   * Typical use cases:
+   * - Git credential helpers that need to sign a token and exit
+   * - CLI utilities that perform a single operation
+   * - Any subprocess that shares a data directory with a long-running daemon
+   *
+   * @param options - Optional password override.
+   * @returns An active AuthSession (with sync disabled).
+   *
+   * @example
+   * ```ts
+   * const session = await auth.connectHeadless({ password });
+   * const did = session.did; // ready to use
+   * await auth.shutdown();   // clean exit
+   * ```
+   */
+  async connectHeadless(options?: HeadlessConnectOptions): Promise<AuthSession> {
+    const password = options?.password ?? this._defaultPassword;
+
+    if (!password) {
+      throw new Error(
+        '[@enbox/auth] connectHeadless() requires a password. ' +
+        'Provide one via options.password or the AuthManager default.'
+      );
+    }
+
+    // Unlock the vault (initialise on first launch).
+    if (await this._userAgent.firstLaunch()) {
+      await this._userAgent.initialize({ password });
+    } else {
+      await this._userAgent.start({ password });
+    }
+    this._emitter.emit('vault-unlocked', {});
+
+    // Find the active identity.
+    const identities = await this._userAgent.identity.list();
+    if (identities.length === 0) {
+      throw new Error('[@enbox/auth] No identities found in vault.');
+    }
+
+    // Prefer the previously-active identity, fall back to first.
+    const savedDid = await this._storage.get(STORAGE_KEYS.ACTIVE_IDENTITY);
+    const identity = (savedDid
+      ? identities.find(id => id.did.uri === savedDid || id.metadata.connectedDid === savedDid)
+      : undefined
+    ) ?? identities[0];
+
+    const connectedDid = identity.metadata.connectedDid ?? identity.did.uri;
+    const delegateDid = identity.metadata.connectedDid ? identity.did.uri : undefined;
+
+    const identityInfo: IdentityInfo = {
+      didUri       : connectedDid,
+      name         : identity.metadata.name,
+      connectedDid : identity.metadata.connectedDid,
+    };
+
+    // No sync, no registration, no session persistence markers.
+    this._session = new AuthSession({
+      agent    : this._userAgent,
+      did      : connectedDid,
+      delegateDid,
+      identity : identityInfo,
+    });
+
+    this._setState('connected');
+
+    return this._session;
+  }
+
   // ─── Session management ────────────────────────────────────────
 
   /** The current active session, or `undefined` if not connected. */
@@ -417,6 +496,86 @@ export class AuthManager {
 
     this._setState('unlocked');
 
+    if (did) {
+      this._emitter.emit('session-end', { did });
+    }
+  }
+
+  /**
+   * Gracefully shut down the auth manager, releasing all resources.
+   *
+   * This goes beyond {@link disconnect} or {@link lock}: it stops sync,
+   * clears the active session, locks the vault, and **closes** the
+   * underlying storage handles (e.g. LevelDB) so the process can exit
+   * without dangling timers or open file descriptors.
+   *
+   * After calling `shutdown()`, the `AuthManager` instance should not be
+   * reused — create a new one via {@link AuthManager.create} if needed.
+   *
+   * Idempotent: calling `shutdown()` more than once is safe.
+   *
+   * @param options - Optional shutdown configuration.
+   * @param options.timeout - Milliseconds to wait for sync to stop. Default: `2000`.
+   *
+   * @example
+   * ```ts
+   * const session = await auth.connectHeadless({ password });
+   * // ... perform work ...
+   * await auth.shutdown(); // clean exit, no process.exit() needed
+   * ```
+   */
+  async shutdown(options: ShutdownOptions = {}): Promise<void> {
+    if (this._isShutDown) {
+      return;
+    }
+
+    const { timeout = 2000 } = options;
+    const did = this._session?.did;
+
+    // 1. Stop sync.
+    if ('sync' in this._userAgent &&
+        typeof (this._userAgent as any).sync?.stopSync === 'function') {
+      try {
+        await (this._userAgent as any).sync.stopSync(timeout);
+      } catch {
+        // Best-effort — don't block shutdown on sync errors.
+      }
+    }
+
+    // 2. Clear the active session.
+    this._session = undefined;
+
+    // 3. Lock the vault (emits 'vault-locked').
+    try {
+      await this._vault.lock();
+    } catch {
+      // Vault may already be locked or uninitialised — safe to ignore.
+    }
+
+    // 4. Close the sync engine (releases LevelDB handles, timers).
+    if ('sync' in this._userAgent &&
+        typeof (this._userAgent as any).sync?.close === 'function') {
+      try {
+        await (this._userAgent as any).sync.close();
+      } catch {
+        // Best-effort.
+      }
+    }
+
+    // 5. Close the storage adapter (e.g. LevelDB session store).
+    if (typeof this._storage.close === 'function') {
+      try {
+        await this._storage.close();
+      } catch {
+        // Best-effort.
+      }
+    }
+
+    // 6. Mark as shut down and transition state.
+    this._isShutDown = true;
+    this._setState('locked');
+
+    // 7. Emit session-end if there was an active session.
     if (did) {
       this._emitter.emit('session-end', { did });
     }

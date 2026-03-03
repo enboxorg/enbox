@@ -35,6 +35,7 @@ function createTestManager(
   manager._session = undefined;
   manager._state = overrides.initialState ?? 'uninitialized';
   manager._isConnecting = false;
+  manager._isShutDown = false;
   manager._defaultPassword = overrides.password;
   manager._defaultSync = overrides.sync;
   manager._defaultDwnEndpoints = overrides.dwnEndpoints;
@@ -730,6 +731,326 @@ describe('AuthManager', () => {
         (t) => t.previous === 'connected' && t.current === 'connected'
       );
       expect(connectToConnect).toHaveLength(0);
+    });
+  });
+
+  describe('connectHeadless()', () => {
+    test('unlocks vault and returns session without sync', async () => {
+      const startCalls: any[] = [];
+      const syncCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch   : async () => false,
+        start         : async (params) => { startCalls.push(params); },
+        identityList  : async () => [createMockIdentity()],
+        syncStartSync : async (params) => { syncCalls.push(params); },
+      });
+      const manager = createTestManager(agent);
+
+      const session = await manager.connectHeadless({ password: 'my-password' });
+
+      expect(session.did).toBe('did:dht:testuser123');
+      expect(manager.state).toBe('connected');
+      expect(manager.session).toBe(session);
+      // Agent was started with the password
+      expect(startCalls).toHaveLength(1);
+      expect(startCalls[0].password).toBe('my-password');
+      // Sync was NOT started
+      expect(syncCalls).toHaveLength(0);
+    });
+
+    test('throws when no password is provided and no default', async () => {
+      const agent = createMockAgent();
+      const manager = createTestManager(agent);
+
+      await expect(manager.connectHeadless()).rejects.toThrow(
+        'connectHeadless() requires a password'
+      );
+    });
+
+    test('uses default password when no override', async () => {
+      const startCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        start        : async (params) => { startCalls.push(params); },
+        identityList : async () => [createMockIdentity()],
+      });
+      const manager = createTestManager(agent, { password: 'default-pw' });
+
+      await manager.connectHeadless();
+
+      expect(startCalls).toHaveLength(1);
+      expect(startCalls[0].password).toBe('default-pw');
+    });
+
+    test('initialises vault on first launch', async () => {
+      const initCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch  : async () => true,
+        initialize   : async (params) => { initCalls.push(params); return 'phrase'; },
+        identityList : async () => [createMockIdentity()],
+      });
+      const manager = createTestManager(agent);
+
+      await manager.connectHeadless({ password: 'new-pw' });
+
+      expect(initCalls).toHaveLength(1);
+      expect(initCalls[0].password).toBe('new-pw');
+    });
+
+    test('throws when no identities exist', async () => {
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [],
+      });
+      const manager = createTestManager(agent);
+
+      await expect(manager.connectHeadless({ password: 'pw' })).rejects.toThrow(
+        'No identities found in vault'
+      );
+    });
+
+    test('prefers previously-active identity', async () => {
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, 'did:dht:second');
+
+      const identities = [
+        createMockIdentity({ did: { uri: 'did:dht:first' }, metadata: { name: 'First', tenant: 't1' } }),
+        createMockIdentity({ did: { uri: 'did:dht:second' }, metadata: { name: 'Second', tenant: 't2' } }),
+      ];
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => identities,
+      });
+      const manager = createTestManager(agent, { storage });
+
+      const session = await manager.connectHeadless({ password: 'pw' });
+
+      expect(session.did).toBe('did:dht:second');
+    });
+
+    test('falls back to first identity when saved identity not found', async () => {
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, 'did:dht:gone');
+
+      const identities = [
+        createMockIdentity({ did: { uri: 'did:dht:first' }, metadata: { name: 'First', tenant: 't1' } }),
+      ];
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => identities,
+      });
+      const manager = createTestManager(agent, { storage });
+
+      const session = await manager.connectHeadless({ password: 'pw' });
+
+      expect(session.did).toBe('did:dht:first');
+    });
+
+    test('handles wallet-connected identity (connectedDid)', async () => {
+      const identity = createMockIdentity({
+        did      : { uri: 'did:dht:delegate' },
+        metadata : { name: 'Wallet', tenant: 't1', connectedDid: 'did:dht:external' },
+      });
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [identity],
+      });
+      const manager = createTestManager(agent);
+
+      const session = await manager.connectHeadless({ password: 'pw' });
+
+      expect(session.did).toBe('did:dht:external');
+      expect(session.delegateDid).toBe('did:dht:delegate');
+    });
+
+    test('does not persist session markers', async () => {
+      const storage = new MemoryStorage();
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+      });
+      const manager = createTestManager(agent, { storage });
+
+      await manager.connectHeadless({ password: 'pw' });
+
+      // No persistence markers should be set
+      expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
+    });
+
+    test('emits vault-unlocked event', async () => {
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+      });
+      const manager = createTestManager(agent);
+      const events: any[] = [];
+      manager.on('vault-unlocked', (payload) => { events.push(payload); });
+
+      await manager.connectHeadless({ password: 'pw' });
+
+      expect(events).toHaveLength(1);
+    });
+  });
+
+  describe('shutdown()', () => {
+    test('stops sync, locks vault, closes storage and sync engine', async () => {
+      const stopCalls: any[] = [];
+      const lockCalls: any[] = [];
+      const syncCloseCalls: any[] = [];
+      const storageCloseCalls: any[] = [];
+
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+        vaultLock    : async () => { lockCalls.push('locked'); },
+      });
+      (agent as any).sync.stopSync = async (timeout: number): Promise<void> => { stopCalls.push(timeout); };
+      (agent as any).sync.close = async (): Promise<void> => { syncCloseCalls.push('closed'); };
+
+      const storage = new MemoryStorage();
+      (storage as any).close = async (): Promise<void> => { storageCloseCalls.push('closed'); };
+
+      const manager = createTestManager(agent, { storage });
+      await manager.connect({ password: 'test' });
+
+      await manager.shutdown();
+
+      expect(stopCalls).toHaveLength(1);
+      expect(stopCalls[0]).toBe(2000); // default timeout
+      expect(lockCalls).toHaveLength(1);
+      expect(syncCloseCalls).toHaveLength(1);
+      expect(storageCloseCalls).toHaveLength(1);
+      expect(manager.state).toBe('locked');
+      expect(manager.session).toBeUndefined();
+    });
+
+    test('emits session-end when session was active', async () => {
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+      });
+      const manager = createTestManager(agent);
+      await manager.connect({ password: 'test' });
+
+      const events: any[] = [];
+      manager.on('session-end', (payload) => { events.push(payload); });
+
+      await manager.shutdown();
+
+      expect(events).toHaveLength(1);
+      expect(events[0].did).toBe('did:dht:testuser123');
+    });
+
+    test('does not emit session-end when no active session', async () => {
+      const agent = createMockAgent();
+      const manager = createTestManager(agent, { initialState: 'unlocked' });
+      const events: any[] = [];
+      manager.on('session-end', (payload) => { events.push(payload); });
+
+      await manager.shutdown();
+
+      expect(events).toHaveLength(0);
+    });
+
+    test('is idempotent — second call is a no-op', async () => {
+      const stopCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+      });
+      (agent as any).sync.stopSync = async (timeout: number): Promise<void> => { stopCalls.push(timeout); };
+
+      const manager = createTestManager(agent);
+      await manager.connect({ password: 'test' });
+
+      await manager.shutdown();
+      await manager.shutdown(); // second call
+
+      // stopSync called only once
+      expect(stopCalls).toHaveLength(1);
+    });
+
+    test('uses custom timeout', async () => {
+      const stopCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+      });
+      (agent as any).sync.stopSync = async (timeout: number): Promise<void> => { stopCalls.push(timeout); };
+
+      const manager = createTestManager(agent);
+      await manager.connect({ password: 'test' });
+
+      await manager.shutdown({ timeout: 5000 });
+
+      expect(stopCalls[0]).toBe(5000);
+    });
+
+    test('handles missing sync.close gracefully', async () => {
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+      });
+      // Remove close from sync
+      delete (agent as any).sync.close;
+
+      const manager = createTestManager(agent);
+      await manager.connect({ password: 'test' });
+
+      // Should not throw
+      await manager.shutdown();
+      expect(manager.state).toBe('locked');
+    });
+
+    test('handles missing storage.close gracefully', async () => {
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+      });
+      const manager = createTestManager(agent);
+      await manager.connect({ password: 'test' });
+
+      // MemoryStorage has no close() by default — should not throw
+      await manager.shutdown();
+      expect(manager.state).toBe('locked');
+    });
+
+    test('handles sync.stopSync failure gracefully', async () => {
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+      });
+      (agent as any).sync.stopSync = async (): Promise<void> => { throw new Error('sync error'); };
+
+      const manager = createTestManager(agent);
+      await manager.connect({ password: 'test' });
+
+      // Should not throw
+      await manager.shutdown();
+      expect(manager.state).toBe('locked');
+    });
+
+    test('handles vault lock failure gracefully', async () => {
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+        vaultLock    : async () => { throw new Error('vault error'); },
+      });
+      const manager = createTestManager(agent);
+      await manager.connect({ password: 'test' });
+
+      // Should not throw
+      await manager.shutdown();
+      expect(manager.state).toBe('locked');
+    });
+
+    test('works from uninitialized state', async () => {
+      const agent = createMockAgent();
+      const manager = createTestManager(agent);
+
+      // Should not throw even with no session/vault
+      await manager.shutdown();
+      expect(manager.state).toBe('locked');
     });
   });
 });
