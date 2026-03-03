@@ -1,7 +1,51 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { PasswordContext } from '../src/password-provider.js';
-import { PasswordProvider } from '../src/password-provider.js';
+import type { DevTtyIo, PasswordContext, TtyReadable, TtyWritable } from '../src/password-provider.js';
+import { PasswordProvider, readPasswordDevTty, readPasswordRawMode } from '../src/password-provider.js';
+
+/**
+ * Create a mock TtyReadable that feeds characters to the onData handler.
+ */
+function createMockStdin(overrides: { isTTY?: boolean } = {}): TtyReadable & {
+  feedChars: (chars: string) => void;
+  feedChar: (char: string) => void;
+} {
+  let dataHandler: ((chunk: string) => void) | undefined;
+
+  return {
+    isTTY: overrides.isTTY ?? true,
+    setRawMode(): void { /* no-op */ },
+    setEncoding(): void { /* no-op */ },
+    resume(): void { /* no-op */ },
+    pause(): void { /* no-op */ },
+    on(_event: 'data', listener: (chunk: string) => void): void {
+      dataHandler = listener;
+    },
+    removeListener(_event: 'data', _listener: (chunk: string) => void): void {
+      dataHandler = undefined;
+    },
+    feedChars(chars: string): void {
+      for (const ch of chars) {
+        dataHandler?.(ch);
+      }
+    },
+    feedChar(char: string): void {
+      dataHandler?.(char);
+    },
+  };
+}
+
+/** Create a mock TtyWritable that records writes. */
+function createMockStdout(): TtyWritable & { output: string[] } {
+  const output: string[] = [];
+  return {
+    output,
+    write(data: string): boolean {
+      output.push(data);
+      return true;
+    },
+  };
+}
 
 describe('PasswordProvider', () => {
   describe('fromEnv()', () => {
@@ -252,7 +296,6 @@ describe('PasswordProvider', () => {
     });
 
     test('uses custom prompt text', () => {
-      // Just verify the provider can be constructed with options
       const provider = PasswordProvider.fromTty({ prompt: 'Enter passphrase: ' });
       expect(provider).toBeDefined();
       expect(typeof provider.getPassword).toBe('function');
@@ -276,9 +319,7 @@ describe('PasswordProvider', () => {
       expect(provider).toBeDefined();
     });
 
-    // Note: Cannot test actual /dev/tty interaction in automated tests.
-    // The provider's behaviour is tested via integration with chain()
-    // (fromDevTty throws when /dev/tty is unavailable, chain falls through).
+    // Note: readPasswordDevTty is tested separately below.
   });
 
   describe('interface compliance', () => {
@@ -294,6 +335,276 @@ describe('PasswordProvider', () => {
       for (const provider of providers) {
         expect(typeof provider.getPassword).toBe('function');
       }
+    });
+  });
+
+  describe('readPasswordRawMode()', () => {
+    test('reads typed characters and resolves on Enter', async () => {
+      const stdin = createMockStdin();
+      const stdout = createMockStdout();
+
+      const promise = readPasswordRawMode(stdin, stdout, 'Password: ');
+
+      // Simulate typing "hello" then pressing Enter
+      stdin.feedChars('hello\n');
+
+      const password = await promise;
+      expect(password).toBe('hello');
+    });
+
+    test('writes prompt to stdout', async () => {
+      const stdin = createMockStdin();
+      const stdout = createMockStdout();
+
+      const promise = readPasswordRawMode(stdin, stdout, 'Vault password: ');
+      stdin.feedChar('\n');
+
+      await promise;
+      expect(stdout.output[0]).toBe('Vault password: ');
+    });
+
+    test('writes newline to stdout after Enter', async () => {
+      const stdin = createMockStdin();
+      const stdout = createMockStdout();
+
+      const promise = readPasswordRawMode(stdin, stdout, 'PW: ');
+      stdin.feedChar('\n');
+
+      await promise;
+      expect(stdout.output).toEqual(['PW: ', '\n']);
+    });
+
+    test('handles carriage return as Enter', async () => {
+      const stdin = createMockStdin();
+      const stdout = createMockStdout();
+
+      const promise = readPasswordRawMode(stdin, stdout, '> ');
+      stdin.feedChars('test\r');
+
+      const password = await promise;
+      expect(password).toBe('test');
+    });
+
+    test('handles backspace (code 127)', async () => {
+      const stdin = createMockStdin();
+      const stdout = createMockStdout();
+
+      const promise = readPasswordRawMode(stdin, stdout, '> ');
+
+      // Type "ab", backspace, "c", Enter → "ac"
+      stdin.feedChars('ab');
+      stdin.feedChar(String.fromCharCode(127)); // backspace
+      stdin.feedChars('c\n');
+
+      const password = await promise;
+      expect(password).toBe('ac');
+    });
+
+    test('handles delete (code 8)', async () => {
+      const stdin = createMockStdin();
+      const stdout = createMockStdout();
+
+      const promise = readPasswordRawMode(stdin, stdout, '> ');
+
+      stdin.feedChars('xyz');
+      stdin.feedChar(String.fromCharCode(8)); // delete
+      stdin.feedChar('\n');
+
+      const password = await promise;
+      expect(password).toBe('xy');
+    });
+
+    test('ignores backspace on empty buffer', async () => {
+      const stdin = createMockStdin();
+      const stdout = createMockStdout();
+
+      const promise = readPasswordRawMode(stdin, stdout, '> ');
+
+      // Backspace on empty buffer, then type "a", Enter
+      stdin.feedChar(String.fromCharCode(127));
+      stdin.feedChar(String.fromCharCode(8));
+      stdin.feedChars('a\n');
+
+      const password = await promise;
+      expect(password).toBe('a');
+    });
+
+    test('rejects on Ctrl-C (code 3)', async () => {
+      const stdin = createMockStdin();
+      const stdout = createMockStdout();
+
+      const promise = readPasswordRawMode(stdin, stdout, '> ');
+
+      stdin.feedChars('par');
+      stdin.feedChar(String.fromCharCode(3)); // Ctrl-C
+
+      await expect(promise).rejects.toThrow('cancelled by user');
+    });
+
+    test('ignores control characters below code 32', async () => {
+      const stdin = createMockStdin();
+      const stdout = createMockStdout();
+
+      const promise = readPasswordRawMode(stdin, stdout, '> ');
+
+      // Tab (9), escape (27), and other control chars should be ignored
+      stdin.feedChar(String.fromCharCode(9)); // tab
+      stdin.feedChar(String.fromCharCode(27)); // escape
+      stdin.feedChar(String.fromCharCode(1)); // Ctrl-A
+      stdin.feedChars('ok\n');
+
+      const password = await promise;
+      expect(password).toBe('ok');
+    });
+
+    test('returns empty string when Enter pressed immediately', async () => {
+      const stdin = createMockStdin();
+      const stdout = createMockStdout();
+
+      const promise = readPasswordRawMode(stdin, stdout, '> ');
+      stdin.feedChar('\n');
+
+      const password = await promise;
+      expect(password).toBe('');
+    });
+
+    test('handles unicode characters', async () => {
+      const stdin = createMockStdin();
+      const stdout = createMockStdout();
+
+      const promise = readPasswordRawMode(stdin, stdout, '> ');
+      stdin.feedChars('\u00e9\u00fc\n'); // é, ü
+
+      const password = await promise;
+      expect(password).toBe('\u00e9\u00fc');
+    });
+  });
+
+  describe('readPasswordDevTty()', () => {
+    /** Create a mock DevTtyIo that simulates /dev/tty with given input. */
+    function createMockDevTtyIo(input: string): DevTtyIo & {
+      writes: Array<{ fd: number; data: string }>;
+      execCalls: string[];
+      closedFds: number[];
+    } {
+      const encoder = new TextEncoder();
+      const inputBytes = encoder.encode(input);
+      let readOffset = 0;
+
+      const writes: Array<{ fd: number; data: string }> = [];
+      const execCalls: string[] = [];
+      const closedFds: number[] = [];
+
+      return {
+        writes,
+        execCalls,
+        closedFds,
+        openSync(_path: string, flags: string): number {
+          return flags === 'r' ? 10 : 11; // fake fds
+        },
+        readSync(_fd: number, buf: Uint8Array, offset: number, length: number): number {
+          if (readOffset >= inputBytes.length) { return 0; }
+          const chunk = inputBytes.subarray(readOffset, readOffset + length);
+          buf.set(chunk, offset);
+          readOffset += chunk.length;
+          return chunk.length;
+        },
+        writeSync(fd: number, data: string): number {
+          writes.push({ fd, data });
+          return data.length;
+        },
+        closeSync(fd: number): void {
+          closedFds.push(fd);
+        },
+        execSync(cmd: string): void {
+          execCalls.push(cmd);
+        },
+      };
+    }
+
+    test('reads password until newline', async () => {
+      const io = createMockDevTtyIo('secret\n');
+      const password = await readPasswordDevTty('Password: ', io);
+      expect(password).toBe('secret');
+    });
+
+    test('reads password until carriage return', async () => {
+      const io = createMockDevTtyIo('mypass\r');
+      const password = await readPasswordDevTty('PW: ', io);
+      expect(password).toBe('mypass');
+    });
+
+    test('writes prompt to write fd', async () => {
+      const io = createMockDevTtyIo('x\n');
+      await readPasswordDevTty('Enter password: ', io);
+      expect(io.writes[0]).toEqual({ fd: 11, data: 'Enter password: ' });
+    });
+
+    test('writes trailing newline after password', async () => {
+      const io = createMockDevTtyIo('pw\n');
+      await readPasswordDevTty('> ', io);
+      const lastWrite = io.writes[io.writes.length - 1];
+      expect(lastWrite).toEqual({ fd: 11, data: '\n' });
+    });
+
+    test('calls stty -echo before reading and stty echo after', async () => {
+      const io = createMockDevTtyIo('pass\n');
+      await readPasswordDevTty('> ', io);
+      expect(io.execCalls[0]).toBe('stty -echo < /dev/tty');
+      expect(io.execCalls[1]).toBe('stty echo < /dev/tty');
+    });
+
+    test('closes both file descriptors in finally', async () => {
+      const io = createMockDevTtyIo('pass\n');
+      await readPasswordDevTty('> ', io);
+      expect(io.closedFds).toContain(10); // read fd
+      expect(io.closedFds).toContain(11); // write fd
+    });
+
+    test('returns empty string when immediate newline', async () => {
+      const io = createMockDevTtyIo('\n');
+      const password = await readPasswordDevTty('> ', io);
+      expect(password).toBe('');
+    });
+
+    test('handles EOF (zero bytes read)', async () => {
+      const io = createMockDevTtyIo('');
+      const password = await readPasswordDevTty('> ', io);
+      expect(password).toBe('');
+    });
+
+    test('throws when openSync fails', async () => {
+      const io = createMockDevTtyIo('');
+      io.openSync = (): number => { throw new Error('ENOENT'); };
+
+      await expect(readPasswordDevTty('> ', io)).rejects.toThrow(
+        'cannot open /dev/tty'
+      );
+    });
+
+    test('continues when stty -echo fails', async () => {
+      const io = createMockDevTtyIo('pass\n');
+      io.execSync = (cmd: string): void => {
+        if (cmd.includes('-echo')) { throw new Error('stty not found'); }
+        // stty echo in finally — also might fail, that's ok
+      };
+
+      const password = await readPasswordDevTty('> ', io);
+      expect(password).toBe('pass');
+    });
+
+    test('closes fds even if read throws', async () => {
+      const io = createMockDevTtyIo('');
+      io.readSync = (): number => { throw new Error('read error'); };
+
+      try {
+        await readPasswordDevTty('> ', io);
+      } catch {
+        // expected
+      }
+
+      expect(io.closedFds).toContain(10);
+      expect(io.closedFds).toContain(11);
     });
   });
 });

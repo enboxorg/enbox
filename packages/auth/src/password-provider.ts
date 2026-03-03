@@ -54,6 +54,169 @@ export interface PasswordProvider {
   getPassword(context: PasswordContext): Promise<string>;
 }
 
+// ─── Internal I/O interfaces (for testing) ───────────────────────
+
+/** @internal Minimal interface for an stdin-like readable stream. */
+export interface TtyReadable {
+  isTTY?: boolean;
+  setRawMode(mode: boolean): void;
+  setEncoding(encoding: string): void;
+  resume(): void;
+  pause(): void;
+  on(event: 'data', listener: (chunk: string) => void): void;
+  removeListener(event: 'data', listener: (chunk: string) => void): void;
+}
+
+/** @internal Minimal interface for an stdout-like writable stream. */
+export interface TtyWritable {
+  write(data: string): boolean;
+}
+
+// ─── Internal helpers ────────────────────────────────────────────
+
+/**
+ * Read a password from a raw-mode TTY stream.
+ *
+ * Reads character-by-character with no echo. Handles Enter (resolve),
+ * Ctrl-C (reject), backspace, and printable characters.
+ *
+ * @internal Exported for testing only.
+ */
+export function readPasswordRawMode(
+  stdin: TtyReadable,
+  stdout: TtyWritable,
+  prompt: string,
+): Promise<string> {
+  stdout.write(prompt);
+
+  return new Promise<string>((resolve, reject) => {
+    let buf = '';
+    stdin.setRawMode(true);
+    stdin.setEncoding('utf8');
+    stdin.resume();
+
+    const onData = (ch: string): void => {
+      const code = ch.charCodeAt(0);
+
+      if (ch === '\r' || ch === '\n') {
+        // Enter — done.
+        stdin.setRawMode(false);
+        stdin.pause();
+        stdin.removeListener('data', onData);
+        stdout.write('\n');
+        resolve(buf);
+      } else if (code === 3) {
+        // Ctrl-C — abort.
+        stdin.setRawMode(false);
+        stdin.pause();
+        stdin.removeListener('data', onData);
+        stdout.write('\n');
+        reject(new Error('[@enbox/auth] PasswordProvider.fromTty: cancelled by user.'));
+      } else if (code === 127 || code === 8) {
+        // Backspace / Delete.
+        if (buf.length > 0) {
+          buf = buf.slice(0, -1);
+        }
+      } else if (code >= 32) {
+        // Printable character.
+        buf += ch;
+      }
+    };
+
+    stdin.on('data', onData);
+  });
+}
+
+/** @internal Injectable I/O for testing `readPasswordDevTty`. */
+export interface DevTtyIo {
+  openSync(path: string, flags: string): number;
+  readSync(fd: number, buf: Uint8Array, offset: number, length: number, position: null): number;
+  writeSync(fd: number, data: string): number;
+  closeSync(fd: number): void;
+  execSync(cmd: string, opts: { stdio: string }): void;
+}
+
+/**
+ * Read a password from `/dev/tty` using synchronous I/O.
+ *
+ * Opens `/dev/tty` directly, uses `stty -echo` to suppress input,
+ * reads until newline, then restores echo and closes file descriptors.
+ *
+ * @param prompt - The prompt string to display.
+ * @param io - Injectable I/O functions (defaults to `node:fs` + `node:child_process`).
+ * @internal Exported for testing only.
+ */
+export async function readPasswordDevTty(
+  prompt: string,
+  io?: DevTtyIo,
+): Promise<string> {
+  // Use injected I/O or import real modules.
+  let fsIo: DevTtyIo;
+  if (io) {
+    fsIo = io;
+  } else {
+    const { openSync, readSync, writeSync, closeSync } = await import('node:fs');
+    const { execSync } = await import('node:child_process');
+    fsIo = {
+      openSync,
+      readSync,
+      writeSync,
+      closeSync,
+      execSync: (cmd: string, opts: { stdio: string }): void => { execSync(cmd, opts as any); },
+    };
+  }
+
+  let readFd: number;
+  let writeFd: number;
+
+  try {
+    readFd = fsIo.openSync('/dev/tty', 'r');
+    writeFd = fsIo.openSync('/dev/tty', 'w');
+  } catch {
+    throw new Error(
+      '[@enbox/auth] PasswordProvider.fromDevTty: cannot open /dev/tty. ' +
+      'No controlling terminal available.'
+    );
+  }
+
+  try {
+    // Suppress echo.
+    try {
+      fsIo.execSync('stty -echo < /dev/tty', { stdio: 'ignore' });
+    } catch {
+      // Continue — the user sees their password but the flow works.
+    }
+
+    fsIo.writeSync(writeFd, prompt);
+
+    // Cooked-mode read (line-buffered; terminal handles backspace).
+    const readBuf = new Uint8Array(256);
+    const decoder = new TextDecoder('utf-8');
+    let password = '';
+
+    while (true) {
+      const bytesRead = fsIo.readSync(readFd, readBuf, 0, readBuf.length, null);
+      if (bytesRead === 0) { break; }
+
+      password += decoder.decode(readBuf.subarray(0, bytesRead), { stream: true });
+
+      const nlIdx = password.indexOf('\n');
+      if (nlIdx !== -1) { password = password.slice(0, nlIdx); break; }
+
+      const crIdx = password.indexOf('\r');
+      if (crIdx !== -1) { password = password.slice(0, crIdx); break; }
+    }
+
+    fsIo.writeSync(writeFd, '\n');
+    return password;
+  } finally {
+    // Restore echo.
+    try { fsIo.execSync('stty echo < /dev/tty', { stdio: 'ignore' }); } catch { /* best-effort */ }
+    fsIo.closeSync(readFd);
+    fsIo.closeSync(writeFd);
+  }
+}
+
 // ─── Factory functions ───────────────────────────────────────────
 
 
@@ -139,44 +302,11 @@ export namespace PasswordProvider {
           );
         }
 
-        process.stdout.write(prompt);
-
-        return new Promise<string>((resolve, reject) => {
-          let buf = '';
-          process.stdin.setRawMode(true);
-          process.stdin.setEncoding('utf8');
-          process.stdin.resume();
-
-          const onData = (ch: string): void => {
-            const code = ch.charCodeAt(0);
-
-            if (ch === '\r' || ch === '\n') {
-              // Enter — done.
-              process.stdin.setRawMode(false);
-              process.stdin.pause();
-              process.stdin.removeListener('data', onData);
-              process.stdout.write('\n');
-              resolve(buf);
-            } else if (code === 3) {
-              // Ctrl-C — abort.
-              process.stdin.setRawMode(false);
-              process.stdin.pause();
-              process.stdin.removeListener('data', onData);
-              process.stdout.write('\n');
-              reject(new Error('[@enbox/auth] PasswordProvider.fromTty: cancelled by user.'));
-            } else if (code === 127 || code === 8) {
-              // Backspace / Delete.
-              if (buf.length > 0) {
-                buf = buf.slice(0, -1);
-              }
-            } else if (code >= 32) {
-              // Printable character.
-              buf += ch;
-            }
-          };
-
-          process.stdin.on('data', onData);
-        });
+        return readPasswordRawMode(
+          process.stdin as unknown as TtyReadable,
+          process.stdout,
+          prompt,
+        );
       },
     };
   }
@@ -206,59 +336,7 @@ export namespace PasswordProvider {
 
     return {
       async getPassword(): Promise<string> {
-        // Dynamic imports — only available in Node.js/Bun.
-        const { openSync, readSync, writeSync, closeSync } = await import('node:fs');
-        const { execSync } = await import('node:child_process');
-
-        let readFd: number;
-        let writeFd: number;
-
-        try {
-          readFd = openSync('/dev/tty', 'r');
-          writeFd = openSync('/dev/tty', 'w');
-        } catch {
-          throw new Error(
-            '[@enbox/auth] PasswordProvider.fromDevTty: cannot open /dev/tty. ' +
-            'No controlling terminal available.'
-          );
-        }
-
-        try {
-          // Suppress echo.
-          try {
-            execSync('stty -echo < /dev/tty', { stdio: 'ignore' });
-          } catch {
-            // Continue — the user sees their password but the flow works.
-          }
-
-          writeSync(writeFd, prompt);
-
-          // Cooked-mode read (line-buffered; terminal handles backspace).
-          const readBuf = new Uint8Array(256);
-          const decoder = new TextDecoder('utf-8');
-          let password = '';
-
-          while (true) {
-            const bytesRead = readSync(readFd, readBuf, 0, readBuf.length, null);
-            if (bytesRead === 0) { break; }
-
-            password += decoder.decode(readBuf.subarray(0, bytesRead), { stream: true });
-
-            const nlIdx = password.indexOf('\n');
-            if (nlIdx !== -1) { password = password.slice(0, nlIdx); break; }
-
-            const crIdx = password.indexOf('\r');
-            if (crIdx !== -1) { password = password.slice(0, crIdx); break; }
-          }
-
-          writeSync(writeFd, '\n');
-          return password;
-        } finally {
-          // Restore echo.
-          try { execSync('stty echo < /dev/tty', { stdio: 'ignore' }); } catch { /* best-effort */ }
-          closeSync(readFd);
-          closeSync(writeFd);
-        }
+        return readPasswordDevTty(prompt);
       },
     };
   }
@@ -303,4 +381,3 @@ export namespace PasswordProvider {
     };
   }
 }
-
