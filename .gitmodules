@@ -4,3 +4,6 @@
 [submodule "examples/dapp-demo"]
 	path = examples/dapp-demo
 	url = https://github.com/enboxorg/dapp-demo.git
+[submodule "design"]
+	path = design
+	url = git@github.com:enboxorg/design.git

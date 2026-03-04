@@ -6,6 +6,7 @@ const withMDX = createMDX();
 const config = {
   output: 'export',
   reactStrictMode: true,
+  transpilePackages: ['@enbox/ui'],
 };
 
 export default withMDX(config);

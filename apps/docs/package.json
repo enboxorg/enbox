@@ -12,6 +12,7 @@
     "format": "biome format --write"
   },
   "dependencies": {
+    "@enbox/ui": "workspace:*",
     "@orama/orama": "^3.1.18",
     "fumadocs-core": "16.6.8",
     "fumadocs-mdx": "14.2.9",

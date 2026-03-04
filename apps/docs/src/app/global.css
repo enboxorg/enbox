@@ -2,55 +2,38 @@
 @import 'fumadocs-ui/css/neutral.css';
 @import 'fumadocs-ui/css/preset.css';
 
+/* Enbox design system (@enbox/ui) — canonical tokens (custom properties, no class collisions) */
+@import '@enbox/ui/styles/tokens.css';
+
+/* Component styles in a CSS layer so Tailwind utilities can override when needed */
+@import '@enbox/ui/styles/components.css' layer(enbox);
+
 /*
- * Enbox design system token overrides.
- * Maps Fumadocs' fd-* CSS variables to Enbox design tokens.
+ * Fumadocs theme overrides.
+ * Maps Fumadocs' --color-fd-* CSS variables to @enbox/ui design tokens.
  * Dark-first: .dark is the default, light via [data-theme="light"].
  *
- * Reference: ~/src/enboxorg/design/tokens/tokens.css
+ * Token reference: design/tokens/tokens.css (via @enbox/ui)
  */
-
-/* ---- Enbox tokens (subset needed for docs) ---- */
-:root {
-  /* Gray scale */
-  --enbox-gray-950: #08090a;
-  --enbox-gray-900: #0e1011;
-  --enbox-gray-850: #131618;
-  --enbox-gray-800: #1a1d20;
-  --enbox-gray-750: #21252a;
-  --enbox-gray-700: #2a2f35;
-  --enbox-gray-600: #3d444d;
-  --enbox-gray-500: #545d69;
-  --enbox-gray-400: #78828f;
-  --enbox-gray-300: #a0a9b4;
-  --enbox-gray-200: #c4cad1;
-  --enbox-gray-100: #e2e5e9;
-  --enbox-gray-50: #f3f4f6;
-  --enbox-white: #ffffff;
-
-  /* Typography */
-  --enbox-font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --enbox-font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
-}
 
 /* ---- Dark mode (default) ---- */
 .dark, :root {
-  --color-fd-background: var(--enbox-gray-950);
-  --color-fd-foreground: var(--enbox-gray-50);
-  --color-fd-muted: var(--enbox-gray-900);
-  --color-fd-muted-foreground: var(--enbox-gray-400);
-  --color-fd-popover: var(--enbox-gray-850);
-  --color-fd-popover-foreground: var(--enbox-gray-100);
-  --color-fd-card: var(--enbox-gray-900);
-  --color-fd-card-foreground: var(--enbox-gray-50);
-  --color-fd-border: rgba(255, 255, 255, 0.10);
-  --color-fd-primary: var(--enbox-white);
-  --color-fd-primary-foreground: var(--enbox-gray-950);
-  --color-fd-secondary: var(--enbox-gray-850);
-  --color-fd-secondary-foreground: var(--enbox-gray-50);
-  --color-fd-accent: rgba(255, 255, 255, 0.06);
-  --color-fd-accent-foreground: var(--enbox-gray-100);
-  --color-fd-ring: var(--enbox-gray-600);
+  --color-fd-background: var(--gray-950);
+  --color-fd-foreground: var(--gray-50);
+  --color-fd-muted: var(--gray-900);
+  --color-fd-muted-foreground: var(--gray-400);
+  --color-fd-popover: var(--gray-850);
+  --color-fd-popover-foreground: var(--gray-100);
+  --color-fd-card: var(--gray-900);
+  --color-fd-card-foreground: var(--gray-50);
+  --color-fd-border: var(--border-default);
+  --color-fd-primary: var(--white);
+  --color-fd-primary-foreground: var(--gray-950);
+  --color-fd-secondary: var(--gray-850);
+  --color-fd-secondary-foreground: var(--gray-50);
+  --color-fd-accent: var(--border-subtle);
+  --color-fd-accent-foreground: var(--gray-100);
+  --color-fd-ring: var(--gray-600);
 }
 
 /* ---- Light mode ---- */
@@ -64,13 +47,13 @@
   --color-fd-card: #f9f6f2;
   --color-fd-card-foreground: #1a1816;
   --color-fd-border: rgba(80, 60, 30, 0.10);
-  --color-fd-primary: var(--enbox-gray-950);
-  --color-fd-primary-foreground: var(--enbox-white);
+  --color-fd-primary: var(--gray-950);
+  --color-fd-primary-foreground: var(--white);
   --color-fd-secondary: #f0ece7;
   --color-fd-secondary-foreground: #1a1816;
   --color-fd-accent: rgba(80, 60, 30, 0.06);
   --color-fd-accent-foreground: #2d2a26;
-  --color-fd-ring: var(--enbox-gray-400);
+  --color-fd-ring: var(--gray-400);
 }
 
 /* ---- Layout width ---- */
@@ -81,7 +64,7 @@
 /* ---- Selection ---- */
 ::selection {
   background: rgba(255, 255, 255, 0.12);
-  color: var(--enbox-gray-50);
+  color: var(--gray-50);
 }
 .light ::selection,
 [data-theme="light"] ::selection {
@@ -98,22 +81,18 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--enbox-gray-700);
+  background: var(--gray-700);
   border-radius: 9999px;
 }
 .light ::-webkit-scrollbar-thumb,
 [data-theme="light"] ::-webkit-scrollbar-thumb {
-  background: var(--enbox-gray-300);
+  background: var(--gray-300);
 }
 
 /* ---- Sidebar refinements ---- */
 #nd-sidebar {
   transition: width 250ms ease;
-}
-
-/* Reduce sidebar border weight to match design system --border-subtle */
-#nd-sidebar {
-  border-color: rgba(255, 255, 255, 0.06);
+  border-color: var(--border-subtle);
 }
 .light #nd-sidebar,
 [data-theme="light"] #nd-sidebar {
