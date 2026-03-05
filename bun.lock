@@ -93,7 +93,6 @@
         "@enbox/crypto": "workspace:*",
         "@enbox/dids": "workspace:*",
         "@enbox/dwn-sdk-js": "workspace:*",
-        "@enbox/protocols": "workspace:*",
         "@types/node": "20.14.8",
         "@types/sinon": "17.0.3",
         "@typescript-eslint/eslint-plugin": "8.32.1",
