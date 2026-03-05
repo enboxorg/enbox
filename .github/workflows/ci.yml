@@ -261,7 +261,7 @@ jobs:
       - name: Link @enbox/protocols for api tests
         run: |
           mkdir -p packages/api/node_modules/@enbox
-          ln -sf ../../../../protocols packages/api/node_modules/@enbox/protocols
+          ln -sf ../../../protocols packages/api/node_modules/@enbox/protocols
 
       - name: Start Pkarr relay
         run: |
