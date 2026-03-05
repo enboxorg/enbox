@@ -258,6 +258,11 @@ jobs:
           name: workspace-build
           path: packages
 
+      - name: Link @enbox/protocols for api tests
+        run: |
+          mkdir -p packages/api/node_modules/@enbox
+          ln -sf ../../../protocols packages/api/node_modules/@enbox/protocols
+
       - name: Start Pkarr relay
         run: |
           docker run -d --name pkarr-relay -p 7527:15411 synonymsoft/pkarr pkarr-relay --testnet
