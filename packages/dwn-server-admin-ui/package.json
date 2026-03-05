@@ -33,6 +33,6 @@
   },
   "devDependencies": {
     "esbuild": "0.23.0",
-    "rimraf": "^5.0.5"
+    "rimraf": "5.0.7"
   }
 }
