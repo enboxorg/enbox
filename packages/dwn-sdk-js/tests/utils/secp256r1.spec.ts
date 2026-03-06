@@ -1,4 +1,5 @@
 import type { JwkParamsEcPublic } from '@enbox/crypto';
+import type { PublicKeyJwk } from '../../src/types/jose-types.js';
 
 import { base64url } from 'multiformats/bases/base64';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
@@ -16,7 +17,7 @@ describe('Secp256r1', () => {
         Secp256r1.validateKey({ ...validKey, kty: 'invalidKty' as any })
       ).toThrow(DwnErrorCode.Secp256r1KeyNotValid);
       expect(() =>
-        Secp256r1.validateKey({ ...validKey, crv: 'invalidCrv' as any })
+        Secp256r1.validateKey({ ...validKey, crv: 'invalidCrv' } as unknown as PublicKeyJwk)
       ).toThrow(DwnErrorCode.Secp256r1KeyNotValid);
     });
   });

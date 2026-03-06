@@ -194,7 +194,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : { ...this._recordProperties, ...messageParams },
-      dataStream    : new Blob([dataBytes], { type: 'application/json' }),
+      dataStream    : new Blob([dataBytes as BlobPart], { type: 'application/json' }),
       ...(encryptionActive ? { encryption: true } : {}),
     });
 

@@ -156,8 +156,8 @@ export async function createBep44PutMessage({ dnsPacket, publicKeyBytes, signer 
     throw new DidError(DidErrorCode.InvalidDidDocumentLength, `DNS packet exceeds the 1000 byte maximum size: ${bencodedData.length} bytes`);
   }
 
-  // Sign the BEP44 message.
-  const signature = await signer.sign({ data: bencodedData });
+  // Sign the BEP44 message. Wrap in Uint8Array since bencode returns Buffer.
+  const signature = await signer.sign({ data: new Uint8Array(bencodedData) });
 
   return { k: publicKeyBytes, seq: sequenceNumber, sig: signature, v: encodedDnsPacket };
 }
@@ -182,7 +182,7 @@ export async function parseBep44GetMessage({ bep44Message }: {
   const isValid = await Ed25519.verify({
     key       : publicKey,
     signature : bep44Message.sig,
-    data      : bencodedData
+    data      : new Uint8Array(bencodedData)
   });
 
   if (!isValid) {

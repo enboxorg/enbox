@@ -1247,7 +1247,7 @@ export class AgentDwnApi {
 
     if (isRecordsWrite(messageEntry) && messageEntry.data) {
       const dataBytes = await DataStream.toBytes(messageEntry.data);
-      dwnMessageWithBlob.data = new Blob([ dataBytes ], { type: messageEntry.message.descriptor.dataFormat });
+      dwnMessageWithBlob.data = new Blob([ dataBytes as BlobPart ], { type: messageEntry.message.descriptor.dataFormat });
     }
 
     return dwnMessageWithBlob;

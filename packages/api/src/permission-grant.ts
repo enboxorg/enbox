@@ -199,7 +199,7 @@ export class PermissionGrant implements PermissionGrantModel {
     target ??= this._connectedDid;
 
     const { encodedData, ...rawMessage } = this._message;
-    const dataStream = new Blob([ Convert.base64Url(encodedData).toUint8Array() ]);
+    const dataStream = new Blob([ Convert.base64Url(encodedData).toUint8Array() as BlobPart ]);
 
     const sendRequestOptions: SendDwnRequest<DwnInterface.RecordsWrite> = {
       messageType : DwnInterface.RecordsWrite,
@@ -224,7 +224,7 @@ export class PermissionGrant implements PermissionGrantModel {
    */
   async store(importGrant: boolean = false): Promise<DwnResponseStatus> {
     const { encodedData, ...rawMessage } = this.rawMessage;
-    const dataStream = new Blob([ Convert.base64Url(encodedData).toUint8Array() ]);
+    const dataStream = new Blob([ Convert.base64Url(encodedData).toUint8Array() as BlobPart ]);
 
     const { reply, message } = await this.agent.processDwnRequest({
       store       : true,
@@ -251,7 +251,7 @@ export class PermissionGrant implements PermissionGrantModel {
    */
   async import(store: boolean = false): Promise<DwnResponseStatus> {
     const { encodedData, ...rawMessage } = this.rawMessage;
-    const dataStream = new Blob([ Convert.base64Url(encodedData).toUint8Array() ]);
+    const dataStream = new Blob([ Convert.base64Url(encodedData).toUint8Array() as BlobPart ]);
 
     const { reply, message } = await this.agent.processDwnRequest({
       store,

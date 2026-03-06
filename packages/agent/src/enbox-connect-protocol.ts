@@ -559,7 +559,7 @@ async function createPermissionGrants(
       author      : selectedDid,
       target      : selectedDid,
       messageType : DwnInterface.RecordsWrite,
-      dataStream  : new Blob([data]),
+      dataStream  : new Blob([data as BlobPart]),
       rawMessage,
     });
 

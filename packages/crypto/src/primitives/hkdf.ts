@@ -100,7 +100,7 @@ export class Hkdf {
     const webCrypto = getWebcryptoSubtle() as SubtleCrypto;
 
     // Import the baseKeyBytes into the Web Crypto API to use for the key derivation operation.
-    const webCryptoKey = await webCrypto.importKey('raw', baseKeyBytes, { name: 'HKDF' }, false, ['deriveBits']);
+    const webCryptoKey = await webCrypto.importKey('raw', baseKeyBytes as BufferSource, { name: 'HKDF' }, false, ['deriveBits']);
 
     // Convert the salt and info to Uint8Array if they are provided as strings.
     const saltBytes = typeof salt === 'string' ? Convert.string(salt).toUint8Array() : salt;
@@ -108,7 +108,7 @@ export class Hkdf {
 
     // Derive the bytes using the Web Crypto API.
     const derivedKeyBuffer = await webCrypto.deriveBits(
-      { name: 'HKDF', hash, salt: saltBytes, info: infoBytes },
+      { name: 'HKDF', hash, salt: saltBytes as BufferSource, info: infoBytes as BufferSource },
       webCryptoKey,
       length
     );

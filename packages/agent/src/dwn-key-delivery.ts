@@ -174,7 +174,7 @@ export async function writeContextKeyRecord(
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : { ...contextKeyParams, dataCid, dataSize, encryptionInput },
-      dataStream    : new Blob([encryptedBytes]),
+      dataStream    : new Blob([encryptedBytes as BlobPart]),
     }));
   } else {
     // --- Fallback: encrypt to the owner's key (local self-delivery) ---

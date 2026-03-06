@@ -147,7 +147,7 @@ export class PermissionRequest implements PermissionRequestModel {
     target ??= this._connectedDid;
 
     const { encodedData, ...rawMessage } = this._message;
-    const dataStream = new Blob([ Convert.base64Url(encodedData).toUint8Array() ]);
+    const dataStream = new Blob([ Convert.base64Url(encodedData).toUint8Array() as BlobPart ]);
 
     const sendRequestOptions: SendDwnRequest<DwnInterface.RecordsWrite> = {
       messageType : DwnInterface.RecordsWrite,
@@ -172,7 +172,7 @@ export class PermissionRequest implements PermissionRequestModel {
    */
   async store(): Promise<DwnResponseStatus> {
     const { encodedData, ...rawMessage } = this.rawMessage;
-    const dataStream = new Blob([ Convert.base64Url(encodedData).toUint8Array() ]);
+    const dataStream = new Blob([ Convert.base64Url(encodedData).toUint8Array() as BlobPart ]);
 
     const { reply, message } = await this.agent.processDwnRequest({
       author      : this._connectedDid,
