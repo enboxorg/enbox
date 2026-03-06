@@ -21,6 +21,13 @@
     "resolveJsonModule": true,
     // required otherwise `ms` lib doesn't import
     "esModuleInterop": true,
+    // Restrict @types auto-discovery to only @types/node (global ambient types).
+    // Without this, TypeScript discovers ALL @types/* in node_modules — including
+    // hoisted packages like @types/mdx (from apps/docs) that break the build.
+    // Module-scoped @types (lodash, sinon, uuid) are still resolved via imports.
+    "types": ["node"],
+    // Protects against internal type errors in third-party .d.ts files (e.g.
+    // bun-types referencing Node types that don't resolve under all configs).
     "skipLibCheck": true
   },
   "typedocOptions": {
