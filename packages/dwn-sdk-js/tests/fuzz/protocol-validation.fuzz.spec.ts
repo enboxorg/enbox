@@ -7,6 +7,7 @@ import { describe, expect, it } from 'bun:test';
 import fc from 'fast-check';
 
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
+import { getTypeName } from '../../src/utils/protocols.js';
 import { verifySizeLimit, verifyType } from '../../src/core/protocol-authorization-validation.js';
 
 const numRuns = Number(process.env.FAST_CHECK_NUM_RUNS) || 100;
@@ -218,7 +219,10 @@ describe('Protocol validation — fuzz', () => {
           fc.string({ minLength: 1, maxLength: 20 }),
           fc.string({ minLength: 1, maxLength: 20 }),
           (declaredType, existingType) => {
-            if (declaredType === existingType) {
+            // Skip when the raw strings match OR when getTypeName() resolves
+            // declaredType to existingType (e.g. "/~" → "~"), since verifyType
+            // extracts the type name from the protocol path before comparing.
+            if (declaredType === existingType || getTypeName(declaredType) === existingType) {
               return;
             }
             const protocolTypes: ProtocolTypes = {
