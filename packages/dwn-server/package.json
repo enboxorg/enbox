@@ -66,14 +66,13 @@
     "eslint": "9.7.0",
     "eslint-plugin-todo-plz": "^1.3.0",
     "multiformats": "11.0.2",
-    "rimraf": "5.0.7",
     "sinon": "18.0.0",
     "typescript": "5.5.4"
   },
   "scripts": {
     "build:esm": "bun run clean && tsc",
     "build": "bun run clean && bun run build:esm",
-    "clean": "rimraf dist && rimraf generated/*",
+    "clean": "rm -rf dist && rm -rf generated/*",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "test:node": "bun test .test.ts",

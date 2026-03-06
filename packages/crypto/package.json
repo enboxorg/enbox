@@ -7,9 +7,9 @@
   "module": "./dist/esm/index.js",
   "types": "./dist/types/index.d.ts",
   "scripts": {
-    "clean": "rimraf dist",
-    "build:esm": "rimraf dist/esm dist/types && bun tsc -p tsconfig.json",
-    "build:browser": "rimraf dist/browser.mjs && bun ../../build/browser-bundle.js --extra-entry src/utils.ts:dist/utils.js",
+    "clean": "rm -rf dist",
+    "build:esm": "rm -rf dist/esm dist/types && bun tsc -p tsconfig.json",
+    "build:browser": "rm -rf dist/browser.mjs && bun ../../build/browser-bundle.js --extra-entry src/utils.ts:dist/utils.js",
     "build": "bun run clean && bun run build:esm && bun run build:browser",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
@@ -84,7 +84,6 @@
     "@vitest/coverage-istanbul": "4.0.18",
     "eslint": "9.7.0",
     "fast-check": "4.5.3",
-    "rimraf": "5.0.7",
     "typescript": "5.5.4",
     "vitest": "4.0.18"
   }
