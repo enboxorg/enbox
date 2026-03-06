@@ -7,7 +7,9 @@
   "scripts": {
     "prebuild:dwn": "bun run --filter @enbox/common build && bun run --filter @enbox/crypto build && bun run --filter @enbox/dids build && bun run --filter @enbox/dwn-sdk-js build && bun run --filter @enbox/dwn-clients build && bun run --filter @enbox/agent build && bun run --filter @enbox/dwn-sql-store build && bun run --filter @enbox/dwn-server build",
     "dev": "bun run prebuild:dwn && electrobun dev",
-    "build": "electrobun build"
+    "build": "electrobun build",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix --max-warnings 0"
   },
   "dependencies": {
     "@enbox/agent": "workspace:*",

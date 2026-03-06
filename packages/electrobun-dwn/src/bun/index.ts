@@ -11,7 +11,7 @@ import {
 import Electrobun, { BrowserWindow, Utils } from 'electrobun/bun';
 
 function selectPortCandidates(): number[] {
-  const envPort = Bun.env.DS_PORT;
+  const envPort = Bun.env['DS_PORT'];
   if (envPort) {
     const parsed = Number.parseInt(envPort, 10);
     if (Number.isInteger(parsed) && parsed > 0) {
@@ -24,11 +24,12 @@ function selectPortCandidates(): number[] {
 
 const webSocketSupport = (
   { on: true, off: false } as const
-)[process.env.DS_WEBSOCKET_SERVER ?? ''] ?? true;
+)[process.env['DS_WEBSOCKET_SERVER'] ?? ''] ?? true;
 
 function resolveDwnServerPackageJsonPath(): string {
-  if (process.env.DWN_SERVER_PACKAGE_JSON) {
-    return process.env.DWN_SERVER_PACKAGE_JSON;
+  const envPath = process.env['DWN_SERVER_PACKAGE_JSON'];
+  if (envPath) {
+    return envPath;
   }
 
   try {
@@ -45,26 +46,36 @@ function resolveDwnServerPackageJsonPath(): string {
   return '/dwn-server/package.json';
 }
 
-function createDwnServerConfig(port: number): DwnServerConfig {
+/**
+ * Build a partial DwnServerConfig for the local desktop server.
+ *
+ * Only the properties relevant to local operation are set here; the
+ * remaining fields (rate-limiting, admin UI, provider-auth, etc.)
+ * keep their defaults from the dwn-server `config` module.
+ */
+function createDwnServerConfig(port: number): Partial<DwnServerConfig> {
   return {
-    serverName            : process.env.DWN_SERVER_PACKAGE_NAME || '@enbox/dwn-server',
-    baseUrl               : process.env.DWN_BASE_URL || `http://127.0.0.1:${port}`,
+    serverName        : process.env['DWN_SERVER_PACKAGE_NAME'] || '@enbox/dwn-server',
+    baseUrl           : process.env['DWN_BASE_URL'] || `http://127.0.0.1:${port}`,
     port,
-    ttlCacheUrl           : process.env.DWN_TTL_CACHE_URL || 'sqlite://',
-    packageJsonPath       : resolveDwnServerPackageJsonPath(),
-    maxRecordDataSize     : 1_073_741_824, // 1 GB
+    ttlCacheUrl       : process.env['DWN_TTL_CACHE_URL'] || 'sqlite://',
+    packageJsonPath   : resolveDwnServerPackageJsonPath(),
+    maxRecordDataSize : 1_073_741_824, // 1 GB
     webSocketSupport,
-    eventLogPluginPath    : process.env.DWN_EVENT_LOG_PLUGIN_PATH || process.env.DWN_EVENT_STREAM_PLUGIN_PATH,
-    messageStore          : process.env.DWN_STORAGE_MESSAGES || process.env.DWN_STORAGE || 'level://data',
-    dataStore             : process.env.DWN_STORAGE_DATA || process.env.DWN_STORAGE || 'level://data',
-    stateIndex            : process.env.DWN_STORAGE_STATE_INDEX || process.env.DWN_STORAGE || 'level://data',
-    resumableTaskStore    : process.env.DWN_STORAGE_RESUMABLE_TASKS || process.env.DWN_STORAGE || 'level://data',
-    registrationStoreUrl  : process.env.DWN_REGISTRATION_STORE_URL || process.env.DWN_STORAGE,
-    registrationProofOfWorkSeed            : process.env.DWN_REGISTRATION_PROOF_OF_WORK_SEED,
-    registrationProofOfWorkEnabled         : process.env.DWN_REGISTRATION_PROOF_OF_WORK_ENABLED === 'true',
-    registrationProofOfWorkInitialMaxHash  : process.env.DWN_REGISTRATION_PROOF_OF_WORK_INITIAL_MAX_HASH,
-    termsOfServiceFilePath                 : process.env.DWN_TERMS_OF_SERVICE_FILE_PATH,
-    logLevel              : process.env.DWN_SERVER_LOG_LEVEL || 'INFO',
+
+    eventLogPluginPath : process.env['DWN_EVENT_LOG_PLUGIN_PATH'] || process.env['DWN_EVENT_STREAM_PLUGIN_PATH'],
+    messageStore       : process.env['DWN_STORAGE_MESSAGES'] || process.env['DWN_STORAGE'] || 'level://data',
+    dataStore          : process.env['DWN_STORAGE_DATA'] || process.env['DWN_STORAGE'] || 'level://data',
+    stateIndex         : process.env['DWN_STORAGE_STATE_INDEX'] || process.env['DWN_STORAGE'] || 'level://data',
+    resumableTaskStore : process.env['DWN_STORAGE_RESUMABLE_TASKS'] || process.env['DWN_STORAGE'] || 'level://data',
+
+    registrationStoreUrl                  : process.env['DWN_REGISTRATION_STORE_URL'] || process.env['DWN_STORAGE'],
+    registrationProofOfWorkSeed           : process.env['DWN_REGISTRATION_PROOF_OF_WORK_SEED'],
+    registrationProofOfWorkEnabled        : process.env['DWN_REGISTRATION_PROOF_OF_WORK_ENABLED'] === 'true',
+    registrationProofOfWorkInitialMaxHash : process.env['DWN_REGISTRATION_PROOF_OF_WORK_INITIAL_MAX_HASH'],
+    termsOfServiceFilePath                : process.env['DWN_TERMS_OF_SERVICE_FILE_PATH'],
+
+    logLevel: process.env['DWN_SERVER_LOG_LEVEL'] || 'INFO',
 
     // Forward writes to the tenant's remote DWN endpoints listed in their
     // DID document, ensuring the local node is not a dead-end silo.
@@ -114,7 +125,7 @@ let selectedPort: number | undefined;
 let dwnServer: InstanceType<typeof DwnServer> | undefined;
 
 for (const port of portCandidates) {
-  const candidateServer = new DwnServer({ config: createDwnServerConfig(port) });
+  const candidateServer = new DwnServer({ config: createDwnServerConfig(port) as DwnServerConfig });
   try {
     await candidateServer.start();
     selectedPort = port;
@@ -122,7 +133,7 @@ for (const port of portCandidates) {
     break;
   } catch (error) {
     const isAddressInUse = isAddressInUseError(error);
-    if (!isAddressInUse || Bun.env.DS_PORT) {
+    if (!isAddressInUse || Bun.env['DS_PORT']) {
       throw error;
     }
 
@@ -206,7 +217,7 @@ async function shutdown(): Promise<void> {
   }
 
   try {
-    await dwnServer.stop();
+    await dwnServer!.stop();
   } catch (error) {
     console.error('[electrobun-dwn] Failed to stop DWN server cleanly', error);
   }
