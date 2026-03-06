@@ -20,7 +20,8 @@
     // allows us to import json files
     "resolveJsonModule": true,
     // required otherwise `ms` lib doesn't import
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "skipLibCheck": true
   },
   "typedocOptions": {
     "entryPoints": [
