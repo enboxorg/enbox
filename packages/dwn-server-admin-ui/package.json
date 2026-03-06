@@ -27,9 +27,9 @@
     "test:node": "echo 'no tests configured'"
   },
   "dependencies": {
-    "@simplewebauthn/browser": "^13.2.2",
-    "preact": "^10.25.0",
-    "preact-router": "^4.1.2"
+    "@simplewebauthn/browser": "13.2.2",
+    "preact": "10.25.0",
+    "preact-router": "4.1.2"
   },
   "devDependencies": {
     "esbuild": "0.23.0"
