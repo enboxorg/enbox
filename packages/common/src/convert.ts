@@ -81,11 +81,11 @@ export class Convert {
     switch (this.format) {
 
       case 'Base58Btc': {
-        return base58btc.baseDecode(this.data).buffer;
+        return base58btc.baseDecode(this.data).buffer as ArrayBuffer;
       }
 
       case 'Base64Url': {
-        return base64url.baseDecode(this.data).buffer;
+        return base64url.baseDecode(this.data).buffer as ArrayBuffer;
       }
 
       case 'BufferSource': {
@@ -97,10 +97,10 @@ export class Convert {
           // Data is a DataView or a different TypedArray (e.g., Uint16Array).
           if (isArrayBufferSlice(this.data)) {
             // Data is a slice of an ArrayBuffer. Return a new ArrayBuffer or ArrayBufferView of the same slice.
-            return this.data.buffer.slice(this.data.byteOffset, this.data.byteOffset + this.data.byteLength);
+            return this.data.buffer.slice(this.data.byteOffset, this.data.byteOffset + this.data.byteLength) as ArrayBuffer;
           } else {
             // Data is a whole ArrayBuffer viewed as a different TypedArray or DataView. Return the whole ArrayBuffer.
-            return this.data.buffer;
+            return this.data.buffer as ArrayBuffer;
           }
         } else {
           throw new TypeError(`${this.format} value is not of type: ArrayBuffer, DataView, or TypedArray.`);
@@ -108,15 +108,15 @@ export class Convert {
       }
 
       case 'Hex': {
-        return this.toUint8Array().buffer;
+        return this.toUint8Array().buffer as ArrayBuffer;
       }
 
       case 'String': {
-        return this.toUint8Array().buffer;
+        return this.toUint8Array().buffer as ArrayBuffer;
       }
 
       case 'Uint8Array': {
-        return this.data.buffer;
+        return this.data.buffer as ArrayBuffer;
       }
 
       default:
