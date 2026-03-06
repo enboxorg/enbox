@@ -88,11 +88,8 @@
   },
   "devDependencies": {
     "@stylistic/eslint-plugin": "2.13.0",
-    "@types/flat": "5.0.2",
     "@types/lodash": "4.14.179",
-    "@types/ms": "0.7.34",
     "@types/node": "22.19.15",
-    "@types/secp256k1": "4.0.3",
     "@types/sinon": "17.0.3",
     "@types/uuid": "9.0.1",
     "@typescript-eslint/eslint-plugin": "8.32.1",

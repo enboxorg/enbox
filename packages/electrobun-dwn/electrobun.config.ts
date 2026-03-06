@@ -15,7 +15,6 @@ export default {
     },
     copy: {
       'src/mainview/index.html' : 'views/mainview/index.html',
-      'src/mainview/index.css'  : 'views/mainview/index.css',
     },
     mac: {
       bundleCEF: false,

@@ -1,3 +1,5 @@
+import 'reflect-metadata';
+
 import type { DwnServerConfig } from '@enbox/dwn-server';
 
 import {
@@ -155,9 +157,13 @@ const capabilities = webSocketSupport ? ['http', 'ws'] : ['http'];
 await discoveryFile.write({ endpoint: serverEndpoint, pid: process.pid, capabilities });
 console.log(`[electrobun-dwn] Discovery file written: ${discoveryFile.path}`);
 
+// Note: electrobun's views:// protocol handler does not strip query
+// parameters before resolving the file path, so passing ?endpoint=...
+// causes a "file not found" error.  The mainview discovers the server
+// endpoint by probing well-known ports via fetch('/info').
 const mainWindow = new BrowserWindow({
   title : 'Enbox DWN Server',
-  url   : `views://mainview/index.html?endpoint=${encodeURIComponent(serverEndpoint)}`,
+  url   : 'views://mainview/index.html',
   frame : {
     width  : 860,
     height : 620,
