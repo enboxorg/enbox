@@ -1,14 +1,12 @@
 /**
  * Mainview UI for the Electrobun DWN desktop app.
  *
- * The bun process passes the resolved server endpoint via the `endpoint`
- * query parameter when constructing the BrowserWindow URL. This avoids
- * duplicate port-probing that was previously needed.
+ * Discovers the running DWN server by probing well-known ports on
+ * `127.0.0.1` and fetching `/info`. A query-parameter shortcut is
+ * supported as a future optimization if electrobun's `views://`
+ * protocol handler gains query-string stripping.
  *
- * A fallback probe is retained for defensive robustness in case the query
- * parameter is ever missing.
- *
- * Keep fallback port list in sync with `localDwnPortCandidates` and
+ * Keep port list in sync with `localDwnPortCandidates` and
  * `localDwnHostCandidates` in `@enbox/agent/src/local-dwn.ts`.
  */
 
@@ -71,7 +69,7 @@ async function resolveServerEndpoint(): Promise<string> {
     return fromParam;
   }
 
-  // Fallback: probe ports (should rarely be needed).
+  // Primary path: probe ports to find the running DWN server.
   return detectLocalDwnBaseUrl();
 }
 
@@ -102,16 +100,15 @@ function setText(id: string, value: string | undefined): void {
 }
 
 /**
- * Initialize the UI: resolve the server endpoint, fetch `/info`, and populate
- * all status elements.
+ * Update all UI elements with the resolved server info.
  */
-async function initUI(): Promise<void> {
+function applyServerInfo(
+  baseUrl: string,
+  info: ServerInfo | null,
+): void {
   const statusDot = document.getElementById('status-dot');
   const statusText = document.getElementById('status');
   const serverUrlEl = document.querySelector<HTMLAnchorElement>('#server-url');
-
-  const baseUrl = await resolveServerEndpoint();
-  const info = await fetchServerInfo(baseUrl);
 
   if (info) {
     // Server is reachable — show online state.
@@ -148,6 +145,36 @@ async function initUI(): Promise<void> {
     setText('server-version', '--');
     setText('ws-support', '--');
   }
+}
+
+const MAX_RETRIES = 5;
+const RETRY_DELAY_MS = 800;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Initialize the UI: resolve the server endpoint, fetch `/info` (with
+ * retries to handle race conditions on startup), and populate all
+ * status elements.
+ */
+async function initUI(): Promise<void> {
+  const baseUrl = await resolveServerEndpoint();
+
+  // The DWN server should be running before the webview loads, but
+  // retry a few times in case the HTTP listener isn't ready yet.
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const info = await fetchServerInfo(baseUrl);
+    if (info) {
+      applyServerInfo(baseUrl, info);
+      return;
+    }
+    await delay(RETRY_DELAY_MS);
+  }
+
+  // All retries exhausted — show offline state.
+  applyServerInfo(baseUrl, null);
 }
 
 void initUI();
