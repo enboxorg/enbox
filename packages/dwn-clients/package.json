@@ -6,8 +6,8 @@
   "module": "./dist/esm/index.js",
   "types": "./dist/types/index.d.ts",
   "scripts": {
-    "clean": "rimraf dist",
-    "build:esm": "rimraf dist/esm dist/types && bun tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "build:esm": "rm -rf dist/esm dist/types && bun tsc -p tsconfig.json",
     "build": "bun run clean && bun run build:esm",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
@@ -59,7 +59,6 @@
     "@typescript-eslint/parser": "8.32.1",
     "bun-types": "latest",
     "eslint": "9.7.0",
-    "rimraf": "5.0.7",
     "sinon": "18.0.0",
     "typescript": "5.5.4"
   }

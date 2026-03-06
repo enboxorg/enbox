@@ -20,7 +20,7 @@
     "./dist/*": "./dist/*"
   },
   "scripts": {
-    "clean": "rimraf dist",
+    "clean": "rm -rf dist",
     "build": "bun run clean && bun run build:bundle",
     "build:bundle": "bun run scripts/build.ts",
     "lint": "echo 'no lint configured'",
@@ -32,7 +32,6 @@
     "preact-router": "^4.1.2"
   },
   "devDependencies": {
-    "esbuild": "0.23.0",
-    "rimraf": "5.0.7"
+    "esbuild": "0.23.0"
   }
 }

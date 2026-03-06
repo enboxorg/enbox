@@ -49,13 +49,12 @@
     "mysql2": "3.9.8",
     "pg": "8.11.2",
     "pg-cursor": "2.10.2",
-    "rimraf": "5.0.7",
     "typescript": "5.5.4"
   },
   "scripts": {
     "build:esm": "bun run clean && tsc",
     "build": "bun run clean && bun run build:esm",
-    "clean": "rimraf dist compiled",
+    "clean": "rm -rf dist compiled",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "test": "bun test --timeout 10000 .spec.ts",
