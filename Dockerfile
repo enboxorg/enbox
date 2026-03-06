@@ -39,6 +39,8 @@ COPY packages/browser/package.json           packages/browser/
 COPY packages/electrobun-dwn/package.json    packages/electrobun-dwn/
 COPY packages/protocols/package.json         packages/protocols/
 COPY packages/protocol-codegen/package.json  packages/protocol-codegen/
+COPY design/package.json                     design/
+COPY apps/docs/package.json                  apps/docs/
 
 RUN bun install --frozen-lockfile
 
@@ -84,6 +86,8 @@ COPY packages/browser/package.json           packages/browser/
 COPY packages/electrobun-dwn/package.json    packages/electrobun-dwn/
 COPY packages/protocols/package.json         packages/protocols/
 COPY packages/protocol-codegen/package.json  packages/protocol-codegen/
+COPY design/package.json                     design/
+COPY apps/docs/package.json                  apps/docs/
 
 # Build packages in dependency order.
 # common -> crypto -> dids -> dwn-sdk-js -> dwn-sql-store, dwn-clients, admin-ui -> dwn-server

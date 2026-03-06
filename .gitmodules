@@ -6,4 +6,4 @@
 	url = https://github.com/enboxorg/dapp-demo.git
 [submodule "design"]
 	path = design
-	url = git@github.com:enboxorg/design.git
+	url = https://github.com/enboxorg/design.git
