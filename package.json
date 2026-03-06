@@ -23,6 +23,7 @@
   "scripts": {
     "clean": "bun run clean:modules && bun run clean:data && bun run --filter '*' clean",
     "clean:modules": "find . -name 'node_modules' -type d -prune -exec rm -rf '{}' +",
+    "clean:all": "bun run clean && bun pm cache rm && rm -rf .turbo packages/*/.turbo",
     "clean:data": "rm -rf data/ data-test/ __TESTDATA__/ TEST-DATASTORE TEST-MESSAGESTORE TEST-EVENTLOG TEST-RESUMABLE-TASK-STORE TEST-INDEX BENCHMARK-INDEX BENCHMARK-BLOCK DATASTORE MESSAGESTORE EVENTLOG RESOLVERCACHE RESUMABLE-TASK-STORE INDEX DATA/ && find . -name '*.sqlite' -o -name '*.db' -o -name 'dwn.db' | xargs rm -f",
     "build": "turbo run build --filter='!@enbox/docs'",
     "build:ci": "./scripts/ci-setup.sh",
