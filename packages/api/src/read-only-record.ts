@@ -93,7 +93,7 @@ export class ReadOnlyRecord {
 
     if (encodedData) {
       this._encodedData = new Blob(
-        [Convert.base64Url(encodedData).toUint8Array()],
+        [Convert.base64Url(encodedData).toUint8Array() as BlobPart],
         { type: this.dataFormat },
       );
     }
@@ -209,7 +209,7 @@ export class ReadOnlyRecord {
     const self = this;
     const dataObj = {
       async blob(): Promise<Blob> {
-        return new Blob([await Stream.consumeToBytes({ readableStream: await this.stream() })], { type: self.dataFormat });
+        return new Blob([await Stream.consumeToBytes({ readableStream: await this.stream() }) as BlobPart], { type: self.dataFormat });
       },
 
       async bytes(): Promise<Uint8Array> {

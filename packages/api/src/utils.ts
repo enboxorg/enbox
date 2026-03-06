@@ -83,7 +83,7 @@ export function dataToBlob(data: any, dataFormat?: string): {
   } else if (dataFormat === 'application/json' || detectedType === 'Object') {
     detectedMimeType = 'application/json';
     const dataBytes = Convert.object(data).toUint8Array();
-    dataBlob = new Blob([dataBytes], { type: detectedMimeType });
+    dataBlob = new Blob([dataBytes as BlobPart], { type: detectedMimeType });
   } else if (detectedType === 'Uint8Array' || detectedType === 'ArrayBuffer') {
     detectedMimeType = 'application/octet-stream';
     dataBlob = new Blob([data], { type: detectedMimeType });

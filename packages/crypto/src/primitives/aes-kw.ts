@@ -189,7 +189,7 @@ export class AesKw {
     // Unwrap the key using the Web Crypto API.
     const unwrappedCryptoKey = await webCrypto.unwrapKey(
       'raw', // output format
-      wrappedKeyBytes.buffer, // key to unwrap
+      wrappedKeyBytes.buffer as ArrayBuffer, // key to unwrap
       decryptionCryptoKey, // unwrapping key
       'AES-KW', // algorithm identifier
       { name: webCryptoAlgorithm }, // unwrapped key algorithm identifier

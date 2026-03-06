@@ -128,7 +128,7 @@ export function createRecordData(streamFn: () => Promise<ReadableStream>, dataFo
      * @beta
      */
     async blob(): Promise<Blob> {
-      return new Blob([await getBytes()], { type: dataFormat });
+      return new Blob([await getBytes() as BlobPart], { type: dataFormat });
     },
 
     /**

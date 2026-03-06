@@ -302,7 +302,7 @@ export class Record implements RecordModel {
       // type is Base64 URL encoded string if the Record object was instantiated by dwn.records.query().
       // If it is a string, we need to Base64 URL decode to bytes and instantiate a Blob.
       this._encodedData = (typeof options.encodedData === 'string') ?
-        new Blob([Convert.base64Url(options.encodedData).toUint8Array()], { type: this.dataFormat }) :
+        new Blob([Convert.base64Url(options.encodedData).toUint8Array() as BlobPart], { type: this.dataFormat }) :
         options.encodedData;
     }
 

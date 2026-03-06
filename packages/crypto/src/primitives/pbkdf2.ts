@@ -192,7 +192,7 @@ export class Pbkdf2 {
     // Import the password as a raw key for use with the Web Crypto API.
     const webCryptoKey = await webCrypto.importKey(
       'raw', // key format is raw bytes
-      baseKeyBytes, // key data to import
+      baseKeyBytes as BufferSource, // key data to import
       { name: 'PBKDF2' }, // algorithm identifier
       false, // key is not extractable
       ['deriveBits'] // key usages
@@ -200,7 +200,7 @@ export class Pbkdf2 {
 
     // Derive the bytes using the Web Crypto API.
     const derivedKeyBuffer = await webCrypto.deriveBits(
-      { name: 'PBKDF2', hash, salt, iterations },
+      { name: 'PBKDF2', hash, salt: salt as BufferSource, iterations },
       webCryptoKey,
       length
     );

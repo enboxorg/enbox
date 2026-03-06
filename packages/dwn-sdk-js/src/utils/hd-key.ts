@@ -85,7 +85,7 @@ export class HdKey {
     const webCrypto = getWebcryptoSubtle() as SubtleCrypto;
 
     // Import the `initialKeyMaterial` into the Web Crypto API to use for the key derivation operation.
-    const webCryptoKey = await webCrypto.importKey('raw', initialKeyMaterial, { name: 'HKDF' }, false, ['deriveBits']);
+    const webCryptoKey = await webCrypto.importKey('raw', initialKeyMaterial as BufferSource, { name: 'HKDF' }, false, ['deriveBits']);
 
     // Derive the bytes using the Web Crypto API.
     const derivedKeyBuffer = await crypto.subtle.deriveBits(
@@ -93,7 +93,7 @@ export class HdKey {
         name : 'HKDF',
         hash : hashAlgorithm,
         salt : new Uint8Array(0), // `info` should be sufficient in our use case
-        info
+        info : info as BufferSource
       },
       webCryptoKey,
       keyLengthInBytes * 8 // convert from bytes to bits

@@ -263,7 +263,7 @@ export class AgentPermissionsApi implements PermissionsApi {
       target      : author,
       messageType : DwnInterface.RecordsWrite,
       messageParams,
-      dataStream  : new Blob([ permissionsGrantBytes ])
+      dataStream  : new Blob([ permissionsGrantBytes as BlobPart ])
     });
 
     if (reply.status.code !== 202) {
@@ -309,7 +309,7 @@ export class AgentPermissionsApi implements PermissionsApi {
       target      : author,
       messageType : DwnInterface.RecordsWrite,
       messageParams,
-      dataStream  : new Blob([ permissionRequestBytes ])
+      dataStream  : new Blob([ permissionRequestBytes as BlobPart ])
     });
 
     if (reply.status.code !== 202) {
@@ -352,7 +352,7 @@ export class AgentPermissionsApi implements PermissionsApi {
       target      : author,
       messageType : DwnInterface.RecordsWrite,
       messageParams,
-      dataStream  : new Blob([ permissionRevocationBytes ])
+      dataStream  : new Blob([ permissionRevocationBytes as BlobPart ])
     });
 
     if (reply.status.code !== 202) {

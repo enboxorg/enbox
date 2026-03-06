@@ -12,6 +12,19 @@ import { verifySizeLimit, verifyType } from '../../src/core/protocol-authorizati
 const numRuns = Number(process.env.FAST_CHECK_NUM_RUNS) || 100;
 
 /**
+ * Generator for a single protocol path segment (also a valid type name).
+ * Matches the JSON schema constraint for a single segment: `[a-zA-Z]+`.
+ */
+const protocolSegment = fc.stringMatching(/^[a-zA-Z]{1,20}$/);
+
+/**
+ * Generator for a valid protocolPath string.
+ * Matches the JSON schema regex: `^[a-zA-Z]+(\/[a-zA-Z]+)*$`
+ * e.g. "thread", "thread/comment", "note/attachment/thumbnail"
+ */
+const protocolPath = fc.stringMatching(/^[a-zA-Z]{1,20}(\/[a-zA-Z]{1,20}){0,2}$/);
+
+/**
  * Builds a minimal RecordsWrite stub for verifySizeLimit testing.
  */
 function stubRecordsWrite(dataSize: number): RecordsWrite {
@@ -215,10 +228,13 @@ describe('Protocol validation — fuzz', () => {
     it('should reject when typeName is not in protocolTypes', () => {
       fc.assert(
         fc.property(
-          fc.string({ minLength: 1, maxLength: 20 }),
-          fc.string({ minLength: 1, maxLength: 20 }),
+          protocolPath,
+          protocolSegment,
           (declaredType, existingType) => {
-            if (declaredType === existingType) {
+            // verifyType extracts the last path segment via getTypeName(),
+            // so "thread/comment" resolves to "comment" for the type lookup.
+            const resolvedType = declaredType.split('/').slice(-1)[0];
+            if (resolvedType === existingType) {
               return;
             }
             const protocolTypes: ProtocolTypes = {
