@@ -6,8 +6,8 @@
  * supported as a future optimization if electrobun's `views://`
  * protocol handler gains query-string stripping.
  *
- * Keep port list in sync with `localDwnPortCandidates` and
- * `localDwnHostCandidates` in `@enbox/agent/src/local-dwn.ts`.
+ * The port list below is the same set used by the bun process in
+ * `electrobun-dwn/src/bun/index.ts` for server port selection.
  */
 
 const candidatePorts = [3000, 55500, 55501, 55502, 55503, 55504, 55505, 55506, 55507, 55508, 55509];

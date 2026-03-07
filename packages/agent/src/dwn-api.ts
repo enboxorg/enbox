@@ -257,8 +257,8 @@ export class AgentDwnApi {
     if (this._localDwnStrategy === 'only') {
       if (!localDwnEndpoint) {
         throw new Error(
-          `AgentDwnApi: Local DWN strategy is 'only' but no local server is available ` +
-          `on 127.0.0.1:{3000,55500-55509}`
+          `AgentDwnApi: Local DWN strategy is 'only' but no local DWN endpoint was discovered. ` +
+          `Ensure the local DWN server is running and discoverable via the discovery file (~/.enbox/dwn.json) or dwn://connect.`
         );
       }
 

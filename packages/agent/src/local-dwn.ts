@@ -7,10 +7,11 @@
  * 2. **Discovery file** (`~/.enbox/dwn.json`) — written by `electrobun-dwn`
  *    on startup. Fast filesystem read, no network. Available for CLI and
  *    native apps; skipped in browsers.
- * 3. **Port probing** (fallback) — sequential HTTP `GET /info` on well-known
- *    localhost ports. Works everywhere but is slower.
+ * 3. **Injected endpoint** — in browsers, the `dwn://connect` redirect
+ *    flow delivers the endpoint, which is injected via
+ *    {@link LocalDwnDiscovery.setCachedEndpoint | setCachedEndpoint()}.
  *
- * @see https://github.com/enboxorg/enbox/issues/585
+ * @see https://github.com/enboxorg/enbox/issues/677
  * @module
  */
 
@@ -19,30 +20,10 @@ import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { DwnDiscoveryFile } from './dwn-discovery-file.js';
 
 /**
- * Well-known ports the local DWN desktop app may bind to.
- *
- * Per the DWN Transport Spec, clients probe ports `55500` through `55509`
- * (inclusive). Port `3000` is included as a development convenience.
- *
- * @see https://identity.foundation/dwn-transport/#port-probing
- */
-export const localDwnPortCandidates = [3000, 55500, 55501, 55502, 55503, 55504, 55505, 55506, 55507, 55508, 55509] as const;
-
-/**
- * Hosts probed when discovering a local DWN server.
- *
- * Per the DWN Transport Spec, clients MUST use `127.0.0.1` rather than
- * `localhost` to avoid DNS resolution ambiguity.
- *
- * @see https://identity.foundation/dwn-transport/#port-probing
- */
-export const localDwnHostCandidates = ['127.0.0.1'] as const;
-
-/**
  * Controls how the agent discovers and routes to a local DWN server.
  *
  * - `'off'`    — (default) skip local discovery entirely.
- * - `'prefer'` — probe localhost first; fall back to DID-document endpoints.
+ * - `'prefer'` — try local DWN first; fall back to DID-document endpoints.
  * - `'only'`   — require a local server; throw if none is found.
  */
 export type LocalDwnStrategy = 'prefer' | 'only' | 'off';
@@ -61,7 +42,7 @@ export function normalizeBaseUrl(url: string): string {
  * Results are cached for {@link _cacheTtlMs} milliseconds (default 10 s) to
  * avoid repeated I/O on hot paths such as sync.
  *
- * @example Discovery with file-based channel
+ * @example Discovery with file-based channel (CLI / native)
  * ```ts
  * import { DwnDiscoveryFile } from './dwn-discovery-file.js';
  *
@@ -95,7 +76,14 @@ export class LocalDwnDiscovery {
    * 2. `~/.enbox/dwn.json` discovery file (if a {@link DwnDiscoveryFile}
    *    was provided). The endpoint from the file is validated via
    *    `GET /info` to ensure the server is still running.
-   * 3. Sequential port probing on well-known localhost ports (fallback).
+   *
+   * If neither channel finds an endpoint, the result (`undefined`) is
+   * cached to avoid repeated discovery file reads on hot paths.
+   *
+   * In browser environments (where no discovery file is available), the
+   * endpoint must be injected externally via
+   * {@link setCachedEndpoint | setCachedEndpoint()} — typically after a
+   * `dwn://connect` redirect delivers the endpoint in the URL fragment.
    */
   public async getEndpoint(): Promise<string | undefined> {
     const now = Date.now();
@@ -103,18 +91,17 @@ export class LocalDwnDiscovery {
       return this._cachedEndpoint;
     }
 
-    // Channel 1: file-based discovery.
+    // File-based discovery (CLI / native — skipped when no file is configured).
     const fileEndpoint = await this._tryDiscoveryFile();
     if (fileEndpoint !== undefined) {
       this._setCacheEntry(fileEndpoint, now);
       return fileEndpoint;
     }
 
-    // Channel 2: sequential port probing (fallback).
-    const probeEndpoint = await this._probePortCandidates();
-    // Cache both positive and negative results.
-    this._setCacheEntry(probeEndpoint, now);
-    return probeEndpoint;
+    // No endpoint found. Cache the negative result to avoid repeated
+    // discovery file reads within the TTL window.
+    this._setCacheEntry(undefined, now);
+    return undefined;
   }
 
   /**
@@ -142,7 +129,7 @@ export class LocalDwnDiscovery {
     this._cacheExpiry = 0;
   }
 
-  // ─── Private discovery channels ────────────────────────────────
+  // ─── Private ──────────────────────────────────────────────────
 
   /**
    * Try the `~/.enbox/dwn.json` discovery file. Returns the endpoint if
@@ -166,24 +153,6 @@ export class LocalDwnDiscovery {
     } catch {
       return undefined;
     }
-  }
-
-  /**
-   * Sequential HTTP probe on well-known localhost port candidates.
-   * Returns the first endpoint whose `GET /info` response identifies
-   * as `@enbox/dwn-server`, or `undefined` if none is found.
-   */
-  private async _probePortCandidates(): Promise<string | undefined> {
-    for (const port of localDwnPortCandidates) {
-      for (const host of localDwnHostCandidates) {
-        const endpoint = `http://${host}:${port}`;
-        const valid = await this._validateEndpoint(endpoint);
-        if (valid) {
-          return normalizeBaseUrl(endpoint);
-        }
-      }
-    }
-    return undefined;
   }
 
   /**
