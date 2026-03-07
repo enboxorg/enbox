@@ -185,7 +185,7 @@ describe('AgentDwnApi', () => {
     it('should use the local DWN endpoint if available even when DID #dwn dereference fails', async () => {
       const mockAgent = createMockAgent();
       mockAgent.did.dereference.rejects(new Error('DID dereference failed'));
-      mockAgent.rpc.getServerInfo.onFirstCall().resolves({ server: '@enbox/dwn-server' });
+      mockAgent.rpc.getServerInfo.resolves({ server: '@enbox/dwn-server' });
 
       const dwnApi = new AgentDwnApi({
         agent            : mockAgent,
@@ -193,10 +193,12 @@ describe('AgentDwnApi', () => {
         localDwnStrategy : 'prefer',
       });
 
+      // Inject a local endpoint (replaces the old port-probing path).
+      await dwnApi.setCachedLocalDwnEndpoint('http://127.0.0.1:3000');
+
       const endpoints = await dwnApi.getDwnEndpointUrlsForTarget(localDid);
 
       expect(endpoints).toEqual(['http://127.0.0.1:3000']);
-      expect(mockAgent.rpc.getServerInfo.callCount).toBe(1);
       expect(mockAgent.did.dereference.callCount).toBe(1);
     });
 
@@ -235,13 +237,16 @@ describe('AgentDwnApi', () => {
       mockAgent.did.dereference.resolves(
         createDerefResult(localDid, ['https://remote-a.example', 'https://remote-b.example'])
       );
-      mockAgent.rpc.getServerInfo.onFirstCall().resolves({ server: '@enbox/dwn-server' });
+      mockAgent.rpc.getServerInfo.resolves({ server: '@enbox/dwn-server' });
 
       const dwnApi = new AgentDwnApi({
         agent            : mockAgent,
         dwn              : {} as Dwn,
         localDwnStrategy : 'prefer',
       });
+
+      // Inject a local endpoint (replaces the old port-probing path).
+      await dwnApi.setCachedLocalDwnEndpoint('http://127.0.0.1:3000');
 
       const endpoints = await dwnApi.getDwnEndpointUrlsForTarget(localDid);
 
@@ -250,7 +255,6 @@ describe('AgentDwnApi', () => {
         'https://remote-a.example',
         'https://remote-b.example',
       ]);
-      expect(mockAgent.rpc.getServerInfo.callCount).toBe(1);
       expect(mockAgent.did.dereference.callCount).toBe(1);
     });
 
