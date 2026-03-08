@@ -457,7 +457,9 @@ export class AgentDwnApi {
       );
     } else {
       // Remote mode: route through RPC to the local DWN server.
-      // Convert ReadableStream → Blob for the RPC transport.
+      // TODO(#713): This buffers the entire stream into memory before
+      // re-streaming it over HTTP. The RPC transport should accept a
+      // ReadableStream directly to avoid the extra copy.
       let data: Blob | undefined;
       if (dataStream) {
         const bytes = await DataStream.toBytes(dataStream);
@@ -511,7 +513,9 @@ export class AgentDwnApi {
       return this._dwn.processMessage(tenant, message, { dataStream: options?.dataStream });
     }
 
-    // Remote mode: convert ReadableStream → Blob for RPC transport.
+    // TODO(#713): This buffers the entire stream into memory before
+    // re-streaming it over HTTP. The RPC transport should accept a
+    // ReadableStream directly to avoid the extra copy.
     let data: Blob | undefined;
     if (options?.dataStream) {
       const bytes = await DataStream.toBytes(options.dataStream);
