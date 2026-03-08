@@ -86,8 +86,9 @@ import {
   writeContextKeyRecord as writeContextKeyRecordFn,
 } from './dwn-key-delivery.js';
 
-// Import extracted record upgrade function
-import { upgradeExternalRootRecord as upgradeExternalRootRecordFn } from './dwn-record-upgrade.js';
+// NOTE: upgradeExternalRootRecord is disabled — see TODO in postWriteKeyDelivery().
+// The module is kept for reference but no longer imported.
+// import { upgradeExternalRootRecord as upgradeExternalRootRecordFn } from './dwn-record-upgrade.js';
 
 // Import extracted protocol definition fetching functions
 import {
@@ -547,17 +548,31 @@ export class AgentDwnApi {
       const isMultiParty = isMultiPartyContextFn(protocolDefinition, rootPathSegment);
 
       if (isExternallyAuthored && isRootRecord && isMultiParty) {
-        try {
-          await upgradeExternalRootRecordFn(
-            this.agent, request.target, recordsWriteMessage,
-            this._dwn, this.getSigner.bind(this), this._contextKeyCache,
-          );
-        } catch (upgradeError: any) {
-          console.warn(
-            `AgentDwnApi: Reactive root-record upgrade failed for ` +
-            `'${recordsWriteMessage.recordId}': ${upgradeError.message}`
-          );
-        }
+        // TODO: Reactive root-record upgrade is disabled and needs redesign.
+        //
+        // The previous implementation (`upgradeExternalRootRecord` in
+        // `dwn-record-upgrade.ts`) bypassed DWN SDK conflict resolution by
+        // directly manipulating messageStore/stateIndex/eventLog internals.
+        // This is incompatible with remote DWN operation (local DWN server
+        // accessed via RPC) where the agent has no direct access to the
+        // server's storage layer.
+        //
+        // The correct approach is either:
+        //   (a) Perform the upgrade BEFORE the initial processMessage() call
+        //       (pre-store augmentation), so the message is stored in its
+        //       final form on the first pass — no replacement needed.
+        //   (b) Add DWN SDK support for same-timestamp owner-augmented
+        //       replacements in the RecordsWrite handler.
+        //
+        // Bumping messageTimestamp is NOT viable because the author's
+        // signature payload contains descriptorCid (which includes the
+        // timestamp). The owner does not have the external author's signing
+        // key and cannot re-sign.
+        //
+        // Until this is redesigned, externally-authored root records in
+        // multi-party encrypted contexts will only have ProtocolPath
+        // encryption. Context key holders will not be able to decrypt
+        // these records via ProtocolContext.
       }
 
       const newParticipants = detectNewParticipantsFn({

@@ -4826,7 +4826,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     expect(recipients[0].header.derivationScheme).toBe('protocolPath');
   }, 15000);
 
-  it('reactive root-record upgrade should append ProtocolContext recipients entry', async () => {
+  // Skipped: reactive root-record upgrade is disabled (see TODO in dwn-api.ts postWriteKeyDelivery).
+  it.skip('reactive root-record upgrade should append ProtocolContext recipients entry', async () => {
     // Configure protocol for Alice with encryption
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4936,7 +4937,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     expect(decryptedText).toBe(threadText);
   }, 15000);
 
-  it('should auto-deliver contextKey to external author on cross-DWN root record write', async () => {
+  // Skipped: depends on reactive root-record upgrade which is disabled.
+  it.skip('should auto-deliver contextKey to external author on cross-DWN root record write', async () => {
     // Configure protocol for Alice with encryption
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4983,7 +4985,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     expect(ckQuery.entries).not.toHaveLength(0);
   }, 15000);
 
-  it('should also auto-deliver contextKey to recipient on cross-DWN write', async () => {
+  // Skipped: depends on reactive root-record upgrade which is disabled.
+  it.skip('should also auto-deliver contextKey to recipient on cross-DWN write', async () => {
     // Configure protocol for Alice with encryption
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -5167,7 +5170,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     expect(decryptedText).toBe(chatText);
   }, 30000);
 
-  it('E2E: cross-DWN full round-trip — Bob writes, Alice upgrades, Bob decrypts via contextKey', async () => {
+  // Skipped: depends on reactive root-record upgrade which is disabled.
+  it.skip('E2E: cross-DWN full round-trip — Bob writes, Alice upgrades, Bob decrypts via contextKey', async () => {
     // Configure email protocol for Alice with encryption
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -5268,7 +5272,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     expect(decryptedText).toBe(threadText);
   }, 30000);
 
-  it('E2E: cross-DWN non-root child record via extractDerivedPublicKey', async () => {
+  // Skipped: depends on reactive root-record upgrade which is disabled.
+  it.skip('E2E: cross-DWN non-root child record via extractDerivedPublicKey', async () => {
     // Configure email protocol for Alice with encryption
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -5363,7 +5368,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     expect(new TextDecoder().decode(aliceDecryptedBytes)).toBe(bobReplyText);
   }, 30000);
 
-  it('E2E: large payload (>30KB) through reactive upgrade path', async () => {
+  // Skipped: depends on reactive root-record upgrade which is disabled.
+  it.skip('E2E: large payload (>30KB) through reactive upgrade path', async () => {
     // Configure email protocol for Alice with encryption
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
