@@ -59,6 +59,7 @@ export {
   applyLocalDwnDiscovery,
   checkUrlForDwnDiscoveryPayload,
   clearLocalDwnEndpoint,
+  discoverLocalDwn,
   persistLocalDwnEndpoint,
   requestLocalDwnDiscovery,
   restoreLocalDwnEndpoint,

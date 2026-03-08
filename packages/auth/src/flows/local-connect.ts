@@ -85,7 +85,10 @@ export async function localConnect(
   emitter.emit('vault-unlocked', {});
 
   // Apply local DWN discovery (browser redirect payload or persisted endpoint).
-  await applyLocalDwnDiscovery(userAgent, storage, emitter);
+  // In remote mode, discovery already ran before agent creation — skip.
+  if (!userAgent.dwn.isRemoteMode) {
+    await applyLocalDwnDiscovery(userAgent, storage, emitter);
+  }
 
   // Find or create the user identity.
   const identities = await userAgent.identity.list();

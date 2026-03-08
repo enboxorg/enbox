@@ -75,7 +75,7 @@ export async function pullMessages({ did, dwnUrl, delegateDid, protocol, message
     const failedCids: string[] = [];
 
     for (const entry of pending) {
-      const pullReply = await agent.dwn.node.processMessage(did, entry.message, { dataStream: entry.dataStream });
+      const pullReply = await agent.dwn.processRawMessage(did, entry.message, { dataStream: entry.dataStream });
       if (!syncMessageReplyIsSuccessful(pullReply)) {
         const cid = await getMessageCid(entry.message);
         failedCids.push(cid);

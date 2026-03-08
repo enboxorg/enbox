@@ -27,7 +27,8 @@
 
 import type { EnboxUserAgent } from '@enbox/agent';
 
-import { buildDwnConnectUrl, readDwnDiscoveryPayloadFromUrl } from '@enbox/agent';
+import { buildDwnConnectUrl, localDwnServerName, normalizeBaseUrl, readDwnDiscoveryPayloadFromUrl } from '@enbox/agent';
+import { EnboxRpcClient } from '@enbox/dwn-clients';
 
 import type { AuthEventEmitter } from '../events.js';
 import { STORAGE_KEYS } from '../types.js';
@@ -63,6 +64,83 @@ export function checkUrlForDwnDiscoveryPayload(): string | undefined {
 
   return payload.endpoint;
 }
+
+// ─── Standalone (pre-agent) discovery ───────────────────────────
+
+/**
+ * Validate a local DWN endpoint by calling `GET /info` and checking
+ * that the server identifies itself as `@enbox/dwn-server`.
+ *
+ * This function has **zero** agent or vault dependencies — it only uses
+ * the network. It is safe to call before the agent exists.
+ *
+ * @param endpoint - The candidate endpoint URL.
+ * @returns The normalised endpoint if valid, `undefined` otherwise.
+ */
+async function validateEndpointStandalone(endpoint: string): Promise<string | undefined> {
+  const normalized = normalizeBaseUrl(endpoint);
+  try {
+    const rpc = new EnboxRpcClient();
+    const serverInfo = await rpc.getServerInfo(normalized);
+    if (serverInfo.server === localDwnServerName) {
+      return normalized;
+    }
+  } catch {
+    // Server not reachable or not ours.
+  }
+  return undefined;
+}
+
+/**
+ * Run local DWN discovery **before the agent exists**.
+ *
+ * This is the standalone counterpart of {@link applyLocalDwnDiscovery} and
+ * is designed to be called in `AuthManager.create()`, before
+ * `EnboxUserAgent.create()`, so the agent creation can decide whether to
+ * spin up an in-process DWN or operate in remote mode.
+ *
+ * Discovery channels (highest → lowest priority):
+ * 1. **URL fragment payload** — A `dwn://connect` redirect just landed.
+ * 2. **Persisted endpoint** (localStorage) — A previously discovered
+ *    endpoint, re-validated via `GET /info`.
+ *
+ * When a valid endpoint is found it is persisted to storage. When a
+ * previously-persisted endpoint is stale, it is removed.
+ *
+ * @param storage - The auth storage adapter (for reading/writing the
+ *   cached endpoint).
+ * @returns The validated endpoint URL, or `undefined` if no local DWN
+ *   server is available.
+ */
+export async function discoverLocalDwn(
+  storage: StorageAdapter,
+): Promise<string | undefined> {
+  // Channel 1: Fresh redirect payload in the URL fragment.
+  const freshEndpoint = checkUrlForDwnDiscoveryPayload();
+  if (freshEndpoint) {
+    const validated = await validateEndpointStandalone(freshEndpoint);
+    if (validated) {
+      await persistLocalDwnEndpoint(storage, validated);
+      return validated;
+    }
+    // Payload was in the URL but the server is unreachable — fall through.
+  }
+
+  // Channel 2: Persisted endpoint from a previous session.
+  const cached = await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT);
+  if (cached) {
+    const validated = await validateEndpointStandalone(cached);
+    if (validated) {
+      return validated;
+    }
+    // Stale — server no longer running.
+    await clearLocalDwnEndpoint(storage);
+  }
+
+  return undefined;
+}
+
+// ─── Storage helpers ────────────────────────────────────────────
 
 /**
  * Persist a discovered local DWN endpoint in auth storage.

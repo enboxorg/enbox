@@ -90,6 +90,16 @@ export type AgentParams<TKeyManager extends AgentKeyManager = LocalKeyManager> =
 
 export type CreateUserAgentParams = Partial<AgentParams> & {
   localDwnStrategy?: LocalDwnStrategy;
+
+  /**
+   * When set, the agent operates in "remote mode": no in-process DWN is
+   * created. All `processRequest()` calls are routed through RPC to
+   * this endpoint instead.
+   *
+   * Typically set by `AuthManager.create()` after standalone discovery
+   * determines that a local DWN server is running.
+   */
+  localDwnEndpoint?: string;
 };
 
 export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManager> implements EnboxPlatformAgent<TKeyManager> {
@@ -146,6 +156,7 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
   public static async create({
     dataPath = 'DATA/AGENT',
     localDwnStrategy,
+    localDwnEndpoint,
     agentDid, agentVault, cryptoApi, didApi, dwnApi, identityApi, keyManager, permissionsApi, rpcClient, syncApi
   }: CreateUserAgentParams = {}
   ): Promise<EnboxUserAgent> {
@@ -163,10 +174,22 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
       store         : new DwnDidStore()
     });
 
-    dwnApi ??= new AgentDwnApi({
-      dwn              : await AgentDwnApi.createDwn({ dataPath, didResolver: didApi }),
-      localDwnStrategy : localDwnStrategy ?? 'prefer',
-    });
+    if (!dwnApi) {
+      if (localDwnEndpoint) {
+        // Remote mode: no in-process DWN. All operations route through
+        // RPC to the local DWN server.
+        dwnApi = new AgentDwnApi({
+          localDwnEndpoint,
+          localDwnStrategy : localDwnStrategy ?? 'prefer',
+        });
+      } else {
+        // Local mode: create an in-process DWN with LevelDB stores.
+        dwnApi = new AgentDwnApi({
+          dwn              : await AgentDwnApi.createDwn({ dataPath, didResolver: didApi }),
+          localDwnStrategy : localDwnStrategy ?? 'prefer',
+        });
+      }
+    }
     if (localDwnStrategy) {
       dwnApi.setLocalDwnStrategy(localDwnStrategy);
     }
