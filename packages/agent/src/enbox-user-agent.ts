@@ -180,7 +180,7 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
         // RPC to the local DWN server.
         dwnApi = new AgentDwnApi({
           localDwnEndpoint,
-          localDwnStrategy : localDwnStrategy ?? 'prefer',
+          localDwnStrategy: localDwnStrategy ?? 'prefer',
         });
       } else {
         // Local mode: create an in-process DWN with LevelDB stores.
