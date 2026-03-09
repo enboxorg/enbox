@@ -86,8 +86,9 @@ import {
   writeContextKeyRecord as writeContextKeyRecordFn,
 } from './dwn-key-delivery.js';
 
-// Import extracted record upgrade function
-import { upgradeExternalRootRecord as upgradeExternalRootRecordFn } from './dwn-record-upgrade.js';
+// NOTE: upgradeExternalRootRecord is disabled — see TODO in postWriteKeyDelivery().
+// The module is kept for reference but no longer imported.
+// import { upgradeExternalRootRecord as upgradeExternalRootRecordFn } from './dwn-record-upgrade.js';
 
 // Import extracted protocol definition fetching functions
 import {
@@ -103,9 +104,11 @@ type DwnMessageWithBlob<T extends DwnInterface> = {
 
 type DwnApiParams = {
   agent?: EnboxPlatformAgent;
-  dwn: Dwn;
   localDwnStrategy?: LocalDwnStrategy;
-};
+} & (
+  | { dwn: Dwn; localDwnEndpoint?: never }
+  | { dwn?: never; localDwnEndpoint: string }
+);
 
 interface DwnApiCreateDwnParams extends Partial<DwnConfig> {
   dataPath?: string;
@@ -122,8 +125,17 @@ export class AgentDwnApi {
 
   /**
    * The DWN instance to use for this API.
+   * `undefined` in remote mode — all operations route through RPC to
+   * the local DWN server endpoint.
    */
-  private _dwn: Dwn;
+  private _dwn?: Dwn;
+
+  /**
+   * The local DWN server endpoint for remote mode.
+   * When set, `_dwn` is `undefined` and `processRequest()` routes
+   * through `sendDwnRpcRequest()`.
+   */
+  private _localDwnEndpoint?: string;
 
   /**
    * Protocol definition cache — TTL 30 minutes. Protocols rarely change.
@@ -166,12 +178,17 @@ export class AgentDwnApi {
   /** Lazy-initialized local DWN discovery instance. */
   private _localDwnDiscovery?: LocalDwnDiscovery;
 
-  constructor({ agent, dwn, localDwnStrategy = 'prefer' }: DwnApiParams) {
+  constructor(params: DwnApiParams) {
+    const { agent, localDwnStrategy = 'prefer' } = params;
+
     // If an agent is provided, set it as the execution context for this API.
     this._agent = agent;
 
-    // Set the DWN instance for this API.
-    this._dwn = dwn;
+    // Set the DWN instance (undefined in remote mode).
+    this._dwn = 'dwn' in params ? params.dwn : undefined;
+
+    // Set the remote endpoint (undefined in local mode).
+    this._localDwnEndpoint = 'localDwnEndpoint' in params ? params.localDwnEndpoint : undefined;
 
     // Set the local DWN discovery strategy.
     this._localDwnStrategy = localDwnStrategy;
@@ -184,6 +201,14 @@ export class AgentDwnApi {
         AgentDwnApi._tryCreateDiscoveryFile(),
       );
     }
+  }
+
+  /**
+   * Whether the API is operating in remote mode (no in-process DWN).
+   * In remote mode, all DWN operations are routed through RPC.
+   */
+  get isRemoteMode(): boolean {
+    return this._dwn === undefined;
   }
 
   /**
@@ -257,8 +282,8 @@ export class AgentDwnApi {
     if (this._localDwnStrategy === 'only') {
       if (!localDwnEndpoint) {
         throw new Error(
-          `AgentDwnApi: Local DWN strategy is 'only' but no local server is available ` +
-          `on 127.0.0.1:{3000,55500-55509}`
+          `AgentDwnApi: Local DWN strategy is 'only' but no local DWN endpoint was discovered. ` +
+          `Ensure the local DWN server is running and discoverable via the discovery file (~/.enbox/dwn.json) or dwn://connect.`
         );
       }
 
@@ -288,6 +313,11 @@ export class AgentDwnApi {
 
   /** Lazily retrieves the local DWN server endpoint via discovery. */
   private async getLocalDwnEndpoint(): Promise<string | undefined> {
+    // In remote mode, the endpoint is always known.
+    if (this._localDwnEndpoint) {
+      return this._localDwnEndpoint;
+    }
+
     this._localDwnDiscovery ??= new LocalDwnDiscovery(
       this.agent.rpc,
       10_000,
@@ -364,6 +394,14 @@ export class AgentDwnApi {
    *   the DWN instance and not `agent.dwn.dwn`.
    */
   get node(): Dwn {
+    if (!this._dwn) {
+      throw new Error(
+        'AgentDwnApi: The in-process DWN instance is not available. ' +
+        'The agent is operating in remote mode (local DWN server at ' +
+        `'${this._localDwnEndpoint}'). Use processRequest() instead ` +
+        'of accessing the DWN node directly.'
+      );
+    }
     return this._dwn;
   }
 
@@ -407,10 +445,35 @@ export class AgentDwnApi {
     //   processing, passing along the target DID, the message, and any associated data stream.
     // - If `store` is set to false, it immediately returns a simulated 'accepted' status without
     //   storing the message/data in the DWN node.
-    const reply: DwnMessageReply[T] = (request.store !== false)
-      ? await this._dwn.processMessage(request.target, message, { dataStream: dataStream as any, subscriptionHandler })
-      : { status: { code: 202, detail: 'Accepted' } };
+    let reply: DwnMessageReply[T];
 
+    if (request.store === false) {
+      reply = { status: { code: 202, detail: 'Accepted' } };
+    } else if (this._dwn) {
+      // Local mode: process directly with the in-process DWN.
+      reply = await this._dwn.processMessage(
+        request.target, message,
+        { dataStream: dataStream as any, subscriptionHandler },
+      );
+    } else {
+      // Remote mode: route through RPC to the local DWN server.
+      // TODO(#713): This buffers the entire stream into memory before
+      // re-streaming it over HTTP. The RPC transport should accept a
+      // ReadableStream directly to avoid the extra copy.
+      let data: Blob | undefined;
+      if (dataStream) {
+        const bytes = await DataStream.toBytes(dataStream);
+        data = new Blob([bytes as BlobPart]);
+      }
+
+      reply = await this.sendDwnRpcRequest({
+        targetDid       : request.target,
+        dwnEndpointUrls : [this._localDwnEndpoint!],
+        message,
+        data,
+        subscriptionHandler,
+      });
+    }
 
     // Post-write key delivery: detect new participants and write contextKey records.
     await this.postWriteKeyDelivery(request, message, reply);
@@ -425,6 +488,46 @@ export class AgentDwnApi {
       message,
       messageCid: await Message.getCid(message),
     };
+  }
+
+  /**
+   * Process a pre-constructed DWN message against the local DWN (in-process
+   * or remote server). Used by the sync engine to store messages that were
+   * already fetched from a remote DWN.
+   *
+   * Unlike {@link processRequest}, this method does NOT construct a new
+   * message — it takes an already-signed `GenericMessage` and routes it
+   * to the appropriate backend.
+   *
+   * @param tenant - The DID of the DWN tenant (target).
+   * @param message - The pre-constructed DWN message.
+   * @param options - Optional data stream and subscription handler.
+   * @returns The reply from processing the message.
+   */
+  public async processRawMessage(
+    tenant: string,
+    message: GenericMessage,
+    options?: { dataStream?: ReadableStream<Uint8Array> },
+  ): Promise<{ status: { code: number; detail: string } }> {
+    if (this._dwn) {
+      return this._dwn.processMessage(tenant, message, { dataStream: options?.dataStream });
+    }
+
+    // TODO(#713): This buffers the entire stream into memory before
+    // re-streaming it over HTTP. The RPC transport should accept a
+    // ReadableStream directly to avoid the extra copy.
+    let data: Blob | undefined;
+    if (options?.dataStream) {
+      const bytes = await DataStream.toBytes(options.dataStream);
+      data = new Blob([bytes as BlobPart]);
+    }
+
+    return this.sendDwnRpcRequest({
+      targetDid       : tenant,
+      dwnEndpointUrls : [this._localDwnEndpoint!],
+      message         : message as DwnMessage[DwnInterface],
+      data,
+    });
   }
 
   public async sendRequest<T extends DwnInterface>(
@@ -547,17 +650,31 @@ export class AgentDwnApi {
       const isMultiParty = isMultiPartyContextFn(protocolDefinition, rootPathSegment);
 
       if (isExternallyAuthored && isRootRecord && isMultiParty) {
-        try {
-          await upgradeExternalRootRecordFn(
-            this.agent, request.target, recordsWriteMessage,
-            this._dwn, this.getSigner.bind(this), this._contextKeyCache,
-          );
-        } catch (upgradeError: any) {
-          console.warn(
-            `AgentDwnApi: Reactive root-record upgrade failed for ` +
-            `'${recordsWriteMessage.recordId}': ${upgradeError.message}`
-          );
-        }
+        // TODO: Reactive root-record upgrade is disabled and needs redesign.
+        //
+        // The previous implementation (`upgradeExternalRootRecord` in
+        // `dwn-record-upgrade.ts`) bypassed DWN SDK conflict resolution by
+        // directly manipulating messageStore/stateIndex/eventLog internals.
+        // This is incompatible with remote DWN operation (local DWN server
+        // accessed via RPC) where the agent has no direct access to the
+        // server's storage layer.
+        //
+        // The correct approach is either:
+        //   (a) Perform the upgrade BEFORE the initial processMessage() call
+        //       (pre-store augmentation), so the message is stored in its
+        //       final form on the first pass — no replacement needed.
+        //   (b) Add DWN SDK support for same-timestamp owner-augmented
+        //       replacements in the RecordsWrite handler.
+        //
+        // Bumping messageTimestamp is NOT viable because the author's
+        // signature payload contains descriptorCid (which includes the
+        // timestamp). The owner does not have the external author's signing
+        // key and cannot re-sign.
+        //
+        // Until this is redesigned, externally-authored root records in
+        // multi-party encrypted contexts will only have ProtocolPath
+        // encryption. Context key holders will not be able to decrypt
+        // these records via ProtocolContext.
       }
 
       const newParticipants = detectNewParticipantsFn({
@@ -1160,6 +1277,17 @@ export class AgentDwnApi {
     tenantDid: string,
     protocolUri: string,
   ): Promise<ProtocolDefinition | undefined> {
+    if (!this._dwn) {
+      // Remote mode: query via RPC (same as fetchRemoteProtocolDefinition,
+      // but for locally-managed DIDs). The remote protocol definition
+      // cache uses a different key prefix, so we use a dedicated call.
+      try {
+        return await this.fetchRemoteProtocolDefinition(tenantDid, protocolUri);
+      } catch {
+        // Protocol not found — return undefined (consistent with local mode).
+        return undefined;
+      }
+    }
     return getProtocolDefinitionFn(
       tenantDid, protocolUri, this._dwn,
       this.getSigner.bind(this), this._protocolDefinitionCache,
@@ -1233,7 +1361,19 @@ export class AgentDwnApi {
       signer
     });
 
-    const result = await this._dwn.processMessage(author, messagesRead.message);
+    let result: any;
+
+    if (this._dwn) {
+      // Local mode: process directly with the in-process DWN.
+      result = await this._dwn.processMessage(author, messagesRead.message);
+    } else {
+      // Remote mode: route through RPC to the local DWN server.
+      result = await this.sendDwnRpcRequest({
+        targetDid       : author,
+        dwnEndpointUrls : [this._localDwnEndpoint!],
+        message         : messagesRead.message,
+      });
+    }
 
     if (result.status.code !== 200) {
       throw new Error(`AgentDwnApi: Failed to read message, response status: ${result.status.code} - ${result.status.detail}`);
@@ -1245,9 +1385,15 @@ export class AgentDwnApi {
     const dwnMessageWithBlob: DwnMessageWithBlob<T> = { message };
     // If the message is a RecordsWrite, data will be present in the form of a stream
 
-    if (isRecordsWrite(messageEntry) && messageEntry.data) {
-      const dataBytes = await DataStream.toBytes(messageEntry.data);
-      dwnMessageWithBlob.data = new Blob([ dataBytes as BlobPart ], { type: messageEntry.message.descriptor.dataFormat });
+    if (isRecordsWrite(messageEntry)) {
+      // The processMessage result includes a `data` ReadableStream for
+      // RecordsWrite entries, but the RecordsWrite type doesn't declare
+      // it. Access via index signature to avoid the type mismatch.
+      const entryData = (messageEntry as unknown as Record<string, unknown>)['data'] as ReadableStream<Uint8Array> | undefined;
+      if (entryData) {
+        const dataBytes = await DataStream.toBytes(entryData);
+        dwnMessageWithBlob.data = new Blob([ dataBytes as BlobPart ], { type: messageEntry.message.descriptor.dataFormat });
+      }
     }
 
     return dwnMessageWithBlob;

@@ -12,6 +12,7 @@ import type { BearerIdentity, PortableIdentity } from '@enbox/agent';
 import { AuthEventEmitter } from './events.js';
 import { AuthSession } from './identity-session.js';
 import { createDefaultStorage } from './storage/storage.js';
+import { discoverLocalDwn } from './flows/dwn-discovery.js';
 import { localConnect } from './flows/local-connect.js';
 import { restoreSession } from './flows/session-restore.js';
 import { STORAGE_KEYS } from './types.js';
@@ -89,6 +90,14 @@ export class AuthManager {
   private _defaultDwnEndpoints?: string[];
   private _registration?: RegistrationOptions;
 
+  /**
+   * The local DWN server endpoint discovered during `create()`, if any.
+   * `undefined` means no local server was found. This is set before any
+   * event listeners are attached, so consumers should check this property
+   * after `create()` returns rather than relying solely on events.
+   */
+  private _localDwnEndpoint?: string;
+
   private constructor(params: {
     userAgent: EnboxUserAgent;
     emitter: AuthEventEmitter;
@@ -99,6 +108,7 @@ export class AuthManager {
     defaultSync?: SyncOption;
     defaultDwnEndpoints?: string[];
     registration?: RegistrationOptions;
+    localDwnEndpoint?: string;
   }) {
     this._userAgent = params.userAgent;
     this._emitter = params.emitter;
@@ -109,6 +119,7 @@ export class AuthManager {
     this._defaultSync = params.defaultSync;
     this._defaultDwnEndpoints = params.defaultDwnEndpoints;
     this._registration = params.registration;
+    this._localDwnEndpoint = params.localDwnEndpoint;
   }
 
   /**
@@ -125,11 +136,27 @@ export class AuthManager {
     const emitter = new AuthEventEmitter();
     const storage = options.storage ?? createDefaultStorage();
 
+    // Run local DWN discovery BEFORE creating the agent. Discovery has
+    // zero vault/DWN dependencies — it only checks the URL fragment,
+    // reads localStorage, and validates via GET /info.
+    //
+    // When a local DWN server is available, the agent is created in
+    // "remote mode": it skips creating an in-process DWN and routes all
+    // DWN operations through RPC to the local server.
+    let localDwnEndpoint: string | undefined;
+    if (!options.agent && options.localDwnStrategy !== 'off') {
+      localDwnEndpoint = await discoverLocalDwn(storage);
+      // NOTE: We intentionally do NOT emit 'local-dwn-available' here
+      // because event listeners aren't attached yet. Consumers should
+      // check `authManager.localDwnEndpoint` after create() returns.
+    }
+
     // Use a pre-built agent or create one with the given options.
     const userAgent = options.agent ?? await EnboxUserAgent.create({
       dataPath         : options.dataPath,
       agentVault       : options.agentVault,
       localDwnStrategy : options.localDwnStrategy,
+      localDwnEndpoint,
     });
 
     const vault = new VaultManager(userAgent.vault, emitter);
@@ -144,6 +171,7 @@ export class AuthManager {
       defaultSync         : options.sync,
       defaultDwnEndpoints : options.dwnEndpoints,
       registration        : options.registration,
+      localDwnEndpoint,
     });
 
     // Determine initial state.
@@ -783,6 +811,17 @@ export class AuthManager {
   /** The underlying EnboxUserAgent (for advanced usage). */
   get agent(): EnboxUserAgent {
     return this._userAgent;
+  }
+
+  /**
+   * The local DWN server endpoint discovered during `create()`, if any.
+   *
+   * When set, the agent is operating in remote mode (no in-process DWN).
+   * This property is available immediately after `create()` returns,
+   * before any event listeners are attached.
+   */
+  get localDwnEndpoint(): string | undefined {
+    return this._localDwnEndpoint;
   }
 
   // ─── Private helpers ───────────────────────────────────────────

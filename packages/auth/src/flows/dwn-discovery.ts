@@ -12,27 +12,23 @@
  *    fresh and explicit.
  * 2. **Persisted endpoint** (localStorage) — A previously discovered
  *    endpoint restored and re-validated via `GET /info`.
- * 3. **Agent-level discovery** (transparent, runs on every `sendRequest`)
- *    — `~/.enbox/dwn.json` discovery file (Node/Bun only; skipped in
- *    browsers) and sequential port probing on `127.0.0.1:{3000,55500–55509}`.
- *    This channel works even if the browser-specific functions here
- *    return `false`.
  *
  * ## Discovery channels (CLI / native, all transparent)
  *
- * In Node/Bun environments, all discovery happens automatically inside
+ * In Node/Bun environments, the agent's `LocalDwnDiscovery` reads the
+ * `~/.enbox/dwn.json` discovery file automatically inside
  * `AgentDwnApi.getLocalDwnEndpoint()`. The browser-specific functions
  * in this module (`checkUrlForDwnDiscoveryPayload`, `requestLocalDwnDiscovery`)
- * are not needed — the agent reads `~/.enbox/dwn.json` and probes ports
- * on its own.
+ * are not needed in those environments.
  *
- * @see https://github.com/enboxorg/enbox/issues/589
+ * @see https://github.com/enboxorg/enbox/issues/677
  * @module
  */
 
 import type { EnboxUserAgent } from '@enbox/agent';
 
-import { buildDwnConnectUrl, readDwnDiscoveryPayloadFromUrl } from '@enbox/agent';
+import { EnboxRpcClient } from '@enbox/dwn-clients';
+import { buildDwnConnectUrl, localDwnServerName, normalizeBaseUrl, readDwnDiscoveryPayloadFromUrl } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
 import { STORAGE_KEYS } from '../types.js';
@@ -68,6 +64,83 @@ export function checkUrlForDwnDiscoveryPayload(): string | undefined {
 
   return payload.endpoint;
 }
+
+// ─── Standalone (pre-agent) discovery ───────────────────────────
+
+/**
+ * Validate a local DWN endpoint by calling `GET /info` and checking
+ * that the server identifies itself as `@enbox/dwn-server`.
+ *
+ * This function has **zero** agent or vault dependencies — it only uses
+ * the network. It is safe to call before the agent exists.
+ *
+ * @param endpoint - The candidate endpoint URL.
+ * @returns The normalised endpoint if valid, `undefined` otherwise.
+ */
+async function validateEndpointStandalone(endpoint: string): Promise<string | undefined> {
+  const normalized = normalizeBaseUrl(endpoint);
+  try {
+    const rpc = new EnboxRpcClient();
+    const serverInfo = await rpc.getServerInfo(normalized);
+    if (serverInfo.server === localDwnServerName) {
+      return normalized;
+    }
+  } catch {
+    // Server not reachable or not ours.
+  }
+  return undefined;
+}
+
+/**
+ * Run local DWN discovery **before the agent exists**.
+ *
+ * This is the standalone counterpart of {@link applyLocalDwnDiscovery} and
+ * is designed to be called in `AuthManager.create()`, before
+ * `EnboxUserAgent.create()`, so the agent creation can decide whether to
+ * spin up an in-process DWN or operate in remote mode.
+ *
+ * Discovery channels (highest → lowest priority):
+ * 1. **URL fragment payload** — A `dwn://connect` redirect just landed.
+ * 2. **Persisted endpoint** (localStorage) — A previously discovered
+ *    endpoint, re-validated via `GET /info`.
+ *
+ * When a valid endpoint is found it is persisted to storage. When a
+ * previously-persisted endpoint is stale, it is removed.
+ *
+ * @param storage - The auth storage adapter (for reading/writing the
+ *   cached endpoint).
+ * @returns The validated endpoint URL, or `undefined` if no local DWN
+ *   server is available.
+ */
+export async function discoverLocalDwn(
+  storage: StorageAdapter,
+): Promise<string | undefined> {
+  // Channel 1: Fresh redirect payload in the URL fragment.
+  const freshEndpoint = checkUrlForDwnDiscoveryPayload();
+  if (freshEndpoint) {
+    const validated = await validateEndpointStandalone(freshEndpoint);
+    if (validated) {
+      await persistLocalDwnEndpoint(storage, validated);
+      return validated;
+    }
+    // Payload was in the URL but the server is unreachable — fall through.
+  }
+
+  // Channel 2: Persisted endpoint from a previous session.
+  const cached = await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT);
+  if (cached) {
+    const validated = await validateEndpointStandalone(cached);
+    if (validated) {
+      return validated;
+    }
+    // Stale — server no longer running.
+    await clearLocalDwnEndpoint(storage);
+  }
+
+  return undefined;
+}
+
+// ─── Storage helpers ────────────────────────────────────────────
 
 /**
  * Persist a discovered local DWN endpoint in auth storage.
@@ -130,7 +203,7 @@ export async function restoreLocalDwnEndpoint(
  * Run the full local DWN discovery sequence for a browser connection flow.
  *
  * This function handles the **receiving** side of local DWN discovery in
- * the browser. It does NOT trigger the `dwn://register` redirect — use
+ * the browser. It does NOT trigger the `dwn://connect` redirect — use
  * {@link requestLocalDwnDiscovery} for that.
  *
  * The discovery channels, from highest to lowest priority:
@@ -141,13 +214,6 @@ export async function restoreLocalDwnEndpoint(
  *
  * 2. **Persisted endpoint** (localStorage) — A previously discovered
  *    endpoint is restored and re-validated via `GET /info`.
- *
- * 3. **Agent-level discovery** (transparent) — Even if this function
- *    returns `false`, the agent's `LocalDwnDiscovery` will independently
- *    try the discovery file (`~/.enbox/dwn.json`) and port probing on
- *    every `sendRequest()` call. Those channels are not available in
- *    browsers (no filesystem access, CORS may block probes), but they
- *    work transparently in Node/Bun CLI environments.
  *
  * When an `emitter` is provided, this function emits:
  * - `'local-dwn-available'` with the endpoint when discovery succeeds.
@@ -201,12 +267,9 @@ export async function applyLocalDwnDiscovery(
  * user's browser back to `callbackUrl` with the local DWN endpoint
  * encoded in the URL fragment.
  *
- * **Important:** There is no reliable cross-browser API to detect whether
- * a `dwn://` handler is installed. If no handler is registered, this call
- * will silently fail or show an OS-level error dialog. Use
- * {@link probeLocalDwn} first to check if a local DWN is already
- * reachable via port probing — if it is, you can skip the connect flow
- * entirely and call {@link applyLocalDwnDiscovery} instead.
+ * **Note:** There is no reliable cross-browser API to detect whether a
+ * `dwn://` handler is installed. If no handler is registered, this call
+ * will silently fail or show an OS-level error dialog.
  *
  * @param callbackUrl - The URL to redirect back to. Defaults to the
  *   current page URL (without its fragment) if running in a browser.
@@ -215,13 +278,10 @@ export async function applyLocalDwnDiscovery(
  *
  * @example
  * ```ts
- * // Check if local DWN is already available via direct probe.
- * const alreadyAvailable = await probeLocalDwn();
- * if (!alreadyAvailable) {
- *   // No local DWN found — trigger the dwn://connect flow.
- *   requestLocalDwnDiscovery();
- *   // The page will reload with the endpoint in the URL fragment.
- * }
+ * // Trigger the dwn://connect flow to discover a local DWN.
+ * requestLocalDwnDiscovery();
+ * // The page will reload with the endpoint in the URL fragment.
+ * // On the next connect/restore, applyLocalDwnDiscovery() reads it.
  * ```
  */
 export function requestLocalDwnDiscovery(callbackUrl?: string): boolean {
@@ -247,46 +307,6 @@ export function requestLocalDwnDiscovery(callbackUrl?: string): boolean {
   }
 
   return false;
-}
-
-/**
- * Probe whether a local DWN server is reachable via direct HTTP fetch.
- *
- * Attempts `GET http://127.0.0.1:{port}/info` on the well-known port
- * candidates and returns the endpoint URL of the first server that
- * responds with a valid `@enbox/dwn-server` identity.
- *
- * This is useful in browsers to check if a local DWN is available
- * *before* triggering the `dwn://connect` redirect flow — if the
- * server is already reachable (CORS permitting), the redirect is
- * unnecessary.
- *
- * @returns The local DWN endpoint URL, or `undefined` if no server
- *   was found. Returns `undefined` (rather than throwing) on CORS
- *   errors or network failures.
- */
-export async function probeLocalDwn(): Promise<string | undefined> {
-  // Import port candidates from @enbox/agent. Using a dynamic import
-  // here keeps the function self-contained and avoids circular deps.
-  const { localDwnPortCandidates, localDwnHostCandidates } = await import('@enbox/agent');
-
-  for (const port of localDwnPortCandidates) {
-    for (const host of localDwnHostCandidates) {
-      const endpoint = `http://${host}:${port}`;
-      try {
-        const response = await fetch(`${endpoint}/info`, { signal: AbortSignal.timeout(2_000) });
-        if (!response.ok) { continue; }
-
-        const serverInfo = await response.json() as { server?: string };
-        if (serverInfo?.server === '@enbox/dwn-server') {
-          return endpoint;
-        }
-      } catch {
-        // Network error, CORS block, or timeout — try next candidate.
-      }
-    }
-  }
-  return undefined;
 }
 
 // ─── Internal helpers ───────────────────────────────────────────

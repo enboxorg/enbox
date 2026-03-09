@@ -95,6 +95,12 @@ describe('AuthManager', () => {
       const manager = createTestManager(agent);
       expect(manager.agent).toBe(agent);
     });
+
+    test('localDwnEndpoint returns undefined when not set', () => {
+      const agent = createMockAgent();
+      const manager = createTestManager(agent);
+      expect(manager.localDwnEndpoint).toBeUndefined();
+    });
   });
 
   describe('connect()', () => {

@@ -59,8 +59,8 @@ export {
   applyLocalDwnDiscovery,
   checkUrlForDwnDiscoveryPayload,
   clearLocalDwnEndpoint,
+  discoverLocalDwn,
   persistLocalDwnEndpoint,
-  probeLocalDwn,
   requestLocalDwnDiscovery,
   restoreLocalDwnEndpoint,
 } from './flows/dwn-discovery.js';

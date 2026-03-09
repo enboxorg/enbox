@@ -223,9 +223,8 @@ export class HttpApi {
           response.headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
           response.headers.set('access-control-allow-headers', '*');
           response.headers.set('access-control-expose-headers', 'dwn-response');
-          // Cache preflight responses for 24 hours to reduce OPTIONS round-trips,
-          // which is especially important for local DWN discovery that probes
-          // multiple ports from the browser (e.g. `probeLocalDwn()` in @enbox/auth).
+          // Cache preflight responses for 24 hours to reduce OPTIONS round-trips
+          // for browser-based DWN clients communicating with a local server.
           response.headers.set('access-control-max-age', '86400');
         }
 

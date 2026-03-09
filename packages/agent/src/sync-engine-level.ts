@@ -521,7 +521,7 @@ export class SyncEngineLevel implements SyncEngine {
         try {
           // Process the message locally.
           const dataStream = this.extractDataStream(event);
-          await this.agent.dwn.node.processMessage(did, event.message, { dataStream });
+          await this.agent.dwn.processRawMessage(did, event.message, { dataStream });
         } catch (error: any) {
           console.error(`SyncEngineLevel: Error processing live-pull event for ${did}`, error);
         }

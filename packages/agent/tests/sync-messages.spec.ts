@@ -329,9 +329,7 @@ describe('sync-messages', () => {
           }),
         },
         dwn: {
-          node: {
-            processMessage: sinon.stub().resolves({ status: { code: 202 } }),
-          },
+          processRawMessage: sinon.stub().resolves({ status: { code: 202 } }),
         },
       } as any;
 
@@ -343,7 +341,7 @@ describe('sync-messages', () => {
         permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
       });
 
-      expect(mockAgent.dwn.node.processMessage.calledOnce).toBe(true);
+      expect(mockAgent.dwn.processRawMessage.calledOnce).toBe(true);
     });
 
     it('should retry failed messages', async () => {
@@ -359,7 +357,7 @@ describe('sync-messages', () => {
       const mockAgent = {
         processDwnRequest : sinon.stub().resolves({ message: { descriptor: {} } }),
         rpc               : { sendDwnRequest: sendDwnRequestStub },
-        dwn               : { node: { processMessage: processMessageStub } },
+        dwn               : { processRawMessage: processMessageStub },
       } as any;
 
       await pullMessages({
@@ -378,7 +376,7 @@ describe('sync-messages', () => {
       const mockAgent = {
         processDwnRequest : sinon.stub(),
         rpc               : { sendDwnRequest: sinon.stub() },
-        dwn               : { node: { processMessage: sinon.stub() } },
+        dwn               : { processRawMessage: sinon.stub() },
       } as any;
 
       await pullMessages({
@@ -390,7 +388,7 @@ describe('sync-messages', () => {
       });
 
       // No messages to process
-      expect(mockAgent.dwn.node.processMessage.called).toBe(false);
+      expect(mockAgent.dwn.processRawMessage.called).toBe(false);
     });
   });
 
