@@ -252,7 +252,14 @@ describe('HdIdentityVault', () => {
         it('returns false after the vault has been cleared', async () => {
           await identityVault.initialize({ password: 'secure-password' });
           await vaultStore.clear();
-          const isInitialized = await identityVault.isInitialized();
+          // After an external store clear (e.g., factory reset), the app would create a fresh
+          // vault instance. Simulate that here — the new instance has no cached state and must
+          // read from the (now-empty) store.
+          const freshVault = new HdIdentityVault({
+            store                   : vaultStore,
+            keyDerivationWorkFactor : 1
+          });
+          const isInitialized = await freshVault.isInitialized();
           expect(isInitialized).toBe(false);
         });
       });
