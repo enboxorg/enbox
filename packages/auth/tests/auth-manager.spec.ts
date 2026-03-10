@@ -33,7 +33,6 @@ function createTestManager(
   manager._userAgent = agent;
   manager._emitter = new (require('../src/events.js').AuthEventEmitter)();
   manager._storage = storage;
-  manager._vault = new (require('../src/vault/vault-manager.js').VaultManager)(agent.vault, manager._emitter);
   manager._session = undefined;
   manager._state = overrides.initialState ?? 'uninitialized';
   manager._isConnecting = false;
@@ -84,10 +83,10 @@ describe('AuthManager', () => {
       expect(manager.session).toBeUndefined();
     });
 
-    test('vault returns the vault manager', () => {
+    test('vault returns the underlying identity vault', () => {
       const agent = createMockAgent();
       const manager = createTestManager(agent);
-      expect(manager.vault).toBeDefined();
+      expect(manager.vault).toBe(agent.vault);
     });
 
     test('agent returns the user agent', () => {

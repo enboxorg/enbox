@@ -37,7 +37,6 @@
 // Core classes
 export { AuthManager } from './auth-manager.js';
 export { AuthSession } from './identity-session.js';
-export { VaultManager } from './vault/vault-manager.js';
 export { AuthEventEmitter } from './events.js';
 
 // Password providers

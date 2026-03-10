@@ -107,6 +107,7 @@ export class PlatformAgentTestHarness {
     await this.dwnResumableTaskStore.clear();
     await this.syncStore.clear();
     await this.vaultStore.clear();
+    (this.agent.vault as any)['_cachedInitialized'] = undefined;
     await this.agent.permissions.clear();
     this.dwnStores.clear();
 

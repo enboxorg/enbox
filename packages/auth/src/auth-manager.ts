@@ -7,7 +7,7 @@
  */
 
 import { EnboxUserAgent } from '@enbox/agent';
-import type { BearerIdentity, PortableIdentity } from '@enbox/agent';
+import type { BearerIdentity, HdIdentityVault, PortableIdentity } from '@enbox/agent';
 
 import { AuthEventEmitter } from './events.js';
 import { AuthSession } from './identity-session.js';
@@ -16,7 +16,6 @@ import { discoverLocalDwn } from './flows/dwn-discovery.js';
 import { localConnect } from './flows/local-connect.js';
 import { restoreSession } from './flows/session-restore.js';
 import { STORAGE_KEYS } from './types.js';
-import { VaultManager } from './vault/vault-manager.js';
 import { walletConnect } from './flows/wallet-connect.js';
 
 import type { PasswordProvider } from './password-provider.js';
@@ -77,7 +76,6 @@ export class AuthManager {
   private _userAgent: EnboxUserAgent;
   private _emitter: AuthEventEmitter;
   private _storage: StorageAdapter;
-  private _vault: VaultManager;
   private _session: AuthSession | undefined;
   private _state: AuthState = 'uninitialized';
   private _isConnecting = false;
@@ -102,7 +100,6 @@ export class AuthManager {
     userAgent: EnboxUserAgent;
     emitter: AuthEventEmitter;
     storage: StorageAdapter;
-    vault: VaultManager;
     defaultPassword?: string;
     passwordProvider?: PasswordProvider;
     defaultSync?: SyncOption;
@@ -113,7 +110,6 @@ export class AuthManager {
     this._userAgent = params.userAgent;
     this._emitter = params.emitter;
     this._storage = params.storage;
-    this._vault = params.vault;
     this._defaultPassword = params.defaultPassword;
     this._passwordProvider = params.passwordProvider;
     this._defaultSync = params.defaultSync;
@@ -159,13 +155,10 @@ export class AuthManager {
       localDwnEndpoint,
     });
 
-    const vault = new VaultManager(userAgent.vault, emitter);
-
     const manager = new AuthManager({
       userAgent,
       emitter,
       storage,
-      vault,
       defaultPassword     : options.password,
       passwordProvider    : options.passwordProvider,
       defaultSync         : options.sync,
@@ -175,8 +168,8 @@ export class AuthManager {
     });
 
     // Determine initial state.
-    if (await vault.isInitialized()) {
-      manager._setState(vault.isLocked ? 'locked' : 'unlocked');
+    if (await userAgent.vault.isInitialized()) {
+      manager._setState(userAgent.vault.isLocked() ? 'locked' : 'unlocked');
     } else {
       manager._setState('uninitialized');
     }
@@ -400,10 +393,10 @@ export class AuthManager {
    */
   async connectHeadless(options?: HeadlessConnectOptions): Promise<AuthSession> {
     let password = options?.password ?? this._defaultPassword;
+    const isFirstLaunch = await this._userAgent.firstLaunch();
 
     // Try the password provider if no explicit password.
     if (!password && this._passwordProvider) {
-      const isFirstLaunch = await this._userAgent.firstLaunch();
       password = await this._passwordProvider.getPassword({
         reason: isFirstLaunch ? 'create' : 'unlock',
       });
@@ -417,7 +410,7 @@ export class AuthManager {
     }
 
     // Unlock the vault (initialise on first launch).
-    if (await this._userAgent.firstLaunch()) {
+    if (isFirstLaunch) {
       await this._userAgent.initialize({ password });
     } else {
       await this._userAgent.start({ password });
@@ -491,8 +484,9 @@ export class AuthManager {
     // 2. Clear the session (but keep storage markers for restore).
     this._session = undefined;
 
-    // 3. Lock the vault (also emits 'vault-locked').
-    await this._vault.lock();
+    // 3. Lock the vault.
+    await this._userAgent.vault.lock();
+    this._emitter.emit('vault-locked', {});
 
     // 4. Transition state.
     this._setState('locked');
@@ -603,9 +597,10 @@ export class AuthManager {
     // 2. Clear the active session.
     this._session = undefined;
 
-    // 3. Lock the vault (emits 'vault-locked').
+    // 3. Lock the vault.
     try {
-      await this._vault.lock();
+      await this._userAgent.vault.lock();
+      this._emitter.emit('vault-locked', {});
     } catch {
       // Vault may already be locked or uninitialised — safe to ignore.
     }
@@ -768,9 +763,9 @@ export class AuthManager {
 
   // ─── Vault ─────────────────────────────────────────────────────
 
-  /** Access the vault manager for lock/unlock/backup operations. */
-  get vault(): VaultManager {
-    return this._vault;
+  /** Access the underlying identity vault for lock/unlock/backup operations. */
+  get vault(): HdIdentityVault {
+    return this._userAgent.vault;
   }
 
   // ─── Events ────────────────────────────────────────────────────
@@ -800,7 +795,7 @@ export class AuthManager {
 
   /** Whether the vault is currently locked. */
   get isLocked(): boolean {
-    return this._vault.isLocked;
+    return this._userAgent.vault.isLocked();
   }
 
   /** Whether a connection attempt is in progress. */
