@@ -1,12 +1,12 @@
 ---
-"@enbox/agent": major
+"@enbox/agent": minor
 "@enbox/auth": minor
-"@enbox/api": major
-"@enbox/dwn-clients": major
-"@enbox/common": major
-"@enbox/crypto": major
-"@enbox/dwn-sdk-js": major
-"@enbox/dids": major
+"@enbox/api": minor
+"@enbox/dwn-clients": minor
+"@enbox/common": minor
+"@enbox/crypto": minor
+"@enbox/dwn-sdk-js": minor
+"@enbox/dids": minor
 "@enbox/dwn-server": patch
 ---
 
