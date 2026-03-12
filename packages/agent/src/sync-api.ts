@@ -72,4 +72,8 @@ export class AgentSyncApi implements SyncEngine {
   public stopSync(timeout?: number): Promise<void> {
     return this._syncEngine.stopSync(timeout);
   }
+
+  public close(): Promise<void> {
+    return this._syncEngine.close();
+  }
 }

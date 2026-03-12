@@ -52,7 +52,7 @@ let _processConnectedGrants: any;
 
 async function load(): Promise<void> {
   if (!_walletConnect) {
-    const mod = await import('../src/flows/wallet-connect.js');
+    const mod = await import('../src/connect/wallet.js');
     _walletConnect = mod.walletConnect;
     _processConnectedGrants = mod.processConnectedGrants;
   }

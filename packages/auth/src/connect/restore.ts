@@ -6,25 +6,13 @@
  * @module
  */
 
-import type { EnboxUserAgent } from '@enbox/agent';
+import type { AuthSession } from '../identity-session.js';
+import type { FlowContext } from './lifecycle.js';
+import type { RestoreSessionOptions } from '../types.js';
 
-import type { AuthEventEmitter } from '../events.js';
-import type { PasswordProvider } from '../password-provider.js';
-import type { RestoreSessionOptions, StorageAdapter, SyncOption } from '../types.js';
-
-import { applyLocalDwnDiscovery } from './dwn-discovery.js';
-import { AuthSession } from '../identity-session.js';
-import { INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../types.js';
-
-/** @internal */
-export interface SessionRestoreContext {
-  userAgent: EnboxUserAgent;
-  emitter: AuthEventEmitter;
-  storage: StorageAdapter;
-  defaultPassword?: string;
-  passwordProvider?: PasswordProvider;
-  defaultSync?: SyncOption;
-}
+import { applyLocalDwnDiscovery } from '../discovery.js';
+import { STORAGE_KEYS } from '../types.js';
+import { finalizeSession, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
 
 /**
  * Attempt to restore a previous session.
@@ -33,7 +21,7 @@ export interface SessionRestoreContext {
  * Returns an `AuthSession` if the session was successfully restored.
  */
 export async function restoreSession(
-  ctx: SessionRestoreContext,
+  ctx: FlowContext,
   options: RestoreSessionOptions = {},
 ): Promise<AuthSession | undefined> {
   const { userAgent, emitter, storage } = ctx;
@@ -45,29 +33,16 @@ export async function restoreSession(
   }
 
   // Resolve password: explicit option → callback → provider → manager default → insecure fallback.
-  let password = options.password ?? ctx.defaultPassword;
+  // Note: restoreSession has an extra `onPasswordRequired` callback that sits between
+  // the explicit password and the provider. We handle that here, then delegate the
+  // remainder of the chain to `resolvePassword()`.
+  let explicitPassword = options.password;
 
-  if (!password && options.onPasswordRequired) {
-    password = await options.onPasswordRequired();
+  if (!explicitPassword && !ctx.defaultPassword && options.onPasswordRequired) {
+    explicitPassword = await options.onPasswordRequired();
   }
 
-  if (!password && ctx.passwordProvider) {
-    try {
-      password = await ctx.passwordProvider.getPassword({ reason: 'unlock' });
-    } catch {
-      // Provider failed — fall through to insecure default.
-    }
-  }
-
-  password ??= INSECURE_DEFAULT_PASSWORD;
-
-  // Warn if using insecure default.
-  if (password === INSECURE_DEFAULT_PASSWORD) {
-    console.warn(
-      '[@enbox/auth] SECURITY WARNING: No password set. Using insecure default. ' +
-      'Set a password to protect your identity vault.'
-    );
-  }
+  const password = await resolvePassword(ctx, explicitPassword, false);
 
   // Start the agent (initializes + unlocks vault).
   if (await userAgent.firstLaunch()) {
@@ -121,35 +96,18 @@ export async function restoreSession(
     : (storedDelegateDid ?? undefined);
 
   // Start sync.
-  const sync = ctx.defaultSync;
-  if (sync !== 'off') {
-    const syncMode = sync === undefined ? 'live' : 'poll';
-    const syncInterval = sync ?? (syncMode === 'live' ? '5m' : '2m');
-    userAgent.sync.startSync({ mode: syncMode, interval: syncInterval })
-      .catch((err: unknown) => {
-        console.error('[@enbox/auth] Sync failed:', err);
-      });
-  }
+  startSyncIfEnabled(userAgent, ctx.defaultSync);
 
-  // Update persisted session info.
-  await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid);
-
-  const identityInfo = {
-    didUri       : connectedDid,
-    name         : identity.metadata.name,
-    connectedDid : identity.metadata.connectedDid,
-  };
-
-  const session = new AuthSession({
-    agent    : userAgent,
-    did      : connectedDid,
+  // Persist session info, build AuthSession, and emit lifecycle events.
+  // Session restore does not emit `identity-added` (identity was already added in the original flow).
+  return finalizeSession({
+    userAgent,
+    emitter,
+    storage,
+    connectedDid,
     delegateDid,
-    identity : identityInfo,
+    identityName         : identity.metadata.name,
+    identityConnectedDid : identity.metadata.connectedDid,
+    emitIdentityAdded    : false,
   });
-
-  emitter.emit('session-start', {
-    session: { did: connectedDid, delegateDid, identity: identityInfo },
-  });
-
-  return session;
 }

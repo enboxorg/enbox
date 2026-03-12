@@ -8,7 +8,7 @@ import {
   loadTokensFromStorage,
   registerWithDwnEndpoints,
   saveTokensToStorage,
-} from '../src/flows/dwn-registration.js';
+} from '../src/registration.js';
 
 import type { RegistrationTokenData } from '../src/types.js';
 

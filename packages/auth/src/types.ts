@@ -332,9 +332,10 @@ export interface WalletConnectOptions {
   /**
    * Protocol permission requests for the wallet connect flow.
    *
-   * Each entry is a `ConnectPermissionRequest` from `@enbox/agent` containing
-   * a `protocolDefinition` and `permissionScopes`. Use
-   * `WalletConnect.createPermissionRequestForProtocol()` to build these.
+   * Each entry is a `ConnectPermissionRequest` containing a
+   * `protocolDefinition` and `permissionScopes`. Use
+   * `WalletConnect.createPermissionRequestForProtocol()` from `@enbox/auth`
+   * to build these.
    */
   permissionRequests: ConnectPermissionRequest[];
 

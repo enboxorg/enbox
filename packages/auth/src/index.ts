@@ -48,10 +48,12 @@ export type { PasswordContext } from './password-provider.js';
 export { EnboxUserAgent, HdIdentityVault } from '@enbox/agent';
 
 // Wallet-connect helpers
-export { processConnectedGrants } from './flows/wallet-connect.js';
+export { processConnectedGrants } from './connect/wallet.js';
+export { WalletConnect } from './wallet-connect-client.js';
+export type { Permission, ProtocolPermissionOptions, WalletConnectClientOptions } from './wallet-connect-client.js';
 
 // Registration token storage helpers
-export { loadTokensFromStorage, saveTokensToStorage } from './flows/dwn-registration.js';
+export { loadTokensFromStorage, saveTokensToStorage } from './registration.js';
 
 // Local DWN discovery (browser dwn:// protocol integration)
 export {
@@ -62,7 +64,7 @@ export {
   persistLocalDwnEndpoint,
   requestLocalDwnDiscovery,
   restoreLocalDwnEndpoint,
-} from './flows/dwn-discovery.js';
+} from './discovery.js';
 
 // Storage adapters
 export { BrowserStorage, LevelStorage, MemoryStorage, createDefaultStorage } from './storage/storage.js';

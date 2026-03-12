@@ -6,29 +6,12 @@
  * @module
  */
 
-import type { EnboxUserAgent } from '@enbox/agent';
+import type { AuthSession } from '../identity-session.js';
+import type { FlowContext } from './lifecycle.js';
+import type { ImportFromPhraseOptions, ImportFromPortableOptions } from '../types.js';
 
-import type { AuthEventEmitter } from '../events.js';
-import { AuthSession } from '../identity-session.js';
-import { registerWithDwnEndpoints } from './dwn-registration.js';
-import { STORAGE_KEYS } from '../types.js';
-import type {
-  ImportFromPhraseOptions,
-  ImportFromPortableOptions,
-  RegistrationOptions,
-  StorageAdapter,
-  SyncOption,
-} from '../types.js';
-
-/** @internal */
-export interface ImportContext {
-  userAgent: EnboxUserAgent;
-  emitter: AuthEventEmitter;
-  storage: StorageAdapter;
-  defaultSync?: SyncOption;
-  defaultDwnEndpoints?: string[];
-  registration?: RegistrationOptions;
-}
+import { registerWithDwnEndpoints } from '../registration.js';
+import { ensureVaultReady, finalizeSession, resolveIdentityDids, startSyncIfEnabled } from './lifecycle.js';
 
 /**
  * Import (or recover) an identity from a BIP-39 recovery phrase.
@@ -37,7 +20,7 @@ export interface ImportContext {
  * recovering the agent DID and all derived keys.
  */
 export async function importFromPhrase(
-  ctx: ImportContext,
+  ctx: FlowContext,
   options: ImportFromPhraseOptions,
 ): Promise<AuthSession> {
   const { userAgent, emitter, storage } = ctx;
@@ -45,18 +28,16 @@ export async function importFromPhrase(
   const sync = options.sync ?? ctx.defaultSync;
   const dwnEndpoints = options.dwnEndpoints ?? ctx.defaultDwnEndpoints ?? ['https://enbox-dwn.fly.dev'];
 
-  // Initialize the vault with the recovery phrase.
-  // This re-derives the same agent DID and CEK from the mnemonic.
-  if (await userAgent.firstLaunch()) {
-    await userAgent.initialize({
-      password,
-      recoveryPhrase,
-      dwnEndpoints,
-    });
-  }
-
-  await userAgent.start({ password });
-  emitter.emit('vault-unlocked', {});
+  // Initialize the vault with the recovery phrase and start the agent.
+  const isFirstLaunch = await userAgent.firstLaunch();
+  await ensureVaultReady({
+    userAgent,
+    emitter,
+    password,
+    isFirstLaunch,
+    recoveryPhrase,
+    dwnEndpoints,
+  });
 
   // The recovery phrase re-derives the same agent DID,
   // but the user identity might not exist yet — create one if needed.
@@ -111,38 +92,22 @@ export async function importFromPhrase(
     );
   }
 
-  // Register and start sync.
+  // Register sync for new identities.
   if (isNewIdentity && sync !== 'off') {
     await userAgent.sync.registerIdentity({ did: connectedDid, options: { protocols: [] } });
   }
 
-  if (sync !== 'off') {
-    const syncMode = sync === undefined ? 'live' : 'poll';
-    const syncInterval = sync ?? (syncMode === 'live' ? '5m' : '2m');
-    userAgent.sync.startSync({ mode: syncMode, interval: syncInterval })
-      .catch((err: unknown) => console.error('[@enbox/auth] Sync failed:', err));
-  }
+  // Start sync.
+  startSyncIfEnabled(userAgent, sync);
 
-  await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-  await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid);
-
-  const identityInfo = {
-    didUri : connectedDid,
-    name   : identity.metadata.name,
-  };
-
-  const session = new AuthSession({
-    agent    : userAgent,
-    did      : connectedDid,
-    identity : identityInfo,
+  // Persist session info, build AuthSession, and emit lifecycle events.
+  return finalizeSession({
+    userAgent,
+    emitter,
+    storage,
+    connectedDid,
+    identityName: identity.metadata.name,
   });
-
-  emitter.emit('identity-added', { identity: identityInfo });
-  emitter.emit('session-start', {
-    session: { did: connectedDid, identity: identityInfo },
-  });
-
-  return session;
 }
 
 /**
@@ -152,7 +117,7 @@ export async function importFromPhrase(
  * allowing it to be used on this device.
  */
 export async function importFromPortable(
-  ctx: ImportContext,
+  ctx: FlowContext,
   options: ImportFromPortableOptions,
 ): Promise<AuthSession> {
   const { userAgent, emitter, storage } = ctx;
@@ -162,8 +127,7 @@ export async function importFromPortable(
     portableIdentity: options.portableIdentity,
   });
 
-  const connectedDid = identity.metadata.connectedDid ?? identity.did.uri;
-  const delegateDid = identity.metadata.connectedDid ? identity.did.uri : undefined;
+  const { connectedDid, delegateDid } = resolveIdentityDids(identity);
 
   // Register with DWN endpoints (if registration options are provided).
   // For portable imports, extract endpoints from the DID document's DWN service.
@@ -187,33 +151,18 @@ export async function importFromPortable(
       did     : connectedDid,
       options : { delegateDid, protocols: [] },
     });
-
-    const syncMode = sync === undefined ? 'live' : 'poll';
-    const syncInterval = sync ?? (syncMode === 'live' ? '5m' : '2m');
-    userAgent.sync.startSync({ mode: syncMode, interval: syncInterval })
-      .catch((err: unknown) => console.error('[@enbox/auth] Sync failed:', err));
   }
 
-  await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-  await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid);
+  startSyncIfEnabled(userAgent, sync);
 
-  const identityInfo = {
-    didUri       : connectedDid,
-    name         : identity.metadata.name,
-    connectedDid : identity.metadata.connectedDid,
-  };
-
-  const session = new AuthSession({
-    agent    : userAgent,
-    did      : connectedDid,
+  // Persist session info, build AuthSession, and emit lifecycle events.
+  return finalizeSession({
+    userAgent,
+    emitter,
+    storage,
+    connectedDid,
     delegateDid,
-    identity : identityInfo,
+    identityName         : identity.metadata.name,
+    identityConnectedDid : identity.metadata.connectedDid,
   });
-
-  emitter.emit('identity-added', { identity: identityInfo });
-  emitter.emit('session-start', {
-    session: { did: connectedDid, delegateDid, identity: identityInfo },
-  });
-
-  return session;
 }

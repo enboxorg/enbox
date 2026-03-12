@@ -11,7 +11,8 @@ import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { type BearerDid, DidDht, DidJwk } from '@enbox/dids';
-import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
+
+import { DwnInterface } from '../src/index.js';
 import {
   type EnboxConnectAuthRequest,
   type EnboxConnectAuthResponse,
@@ -20,7 +21,6 @@ import {
 } from '../src/enbox-connect-protocol.js';
 
 import type { BearerIdentity, DwnMessage, DwnProtocolDefinition } from '../src/index.js';
-import { DwnInterface, WalletConnect } from '../src/index.js';
 
 describe('enbox connect', () => {
 
@@ -449,101 +449,9 @@ describe('enbox connect', () => {
     });
   });
 
-  describe('end to end client test', () => {
-    it('should complete the whole connect flow with the correct pin', async () => {
-      const fetchStub = sinon.stub(globalThis, 'fetch');
-      const onWalletUriReadySpy = sinon.spy();
-      sinon.stub(DidJwk, 'create').resolves(clientEphemeralBearerDid);
-
-      const par = {
-        expires_in  : 3600000,
-        request_uri : 'http://localhost:3000/connect/authorize/xyz.jwt',
-      };
-
-      const parResponse = new Response(JSON.stringify(par), {
-        status  : 200,
-        headers : { 'Content-type': 'application/json' },
-      });
-
-      const connectResponse = new Response(connectResponseJwe, {
-        status  : 200,
-        headers : { 'Content-Type': 'application/x-www-form-urlencoded' },
-      });
-
-      fetchStub.onFirstCall().resolves(parResponse);
-      fetchStub.callThrough();
-      fetchStub.onThirdCall().resolves(connectResponse);
-      fetchStub.callThrough();
-
-      const results = await WalletConnect.initClient({
-        displayName        : 'Sample App',
-        walletUri          : 'http://localhost:3000/',
-        connectServerUrl   : 'http://localhost:3000/connect',
-        permissionRequests : [
-          {
-            protocolDefinition : {} as any,
-            permissionScopes   : {} as any,
-          },
-        ],
-        onWalletUriReady : (uri) => onWalletUriReadySpy(uri),
-        validatePin      : async () => randomPin,
-      });
-
-      expect(fetchStub.firstCall.args[0]).toBe(
-        'http://localhost:3000/connect/par'
-      );
-      expect(onWalletUriReadySpy.calledOnce).toBe(true);
-      expect(onWalletUriReadySpy.firstCall.args[0]).toMatch(
-        new RegExp(
-          'http:\\/\\/[\\w.-]+:\\d+\\/\\?request_uri=http%3A%2F%2F[\\w.-]+%3A(\\d+|%24%7Bport%7D)%2Fconnect%2Fauthorize%2F[\\w.-]+\\.jwt&encryption_key=.+',
-          'i'
-        )
-      );
-      expect(fetchStub.thirdCall.args[0]).toMatch(
-        new RegExp('^http:\\/\\/localhost:3000\\/connect\\/token\\/.+\\.jwt$')
-      );
-
-      expect(typeof results).toBe('object');
-      expect(results?.delegateGrants).toBeInstanceOf(Array);
-      expect(typeof results?.delegatePortableDid).toBe('object');
-    });
-  });
-
-  describe('initClient — error paths', () => {
-    it('should throw when signJwt returns undefined', async () => {
-      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves(undefined as any);
-
-      await expect(
-        WalletConnect.initClient({
-          displayName        : 'Sample App',
-          walletUri          : 'http://localhost:3000/',
-          connectServerUrl   : 'http://localhost:3000/connect',
-          permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: {} as any }],
-          onWalletUriReady   : () => {},
-          validatePin        : async () => '1234',
-        })
-      ).rejects.toThrow('Unable to sign requestObject');
-    });
-
-    it('should throw when PAR response is not ok', async () => {
-      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves('signed.jwt.value');
-      sinon.stub(EnboxConnectProtocol, 'encryptRequest').resolves('encrypted-jwe');
-      sinon.stub(globalThis, 'fetch').resolves(
-        new Response('Bad Request', { status: 400, statusText: 'Bad Request' })
-      );
-
-      await expect(
-        WalletConnect.initClient({
-          displayName        : 'Sample App',
-          walletUri          : 'http://localhost:3000/',
-          connectServerUrl   : 'http://localhost:3000/connect',
-          permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: {} as any }],
-          onWalletUriReady   : () => {},
-          validatePin        : async () => '1234',
-        })
-      ).rejects.toThrow('400: Bad Request');
-    });
-  });
+  // NOTE: `end to end client test` and `initClient — error paths` were moved
+  // to @enbox/auth (wallet-connect-client.spec.ts) since WalletConnect.initClient
+  // now lives in that package.
 
   describe('submitConnectResponse', () => {
     it('should not attempt to configure the protocol if it already exists', async () => {
@@ -850,114 +758,7 @@ describe('enbox connect', () => {
     });
   });
 
-  describe('createPermissionRequestForProtocol', () => {
-    it('should add sync permissions to all requests', async () => {
-      const protocol:DwnProtocolDefinition = {
-        published : true,
-        protocol  : 'https://exmaple.org/protocols/social',
-        types     : {
-          note: {
-            schema      : 'https://example.org/schemas/note',
-            dataFormats : [ 'application/json', 'text/plain' ],
-          }
-        },
-        structure: {
-          note: {}
-        }
-      };
-
-      const permissionRequests = WalletConnect.createPermissionRequestForProtocol({
-        definition: protocol, permissions: []
-      });
-
-      expect(permissionRequests.protocolDefinition).toEqual(protocol);
-      // Messages.Read (unified: covers Read, Subscribe, Sync) + Protocols.Query
-      expect(permissionRequests.permissionScopes.length).toBe(2);
-      const scopes = permissionRequests.permissionScopes;
-      expect(scopes.find(
-        scope => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Read
-      )).toBeDefined();
-      expect(scopes.find(
-        scope => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Query
-      )).toBeDefined();
-    });
-
-    it('should add requested permissions to the request', async () => {
-      const protocol:DwnProtocolDefinition = {
-        published : true,
-        protocol  : 'https://exmaple.org/protocols/social',
-        types     : {
-          note: {
-            schema      : 'https://example.org/schemas/note',
-            dataFormats : [ 'application/json', 'text/plain' ],
-          }
-        },
-        structure: {
-          note: {}
-        }
-      };
-
-      const permissionRequests = WalletConnect.createPermissionRequestForProtocol({
-        definition: protocol, permissions: ['write', 'read']
-      });
-
-      expect(permissionRequests.protocolDefinition).toEqual(protocol);
-
-      // Messages.Read (unified) + 2 requested Records permissions + Protocols.Query
-      expect(permissionRequests.permissionScopes.length).toBe(4);
-      expect(permissionRequests.permissionScopes.find(
-        scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read
-      )).toBeDefined();
-      expect(permissionRequests.permissionScopes.find(
-        scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Write
-      )).toBeDefined();
-    });
-
-    it('supports requesting `read`, `write`, `delete`, `query`, `subscribe` and `configure` permissions', async () => {
-      const protocol:DwnProtocolDefinition = {
-        published : true,
-        protocol  : 'https://exmaple.org/protocols/social',
-        types     : {
-          note: {
-            schema      : 'https://example.org/schemas/note',
-            dataFormats : [ 'application/json', 'text/plain' ],
-          }
-        },
-        structure: {
-          note: {}
-        }
-      };
-
-      const permissionRequests = WalletConnect.createPermissionRequestForProtocol({
-        definition: protocol, permissions: ['write', 'read', 'delete', 'query', 'subscribe', 'configure']
-      });
-
-      expect(permissionRequests.protocolDefinition).toEqual(protocol);
-
-      // Messages.Read (unified) + 5 requested Records permissions + Protocols.Query + Protocols.Configure
-      expect(permissionRequests.permissionScopes.length).toBe(8);
-      const ps = permissionRequests.permissionScopes;
-      expect(ps.find(
-        scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read
-      )).toBeDefined();
-      expect(ps.find(
-        scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Write
-      )).toBeDefined();
-      expect(ps.find(
-        scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Delete
-      )).toBeDefined();
-      expect(ps.find(
-        scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Query
-      )).toBeDefined();
-      expect(ps.find(
-        scope => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Subscribe
-      )).toBeDefined();
-      expect(ps.find(
-        scope => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Query
-      )).toBeDefined();
-      expect(ps.find(
-        scope => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Configure
-      )).toBeDefined();
-    });
-  });
+  // NOTE: `createPermissionRequestForProtocol` tests were moved to
+  // @enbox/auth (wallet-connect-client.spec.ts) since the function
+  // now lives in that package.
 });

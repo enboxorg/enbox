@@ -6,18 +6,9 @@
  * @module
  */
 
-import { EnboxUserAgent } from '@enbox/agent';
 import type { BearerIdentity, HdIdentityVault, PortableIdentity } from '@enbox/agent';
 
-import { AuthEventEmitter } from './events.js';
-import { AuthSession } from './identity-session.js';
-import { createDefaultStorage } from './storage/storage.js';
-import { discoverLocalDwn } from './flows/dwn-discovery.js';
-import { localConnect } from './flows/local-connect.js';
-import { restoreSession } from './flows/session-restore.js';
-import { STORAGE_KEYS } from './types.js';
-import { walletConnect } from './flows/wallet-connect.js';
-
+import type { FlowContext } from './connect/lifecycle.js';
 import type { PasswordProvider } from './password-provider.js';
 import type {
   AuthEvent,
@@ -37,7 +28,19 @@ import type {
   SyncOption,
   WalletConnectOptions,
 } from './types.js';
-import { importFromPhrase, importFromPortable } from './flows/import-identity.js';
+
+import { EnboxUserAgent } from '@enbox/agent';
+
+import { AuthEventEmitter } from './events.js';
+import { AuthSession } from './identity-session.js';
+import { createDefaultStorage } from './storage/storage.js';
+import { discoverLocalDwn } from './discovery.js';
+import { localConnect } from './connect/local.js';
+import { restoreSession } from './connect/restore.js';
+import { STORAGE_KEYS } from './types.js';
+import { walletConnect } from './connect/wallet.js';
+import { ensureVaultReady, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './connect/lifecycle.js';
+import { importFromPhrase, importFromPortable } from './connect/import.js';
 
 /**
  * The primary entry point for authentication and identity management.
@@ -190,30 +193,7 @@ export class AuthManager {
    * @throws If a connection attempt is already in progress.
    */
   async connect(options?: LocalConnectOptions): Promise<AuthSession> {
-    this._guardConcurrency();
-    this._isConnecting = true;
-
-    try {
-      const session = await localConnect(
-        {
-          userAgent           : this._userAgent,
-          emitter             : this._emitter,
-          storage             : this._storage,
-          defaultPassword     : this._defaultPassword,
-          passwordProvider    : this._passwordProvider,
-          defaultSync         : this._defaultSync,
-          defaultDwnEndpoints : this._defaultDwnEndpoints,
-          registration        : this._registration,
-        },
-        options,
-      );
-
-      this._session = session;
-      this._setState('connected');
-      return session;
-    } finally {
-      this._isConnecting = false;
-    }
+    return this._withConnect(() => localConnect(this._flowContext(), options));
   }
 
   /**
@@ -228,50 +208,24 @@ export class AuthManager {
    * @throws If a connection attempt is already in progress.
    */
   async walletConnect(options: WalletConnectOptions): Promise<AuthSession> {
-    this._guardConcurrency();
-    this._isConnecting = true;
-
-    try {
+    return this._withConnect(async () => {
       // Ensure the agent is initialized and started before wallet connect.
       const isFirstLaunch = await this._userAgent.firstLaunch();
-      let password = this._defaultPassword;
-
-      if (!password && this._passwordProvider) {
-        try {
-          password = await this._passwordProvider.getPassword({
-            reason: isFirstLaunch ? 'create' : 'unlock',
-          });
-        } catch {
-          // Provider failed — fall through to insecure default.
-        }
-      }
-
-      password ??= 'insecure-static-phrase';
-
-      if (isFirstLaunch) {
-        await this._userAgent.initialize({ password });
-      }
-      await this._userAgent.start({ password });
-      this._emitter.emit('vault-unlocked', {});
-
-      const session = await walletConnect(
-        {
-          userAgent           : this._userAgent,
-          emitter             : this._emitter,
-          storage             : this._storage,
-          defaultSync         : this._defaultSync,
-          defaultDwnEndpoints : this._defaultDwnEndpoints,
-          registration        : this._registration,
-        },
-        options,
+      const password = await resolvePassword(
+        { defaultPassword: this._defaultPassword, passwordProvider: this._passwordProvider },
+        undefined,
+        isFirstLaunch,
       );
 
-      this._session = session;
-      this._setState('connected');
-      return session;
-    } finally {
-      this._isConnecting = false;
-    }
+      await ensureVaultReady({
+        userAgent : this._userAgent,
+        emitter   : this._emitter,
+        password,
+        isFirstLaunch,
+      });
+
+      return walletConnect(this._flowContext(), options);
+    });
   }
 
   /**
@@ -281,28 +235,7 @@ export class AuthManager {
    * recovering the identity on this device.
    */
   async importFromPhrase(options: ImportFromPhraseOptions): Promise<AuthSession> {
-    this._guardConcurrency();
-    this._isConnecting = true;
-
-    try {
-      const session = await importFromPhrase(
-        {
-          userAgent           : this._userAgent,
-          emitter             : this._emitter,
-          storage             : this._storage,
-          defaultSync         : this._defaultSync,
-          defaultDwnEndpoints : this._defaultDwnEndpoints,
-          registration        : this._registration,
-        },
-        options,
-      );
-
-      this._session = session;
-      this._setState('connected');
-      return session;
-    } finally {
-      this._isConnecting = false;
-    }
+    return this._withConnect(() => importFromPhrase(this._flowContext(), options));
   }
 
   /**
@@ -311,28 +244,7 @@ export class AuthManager {
    * The portable identity contains the DID's private keys and metadata.
    */
   async importFromPortable(options: ImportFromPortableOptions): Promise<AuthSession> {
-    this._guardConcurrency();
-    this._isConnecting = true;
-
-    try {
-      const session = await importFromPortable(
-        {
-          userAgent           : this._userAgent,
-          emitter             : this._emitter,
-          storage             : this._storage,
-          defaultSync         : this._defaultSync,
-          defaultDwnEndpoints : this._defaultDwnEndpoints,
-          registration        : this._registration,
-        },
-        options,
-      );
-
-      this._session = session;
-      this._setState('connected');
-      return session;
-    } finally {
-      this._isConnecting = false;
-    }
+    return this._withConnect(() => importFromPortable(this._flowContext(), options));
   }
 
   /**
@@ -346,17 +258,7 @@ export class AuthManager {
     this._isConnecting = true;
 
     try {
-      const session = await restoreSession(
-        {
-          userAgent        : this._userAgent,
-          emitter          : this._emitter,
-          storage          : this._storage,
-          defaultPassword  : this._defaultPassword,
-          passwordProvider : this._passwordProvider,
-          defaultSync      : this._defaultSync,
-        },
-        options,
-      );
+      const session = await restoreSession(this._flowContext(), options);
 
       if (session) {
         this._session = session;
@@ -409,13 +311,13 @@ export class AuthManager {
       );
     }
 
-    // Unlock the vault (initialise on first launch).
-    if (isFirstLaunch) {
-      await this._userAgent.initialize({ password });
-    } else {
-      await this._userAgent.start({ password });
-    }
-    this._emitter.emit('vault-unlocked', {});
+    // Unlock the vault (initialise on first launch, always start).
+    await ensureVaultReady({
+      userAgent : this._userAgent,
+      emitter   : this._emitter,
+      password,
+      isFirstLaunch,
+    });
 
     // Find the active identity.
     const identities = await this._userAgent.identity.list();
@@ -430,8 +332,7 @@ export class AuthManager {
       : undefined
     ) ?? identities[0];
 
-    const connectedDid = identity.metadata.connectedDid ?? identity.did.uri;
-    const delegateDid = identity.metadata.connectedDid ? identity.did.uri : undefined;
+    const { connectedDid, delegateDid } = resolveIdentityDids(identity);
 
     const identityInfo: IdentityInfo = {
       didUri       : connectedDid,
@@ -477,9 +378,7 @@ export class AuthManager {
     const did = this._session?.did;
 
     // 1. Stop sync.
-    if ('sync' in this._userAgent && typeof (this._userAgent as any).sync?.stopSync === 'function') {
-      await (this._userAgent as any).sync.stopSync(timeout);
-    }
+    await this._userAgent.sync.stopSync(timeout);
 
     // 2. Clear the session (but keep storage markers for restore).
     this._session = undefined;
@@ -511,9 +410,7 @@ export class AuthManager {
 
     // Stop sync.
     if (this._session) {
-      if ('sync' in this._userAgent && typeof (this._userAgent as any).sync?.stopSync === 'function') {
-        await (this._userAgent as any).sync.stopSync(timeout);
-      }
+      await this._userAgent.sync.stopSync(timeout);
     }
 
     this._session = undefined;
@@ -585,13 +482,10 @@ export class AuthManager {
     const did = this._session?.did;
 
     // 1. Stop sync.
-    if ('sync' in this._userAgent &&
-        typeof (this._userAgent as any).sync?.stopSync === 'function') {
-      try {
-        await (this._userAgent as any).sync.stopSync(timeout);
-      } catch {
-        // Best-effort — don't block shutdown on sync errors.
-      }
+    try {
+      await this._userAgent.sync.stopSync(timeout);
+    } catch {
+      // Best-effort — don't block shutdown on sync errors.
     }
 
     // 2. Clear the active session.
@@ -606,13 +500,10 @@ export class AuthManager {
     }
 
     // 4. Close the sync engine (releases LevelDB handles, timers).
-    if ('sync' in this._userAgent &&
-        typeof (this._userAgent as any).sync?.close === 'function') {
-      try {
-        await (this._userAgent as any).sync.close();
-      } catch {
-        // Best-effort.
-      }
+    try {
+      await this._userAgent.sync.close();
+    } catch {
+      // Best-effort.
     }
 
     // 5. Close the storage adapter (e.g. LevelDB session store).
@@ -668,8 +559,7 @@ export class AuthManager {
       throw new Error(`[@enbox/auth] Identity not found: ${didUri}`);
     }
 
-    const connectedDid = identity.metadata.connectedDid ?? identity.did.uri;
-    const delegateDid = identity.metadata.connectedDid ? identity.did.uri : undefined;
+    const { connectedDid, delegateDid } = resolveIdentityDids(identity);
 
     // Persist the switch.
     await this._storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
@@ -694,10 +584,7 @@ export class AuthManager {
         // Already registered — safe to ignore.
       }
 
-      const syncMode = sync === undefined ? 'live' : 'poll';
-      const syncInterval = sync ?? (syncMode === 'live' ? '5m' : '2m');
-      this._userAgent.sync.startSync({ mode: syncMode, interval: syncInterval })
-        .catch((err: unknown) => console.error('[@enbox/auth] Sync failed:', err));
+      startSyncIfEnabled(this._userAgent, sync);
     }
 
     this._session = new AuthSession({
@@ -820,6 +707,47 @@ export class AuthManager {
   }
 
   // ─── Private helpers ───────────────────────────────────────────
+
+  /**
+   * Build a `FlowContext` from the manager's current state.
+   *
+   * Replaces the 5 manual inline context constructions that were
+   * previously duplicated across `connect()`, `walletConnect()`,
+   * `importFromPhrase()`, `importFromPortable()`, and `restoreSession()`.
+   */
+  private _flowContext(): FlowContext {
+    return {
+      userAgent           : this._userAgent,
+      emitter             : this._emitter,
+      storage             : this._storage,
+      defaultPassword     : this._defaultPassword,
+      passwordProvider    : this._passwordProvider,
+      defaultSync         : this._defaultSync,
+      defaultDwnEndpoints : this._defaultDwnEndpoints,
+      registration        : this._registration,
+    };
+  }
+
+  /**
+   * Template for connection flows that follow the guard → try/finally → setState pattern.
+   *
+   * Consolidates the duplicated concurrency guard, `_isConnecting` flag management,
+   * session assignment, and state transition across `connect()`, `walletConnect()`,
+   * `importFromPhrase()`, and `importFromPortable()`.
+   */
+  private async _withConnect(fn: () => Promise<AuthSession>): Promise<AuthSession> {
+    this._guardConcurrency();
+    this._isConnecting = true;
+
+    try {
+      const session = await fn();
+      this._session = session;
+      this._setState('connected');
+      return session;
+    } finally {
+      this._isConnecting = false;
+    }
+  }
 
   private _setState(state: AuthState): void {
     if (state === this._state) {return;}
