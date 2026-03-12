@@ -6,12 +6,15 @@ import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 
 // ── Module-level mocks ──────────────────────────────────────────
-// We must preserve ALL original exports from @enbox/agent and @enbox/common
-// because mock.module() replaces the module globally for the entire test
+// We must preserve ALL original exports from @enbox/agent because
+// mock.module() replaces the module globally for the entire test
 // process. Only override the specific items we need to control.
+//
+// IMPORTANT: Do NOT mock @enbox/common — spreading a class (Convert)
+// into a plain object loses its static methods, breaking downstream
+// code that depends on Convert.uint8Array, Convert.hex, etc.
 
 const actualAgent = await import('@enbox/agent');
-const actualCommon = await import('@enbox/common');
 
 const mockInitClient = mock((): any => Promise.resolve({
   delegatePortableDid : { uri: 'did:dht:delegate123' },
@@ -23,25 +26,21 @@ const mockParseGrant = mock((message: any) => ({
   scope: message._scope ?? {},
 }));
 
-mock.module('@enbox/agent', () => ({
-  ...actualAgent,
+const actualWalletConnectClient = await import('../src/wallet-connect-client.js');
+
+mock.module('../src/wallet-connect-client.js', () => ({
+  ...actualWalletConnectClient,
   WalletConnect: {
-    ...actualAgent.WalletConnect,
+    ...actualWalletConnectClient.WalletConnect,
     initClient: mockInitClient,
-  },
-  DwnPermissionGrant: {
-    ...actualAgent.DwnPermissionGrant,
-    parse: mockParseGrant,
   },
 }));
 
-mock.module('@enbox/common', () => ({
-  ...actualCommon,
-  Convert: {
-    ...actualCommon.Convert,
-    base64Url: (): { toUint8Array: () => Uint8Array } => ({
-      toUint8Array: (): Uint8Array => new Uint8Array([1, 2, 3]),
-    }),
+mock.module('@enbox/agent', () => ({
+  ...actualAgent,
+  DwnPermissionGrant: {
+    ...actualAgent.DwnPermissionGrant,
+    parse: mockParseGrant,
   },
 }));
 
