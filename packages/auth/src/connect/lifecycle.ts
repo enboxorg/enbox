@@ -189,8 +189,6 @@ export async function createDefaultIdentity(
           id              : 'dwn',
           type            : 'DecentralizedWebNode',
           serviceEndpoint : dwnEndpoints,
-          enc             : '#enc',
-          sig             : '#sig',
         }
       ],
       verificationMethods: [

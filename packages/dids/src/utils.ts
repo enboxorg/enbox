@@ -39,25 +39,7 @@ import { DidError, DidErrorCode } from './did-error.js';
  *
  * @see {@link https://github.com/enboxorg/dwn-spec | Enbox DWN Specification}
  */
-export interface DwnDidService extends DidService {
-  /**
-   * @deprecated Optional legacy field. Resolve encryption keys from the DID document's
-   * `keyAgreement` verification methods instead.
-   *
-   * One or more verification method `id` values that can be used to encrypt information
-   * intended for the DID subject.
-   */
-  enc?: string | string[];
-
-  /**
-   * @deprecated Optional legacy field. Resolve signing keys from the DID document's
-   * `authentication` or `assertionMethod` verification methods instead.
-   *
-   * One or more verification method `id` values that will be used by the DID subject to sign data
-   * or by another entity to verify signatures created by the DID subject.
-   */
-  sig?: string | string[];
-}
+export interface DwnDidService extends DidService {}
 
 /**
  * Extracts the fragment part of a Decentralized Identifier (DID) verification method identifier.
@@ -419,13 +401,6 @@ export function isDwnDidService(obj: unknown): obj is DwnDidService {
 
   // Validate that the `type` property is `DecentralizedWebNode`.
   if (obj.type !== 'DecentralizedWebNode') {return false;}
-
-  // If `enc` or `sig` are present, validate they are strings or arrays of strings.
-  const isStringOrStringArray = (prop: any): boolean =>
-    typeof prop === 'string' || Array.isArray(prop) && prop.every(item => typeof item === 'string');
-
-  if ('enc' in obj && obj.enc !== undefined && !isStringOrStringArray(obj.enc)) {return false;}
-  if ('sig' in obj && obj.sig !== undefined && !isStringOrStringArray(obj.sig)) {return false;}
 
   return true;
 }

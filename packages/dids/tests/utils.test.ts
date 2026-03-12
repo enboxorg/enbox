@@ -341,37 +341,6 @@ describe('DID Utils', () => {
       expect(isDwnDidService(minimalDwnService)).toBe(true);
     });
 
-    it('returns true for a DwnDidService with legacy enc/sig properties', () => {
-      const legacyDwnService = {
-        id              : 'did:example:123#dwn',
-        type            : 'DecentralizedWebNode',
-        serviceEndpoint : 'https://dwn.example.org',
-        enc             : 'did:example:123#key-1',
-        sig             : 'did:example:123#key-2'
-      };
-      expect(isDwnDidService(legacyDwnService)).toBe(true);
-    });
-
-    it('returns true with only enc present (no sig)', () => {
-      const encOnlyService = {
-        id              : 'did:example:123#dwn',
-        type            : 'DecentralizedWebNode',
-        serviceEndpoint : 'https://dwn.example.org',
-        enc             : 'did:example:123#key-1'
-      };
-      expect(isDwnDidService(encOnlyService)).toBe(true);
-    });
-
-    it('returns true with only sig present (no enc)', () => {
-      const sigOnlyService = {
-        id              : 'did:example:123#dwn',
-        type            : 'DecentralizedWebNode',
-        serviceEndpoint : 'https://dwn.example.org',
-        sig             : 'did:example:123#key-2'
-      };
-      expect(isDwnDidService(sigOnlyService)).toBe(true);
-    });
-
     it('returns false for a non-DwnDidService type', () => {
       const nonDwnService = {
         id              : 'did:example:123#service',
@@ -381,45 +350,7 @@ describe('DID Utils', () => {
       expect(isDwnDidService(nonDwnService)).toBe(false);
     });
 
-    it('returns false for invalid enc property type', () => {
-      const invalidEncService = {
-        id              : 'did:example:123#dwn',
-        type            : 'DecentralizedWebNode',
-        serviceEndpoint : 'https://dwn.example.org',
-        enc             : 123,
-      };
-      expect(isDwnDidService(invalidEncService)).toBe(false);
-    });
 
-    it('returns false for invalid sig property type', () => {
-      const invalidSigService = {
-        id              : 'did:example:123#dwn',
-        type            : 'DecentralizedWebNode',
-        serviceEndpoint : 'https://dwn.example.org',
-        sig             : true
-      };
-      expect(isDwnDidService(invalidSigService)).toBe(false);
-    });
-
-    it('returns false for an array of non-string in enc', () => {
-      const arrayEncService = {
-        id              : 'did:example:123#dwn',
-        type            : 'DecentralizedWebNode',
-        serviceEndpoint : 'https://dwn.example.org',
-        enc             : [123, 'did:example:123#key-1'],
-      };
-      expect(isDwnDidService(arrayEncService)).toBe(false);
-    });
-
-    it('returns false for an array of non-string in sig', () => {
-      const arraySigService = {
-        id              : 'did:example:123#dwn',
-        type            : 'DecentralizedWebNode',
-        serviceEndpoint : 'https://dwn.example.org',
-        sig             : ['did:example:123#key-2', null]
-      };
-      expect(isDwnDidService(arraySigService)).toBe(false);
-    });
 
     it('returns false for a null object', () => {
       expect(isDwnDidService(null)).toBe(false);

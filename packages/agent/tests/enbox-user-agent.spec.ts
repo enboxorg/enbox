@@ -292,8 +292,6 @@ describe('EnboxUserAgent', () => {
                       id              : 'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy#dwn',
                       type            : 'DecentralizedWebNode',
                       serviceEndpoint : testDwnUrls,
-                      enc             : '#enc',
-                      sig             : '#sig',
                     },
                   ],
                 },
