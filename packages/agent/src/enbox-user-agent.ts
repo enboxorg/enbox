@@ -284,13 +284,3 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
     this.agentDid = await this.vault.getDid();
   }
 }
-
-// ---------------------------------------------------------------------------
-// Deprecated aliases — migration aid
-// ---------------------------------------------------------------------------
-
-/** @deprecated Use {@link EnboxUserAgent} instead. Will be removed in a future version. */
-export const Web5UserAgent = EnboxUserAgent;
-
-/** @deprecated Use {@link EnboxUserAgent} instead. Will be removed in a future version. */
-export type Web5UserAgent = EnboxUserAgent;

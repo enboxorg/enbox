@@ -176,7 +176,7 @@ async function initClient({
     tokenParam : request.state,
   });
 
-  // subscribe to receiving a response from the wallet with default TTL. receive ciphertext of {@link EnboxConnectAuthResponse}
+  // subscribe to receiving a response from the wallet with default TTL. receive ciphertext of {@link EnboxConnectResponse}
   const authResponse = await pollWithTtl(() => fetch(tokenUrl, { signal: AbortSignal.timeout(30_000) }));
 
   if (authResponse) {

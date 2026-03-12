@@ -103,32 +103,7 @@ export interface CryptoApi<
   KeyBytesDeriver<DeriveKeyBytesInput, DeriveKeyBytesOutput>,
   KeyWrapper<WrapKeyInput, UnwrapKeyInput> {}
 
-/** @deprecated Use {@link CryptoApi} instead. */
-export type ExtendedCryptoApi<
-  GenerateKeyInput = GenerateKeyParams,
-  GenerateKeyOutput = Jwk,
-  GetPublicKeyInput = GetPublicKeyParams,
-  DigestInput = DigestParams,
-  SignInput = SignParams,
-  VerifyInput = VerifyParams,
-  EncryptInput = CipherParams,
-  DecryptInput = CipherParams,
-  BytesToPublicKeyInput = BytesToPublicKeyParams,
-  PublicKeyToBytesInput = PublicKeyToBytesParams,
-  BytesToPrivateKeyInput = BytesToPrivateKeyParams,
-  PrivateKeyToBytesInput = PrivateKeyToBytesParams,
-  DeriveKeyInput = DeriveKeyFromBytesParams,
-  DeriveKeyOutput = Jwk,
-  DeriveKeyBytesInput = DeriveKeyBytesParams,
-  DeriveKeyBytesOutput = Uint8Array,
-  WrapKeyInput = WrapKeyParams,
-  UnwrapKeyInput = UnwrapKeyParams
-> = CryptoApi<
-  GenerateKeyInput, GenerateKeyOutput, GetPublicKeyInput, DigestInput, SignInput, VerifyInput,
-  EncryptInput, DecryptInput, BytesToPublicKeyInput, PublicKeyToBytesInput,
-  BytesToPrivateKeyInput, PrivateKeyToBytesInput, DeriveKeyInput, DeriveKeyOutput,
-  DeriveKeyBytesInput, DeriveKeyBytesOutput, WrapKeyInput, UnwrapKeyInput
->;
+
 
 /**
  * Parameters for configuring a {@link KeyManager} implementation.

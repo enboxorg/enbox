@@ -14,10 +14,9 @@ import { type BearerDid, DidDht, DidJwk } from '@enbox/dids';
 
 import { DwnInterface } from '../src/index.js';
 import {
-  type EnboxConnectAuthRequest,
-  type EnboxConnectAuthResponse,
   EnboxConnectProtocol,
-  Oidc,
+  type EnboxConnectRequest,
+  type EnboxConnectResponse,
 } from '../src/enbox-connect-protocol.js';
 
 import type { BearerIdentity, DwnMessage, DwnProtocolDefinition } from '../src/index.js';
@@ -164,11 +163,11 @@ describe('enbox connect', () => {
 
   let testHarness: PlatformAgentTestHarness;
 
-  let connectRequest: EnboxConnectAuthRequest;
+  let connectRequest: EnboxConnectRequest;
   let connectRequestJwt: string;
   let connectRequestJwe: string;
 
-  let connectResponse: EnboxConnectAuthResponse;
+  let connectResponse: EnboxConnectResponse;
   let connectResponseJwt: string;
   let connectResponseJwe: string;
 
@@ -224,7 +223,7 @@ describe('enbox connect', () => {
         .stub(CryptoUtils, 'randomBytes')
         .returns(connectRequestEncryptionKey);
 
-      const callbackUrl = Oidc.buildOidcUrl({
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
         baseURL  : 'http://localhost:3000',
         endpoint : 'callback',
       });
@@ -235,7 +234,7 @@ describe('enbox connect', () => {
         permissionRequests : [{ protocolDefinition, permissionScopes }],
         callbackUrl        : callbackUrl,
       };
-      connectRequest = await Oidc.createAuthRequest(options);
+      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
       expect(connectRequest).toEqual(expect.objectContaining(options));
       expect(typeof connectRequest.nonce).toBe('string');
       expect(typeof connectRequest.state).toBe('string');
@@ -245,7 +244,7 @@ describe('enbox connect', () => {
     });
 
     it('should construct a signed JWT of a connect request', async () => {
-      connectRequestJwt = await Oidc.signJwt({
+      connectRequestJwt = await EnboxConnectProtocol.signJwt({
         did  : clientEphemeralBearerDid,
         data : connectRequest,
       });
@@ -253,7 +252,7 @@ describe('enbox connect', () => {
     });
 
     it('should encrypt a connect request', async () => {
-      connectRequestJwe = await Oidc.encryptAuthRequest({
+      connectRequestJwe = await EnboxConnectProtocol.encryptRequest({
         jwt           : connectRequestJwt,
         encryptionKey : connectRequestEncryptionKey
       });
@@ -272,7 +271,7 @@ describe('enbox connect', () => {
         } as any);
       fetchStub.callThrough();
 
-      const authorizeUrl = Oidc.buildOidcUrl({
+      const authorizeUrl = EnboxConnectProtocol.buildConnectUrl({
         baseURL   : 'http://localhost:3000',
         endpoint  : 'authorize',
         authParam : '12345',
@@ -281,7 +280,7 @@ describe('enbox connect', () => {
         'http://localhost:3000/authorize/12345.jwt'
       );
 
-      const result = await Oidc.getAuthRequest(
+      const result = await EnboxConnectProtocol.getConnectRequest(
         authorizeUrl,
         Convert.uint8Array(connectRequestEncryptionKey).toBase64Url()
       );
@@ -289,7 +288,7 @@ describe('enbox connect', () => {
     });
 
     it('should create permission grants for each selected did', async () => {
-      const results = await Oidc.createPermissionGrants(
+      const results = await EnboxConnectProtocol.createPermissionGrants(
         providerIdentity.did.uri,
         delegateBearerDid,
         testHarness.agent,
@@ -309,7 +308,7 @@ describe('enbox connect', () => {
         delegateGrants : permissionGrants,
         delegatePortableDid,
       };
-      connectResponse = await Oidc.createResponseObject(options);
+      connectResponse = await EnboxConnectProtocol.createConnectResponse(options);
 
       expect(connectResponse).toEqual(expect.objectContaining(options));
       expect(typeof connectResponse.iat).toBe('number');
@@ -318,7 +317,7 @@ describe('enbox connect', () => {
     });
 
     it('should sign the connect response with the delegate DID', async () => {
-      connectResponseJwt = await Oidc.signJwt({
+      connectResponseJwt = await EnboxConnectProtocol.signJwt({
         did  : delegateBearerDid,
         data : connectResponse,
       });
@@ -326,11 +325,11 @@ describe('enbox connect', () => {
     });
 
     it('should derive a valid ECDH private key for both provider and client which is identical', async () => {
-      const providerECDHDerivedPrivateKey = await Oidc.deriveSharedKey(
+      const providerECDHDerivedPrivateKey = await EnboxConnectProtocol.deriveSharedKey(
         delegateBearerDid,
         clientEphemeralBearerDid.document
       );
-      const clientECDHDerivedPrivateKey = await Oidc.deriveSharedKey(
+      const clientECDHDerivedPrivateKey = await EnboxConnectProtocol.deriveSharedKey(
         clientEphemeralBearerDid,
         delegateBearerDid.document
       );
@@ -352,7 +351,7 @@ describe('enbox connect', () => {
       const randomBytesStub = sinon
         .stub(CryptoUtils, 'randomBytes')
         .returns(encryptionNonce);
-      connectResponseJwe = await Oidc.encryptAuthResponse({
+      connectResponseJwe = await EnboxConnectProtocol.encryptResponse({
         jwt              : connectResponseJwt,
         encryptionKey    : sharedECDHPrivateKey,
         pin              : randomPin,
@@ -367,7 +366,7 @@ describe('enbox connect', () => {
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
-      const callbackUrl = Oidc.buildOidcUrl({
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
         baseURL  : 'http://localhost:3000',
         endpoint : 'callback',
       });
@@ -390,7 +389,7 @@ describe('enbox connect', () => {
       const fetchStub = sinon.stub(globalThis, 'fetch').resolves(new Response());
 
       const selectedDid = providerIdentity.did.uri;
-      await Oidc.submitAuthResponse(
+      await EnboxConnectProtocol.submitConnectResponse(
         selectedDid,
         connectRequest,
         randomPin,
@@ -418,7 +417,7 @@ describe('enbox connect', () => {
 
   describe('client PIN entry final phase', () => {
     it('should get the connect response from server and decrypt the JWE using the PIN', async () => {
-      const result = await Oidc.decryptAuthResponse(
+      const result = await EnboxConnectProtocol.decryptResponse(
         clientEphemeralBearerDid,
         connectResponseJwe,
         randomPin
@@ -429,7 +428,7 @@ describe('enbox connect', () => {
 
     it('should fail decrypting the jwe if the wrong pin is entered', async () => {
       try {
-        await Oidc.decryptAuthResponse(
+        await EnboxConnectProtocol.decryptResponse(
           clientEphemeralBearerDid,
           connectResponseJwe,
           '87383837583757835737537734783'
@@ -441,9 +440,9 @@ describe('enbox connect', () => {
     });
 
     it('should validate the jwt and parse it into an object', async () => {
-      const result = (await Oidc.verifyJwt({
+      const result = (await EnboxConnectProtocol.verifyJwt({
         jwt: connectResponseJwt,
-      })) as EnboxConnectAuthResponse;
+      })) as EnboxConnectResponse;
       expect(typeof result).toBe('object');
       expect(result.delegateGrants.length).toBeGreaterThan(0);
     });
@@ -463,7 +462,7 @@ describe('enbox connect', () => {
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
-      const callbackUrl = Oidc.buildOidcUrl({
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
         baseURL  : 'http://localhost:3000',
         endpoint : 'callback',
       });
@@ -474,7 +473,7 @@ describe('enbox connect', () => {
         permissionRequests : [{ protocolDefinition, permissionScopes }],
         callbackUrl        : callbackUrl,
       };
-      connectRequest = await Oidc.createAuthRequest(options);
+      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
 
       // stub the processDwnRequest method to return a protocol entry
       const protocolMessage = {} as DwnMessage[DwnInterface.ProtocolsConfigure];
@@ -490,7 +489,7 @@ describe('enbox connect', () => {
         .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [ protocolMessage ] } });
 
       // call submitAuthResponse
-      await Oidc.submitAuthResponse(
+      await EnboxConnectProtocol.submitConnectResponse(
         providerIdentity.did.uri,
         connectRequest,
         randomPin,
@@ -516,7 +515,7 @@ describe('enbox connect', () => {
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
-      const callbackUrl = Oidc.buildOidcUrl({
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
         baseURL  : 'http://localhost:3000',
         endpoint : 'callback',
       });
@@ -527,7 +526,7 @@ describe('enbox connect', () => {
         permissionRequests : [{ protocolDefinition, permissionScopes }],
         callbackUrl        : callbackUrl,
       };
-      connectRequest = await Oidc.createAuthRequest(options);
+      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
 
       // spy send request
       const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
@@ -540,7 +539,7 @@ describe('enbox connect', () => {
         .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [ ] } });
 
       // call submitAuthResponse
-      await Oidc.submitAuthResponse(
+      await EnboxConnectProtocol.submitConnectResponse(
         providerIdentity.did.uri,
         connectRequest,
         randomPin,
@@ -564,7 +563,7 @@ describe('enbox connect', () => {
       processDwnRequestStub.resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' } } });
 
       // call submitAuthResponse
-      await Oidc.submitAuthResponse(
+      await EnboxConnectProtocol.submitConnectResponse(
         providerIdentity.did.uri,
         connectRequest,
         randomPin,
@@ -586,7 +585,7 @@ describe('enbox connect', () => {
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
-      const callbackUrl = Oidc.buildOidcUrl({
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
         baseURL  : 'http://localhost:3000',
         endpoint : 'callback',
       });
@@ -597,7 +596,7 @@ describe('enbox connect', () => {
         permissionRequests : [{ protocolDefinition, permissionScopes }],
         callbackUrl        : callbackUrl,
       };
-      connectRequest = await Oidc.createAuthRequest(options);
+      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
 
       // spy send request
       const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
@@ -612,7 +611,7 @@ describe('enbox connect', () => {
 
       try {
         // call submitAuthResponse
-        await Oidc.submitAuthResponse(
+        await EnboxConnectProtocol.submitConnectResponse(
           providerIdentity.did.uri,
           connectRequest,
           randomPin,
@@ -631,7 +630,7 @@ describe('enbox connect', () => {
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
-      const callbackUrl = Oidc.buildOidcUrl({
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
         baseURL  : 'http://localhost:3000',
         endpoint : 'callback',
       });
@@ -642,7 +641,7 @@ describe('enbox connect', () => {
         permissionRequests : [{ protocolDefinition, permissionScopes }],
         callbackUrl        : callbackUrl,
       };
-      connectRequest = await Oidc.createAuthRequest(options);
+      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
 
       // stub the processDwnRequest method to return a protocol entry
       const protocolMessage = {} as DwnMessage[DwnInterface.ProtocolsConfigure];
@@ -660,7 +659,7 @@ describe('enbox connect', () => {
 
       try {
         // call submitAuthResponse
-        await Oidc.submitAuthResponse(
+        await EnboxConnectProtocol.submitConnectResponse(
           providerIdentity.did.uri,
           connectRequest,
           randomPin,
@@ -680,7 +679,7 @@ describe('enbox connect', () => {
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
-      const callbackUrl = Oidc.buildOidcUrl({
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
         baseURL  : 'http://localhost:3000',
         endpoint : 'callback',
       });
@@ -691,7 +690,7 @@ describe('enbox connect', () => {
         permissionRequests : [{ protocolDefinition, permissionScopes }],
         callbackUrl        : callbackUrl,
       };
-      connectRequest = await Oidc.createAuthRequest(options);
+      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
 
       // spy send request
       const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
@@ -706,7 +705,7 @@ describe('enbox connect', () => {
 
       try {
         // call submitAuthResponse
-        await Oidc.submitAuthResponse(
+        await EnboxConnectProtocol.submitConnectResponse(
           providerIdentity.did.uri,
           connectRequest,
           randomPin,
@@ -726,7 +725,7 @@ describe('enbox connect', () => {
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
-      const callbackUrl = Oidc.buildOidcUrl({
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
         baseURL  : 'http://localhost:3000',
         endpoint : 'callback',
       });
@@ -740,11 +739,11 @@ describe('enbox connect', () => {
         permissionRequests : [{ protocolDefinition, permissionScopes }],
         callbackUrl        : callbackUrl,
       };
-      connectRequest = await Oidc.createAuthRequest(options);
+      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
 
       try {
         // call submitAuthResponse
-        await Oidc.submitAuthResponse(
+        await EnboxConnectProtocol.submitConnectResponse(
           providerIdentity.did.uri,
           connectRequest,
           randomPin,

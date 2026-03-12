@@ -153,22 +153,6 @@ export type ConnectEndpoint =
   | 'token';
 
 // ---------------------------------------------------------------------------
-// Deprecated type aliases — kept temporarily for migration
-// ---------------------------------------------------------------------------
-
-/** @deprecated Use {@link EnboxConnectRequest} instead. */
-export type EnboxConnectAuthRequest = EnboxConnectRequest;
-
-/** @deprecated Use {@link EnboxConnectResponse} instead. */
-export type EnboxConnectAuthResponse = EnboxConnectResponse;
-
-/** @deprecated Use {@link ConnectPushedRequest} instead. */
-export type PushedAuthRequest = ConnectPushedRequest;
-
-/** @deprecated Use {@link ConnectPushedResponse} instead. */
-export type PushedAuthResponse = ConnectPushedResponse;
-
-// ---------------------------------------------------------------------------
 // URL building
 // ---------------------------------------------------------------------------
 
@@ -766,26 +750,4 @@ export const EnboxConnectProtocol = {
   createConnectResponse,
   createPermissionGrants,
   submitConnectResponse,
-};
-
-// ---------------------------------------------------------------------------
-// Deprecated aliases — migration aid from the old `Oidc` namespace
-// ---------------------------------------------------------------------------
-
-/** @deprecated Use {@link EnboxConnectProtocol} instead. */
-export const Oidc = {
-  createAuthRequest     : createConnectRequest,
-  encryptAuthRequest    : encryptRequest,
-  getAuthRequest        : getConnectRequest,
-  decryptAuthRequest    : decryptRequest,
-  createPermissionGrants,
-  createResponseObject  : createConnectResponse,
-  encryptAuthResponse   : encryptResponse,
-  decryptAuthResponse   : decryptResponse,
-  deriveSharedKey,
-  signJwt,
-  verifyJwt,
-  buildOidcUrl          : buildConnectUrl,
-  generateCodeChallenge : undefined as never, // Removed — PKCE was never functional.
-  submitAuthResponse    : submitConnectResponse,
 };

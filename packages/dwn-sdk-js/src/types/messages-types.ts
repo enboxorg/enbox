@@ -59,11 +59,6 @@ export type MessagesSyncReply = GenericMessageReply & {
   entries? : string[]; // messageCid[] (for 'leaves' action)
 };
 
-/**
- * @deprecated Use {@link SubscriptionListener} directly. Retained as an alias for migration.
- */
-export type MessageSubscriptionHandler = SubscriptionListener;
-
 export type MessagesSubscribeMessageOptions = {
   subscriptionHandler: SubscriptionListener;
 };

@@ -7,7 +7,6 @@ import type { AgentKeyManager } from './key-manager.js';
 import type { AgentPermissionsApi } from '../permissions-api.js';
 import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { IdentityVault } from './identity-vault.js';
-import type { LocalKeyManager } from '../local-key-manager.js';
 import type { SyncEngine } from './sync.js';
 import type { AgentDidApi, DidInterface, DidRequest, DidResponse } from '../did-api.js';
 import type { DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './dwn.js';
@@ -194,13 +193,3 @@ export interface EnboxPlatformAgent<TKeyManager extends AgentKeyManager = AgentK
    */
   start(params: unknown): Promise<unknown>;
 }
-
-// ---------------------------------------------------------------------------
-// Deprecated aliases — migration aid
-// ---------------------------------------------------------------------------
-
-/** @deprecated Use {@link EnboxAgent} instead. Will be removed in a future version. */
-export type Web5Agent = EnboxAgent;
-
-/** @deprecated Use {@link EnboxPlatformAgent} instead. Will be removed in a future version. */
-export type Web5PlatformAgent<TKeyManager extends AgentKeyManager = LocalKeyManager> = EnboxPlatformAgent<TKeyManager>;
