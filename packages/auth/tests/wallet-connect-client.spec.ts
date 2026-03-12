@@ -56,6 +56,69 @@ describe('WalletConnect', () => {
     });
   });
 
+  describe('initClient — happy path', () => {
+    it('should complete the full relay flow and return delegate info', async () => {
+      // Stub EnboxConnectProtocol methods used by initClient.
+      sinon.stub(EnboxConnectProtocol, 'createConnectRequest').resolves({
+        clientDid           : 'did:jwk:test',
+        callbackUrl         : 'http://localhost:3000/connect/callback',
+        permissionRequests  : [],
+        appName             : 'Sample App',
+        nonce               : 'test-nonce',
+        responseMode        : 'direct_post',
+        state               : 'test-state',
+        supportedDidMethods : ['did:dht', 'did:jwk'],
+      } as any);
+      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves('signed.jwt.value');
+      sinon.stub(EnboxConnectProtocol, 'encryptRequest').resolves('encrypted-jwe');
+      sinon.stub(EnboxConnectProtocol, 'decryptResponse').resolves('decrypted.jwt.value');
+      sinon.stub(EnboxConnectProtocol, 'verifyJwt').resolves({
+        providerDid         : 'did:dht:provider789',
+        delegateGrants      : [{ recordId: 'grant1' }],
+        delegatePortableDid : { uri: 'did:dht:delegate123', document: {}, metadata: {} },
+      } as any);
+
+      // Stub fetch: first call = PAR response, second call = poll token response.
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.onFirstCall().resolves(
+        new Response(JSON.stringify({ request_uri: 'http://localhost:3000/connect/authorize/req.jwt' }), {
+          status  : 200,
+          headers : { 'Content-Type': 'application/json' },
+        })
+      );
+      fetchStub.onSecondCall().resolves(
+        new Response('encrypted-response-jwe', { status: 200 })
+      );
+
+      const walletUris: string[] = [];
+
+      const result = await WalletConnect.initClient({
+        displayName        : 'Sample App',
+        walletUri          : 'http://localhost:3000/',
+        connectServerUrl   : 'http://localhost:3000/connect',
+        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        onWalletUriReady   : (uri: string): void => { walletUris.push(uri); },
+        validatePin        : async (): Promise<string> => '1234',
+      });
+
+      // Verify result shape.
+      expect(result).toBeDefined();
+      expect(result!.connectedDid).toBe('did:dht:provider789');
+      expect(result!.delegatePortableDid.uri).toBe('did:dht:delegate123');
+      expect(result!.delegateGrants).toHaveLength(1);
+
+      // Verify onWalletUriReady was called with the correct URI.
+      expect(walletUris).toHaveLength(1);
+      const uri = new URL(walletUris[0]);
+      expect(uri.searchParams.get('request_uri')).toBe('http://localhost:3000/connect/authorize/req.jwt');
+      expect(uri.searchParams.get('encryption_key')).toBeDefined();
+
+      // Verify fetch was called for PAR and poll.
+      expect(fetchStub.callCount).toBeGreaterThanOrEqual(2);
+    });
+
+  });
+
   describe('createPermissionRequestForProtocol', () => {
     it('should add sync permissions to all requests', async () => {
       const protocol: DwnProtocolDefinition = {
