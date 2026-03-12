@@ -10,9 +10,11 @@ import { Stream } from '@enbox/common';
 import {
   DwnConstant, DwnContentEncryptionAlgorithm, DwnDateSort, DwnInterface, DwnKeyDerivationScheme,
   dwnMessageConstructors, EnboxConnectProtocol, EnboxUserAgent, getRecordAuthor,
-  getRecordProtocolRole, PlatformAgentTestHarness, WalletConnect,
+  getRecordProtocolRole, PlatformAgentTestHarness,
 } from '@enbox/agent';
 import { Jws, Message, Poller } from '@enbox/dwn-sdk-js';
+
+import { WalletConnect } from '@enbox/auth';
 
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
 import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json' with { type: 'json' };

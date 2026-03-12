@@ -1,13 +1,86 @@
+/**
+ * WalletConnect client — initiates the relay-mediated connect flow.
+ *
+ * Moved from `@enbox/agent/src/connect.ts` because `initClient` has zero
+ * coupling to agent internals (no vault, no key store, no DWN processing,
+ * no sync). Its only consumer is `auth/src/connect/wallet.ts`.
+ *
+ * The server-side counterpart (`EnboxConnectProtocol`) correctly stays in
+ * `@enbox/agent` because it uses `agent.processDwnRequest()`,
+ * `agent.sendDwnRequest()`, and `AgentPermissionsApi`.
+ *
+ * @module
+ */
 
-import type { ConnectPushedResponse, EnboxConnectResponse } from './enbox-connect-protocol.js';
-import type { DwnPermissionScope, DwnProtocolDefinition } from './index.js';
+import type { ConnectPermissionRequest, DwnPermissionScope, DwnProtocolDefinition } from '@enbox/agent';
+import type { ConnectPushedResponse, EnboxConnectResponse } from '@enbox/agent';
 
 import { CryptoUtils } from '@enbox/crypto';
 import { DidJwk } from '@enbox/dids';
-import { EnboxConnectProtocol } from './enbox-connect-protocol.js';
-import { pollWithTtl } from './utils.js';
 import { Convert, logger } from '@enbox/common';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
+import { EnboxConnectProtocol, pollWithTtl } from '@enbox/agent';
+
+/**
+ * Options for initiating a wallet connect flow (remote, relay-mediated).
+ *
+ * This is the agent-level options type used by `initClient()`. The auth-level
+ * `WalletConnectOptions` (in `types.ts`) wraps this with additional fields
+ * like `sync`.
+ */
+export type WalletConnectClientOptions = {
+  /** The user-friendly name of the app, displayed in the wallet consent UI. */
+  displayName: string;
+
+  /** The URL of the connect server which relays messages between the app and wallet. */
+  connectServerUrl: string;
+
+  /**
+   * The URI of the wallet app. Query params (`request_uri`, `encryption_key`)
+   * are appended and passed to `onWalletUriReady`.
+   * @example `enbox://connect` or `http://localhost:3000/`
+   */
+  walletUri: string;
+
+  /**
+   * The protocols of permissions requested, along with the definition and
+   * permission scopes for each protocol. The key is the protocol URL and
+   * the value is an object with the protocol definition and the permission scopes.
+   */
+  permissionRequests: ConnectPermissionRequest[];
+
+  /**
+   * Called with the wallet URI including query params (`request_uri`, `encryption_key`).
+   * The app should render this as a QR code or use it as a deep link.
+   *
+   * @param uri - The wallet URI with connect payload.
+   */
+  onWalletUriReady: (uri: string) => void;
+
+  /**
+   * Called to collect the PIN from the user. The PIN is used as AAD
+   * when decrypting the connect response from the relay.
+   *
+   * @returns A promise that resolves to the PIN as a string.
+   */
+  validatePin: () => Promise<string>;
+};
+
+/**
+ * Shorthand for the types of permissions that can be requested.
+ */
+export type Permission = 'write' | 'read' | 'delete' | 'query' | 'subscribe' | 'configure';
+
+/**
+ * The options for creating a permission request for a given protocol.
+ */
+export type ProtocolPermissionOptions = {
+  /** The protocol definition for the protocol being requested */
+  definition: DwnProtocolDefinition;
+
+  /** The permissions being requested for the protocol */
+  permissions: Permission[];
+};
 
 /**
  * Initiates the wallet connect process. Used when a client wants to obtain
@@ -20,7 +93,7 @@ async function initClient({
   permissionRequests,
   onWalletUriReady,
   validatePin,
-}: WalletConnectOptions): Promise<{
+}: WalletConnectClientOptions): Promise<{
   delegateGrants: EnboxConnectResponse['delegateGrants'];
   delegatePortableDid: EnboxConnectResponse['delegatePortableDid'];
   connectedDid: string;
@@ -103,7 +176,7 @@ async function initClient({
     tokenParam : request.state,
   });
 
-  // subscribe to receiving a response from the wallet with default TTL. receive ciphertext of {@link EnboxConnectAuthResponse}
+  // subscribe to receiving a response from the wallet with default TTL. receive ciphertext of {@link EnboxConnectResponse}
   const authResponse = await pollWithTtl(() => fetch(tokenUrl, { signal: AbortSignal.timeout(30_000) }));
 
   if (authResponse) {
@@ -123,77 +196,6 @@ async function initClient({
     };
   }
 }
-
-/**
- * Options for initiating a wallet connect flow (remote, relay-mediated).
- */
-export type WalletConnectOptions = {
-  /** The user-friendly name of the app, displayed in the wallet consent UI. */
-  displayName: string;
-
-  /** The URL of the connect server which relays messages between the app and wallet. */
-  connectServerUrl: string;
-
-  /**
-   * The URI of the wallet app. Query params (`request_uri`, `encryption_key`)
-   * are appended and passed to `onWalletUriReady`.
-   * @example `enbox://connect` or `http://localhost:3000/`
-   */
-  walletUri: string;
-
-  /**
-   * The protocols of permissions requested, along with the definition and
-   * permission scopes for each protocol. The key is the protocol URL and
-   * the value is an object with the protocol definition and the permission scopes.
-   */
-  permissionRequests: ConnectPermissionRequest[];
-
-  /**
-   * Called with the wallet URI including query params (`request_uri`, `encryption_key`).
-   * The app should render this as a QR code or use it as a deep link.
-   *
-   * @param uri - The wallet URI with connect payload.
-   */
-  onWalletUriReady: (uri: string) => void;
-
-  /**
-   * Called to collect the PIN from the user. The PIN is used as AAD
-   * when decrypting the connect response from the relay.
-   *
-   * @returns A promise that resolves to the PIN as a string.
-   */
-  validatePin: () => Promise<string>;
-};
-
-/**
- * The protocols of permissions requested, along with the definition and permission scopes for each protocol.
- */
-export type ConnectPermissionRequest = {
-  /**
-   * The definition of the protocol the permissions are being requested for.
-   * In the event that the protocol is not already installed, the wallet will install this given protocol definition.
-   */
-  protocolDefinition: DwnProtocolDefinition;
-
-  /** The scope of the permissions being requested for the given protocol */
-  permissionScopes: DwnPermissionScope[];
-};
-
-/**
- * Shorthand for the types of permissions that can be requested.
- */
-export type Permission = 'write' | 'read' | 'delete' | 'query' | 'subscribe' | 'configure';
-
-/**
- * The options for creating a permission request for a given protocol.
- */
-export type ProtocolPermissionOptions = {
-  /** The protocol definition for the protocol being requested */
-  definition: DwnProtocolDefinition;
-
-  /** The permissions being requested for the protocol */
-  permissions: Permission[];
-};
 
 /**
  * Creates a set of Dwn Permission Scopes to request for a given protocol.

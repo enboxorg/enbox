@@ -263,19 +263,3 @@ export class Enbox {
     return new Enbox(params);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Deprecated aliases — migration aid
-// ---------------------------------------------------------------------------
-
-/** @deprecated Use {@link Enbox} instead. Will be removed in a future version. */
-export const Web5 = Enbox;
-
-/** @deprecated Use {@link EnboxParams} instead. */
-export type Web5Params = EnboxParams;
-
-/** @deprecated Use {@link EnboxAnonymousOptions} instead. */
-export type Web5AnonymousOptions = EnboxAnonymousOptions;
-
-/** @deprecated Use {@link EnboxAnonymousApi} instead. */
-export type Web5AnonymousApi = EnboxAnonymousApi;

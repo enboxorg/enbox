@@ -12,7 +12,6 @@ import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, Permissions
 
 import type { BearerIdentity } from '../src/bearer-identity.js';
 
-import { AgentSyncApi } from '../src/sync-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
@@ -69,8 +68,7 @@ describe('SyncEngineLevel', () => {
 
       const syncStore = testHarness.syncStore;
       syncEngine = new SyncEngineLevel({ db: syncStore, agent: testHarness.agent });
-      const syncApi = new AgentSyncApi({ syncEngine, agent: testHarness.agent });
-      testHarness.agent.sync = syncApi;
+      testHarness.agent.sync = syncEngine;
 
       alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
     });

@@ -72,15 +72,3 @@ declare global {
 if (typeof window !== 'undefined') {
   window.enboxLogger = logger;
 }
-
-// ---------------------------------------------------------------------------
-// Deprecated aliases — migration aid
-// ---------------------------------------------------------------------------
-
-/** @deprecated Use {@link LogLevel} instead. Will be removed in a future version. */
-export const Web5LogLevel = LogLevel;
-/** @deprecated Use {@link LogLevel} instead. Will be removed in a future version. */
-export type Web5LogLevel = LogLevel;
-
-/** @deprecated Use {@link LoggerInterface} instead. Will be removed in a future version. */
-export type Web5LoggerInterface = LoggerInterface;

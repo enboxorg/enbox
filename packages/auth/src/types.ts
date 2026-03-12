@@ -332,9 +332,10 @@ export interface WalletConnectOptions {
   /**
    * Protocol permission requests for the wallet connect flow.
    *
-   * Each entry is a `ConnectPermissionRequest` from `@enbox/agent` containing
-   * a `protocolDefinition` and `permissionScopes`. Use
-   * `WalletConnect.createPermissionRequestForProtocol()` to build these.
+   * Each entry is a `ConnectPermissionRequest` containing a
+   * `protocolDefinition` and `permissionScopes`. Use
+   * `WalletConnect.createPermissionRequestForProtocol()` from `@enbox/auth`
+   * to build these.
    */
   permissionRequests: ConnectPermissionRequest[];
 
@@ -463,6 +464,9 @@ export interface StorageAdapter {
 
 /** The insecure default password used when none is provided. */
 export const INSECURE_DEFAULT_PASSWORD = 'insecure-static-phrase';
+
+/** Default DWN endpoints for new identities when none are configured. */
+export const DEFAULT_DWN_ENDPOINTS = ['https://enbox-dwn.fly.dev'];
 
 /**
  * Storage keys used by the auth manager for session persistence.

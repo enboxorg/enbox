@@ -13,7 +13,7 @@ import {
   persistLocalDwnEndpoint,
   requestLocalDwnDiscovery,
   restoreLocalDwnEndpoint,
-} from '../src/flows/dwn-discovery.js';
+} from '../src/discovery.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────
 

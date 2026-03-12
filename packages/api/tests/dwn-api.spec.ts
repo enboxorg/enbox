@@ -9,9 +9,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { processConnectedGrants } from '@enbox/auth';
 import {
   AgentPermissionsApi, DwnDateSort, DwnInterface, EnboxConnectProtocol,
-  EnboxUserAgent, getRecordAuthor, PlatformAgentTestHarness, WalletConnect,
+  EnboxUserAgent, getRecordAuthor, PlatformAgentTestHarness,
 } from '@enbox/agent';
 import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, PermissionsProtocol, Poller, Time } from '@enbox/dwn-sdk-js';
+
+import { WalletConnect } from '@enbox/auth';
 
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
 import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json' with { type: 'json' };

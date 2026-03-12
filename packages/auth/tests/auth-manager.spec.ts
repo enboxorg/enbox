@@ -994,13 +994,13 @@ describe('AuthManager', () => {
       expect(stopCalls[0]).toBe(5000);
     });
 
-    test('handles missing sync.close gracefully', async () => {
+    test('handles sync.close throwing gracefully', async () => {
       const agent = createMockAgent({
         firstLaunch  : async () => false,
         identityList : async () => [createMockIdentity()],
       });
-      // Remove close from sync
-      delete (agent as any).sync.close;
+      // Make close throw — shutdown should still succeed (best-effort).
+      (agent as any).sync.close = async (): Promise<void> => { throw new Error('db already closed'); };
 
       const manager = createTestManager(agent);
       await manager.connect({ password: 'test' });

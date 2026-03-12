@@ -5,10 +5,10 @@ import type { AgentDwnApi } from '../../src/dwn-api.js';
 import type { AgentIdentityApi } from '../../src/identity-api.js';
 import type { AgentKeyManager } from '../../src/types/key-manager.js';
 import type { AgentPermissionsApi } from '../../src/permissions-api.js';
-import type { AgentSyncApi } from '../../src/sync-api.js';
 import type { EnboxPlatformAgent } from '../../src/types/agent.js';
 import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { IdentityVault } from '../../src/types/identity-vault.js';
+import type { SyncEngine } from '../../src/types/sync.js';
 import type { AgentDidApi, DidInterface } from '../../src/did-api.js';
 import type { DidRequest, DidResponse } from '../../src/did-api.js';
 import type {
@@ -28,7 +28,7 @@ type TestAgentParams<TKeyManager extends AgentKeyManager> = {
   keyManager: TKeyManager;
   permissionsApi: AgentPermissionsApi;
   rpcClient: EnboxRpc;
-  syncApi: AgentSyncApi;
+  syncApi: SyncEngine;
 };
 
 export class TestAgent<TKeyManager extends AgentKeyManager> implements EnboxPlatformAgent<TKeyManager> {
@@ -39,7 +39,7 @@ export class TestAgent<TKeyManager extends AgentKeyManager> implements EnboxPlat
   public keyManager: TKeyManager;
   public permissions: AgentPermissionsApi;
   public rpc: EnboxRpc;
-  public sync: AgentSyncApi;
+  public sync: SyncEngine;
   public vault: IdentityVault;
 
   private _agentDid?: BearerDid;

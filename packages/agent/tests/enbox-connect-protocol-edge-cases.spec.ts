@@ -1,12 +1,12 @@
 import { Convert } from '@enbox/common';
 import { describe, expect, it } from 'bun:test';
 
-import { Oidc } from '../src/enbox-connect-protocol.js';
+import { EnboxConnectProtocol } from '../src/enbox-connect-protocol.js';
 
 describe('EnboxConnectProtocol — edge cases', () => {
   describe('buildOidcUrl', () => {
     it('should build pushedAuthorizationRequest URL', () => {
-      const url = Oidc.buildOidcUrl({
+      const url = EnboxConnectProtocol.buildConnectUrl({
         baseURL  : 'https://auth.example.com',
         endpoint : 'pushedAuthorizationRequest',
       });
@@ -14,7 +14,7 @@ describe('EnboxConnectProtocol — edge cases', () => {
     });
 
     it('should build authorize URL with authParam', () => {
-      const url = Oidc.buildOidcUrl({
+      const url = EnboxConnectProtocol.buildConnectUrl({
         baseURL   : 'https://auth.example.com',
         endpoint  : 'authorize',
         authParam : 'abc123',
@@ -23,14 +23,14 @@ describe('EnboxConnectProtocol — edge cases', () => {
     });
 
     it('should throw when authorize endpoint has no authParam', () => {
-      expect((): string => Oidc.buildOidcUrl({
+      expect((): string => EnboxConnectProtocol.buildConnectUrl({
         baseURL  : 'https://auth.example.com',
         endpoint : 'authorize',
       })).toThrow('authParam must be provided when building an authorize URL');
     });
 
     it('should build callback URL', () => {
-      const url = Oidc.buildOidcUrl({
+      const url = EnboxConnectProtocol.buildConnectUrl({
         baseURL  : 'https://auth.example.com',
         endpoint : 'callback',
       });
@@ -38,7 +38,7 @@ describe('EnboxConnectProtocol — edge cases', () => {
     });
 
     it('should build token URL with tokenParam', () => {
-      const url = Oidc.buildOidcUrl({
+      const url = EnboxConnectProtocol.buildConnectUrl({
         baseURL    : 'https://auth.example.com',
         endpoint   : 'token',
         tokenParam : 'xyz789',
@@ -47,14 +47,14 @@ describe('EnboxConnectProtocol — edge cases', () => {
     });
 
     it('should throw when token endpoint has no tokenParam', () => {
-      expect((): string => Oidc.buildOidcUrl({
+      expect((): string => EnboxConnectProtocol.buildConnectUrl({
         baseURL  : 'https://auth.example.com',
         endpoint : 'token',
       })).toThrow('tokenParam must be provided when building a token URL');
     });
 
     it('should throw for unknown endpoint', () => {
-      expect((): string => Oidc.buildOidcUrl({
+      expect((): string => EnboxConnectProtocol.buildConnectUrl({
         baseURL  : 'https://auth.example.com',
         endpoint : 'unknown' as any,
       })).toThrow('Unknown connect endpoint:');
@@ -70,7 +70,7 @@ describe('EnboxConnectProtocol — edge cases', () => {
       const payload = Convert.object({ test: true }).toBase64Url();
       const fakeJwt = `${header}.${payload}.fakesignature`;
 
-      await expect(Oidc.verifyJwt({ jwt: fakeJwt })).rejects.toThrow('missing required "kid"');
+      await expect(EnboxConnectProtocol.verifyJwt({ jwt: fakeJwt })).rejects.toThrow('missing required "kid"');
     });
 
     it('should throw when DID resolution fails', async () => {
@@ -79,7 +79,7 @@ describe('EnboxConnectProtocol — edge cases', () => {
       const payload = Convert.object({ test: true }).toBase64Url();
       const fakeJwt = `${header}.${payload}.fakesignature`;
 
-      await expect(Oidc.verifyJwt({ jwt: fakeJwt })).rejects.toThrow();
+      await expect(EnboxConnectProtocol.verifyJwt({ jwt: fakeJwt })).rejects.toThrow();
     });
 
     it('should verify a valid JWT signed by a did:jwk', async () => {
@@ -87,11 +87,11 @@ describe('EnboxConnectProtocol — edge cases', () => {
       const didJwk = await DidJwk.create();
 
       // Create a JWT signed by the DID
-      const jwt = await Oidc.signJwt({ did: didJwk, data: { test: 'value' } });
+      const jwt = await EnboxConnectProtocol.signJwt({ did: didJwk, data: { test: 'value' } });
       expect(jwt).toBeDefined();
 
       // Verify it
-      const result = await Oidc.verifyJwt({ jwt: jwt! });
+      const result = await EnboxConnectProtocol.verifyJwt({ jwt: jwt! });
       expect(result).toBeDefined();
       expect(result.test).toBe('value');
     });
@@ -100,7 +100,7 @@ describe('EnboxConnectProtocol — edge cases', () => {
       const { DidJwk } = await import('@enbox/dids');
       const didJwk = await DidJwk.create();
 
-      const jwt = await Oidc.signJwt({ did: didJwk, data: { test: 'value' } });
+      const jwt = await EnboxConnectProtocol.signJwt({ did: didJwk, data: { test: 'value' } });
       expect(jwt).toBeDefined();
 
       // Tamper with the signature
@@ -108,7 +108,7 @@ describe('EnboxConnectProtocol — edge cases', () => {
       parts[2] = Convert.uint8Array(new Uint8Array(64)).toBase64Url();
       const tamperedJwt = parts.join('.');
 
-      await expect(Oidc.verifyJwt({ jwt: tamperedJwt })).rejects.toThrow('invalid signature');
+      await expect(EnboxConnectProtocol.verifyJwt({ jwt: tamperedJwt })).rejects.toThrow('invalid signature');
     });
   });
 });

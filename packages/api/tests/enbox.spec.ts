@@ -10,8 +10,8 @@ import {
 } from '@enbox/agent';
 
 import { defineProtocol } from '../src/define-protocol.js';
-import { Enbox, Web5 } from '../src/enbox.js';
-import { TypedEnbox, TypedWeb5 } from '../src/typed-enbox.js';
+import { Enbox } from '../src/enbox.js';
+import { TypedEnbox } from '../src/typed-enbox.js';
 
 describe('Enbox API', () => {
   let consoleWarn: typeof console.warn;
@@ -92,29 +92,6 @@ describe('Enbox API', () => {
           connectedDid : socialIdentity.did.uri,
         });
         expect(enboxSocial).toBeDefined();
-      });
-    });
-
-    describe('deprecated aliases', () => {
-      it('should export Web5 as a deprecated alias for Enbox', () => {
-        expect(Web5).toBe(Enbox);
-      });
-
-      it('should export TypedWeb5 as a deprecated alias for TypedEnbox', () => {
-        expect(TypedWeb5).toBe(TypedEnbox);
-      });
-
-      it('should allow constructing via the Web5 alias', async () => {
-        const identity = await testHarness.agent.identity.create({
-          metadata  : { name: 'Alias' },
-          didMethod : 'jwk',
-        });
-
-        const instance = new Web5({
-          agent        : testHarness.agent,
-          connectedDid : identity.did.uri,
-        });
-        expect(instance).toBeInstanceOf(Enbox);
       });
     });
 
@@ -427,30 +404,11 @@ describe('Enbox API', () => {
       expect(enbox.agent).toBe(testHarness.agent);
     });
 
-    it('should be usable via the deprecated Web5 alias', async () => {
-      const identity = await testHarness.agent.identity.create({
-        metadata  : { name: 'Alias' },
-        didMethod : 'jwk',
-      });
-
-      const enbox = Web5.connect({
-        agent        : testHarness.agent,
-        connectedDid : identity.did.uri,
-      });
-
-      expect(enbox).toBeInstanceOf(Enbox);
-    });
   });
 
   describe('anonymous()', () => {
     it('should return an anonymous API with a read-only dwn property', () => {
       const anonApi = Enbox.anonymous();
-      expect(anonApi).toBeDefined();
-      expect(anonApi.dwn).toBeDefined();
-    });
-
-    it('should be accessible via the deprecated Web5 alias', () => {
-      const anonApi = Web5.anonymous();
       expect(anonApi).toBeDefined();
       expect(anonApi.dwn).toBeDefined();
     });

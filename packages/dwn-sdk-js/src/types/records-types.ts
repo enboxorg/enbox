@@ -191,11 +191,6 @@ export type RecordEvent = {
   initialWrite?: RecordsWriteMessage;
 };
 
-/**
- * @deprecated Use {@link SubscriptionListener} directly. Retained as an alias for migration.
- */
-export type RecordSubscriptionHandler = SubscriptionListener;
-
 export type RecordsSubscribeMessageOptions = {
   subscriptionHandler: SubscriptionListener;
 };

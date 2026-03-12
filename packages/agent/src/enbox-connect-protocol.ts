@@ -13,11 +13,24 @@
  * and ECDH (Ed25519 → X25519 + HKDF) for key agreement.
  */
 
-import type { ConnectPermissionRequest } from './connect.js';
 import type { EnboxAgent } from './types/agent.js';
 import type { RequireOnly } from '@enbox/common';
 import type { DidDocument, PortableDid } from '@enbox/dids';
 import type { DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnProtocolDefinition } from './types/dwn.js';
+
+/**
+ * The protocols of permissions requested, along with the definition and permission scopes for each protocol.
+ */
+export type ConnectPermissionRequest = {
+  /**
+   * The definition of the protocol the permissions are being requested for.
+   * In the event that the protocol is not already installed, the wallet will install this given protocol definition.
+   */
+  protocolDefinition: DwnProtocolDefinition;
+
+  /** The scope of the permissions being requested for the given protocol */
+  permissionScopes: DwnPermissionScope[];
+};
 import type {
   JoseHeaderParams,
   Jwk } from '@enbox/crypto';
@@ -138,22 +151,6 @@ export type ConnectEndpoint =
   | 'authorize'
   | 'callback'
   | 'token';
-
-// ---------------------------------------------------------------------------
-// Deprecated type aliases — kept temporarily for migration
-// ---------------------------------------------------------------------------
-
-/** @deprecated Use {@link EnboxConnectRequest} instead. */
-export type EnboxConnectAuthRequest = EnboxConnectRequest;
-
-/** @deprecated Use {@link EnboxConnectResponse} instead. */
-export type EnboxConnectAuthResponse = EnboxConnectResponse;
-
-/** @deprecated Use {@link ConnectPushedRequest} instead. */
-export type PushedAuthRequest = ConnectPushedRequest;
-
-/** @deprecated Use {@link ConnectPushedResponse} instead. */
-export type PushedAuthResponse = ConnectPushedResponse;
 
 // ---------------------------------------------------------------------------
 // URL building
@@ -753,26 +750,4 @@ export const EnboxConnectProtocol = {
   createConnectResponse,
   createPermissionGrants,
   submitConnectResponse,
-};
-
-// ---------------------------------------------------------------------------
-// Deprecated aliases — migration aid from the old `Oidc` namespace
-// ---------------------------------------------------------------------------
-
-/** @deprecated Use {@link EnboxConnectProtocol} instead. */
-export const Oidc = {
-  createAuthRequest     : createConnectRequest,
-  encryptAuthRequest    : encryptRequest,
-  getAuthRequest        : getConnectRequest,
-  decryptAuthRequest    : decryptRequest,
-  createPermissionGrants,
-  createResponseObject  : createConnectResponse,
-  encryptAuthResponse   : encryptResponse,
-  decryptAuthResponse   : decryptResponse,
-  deriveSharedKey,
-  signJwt,
-  verifyJwt,
-  buildOidcUrl          : buildConnectUrl,
-  generateCodeChallenge : undefined as never, // Removed — PKCE was never functional.
-  submitAuthResponse    : submitConnectResponse,
 };

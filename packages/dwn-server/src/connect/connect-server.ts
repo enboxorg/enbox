@@ -130,21 +130,3 @@ export class ConnectServer {
     this.cache.close();
   }
 }
-
-// ---------------------------------------------------------------------------
-// Deprecated aliases — migration aid
-// ---------------------------------------------------------------------------
-
-/** @deprecated Use {@link ConnectRequest} instead. Will be removed in a future version. */
-export type Web5ConnectRequest = ConnectRequest;
-
-/** @deprecated Use {@link ConnectResponse} instead. Will be removed in a future version. */
-export type Web5ConnectResponse = ConnectResponse;
-
-/** @deprecated Use {@link SetConnectRequestResult} instead. Will be removed in a future version. */
-export type SetWeb5ConnectRequestResult = SetConnectRequestResult;
-
-/** @deprecated Use {@link ConnectServer} instead. Will be removed in a future version. */
-export const Web5ConnectServer = ConnectServer;
-/** @deprecated Use {@link ConnectServer} instead. Will be removed in a future version. */
-export type Web5ConnectServer = ConnectServer;

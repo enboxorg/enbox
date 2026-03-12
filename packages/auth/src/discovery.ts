@@ -30,9 +30,10 @@ import type { EnboxUserAgent } from '@enbox/agent';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
 import { buildDwnConnectUrl, localDwnServerName, normalizeBaseUrl, readDwnDiscoveryPayloadFromUrl } from '@enbox/agent';
 
-import type { AuthEventEmitter } from '../events.js';
-import { STORAGE_KEYS } from '../types.js';
-import type { StorageAdapter } from '../types.js';
+import type { AuthEventEmitter } from './events.js';
+import type { StorageAdapter } from './types.js';
+
+import { STORAGE_KEYS } from './types.js';
 
 /**
  * Check the current page URL for a `DwnDiscoveryPayload` in the fragment.

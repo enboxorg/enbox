@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { AuthEventEmitter } from '../src/events.js';
 import { MemoryStorage } from '../src/storage/storage.js';
-import { restoreSession } from '../src/flows/session-restore.js';
+import { restoreSession } from '../src/connect/restore.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 

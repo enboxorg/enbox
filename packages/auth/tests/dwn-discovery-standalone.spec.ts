@@ -31,7 +31,7 @@ mock.module('@enbox/dwn-clients', () => ({
 }));
 
 // Import AFTER mocks are registered.
-const { discoverLocalDwn } = await import('../src/flows/dwn-discovery.js');
+const { discoverLocalDwn } = await import('../src/discovery.js');
 
 // ── Helpers ─────────────────────────────────────────────────────
 let originalLocation: Location | undefined;

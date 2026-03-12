@@ -332,8 +332,6 @@ describe('AgentDwnApi', () => {
           id              : `${did}#dwn`,
           type            : 'DecentralizedWebNode',
           serviceEndpoint : serviceEndpoint,
-          enc             : `${did}#enc`,
-          sig             : `${did}#sig`,
         },
       };
     }
@@ -1449,8 +1447,6 @@ describe('AgentDwnApi', () => {
                 id              : 'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy#dwn',
                 type            : 'DecentralizedWebNode',
                 serviceEndpoint : testDwnUrls,
-                enc             : '#enc',
-                sig             : '#sig',
               },
             ],
           },
@@ -3877,8 +3873,6 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
           id              : '#dwn',
           type            : 'DecentralizedWebNode',
           serviceEndpoint : ['https://dwn.example.com'],
-          enc             : '#enc',
-          sig             : '#sig',
         }
       });
 
@@ -3929,8 +3923,6 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
           id              : '#dwn',
           type            : 'DecentralizedWebNode',
           serviceEndpoint : ['https://dwn.example.com'],
-          enc             : '#enc',
-          sig             : '#sig',
         }
       });
 

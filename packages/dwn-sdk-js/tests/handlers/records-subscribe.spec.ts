@@ -1,7 +1,7 @@
 import type { DidResolver } from '@enbox/dids';
 import type { DataStore, MessageStore, ProtocolDefinition, RecordsDeleteMessage, RecordsWriteMessage, ResumableTaskStore, StateIndex } from '../../src/index.js';
-import type { EventLog, SubscriptionMessage } from '../../src/types/subscriptions.js';
-import type { RecordEvent, RecordsFilter, RecordSubscriptionHandler } from '../../src/types/records-types.js';
+import type { EventLog, SubscriptionListener, SubscriptionMessage } from '../../src/types/subscriptions.js';
+import type { RecordEvent, RecordsFilter } from '../../src/types/records-types.js';
 
 import sinon from 'sinon';
 
@@ -239,7 +239,7 @@ export function testRecordsSubscribeHandler(): void {
 
         // subscribe
         const receivedEvents: RecordEvent[] = [];
-        const subscriptionHandler: RecordSubscriptionHandler = (msg): void => { if (msg.type === 'event') { receivedEvents.push(msg.event as RecordEvent); } };
+        const subscriptionHandler: SubscriptionListener = (msg): void => { if (msg.type === 'event') { receivedEvents.push(msg.event as RecordEvent); } };
         const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
           author : alice,
           filter : { schema: 'http://live-test' },
@@ -280,7 +280,7 @@ export function testRecordsSubscribeHandler(): void {
           // Subscribe with the cursor from before the writes. The handler takes the
           // EventLog catch-up path, replaying events through the subscription handler.
           const receivedEvents: RecordEvent[] = [];
-          const subscriptionHandler: RecordSubscriptionHandler = (msg): void => { if (msg.type === 'event') { receivedEvents.push(msg.event as RecordEvent); } };
+          const subscriptionHandler: SubscriptionListener = (msg): void => { if (msg.type === 'event') { receivedEvents.push(msg.event as RecordEvent); } };
           const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
             author : alice,
             filter : { schema: 'http://cursor-test' },
@@ -293,7 +293,7 @@ export function testRecordsSubscribeHandler(): void {
 
           // In cursor mode, initial entries are NOT returned via the reply —
           // they come through the subscription handler as catch-up events.
-          // The handler wraps SubscriptionListener→RecordSubscriptionHandler,
+          // The handler wraps SubscriptionListener→SubscriptionListener,
           // so we get plain RecordEvents (EOSE is silently consumed).
           await Poller.pollUntilSuccessOrTimeout(async () => {
             expect(receivedEvents.length).toBeGreaterThanOrEqual(2);
@@ -321,7 +321,7 @@ export function testRecordsSubscribeHandler(): void {
           await dwn.processMessage(alice.did, write2.message, { dataStream: write2.dataStream });
 
           const receivedEvents: RecordEvent[] = [];
-          const subscriptionHandler: RecordSubscriptionHandler = (msg): void => { if (msg.type === 'event') { receivedEvents.push(msg.event as RecordEvent); } };
+          const subscriptionHandler: SubscriptionListener = (msg): void => { if (msg.type === 'event') { receivedEvents.push(msg.event as RecordEvent); } };
           const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
             author : alice,
             filter : { schema: 'http://cursor-live' },
@@ -364,7 +364,7 @@ export function testRecordsSubscribeHandler(): void {
           await dwn.processMessage(alice.did, noMatchWrite.message, { dataStream: noMatchWrite.dataStream });
 
           const receivedEvents: RecordEvent[] = [];
-          const subscriptionHandler: RecordSubscriptionHandler = (msg): void => { if (msg.type === 'event') { receivedEvents.push(msg.event as RecordEvent); } };
+          const subscriptionHandler: SubscriptionListener = (msg): void => { if (msg.type === 'event') { receivedEvents.push(msg.event as RecordEvent); } };
           const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
             author : alice,
             filter : { schema: 'http://filter-match' },
@@ -689,7 +689,7 @@ export function testRecordsSubscribeHandler(): void {
           expect(friendRoleReply.status.code).toBe(202);
 
           const recordIds: Set<string> = new Set();
-          const addRecord:RecordSubscriptionHandler = async (msg) => {
+          const addRecord:SubscriptionListener = async (msg) => {
             if (msg.type !== 'event') { return; }
             const { message } = msg.event;
             if (message.descriptor.method === DwnMethodName.Write) {
@@ -845,7 +845,7 @@ export function testRecordsSubscribeHandler(): void {
           expect(participantRoleReply.status.code).toBe(202);
 
           const recordIds: string[] = [];
-          const addRecord:RecordSubscriptionHandler = async (msg) => {
+          const addRecord:SubscriptionListener = async (msg) => {
             if (msg.type !== 'event') { return; }
             const { message } = msg.event;
             if (message.descriptor.method === DwnMethodName.Write) {
@@ -1094,7 +1094,7 @@ export function testRecordsSubscribeHandler(): void {
 
             // Bob subscribes — no role
             const bobRecordIds: Set<string> = new Set();
-            const bobHandler: RecordSubscriptionHandler = async (msg): Promise<void> => {
+            const bobHandler: SubscriptionListener = async (msg): Promise<void> => {
               if (msg.type !== 'event') { return; }
               const { message } = msg.event;
               if (message.descriptor.method === DwnMethodName.Write) {
@@ -1114,7 +1114,7 @@ export function testRecordsSubscribeHandler(): void {
 
             // Carol subscribes — no role
             const carolRecordIds: Set<string> = new Set();
-            const carolHandler: RecordSubscriptionHandler = async (msg): Promise<void> => {
+            const carolHandler: SubscriptionListener = async (msg): Promise<void> => {
               if (msg.type !== 'event') { return; }
               const { message } = msg.event;
               if (message.descriptor.method === DwnMethodName.Write) {
@@ -1134,7 +1134,7 @@ export function testRecordsSubscribeHandler(): void {
 
             // Dave subscribes — no role, not a participant at all
             const daveRecordIds: Set<string> = new Set();
-            const daveHandler: RecordSubscriptionHandler = async (msg): Promise<void> => {
+            const daveHandler: SubscriptionListener = async (msg): Promise<void> => {
               if (msg.type !== 'event') { return; }
               const { message } = msg.event;
               if (message.descriptor.method === DwnMethodName.Write) {

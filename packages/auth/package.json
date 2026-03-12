@@ -58,13 +58,17 @@
   "dependencies": {
     "@enbox/agent": "workspace:*",
     "@enbox/common": "workspace:*",
+    "@enbox/crypto": "workspace:*",
     "@enbox/dids": "workspace:*",
     "@enbox/dwn-clients": "workspace:*",
+    "@enbox/dwn-sdk-js": "workspace:*",
     "level": "8.0.1"
   },
   "devDependencies": {
     "@types/node": "22.19.15",
+    "@types/sinon": "17.0.3",
     "bun-types": "1.3.10",
+    "sinon": "18.0.0",
     "typescript": "5.9.3"
   }
 }
