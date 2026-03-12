@@ -21,7 +21,7 @@ import type { PasswordProvider } from '../password-provider.js';
 import type { IdentityInfo, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
 
 import { AuthSession } from '../identity-session.js';
-import { INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../types.js';
+import { DEFAULT_DWN_ENDPOINTS, INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../types.js';
 
 // ─── FlowContext ─────────────────────────────────────────────────
 
@@ -164,6 +164,51 @@ export function startSyncIfEnabled(
     });
 }
 
+// ─── createDefaultIdentity ──────────────────────────────────────
+
+/**
+ * Create a new `did:dht` identity with Ed25519 signing and X25519
+ * encryption keys, and a DWN service endpoint.
+ *
+ * This consolidates the identical identity creation block that was
+ * duplicated in `localConnect` and `importFromPhrase`.
+ *
+ * @internal
+ */
+export async function createDefaultIdentity(
+  userAgent: EnboxUserAgent,
+  dwnEndpoints: string[] = DEFAULT_DWN_ENDPOINTS,
+  name = 'Default',
+): Promise<BearerIdentity> {
+  return userAgent.identity.create({
+    didMethod  : 'dht',
+    metadata   : { name },
+    didOptions : {
+      services: [
+        {
+          id              : 'dwn',
+          type            : 'DecentralizedWebNode',
+          serviceEndpoint : dwnEndpoints,
+          enc             : '#enc',
+          sig             : '#sig',
+        }
+      ],
+      verificationMethods: [
+        {
+          algorithm : 'Ed25519',
+          id        : 'sig',
+          purposes  : ['assertionMethod', 'authentication'],
+        },
+        {
+          algorithm : 'X25519',
+          id        : 'enc',
+          purposes  : ['keyAgreement'],
+        },
+      ],
+    },
+  });
+}
+
 // ─── resolveIdentityDids ────────────────────────────────────────
 
 /**
@@ -175,14 +220,24 @@ export function startSyncIfEnabled(
  * For a **wallet-connected** identity: `connectedDid` is the external wallet
  * DID, and `delegateDid` is the local identity's DID URI.
  *
+ * @param identity            - The bearer identity to extract DIDs from.
+ * @param storedDelegateDid   - Optional fallback delegate DID from storage,
+ *   used by session-restore when the identity metadata doesn't include a
+ *   `connectedDid` but a delegate DID was persisted in a prior session.
+ *
  * @internal
  */
-export function resolveIdentityDids(identity: BearerIdentity): {
+export function resolveIdentityDids(
+  identity: BearerIdentity,
+  storedDelegateDid?: string,
+): {
   connectedDid: string;
   delegateDid: string | undefined;
 } {
   const connectedDid = identity.metadata.connectedDid ?? identity.did.uri;
-  const delegateDid = identity.metadata.connectedDid ? identity.did.uri : undefined;
+  const delegateDid = identity.metadata.connectedDid
+    ? identity.did.uri
+    : (storedDelegateDid ?? undefined);
   return { connectedDid, delegateDid };
 }
 

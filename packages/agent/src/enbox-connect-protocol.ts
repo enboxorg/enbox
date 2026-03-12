@@ -13,11 +13,24 @@
  * and ECDH (Ed25519 → X25519 + HKDF) for key agreement.
  */
 
-import type { ConnectPermissionRequest } from './connect.js';
 import type { EnboxAgent } from './types/agent.js';
 import type { RequireOnly } from '@enbox/common';
 import type { DidDocument, PortableDid } from '@enbox/dids';
 import type { DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnProtocolDefinition } from './types/dwn.js';
+
+/**
+ * The protocols of permissions requested, along with the definition and permission scopes for each protocol.
+ */
+export type ConnectPermissionRequest = {
+  /**
+   * The definition of the protocol the permissions are being requested for.
+   * In the event that the protocol is not already installed, the wallet will install this given protocol definition.
+   */
+  protocolDefinition: DwnProtocolDefinition;
+
+  /** The scope of the permissions being requested for the given protocol */
+  permissionScopes: DwnPermissionScope[];
+};
 import type {
   JoseHeaderParams,
   Jwk } from '@enbox/crypto';

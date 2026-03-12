@@ -39,7 +39,7 @@ import { localConnect } from './connect/local.js';
 import { restoreSession } from './connect/restore.js';
 import { STORAGE_KEYS } from './types.js';
 import { walletConnect } from './connect/wallet.js';
-import { ensureVaultReady, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './connect/lifecycle.js';
+import { ensureVaultReady, resolveIdentityDids, startSyncIfEnabled } from './connect/lifecycle.js';
 import { importFromPhrase, importFromPortable } from './connect/import.js';
 
 /**
@@ -208,24 +208,7 @@ export class AuthManager {
    * @throws If a connection attempt is already in progress.
    */
   async walletConnect(options: WalletConnectOptions): Promise<AuthSession> {
-    return this._withConnect(async () => {
-      // Ensure the agent is initialized and started before wallet connect.
-      const isFirstLaunch = await this._userAgent.firstLaunch();
-      const password = await resolvePassword(
-        { defaultPassword: this._defaultPassword, passwordProvider: this._passwordProvider },
-        undefined,
-        isFirstLaunch,
-      );
-
-      await ensureVaultReady({
-        userAgent : this._userAgent,
-        emitter   : this._emitter,
-        password,
-        isFirstLaunch,
-      });
-
-      return walletConnect(this._flowContext(), options);
-    });
+    return this._withConnect(() => walletConnect(this._flowContext(), options));
   }
 
   /**

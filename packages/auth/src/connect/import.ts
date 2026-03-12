@@ -10,8 +10,9 @@ import type { AuthSession } from '../identity-session.js';
 import type { FlowContext } from './lifecycle.js';
 import type { ImportFromPhraseOptions, ImportFromPortableOptions } from '../types.js';
 
+import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
-import { ensureVaultReady, finalizeSession, resolveIdentityDids, startSyncIfEnabled } from './lifecycle.js';
+import { createDefaultIdentity, ensureVaultReady, finalizeSession, resolveIdentityDids, startSyncIfEnabled } from './lifecycle.js';
 
 /**
  * Import (or recover) an identity from a BIP-39 recovery phrase.
@@ -26,7 +27,7 @@ export async function importFromPhrase(
   const { userAgent, emitter, storage } = ctx;
   const { recoveryPhrase, password } = options;
   const sync = options.sync ?? ctx.defaultSync;
-  const dwnEndpoints = options.dwnEndpoints ?? ctx.defaultDwnEndpoints ?? ['https://enbox-dwn.fly.dev'];
+  const dwnEndpoints = options.dwnEndpoints ?? ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
 
   // Initialize the vault with the recovery phrase and start the agent.
   const isFirstLaunch = await userAgent.firstLaunch();
@@ -47,36 +48,10 @@ export async function importFromPhrase(
 
   if (!identity) {
     isNewIdentity = true;
-    identity = await userAgent.identity.create({
-      didMethod  : 'dht',
-      metadata   : { name: 'Default' },
-      didOptions : {
-        services: [
-          {
-            id              : 'dwn',
-            type            : 'DecentralizedWebNode',
-            serviceEndpoint : dwnEndpoints,
-            enc             : '#enc',
-            sig             : '#sig',
-          }
-        ],
-        verificationMethods: [
-          {
-            algorithm : 'Ed25519',
-            id        : 'sig',
-            purposes  : ['assertionMethod', 'authentication'],
-          },
-          {
-            algorithm : 'X25519',
-            id        : 'enc',
-            purposes  : ['keyAgreement'],
-          },
-        ],
-      },
-    });
+    identity = await createDefaultIdentity(userAgent, dwnEndpoints);
   }
 
-  const connectedDid = identity.did.uri;
+  const { connectedDid, delegateDid } = resolveIdentityDids(identity);
 
   // Register with DWN endpoints (if registration options are provided).
   if (ctx.registration) {
@@ -94,7 +69,10 @@ export async function importFromPhrase(
 
   // Register sync for new identities.
   if (isNewIdentity && sync !== 'off') {
-    await userAgent.sync.registerIdentity({ did: connectedDid, options: { protocols: [] } });
+    await userAgent.sync.registerIdentity({
+      did     : connectedDid,
+      options : { delegateDid, protocols: [] },
+    });
   }
 
   // Start sync.
@@ -106,7 +84,9 @@ export async function importFromPhrase(
     emitter,
     storage,
     connectedDid,
-    identityName: identity.metadata.name,
+    delegateDid,
+    identityName         : identity.metadata.name,
+    identityConnectedDid : identity.metadata.connectedDid,
   });
 }
 
@@ -132,7 +112,7 @@ export async function importFromPortable(
   // Register with DWN endpoints (if registration options are provided).
   // For portable imports, extract endpoints from the DID document's DWN service.
   if (ctx.registration) {
-    const dwnEndpoints = ctx.defaultDwnEndpoints ?? ['https://enbox-dwn.fly.dev'];
+    const dwnEndpoints = ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
     await registerWithDwnEndpoints(
       {
         userAgent : userAgent,

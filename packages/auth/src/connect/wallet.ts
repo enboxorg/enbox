@@ -15,10 +15,10 @@ import type { WalletConnectOptions } from '../types.js';
 
 import { Convert } from '@enbox/common';
 import { registerWithDwnEndpoints } from '../registration.js';
-import { STORAGE_KEYS } from '../types.js';
 import { WalletConnect } from '../wallet-connect-client.js';
+import { DEFAULT_DWN_ENDPOINTS, STORAGE_KEYS } from '../types.js';
 import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
-import { finalizeSession, startSyncIfEnabled } from './lifecycle.js';
+import { ensureVaultReady, finalizeSession, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
 
 /**
  * Process connected grants by storing them in the local DWN as the owner.
@@ -91,6 +91,17 @@ export async function walletConnect(
     );
   }
 
+  // Ensure the agent is initialized and started before the relay flow.
+  const isFirstLaunch = await userAgent.firstLaunch();
+  const password = await resolvePassword(ctx, undefined, isFirstLaunch);
+
+  await ensureVaultReady({
+    userAgent,
+    emitter,
+    password,
+    isFirstLaunch,
+  });
+
   // Run the Enbox Connect relay flow.
   // permissionRequests are already agent-level ConnectPermissionRequest objects.
   const result = await WalletConnect.initClient({
@@ -132,7 +143,7 @@ export async function walletConnect(
 
     // Register with DWN endpoints (if registration options are provided).
     if (ctx.registration) {
-      const dwnEndpoints = ctx.defaultDwnEndpoints ?? ['https://enbox-dwn.fly.dev'];
+      const dwnEndpoints = ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
       await registerWithDwnEndpoints(
         {
           userAgent : userAgent,

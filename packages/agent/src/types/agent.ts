@@ -5,10 +5,10 @@ import type { AgentDwnApi } from '../dwn-api.js';
 import type { AgentIdentityApi } from '../identity-api.js';
 import type { AgentKeyManager } from './key-manager.js';
 import type { AgentPermissionsApi } from '../permissions-api.js';
-import type { AgentSyncApi } from '../sync-api.js';
 import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { IdentityVault } from './identity-vault.js';
 import type { LocalKeyManager } from '../local-key-manager.js';
+import type { SyncEngine } from './sync.js';
 import type { AgentDidApi, DidInterface, DidRequest, DidResponse } from '../did-api.js';
 import type { DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './dwn.js';
 import type { ProcessVcRequest, SendVcRequest, VcResponse } from './vc.js';
@@ -168,7 +168,7 @@ export interface EnboxPlatformAgent<TKeyManager extends AgentKeyManager = AgentK
    * The synchronization API, responsible for managing the consistency and real-time update of the
    * agent's data with the state of the distributed network.
    */
-  sync: AgentSyncApi;
+  sync: SyncEngine;
 
   /**
    * An instance of {@link IdentityVault}, providing secure storage and management of an Enbox Agent's

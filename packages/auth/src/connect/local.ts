@@ -11,8 +11,9 @@ import type { FlowContext } from './lifecycle.js';
 import type { LocalConnectOptions } from '../types.js';
 
 import { applyLocalDwnDiscovery } from '../discovery.js';
+import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
-import { ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
+import { createDefaultIdentity, ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
 
 /**
  * Execute the local connect flow.
@@ -31,7 +32,7 @@ export async function localConnect(
   const password = await resolvePassword(ctx, options.password, isFirstLaunch);
 
   const sync = options.sync ?? ctx.defaultSync;
-  const dwnEndpoints = options.dwnEndpoints ?? ctx.defaultDwnEndpoints ?? ['https://enbox-dwn.fly.dev'];
+  const dwnEndpoints = options.dwnEndpoints ?? ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
 
   // Initialize vault on first launch and start the agent.
   const recoveryPhrase = await ensureVaultReady({
@@ -56,33 +57,7 @@ export async function localConnect(
 
   if (!identity) {
     isNewIdentity = true;
-    identity = await userAgent.identity.create({
-      didMethod  : 'dht',
-      metadata   : { name: options.metadata?.name ?? 'Default' },
-      didOptions : {
-        services: [
-          {
-            id              : 'dwn',
-            type            : 'DecentralizedWebNode',
-            serviceEndpoint : dwnEndpoints,
-            enc             : '#enc',
-            sig             : '#sig',
-          }
-        ],
-        verificationMethods: [
-          {
-            algorithm : 'Ed25519',
-            id        : 'sig',
-            purposes  : ['assertionMethod', 'authentication'],
-          },
-          {
-            algorithm : 'X25519',
-            id        : 'enc',
-            purposes  : ['keyAgreement'],
-          },
-        ],
-      },
-    });
+    identity = await createDefaultIdentity(userAgent, dwnEndpoints, options.metadata?.name ?? 'Default');
   }
 
   const { connectedDid, delegateDid } = resolveIdentityDids(identity);

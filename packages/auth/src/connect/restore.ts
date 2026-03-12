@@ -12,7 +12,7 @@ import type { RestoreSessionOptions } from '../types.js';
 
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { STORAGE_KEYS } from '../types.js';
-import { finalizeSession, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
+import { ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
 
 /**
  * Attempt to restore a previous session.
@@ -42,18 +42,23 @@ export async function restoreSession(
     explicitPassword = await options.onPasswordRequired();
   }
 
-  const password = await resolvePassword(ctx, explicitPassword, false);
-
-  // Start the agent (initializes + unlocks vault).
-  if (await userAgent.firstLaunch()) {
-    // Vault doesn't exist yet — this shouldn't happen if previouslyConnected is true.
-    // Clean up the stale flag and return undefined.
+  // Check for stale session marker: if the vault was never initialized,
+  // previouslyConnected is a leftover — clean up and bail.
+  const isFirstLaunch = await userAgent.firstLaunch();
+  if (isFirstLaunch) {
     await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
     return undefined;
   }
 
-  await userAgent.start({ password });
-  emitter.emit('vault-unlocked', {});
+  const password = await resolvePassword(ctx, explicitPassword, false);
+
+  // Start the agent (vault is known to exist).
+  await ensureVaultReady({
+    userAgent,
+    emitter,
+    password,
+    isFirstLaunch: false,
+  });
 
   // Apply local DWN discovery (browser redirect payload or persisted endpoint).
   // In remote mode, discovery already ran before agent creation — skip.
@@ -90,10 +95,9 @@ export async function restoreSession(
     return undefined;
   }
 
-  const connectedDid = identity.metadata.connectedDid ?? identity.did.uri;
-  const delegateDid = identity.metadata.connectedDid
-    ? identity.did.uri
-    : (storedDelegateDid ?? undefined);
+  const { connectedDid, delegateDid } = resolveIdentityDids(
+    identity, storedDelegateDid ?? undefined,
+  );
 
   // Start sync.
   startSyncIfEnabled(userAgent, ctx.defaultSync);
