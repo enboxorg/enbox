@@ -3,6 +3,7 @@ import type { BearerDid } from '@enbox/dids';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { LocalDwnStrategy } from './local-dwn.js';
+import type { SyncEngine } from './types/sync.js';
 import type { DidInterface, DidRequest, DidResponse } from './did-api.js';
 import type { DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './types/dwn.js';
 import type { ProcessVcRequest, SendVcRequest, VcResponse } from './types/vc.js';
@@ -13,7 +14,6 @@ import { AgentDidResolverCache } from './agent-did-resolver-cache.js';
 import { AgentDwnApi } from './dwn-api.js';
 import { AgentIdentityApi } from './identity-api.js';
 import { AgentPermissionsApi } from './permissions-api.js';
-import { AgentSyncApi } from './sync-api.js';
 import { DwnDidStore } from './store-did.js';
 import { DwnIdentityStore } from './store-identity.js';
 import { DwnKeyStore } from './store-key.js';
@@ -85,7 +85,7 @@ export type AgentParams<TKeyManager extends AgentKeyManager = LocalKeyManager> =
   /** Remote procedure call (RPC) client used to communicate with other Enbox services. */
   rpcClient: EnboxRpc;
   /** Facilitates data synchronization of DWN records between nodes. */
-  syncApi: AgentSyncApi;
+  syncApi: SyncEngine;
 };
 
 export type CreateUserAgentParams = Partial<AgentParams> & {
@@ -110,7 +110,7 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
   public keyManager: TKeyManager;
   public permissions: AgentPermissionsApi;
   public rpc: EnboxRpc;
-  public sync: AgentSyncApi;
+  public sync: SyncEngine;
   public vault: HdIdentityVault;
 
   private _agentDid?: BearerDid;
@@ -202,7 +202,7 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
 
     rpcClient ??= new EnboxRpcClient();
 
-    syncApi ??= new AgentSyncApi({ syncEngine: new SyncEngineLevel({ dataPath }) });
+    syncApi ??= new SyncEngineLevel({ dataPath });
 
     // Instantiate the Agent using the provided or default components.
     return new EnboxUserAgent({
