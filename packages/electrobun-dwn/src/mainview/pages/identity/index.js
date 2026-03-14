@@ -541,10 +541,10 @@ class IdentityPage extends SignalWatcher(LitElement) {
                   aria-live="polite"
                   aria-label="Managed DIDs"
                   empty-text="No identities yet."
-                  @click=${this.onAccordionClick}
-                  @wa-show=${this.onAccordionShow}
-                  @wa-hide=${this.onAccordionHide}
-                  @toggle=${this.onAccordionToggle}
+                  @x-accordion-action=${this.onAccordionAction}
+                  @x-accordion-item-show=${this.onAccordionShow}
+                  @x-accordion-item-hide=${this.onAccordionHide}
+                  @x-accordion-item-toggle=${this.onAccordionToggle}
                 ></x-accordion>
               </section>
             `}
@@ -1548,28 +1548,31 @@ class IdentityPage extends SignalWatcher(LitElement) {
   };
 
   /**
-   * @param {MouseEvent} event
+   * @param {CustomEvent<{ actionElement?: unknown }>} event
    */
-  onAccordionClick = (event) => {
-    const target = event.target;
-    if (!(target instanceof Element)) {
+  onAccordionAction = (event) => {
+    const actionElementFromDetail = event.detail?.actionElement;
+    if (actionElementFromDetail instanceof HTMLElement) {
+      void this.handleListAction(actionElementFromDetail);
       return;
     }
 
-    const actionButton = target.closest('[data-action]');
-    if (!(actionButton instanceof HTMLElement)) {
+    const actionElementFromPath = findActionElementInEvent(event);
+    if (actionElementFromPath instanceof HTMLElement) {
+      void this.handleListAction(actionElementFromPath);
       return;
     }
 
-    if (actionButton instanceof HTMLInputElement && actionButton.disabled) {
+    const action = typeof event.detail?.action === 'string' ? event.detail.action : '';
+    const encodedDid = typeof event.detail?.didUri === 'string' ? event.detail.didUri : '';
+    if (!action || !encodedDid) {
       return;
     }
 
-    if (actionButton.matches('input[type="radio"][data-action="switch"]')) {
-      event.preventDefault();
-    }
-
-    void this.handleListAction(actionButton);
+    const syntheticActionButton = document.createElement('button');
+    syntheticActionButton.dataset.action = action;
+    syntheticActionButton.dataset.didUri = encodedDid;
+    void this.handleListAction(syntheticActionButton);
   };
 
   /**
@@ -1610,13 +1613,15 @@ class IdentityPage extends SignalWatcher(LitElement) {
       return;
     }
 
-    const target = event.target;
-    if (!(target instanceof HTMLElement)) {
-      return;
-    }
+    const detail = event instanceof CustomEvent && event.detail && typeof event.detail === 'object'
+      ? /** @type {{ open?: unknown }} */ (event.detail)
+      : null;
+    const isOpen = typeof detail?.open === 'boolean'
+      ? detail.open
+      : event.target instanceof HTMLElement && event.target.hasAttribute('open');
 
     const nextExpanded = new Set(this.expandedDidUris);
-    if (target.hasAttribute('open')) {
+    if (isOpen) {
       nextExpanded.add(didUri);
       this.expandedDidUris = nextExpanded;
       void this.ensureDidDetailsLoaded(didUri);
@@ -1680,7 +1685,7 @@ class IdentityPage extends SignalWatcher(LitElement) {
       }
 
       if (action === 'save-endpoints') {
-        const endpointInput = this.findDetailsEndpointInput(encodedDid);
+        const endpointInput = this.findDetailsEndpointInput(actionButton, encodedDid);
         if (!(endpointInput instanceof HTMLElement)) {
           throw new Error('Unable to locate endpoint editor for this DID.');
         }
@@ -1707,16 +1712,36 @@ class IdentityPage extends SignalWatcher(LitElement) {
   }
 
   /**
+   * @param {HTMLElement} actionButton
    * @param {string} encodedDid
    */
-  findDetailsEndpointInput(encodedDid) {
+  findDetailsEndpointInput(actionButton, encodedDid) {
+    const selector = `.identity-details-endpoints-input[data-did-uri="${cssAttributeEscape(encodedDid)}"]`;
+
+    const actionRoot = actionButton.getRootNode();
+    if (actionRoot && typeof actionRoot === 'object' && 'querySelector' in actionRoot) {
+      const candidate = actionRoot.querySelector(selector);
+      if (candidate instanceof HTMLElement) {
+        return candidate;
+      }
+    }
+
     const accordion = this.accordionRef.value;
     if (!(accordion instanceof HTMLElement)) {
       return null;
     }
 
-    const selector = `.identity-details-endpoints-input[data-did-uri="${cssAttributeEscape(encodedDid)}"]`;
-    return accordion.querySelector(selector);
+    const lightDomCandidate = accordion.querySelector(selector);
+    if (lightDomCandidate instanceof HTMLElement) {
+      return lightDomCandidate;
+    }
+
+    const shadowDomCandidate = accordion.shadowRoot?.querySelector(selector);
+    if (shadowDomCandidate instanceof HTMLElement) {
+      return shadowDomCandidate;
+    }
+
+    return null;
   }
 
   /**
@@ -2011,12 +2036,53 @@ if (!customElements.get('identity-page')) {
  * @returns {string}
  */
 function didUriFromAccordionEvent(event) {
+  if (event instanceof CustomEvent && event.detail && typeof event.detail === 'object') {
+    const itemId = /** @type {{ itemId?: unknown }} */ (event.detail).itemId;
+    if (typeof itemId === 'string' && itemId.length > 0) {
+      return itemId;
+    }
+  }
+
+  if (typeof event.composedPath === 'function') {
+    for (const pathNode of event.composedPath()) {
+      if (!(pathNode instanceof HTMLElement)) {
+        continue;
+      }
+
+      if (pathNode.matches('wa-details.item') && typeof pathNode.dataset.itemId === 'string') {
+        return pathNode.dataset.itemId;
+      }
+    }
+  }
+
   const target = event.target;
-  if (!(target instanceof HTMLElement) || !target.matches('wa-details.item')) {
+  if (!(target instanceof HTMLElement) || !target.matches('wa-details.item') || typeof target.dataset.itemId !== 'string') {
     return '';
   }
 
-  return target.dataset.itemId ?? '';
+  return target.dataset.itemId;
+}
+
+/**
+ * @param {Event} event
+ * @returns {HTMLElement | null}
+ */
+function findActionElementInEvent(event) {
+  if (typeof event.composedPath !== 'function') {
+    return null;
+  }
+
+  for (const pathNode of event.composedPath()) {
+    if (!(pathNode instanceof HTMLElement)) {
+      continue;
+    }
+
+    if (pathNode.matches('[data-action]')) {
+      return pathNode;
+    }
+  }
+
+  return null;
 }
 
 /**

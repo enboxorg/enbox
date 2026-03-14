@@ -1,5 +1,6 @@
 import { LitElement, css, html } from 'lit';
 import { createRef, ref } from 'lit/directives/ref.js';
+import { requestWebAwesomeDiscovery } from '../../utils/webawesome-loader.js';
 
 const keypadLayout = [
   ['1', '2', '3'],
@@ -77,6 +78,10 @@ class PinPad extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this.syncKeyboardCapture();
+  }
+
+  firstUpdated() {
+    requestWebAwesomeDiscovery(this.renderRoot);
   }
 
   disconnectedCallback() {

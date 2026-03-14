@@ -1,4 +1,5 @@
 import { LitElement, css, html } from 'lit';
+import { requestWebAwesomeDiscovery } from '../../utils/webawesome-loader.js';
 
 class XOverflowToolbar extends LitElement {
   static properties = {
@@ -59,6 +60,7 @@ class XOverflowToolbar extends LitElement {
   }
 
   firstUpdated() {
+    requestWebAwesomeDiscovery(this.renderRoot);
     const track = this.renderRoot.querySelector('.track');
     if (!(track instanceof HTMLElement)) {
       return;

@@ -1,4 +1,5 @@
 const componentStyleIdSymbol = Symbol.for('enbox.app.componentStyleId');
+const componentStyleLinkAttribute = 'data-enbox-component-style';
 
 /** @type {Map<string, Promise<CSSStyleSheet>>} */
 const componentStylesheetCache = new Map();
@@ -56,8 +57,70 @@ async function getOrCreateComponentStyleSheet(componentName, cssUrl) {
  * @returns {CSSStyleSheet | null}
  */
 function findAdoptedComponentStyleSheet(target, componentName) {
+  if (!('adoptedStyleSheets' in target)) {
+    return null;
+  }
+
   const adoptedStyleSheets = target.adoptedStyleSheets;
+  if (!Array.isArray(adoptedStyleSheets)) {
+    return null;
+  }
+
   return adoptedStyleSheets.find((sheet) => sheet[componentStyleIdSymbol] === componentName) ?? null;
+}
+
+/**
+ * @param {Document | ShadowRoot} target
+ * @returns {ParentNode | null}
+ */
+function getFallbackStyleContainer(target) {
+  if (target instanceof ShadowRoot) {
+    return target;
+  }
+
+  if (target instanceof Document) {
+    return target.head ?? target.documentElement;
+  }
+
+  return null;
+}
+
+/**
+ * @param {Document | ShadowRoot} target
+ * @param {string} componentName
+ * @returns {HTMLLinkElement | null}
+ */
+function findFallbackStylesheetLink(target, componentName) {
+  const styleContainer = getFallbackStyleContainer(target);
+  if (!styleContainer) {
+    return null;
+  }
+
+  const selector = `link[rel="stylesheet"][${componentStyleLinkAttribute}="${componentName}"]`;
+  const existingLink = styleContainer.querySelector(selector);
+  return existingLink instanceof HTMLLinkElement ? existingLink : null;
+}
+
+/**
+ * @param {Document | ShadowRoot} target
+ * @param {string} componentName
+ * @param {string} stylesheetUrl
+ */
+function ensureFallbackStylesheetLink(target, componentName, stylesheetUrl) {
+  if (findFallbackStylesheetLink(target, componentName)) {
+    return;
+  }
+
+  const styleContainer = getFallbackStyleContainer(target);
+  if (!styleContainer) {
+    return;
+  }
+
+  const fallbackLink = document.createElement('link');
+  fallbackLink.rel = 'stylesheet';
+  fallbackLink.href = stylesheetUrl;
+  fallbackLink.setAttribute(componentStyleLinkAttribute, componentName);
+  styleContainer.appendChild(fallbackLink);
 }
 
 /**
@@ -69,24 +132,37 @@ function findAdoptedComponentStyleSheet(target, componentName) {
  * @returns {Promise<void>}
  */
 export async function adoptComponentStyle(componentName, cssUrl, target = document) {
-  const existingAdoptedSheet = findAdoptedComponentStyleSheet(target, componentName);
-  if (existingAdoptedSheet) {
-    return;
-  }
-
   const stylesheetUrl = typeof cssUrl === 'string' ? cssUrl : cssUrl.toString();
-  const stylesheet = await getOrCreateComponentStyleSheet(componentName, stylesheetUrl);
 
-  const existingAdoptedSheetAfterLoad = findAdoptedComponentStyleSheet(target, componentName);
-  if (existingAdoptedSheetAfterLoad) {
+  if (findAdoptedComponentStyleSheet(target, componentName) || findFallbackStylesheetLink(target, componentName)) {
     return;
   }
 
-  const adoptedStyleSheets = target.adoptedStyleSheets;
-
-  if (adoptedStyleSheets.includes(stylesheet)) {
+  if (!('adoptedStyleSheets' in target) || typeof CSSStyleSheet === 'undefined') {
+    ensureFallbackStylesheetLink(target, componentName, stylesheetUrl);
     return;
   }
 
-  target.adoptedStyleSheets = [...adoptedStyleSheets, stylesheet];
+  try {
+    const stylesheet = await getOrCreateComponentStyleSheet(componentName, stylesheetUrl);
+
+    const existingAdoptedSheetAfterLoad = findAdoptedComponentStyleSheet(target, componentName);
+    if (existingAdoptedSheetAfterLoad || findFallbackStylesheetLink(target, componentName)) {
+      return;
+    }
+
+    const adoptedStyleSheets = target.adoptedStyleSheets;
+    if (!Array.isArray(adoptedStyleSheets)) {
+      ensureFallbackStylesheetLink(target, componentName, stylesheetUrl);
+      return;
+    }
+
+    if (adoptedStyleSheets.includes(stylesheet)) {
+      return;
+    }
+
+    target.adoptedStyleSheets = [...adoptedStyleSheets, stylesheet];
+  } catch {
+    ensureFallbackStylesheetLink(target, componentName, stylesheetUrl);
+  }
 }

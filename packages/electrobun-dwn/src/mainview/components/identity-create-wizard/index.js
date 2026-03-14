@@ -1,6 +1,7 @@
 import { LitElement, css, html } from 'lit';
 import { createRef, ref } from 'lit/directives/ref.js';
 import '../pin-pad/index.js';
+import { requestWebAwesomeDiscovery } from '../../utils/webawesome-loader.js';
 
 class IdentityCreateWizard extends LitElement {
   static properties = {
@@ -100,6 +101,7 @@ class IdentityCreateWizard extends LitElement {
   }
 
   firstUpdated() {
+    requestWebAwesomeDiscovery(this.renderRoot);
     this.emitWizardState();
   }
 

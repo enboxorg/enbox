@@ -1,5 +1,6 @@
 import { CachedResolver } from '@digitalbazaar/did-io';
 import { base64ToBytes } from 'did-jwt';
+import { DidDht } from '../../../../dids/dist/esm/methods/did-dht.js';
 
 /**
  * @typedef DidResolutionResult
@@ -102,6 +103,22 @@ function createErrorResult(message, errorCode = 'resolutionError', extraMetadata
       ...extraMetadata,
     },
   };
+}
+
+/**
+ * @returns {string | undefined}
+ */
+function getDidDhtGatewayUri() {
+  const configuredGatewayUri = typeof process !== 'undefined'
+    && typeof process.env?.DID_DHT_GATEWAY_URI === 'string'
+    ? process.env.DID_DHT_GATEWAY_URI.trim()
+    : '';
+
+  if (configuredGatewayUri.length === 0) {
+    return undefined;
+  }
+
+  return configuredGatewayUri;
 }
 
 /**
@@ -210,7 +227,51 @@ async function resolveDidJwk(did) {
   };
 }
 
+/**
+ * @param {string} did
+ * @returns {Promise<DidResolutionResult>}
+ */
+async function resolveDidDht(did) {
+  const gatewayUri = getDidDhtGatewayUri();
+
+  try {
+    const didResolutionResult = gatewayUri
+      ? await DidDht.resolve(did, { gatewayUri })
+      : await DidDht.resolve(did);
+    const didResolutionMetadata = {
+      ...(didResolutionResult.didResolutionMetadata ?? {}),
+      resolver: '@enbox/dids',
+      method: 'did:dht',
+      ...(gatewayUri ? { gatewayUri } : {}),
+    };
+
+    // Normalize error shape for UI consistency across resolver implementations.
+    if (
+      typeof didResolutionMetadata.message !== 'string'
+      && typeof didResolutionMetadata.errorMessage === 'string'
+    ) {
+      didResolutionMetadata.message = didResolutionMetadata.errorMessage;
+    }
+
+    return {
+      didDocument: didResolutionResult.didDocument ?? null,
+      didDocumentMetadata: didResolutionResult.didDocumentMetadata ?? {},
+      didResolutionMetadata,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown did:dht resolution error';
+    return createErrorResult(message, 'didDhtResolutionError', {
+      resolver: '@enbox/dids',
+      method: 'did:dht',
+      ...(gatewayUri ? { gatewayUri } : {}),
+    });
+  }
+}
+
 export const supportedDidMethods = {
+  'did:dht': {
+    resolve: resolveDidDht,
+  },
   'did:web': {
     resolve: resolveDidWeb,
   },

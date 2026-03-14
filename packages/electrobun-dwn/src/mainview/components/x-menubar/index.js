@@ -1,3 +1,5 @@
+import { requestWebAwesomeDiscovery } from '../../utils/webawesome-loader.js';
+
 class XMenubar extends HTMLElement {
   static get observedAttributes() {
     return ['size'];
@@ -79,6 +81,7 @@ class XMenubar extends HTMLElement {
   }
 
   connectedCallback() {
+    requestWebAwesomeDiscovery(this.shadowRoot);
     this.slotElement?.addEventListener('slotchange', this.onSlotChange);
     this.moreDropdown?.addEventListener('wa-show', this.onDropdownShow);
     this.setupObserver();
@@ -259,6 +262,8 @@ class XMenubar extends HTMLElement {
       this.moreDropdown.append(item);
       this.menuItems.push(item);
     }
+
+    requestWebAwesomeDiscovery(this.shadowRoot);
 
     if (wasHidden) {
       requestAnimationFrame(() => {

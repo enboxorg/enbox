@@ -1,6 +1,7 @@
 import { LitElement, css, html } from 'lit';
 import { ifDefined } from 'lit/directives/if-defined.js';
 import { createHashvatar } from 'hashvatar';
+import { requestWebAwesomeDiscovery } from '../../utils/webawesome-loader.js';
 
 const DEFAULT_SIZE = 36;
 const MIN_SIZE = 16;
@@ -69,6 +70,10 @@ class HashAvatar extends LitElement {
     this.mode = 'dither';
     this.size = DEFAULT_SIZE;
     this.imageDataUrl = '';
+  }
+
+  firstUpdated() {
+    requestWebAwesomeDiscovery(this.renderRoot);
   }
 
   /**
