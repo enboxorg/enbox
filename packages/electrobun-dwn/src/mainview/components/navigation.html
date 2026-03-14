@@ -1,0 +1,236 @@
+<!-- #region Navigation -->
+
+<style>
+  wa-page {
+    [slot='navigation'] {
+      /* See also: https://webawesome.com/docs/components/button/#css-parts */
+      wa-button {
+        &::part(base) {
+          justify-content: start;
+        }
+      }
+
+      /* Give details summaries a button-like appearance */
+      /* See also: https://webawesome.com/docs/components/details/#css-parts */
+      wa-details {
+        &::part(header) {
+          padding: 0 var(--wa-form-control-padding-inline);
+          color: var(--wa-color-on-quiet, var(--wa-color-neutral-on-quiet));
+          font-weight: var(--wa-font-weight-action);
+          line-height: calc(var(--wa-form-control-height) - var(--border-width) * 2);
+          height: var(--wa-form-control-height);
+          border-radius: var(--wa-form-control-border-radius);
+        }
+
+        &::part(header):hover {
+          color: var(--wa-color-on-quiet, var(--wa-color-neutral-on-quiet));
+          background-color: var(--wa-color-fill-quiet, var(--wa-color-neutral-fill-quiet));
+        }
+
+        &::part(header):active {
+          color: var(--wa-color-on-quiet, var(--wa-color-neutral-on-quiet));
+          background-color: color-mix(
+            in oklab,
+            var(--wa-color-fill-quiet, var(--wa-color-neutral-fill-quiet)),
+            var(--wa-color-mix-active)
+          );
+        }
+
+        &::part(icon) {
+          font-size: var(--wa-font-size-s);
+        }
+      }
+    }
+  }
+</style>
+
+<div class="wa-stack wa-gap-l">
+  <div class="wa-mobile-only">
+    <wa-include src="./account-summary.html"></wa-include>
+  </div>
+
+  <div class="wa-stack wa-gap-0">
+    <wa-button href="#" appearance="plain">
+      <wa-icon slot="start" name="home" variant="regular"></wa-icon>
+      <div class="wa-cluster wa-gap-s">
+        Home
+        <wa-badge appearance="outlined">Demo</wa-badge>
+      </div>
+    </wa-button>
+
+    <wa-button href="#" appearance="plain">
+      <wa-icon slot="start" name="bars-staggered" variant="regular"></wa-icon>
+      Balances
+    </wa-button>
+
+    <wa-button href="#" appearance="plain">
+      <wa-icon slot="start" name="arrows-repeat" variant="regular"></wa-icon>
+      <div class="wa-cluster wa-gap-s">
+        Transactions
+        <wa-badge appearance="outlined">Demo</wa-badge>
+      </div>
+    </wa-button>
+
+    <wa-button href="#" appearance="plain">
+      <wa-icon slot="start" name="user" variant="regular"></wa-icon>
+      Customers
+    </wa-button>
+
+    <wa-button href="#" appearance="plain">
+      <wa-icon slot="start" name="box-isometric" variant="regular"></wa-icon>
+      Product
+    </wa-button>
+  </div>
+
+  <div class="wa-stack wa-gap-0">
+    <div class="wa-caption-s" style="padding: 0 0 var(--wa-space-xs) var(--wa-space-m)">Shortcuts</div>
+
+    <wa-button href="#" appearance="plain">
+      <wa-icon slot="start" name="thumbtack-angle" variant="regular"></wa-icon>
+      Invoices
+    </wa-button>
+
+    <wa-button href="#" appearance="plain">
+      <wa-icon slot="start" name="thumbtack-angle" variant="regular"></wa-icon>
+      Subscriptions
+    </wa-button>
+
+    <wa-button href="#" appearance="plain">
+      <wa-icon slot="start" name="clock" variant="regular"></wa-icon>
+      Analytics
+    </wa-button>
+  </div>
+
+  <div class="wa-stack wa-gap-0">
+    <div class="wa-caption-s" style="padding: 0 0 var(--wa-space-xs) var(--wa-space-m)">Products</div>
+
+    <wa-details name="navigation-button-details-group" appearance="plain" style="--spacing: 0">
+      <div slot="summary" class="wa-cluster wa-gap-0">
+        <wa-icon slot="start" name="receipt" variant="regular" style="margin-inline-end: 0.75em"></wa-icon>
+        Billing
+      </div>
+
+      <div class="wa-stack wa-gap-0">
+        <wa-button href="#" appearance="plain">
+          <wa-icon slot="start" name="receipt" style="visibility: hidden"></wa-icon>
+          Overview
+        </wa-button>
+
+        <wa-button href="#" appearance="plain">
+          <wa-icon slot="start" name="receipt" style="visibility: hidden"></wa-icon>
+          Subscriptions
+        </wa-button>
+
+        <wa-button href="#" appearance="plain">
+          <wa-icon slot="start" name="receipt" style="visibility: hidden"></wa-icon>
+          Invoices
+        </wa-button>
+      </div>
+    </wa-details>
+
+    <wa-details name="navigation-button-details-group" appearance="plain" style="--spacing: 0">
+      <div slot="summary" class="wa-cluster wa-gap-0">
+        <wa-icon slot="start" name="wallet" variant="regular" style="margin-inline-end: 0.75em"></wa-icon>
+        Payments
+      </div>
+
+      <div class="wa-stack wa-gap-0">
+        <wa-button href="#" appearance="plain">
+          <wa-icon slot="start" name="wallet" style="visibility: hidden"></wa-icon>
+          Analytics
+        </wa-button>
+
+        <wa-button href="#" appearance="plain">
+          <wa-icon slot="start" name="wallet" style="visibility: hidden"></wa-icon>
+          Disputes
+        </wa-button>
+
+        <wa-button href="#" appearance="plain">
+          <wa-icon slot="start" name="wallet" style="visibility: hidden"></wa-icon>
+          Links
+        </wa-button>
+
+        <wa-button href="#" appearance="plain">
+          <wa-icon slot="start" name="wallet" style="visibility: hidden"></wa-icon>
+          Terminal
+        </wa-button>
+      </div>
+    </wa-details>
+
+    <wa-details name="navigation-button-details-group" appearance="plain" style="--spacing: 0">
+      <div slot="summary" class="wa-cluster wa-gap-0">
+        <wa-icon slot="start" name="chart-column" variant="regular" style="margin-inline-end: 0.75em"></wa-icon>
+        Reporting
+      </div>
+
+      <div class="wa-stack wa-gap-0">
+        <wa-button href="#" appearance="plain">
+          <wa-icon slot="start" name="chart-column" style="visibility: hidden"></wa-icon>
+          Reports
+        </wa-button>
+
+        <wa-button href="#" appearance="plain">
+          <wa-icon slot="start" name="chart-column" style="visibility: hidden"></wa-icon>
+          Custom Metrics
+        </wa-button>
+
+        <wa-button href="#" appearance="plain">
+          <wa-icon slot="start" name="chart-column" style="visibility: hidden"></wa-icon>
+          Data Management
+        </wa-button>
+      </div>
+    </wa-details>
+
+    <wa-details name="navigation-button-details-group" appearance="plain" style="--spacing: 0">
+      <div slot="summary" class="wa-cluster wa-gap-0">
+        <wa-icon slot="start" name="layer-group" variant="regular" style="margin-inline-end: 0.75em"></wa-icon> Connect
+      </div>
+
+      <div class="wa-stack wa-gap-0">
+        <wa-button href="#" appearance="plain">
+          <wa-icon slot="start" name="layer-group" style="visibility: hidden"></wa-icon>
+          Overview
+        </wa-button>
+
+        <wa-button href="#" appearance="plain">
+          <wa-icon slot="start" name="layer-group" style="visibility: hidden"></wa-icon>
+          Accounts
+        </wa-button>
+
+        <wa-button href="#" appearance="plain">
+          <wa-icon slot="start" name="layer-group" style="visibility: hidden"></wa-icon>
+          Compliance
+          <span slot="end">
+            <wa-badge appearance="outlined" variant="brand">New</wa-badge>
+          </span>
+        </wa-button>
+
+        <wa-button href="#" appearance="plain">
+          <wa-icon slot="start" name="layer-group" style="visibility: hidden"></wa-icon>
+          Taxes
+        </wa-button>
+      </div>
+    </wa-details>
+
+    <wa-details name="navigation-button-details-group" appearance="plain" style="--spacing: 0">
+      <div slot="summary" class="wa-cluster wa-gap-0">
+        <wa-icon slot="start" name="ellipsis" variant="regular" style="margin-inline-end: 0.75em"></wa-icon>
+        More
+      </div>
+
+      <div class="wa-stack wa-gap-0">
+        <wa-button href="#" appearance="plain">
+          <wa-icon slot="start" name="ellipsis" style="visibility: hidden"></wa-icon>
+          Identity
+        </wa-button>
+
+        <wa-button href="#" appearance="plain">
+          <wa-icon slot="start" name="ellipsis" style="visibility: hidden"></wa-icon>
+          Financial Connections
+        </wa-button>
+      </div>
+    </wa-details>
+  </div>
+</div>
+
+<!-- #endregion Navigation -->

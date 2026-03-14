@@ -1,0 +1,55 @@
+<!-- #region Toolbar -->
+
+<div class="wa-split wa-flex-nowrap wa-justify-content-end">
+  <div class="app-desktop-only" style="flex: auto">
+    <wa-input placeholder="Search" appearance="filled" pill style="max-inline-size: 20rem">
+      <wa-icon slot="start" name="magnifying-glass"></wa-icon>
+    </wa-input>
+  </div>
+
+  <div
+    class="wa-cluster wa-justify-content-end wa-gap-xs"
+    style="height: var(--wa-form-control-height); overflow: hidden"
+  >
+    <wa-tooltip for="search-button" without-arrow>Search</wa-tooltip>
+    <wa-button id="search-button" class="app-mobile-only" appearance="plain" pill>
+      <wa-icon name="magnifying-glass" label="Toggle search menu" variant="regular" class="wa-font-size-l"></wa-icon>
+    </wa-button>
+
+    <wa-tooltip for="create-button" without-arrow>Create</wa-tooltip>
+    <wa-button id="create-button" appearance="plain" pill>
+      <wa-icon name="circle-plus" label="Toggle create menu" variant="regular" class="wa-font-size-l"></wa-icon>
+    </wa-button>
+
+    <wa-tooltip for="settings-button" without-arrow>Settings</wa-tooltip>
+    <wa-button id="settings-button" href="#" appearance="plain" pill>
+      <wa-icon name="gear" label="Settings" variant="regular" class="wa-font-size-l"></wa-icon>
+    </wa-button>
+
+    <wa-tooltip for="color-scheme-button" without-arrow>Color Scheme</wa-tooltip>
+    <wa-button id="color-scheme-button" appearance="plain" pill>
+      <wa-icon name="moon-stars" label="Toggle color scheme" variant="regular" class="wa-font-size-l"></wa-icon>
+    </wa-button>
+
+    <wa-tooltip for="notifications-button" without-arrow>Notifications</wa-tooltip>
+    <wa-button id="notifications-button" appearance="plain" pill>
+      <wa-icon name="bell" label="Toggle notifications drawer" variant="regular" class="wa-font-size-l"></wa-icon>
+    </wa-button>
+
+    <wa-tooltip for="help-button" without-arrow>Help</wa-tooltip>
+    <wa-button id="help-button" class="toolbar-help-button" appearance="plain" pill data-drawer="open assistant-drawer">
+      <wa-icon name="comment-question" label="Toggle help drawer" variant="regular" class="wa-font-size-l"></wa-icon>
+    </wa-button>
+  </div>
+
+  <script type="module">
+    const enforceDarkMode = () => {
+      localStorage.colorScheme = 'dark';
+      document.documentElement.classList.add('wa-dark');
+    };
+
+    document.getElementById('color-scheme-button')?.addEventListener('click', () => enforceDarkMode());
+  </script>
+</div>
+
+<!-- #endregion Toolbar -->

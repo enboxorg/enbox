@@ -1,157 +1,220 @@
 <!doctype html>
-<html lang="en">
+<html
+  lang="en"
+  class="wa-theme-default wa-palette-default wa-dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Enbox DWN Server</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      min-height: 100vh;
-      font-family: -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
-      color: #e2e8f0;
-      background: linear-gradient(145deg, #0f172a 0%, #1e293b 100%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 32px;
-    }
-
-    .card {
-      max-width: 560px;
-      width: 100%;
-      background: rgba(15, 23, 42, 0.85);
-      border: 1px solid rgba(148, 163, 184, 0.2);
-      border-radius: 16px;
-      padding: 32px;
-      box-shadow: 0 24px 60px rgba(2, 6, 23, 0.5);
-    }
-
-    .logo {
-      font-size: 2rem;
-      font-weight: 700;
-      color: #f8fafc;
-      margin-bottom: 4px;
-      letter-spacing: -0.02em;
-    }
-
-    .subtitle {
-      font-size: 0.85rem;
-      color: #64748b;
-      margin-bottom: 24px;
-    }
-
-    .status-bar {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 12px 16px;
-      background: rgba(30, 41, 59, 0.9);
-      border: 1px solid rgba(148, 163, 184, 0.15);
-      border-radius: 10px;
-      margin-bottom: 20px;
-    }
-
-    .status-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: #4ade80;
-      box-shadow: 0 0 8px rgba(74, 222, 128, 0.4);
-      flex-shrink: 0;
-    }
-
-    .status-dot.offline {
-      background: #f87171;
-      box-shadow: 0 0 8px rgba(248, 113, 113, 0.4);
-    }
-
-    .status-text {
-      font-size: 0.9rem;
-      color: #cbd5e1;
-    }
-
-    .status-text a {
-      color: #93c5fd;
-      text-decoration: none;
-    }
-
-    .status-text a:hover {
-      text-decoration: underline;
-    }
-
-    .info-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-bottom: 20px;
-    }
-
-    .info-item {
-      padding: 12px 14px;
-      background: rgba(30, 41, 59, 0.6);
-      border: 1px solid rgba(148, 163, 184, 0.1);
-      border-radius: 8px;
-    }
-
-    .info-label {
-      font-size: 0.7rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: #64748b;
-      margin-bottom: 4px;
-    }
-
-    .info-value {
-      font-size: 0.85rem;
-      color: #e2e8f0;
-      font-family: "SF Mono", "Fira Code", monospace;
-    }
-
-    .notes {
-      font-size: 0.8rem;
-      color: #64748b;
-      line-height: 1.5;
-    }
-  </style>
+  <title>DWeb Dashboard</title>
+  <script src="https://kit.webawesome.com/1321e1577f124a18.js" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="./index.css">
 </head>
 <body>
-  <div class="card">
-    <div class="logo">Enbox DWN</div>
-    <div class="subtitle">Local Decentralized Web Node</div>
+  <app-shell>
+    <div
+      class="app-window-drag-region electrobun-webkit-app-region-drag"
+      aria-hidden="true"></div>
 
-    <div class="status-bar">
-      <div class="status-dot" id="status-dot"></div>
-      <div class="status-text">
-        <span id="status">Connecting...</span>
-        <a id="server-url" href="#" target="_blank" rel="noreferrer"></a>
+    <wa-page mobile-breakpoint="1152">
+      <div hidden aria-hidden="true" style="display: none !important;">
+        <wa-button-group></wa-button-group>
+        <wa-dropdown></wa-dropdown>
+        <wa-dropdown-item></wa-dropdown-item>
+        <wa-copy-button></wa-copy-button>
       </div>
-    </div>
 
-    <div class="info-grid">
-      <div class="info-item">
-        <div class="info-label">Endpoint</div>
-        <div class="info-value" id="endpoint">--</div>
-      </div>
-      <div class="info-item">
-        <div class="info-label">Server</div>
-        <div class="info-value" id="server-name">--</div>
-      </div>
-      <div class="info-item">
-        <div class="info-label">Version</div>
-        <div class="info-value" id="server-version">--</div>
-      </div>
-      <div class="info-item">
-        <div class="info-label">WebSocket</div>
-        <div class="info-value" id="ws-support">--</div>
-      </div>
-    </div>
+      <header slot="navigation-header" class="app-desktop-only">
+        <div class="wa-align-items-center">
+          <img class="app-logo" src="views://mainview/assets/logo.svg" alt="DWeb logo">
+          &nbsp; DWeb Dashboard
+        </div>
+      </header>
 
-    <div class="notes">
-      Close this window to stop the server. The DWN uses ports 3000, then 55500-55509.
-    </div>
-  </div>
+      <div slot="navigation" style="padding-top: 0">
+        <div class="wa-stack wa-gap-l">
+          <div class="wa-mobile-only">
+            <div class="wa-stack wa-align-items-center">
+              <wa-icon class="app-logo" src="views://mainview/assets/logo.svg" alt="DWeb logo">
+              <div class="wa-stack wa-align-items-center wa-gap-xs">
+                <h3 class="wa-heading-l">DWeb Dashboard</h3>
+                <div class="wa-caption-m">Identity & Personal Datastore</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="wa-stack wa-gap-0 nav-links">
+            <wa-button href="/home" appearance="plain" data-route="home" class="nav-link">
+              <wa-icon slot="start" name="home" variant="solid"></wa-icon>
+              <div class="wa-cluster wa-gap-s">
+                Home
+              </div>
+            </wa-button>
+
+            <wa-button href="/identity" appearance="plain" data-route="identity" class="nav-link">
+              <wa-icon slot="start" name="user" variant="solid"></wa-icon>
+              Identity
+            </wa-button>
+
+            <wa-button href="/data" appearance="plain" data-route="data" class="nav-link">
+              <wa-icon slot="start" name="database" variant="solid"></wa-icon>
+              <div class="wa-cluster wa-gap-s">
+                Data
+              </div>
+            </wa-button>
+
+            <wa-button href="/apps" appearance="plain" data-route="apps" class="nav-link">
+              <wa-icon slot="start" name="window-restore" variant="solid"></wa-icon>
+              Apps
+            </wa-button>
+
+            <wa-button href="/permissions" appearance="plain" data-route="permissions" class="nav-link">
+              <wa-icon slot="start" name="list-check" variant="solid"></wa-icon>
+              Permissions
+            </wa-button>
+          </div>
+
+          <!-- <div class="wa-stack wa-gap-0">
+          <div class="wa-caption-s" style="padding: 0 0 var(--wa-space-xs) var(--wa-space-m)">Products</div>
+
+          <wa-details name="navigation-button-details-group" appearance="plain" style="--spacing: 0">
+            <div slot="summary" class="wa-cluster wa-gap-0">
+              <wa-icon slot="start" name="receipt" variant="solid" style="margin-inline-end: 0.75em"></wa-icon>
+              Billing
+            </div>
+
+            <div class="wa-stack wa-gap-0">
+              <wa-button href="#" appearance="plain">
+                <wa-icon slot="start" name="receipt" style="visibility: hidden"></wa-icon>
+                Overview
+              </wa-button>
+
+              <wa-button href="#" appearance="plain">
+                <wa-icon slot="start" name="receipt" style="visibility: hidden"></wa-icon>
+                Subscriptions
+              </wa-button>
+
+              <wa-button href="#" appearance="plain">
+                <wa-icon slot="start" name="receipt" style="visibility: hidden"></wa-icon>
+                Invoices
+              </wa-button>
+            </div>
+          </wa-details>
+          </div> -->
+
+        </div>
+      </div>
+
+      <header slot="main-header" class="main-header">
+        <wa-button data-toggle-nav appearance="plain">
+          <wa-icon slot="start" name="bars" label="Toggle navigation drawer" style="margin-inline-end: 0;"></wa-icon>
+        </wa-button>
+
+        <div class="main-header-status wa-cluster wa-gap-s wa-flex-nowrap">
+          <connection-badge></connection-badge>
+        </div>
+
+        <div class="main-header-search">
+          <wa-input
+            id="global-search-input"
+            placeholder="Search"
+            appearance="filled"
+            pill
+            autocapitalize="none"
+            autocorrect="off"
+            autocomplete="on"
+            spellcheck="false">
+            <wa-icon slot="start" name="magnifying-glass"></wa-icon>
+          </wa-input>
+        </div>
+
+        <div class="main-header-actions wa-cluster wa-justify-content-end wa-gap-xs wa-flex-nowrap">
+          <wa-tooltip for="notifications-button" without-arrow>Notifications</wa-tooltip>
+          <wa-button id="notifications-button" appearance="plain" pill data-drawer="open notifications-drawer">
+            <wa-icon name="bell" label="Toggle notifications drawer" variant="solid" class="wa-font-size-l"></wa-icon>
+          </wa-button>
+
+          <identity-switcher></identity-switcher>
+        </div>
+
+        <script type="module">
+          const enforceDarkMode = () => {
+            localStorage.colorScheme = 'dark';
+            document.documentElement.classList.add('wa-dark');
+          };
+
+          document.getElementById('color-scheme-button')?.addEventListener('click', () => enforceDarkMode());
+        </script>
+      </header>
+
+      <main class="main-shell">
+        <section id="page-view" class="page-view" aria-live="polite" aria-busy="false">
+          <wa-tab-group id="page-tabs" class="page-tabs" activation="manual">
+            <wa-tab slot="nav" panel="home">Home</wa-tab>
+            <wa-tab slot="nav" panel="identity">Identity</wa-tab>
+            <wa-tab slot="nav" panel="data">Data</wa-tab>
+            <wa-tab slot="nav" panel="apps">Apps</wa-tab>
+            <wa-tab slot="nav" panel="permissions">Permissions</wa-tab>
+
+            <wa-tab-panel class="app-page-panel" name="home">
+              <section class="page-panel-shell" data-route="home"></section>
+            </wa-tab-panel>
+
+            <wa-tab-panel class="app-page-panel" name="identity">
+              <section class="page-panel-shell" data-route="identity"></section>
+            </wa-tab-panel>
+
+            <wa-tab-panel class="app-page-panel" name="data">
+              <section class="page-panel-shell" data-route="data"></section>
+            </wa-tab-panel>
+
+            <wa-tab-panel class="app-page-panel" name="apps">
+              <section class="page-panel-shell" data-route="apps"></section>
+            </wa-tab-panel>
+
+            <wa-tab-panel class="app-page-panel" name="permissions">
+              <section class="page-panel-shell" data-route="permissions"></section>
+            </wa-tab-panel>
+
+            <wa-tab-panel class="app-page-panel" name="resolver">
+              <section class="page-panel-shell" data-route="resolver"></section>
+            </wa-tab-panel>
+          </wa-tab-group>
+        </section>
+      </main>
+    </wa-page>
+
+    <notification-drawer></notification-drawer>
+    <toast-region></toast-region>
+  </app-shell>
+
+  <script>
+    (() => {
+      if (typeof globalThis.process === 'undefined') {
+        const noop = () => {};
+        globalThis.process = {
+          browser : true,
+          env     : {},
+          argv    : [],
+          platform: 'browser',
+          arch    : 'unknown',
+          versions: {},
+          cwd     : () => '/',
+          emitWarning : (...args) => console.warn(...args),
+          on          : noop,
+          once        : noop,
+          off         : noop,
+          removeListener: noop,
+          kill        : () => false,
+          stdin       : { isTTY: false },
+          stdout      : { write: noop },
+          stderr      : { write: noop },
+        };
+      } else if (typeof globalThis.process.env === 'undefined') {
+        globalThis.process.env = {};
+      }
+    })();
+  </script>
+
   <script type="module" src="./index.js"></script>
 </body>
 </html>

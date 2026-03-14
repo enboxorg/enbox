@@ -1,0 +1,204 @@
+x-accordion {
+  display: block;
+}
+x-accordion .list {
+  display: grid;
+  gap: var(--wa-space-s);
+}
+
+x-accordion .item {
+  --spacing: 0;
+  border: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+  border-radius: var(--wa-border-radius-l);
+  overflow: hidden;
+  background: var(--wa-color-surface-raised);
+  box-shadow: var(--panel-shadow, 0 16px 40px rgba(0, 0, 0, 0.36));
+}
+
+x-accordion .item::part(base) {
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+}
+
+x-accordion .item::part(summary) {
+  padding: 0;
+  list-style: none;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+x-accordion .item::part(content) {
+  padding: 0;
+}
+
+x-accordion .item::part(header) {
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wa-space-m);
+  min-width: 0;
+}
+
+x-accordion .item::part(icon) {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-inline-end: var(--wa-space-l);
+  color: var(--wa-color-text-quiet);
+  font-size: var(--wa-font-size-s);
+}
+
+x-accordion .summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wa-space-m);
+  padding: var(--wa-space-m) 0 var(--wa-space-m) var(--wa-space-l);
+  min-width: 0;
+}
+
+x-accordion .main {
+  display: flex;
+  align-items: center;
+  gap: var(--wa-space-s);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+x-accordion .avatar {
+  inline-size: 2.25rem;
+  block-size: 2.25rem;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+  background: color-mix(in oklab, var(--wa-color-surface-lowered), #ffffff 10%);
+}
+
+x-accordion .avatar-image {
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+}
+
+x-accordion .avatar hash-avatar {
+  inline-size: 100%;
+  block-size: 100%;
+}
+
+x-accordion .avatar-fallback {
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: var(--wa-color-text-normal);
+}
+
+x-accordion .summary-text {
+  min-width: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  align-items: baseline;
+  gap: var(--wa-space-2xs);
+  overflow: hidden;
+}
+
+x-accordion .summary-leading {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+x-accordion .summary-trailing {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding-inline-end: var(--wa-space-s);
+}
+
+x-accordion .title {
+  margin-right: 0.2rem;
+  font-size: 1rem;
+  font-weight: 650;
+  color: var(--wa-color-text-normal);
+  white-space: nowrap;
+}
+
+x-accordion .subtitle {
+  font-size: 0.8rem;
+  color: var(--wa-color-text-quiet);
+  min-width: 0;
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+x-accordion .panel {
+  border-top: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+  padding: var(--wa-space-m) var(--wa-space-l) var(--wa-space-l);
+  display: grid;
+  gap: var(--wa-space-m);
+}
+
+x-accordion .description {
+  margin: 0;
+  color: var(--wa-color-text-quiet);
+  font-size: 0.9rem;
+}
+
+x-accordion .meta {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: var(--wa-space-s);
+  row-gap: var(--wa-space-2xs);
+}
+
+x-accordion .meta dt {
+  margin: 0;
+  color: var(--wa-color-text-quiet);
+  font-size: 0.8rem;
+}
+
+x-accordion .meta dd {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--wa-color-text-normal);
+}
+
+x-accordion .tags {
+  display: grid;
+  gap: var(--wa-space-xs);
+}
+
+x-accordion .tags-label {
+  color: var(--wa-color-text-quiet);
+  font-size: 0.8rem;
+}
+
+x-accordion .tags-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wa-space-2xs);
+}
+
+x-accordion .tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.5rem;
+  border-radius: 999px;
+  border: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+  background: color-mix(in oklab, var(--wa-color-surface-lowered), #ffffff 8%);
+  padding: 0 var(--wa-space-s);
+  font-size: 0.76rem;
+  color: var(--wa-color-text-quiet);
+}
+
+x-accordion .panel-html {
+  display: grid;
+  gap: var(--wa-space-s);
+}

@@ -1,0 +1,7 @@
+.apps-connections-intro {
+  color: var(--muted);
+}
+
+.apps-connections-list {
+  margin-top: var(--wa-space-xs);
+}

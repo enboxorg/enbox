@@ -1,0 +1,18 @@
+.resolver-did-title {
+  margin: 0;
+  width: min(100%, 56rem);
+  padding: var(--wa-space-s) var(--wa-space-l);
+  border-radius: 999px;
+  background: #343a40;
+  color: #f1f3f5;
+  font-size: var(--wa-font-size-l);
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.resolver-did-header {
+  align-items: center;
+}

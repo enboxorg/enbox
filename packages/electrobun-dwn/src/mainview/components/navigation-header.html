@@ -1,0 +1,107 @@
+<!-- #region Navigation Header -->
+
+<style>
+  wa-button#account-dropdown-button {
+    inline-size: 100%;
+
+    &::part(base) {
+      justify-content: start;
+    }
+
+    &::part(caret) {
+      flex: auto;
+      justify-content: end;
+    }
+  }
+</style>
+
+<wa-dropdown distance="4">
+  <div slot="trigger">
+    <wa-button id="account-dropdown-button" appearance="plain" with-caret>
+      <wa-avatar slot="start" label="Avatar with fighter jet icon" shape="rounded" style="--size: 2rem">
+        <wa-icon slot="icon" name="jet-fighter-up"></wa-icon>
+      </wa-avatar>
+      Hangar 3-5
+    </wa-button>
+  </div>
+
+  <div style="inline-size: clamp(8rem, 20rem, 100vw); padding: var(--wa-space-m)">
+    <wa-include src="./account-summary.html"></wa-include>
+  </div>
+
+  <wa-dropdown-item value="#" onclick="window.location = this.value">
+    <wa-icon slot="icon" name="gear" variant="regular"></wa-icon>
+    <div class="wa-cluster wa-gap-s">
+      Settings
+      <wa-badge appearance="outlined">Demo</wa-badge>
+    </div>
+  </wa-dropdown-item>
+
+  <wa-dropdown-item value="switch-to-sandbox">
+    <wa-icon slot="icon" name="umbrella-beach" variant="regular"></wa-icon>
+    Switch to Sandbox
+
+    <wa-dropdown-item slot="submenu" value="my-sandbox" style="inline-size: 20ch">
+      <wa-avatar slot="icon" label="Avatar with rocket ship icon" shape="rounded" style="--size: 1.5em">
+        <wa-icon slot="icon" name="rocket-vertical"></wa-icon>
+      </wa-avatar>
+      My Sandbox
+    </wa-dropdown-item>
+
+    <wa-dropdown-item slot="submenu" value="create-sandbox">
+      <wa-icon slot="icon" name="plus" variant="regular"></wa-icon>
+      Create Sandbox
+    </wa-dropdown-item>
+
+    <wa-divider slot="submenu"></wa-divider>
+
+    <wa-dropdown-item slot="submenu" value="manage-sandboxes">
+      <wa-icon slot="icon" name="umbrella-beach" variant="regular"></wa-icon>
+      Manage Sandboxes
+    </wa-dropdown-item>
+
+    <wa-dropdown-item slot="submenu" value="test-mode">
+      <wa-icon slot="icon" name="toggle-off" variant="regular"></wa-icon>
+      Test Mode
+    </wa-dropdown-item>
+  </wa-dropdown-item>
+
+  <wa-dropdown-item value="create">
+    <wa-icon slot="icon" name="plus" variant="regular"></wa-icon>
+    Create
+
+    <wa-dropdown-item slot="submenu" value="create-account" style="inline-size: 20ch">
+      <wa-icon slot="icon" name="store" variant="regular"></wa-icon>
+      Create Account
+    </wa-dropdown-item>
+
+    <wa-dropdown-item slot="submenu" value="create-organization">
+      <wa-icon slot="icon" name="chart-diagram" variant="regular"></wa-icon>
+      Create Organization
+    </wa-dropdown-item>
+  </wa-dropdown-item>
+
+  <wa-divider></wa-divider>
+
+  <wa-dropdown-item value="#" onclick="window.location = this.value">
+    <wa-icon slot="icon" name="user" variant="regular"></wa-icon>
+
+    <div class="wa-cluster wa-gap-s">
+      Peli Motto
+      <wa-badge appearance="outlined">Demo</wa-badge>
+    </div>
+
+    <wa-icon id="my-account-info-icon" slot="details" name="square-info" variant="regular"></wa-icon>
+    <wa-tooltip for="my-account-info-icon" placement="right" without-arrow>
+      <div class="wa-font-size-xs">Roles</div>
+      Super Administrator
+    </wa-tooltip>
+  </wa-dropdown-item>
+
+  <wa-dropdown-item value="sign-out" variant="danger">
+    <wa-icon slot="icon" name="arrow-right-from-line" variant="regular"></wa-icon>
+    Sign out
+  </wa-dropdown-item>
+</wa-dropdown>
+
+<!-- #endregion Navigation Header -->

@@ -1,0 +1,313 @@
+.identity-page h3 {
+  margin: 0;
+}
+
+.identity-header-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--wa-space-s);
+  min-inline-size: 0;
+}
+
+.identity-header-row > h1 {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.identity-toolbar-actions {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  margin-inline-start: auto;
+  --x-menubar-gap: var(--wa-space-2xs);
+}
+
+.identity-locked-state,
+.identity-onboarding-state,
+.identity-managed-section {
+  display: grid;
+  gap: var(--wa-space-s);
+}
+
+.identity-locked-state,
+.identity-onboarding-state {
+  min-height: 18rem;
+  place-items: center;
+}
+
+.identity-locked-empty-state,
+.identity-onboarding-empty-state {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: var(--wa-space-s);
+  max-inline-size: 34rem;
+  padding: var(--wa-space-xl) var(--wa-space-l);
+}
+
+.identity-locked-icon {
+  margin: var(--wa-space-m) auto;
+  font-size: clamp(2.8rem, 5vw, 4rem);
+  color: var(--wa-color-text-quiet);
+}
+
+.identity-onboarding-icon {
+  margin: var(--wa-space-m) auto;
+  font-size: clamp(3rem, 5vw, 4.2rem);
+  color: var(--wa-color-brand-on-quiet);
+}
+
+.identity-locked-title {
+  font-size: clamp(1.2rem, 2.6vw, 1.6rem);
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.identity-onboarding-title {
+  font-size: clamp(1.5rem, 3.2vw, 2rem);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.identity-locked-subtitle {
+  color: var(--wa-color-text-quiet);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.identity-onboarding-subtitle {
+  color: var(--wa-color-text-quiet);
+  font-size: 1rem;
+  line-height: 1.45;
+}
+
+.identity-onboarding-actions {
+  margin-top: var(--wa-space-m);
+}
+
+.identity-locked-empty-state > wa-button {
+  margin-top: var(--wa-space-m);
+}
+
+.identity-managed-header {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--wa-space-s);
+  min-inline-size: 0;
+}
+
+.identity-managed-header > h3 {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.identity-list-accordion {
+  margin-top: var(--wa-space-xs);
+}
+
+.identity-list-accordion .identity-accordion-radio {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.identity-list-accordion .identity-accordion-radio-input {
+  margin: 0;
+  inline-size: 1rem;
+  block-size: 1rem;
+  accent-color: var(--wa-color-brand-fill-loud);
+  cursor: pointer;
+}
+
+.identity-list-accordion .identity-accordion-radio-input[disabled] {
+  cursor: default;
+  opacity: 0.95;
+}
+
+.identity-dialog-body {
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  box-sizing: border-box;
+}
+
+.identity-dialog-body > * {
+  min-inline-size: 0;
+}
+
+.identity-dialog-body wa-input,
+.identity-dialog-body wa-textarea,
+.identity-dialog-body wa-radio-group {
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.identity-import-mode {
+  justify-self: start;
+  max-inline-size: 100%;
+}
+
+.identity-import-mode::part(form-control-label) {
+  display: none;
+}
+
+.identity-import-mode::part(form-control-input) {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--wa-space-2xs);
+  align-items: center;
+}
+
+.identity-import-mode wa-radio {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.identity-empty {
+  color: var(--muted);
+  margin-top: var(--wa-space-xs);
+}
+
+.identity-accordion-panel {
+  display: grid;
+  gap: var(--wa-space-s);
+}
+
+.identity-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--wa-space-2xs);
+}
+
+.identity-detail-value {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.identity-detail-inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--wa-space-2xs);
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.identity-detail-inline > .identity-detail-value {
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.identity-detail-inline > wa-button,
+.identity-detail-inline > wa-copy-button {
+  flex: 0 0 auto;
+}
+
+.identity-detail-did {
+  font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.identity-details-loading {
+  min-height: 6rem;
+  display: grid;
+  align-items: center;
+}
+
+.identity-list-accordion x-code {
+  display: block;
+}
+
+.identity-list-accordion .meta dd {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.identity-list-accordion .identity-detail-value.identity-detail-did {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.identity-list-accordion wa-textarea::part(base) {
+  inline-size: 100%;
+}
+
+.identity-list-accordion wa-callout::part(base) {
+  width: 100%;
+}
+
+.identity-list-accordion wa-details::part(summary) {
+  align-items: center;
+}
+
+.identity-import-panel form {
+  margin: 0;
+}
+
+.identity-dialog-body .wa-cluster {
+  flex-wrap: wrap;
+}
+
+.identity-dialog-footer {
+  inline-size: 100%;
+  flex-wrap: wrap;
+}
+
+.identity-dialog-context {
+  color: var(--wa-color-text-quiet);
+  word-break: break-word;
+}
+
+.identity-delete-callout-copy {
+  margin: 0;
+}
+
+.identity-delete-callout-did {
+  margin-top: var(--wa-space-2xs);
+  font-weight: 700;
+  color: var(--wa-color-danger-on-loud);
+  white-space: normal;
+  word-break: break-all;
+}
+
+.identity-delete-warning {
+  color: var(--wa-color-danger-fill-loud);
+  text-align: center;
+}
+
+.identity-recovery-dialog-phrase {
+  display: block;
+  border: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+  border-radius: var(--wa-border-radius-m);
+  background: var(--wa-color-surface-raised);
+  padding: var(--wa-space-s);
+}
+
+.identity-page wa-dialog::part(panel) {
+  inline-size: min(46rem, 92vw);
+  max-inline-size: 92vw;
+}
+
+.identity-page wa-dialog::part(body) {
+  overflow-x: hidden;
+}

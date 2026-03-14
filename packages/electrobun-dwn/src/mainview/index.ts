@@ -1,180 +1,214 @@
-/**
- * Mainview UI for the Electrobun DWN desktop app.
- *
- * Discovers the running DWN server by probing well-known ports on
- * `127.0.0.1` and fetching `/info`. A query-parameter shortcut is
- * supported as a future optimization if electrobun's `views://`
- * protocol handler gains query-string stripping.
- *
- * Keep port list in sync with `localDwnPortCandidates` and
- * `localDwnHostCandidates` in `@enbox/agent/src/local-dwn.ts`.
- */
+import { Router } from '@vaadin/router';
+import { ContextRoot } from '@lit/context';
+import { createRouter } from './router.js';
+import { createDidResolverRuntime } from './utils/dids.js';
+import { ensureIdentityRuntime, type IdentityRuntime } from './identity-runtime.js';
+import { ensureServerStatus } from './services/server-status.js';
+import { getAppStore } from './state/app-store.js';
+import './index.css';
+import './components/app-shell/index.js';
+import './components/connection-badge/index.js';
+import './components/toast-region/index.js';
+import './components/identity-switcher/index.js';
+import './components/x-accordion/index.js';
+import './components/x-code/index.js';
+import './components/notification-drawer/index.js';
+import './pages/home/index.js';
+import './pages/identity/index.js';
+import './pages/data/index.js';
+import './pages/apps/index.js';
+import './pages/permissions/index.js';
+import './pages/resolver/index.js';
 
-const candidatePorts = [3000, 55500, 55501, 55502, 55503, 55504, 55505, 55506, 55507, 55508, 55509];
-const candidateHosts = ['127.0.0.1'];
+// Force dark mode for the dashboard shell.
+localStorage.colorScheme = 'dark';
+document.documentElement.classList.add('wa-dark');
 
-interface ServerInfo {
-  server: string;
-  version: string;
-  webSocketSupport: boolean;
-  registrationRequirements: string[];
-  maxFileSize: number;
+if (/mac/i.test(navigator.platform)) {
+  document.documentElement.classList.add('platform-macos');
 }
 
-/**
- * Try to read the endpoint from the query string set by the bun process.
- */
-function getEndpointFromQueryParam(): string | null {
+type SearchInputElement = HTMLElement & { value?: string };
+type DidResolverRuntime = ReturnType<typeof createDidResolverRuntime>;
+type SyntaxHighlightNamespace = {
+  config?: {
+    languages?: string[];
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+};
+type AppWindow = Window & {
+  __didResolverRuntime?: DidResolverRuntime;
+  __identityRuntime?: IdentityRuntime;
+  she?: SyntaxHighlightNamespace;
+};
+
+function getAppWindow(): AppWindow {
+  return window as AppWindow;
+}
+
+async function clearRendererStorageIfRequested(): Promise<void> {
+  if (process.env.MAINVIEW_RESET_STORAGE_ON_START !== 'true') {
+    return;
+  }
+
+  if (typeof globalThis.localStorage !== 'undefined') {
+    try {
+      globalThis.localStorage.clear();
+    } catch {
+      // Best-effort reset only.
+    }
+  }
+
+  if (typeof globalThis.indexedDB === 'undefined') {
+    return;
+  }
+
+  if (typeof globalThis.indexedDB.databases !== 'function') {
+    return;
+  }
+
+  try {
+    const databases = await globalThis.indexedDB.databases();
+    await Promise.all(
+      databases
+        .map((entry) => entry.name)
+        .filter((name): name is string => !!name)
+        .map((name) => new Promise<void>((resolveDelete) => {
+          const request = globalThis.indexedDB.deleteDatabase(name);
+          request.onsuccess = () => resolveDelete();
+          request.onerror = () => resolveDelete();
+          request.onblocked = () => resolveDelete();
+        })),
+    );
+  } catch {
+    // Best-effort reset only.
+  }
+}
+
+function ensureDidResolverRuntime(): DidResolverRuntime {
+  const appWindow = getAppWindow();
+  if (!appWindow.__didResolverRuntime) {
+    appWindow.__didResolverRuntime = createDidResolverRuntime();
+  }
+
+  return appWindow.__didResolverRuntime;
+}
+
+async function ensureSyntaxHighlightElement(): Promise<void> {
+  const appWindow = getAppWindow();
+  const existingNamespace = appWindow.she ?? {};
+  const existingConfig = existingNamespace.config ?? {};
+  const existingLanguages = Array.isArray(existingConfig.languages)
+    ? existingConfig.languages
+    : ['markup', 'css', 'javascript'];
+
+  appWindow.she = {
+    ...existingNamespace,
+    config: {
+      ...existingConfig,
+      languages: Array.from(new Set([...existingLanguages, 'json'])),
+    },
+  };
+
+  await import('syntax-highlight-element');
+}
+
+function getDidFromLocation(): string | null {
   try {
     const params = new URLSearchParams(window.location.search);
-    const endpoint = params.get('endpoint');
-    if (endpoint && endpoint.startsWith('http')) {
-      return endpoint;
+    const did = (params.get('did') ?? '').trim();
+    if (did.toLowerCase().startsWith('did:')) {
+      return did;
     }
   } catch {
-    // Defensive: if URL parsing fails, fall through to probing.
+    // If URL parsing fails, preserve existing resolver state.
   }
+
   return null;
 }
 
-/**
- * Fallback: probe well-known ports to find the running DWN server.
- */
-async function detectLocalDwnBaseUrl(): Promise<string> {
-  for (const port of candidatePorts) {
-    for (const host of candidateHosts) {
-      const infoUrl = `http://${host}:${port}/info`;
-      try {
-        const response = await fetch(infoUrl);
-        if (!response.ok) {
-          continue;
-        }
-
-        const serverInfo = await response.json();
-        if (serverInfo?.server === '@enbox/dwn-server') {
-          return `http://127.0.0.1:${port}`;
-        }
-      } catch {
-        // Keep probing candidate endpoints.
-      }
-    }
+function setCurrentResolverDid(did: string): void {
+  const normalizedDid = did.trim();
+  if (normalizedDid.length === 0) {
+    return;
   }
 
-  return 'http://127.0.0.1:3000';
+  getAppStore().resolver.setCurrentDid(normalizedDid);
 }
 
-async function resolveServerEndpoint(): Promise<string> {
-  const fromParam = getEndpointFromQueryParam();
-  if (fromParam) {
-    return fromParam;
+function captureResolverDidFromLocation(): string | null {
+  const didFromLocation = getDidFromLocation();
+  if (didFromLocation) {
+    setCurrentResolverDid(didFromLocation);
+    return didFromLocation;
   }
 
-  // Primary path: probe ports to find the running DWN server.
-  return detectLocalDwnBaseUrl();
+  return null;
 }
 
-/**
- * Fetch server info from the `/info` endpoint and return it, or `null` on
- * failure.
- */
-async function fetchServerInfo(baseUrl: string): Promise<ServerInfo | null> {
-  try {
-    const response = await fetch(`${baseUrl}/info`);
-    if (!response.ok) {
-      return null;
-    }
-    return await response.json() as ServerInfo;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Set a text element's content by ID, with a fallback of `'--'`.
- */
-function setText(id: string, value: string | undefined): void {
-  const el = document.getElementById(id);
-  if (el) {
-    el.textContent = value ?? '--';
-  }
-}
-
-/**
- * Update all UI elements with the resolved server info.
- */
-function applyServerInfo(
-  baseUrl: string,
-  info: ServerInfo | null,
+function installGlobalSearchHandler(
+  router: { navigate: (route: 'data') => void },
 ): void {
-  const statusDot = document.getElementById('status-dot');
-  const statusText = document.getElementById('status');
-  const serverUrlEl = document.querySelector<HTMLAnchorElement>('#server-url');
-
-  if (info) {
-    // Server is reachable — show online state.
-    if (statusDot) {
-      statusDot.classList.remove('offline');
-    }
-    if (statusText) {
-      statusText.textContent = 'Running at ';
-    }
-    if (serverUrlEl) {
-      serverUrlEl.href = baseUrl;
-      serverUrlEl.textContent = baseUrl;
-    }
-
-    setText('endpoint', baseUrl);
-    setText('server-name', info.server);
-    setText('server-version', info.version);
-    setText('ws-support', info.webSocketSupport ? 'Enabled' : 'Disabled');
-  } else {
-    // Server unreachable — show offline state.
-    if (statusDot) {
-      statusDot.classList.add('offline');
-    }
-    if (statusText) {
-      statusText.textContent = 'Unable to reach server';
-    }
-    if (serverUrlEl) {
-      serverUrlEl.href = '#';
-      serverUrlEl.textContent = '';
-    }
-
-    setText('endpoint', baseUrl);
-    setText('server-name', '--');
-    setText('server-version', '--');
-    setText('ws-support', '--');
+  const searchInput = document.querySelector('#global-search-input');
+  if (!(searchInput instanceof HTMLElement)) {
+    return;
   }
-}
 
-const MAX_RETRIES = 5;
-const RETRY_DELAY_MS = 800;
+  const searchInputElement = searchInput as SearchInputElement;
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Initialize the UI: resolve the server endpoint, fetch `/info` (with
- * retries to handle race conditions on startup), and populate all
- * status elements.
- */
-async function initUI(): Promise<void> {
-  const baseUrl = await resolveServerEndpoint();
-
-  // The DWN server should be running before the webview loads, but
-  // retry a few times in case the HTTP listener isn't ready yet.
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const info = await fetchServerInfo(baseUrl);
-    if (info) {
-      applyServerInfo(baseUrl, info);
+  searchInputElement.addEventListener('keydown', (event: KeyboardEvent) => {
+    if (event.key !== 'Enter' || event.isComposing) {
       return;
     }
-    await delay(RETRY_DELAY_MS);
-  }
 
-  // All retries exhausted — show offline state.
-  applyServerInfo(baseUrl, null);
+    event.preventDefault();
+
+    const submittedValue = (searchInputElement.value ?? '').trim();
+    searchInputElement.value = submittedValue;
+
+    if (submittedValue.length === 0) {
+      return;
+    }
+
+    if (submittedValue.toLowerCase().startsWith('did:')) {
+      setCurrentResolverDid(submittedValue);
+      Router.go(`/resolver?did=${encodeURIComponent(submittedValue)}`);
+      return;
+    }
+
+    router.navigate('data');
+  });
 }
 
-void initUI();
+async function start(): Promise<void> {
+  const contextRoot = new ContextRoot();
+  if (document.body instanceof HTMLElement) {
+    contextRoot.attach(document.body);
+  }
+
+  await clearRendererStorageIfRequested();
+  await ensureSyntaxHighlightElement();
+  const appStore = getAppStore();
+  ensureDidResolverRuntime();
+  ensureIdentityRuntime(getAppWindow());
+  captureResolverDidFromLocation();
+  void ensureServerStatus(appStore);
+
+  const router = createRouter({
+    onRouteActivated: (route) => {
+      appStore.route.setActive(route);
+      if (route !== 'resolver') {
+        return;
+      }
+
+      captureResolverDidFromLocation();
+    },
+  });
+
+  appStore.setRouter(router);
+  installGlobalSearchHandler(router);
+  await router.init();
+}
+
+void start();
