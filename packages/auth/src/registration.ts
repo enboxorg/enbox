@@ -15,13 +15,13 @@ import type { EnboxUserAgent } from '@enbox/agent';
 
 import { DwnRegistrar } from '@enbox/dwn-clients';
 
-import { STORAGE_KEYS } from '../types.js';
+import { STORAGE_KEYS } from './types.js';
 
 import type {
   RegistrationOptions,
   RegistrationTokenData,
   StorageAdapter,
-} from '../types.js';
+} from './types.js';
 
 /** @internal */
 export interface RegistrationContext {

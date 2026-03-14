@@ -1,5 +1,5 @@
-import type { DwnSubscriptionMessage, ResubscribeFactory } from '../src/dwn-rpc-types.js';
-import type { GenericMessage, Persona, ProtocolDefinition, RecordSubscriptionHandler, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { DwnSubscriptionHandler, DwnSubscriptionMessage, ResubscribeFactory } from '../src/dwn-rpc-types.js';
+import type { GenericMessage, Persona, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -212,7 +212,7 @@ describe('WebSocketDwnRpcClient', () => {
       });
 
       const dataCids:string[] = [];
-      const subscriptionHandler: RecordSubscriptionHandler = (msg) => {
+      const subscriptionHandler: DwnSubscriptionHandler = (msg) => {
         if (msg.type !== 'event') { return; }
         const { message, initialWrite } = msg.event;
         expect(initialWrite!.recordId).toBe(writeMessage.recordId);
@@ -405,7 +405,7 @@ describe('WebSocketDwnRpcClient', () => {
         });
 
         const receivedMessages: any[] = [];
-        const handler: RecordSubscriptionHandler = (msg) => {
+        const handler: DwnSubscriptionHandler = (msg) => {
           receivedMessages.push(msg);
         };
 
@@ -462,7 +462,7 @@ describe('WebSocketDwnRpcClient', () => {
           filter : { schema: 'foo/bar' }
         });
 
-        const handler: RecordSubscriptionHandler = (): void => {};
+        const handler: DwnSubscriptionHandler = (): void => {};
 
         const subscribeResponse = await client.sendDwnRequest({
           dwnUrl       : socketDwnUrl,

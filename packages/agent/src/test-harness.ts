@@ -16,7 +16,6 @@ import { AgentDidResolverCache } from './agent-did-resolver-cache.js';
 import { AgentDwnApi } from './dwn-api.js';
 import { AgentIdentityApi } from './identity-api.js';
 import { AgentPermissionsApi } from './permissions-api.js';
-import { AgentSyncApi } from './sync-api.js';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
 import { HdIdentityVault } from './hd-identity-vault.js';
 import { LocalKeyManager } from './local-key-manager.js';
@@ -107,6 +106,7 @@ export class PlatformAgentTestHarness {
     await this.dwnResumableTaskStore.clear();
     await this.syncStore.clear();
     await this.vaultStore.clear();
+    (this.agent.vault as any)['_cachedInitialized'] = undefined;
     await this.agent.permissions.clear();
     this.dwnStores.clear();
 
@@ -282,8 +282,7 @@ export class PlatformAgentTestHarness {
 
     // Instantiate Agent's Sync API using a custom LevelDB-backed store.
     const syncStore = new Level(testDataPath('SYNC_STORE'));
-    const syncEngine = new SyncEngineLevel({ db: syncStore });
-    const syncApi = new AgentSyncApi({ syncEngine });
+    const syncApi = new SyncEngineLevel({ db: syncStore });
 
     // Create EnboxPlatformAgent instance
     const agent = new agentClass({

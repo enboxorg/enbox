@@ -106,4 +106,11 @@ export interface SyncEngine {
    * @throws {Error} if the sync operation fails to stop before the timeout.
    */
   stopSync(timeout?: number): Promise<void>;
+
+  /**
+   * Release all resources held by the sync engine (LevelDB handles, timers,
+   * WebSocket subscriptions). After calling `close()`, the engine should not
+   * be reused.
+   */
+  close(): Promise<void>;
 }

@@ -41,6 +41,7 @@ export interface MockAgentOverrides {
   identityConnectedIdentity?: () => Promise<MockIdentity | undefined>;
   didDelete?: (params: any) => Promise<void>;
   dwnSetCachedLocalDwnEndpoint?: (endpoint: string) => Promise<boolean>;
+  dwnIsRemoteMode?: boolean;
   syncRegisterIdentity?: (params: any) => Promise<void>;
   syncStartSync?: (params: any) => Promise<void>;
   syncStopSync?: (timeout: number) => Promise<void>;
@@ -89,6 +90,7 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     dwn: {
       setCachedLocalDwnEndpoint: overrides.dwnSetCachedLocalDwnEndpoint
         ?? (async (): Promise<boolean> => false),
+      isRemoteMode: overrides.dwnIsRemoteMode ?? false,
     },
 
     sync: {

@@ -158,19 +158,3 @@ export class WebSocketEnboxRpcClient extends WebSocketDwnRpcClient implements En
     throw new Error(`not implemented for transports [${this.transportProtocols.join(', ')}]`);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Deprecated aliases — migration aid
-// ---------------------------------------------------------------------------
-
-/** @deprecated Use {@link EnboxRpc} instead. Will be removed in a future version. */
-export type Web5Rpc = EnboxRpc;
-
-/** @deprecated Use {@link EnboxRpcClient} instead. Will be removed in a future version. */
-export const Web5RpcClient = EnboxRpcClient;
-
-/** @deprecated Use {@link HttpEnboxRpcClient} instead. Will be removed in a future version. */
-export const HttpWeb5RpcClient = HttpEnboxRpcClient;
-
-/** @deprecated Use {@link WebSocketEnboxRpcClient} instead. Will be removed in a future version. */
-export const WebSocketWeb5RpcClient = WebSocketEnboxRpcClient;

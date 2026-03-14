@@ -1160,10 +1160,3 @@ function stableStringify(value: unknown): string {
   );
   return '{' + pairs.join(',') + '}';
 }
-
-// ---------------------------------------------------------------------------
-// Deprecated alias — migration aid
-// ---------------------------------------------------------------------------
-
-/** @deprecated Use {@link TypedEnbox} instead. Will be removed in a future version. */
-export const TypedWeb5 = TypedEnbox;

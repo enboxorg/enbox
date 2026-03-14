@@ -37,7 +37,6 @@
 // Core classes
 export { AuthManager } from './auth-manager.js';
 export { AuthSession } from './identity-session.js';
-export { VaultManager } from './vault/vault-manager.js';
 export { AuthEventEmitter } from './events.js';
 
 // Password providers
@@ -49,21 +48,23 @@ export type { PasswordContext } from './password-provider.js';
 export { EnboxUserAgent, HdIdentityVault } from '@enbox/agent';
 
 // Wallet-connect helpers
-export { processConnectedGrants } from './flows/wallet-connect.js';
+export { processConnectedGrants } from './connect/wallet.js';
+export { WalletConnect } from './wallet-connect-client.js';
+export type { Permission, ProtocolPermissionOptions, WalletConnectClientOptions } from './wallet-connect-client.js';
 
 // Registration token storage helpers
-export { loadTokensFromStorage, saveTokensToStorage } from './flows/dwn-registration.js';
+export { loadTokensFromStorage, saveTokensToStorage } from './registration.js';
 
 // Local DWN discovery (browser dwn:// protocol integration)
 export {
   applyLocalDwnDiscovery,
   checkUrlForDwnDiscoveryPayload,
   clearLocalDwnEndpoint,
+  discoverLocalDwn,
   persistLocalDwnEndpoint,
-  probeLocalDwn,
   requestLocalDwnDiscovery,
   restoreLocalDwnEndpoint,
-} from './flows/dwn-discovery.js';
+} from './discovery.js';
 
 // Storage adapters
 export { BrowserStorage, LevelStorage, MemoryStorage, createDefaultStorage } from './storage/storage.js';

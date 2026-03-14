@@ -17,7 +17,9 @@ export * from './dwn-discovery-file.js';
 export * from './dwn-discovery-payload.js';
 export * from './dwn-encryption.js';
 export * from './dwn-key-delivery.js';
-export * from './dwn-record-upgrade.js';
+// NOTE: dwn-record-upgrade.js is intentionally NOT exported — the module
+// is disabled (see TODO in dwn-api.ts postWriteKeyDelivery). Keeping the
+// source file for reference until the redesign in a future PR.
 export * from './dwn-type-guards.js';
 export * from './protocol-utils.js';
 export * from './hd-identity-vault.js';
@@ -29,10 +31,8 @@ export * from './store-data.js';
 export * from './store-did.js';
 export * from './store-identity.js';
 export * from './store-key.js';
-export * from './sync-api.js';
 export * from './sync-engine-level.js';
 export * from './test-harness.js';
 export * from './utils.js';
-export * from './connect.js';
 export * from './enbox-connect-protocol.js';
 export * from './enbox-user-agent.js';

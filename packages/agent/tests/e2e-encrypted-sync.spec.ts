@@ -4,7 +4,6 @@ import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js'
 import { DataStream } from '@enbox/dwn-sdk-js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import { AgentSyncApi } from '../src/sync-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { EnboxUserAgent } from '../src/enbox-user-agent.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
@@ -65,8 +64,7 @@ describe('e2e: encrypted data survives sync round-trip', () => {
     // Wire up a fresh sync engine.
     const syncStore = testHarness.syncStore;
     syncEngine = new SyncEngineLevel({ db: syncStore, agent: testHarness.agent });
-    const syncApi = new AgentSyncApi({ syncEngine, agent: testHarness.agent });
-    testHarness.agent.sync = syncApi;
+    testHarness.agent.sync = syncEngine;
 
     alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
   });

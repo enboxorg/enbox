@@ -72,19 +72,7 @@ import {
  *
  * @see {@link https://github.com/enboxorg/dwn-spec | Enbox DWN Specification}
  */
-export interface DwnDidService extends DidService {
-  /**
-   * @deprecated Optional legacy field. Resolve encryption keys from the DID document's
-   * `keyAgreement` verification methods instead.
-   */
-  enc?: string | string[];
-
-  /**
-   * @deprecated Optional legacy field. Resolve signing keys from the DID document's
-   * `authentication` or `assertionMethod` verification methods instead.
-   */
-  sig?: string | string[];
-}
+export interface DwnDidService extends DidService {}
 
 export enum DwnInterface {
   MessagesRead = DwnInterfaceName.Messages + DwnMethodName.Read,

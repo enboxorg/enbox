@@ -4,7 +4,7 @@ import { AuthEventEmitter } from '../src/events.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
-import { importFromPhrase, importFromPortable } from '../src/flows/import-identity.js';
+import { importFromPhrase, importFromPortable } from '../src/connect/import.js';
 
 describe('importFromPhrase', () => {
   test('initializes vault and starts agent with recovery phrase', async () => {

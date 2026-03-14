@@ -326,8 +326,6 @@ describe('AgentIdentityApi', () => {
                 serviceEndpoint : [
                   'https://example.com/dwn'
                 ],
-                enc : '#enc',
-                sig : '#sig'
               }
             ]
           },
@@ -384,8 +382,6 @@ describe('AgentIdentityApi', () => {
             id              : `${testPortableDid.uri}#dwn`,
             type            : 'DecentralizedWebNode',
             serviceEndpoint : newEndpoints,
-            enc             : '#enc',
-            sig             : '#sig'
           }]);
         });
 

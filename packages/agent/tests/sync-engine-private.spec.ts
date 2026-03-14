@@ -1476,7 +1476,7 @@ describe('SyncEngineLevel — private methods', () => {
               },
             };
           }),
-          node: { processMessage: processMessageStub },
+          processRawMessage: processMessageStub,
         },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
@@ -1517,7 +1517,7 @@ describe('SyncEngineLevel — private methods', () => {
               },
             };
           }),
-          node: { processMessage: processMessageStub },
+          processRawMessage: processMessageStub,
         },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
@@ -1712,7 +1712,7 @@ describe('SyncEngineLevel — private methods', () => {
         agentDid          : 'did:example:agent',
         processDwnRequest : sinon.stub().resolves({ message: {} }),
         dwn               : {
-          node: { processMessage: sinon.stub().resolves({ status: { code: 202 } }) },
+          processRawMessage: sinon.stub().resolves({ status: { code: 202 } }),
         },
         rpc: {
           sendDwnRequest: sinon.stub().resolves({
@@ -1731,7 +1731,7 @@ describe('SyncEngineLevel — private methods', () => {
         messageCids : ['cid-1'],
       });
 
-      expect(mockAgent.dwn.node.processMessage.called).toBe(true);
+      expect(mockAgent.dwn.processRawMessage.called).toBe(true);
     });
 
     it('pushMessages should delegate to sync-messages pushMessages', async () => {

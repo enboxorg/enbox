@@ -3,6 +3,7 @@ import type { BearerDid } from '@enbox/dids';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { LocalDwnStrategy } from './local-dwn.js';
+import type { SyncEngine } from './types/sync.js';
 import type { DidInterface, DidRequest, DidResponse } from './did-api.js';
 import type { DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './types/dwn.js';
 import type { ProcessVcRequest, SendVcRequest, VcResponse } from './types/vc.js';
@@ -13,7 +14,6 @@ import { AgentDidResolverCache } from './agent-did-resolver-cache.js';
 import { AgentDwnApi } from './dwn-api.js';
 import { AgentIdentityApi } from './identity-api.js';
 import { AgentPermissionsApi } from './permissions-api.js';
-import { AgentSyncApi } from './sync-api.js';
 import { DwnDidStore } from './store-did.js';
 import { DwnIdentityStore } from './store-identity.js';
 import { DwnKeyStore } from './store-key.js';
@@ -85,11 +85,21 @@ export type AgentParams<TKeyManager extends AgentKeyManager = LocalKeyManager> =
   /** Remote procedure call (RPC) client used to communicate with other Enbox services. */
   rpcClient: EnboxRpc;
   /** Facilitates data synchronization of DWN records between nodes. */
-  syncApi: AgentSyncApi;
+  syncApi: SyncEngine;
 };
 
 export type CreateUserAgentParams = Partial<AgentParams> & {
   localDwnStrategy?: LocalDwnStrategy;
+
+  /**
+   * When set, the agent operates in "remote mode": no in-process DWN is
+   * created. All `processRequest()` calls are routed through RPC to
+   * this endpoint instead.
+   *
+   * Typically set by `AuthManager.create()` after standalone discovery
+   * determines that a local DWN server is running.
+   */
+  localDwnEndpoint?: string;
 };
 
 export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManager> implements EnboxPlatformAgent<TKeyManager> {
@@ -100,7 +110,7 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
   public keyManager: TKeyManager;
   public permissions: AgentPermissionsApi;
   public rpc: EnboxRpc;
-  public sync: AgentSyncApi;
+  public sync: SyncEngine;
   public vault: HdIdentityVault;
 
   private _agentDid?: BearerDid;
@@ -146,6 +156,7 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
   public static async create({
     dataPath = 'DATA/AGENT',
     localDwnStrategy,
+    localDwnEndpoint,
     agentDid, agentVault, cryptoApi, didApi, dwnApi, identityApi, keyManager, permissionsApi, rpcClient, syncApi
   }: CreateUserAgentParams = {}
   ): Promise<EnboxUserAgent> {
@@ -163,10 +174,22 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
       store         : new DwnDidStore()
     });
 
-    dwnApi ??= new AgentDwnApi({
-      dwn              : await AgentDwnApi.createDwn({ dataPath, didResolver: didApi }),
-      localDwnStrategy : localDwnStrategy ?? 'prefer',
-    });
+    if (!dwnApi) {
+      if (localDwnEndpoint) {
+        // Remote mode: no in-process DWN. All operations route through
+        // RPC to the local DWN server.
+        dwnApi = new AgentDwnApi({
+          localDwnEndpoint,
+          localDwnStrategy: localDwnStrategy ?? 'prefer',
+        });
+      } else {
+        // Local mode: create an in-process DWN with LevelDB stores.
+        dwnApi = new AgentDwnApi({
+          dwn              : await AgentDwnApi.createDwn({ dataPath, didResolver: didApi }),
+          localDwnStrategy : localDwnStrategy ?? 'prefer',
+        });
+      }
+    }
     if (localDwnStrategy) {
       dwnApi.setLocalDwnStrategy(localDwnStrategy);
     }
@@ -179,7 +202,7 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
 
     rpcClient ??= new EnboxRpcClient();
 
-    syncApi ??= new AgentSyncApi({ syncEngine: new SyncEngineLevel({ dataPath }) });
+    syncApi ??= new SyncEngineLevel({ dataPath });
 
     // Instantiate the Agent using the provided or default components.
     return new EnboxUserAgent({
@@ -261,13 +284,3 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
     this.agentDid = await this.vault.getDid();
   }
 }
-
-// ---------------------------------------------------------------------------
-// Deprecated aliases — migration aid
-// ---------------------------------------------------------------------------
-
-/** @deprecated Use {@link EnboxUserAgent} instead. Will be removed in a future version. */
-export const Web5UserAgent = EnboxUserAgent;
-
-/** @deprecated Use {@link EnboxUserAgent} instead. Will be removed in a future version. */
-export type Web5UserAgent = EnboxUserAgent;

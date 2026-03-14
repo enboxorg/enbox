@@ -6,18 +6,9 @@
  * @module
  */
 
-import { EnboxUserAgent } from '@enbox/agent';
-import type { BearerIdentity, PortableIdentity } from '@enbox/agent';
+import type { BearerIdentity, HdIdentityVault, PortableIdentity } from '@enbox/agent';
 
-import { AuthEventEmitter } from './events.js';
-import { AuthSession } from './identity-session.js';
-import { createDefaultStorage } from './storage/storage.js';
-import { localConnect } from './flows/local-connect.js';
-import { restoreSession } from './flows/session-restore.js';
-import { STORAGE_KEYS } from './types.js';
-import { VaultManager } from './vault/vault-manager.js';
-import { walletConnect } from './flows/wallet-connect.js';
-
+import type { FlowContext } from './connect/lifecycle.js';
 import type { PasswordProvider } from './password-provider.js';
 import type {
   AuthEvent,
@@ -37,7 +28,19 @@ import type {
   SyncOption,
   WalletConnectOptions,
 } from './types.js';
-import { importFromPhrase, importFromPortable } from './flows/import-identity.js';
+
+import { EnboxUserAgent } from '@enbox/agent';
+
+import { AuthEventEmitter } from './events.js';
+import { AuthSession } from './identity-session.js';
+import { createDefaultStorage } from './storage/storage.js';
+import { discoverLocalDwn } from './discovery.js';
+import { localConnect } from './connect/local.js';
+import { restoreSession } from './connect/restore.js';
+import { STORAGE_KEYS } from './types.js';
+import { walletConnect } from './connect/wallet.js';
+import { ensureVaultReady, resolveIdentityDids, startSyncIfEnabled } from './connect/lifecycle.js';
+import { importFromPhrase, importFromPortable } from './connect/import.js';
 
 /**
  * The primary entry point for authentication and identity management.
@@ -76,7 +79,6 @@ export class AuthManager {
   private _userAgent: EnboxUserAgent;
   private _emitter: AuthEventEmitter;
   private _storage: StorageAdapter;
-  private _vault: VaultManager;
   private _session: AuthSession | undefined;
   private _state: AuthState = 'uninitialized';
   private _isConnecting = false;
@@ -89,26 +91,34 @@ export class AuthManager {
   private _defaultDwnEndpoints?: string[];
   private _registration?: RegistrationOptions;
 
+  /**
+   * The local DWN server endpoint discovered during `create()`, if any.
+   * `undefined` means no local server was found. This is set before any
+   * event listeners are attached, so consumers should check this property
+   * after `create()` returns rather than relying solely on events.
+   */
+  private _localDwnEndpoint?: string;
+
   private constructor(params: {
     userAgent: EnboxUserAgent;
     emitter: AuthEventEmitter;
     storage: StorageAdapter;
-    vault: VaultManager;
     defaultPassword?: string;
     passwordProvider?: PasswordProvider;
     defaultSync?: SyncOption;
     defaultDwnEndpoints?: string[];
     registration?: RegistrationOptions;
+    localDwnEndpoint?: string;
   }) {
     this._userAgent = params.userAgent;
     this._emitter = params.emitter;
     this._storage = params.storage;
-    this._vault = params.vault;
     this._defaultPassword = params.defaultPassword;
     this._passwordProvider = params.passwordProvider;
     this._defaultSync = params.defaultSync;
     this._defaultDwnEndpoints = params.defaultDwnEndpoints;
     this._registration = params.registration;
+    this._localDwnEndpoint = params.localDwnEndpoint;
   }
 
   /**
@@ -125,30 +135,44 @@ export class AuthManager {
     const emitter = new AuthEventEmitter();
     const storage = options.storage ?? createDefaultStorage();
 
+    // Run local DWN discovery BEFORE creating the agent. Discovery has
+    // zero vault/DWN dependencies — it only checks the URL fragment,
+    // reads localStorage, and validates via GET /info.
+    //
+    // When a local DWN server is available, the agent is created in
+    // "remote mode": it skips creating an in-process DWN and routes all
+    // DWN operations through RPC to the local server.
+    let localDwnEndpoint: string | undefined;
+    if (!options.agent && options.localDwnStrategy !== 'off') {
+      localDwnEndpoint = await discoverLocalDwn(storage);
+      // NOTE: We intentionally do NOT emit 'local-dwn-available' here
+      // because event listeners aren't attached yet. Consumers should
+      // check `authManager.localDwnEndpoint` after create() returns.
+    }
+
     // Use a pre-built agent or create one with the given options.
     const userAgent = options.agent ?? await EnboxUserAgent.create({
       dataPath         : options.dataPath,
       agentVault       : options.agentVault,
       localDwnStrategy : options.localDwnStrategy,
+      localDwnEndpoint,
     });
-
-    const vault = new VaultManager(userAgent.vault, emitter);
 
     const manager = new AuthManager({
       userAgent,
       emitter,
       storage,
-      vault,
       defaultPassword     : options.password,
       passwordProvider    : options.passwordProvider,
       defaultSync         : options.sync,
       defaultDwnEndpoints : options.dwnEndpoints,
       registration        : options.registration,
+      localDwnEndpoint,
     });
 
     // Determine initial state.
-    if (await vault.isInitialized()) {
-      manager._setState(vault.isLocked ? 'locked' : 'unlocked');
+    if (await userAgent.vault.isInitialized()) {
+      manager._setState(userAgent.vault.isLocked() ? 'locked' : 'unlocked');
     } else {
       manager._setState('uninitialized');
     }
@@ -169,30 +193,7 @@ export class AuthManager {
    * @throws If a connection attempt is already in progress.
    */
   async connect(options?: LocalConnectOptions): Promise<AuthSession> {
-    this._guardConcurrency();
-    this._isConnecting = true;
-
-    try {
-      const session = await localConnect(
-        {
-          userAgent           : this._userAgent,
-          emitter             : this._emitter,
-          storage             : this._storage,
-          defaultPassword     : this._defaultPassword,
-          passwordProvider    : this._passwordProvider,
-          defaultSync         : this._defaultSync,
-          defaultDwnEndpoints : this._defaultDwnEndpoints,
-          registration        : this._registration,
-        },
-        options,
-      );
-
-      this._session = session;
-      this._setState('connected');
-      return session;
-    } finally {
-      this._isConnecting = false;
-    }
+    return this._withConnect(() => localConnect(this._flowContext(), options));
   }
 
   /**
@@ -207,50 +208,7 @@ export class AuthManager {
    * @throws If a connection attempt is already in progress.
    */
   async walletConnect(options: WalletConnectOptions): Promise<AuthSession> {
-    this._guardConcurrency();
-    this._isConnecting = true;
-
-    try {
-      // Ensure the agent is initialized and started before wallet connect.
-      const isFirstLaunch = await this._userAgent.firstLaunch();
-      let password = this._defaultPassword;
-
-      if (!password && this._passwordProvider) {
-        try {
-          password = await this._passwordProvider.getPassword({
-            reason: isFirstLaunch ? 'create' : 'unlock',
-          });
-        } catch {
-          // Provider failed — fall through to insecure default.
-        }
-      }
-
-      password ??= 'insecure-static-phrase';
-
-      if (isFirstLaunch) {
-        await this._userAgent.initialize({ password });
-      }
-      await this._userAgent.start({ password });
-      this._emitter.emit('vault-unlocked', {});
-
-      const session = await walletConnect(
-        {
-          userAgent           : this._userAgent,
-          emitter             : this._emitter,
-          storage             : this._storage,
-          defaultSync         : this._defaultSync,
-          defaultDwnEndpoints : this._defaultDwnEndpoints,
-          registration        : this._registration,
-        },
-        options,
-      );
-
-      this._session = session;
-      this._setState('connected');
-      return session;
-    } finally {
-      this._isConnecting = false;
-    }
+    return this._withConnect(() => walletConnect(this._flowContext(), options));
   }
 
   /**
@@ -260,28 +218,7 @@ export class AuthManager {
    * recovering the identity on this device.
    */
   async importFromPhrase(options: ImportFromPhraseOptions): Promise<AuthSession> {
-    this._guardConcurrency();
-    this._isConnecting = true;
-
-    try {
-      const session = await importFromPhrase(
-        {
-          userAgent           : this._userAgent,
-          emitter             : this._emitter,
-          storage             : this._storage,
-          defaultSync         : this._defaultSync,
-          defaultDwnEndpoints : this._defaultDwnEndpoints,
-          registration        : this._registration,
-        },
-        options,
-      );
-
-      this._session = session;
-      this._setState('connected');
-      return session;
-    } finally {
-      this._isConnecting = false;
-    }
+    return this._withConnect(() => importFromPhrase(this._flowContext(), options));
   }
 
   /**
@@ -290,28 +227,7 @@ export class AuthManager {
    * The portable identity contains the DID's private keys and metadata.
    */
   async importFromPortable(options: ImportFromPortableOptions): Promise<AuthSession> {
-    this._guardConcurrency();
-    this._isConnecting = true;
-
-    try {
-      const session = await importFromPortable(
-        {
-          userAgent           : this._userAgent,
-          emitter             : this._emitter,
-          storage             : this._storage,
-          defaultSync         : this._defaultSync,
-          defaultDwnEndpoints : this._defaultDwnEndpoints,
-          registration        : this._registration,
-        },
-        options,
-      );
-
-      this._session = session;
-      this._setState('connected');
-      return session;
-    } finally {
-      this._isConnecting = false;
-    }
+    return this._withConnect(() => importFromPortable(this._flowContext(), options));
   }
 
   /**
@@ -325,17 +241,7 @@ export class AuthManager {
     this._isConnecting = true;
 
     try {
-      const session = await restoreSession(
-        {
-          userAgent        : this._userAgent,
-          emitter          : this._emitter,
-          storage          : this._storage,
-          defaultPassword  : this._defaultPassword,
-          passwordProvider : this._passwordProvider,
-          defaultSync      : this._defaultSync,
-        },
-        options,
-      );
+      const session = await restoreSession(this._flowContext(), options);
 
       if (session) {
         this._session = session;
@@ -372,10 +278,10 @@ export class AuthManager {
    */
   async connectHeadless(options?: HeadlessConnectOptions): Promise<AuthSession> {
     let password = options?.password ?? this._defaultPassword;
+    const isFirstLaunch = await this._userAgent.firstLaunch();
 
     // Try the password provider if no explicit password.
     if (!password && this._passwordProvider) {
-      const isFirstLaunch = await this._userAgent.firstLaunch();
       password = await this._passwordProvider.getPassword({
         reason: isFirstLaunch ? 'create' : 'unlock',
       });
@@ -388,13 +294,13 @@ export class AuthManager {
       );
     }
 
-    // Unlock the vault (initialise on first launch).
-    if (await this._userAgent.firstLaunch()) {
-      await this._userAgent.initialize({ password });
-    } else {
-      await this._userAgent.start({ password });
-    }
-    this._emitter.emit('vault-unlocked', {});
+    // Unlock the vault (initialise on first launch, always start).
+    await ensureVaultReady({
+      userAgent : this._userAgent,
+      emitter   : this._emitter,
+      password,
+      isFirstLaunch,
+    });
 
     // Find the active identity.
     const identities = await this._userAgent.identity.list();
@@ -409,8 +315,7 @@ export class AuthManager {
       : undefined
     ) ?? identities[0];
 
-    const connectedDid = identity.metadata.connectedDid ?? identity.did.uri;
-    const delegateDid = identity.metadata.connectedDid ? identity.did.uri : undefined;
+    const { connectedDid, delegateDid } = resolveIdentityDids(identity);
 
     const identityInfo: IdentityInfo = {
       didUri       : connectedDid,
@@ -456,15 +361,14 @@ export class AuthManager {
     const did = this._session?.did;
 
     // 1. Stop sync.
-    if ('sync' in this._userAgent && typeof (this._userAgent as any).sync?.stopSync === 'function') {
-      await (this._userAgent as any).sync.stopSync(timeout);
-    }
+    await this._userAgent.sync.stopSync(timeout);
 
     // 2. Clear the session (but keep storage markers for restore).
     this._session = undefined;
 
-    // 3. Lock the vault (also emits 'vault-locked').
-    await this._vault.lock();
+    // 3. Lock the vault.
+    await this._userAgent.vault.lock();
+    this._emitter.emit('vault-locked', {});
 
     // 4. Transition state.
     this._setState('locked');
@@ -489,9 +393,7 @@ export class AuthManager {
 
     // Stop sync.
     if (this._session) {
-      if ('sync' in this._userAgent && typeof (this._userAgent as any).sync?.stopSync === 'function') {
-        await (this._userAgent as any).sync.stopSync(timeout);
-      }
+      await this._userAgent.sync.stopSync(timeout);
     }
 
     this._session = undefined;
@@ -563,33 +465,28 @@ export class AuthManager {
     const did = this._session?.did;
 
     // 1. Stop sync.
-    if ('sync' in this._userAgent &&
-        typeof (this._userAgent as any).sync?.stopSync === 'function') {
-      try {
-        await (this._userAgent as any).sync.stopSync(timeout);
-      } catch {
-        // Best-effort — don't block shutdown on sync errors.
-      }
+    try {
+      await this._userAgent.sync.stopSync(timeout);
+    } catch {
+      // Best-effort — don't block shutdown on sync errors.
     }
 
     // 2. Clear the active session.
     this._session = undefined;
 
-    // 3. Lock the vault (emits 'vault-locked').
+    // 3. Lock the vault.
     try {
-      await this._vault.lock();
+      await this._userAgent.vault.lock();
+      this._emitter.emit('vault-locked', {});
     } catch {
       // Vault may already be locked or uninitialised — safe to ignore.
     }
 
     // 4. Close the sync engine (releases LevelDB handles, timers).
-    if ('sync' in this._userAgent &&
-        typeof (this._userAgent as any).sync?.close === 'function') {
-      try {
-        await (this._userAgent as any).sync.close();
-      } catch {
-        // Best-effort.
-      }
+    try {
+      await this._userAgent.sync.close();
+    } catch {
+      // Best-effort.
     }
 
     // 5. Close the storage adapter (e.g. LevelDB session store).
@@ -645,8 +542,7 @@ export class AuthManager {
       throw new Error(`[@enbox/auth] Identity not found: ${didUri}`);
     }
 
-    const connectedDid = identity.metadata.connectedDid ?? identity.did.uri;
-    const delegateDid = identity.metadata.connectedDid ? identity.did.uri : undefined;
+    const { connectedDid, delegateDid } = resolveIdentityDids(identity);
 
     // Persist the switch.
     await this._storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
@@ -671,10 +567,7 @@ export class AuthManager {
         // Already registered — safe to ignore.
       }
 
-      const syncMode = sync === undefined ? 'live' : 'poll';
-      const syncInterval = sync ?? (syncMode === 'live' ? '5m' : '2m');
-      this._userAgent.sync.startSync({ mode: syncMode, interval: syncInterval })
-        .catch((err: unknown) => console.error('[@enbox/auth] Sync failed:', err));
+      startSyncIfEnabled(this._userAgent, sync);
     }
 
     this._session = new AuthSession({
@@ -740,9 +633,9 @@ export class AuthManager {
 
   // ─── Vault ─────────────────────────────────────────────────────
 
-  /** Access the vault manager for lock/unlock/backup operations. */
-  get vault(): VaultManager {
-    return this._vault;
+  /** Access the underlying identity vault for lock/unlock/backup operations. */
+  get vault(): HdIdentityVault {
+    return this._userAgent.vault;
   }
 
   // ─── Events ────────────────────────────────────────────────────
@@ -772,7 +665,7 @@ export class AuthManager {
 
   /** Whether the vault is currently locked. */
   get isLocked(): boolean {
-    return this._vault.isLocked;
+    return this._userAgent.vault.isLocked();
   }
 
   /** Whether a connection attempt is in progress. */
@@ -785,7 +678,59 @@ export class AuthManager {
     return this._userAgent;
   }
 
+  /**
+   * The local DWN server endpoint discovered during `create()`, if any.
+   *
+   * When set, the agent is operating in remote mode (no in-process DWN).
+   * This property is available immediately after `create()` returns,
+   * before any event listeners are attached.
+   */
+  get localDwnEndpoint(): string | undefined {
+    return this._localDwnEndpoint;
+  }
+
   // ─── Private helpers ───────────────────────────────────────────
+
+  /**
+   * Build a `FlowContext` from the manager's current state.
+   *
+   * Replaces the 5 manual inline context constructions that were
+   * previously duplicated across `connect()`, `walletConnect()`,
+   * `importFromPhrase()`, `importFromPortable()`, and `restoreSession()`.
+   */
+  private _flowContext(): FlowContext {
+    return {
+      userAgent           : this._userAgent,
+      emitter             : this._emitter,
+      storage             : this._storage,
+      defaultPassword     : this._defaultPassword,
+      passwordProvider    : this._passwordProvider,
+      defaultSync         : this._defaultSync,
+      defaultDwnEndpoints : this._defaultDwnEndpoints,
+      registration        : this._registration,
+    };
+  }
+
+  /**
+   * Template for connection flows that follow the guard → try/finally → setState pattern.
+   *
+   * Consolidates the duplicated concurrency guard, `_isConnecting` flag management,
+   * session assignment, and state transition across `connect()`, `walletConnect()`,
+   * `importFromPhrase()`, and `importFromPortable()`.
+   */
+  private async _withConnect(fn: () => Promise<AuthSession>): Promise<AuthSession> {
+    this._guardConcurrency();
+    this._isConnecting = true;
+
+    try {
+      const session = await fn();
+      this._session = session;
+      this._setState('connected');
+      return session;
+    } finally {
+      this._isConnecting = false;
+    }
+  }
 
   private _setState(state: AuthState): void {
     if (state === this._state) {return;}

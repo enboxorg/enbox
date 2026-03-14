@@ -7,26 +7,18 @@
  * @module
  */
 
-import { Convert } from '@enbox/common';
-import { WalletConnect } from '@enbox/agent';
 import type { DwnDataEncodedRecordsWriteMessage, DwnMessagesPermissionScope, DwnRecordsPermissionScope, EnboxUserAgent } from '@enbox/agent';
+
+import type { AuthSession } from '../identity-session.js';
+import type { FlowContext } from './lifecycle.js';
+import type { WalletConnectOptions } from '../types.js';
+
+import { Convert } from '@enbox/common';
+import { registerWithDwnEndpoints } from '../registration.js';
+import { WalletConnect } from '../wallet-connect-client.js';
+import { DEFAULT_DWN_ENDPOINTS, STORAGE_KEYS } from '../types.js';
 import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
-
-import type { AuthEventEmitter } from '../events.js';
-import { AuthSession } from '../identity-session.js';
-import { registerWithDwnEndpoints } from './dwn-registration.js';
-import { STORAGE_KEYS } from '../types.js';
-import type { RegistrationOptions, StorageAdapter, SyncOption, WalletConnectOptions } from '../types.js';
-
-/** @internal */
-export interface WalletConnectContext {
-  userAgent: EnboxUserAgent;
-  emitter: AuthEventEmitter;
-  storage: StorageAdapter;
-  defaultSync?: SyncOption;
-  defaultDwnEndpoints?: string[];
-  registration?: RegistrationOptions;
-}
+import { ensureVaultReady, finalizeSession, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
 
 /**
  * Process connected grants by storing them in the local DWN as the owner.
@@ -86,7 +78,7 @@ export async function processConnectedGrants(params: {
  * 3. Sets up sync and returns an AuthSession.
  */
 export async function walletConnect(
-  ctx: WalletConnectContext,
+  ctx: FlowContext,
   options: WalletConnectOptions,
 ): Promise<AuthSession> {
   const { userAgent, emitter, storage } = ctx;
@@ -98,6 +90,17 @@ export async function walletConnect(
       'Remove sync: "off" or set an interval like "15s".'
     );
   }
+
+  // Ensure the agent is initialized and started before the relay flow.
+  const isFirstLaunch = await userAgent.firstLaunch();
+  const password = await resolvePassword(ctx, undefined, isFirstLaunch);
+
+  await ensureVaultReady({
+    userAgent,
+    emitter,
+    password,
+    isFirstLaunch,
+  });
 
   // Run the Enbox Connect relay flow.
   // permissionRequests are already agent-level ConnectPermissionRequest objects.
@@ -140,7 +143,7 @@ export async function walletConnect(
 
     // Register with DWN endpoints (if registration options are provided).
     if (ctx.registration) {
-      const dwnEndpoints = ctx.defaultDwnEndpoints ?? ['https://enbox-dwn.fly.dev'];
+      const dwnEndpoints = ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
       await registerWithDwnEndpoints(
         {
           userAgent : userAgent,
@@ -184,43 +187,23 @@ export async function walletConnect(
     throw new Error(`[@enbox/auth] Wallet connect failed: ${message}`);
   }
 
-  // Start sync.
-  const syncMode = sync === undefined ? 'live' : 'poll';
-  const syncInterval = sync ?? (syncMode === 'live' ? '5m' : '2m');
-  userAgent.sync.startSync({ mode: syncMode, interval: syncInterval })
-    .catch((err: unknown) => {
-      console.error('[@enbox/auth] Sync failed:', err);
-    });
-
   const delegateDid = delegatePortableDid.uri;
 
-  // Persist session info.
-  await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-  await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid);
-  await storage.set(STORAGE_KEYS.DELEGATE_DID, delegateDid);
-  await storage.set(STORAGE_KEYS.CONNECTED_DID, connectedDid);
+  // Start sync.
+  startSyncIfEnabled(userAgent, sync);
 
-  const identityInfo = {
-    didUri       : connectedDid,
-    name         : identity.metadata.name,
-    connectedDid : identity.metadata.connectedDid,
-  };
-
-  const session = new AuthSession({
-    agent    : userAgent,
-    did      : connectedDid,
+  // Persist session info, build AuthSession, and emit lifecycle events.
+  return finalizeSession({
+    userAgent,
+    emitter,
+    storage,
+    connectedDid,
     delegateDid,
-    identity : identityInfo,
-  });
-
-  emitter.emit('identity-added', { identity: identityInfo });
-  emitter.emit('session-start', {
-    session: {
-      did      : session.did,
-      delegateDid,
-      identity : identityInfo,
+    identityName         : identity.metadata.name,
+    identityConnectedDid : identity.metadata.connectedDid,
+    extraStorageKeys     : {
+      [STORAGE_KEYS.DELEGATE_DID]  : delegateDid,
+      [STORAGE_KEYS.CONNECTED_DID] : connectedDid,
     },
   });
-
-  return session;
 }

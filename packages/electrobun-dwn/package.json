@@ -1,6 +1,6 @@
 {
   "name": "@enbox/electrobun-dwn",
-  "version": "0.0.4",
+  "version": "0.0.6",
   "private": true,
   "type": "module",
   "description": "Electrobun app that runs a local Enbox DWN server",
@@ -10,7 +10,9 @@
     "dev:clean": "DWN_RESET_ON_START=true bun run prebuild:dwn && DWN_RESET_ON_START=true electrobun dev",
     "dev:watch": "bun run prebuild:dwn && electrobun dev --watch",
     "dev:clean:watch": "DWN_RESET_ON_START=true bun run prebuild:dwn && DWN_RESET_ON_START=true electrobun dev --watch",
-    "build": "electrobun build"
+    "build": "electrobun build",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix --max-warnings 0"
   },
   "dependencies": {
     "@digitalbazaar/did-io": "^2.1.0",

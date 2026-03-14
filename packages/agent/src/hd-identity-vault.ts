@@ -151,6 +151,14 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
   private _contentEncryptionKey: Jwk | undefined;
 
   /**
+   * Cached initialization state. Once read from the store, avoids redundant LevelDB reads on
+   * subsequent checks. The `initialized` flag is write-once (false → true) and never reverts,
+   * making it safe to cache indefinitely. Mirrors the pattern used by {@link _contentEncryptionKey}
+   * for the synchronous {@link isLocked} check.
+   */
+  private _cachedInitialized: boolean | undefined;
+
+  /**
    * Constructs an instance of `HdIdentityVault`, initializing the key derivation factor and data
    * store. It sets the default key derivation work factor and initializes the internal data store,
    * either with the provided store or a default in-memory store. It also establishes the initial
@@ -335,6 +343,13 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     const vaultStatus = Convert.string(storedStatus).toObject();
     if (!isIdentityVaultStatus(vaultStatus)) {
       throw new Error('HdIdentityVault: Invalid IdentityVaultStatus object in store');
+    }
+
+    // Only cache the `true` state — `initialized` is write-once (false → true) and never reverts,
+    // so a cached `true` is always valid. Leaving `false` uncached ensures a subsequent
+    // `isInitialized()` call after `initialize()` correctly reads the updated store.
+    if (vaultStatus.initialized) {
+      this._cachedInitialized = true;
     }
 
     return vaultStatus;
@@ -595,6 +610,9 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    * @returns A promise that resolves to `true` if the vault has been initialized, otherwise `false`.
    */
   public async isInitialized(): Promise<boolean> {
+    if (this._cachedInitialized === true) {
+      return true;
+    }
     return this.getStatus().then(({ initialized }) => initialized);
   }
 
@@ -850,6 +868,9 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
 
     // Write the changes to the store.
     await this._store.set('vaultStatus', JSON.stringify(vaultStatus));
+
+    // Update the in-memory cache so subsequent reads skip the store.
+    this._cachedInitialized = vaultStatus.initialized;
 
     return true;
   }

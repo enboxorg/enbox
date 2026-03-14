@@ -102,6 +102,179 @@ describe('AgentDwnApi', () => {
     });
   });
 
+  describe('set agent', () => {
+    it('sets the agent and re-initializes local DWN discovery', () => {
+      const mockDwn = ({} as unknown) as Dwn;
+      const dwnApi = new AgentDwnApi({ dwn: mockDwn });
+
+      const mockAgent: any = {
+        agentDid : { uri: 'did:method:abc123' },
+        rpc      : { getServerInfo: sinon.stub().resolves({ server: '@enbox/dwn-server' }) },
+      };
+
+      dwnApi.agent = mockAgent;
+      expect(dwnApi.agent).toBe(mockAgent);
+    });
+  });
+
+  describe('isRemoteMode', () => {
+    it('returns false when a DWN instance is provided', () => {
+      const mockDwn = ({} as unknown) as Dwn;
+      const dwnApi = new AgentDwnApi({ dwn: mockDwn });
+      expect(dwnApi.isRemoteMode).toBe(false);
+    });
+
+    it('returns true when a localDwnEndpoint is provided instead of a DWN', () => {
+      const dwnApi = new AgentDwnApi({ localDwnEndpoint: 'http://127.0.0.1:55557' });
+      expect(dwnApi.isRemoteMode).toBe(true);
+    });
+  });
+
+  describe('get node', () => {
+    it('returns the DWN instance in local mode', () => {
+      const mockDwn = ({ test: 'dwn' } as unknown) as Dwn;
+      const dwnApi = new AgentDwnApi({ dwn: mockDwn });
+      expect(dwnApi.node).toHaveProperty('test', 'dwn');
+    });
+
+    it('throws in remote mode when no in-process DWN exists', () => {
+      const dwnApi = new AgentDwnApi({ localDwnEndpoint: 'http://127.0.0.1:55557' });
+      expect(() => dwnApi.node).toThrow('The in-process DWN instance is not available');
+    });
+  });
+
+  describe('remote mode (localDwnEndpoint)', () => {
+    it('routes processRequest through RPC in remote mode', async () => {
+      // Create a mock agent with enough structure for constructDwnMessage + sendDwnRpcRequest
+      const rpcSendStub = sinon.stub().resolves({
+        status  : { code: 200, detail: 'OK' },
+        entries : [],
+      });
+      const mockAgent: any = {
+        agentDid: {
+          uri       : 'did:dht:testagent',
+          getSigner : sinon.stub().resolves({
+            algorithm : 'EdDSA',
+            keyId     : 'did:dht:testagent#0',
+            sign      : sinon.stub().resolves(new Uint8Array(64)),
+          }),
+        },
+        rpc: {
+          getServerInfo  : sinon.stub().resolves({ server: '@enbox/dwn-server', webSocketSupport: false }),
+          sendDwnRequest : rpcSendStub,
+        },
+      };
+
+      const dwnApi = new AgentDwnApi({
+        agent            : mockAgent,
+        localDwnEndpoint : 'http://127.0.0.1:55557',
+      });
+
+      // ProtocolsQuery is a simple message type — no data stream required.
+      const result = await dwnApi.processRequest({
+        author        : 'did:dht:testagent',
+        target        : 'did:dht:testagent',
+        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : {},
+      });
+
+      expect(result.reply.status.code).toBe(200);
+      // Verify RPC was called with the local endpoint
+      expect(rpcSendStub.calledOnce).toBe(true);
+      expect(rpcSendStub.firstCall.args[0].dwnUrl).toBe('http://127.0.0.1:55557');
+    });
+
+    it('routes processRawMessage through RPC in remote mode', async () => {
+      const rpcSendStub = sinon.stub().resolves({
+        status: { code: 202, detail: 'Accepted' },
+      });
+      const mockAgent: any = {
+        rpc: {
+          getServerInfo  : sinon.stub().resolves({ server: '@enbox/dwn-server', webSocketSupport: false }),
+          sendDwnRequest : rpcSendStub,
+        },
+      };
+
+      const dwnApi = new AgentDwnApi({
+        agent            : mockAgent,
+        localDwnEndpoint : 'http://127.0.0.1:55557',
+      });
+
+      const fakeMessage = {
+        descriptor: { interface: 'Records', method: 'Write' },
+      } as any;
+
+      const result = await dwnApi.processRawMessage(
+        'did:dht:testtenant',
+        fakeMessage,
+      );
+
+      expect(result.status.code).toBe(202);
+      expect(rpcSendStub.calledOnce).toBe(true);
+      expect(rpcSendStub.firstCall.args[0].dwnUrl).toBe('http://127.0.0.1:55557');
+    });
+
+    it('processRawMessage converts data stream to Blob for RPC', async () => {
+      const rpcSendStub = sinon.stub().resolves({
+        status: { code: 202, detail: 'Accepted' },
+      });
+      const mockAgent: any = {
+        rpc: {
+          getServerInfo  : sinon.stub().resolves({ server: '@enbox/dwn-server', webSocketSupport: false }),
+          sendDwnRequest : rpcSendStub,
+        },
+      };
+
+      const dwnApi = new AgentDwnApi({
+        agent            : mockAgent,
+        localDwnEndpoint : 'http://127.0.0.1:55557',
+      });
+
+      const fakeMessage = {
+        descriptor: { interface: 'Records', method: 'Write' },
+      } as any;
+
+      const testBytes = new TextEncoder().encode('hello world');
+      const dataStream = new ReadableStream<Uint8Array>({
+        start(controller): void {
+          controller.enqueue(testBytes);
+          controller.close();
+        },
+      });
+
+      const result = await dwnApi.processRawMessage(
+        'did:dht:testtenant',
+        fakeMessage,
+        { dataStream },
+      );
+
+      expect(result.status.code).toBe(202);
+      // Verify data was converted to Blob for RPC
+      const rpcCall = rpcSendStub.firstCall.args[0];
+      expect(rpcCall.data).toBeInstanceOf(Blob);
+    });
+
+    it('processRawMessage routes through in-process DWN in local mode', async () => {
+      const processMessageStub = sinon.stub().resolves({
+        status: { code: 202, detail: 'Accepted' },
+      });
+      const mockDwn = { processMessage: processMessageStub } as unknown as Dwn;
+      const dwnApi = new AgentDwnApi({ dwn: mockDwn });
+
+      const fakeMessage = {
+        descriptor: { interface: 'Records', method: 'Write' },
+      } as any;
+
+      const result = await dwnApi.processRawMessage(
+        'did:dht:testtenant',
+        fakeMessage,
+      );
+
+      expect(result.status.code).toBe(202);
+      expect(processMessageStub.calledOnce).toBe(true);
+    });
+  });
+
   describe('setCachedLocalDwnEndpoint()', () => {
     it('should return true and cache the endpoint when the server is valid', async () => {
       const mockDwn = ({} as unknown) as Dwn;
@@ -159,8 +332,6 @@ describe('AgentDwnApi', () => {
           id              : `${did}#dwn`,
           type            : 'DecentralizedWebNode',
           serviceEndpoint : serviceEndpoint,
-          enc             : `${did}#enc`,
-          sig             : `${did}#sig`,
         },
       };
     }
@@ -185,7 +356,7 @@ describe('AgentDwnApi', () => {
     it('should use the local DWN endpoint if available even when DID #dwn dereference fails', async () => {
       const mockAgent = createMockAgent();
       mockAgent.did.dereference.rejects(new Error('DID dereference failed'));
-      mockAgent.rpc.getServerInfo.onFirstCall().resolves({ server: '@enbox/dwn-server' });
+      mockAgent.rpc.getServerInfo.resolves({ server: '@enbox/dwn-server' });
 
       const dwnApi = new AgentDwnApi({
         agent            : mockAgent,
@@ -193,10 +364,12 @@ describe('AgentDwnApi', () => {
         localDwnStrategy : 'prefer',
       });
 
+      // Inject a local endpoint (replaces the old port-probing path).
+      await dwnApi.setCachedLocalDwnEndpoint('http://127.0.0.1:3000');
+
       const endpoints = await dwnApi.getDwnEndpointUrlsForTarget(localDid);
 
       expect(endpoints).toEqual(['http://127.0.0.1:3000']);
-      expect(mockAgent.rpc.getServerInfo.callCount).toBe(1);
       expect(mockAgent.did.dereference.callCount).toBe(1);
     });
 
@@ -235,13 +408,16 @@ describe('AgentDwnApi', () => {
       mockAgent.did.dereference.resolves(
         createDerefResult(localDid, ['https://remote-a.example', 'https://remote-b.example'])
       );
-      mockAgent.rpc.getServerInfo.onFirstCall().resolves({ server: '@enbox/dwn-server' });
+      mockAgent.rpc.getServerInfo.resolves({ server: '@enbox/dwn-server' });
 
       const dwnApi = new AgentDwnApi({
         agent            : mockAgent,
         dwn              : {} as Dwn,
         localDwnStrategy : 'prefer',
       });
+
+      // Inject a local endpoint (replaces the old port-probing path).
+      await dwnApi.setCachedLocalDwnEndpoint('http://127.0.0.1:3000');
 
       const endpoints = await dwnApi.getDwnEndpointUrlsForTarget(localDid);
 
@@ -250,7 +426,6 @@ describe('AgentDwnApi', () => {
         'https://remote-a.example',
         'https://remote-b.example',
       ]);
-      expect(mockAgent.rpc.getServerInfo.callCount).toBe(1);
       expect(mockAgent.did.dereference.callCount).toBe(1);
     });
 
@@ -1272,8 +1447,6 @@ describe('AgentDwnApi', () => {
                 id              : 'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy#dwn',
                 type            : 'DecentralizedWebNode',
                 serviceEndpoint : testDwnUrls,
-                enc             : '#enc',
-                sig             : '#sig',
               },
             ],
           },
@@ -3700,8 +3873,6 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
           id              : '#dwn',
           type            : 'DecentralizedWebNode',
           serviceEndpoint : ['https://dwn.example.com'],
-          enc             : '#enc',
-          sig             : '#sig',
         }
       });
 
@@ -3752,8 +3923,6 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
           id              : '#dwn',
           type            : 'DecentralizedWebNode',
           serviceEndpoint : ['https://dwn.example.com'],
-          enc             : '#enc',
-          sig             : '#sig',
         }
       });
 
@@ -4822,7 +4991,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     expect(recipients[0].header.derivationScheme).toBe('protocolPath');
   }, 15000);
 
-  it('reactive root-record upgrade should append ProtocolContext recipients entry', async () => {
+  // Skipped: reactive root-record upgrade is disabled (see TODO in dwn-api.ts postWriteKeyDelivery).
+  it.skip('reactive root-record upgrade should append ProtocolContext recipients entry', async () => {
     // Configure protocol for Alice with encryption
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4932,7 +5102,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     expect(decryptedText).toBe(threadText);
   }, 15000);
 
-  it('should auto-deliver contextKey to external author on cross-DWN root record write', async () => {
+  // Skipped: depends on reactive root-record upgrade which is disabled.
+  it.skip('should auto-deliver contextKey to external author on cross-DWN root record write', async () => {
     // Configure protocol for Alice with encryption
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4979,7 +5150,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     expect(ckQuery.entries).not.toHaveLength(0);
   }, 15000);
 
-  it('should also auto-deliver contextKey to recipient on cross-DWN write', async () => {
+  // Skipped: depends on reactive root-record upgrade which is disabled.
+  it.skip('should also auto-deliver contextKey to recipient on cross-DWN write', async () => {
     // Configure protocol for Alice with encryption
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -5163,7 +5335,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     expect(decryptedText).toBe(chatText);
   }, 30000);
 
-  it('E2E: cross-DWN full round-trip — Bob writes, Alice upgrades, Bob decrypts via contextKey', async () => {
+  // Skipped: depends on reactive root-record upgrade which is disabled.
+  it.skip('E2E: cross-DWN full round-trip — Bob writes, Alice upgrades, Bob decrypts via contextKey', async () => {
     // Configure email protocol for Alice with encryption
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -5264,7 +5437,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     expect(decryptedText).toBe(threadText);
   }, 30000);
 
-  it('E2E: cross-DWN non-root child record via extractDerivedPublicKey', async () => {
+  // Skipped: depends on reactive root-record upgrade which is disabled.
+  it.skip('E2E: cross-DWN non-root child record via extractDerivedPublicKey', async () => {
     // Configure email protocol for Alice with encryption
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -5359,7 +5533,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     expect(new TextDecoder().decode(aliceDecryptedBytes)).toBe(bobReplyText);
   }, 30000);
 
-  it('E2E: large payload (>30KB) through reactive upgrade path', async () => {
+  // Skipped: depends on reactive root-record upgrade which is disabled.
+  it.skip('E2E: large payload (>30KB) through reactive upgrade path', async () => {
     // Configure email protocol for Alice with encryption
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,

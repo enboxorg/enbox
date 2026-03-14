@@ -1,5 +1,12 @@
 # @enbox/browser
 
+## 0.1.3
+
+### Patch Changes
+
+- Updated dependencies [[`af0145e`](https://github.com/enboxorg/enbox/commit/af0145e5084ad32105584d9e5e6a131b188ca531)]:
+  - @enbox/dids@0.1.0
+
 ## 0.1.2
 
 ### Patch Changes

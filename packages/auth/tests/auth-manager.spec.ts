@@ -33,7 +33,6 @@ function createTestManager(
   manager._userAgent = agent;
   manager._emitter = new (require('../src/events.js').AuthEventEmitter)();
   manager._storage = storage;
-  manager._vault = new (require('../src/vault/vault-manager.js').VaultManager)(agent.vault, manager._emitter);
   manager._session = undefined;
   manager._state = overrides.initialState ?? 'uninitialized';
   manager._isConnecting = false;
@@ -84,16 +83,22 @@ describe('AuthManager', () => {
       expect(manager.session).toBeUndefined();
     });
 
-    test('vault returns the vault manager', () => {
+    test('vault returns the underlying identity vault', () => {
       const agent = createMockAgent();
       const manager = createTestManager(agent);
-      expect(manager.vault).toBeDefined();
+      expect(manager.vault).toBe(agent.vault);
     });
 
     test('agent returns the user agent', () => {
       const agent = createMockAgent();
       const manager = createTestManager(agent);
       expect(manager.agent).toBe(agent);
+    });
+
+    test('localDwnEndpoint returns undefined when not set', () => {
+      const agent = createMockAgent();
+      const manager = createTestManager(agent);
+      expect(manager.localDwnEndpoint).toBeUndefined();
     });
   });
 
@@ -989,13 +994,13 @@ describe('AuthManager', () => {
       expect(stopCalls[0]).toBe(5000);
     });
 
-    test('handles missing sync.close gracefully', async () => {
+    test('handles sync.close throwing gracefully', async () => {
       const agent = createMockAgent({
         firstLaunch  : async () => false,
         identityList : async () => [createMockIdentity()],
       });
-      // Remove close from sync
-      delete (agent as any).sync.close;
+      // Make close throw — shutdown should still succeed (best-effort).
+      (agent as any).sync.close = async (): Promise<void> => { throw new Error('db already closed'); };
 
       const manager = createTestManager(agent);
       await manager.connect({ password: 'test' });
