@@ -1,5 +1,4 @@
 import { AuthManager } from '../../../auth/dist/esm/auth-manager.js';
-import { probeLocalDwn } from '../../../auth/dist/esm/flows/dwn-discovery.js';
 import type { AuthState, IdentityInfo, PortableIdentity } from '@enbox/auth';
 import { getAppStore } from './state/app-store.js';
 
@@ -561,11 +560,8 @@ class IdentityRuntimeController implements IdentityRuntime {
     }
 
     this._localEndpointFetchedAt = now;
-    try {
-      this._localEndpoint = await probeLocalDwn();
-    } catch {
-      this._localEndpoint = undefined;
-    }
+    const auth = await this._getAuth();
+    this._localEndpoint = auth.localDwnEndpoint;
 
     return this._localEndpoint;
   }
@@ -580,9 +576,8 @@ class IdentityRuntimeController implements IdentityRuntime {
       this._localEndpointFetchedAt = now;
       this._localEndpointProbePromise = (async () => {
         try {
-          this._localEndpoint = await probeLocalDwn();
-        } catch {
-          this._localEndpoint = undefined;
+          const auth = await this._getAuth();
+          this._localEndpoint = auth.localDwnEndpoint;
         } finally {
           this._localEndpointFetchedAt = Date.now();
           this._localEndpointProbePromise = undefined;
