@@ -2,6 +2,7 @@ import { LitElement, html } from 'lit';
 import { ContextConsumer } from '@lit/context';
 import { SignalWatcher } from '@lit-labs/signals';
 import { createRef, ref } from 'lit/directives/ref.js';
+import '../../components/hash-avatar/index.js';
 import '../../components/identity-create-wizard/index.js';
 import '../../components/pin-pad/index.js';
 import '../../components/x-menubar/index.js';
@@ -56,6 +57,71 @@ const identityRuntimeWindowKey = '__identityRuntime';
  */
 
 /**
+ * @typedef {Object} EditableProfileImageSnapshot
+ * @property {string} recordId
+ * @property {Blob} blob
+ * @property {string=} dataFormat
+ */
+
+/**
+ * @typedef {Object} EditableProfileLinkSnapshot
+ * @property {string} id
+ * @property {string} title
+ * @property {string} url
+ * @property {string=} icon
+ * @property {number=} sortOrder
+ */
+
+/**
+ * @typedef {Object} EditableDidProfileSnapshot
+ * @property {string} did
+ * @property {{
+ *   displayName: string;
+ *   bio?: string;
+ *   tagline?: string;
+ *   location?: string;
+ *   website?: string;
+ *   pronouns?: string;
+ * }} profile
+ * @property {EditableProfileImageSnapshot=} avatar
+ * @property {EditableProfileImageSnapshot=} hero
+ * @property {EditableProfileLinkSnapshot[]} links
+ */
+
+/**
+ * @typedef {Object} ProfileLinkDraft
+ * @property {string} key
+ * @property {string=} id
+ * @property {string} title
+ * @property {string} url
+ * @property {string} icon
+ * @property {string} sortOrder
+ */
+
+/**
+ * @typedef {Object} ProfileEditorState
+ * @property {string} didUri
+ * @property {string} identityName
+ * @property {boolean} loading
+ * @property {boolean} submitting
+ * @property {string} error
+ * @property {string} displayName
+ * @property {string} bio
+ * @property {string} tagline
+ * @property {string} location
+ * @property {string} website
+ * @property {string} avatarRecordId
+ * @property {'keep' | 'replace' | 'remove'} avatarMode
+ * @property {File | null} avatarFile
+ * @property {string} avatarPreviewUrl
+ * @property {string} heroRecordId
+ * @property {'keep' | 'replace' | 'remove'} heroMode
+ * @property {File | null} heroFile
+ * @property {string} heroPreviewUrl
+ * @property {ProfileLinkDraft[]} links
+ */
+
+/**
  * @typedef {Object} IdentityRuntime
  * @property {() => Promise<IdentityWalletSnapshot>} initialize
  * @property {() => Promise<IdentityWalletSnapshot>} refresh
@@ -74,6 +140,21 @@ const identityRuntimeWindowKey = '__identityRuntime';
  * @property {(password: string) => Promise<IdentityWalletSnapshot>} unlock
  * @property {(clearStorage?: boolean) => Promise<IdentityWalletSnapshot>} disconnect
  * @property {() => Promise<IdentityWalletSnapshot>} clearRecoveryPhrase
+ * @property {(didUri: string) => Promise<EditableDidProfileSnapshot>} getDidProfile
+ * @property {(input: {
+ *   didUri: string;
+ *   profile: {
+ *     displayName: string;
+ *     bio?: string;
+ *     tagline?: string;
+ *     location?: string;
+ *     website?: string;
+ *     pronouns?: string;
+ *   };
+ *   avatar?: { mode: 'keep' | 'replace' | 'remove'; file?: Blob; };
+ *   hero?: { mode: 'keep' | 'replace' | 'remove'; file?: Blob; };
+ *   links: Array<{ id?: string; title: string; url: string; icon?: string; sortOrder?: number; }>;
+ * }) => Promise<{ did: string; status: { code: number; detail: string; [key: string]: unknown; } }>} saveDidProfile
  */
 
 /**
@@ -113,6 +194,8 @@ function getIdentityRuntime() {
     'lock',
     'unlock',
     'clearRecoveryPhrase',
+    'getDidProfile',
+    'saveDidProfile',
   ];
 
   for (const methodName of requiredMethods) {
@@ -172,6 +255,7 @@ class IdentityPage extends SignalWatcher(LitElement) {
     isPhraseSubmitting: { state: true },
     isPortableSubmitting: { state: true },
     isRenameSubmitting: { state: true },
+    profileEditorState: { state: true },
     isUnlockSubmitting: { state: true },
     createWizardMode: { state: true },
     phraseValue: { state: true },
@@ -209,6 +293,7 @@ class IdentityPage extends SignalWatcher(LitElement) {
     this.isPortableSubmitting = false;
     this.isRenameSubmitting = false;
     this.isUnlockSubmitting = false;
+    this.profileEditorState = createEmptyProfileEditorState();
 
     this.createWizardMode = 'additional';
 
@@ -238,11 +323,17 @@ class IdentityPage extends SignalWatcher(LitElement) {
     this._lastAppliedSnapshot = null;
     /** @type {IdentityWalletSnapshot | null} */
     this._lastAccordionSnapshot = null;
+    this._profileEditorRequestId = 0;
+    this._profileLinkDraftCounter = 0;
 
     this.createDialogRef = createRef();
     this.createWizardRef = createRef();
     this.deleteDialogRef = createRef();
     this.importDialogRef = createRef();
+    this.profileDialogRef = createRef();
+    this.profileDisplayNameRef = createRef();
+    this.avatarFileInputRef = createRef();
+    this.heroFileInputRef = createRef();
     this.recoveryDialogRef = createRef();
     this.renameDialogRef = createRef();
     this.renameInputRef = createRef();
@@ -269,6 +360,11 @@ class IdentityPage extends SignalWatcher(LitElement) {
         void this.initializeView();
       }
     }
+  }
+
+  disconnectedCallback() {
+    this.resetProfileEditorState();
+    super.disconnectedCallback();
   }
 
   updated(changedProperties) {
@@ -790,6 +886,8 @@ class IdentityPage extends SignalWatcher(LitElement) {
           </div>
         </wa-dialog>
 
+        ${this.renderProfileDialog()}
+
         <wa-dialog ${ref(this.deleteDialogRef)} id="identity-delete-dialog">
           <div slot="label" class="wa-cluster wa-gap-xs">
             <wa-icon name="trash" variant="solid"></wa-icon>
@@ -859,6 +957,268 @@ class IdentityPage extends SignalWatcher(LitElement) {
             </wa-button>
           </div>
         </wa-dialog>
+      </div>
+    `;
+  }
+
+  renderProfileDialog() {
+    const state = this.profileEditorState;
+    const canSubmit = Boolean(this.runtime)
+      && !state.loading
+      && !state.submitting
+      && state.didUri.length > 0
+      && state.displayName.trim().length > 0;
+
+    return html`
+      <wa-dialog
+        ${ref(this.profileDialogRef)}
+        id="identity-profile-dialog"
+        light-dismiss
+        @wa-after-hide=${this.onAfterProfileDialogHide}
+      >
+        <div slot="label" class="wa-cluster wa-gap-xs">
+          <wa-icon name="id-card" variant="solid"></wa-icon>
+          Edit Profile
+        </div>
+
+        <form id="identity-profile-form" class="wa-stack wa-gap-l identity-dialog-body identity-profile-dialog-body" @submit=${this.onProfileSubmit}>
+          ${state.didUri
+            ? html`
+                <div class="identity-profile-context">
+                  <div class="identity-profile-context-avatar">
+                    <hash-avatar
+                      hash=${state.didUri}
+                      initials=${state.identityName || state.didUri}
+                      label=${`Avatar for ${state.identityName || state.didUri}`}
+                      .size=${44}
+                    ></hash-avatar>
+                  </div>
+                  <div class="identity-profile-context-copy">
+                    <div class="identity-profile-context-name">${state.identityName || state.didUri}</div>
+                    <div class="identity-profile-context-did" title=${state.didUri}>${state.didUri}</div>
+                  </div>
+                </div>
+              `
+            : ''}
+
+          ${state.loading
+            ? html`
+                <div class="wa-stack wa-align-items-center wa-gap-s identity-profile-loading">
+                  <wa-spinner style="font-size: 1.6rem"></wa-spinner>
+                  <div class="wa-caption-s">Loading profile records...</div>
+                </div>
+              `
+            : html`
+                ${state.error
+                  ? html`<wa-callout variant="danger">${state.error}</wa-callout>`
+                  : ''}
+
+                <div class="identity-profile-fields">
+                  <wa-input
+                    ${ref(this.profileDisplayNameRef)}
+                    class="identity-profile-field-full"
+                    label="Display name"
+                    placeholder="Required"
+                    .value=${state.displayName}
+                    @input=${(event) => {
+                      this.updateProfileEditorField('displayName', readFieldValue(event.target));
+                    }}
+                  ></wa-input>
+
+                  <wa-textarea
+                    class="identity-profile-field-full"
+                    label="Bio"
+                    rows="3"
+                    .value=${state.bio}
+                    @input=${(event) => {
+                      this.updateProfileEditorField('bio', readFieldValue(event.target));
+                    }}
+                  ></wa-textarea>
+
+                  <wa-input
+                    label="Tagline"
+                    .value=${state.tagline}
+                    @input=${(event) => {
+                      this.updateProfileEditorField('tagline', readFieldValue(event.target));
+                    }}
+                  ></wa-input>
+
+                  <wa-input
+                    label="Location"
+                    .value=${state.location}
+                    @input=${(event) => {
+                      this.updateProfileEditorField('location', readFieldValue(event.target));
+                    }}
+                  ></wa-input>
+
+                  <wa-input
+                    label="Website"
+                    .value=${state.website}
+                    @input=${(event) => {
+                      this.updateProfileEditorField('website', readFieldValue(event.target));
+                    }}
+                  ></wa-input>
+                </div>
+
+                <section class="wa-stack wa-gap-s identity-profile-section">
+                  <div class="wa-caption-s">Images</div>
+                  <wa-tab-group activation="auto" class="identity-profile-image-tabs">
+                    <wa-tab slot="nav" panel="profile-avatar-image">Avatar</wa-tab>
+                    <wa-tab slot="nav" panel="profile-hero-image">Hero</wa-tab>
+
+                    <wa-tab-panel name="profile-avatar-image">
+                      ${this.renderProfileImageEditor('avatar', 'Avatar image', state.avatarPreviewUrl)}
+                    </wa-tab-panel>
+
+                    <wa-tab-panel name="profile-hero-image">
+                      ${this.renderProfileImageEditor('hero', 'Hero image', state.heroPreviewUrl)}
+                    </wa-tab-panel>
+                  </wa-tab-group>
+                </section>
+
+                <section class="wa-stack wa-gap-s identity-profile-section">
+                  <div class="wa-flank:end">
+                    <div class="wa-caption-s">Links</div>
+                    <wa-button
+                      size="small"
+                      appearance="outlined"
+                      type="button"
+                      ?disabled=${state.submitting}
+                      @click=${this.onAddProfileLink}
+                    >
+                      <wa-icon slot="start" name="plus" variant="solid"></wa-icon>
+                      Add Link
+                    </wa-button>
+                  </div>
+
+                  ${state.links.length === 0
+                    ? html`<div class="wa-caption-s identity-profile-links-empty">No links yet.</div>`
+                    : state.links.map((link, index) => this.renderProfileLinkEditor(link, index))}
+                </section>
+              `}
+        </form>
+
+        <div slot="footer" class="wa-cluster wa-gap-xs wa-justify-content-end identity-dialog-footer">
+          <wa-button appearance="plain" type="button" @click=${this.onCloseProfileDialog}>Cancel</wa-button>
+          <wa-button
+            id="identity-profile-submit"
+            variant="brand"
+            type="submit"
+            form="identity-profile-form"
+            ?loading=${state.submitting}
+            ?disabled=${!canSubmit}
+          >
+            Save Profile
+          </wa-button>
+        </div>
+      </wa-dialog>
+    `;
+  }
+
+  renderProfileImageEditor(kind, label, previewUrl) {
+    const fileInputRef = kind === 'avatar' ? this.avatarFileInputRef : this.heroFileInputRef;
+    const inputClass = `identity-profile-image-input${previewUrl ? ' has-preview' : ''}`;
+
+    return html`
+      <div class="wa-stack wa-gap-s identity-profile-image-field">
+        <wa-file-input
+          ${ref(fileInputRef)}
+          class=${inputClass}
+          aria-label=${label}
+          hint="PNG, JPEG, GIF, or WebP"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          ?disabled=${this.profileEditorState.submitting}
+          @change=${(event) => {
+            this.onProfileImageSelected(kind, event);
+          }}
+        >
+          ${previewUrl
+            ? html`
+                <div slot="dropzone" class="identity-profile-image-dropzone-preview">
+                  <wa-button
+                    class="identity-profile-image-remove"
+                    appearance="plain"
+                    pill
+                    size="small"
+                    type="button"
+                    ?disabled=${this.profileEditorState.submitting}
+                    aria-label=${`Remove ${label}`}
+                    @click=${(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      this.onRemoveProfileImage(kind);
+                    }}
+                  >
+                    <wa-icon name="xmark" variant="solid"></wa-icon>
+                  </wa-button>
+                  <img src=${previewUrl} alt=${`${label} preview`}>
+                </div>
+              `
+            : ''}
+        </wa-file-input>
+      </div>
+    `;
+  }
+
+  renderProfileLinkEditor(link, index) {
+    return html`
+      <div class="identity-profile-link-card">
+        <div class="identity-profile-link-grid">
+          <wa-input
+            label="Title"
+            .value=${link.title}
+            ?disabled=${this.profileEditorState.submitting}
+            @input=${(event) => {
+              this.updateProfileLinkDraft(link.key, 'title', readFieldValue(event.target));
+            }}
+          ></wa-input>
+
+          <wa-input
+            label="URL"
+            .value=${link.url}
+            ?disabled=${this.profileEditorState.submitting}
+            @input=${(event) => {
+              this.updateProfileLinkDraft(link.key, 'url', readFieldValue(event.target));
+            }}
+          ></wa-input>
+
+          <wa-input
+            label="Icon"
+            .value=${link.icon}
+            ?disabled=${this.profileEditorState.submitting}
+            @input=${(event) => {
+              this.updateProfileLinkDraft(link.key, 'icon', readFieldValue(event.target));
+            }}
+          ></wa-input>
+
+          <wa-input
+            label="Sort order"
+            type="number"
+            step="1"
+            inputmode="numeric"
+            .value=${link.sortOrder}
+            ?disabled=${this.profileEditorState.submitting}
+            @input=${(event) => {
+              this.updateProfileLinkDraft(link.key, 'sortOrder', readFieldValue(event.target));
+            }}
+          ></wa-input>
+        </div>
+
+        <div class="wa-flank:end identity-profile-link-actions">
+          <div class="wa-caption-s">Link ${index + 1}</div>
+          <wa-button
+            size="small"
+            appearance="outlined"
+            variant="danger"
+            type="button"
+            ?disabled=${this.profileEditorState.submitting}
+            @click=${() => {
+              this.removeProfileLinkDraft(link.key);
+            }}
+          >
+            Remove
+          </wa-button>
+        </div>
       </div>
     `;
   }
@@ -972,10 +1332,24 @@ class IdentityPage extends SignalWatcher(LitElement) {
    */
   renderIdentityPanelHtml(identity, detailsState) {
     const encodedDid = encodeDidUri(identity.didUri);
+    const editProfileButton = `
+      <wa-button
+        size="small"
+        appearance="outlined"
+        data-action="edit-profile"
+        data-did-uri="${encodedDid}"
+        ${identity.kind === 'local' ? '' : 'disabled'}
+        title="${escapeHtml(identity.kind === 'local' ? 'Edit this DID profile' : 'Profile editing is currently available for local DIDs only.')}"
+      >
+        <wa-icon slot="start" name="id-card" variant="solid"></wa-icon>
+        Edit Profile
+      </wa-button>
+    `;
 
     return `
       <div class="identity-accordion-panel">
         <div class="identity-item-actions">
+          ${editProfileButton}
           <wa-button size="small" appearance="outlined" data-action="export" data-did-uri="${encodedDid}">
             <wa-icon slot="start" name="download" variant="solid"></wa-icon>
             Export
@@ -1252,12 +1626,133 @@ class IdentityPage extends SignalWatcher(LitElement) {
     this.closeDialog(this.deleteDialogRef.value);
   };
 
+  onCloseProfileDialog = () => {
+    if (this.profileEditorState.submitting) {
+      return;
+    }
+
+    this.closeDialog(this.profileDialogRef.value);
+  };
+
+  onAfterProfileDialogHide = () => {
+    this._profileEditorRequestId += 1;
+    this.resetProfileEditorState();
+  };
+
   /**
    * @param {Event} event
    */
   onImportModeChanged = (event) => {
     const mode = readFieldValue(event.target);
     this.importMode = mode === 'upload' ? 'upload' : 'phrase';
+  };
+
+  /**
+   * @param {SubmitEvent} event
+   */
+  onProfileSubmit = async (event) => {
+    event.preventDefault();
+    if (!this.runtime || this.profileEditorState.loading || this.profileEditorState.submitting) {
+      return;
+    }
+
+    const state = this.profileEditorState;
+    const displayName = state.displayName.trim();
+    if (!displayName) {
+      this.profileEditorState = {
+        ...state,
+        error: 'Display name is required.',
+      };
+      return;
+    }
+
+    /** @type {Array<{ id?: string; title: string; url: string; icon?: string; sortOrder?: number; }>} */
+    const links = [];
+    for (const link of state.links) {
+      const title = link.title.trim();
+      const url = link.url.trim();
+      const icon = normalizeOptionalText(link.icon);
+      const sortOrder = parseOptionalNumber(link.sortOrder);
+
+      if (!title && !url && !icon && sortOrder === undefined) {
+        continue;
+      }
+
+      if (!title || !url) {
+        this.profileEditorState = {
+          ...state,
+          error: 'Each link must include both a title and a URL.',
+        };
+        return;
+      }
+
+      links.push({
+        ...(link.id ? { id: link.id } : {}),
+        title,
+        url,
+        ...(icon ? { icon } : {}),
+        ...(sortOrder !== undefined ? { sortOrder } : {}),
+      });
+    }
+
+    const bio = normalizeOptionalText(state.bio);
+    const tagline = normalizeOptionalText(state.tagline);
+    const location = normalizeOptionalText(state.location);
+    const website = normalizeOptionalText(state.website);
+
+    const requestId = this._profileEditorRequestId;
+    this.profileEditorState = {
+      ...state,
+      submitting: true,
+      error: '',
+    };
+
+    try {
+      await this.runtime.saveDidProfile({
+        didUri : state.didUri,
+        profile: {
+          displayName,
+          ...(bio ? { bio } : {}),
+          ...(tagline ? { tagline } : {}),
+          ...(location ? { location } : {}),
+          ...(website ? { website } : {}),
+        },
+        avatar: {
+          mode : state.avatarMode,
+          ...(state.avatarFile ? { file: state.avatarFile } : {}),
+        },
+        hero: {
+          mode : state.heroMode,
+          ...(state.heroFile ? { file: state.heroFile } : {}),
+        },
+        links,
+      });
+
+      this.showFeedback('success', 'Profile saved.', { allowSuccess: true });
+
+      if (this._profileEditorRequestId !== requestId) {
+        return;
+      }
+
+      this.profileEditorState = {
+        ...this.profileEditorState,
+        submitting: false,
+      };
+      this.closeDialog(this.profileDialogRef.value);
+    } catch (error) {
+      const message = errorMessage(error);
+      this.showFeedback('danger', message);
+
+      if (this._profileEditorRequestId !== requestId) {
+        return;
+      }
+
+      this.profileEditorState = {
+        ...this.profileEditorState,
+        submitting: false,
+        error: message,
+      };
+    }
   };
 
   /**
@@ -1652,6 +2147,11 @@ class IdentityPage extends SignalWatcher(LitElement) {
       return;
     }
 
+    if (action === 'edit-profile') {
+      await this.openProfileDialog(didUri);
+      return;
+    }
+
     if (action === 'delete') {
       this.openDeleteDialog(didUri);
       return;
@@ -1906,6 +2406,62 @@ class IdentityPage extends SignalWatcher(LitElement) {
     this.openDialog(this.recoveryDialogRef.value);
   }
 
+  async openProfileDialog(didUri) {
+    if (!this.runtime) {
+      return;
+    }
+
+    const identity = this.identities.find((entry) => entry.didUri === didUri);
+    if (!identity) {
+      return;
+    }
+
+    if (identity.kind !== 'local') {
+      this.showFeedback('warning', 'Profile editing is currently available for local DIDs only.');
+      return;
+    }
+
+    if (this.snapshot?.isLocked) {
+      this.showFeedback('warning', 'Unlock the vault before editing a profile.');
+      this.openUnlockDialog();
+      return;
+    }
+
+    const requestId = this._profileEditorRequestId + 1;
+    this._profileEditorRequestId = requestId;
+    this.resetProfileEditorState();
+    this.profileEditorState = {
+      ...createEmptyProfileEditorState(),
+      didUri,
+      identityName : identity.name ?? '',
+      loading      : true,
+    };
+
+    await this.updateComplete;
+    this.openDialog(this.profileDialogRef.value);
+
+    try {
+      const snapshot = await this.runtime.getDidProfile(didUri);
+      if (this._profileEditorRequestId !== requestId) {
+        return;
+      }
+
+      this.profileEditorState = this.createProfileEditorState(snapshot, identity.name ?? '');
+      await this.updateComplete;
+      focusFieldSoon(this.profileDisplayNameRef.value);
+    } catch (error) {
+      if (this._profileEditorRequestId !== requestId) {
+        return;
+      }
+
+      this.profileEditorState = {
+        ...this.profileEditorState,
+        loading : false,
+        error   : errorMessage(error),
+      };
+    }
+  }
+
   openRenameDialog(didUri) {
     const identity = this.identities.find((entry) => entry.didUri === didUri);
     if (!identity) {
@@ -1934,6 +2490,160 @@ class IdentityPage extends SignalWatcher(LitElement) {
     dialog.addEventListener('wa-show', focusWhenReady, { once: true });
     this.openDialog(dialog);
     window.setTimeout(focusWhenReady, 140);
+  }
+
+  /**
+   * @param {'displayName' | 'bio' | 'tagline' | 'location' | 'website'} field
+   * @param {string} value
+   */
+  updateProfileEditorField(field, value) {
+    this.profileEditorState = {
+      ...this.profileEditorState,
+      [field] : value,
+      error   : '',
+    };
+  }
+
+  /**
+   * @param {'avatar' | 'hero'} kind
+   * @param {Event} event
+   */
+  onProfileImageSelected(kind, event) {
+    const file = readSelectedFile(event.target);
+    if (!file) {
+      return;
+    }
+
+    const previousState = this.profileEditorState;
+    const previewKey = kind === 'avatar' ? 'avatarPreviewUrl' : 'heroPreviewUrl';
+    const fileKey = kind === 'avatar' ? 'avatarFile' : 'heroFile';
+    const modeKey = kind === 'avatar' ? 'avatarMode' : 'heroMode';
+    const previousPreviewUrl = previousState[previewKey];
+    if (previousPreviewUrl) {
+      revokeObjectUrl(previousPreviewUrl);
+    }
+
+    this.profileEditorState = {
+      ...previousState,
+      [previewKey] : URL.createObjectURL(file),
+      [fileKey]    : file,
+      [modeKey]    : 'replace',
+      error        : '',
+    };
+  }
+
+  /**
+   * @param {'avatar' | 'hero'} kind
+   */
+  onRemoveProfileImage(kind) {
+    const previousState = this.profileEditorState;
+    const previewKey = kind === 'avatar' ? 'avatarPreviewUrl' : 'heroPreviewUrl';
+    const fileKey = kind === 'avatar' ? 'avatarFile' : 'heroFile';
+    const modeKey = kind === 'avatar' ? 'avatarMode' : 'heroMode';
+    const recordIdKey = kind === 'avatar' ? 'avatarRecordId' : 'heroRecordId';
+    const previousPreviewUrl = previousState[previewKey];
+    if (previousPreviewUrl) {
+      revokeObjectUrl(previousPreviewUrl);
+    }
+
+    this.profileEditorState = {
+      ...previousState,
+      [previewKey] : '',
+      [fileKey]    : null,
+      [modeKey]    : previousState[recordIdKey] ? 'remove' : 'keep',
+      error        : '',
+    };
+
+    this.clearProfileImageInput(kind);
+  }
+
+  onAddProfileLink = () => {
+    this.profileEditorState = {
+      ...this.profileEditorState,
+      links : [...this.profileEditorState.links, this.createProfileLinkDraft()],
+      error : '',
+    };
+  };
+
+  /**
+   * @param {string} key
+   * @param {'title' | 'url' | 'icon' | 'sortOrder'} field
+   * @param {string} value
+   */
+  updateProfileLinkDraft(key, field, value) {
+    this.profileEditorState = {
+      ...this.profileEditorState,
+      links : this.profileEditorState.links.map((link) => (
+        link.key === key
+          ? { ...link, [field]: value }
+          : link
+      )),
+      error: '',
+    };
+  }
+
+  /**
+   * @param {string} key
+   */
+  removeProfileLinkDraft(key) {
+    this.profileEditorState = {
+      ...this.profileEditorState,
+      links : this.profileEditorState.links.filter((link) => link.key !== key),
+      error : '',
+    };
+  }
+
+  /**
+   * @param {EditableProfileLinkSnapshot=} snapshot
+   * @returns {ProfileLinkDraft}
+   */
+  createProfileLinkDraft(snapshot) {
+    this._profileLinkDraftCounter += 1;
+    return toProfileLinkDraft(`profile-link-${this._profileLinkDraftCounter}`, snapshot);
+  }
+
+  /**
+   * @param {EditableDidProfileSnapshot} snapshot
+   * @param {string} identityName
+   * @returns {ProfileEditorState}
+   */
+  createProfileEditorState(snapshot, identityName) {
+    return {
+      ...createEmptyProfileEditorState(),
+      didUri           : snapshot.did,
+      identityName,
+      displayName      : snapshot.profile.displayName ?? '',
+      bio              : snapshot.profile.bio ?? '',
+      tagline          : snapshot.profile.tagline ?? '',
+      location         : snapshot.profile.location ?? '',
+      website          : snapshot.profile.website ?? '',
+      avatarRecordId   : snapshot.avatar?.recordId ?? '',
+      avatarPreviewUrl : snapshot.avatar ? URL.createObjectURL(snapshot.avatar.blob) : '',
+      heroRecordId     : snapshot.hero?.recordId ?? '',
+      heroPreviewUrl   : snapshot.hero ? URL.createObjectURL(snapshot.hero.blob) : '',
+      links            : snapshot.links.map((link) => this.createProfileLinkDraft(link)),
+    };
+  }
+
+  /**
+   * @param {'avatar' | 'hero'} kind
+   */
+  clearProfileImageInput(kind) {
+    const input = kind === 'avatar'
+      ? this.avatarFileInputRef.value
+      : this.heroFileInputRef.value;
+
+    if (input && typeof input === 'object' && 'files' in input) {
+      input.files = [];
+    }
+  }
+
+  resetProfileEditorState() {
+    revokeObjectUrl(this.profileEditorState.avatarPreviewUrl);
+    revokeObjectUrl(this.profileEditorState.heroPreviewUrl);
+    this.clearProfileImageInput('avatar');
+    this.clearProfileImageInput('hero');
+    this.profileEditorState = createEmptyProfileEditorState();
   }
 
   openDeleteDialog(didUri) {
@@ -2195,6 +2905,123 @@ function cssAttributeEscape(value) {
   }
 
   return value.replaceAll('"', '\\"');
+}
+
+/**
+ * @returns {ProfileEditorState}
+ */
+function createEmptyProfileEditorState() {
+  return {
+    didUri           : '',
+    identityName     : '',
+    loading          : false,
+    submitting       : false,
+    error            : '',
+    displayName      : '',
+    bio              : '',
+    tagline          : '',
+    location         : '',
+    website          : '',
+    avatarRecordId   : '',
+    avatarMode       : 'keep',
+    avatarFile       : null,
+    avatarPreviewUrl : '',
+    heroRecordId     : '',
+    heroMode         : 'keep',
+    heroFile         : null,
+    heroPreviewUrl   : '',
+    links            : [],
+  };
+}
+
+/**
+ * @param {string} key
+ * @param {EditableProfileLinkSnapshot=} snapshot
+ * @returns {ProfileLinkDraft}
+ */
+function toProfileLinkDraft(key, snapshot) {
+  return {
+    key,
+    id        : snapshot?.id,
+    title     : snapshot?.title ?? '',
+    url       : snapshot?.url ?? '',
+    icon      : snapshot?.icon ?? '',
+    sortOrder : typeof snapshot?.sortOrder === 'number' ? String(snapshot.sortOrder) : '',
+  };
+}
+
+/**
+ * @param {unknown} target
+ * @returns {File | null}
+ */
+function readSelectedFile(target) {
+  if (!target || typeof target !== 'object') {
+    return null;
+  }
+
+  const fileValue = /** @type {{ files?: unknown; value?: unknown }} */ (target).files;
+  if (fileValue && typeof fileValue === 'object') {
+    if ('item' in fileValue && typeof fileValue.item === 'function') {
+      const file = fileValue.item(0);
+      return file instanceof File ? file : null;
+    }
+
+    if (0 in fileValue) {
+      const file = fileValue[0];
+      return file instanceof File ? file : null;
+    }
+  }
+
+  const value = /** @type {{ value?: unknown }} */ (target).value;
+  if (value instanceof File) {
+    return value;
+  }
+
+  if (value && typeof value === 'object') {
+    if ('item' in value && typeof value.item === 'function') {
+      const file = value.item(0);
+      return file instanceof File ? file : null;
+    }
+
+    if (0 in value) {
+      const file = value[0];
+      return file instanceof File ? file : null;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * @param {string} value
+ * @returns {number | undefined}
+ */
+function parseOptionalNumber(value) {
+  const normalized = value.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * @param {string} value
+ * @returns {string | undefined}
+ */
+function normalizeOptionalText(value) {
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+/**
+ * @param {string} url
+ */
+function revokeObjectUrl(url) {
+  if (url) {
+    URL.revokeObjectURL(url);
+  }
 }
 
 /**

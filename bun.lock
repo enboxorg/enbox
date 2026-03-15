@@ -384,8 +384,10 @@
       "dependencies": {
         "@digitalbazaar/did-io": "^2.1.0",
         "@enbox/agent": "workspace:*",
+        "@enbox/api": "workspace:*",
         "@enbox/auth": "workspace:*",
         "@enbox/dwn-server": "workspace:*",
+        "@enbox/protocols": "workspace:*",
         "@lit-labs/signals": "^0.2.0",
         "@lit/context": "^1.1.6",
         "@vaadin/router": "^2.0.1",

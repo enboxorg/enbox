@@ -146,6 +146,11 @@ wa-toast-item::part(content) {
   text-overflow: ellipsis;
 }
 
+wa-dialog::part(footer) {
+  padding-block-start: var(--wa-space-l);
+  border-block-start: 1px solid rgb(255 255 255 / 10%);
+}
+
 .main-shell {
   position: relative;
   z-index: 0;

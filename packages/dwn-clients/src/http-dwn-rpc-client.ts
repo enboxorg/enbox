@@ -131,12 +131,22 @@ export class HttpDwnRpcClient implements DwnRpc {
 
     if (request.data) {
       requestHeaders['content-type'] = 'application/octet-stream';
-      fetchOpts.body = request.data;
+      let requestBody = request.data;
 
-      // Browsers require `duplex: 'half'` when the fetch body is a ReadableStream.
-      // The sync-push path sends record data as a raw stream (see sync-messages.ts).
-      // TypeScript's built-in RequestInit does not include `duplex` yet.
-      (fetchOpts as Record<string, unknown>).duplex = 'half';
+      // Bun's fetch currently fails on some ReadableStream uploads in the sync push path.
+      // Buffering to a plain Blob keeps transport semantics the same and avoids the broken path.
+      if (requestBody instanceof ReadableStream) {
+        const bodyBytes = await DataStream.toBytes(requestBody as ReadableStream<Uint8Array>);
+        requestBody = new Blob([bodyBytes as BlobPart], { type: 'application/octet-stream' });
+      }
+
+      fetchOpts.body = requestBody;
+
+      if (requestBody instanceof ReadableStream) {
+        // Browsers require `duplex: 'half'` when the fetch body is a ReadableStream.
+        // TypeScript's built-in RequestInit does not include `duplex` yet.
+        (fetchOpts as Record<string, unknown>).duplex = 'half';
+      }
     }
 
     const resp = await this.fetchWithRetry(request.dwnUrl, fetchOpts);

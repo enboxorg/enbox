@@ -1,6 +1,9 @@
 import { AuthManager } from '../../../auth/dist/esm/auth-manager.js';
-import type { AuthState, IdentityInfo, PortableIdentity } from '@enbox/auth';
+import { TypedEnbox, repository } from '@enbox/api';
+import { DwnApi } from '@enbox/api/advanced';
+import { ProfileDefinition, ProfileProtocol, SocialGraphDefinition } from '@enbox/protocols';
 import { getAppStore } from './state/app-store.js';
+import type { AuthState, IdentityInfo, PortableIdentity } from '@enbox/auth';
 
 const defaultDwnEndpoint = 'https://enbox-dwn.fly.dev';
 const localEndpointCacheMs = 5_000;
@@ -50,6 +53,92 @@ export type ExportedIdentity = {
   json: string;
 };
 
+export type ProtocolDefinitionLike = {
+  protocol: string;
+  [key: string]: unknown;
+};
+
+export type InstalledProtocolsSnapshot = {
+  did: string;
+  protocols: string[];
+};
+
+export type EnsureProtocolInstalledResult = {
+  did: string;
+  protocol: string;
+  alreadyInstalled: boolean;
+  status: {
+    code: number;
+    detail: string;
+    [key: string]: unknown;
+  };
+};
+
+export type EditableProfileImageSnapshot = {
+  recordId: string;
+  blob: Blob;
+  dataFormat?: string;
+};
+
+export type EditableProfileLinkSnapshot = {
+  id: string;
+  title: string;
+  url: string;
+  icon?: string;
+  sortOrder?: number;
+};
+
+export type EditableDidProfileSnapshot = {
+  did: string;
+  profile: {
+    displayName: string;
+    bio?: string;
+    tagline?: string;
+    location?: string;
+    website?: string;
+    pronouns?: string;
+  };
+  avatar?: EditableProfileImageSnapshot;
+  hero?: EditableProfileImageSnapshot;
+  links: EditableProfileLinkSnapshot[];
+};
+
+export type EditableDidProfileInput = {
+  didUri: string;
+  profile: {
+    displayName: string;
+    bio?: string;
+    tagline?: string;
+    location?: string;
+    website?: string;
+    pronouns?: string;
+  };
+  avatar?: {
+    mode: 'keep' | 'replace' | 'remove';
+    file?: Blob;
+  };
+  hero?: {
+    mode: 'keep' | 'replace' | 'remove';
+    file?: Blob;
+  };
+  links: Array<{
+    id?: string;
+    title: string;
+    url: string;
+    icon?: string;
+    sortOrder?: number;
+  }>;
+};
+
+export type SaveDidProfileResult = {
+  did: string;
+  status: {
+    code: number;
+    detail: string;
+    [key: string]: unknown;
+  };
+};
+
 export interface IdentityRuntime {
   initialize(): Promise<IdentityWalletSnapshot>;
   refresh(): Promise<IdentityWalletSnapshot>;
@@ -96,6 +185,10 @@ export interface IdentityRuntime {
   unlock(password: string): Promise<IdentityWalletSnapshot>;
   disconnect(clearStorage?: boolean): Promise<IdentityWalletSnapshot>;
   clearRecoveryPhrase(): Promise<IdentityWalletSnapshot>;
+  listInstalledProtocols(): Promise<InstalledProtocolsSnapshot>;
+  ensureProtocolInstalled(definition: ProtocolDefinitionLike): Promise<EnsureProtocolInstalledResult>;
+  getDidProfile(didUri: string): Promise<EditableDidProfileSnapshot>;
+  saveDidProfile(input: EditableDidProfileInput): Promise<SaveDidProfileResult>;
 }
 
 type IdentityRuntimeHostWindow = Window & {
@@ -424,6 +517,289 @@ class IdentityRuntimeController implements IdentityRuntime {
     return this._refreshAndEmit();
   }
 
+  async listInstalledProtocols(): Promise<InstalledProtocolsSnapshot> {
+    const { did, dwn } = await this._createConnectedDwnApi();
+    const response = await dwn.protocols.query({});
+
+    if (response.status.code >= 300) {
+      throw new Error(response.status.detail || `Failed to query installed protocols (${response.status.code}).`);
+    }
+
+    const protocols = Array.from(
+      new Set(
+        response.protocols
+          .map((protocol) => protocol.definition?.protocol)
+          .filter((protocolUri): protocolUri is string => typeof protocolUri === 'string' && protocolUri.trim().length > 0)
+          .map((protocolUri) => protocolUri.trim()),
+      ),
+    );
+
+    return { did, protocols };
+  }
+
+  async ensureProtocolInstalled(definition: ProtocolDefinitionLike): Promise<EnsureProtocolInstalledResult> {
+    const protocolUri = typeof definition?.protocol === 'string'
+      ? definition.protocol.trim()
+      : '';
+
+    if (!protocolUri) {
+      throw new Error('Protocol definition is missing a protocol URI.');
+    }
+
+    const { did, dwn } = await this._createConnectedDwnApi();
+    const queryResponse = await dwn.protocols.query({
+      filter: { protocol: protocolUri },
+    });
+
+    if (queryResponse.status.code >= 300) {
+      throw new Error(queryResponse.status.detail || `Failed to check protocol installation (${queryResponse.status.code}).`);
+    }
+
+    if (queryResponse.protocols.length > 0) {
+      return {
+        did,
+        protocol         : protocolUri,
+        alreadyInstalled : true,
+        status           : { code: 200, detail: 'Already installed' },
+      };
+    }
+
+    const configureResponse = await dwn.protocols.configure({ definition });
+    if (configureResponse.status.code >= 300) {
+      throw new Error(configureResponse.status.detail || `Failed to install protocol (${configureResponse.status.code}).`);
+    }
+
+    return {
+      did,
+      protocol         : protocolUri,
+      alreadyInstalled : false,
+      status           : configureResponse.status,
+    };
+  }
+
+  async getDidProfile(didUri: string): Promise<EditableDidProfileSnapshot> {
+    const normalizedDidUri = didUri.trim();
+    if (!normalizedDidUri) {
+      throw new Error('A DID is required to load a profile.');
+    }
+
+    const { dwn } = await this._createDwnApiForDid(normalizedDidUri);
+    const installedResponse = await dwn.protocols.query({
+      filter: { protocol: ProfileDefinition.protocol },
+    });
+
+    if (installedResponse.status.code >= 300) {
+      throw new Error(installedResponse.status.detail || `Failed to check profile protocol installation (${installedResponse.status.code}).`);
+    }
+
+    if (installedResponse.protocols.length === 0) {
+      return {
+        did     : normalizedDidUri,
+        profile : { displayName: '' },
+        links   : [],
+      };
+    }
+
+    const profileRepo = this._createProfileRepository(dwn);
+    const profileRecord = await profileRepo.profile.get();
+    if (!profileRecord) {
+      return {
+        did     : normalizedDidUri,
+        profile : { displayName: '' },
+        links   : [],
+      };
+    }
+
+    const profileData = await profileRecord.data.json<EditableDidProfileSnapshot['profile']>();
+    const profileContextId = profileRecord.contextId;
+    const avatarRecord = profileContextId ? await profileRepo.profile.avatar.get(profileContextId) : undefined;
+    const heroRecord = profileContextId ? await profileRepo.profile.hero.get(profileContextId) : undefined;
+    const linkResult = profileContextId ? await profileRepo.profile.link.query(profileContextId) : { records: [] };
+
+    const links = await Promise.all(
+      linkResult.records.map(async (record) => {
+        const data = await record.data.json<{
+          url: string;
+          title: string;
+          icon?: string;
+          sortOrder?: number;
+        }>();
+
+        return {
+          id        : record.id,
+          title     : data.title ?? '',
+          url       : data.url ?? '',
+          icon      : normalizeOptionalString(data.icon),
+          sortOrder : typeof data.sortOrder === 'number' && Number.isFinite(data.sortOrder)
+            ? data.sortOrder
+            : undefined,
+        } satisfies EditableProfileLinkSnapshot;
+      }),
+    );
+
+    links.sort((left, right) => {
+      const leftOrder = typeof left.sortOrder === 'number' ? left.sortOrder : Number.MAX_SAFE_INTEGER;
+      const rightOrder = typeof right.sortOrder === 'number' ? right.sortOrder : Number.MAX_SAFE_INTEGER;
+      if (leftOrder !== rightOrder) {
+        return leftOrder - rightOrder;
+      }
+
+      return left.title.localeCompare(right.title);
+    });
+
+    return {
+      did     : normalizedDidUri,
+      profile : {
+        displayName : profileData.displayName ?? '',
+        bio         : normalizeOptionalString(profileData.bio),
+        tagline     : normalizeOptionalString(profileData.tagline),
+        location    : normalizeOptionalString(profileData.location),
+        website     : normalizeOptionalString(profileData.website),
+        pronouns    : normalizeOptionalString(profileData.pronouns),
+      },
+      avatar : avatarRecord
+        ? {
+          recordId    : avatarRecord.id,
+          blob        : await avatarRecord.data.blob(),
+          dataFormat  : avatarRecord.dataFormat,
+        }
+        : undefined,
+      hero: heroRecord
+        ? {
+          recordId    : heroRecord.id,
+          blob        : await heroRecord.data.blob(),
+          dataFormat  : heroRecord.dataFormat,
+        }
+        : undefined,
+      links,
+    };
+  }
+
+  async saveDidProfile(input: EditableDidProfileInput): Promise<SaveDidProfileResult> {
+    const normalizedDidUri = input.didUri.trim();
+    if (!normalizedDidUri) {
+      throw new Error('A DID is required to save a profile.');
+    }
+
+    const profileData = {
+      displayName : input.profile.displayName.trim(),
+      ...(normalizeOptionalString(input.profile.bio) ? { bio: normalizeOptionalString(input.profile.bio) } : {}),
+      ...(normalizeOptionalString(input.profile.tagline) ? { tagline: normalizeOptionalString(input.profile.tagline) } : {}),
+      ...(normalizeOptionalString(input.profile.location) ? { location: normalizeOptionalString(input.profile.location) } : {}),
+      ...(normalizeOptionalString(input.profile.website) ? { website: normalizeOptionalString(input.profile.website) } : {}),
+      ...(normalizeOptionalString(input.profile.pronouns) ? { pronouns: normalizeOptionalString(input.profile.pronouns) } : {}),
+    };
+
+    if (!profileData.displayName) {
+      throw new Error('Display name is required.');
+    }
+
+    await this._ensureProtocolInstalledForDid(normalizedDidUri, SocialGraphDefinition);
+    await this._ensureProtocolInstalledForDid(normalizedDidUri, ProfileDefinition);
+
+    const { dwn } = await this._createDwnApiForDid(normalizedDidUri);
+    const typed = new TypedEnbox(dwn, ProfileProtocol);
+    const profileRepo = repository(typed);
+
+    const profileResult = await profileRepo.profile.set({ data: profileData });
+    if (profileResult.status.code >= 300 || !profileResult.record?.contextId) {
+      throw new Error(profileResult.status.detail || `Failed to save profile (${profileResult.status.code}).`);
+    }
+
+    const profileContextId = profileResult.record.contextId;
+    const { records: avatarRecords } = await typed.records.query('profile/avatar', {
+      filter: { contextId: profileContextId },
+    });
+    const { records: heroRecords } = await typed.records.query('profile/hero', {
+      filter: { contextId: profileContextId },
+    });
+    const existingAvatar = avatarRecords[0];
+    const existingHero = heroRecords[0];
+
+    await this._saveProfileImageRecord({
+      action        : input.avatar?.mode ?? 'keep',
+      file          : input.avatar?.file,
+      existingRecord: existingAvatar,
+      parentContextId : profileContextId,
+      typed,
+      path          : 'profile/avatar',
+    });
+    await this._saveProfileImageRecord({
+      action        : input.hero?.mode ?? 'keep',
+      file          : input.hero?.file,
+      existingRecord: existingHero,
+      parentContextId : profileContextId,
+      typed,
+      path          : 'profile/hero',
+    });
+
+    const { records: existingLinks } = await typed.records.query('profile/link', {
+      filter: { contextId: profileContextId },
+    });
+    const existingLinksById = new Map(existingLinks.map((record) => [record.id, record]));
+    const retainedLinkIds = new Set<string>();
+
+    for (const rawLink of input.links) {
+      const title = rawLink.title.trim();
+      const url = rawLink.url.trim();
+      const icon = normalizeOptionalString(rawLink.icon);
+      const sortOrder = typeof rawLink.sortOrder === 'number' && Number.isFinite(rawLink.sortOrder)
+        ? rawLink.sortOrder
+        : undefined;
+
+      if (!title && !url && !icon && sortOrder === undefined) {
+        continue;
+      }
+
+      if (!title || !url) {
+        throw new Error('Each link must include both a title and a URL.');
+      }
+
+      const linkData = {
+        title,
+        url,
+        ...(icon ? { icon } : {}),
+        ...(sortOrder !== undefined ? { sortOrder } : {}),
+      };
+
+      const existingRecord = rawLink.id ? existingLinksById.get(rawLink.id) : undefined;
+      if (existingRecord) {
+        const updateResult = await existingRecord.update({ data: linkData });
+        if (updateResult.status.code >= 300) {
+          throw new Error(updateResult.status.detail || `Failed to update link (${updateResult.status.code}).`);
+        }
+
+        retainedLinkIds.add(existingRecord.id);
+        continue;
+      }
+
+      const createResult = await profileRepo.profile.link.create(profileContextId, {
+        data: linkData,
+      });
+      if (createResult.status.code >= 300 || !createResult.record) {
+        throw new Error(createResult.status.detail || `Failed to create link (${createResult.status.code}).`);
+      }
+
+      retainedLinkIds.add(createResult.record.id);
+    }
+
+    for (const existingRecord of existingLinks) {
+      if (retainedLinkIds.has(existingRecord.id)) {
+        continue;
+      }
+
+      const deleteResult = await existingRecord.delete();
+      if (deleteResult.status.code >= 300) {
+        throw new Error(deleteResult.status.detail || `Failed to delete link (${deleteResult.status.code}).`);
+      }
+    }
+
+    return {
+      did    : normalizedDidUri,
+      status : { code: 200, detail: 'Profile saved' },
+    };
+  }
+
   private async _getAuth(): Promise<AuthManager> {
     if (this._auth) {
       return this._auth;
@@ -615,6 +991,140 @@ class IdentityRuntimeController implements IdentityRuntime {
     }
 
     return [defaultDwnEndpoint];
+  }
+
+  private async _createConnectedDwnApi(): Promise<{ did: string; dwn: DwnApi }> {
+    const auth = await this._getAuth();
+    await this._ensureConnected();
+
+    const session = auth.session;
+    if (!session) {
+      throw new Error('No active DID session is available.');
+    }
+
+    return {
+      did : session.did,
+      dwn : new DwnApi({
+        agent        : session.agent,
+        connectedDid : session.did,
+        delegateDid  : session.delegateDid,
+      }),
+    };
+  }
+
+  private async _createDwnApiForDid(didUri: string): Promise<{ did: string; dwn: DwnApi }> {
+    const auth = await this._getAuth();
+    await this._ensureConnected();
+
+    const session = auth.session;
+    if (!session) {
+      throw new Error('No active DID session is available.');
+    }
+
+    return {
+      did : didUri,
+      dwn : new DwnApi({
+        agent        : session.agent,
+        connectedDid : didUri,
+      }),
+    };
+  }
+
+  private async _ensureProtocolInstalledForDid(didUri: string, definition: ProtocolDefinitionLike): Promise<void> {
+    const protocolUri = typeof definition?.protocol === 'string'
+      ? definition.protocol.trim()
+      : '';
+
+    if (!protocolUri) {
+      throw new Error('Protocol definition is missing a protocol URI.');
+    }
+
+    const { dwn } = await this._createDwnApiForDid(didUri);
+    const queryResponse = await dwn.protocols.query({
+      filter: { protocol: protocolUri },
+    });
+
+    if (queryResponse.status.code >= 300) {
+      throw new Error(queryResponse.status.detail || `Failed to check protocol installation (${queryResponse.status.code}).`);
+    }
+
+    if (queryResponse.protocols.length > 0) {
+      return;
+    }
+
+    const configureResponse = await dwn.protocols.configure({ definition });
+    if (configureResponse.status.code >= 300) {
+      throw new Error(configureResponse.status.detail || `Failed to install protocol (${configureResponse.status.code}).`);
+    }
+  }
+
+  private _createProfileRepository(dwn: DwnApi) {
+    return repository(new TypedEnbox(dwn, ProfileProtocol));
+  }
+
+  private async _saveProfileImageRecord({
+    action,
+    file,
+    existingRecord,
+    parentContextId,
+    typed,
+    path,
+  }: {
+    action: 'keep' | 'replace' | 'remove';
+    file?: Blob;
+    existingRecord?: {
+      id: string;
+      dataFormat?: string;
+      update: (options: { data: Blob; dataFormat?: string }) => Promise<{ status: { code: number; detail: string } }>;
+      delete: () => Promise<{ status: { code: number; detail: string } }>;
+    };
+    parentContextId: string;
+    typed: TypedEnbox<typeof ProfileDefinition, Record<string, unknown>>;
+    path: 'profile/avatar' | 'profile/hero';
+  }): Promise<void> {
+    if (action === 'keep') {
+      return;
+    }
+
+    if (action === 'remove') {
+      if (!existingRecord) {
+        return;
+      }
+
+      const deleteResult = await existingRecord.delete();
+      if (deleteResult.status.code >= 300) {
+        throw new Error(deleteResult.status.detail || `Failed to remove ${path} image (${deleteResult.status.code}).`);
+      }
+      return;
+    }
+
+    if (!file) {
+      return;
+    }
+
+    const normalizedFile = await this._materializeBlob(file);
+    const dataFormat = normalizedFile.type || existingRecord?.dataFormat || undefined;
+    if (existingRecord) {
+      const updateResult = await existingRecord.update({ data: normalizedFile, dataFormat });
+      if (updateResult.status.code >= 300) {
+        throw new Error(updateResult.status.detail || `Failed to update ${path} image (${updateResult.status.code}).`);
+      }
+      return;
+    }
+
+    const createResult = await typed.records.create(path, {
+      data            : normalizedFile,
+      parentContextId,
+      dataFormat,
+    });
+    if (createResult.status.code >= 300) {
+      throw new Error(createResult.status.detail || `Failed to create ${path} image (${createResult.status.code}).`);
+    }
+  }
+
+  private async _materializeBlob(blob: Blob): Promise<Blob> {
+    const bytes = await blob.arrayBuffer();
+    return new Blob([bytes], { type: blob.type });
   }
 
   private async _ensureConnected(password?: string): Promise<void> {
@@ -833,6 +1343,12 @@ function createResolutionErrorResult(message: string): DidResolutionLike {
       message,
     },
   };
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0
+    ? value.trim()
+    : undefined;
 }
 
 function errorMessage(error: unknown): string {
