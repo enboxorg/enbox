@@ -141,12 +141,6 @@ export class HttpDwnRpcClient implements DwnRpc {
       }
 
       fetchOpts.body = requestBody;
-
-      if (requestBody instanceof ReadableStream) {
-        // Browsers require `duplex: 'half'` when the fetch body is a ReadableStream.
-        // TypeScript's built-in RequestInit does not include `duplex` yet.
-        (fetchOpts as Record<string, unknown>).duplex = 'half';
-      }
     }
 
     const resp = await this.fetchWithRetry(request.dwnUrl, fetchOpts);

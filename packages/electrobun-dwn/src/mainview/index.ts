@@ -1,22 +1,25 @@
-import { Router } from '@vaadin/router';
+import type { IdentityRuntime } from './identity-runtime.js';
+
 import { ContextRoot } from '@lit/context';
-import { createRouter } from './router.js';
+import { Router } from '@vaadin/router';
+
 import { createDidResolverRuntime } from './utils/dids.js';
-import { ensureIdentityRuntime, type IdentityRuntime } from './identity-runtime.js';
+import { createRouter } from './router.js';
+import { ensureIdentityRuntime } from './identity-runtime.js';
 import { ensureServerStatus } from './services/server-status.js';
 import { getAppStore } from './state/app-store.js';
-import './index.css';
+
 import './components/app-shell/index.js';
 import './components/connection-badge/index.js';
-import './components/toast-region/index.js';
 import './components/identity-switcher/index.js';
+import './components/notification-drawer/index.js';
+import './components/toast-region/index.js';
 import './components/x-accordion/index.js';
 import './components/x-code/index.js';
-import './components/notification-drawer/index.js';
+import './index.css';
+import './pages/apps/index.js';
 import './pages/home/index.js';
 import './pages/identity/index.js';
-import './pages/data/index.js';
-import './pages/apps/index.js';
 import './pages/permissions/index.js';
 import './pages/resolver/index.js';
 
@@ -72,13 +75,13 @@ async function clearRendererStorageIfRequested(): Promise<void> {
     const databases = await globalThis.indexedDB.databases();
     await Promise.all(
       databases
-        .map((entry) => entry.name)
+        .map((entry): string | undefined => entry.name)
         .filter((name): name is string => !!name)
-        .map((name) => new Promise<void>((resolveDelete) => {
+        .map((name): Promise<void> => new Promise<void>((resolveDelete: () => void): void => {
           const request = globalThis.indexedDB.deleteDatabase(name);
-          request.onsuccess = () => resolveDelete();
-          request.onerror = () => resolveDelete();
-          request.onblocked = () => resolveDelete();
+          request.onsuccess = (): void => resolveDelete();
+          request.onerror = (): void => resolveDelete();
+          request.onblocked = (): void => resolveDelete();
         })),
     );
   } catch {

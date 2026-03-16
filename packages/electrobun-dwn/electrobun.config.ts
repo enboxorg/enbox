@@ -26,7 +26,7 @@ function resolveLevelBrowserEntry(): string {
 const levelBrowserEntry = resolveLevelBrowserEntry();
 const mainviewBrowserAliasPlugin = {
   name: 'mainview-browser-aliases',
-  setup(build) {
+  setup(build: { onResolve: (opts: { filter: RegExp }, cb: () => { path: string }) => void }): void {
     build.onResolve({ filter: /^level$/ }, () => ({ path: levelBrowserEntry }));
   },
 };
@@ -45,21 +45,21 @@ export default {
   build: {
     views: {
       mainview: {
-        entrypoint: 'src/mainview/index.ts',
-        conditions: ['browser'],
-        plugins: [mainviewBrowserAliasPlugin],
-        define: {
-          global: 'globalThis',
-          'process.env.DID_DHT_GATEWAY_URI': JSON.stringify(didDhtGatewayUri),
-          'process.env.MAINVIEW_RESET_STORAGE_ON_START': JSON.stringify(resetStorageOnStart),
+        entrypoint : 'src/mainview/index.ts',
+        conditions : ['browser'],
+        plugins    : [mainviewBrowserAliasPlugin],
+        define     : {
+          global                                        : 'globalThis',
+          'process.env.DID_DHT_GATEWAY_URI'             : JSON.stringify(didDhtGatewayUri),
+          'process.env.MAINVIEW_RESET_STORAGE_ON_START' : JSON.stringify(resetStorageOnStart),
         },
       },
     },
     copy: {
-      'src/mainview/index.html' : 'views/mainview/index.html',
-      'src/mainview/router.js' : 'views/mainview/router.js',
-      'src/mainview/components' : 'views/mainview/components',
-      'src/mainview/assets' : 'views/mainview/assets',
+      'src/mainview/index.html'      : 'views/mainview/index.html',
+      'src/mainview/router.js'       : 'views/mainview/router.js',
+      'src/mainview/components'      : 'views/mainview/components',
+      'src/mainview/assets'          : 'views/mainview/assets',
       'src/mainview/assets/logo.svg' : 'views/mainview/assets/logo.svg',
     },
     mac: {

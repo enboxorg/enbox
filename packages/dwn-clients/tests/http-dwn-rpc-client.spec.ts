@@ -113,6 +113,61 @@ describe('HttpDwnRpcClient', () => {
       expect(readResponse.entry?.recordsWrite?.recordId).toBe(writeMessage.recordId);
     });
 
+    it('should buffer ReadableStream data to a Blob before sending', async () => {
+      // The client buffers ReadableStream bodies to a Blob so that Bun's
+      // fetch (which can fail on stream uploads) works correctly. After
+      // buffering, `duplex: 'half'` must NOT be set because the body is
+      // no longer a stream.
+      const streamBytes = new TextEncoder().encode('streamed-payload');
+      const dataStream = new ReadableStream<Uint8Array>({
+        start(controller): void {
+          controller.enqueue(streamBytes);
+          controller.close();
+        },
+      });
+
+      const jsonRpcResponse = {
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { reply: { status: { code: 202, detail: 'Accepted' } } },
+      };
+
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves({
+        status  : 200,
+        headers : new Headers(),
+        text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
+      } as any);
+
+      const { message: writeMessage } = await TestDataGenerator.generateRecordsWrite({
+        author : alice,
+        schema : 'foo/bar',
+      });
+
+      await client.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message   : writeMessage,
+        data      : dataStream,
+      });
+
+      expect(fetchStub.calledOnce).toBe(true);
+
+      const fetchCallArgs = fetchStub.firstCall.args;
+      const fetchOpts = fetchCallArgs[1] as Record<string, unknown>;
+
+      // Body should have been buffered to a Blob, not left as a ReadableStream.
+      expect(fetchOpts.body instanceof ReadableStream).toBe(false);
+      expect(fetchOpts.body instanceof Blob).toBe(true);
+
+      // `duplex` must NOT be set since the body is a Blob, not a stream.
+      expect(fetchOpts.duplex).toBeUndefined();
+
+      // Verify the Blob contains the original stream bytes.
+      const sentBlob = fetchOpts.body as Blob;
+      const sentBytes = new Uint8Array(await sentBlob.arrayBuffer());
+      expect(sentBytes).toEqual(streamBytes);
+    });
+
     it('sends RecordsRead and populates reply.entry.data when dwn-response header is present', async () => {
       // Simulate a server response where the JSON-RPC envelope is in the
       // dwn-response header and the body is raw data (reply.entry branch).
