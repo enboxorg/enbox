@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { AppStore } from '../src/mainview/state/app-store.js';
+import { AppStore, getAppStore, setAppConnections } from '../src/mainview/state/app-store.js';
 
 describe('AppStore', () => {
   describe('ToastStore', () => {
@@ -124,6 +124,56 @@ describe('AppStore', () => {
       const snap = store.connection.snapshot.get();
       expect(snap.state).toBe('online');
       expect(snap.serverName).toBe('@enbox/dwn-server');
+    });
+
+    it('should apply a full snapshot via setSnapshot', () => {
+      const store = new AppStore();
+      store.connection.setSnapshot({
+        state         : 'online',
+        endpoint      : 'http://localhost:4000',
+        updatedAt     : '14:00:00',
+        serverUrl     : 'http://localhost:4000',
+        serverName    : 'custom-server',
+        serverVersion : '2.0',
+        wsSupport     : 'Disabled',
+      });
+      const snap = store.connection.snapshot.get();
+      expect(snap.state).toBe('online');
+      expect(snap.serverName).toBe('custom-server');
+      expect(snap.serverVersion).toBe('2.0');
+    });
+
+    it('should transition to connecting', () => {
+      const store = new AppStore();
+      store.connection.markOnline({
+        endpoint      : 'http://localhost:3000',
+        updatedAt     : '12:00:00',
+        serverUrl     : 'http://localhost:3000',
+        serverName    : 'srv',
+        serverVersion : '1',
+        wsSupport     : 'Enabled',
+      });
+      store.connection.markConnecting('http://localhost:5000');
+      const snap = store.connection.snapshot.get();
+      expect(snap.state).toBe('connecting');
+      expect(snap.endpoint).toBe('http://localhost:5000');
+      expect(snap.serverUrl).toBe('http://localhost:5000');
+    });
+
+    it('should keep previous serverUrl when markConnecting endpoint is not http', () => {
+      const store = new AppStore();
+      store.connection.markOnline({
+        endpoint      : 'http://localhost:3000',
+        updatedAt     : '12:00:00',
+        serverUrl     : 'http://localhost:3000',
+        serverName    : 'srv',
+        serverVersion : '1',
+        wsSupport     : 'Enabled',
+      });
+      store.connection.markConnecting('--');
+      const snap = store.connection.snapshot.get();
+      expect(snap.state).toBe('connecting');
+      expect(snap.serverUrl).toBe('http://localhost:3000');
     });
 
     it('should transition to offline', () => {
@@ -318,6 +368,23 @@ describe('AppStore', () => {
     it('should not throw when navigating without a router', () => {
       const store = new AppStore();
       expect(() => store.navigate('home')).not.toThrow();
+    });
+  });
+
+  describe('getAppStore / setAppConnections', () => {
+    it('should return a singleton instance from getAppStore', () => {
+      const a = getAppStore();
+      const b = getAppStore();
+      expect(a).toBe(b);
+    });
+
+    it('should set connections on the singleton via setAppConnections', () => {
+      setAppConnections([
+        { id: 'singleton-app', name: 'Singleton App', url: 'https://singleton.example' },
+      ]);
+      const store = getAppStore();
+      const connections = store.apps.connections.get();
+      expect(connections.some((c) => c.id === 'singleton-app')).toBe(true);
     });
   });
 });
