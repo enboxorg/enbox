@@ -27,8 +27,6 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 /** HTTP status codes that are considered retryable. */
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 
-
-
 /**
  * Options for controlling HTTP retry behaviour.
  */
