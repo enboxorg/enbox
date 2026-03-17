@@ -123,8 +123,9 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, 
     }
   }
 
-  // Fetch messages in parallel with bounded concurrency.
-  const CONCURRENCY = 10;
+  // Fetch messages in parallel with bounded concurrency.  Keep this low
+  // to avoid bursting through the remote server's rate limits during sync.
+  const CONCURRENCY = 4;
   let cursor = 0;
 
   while (cursor < messageCids.length) {
