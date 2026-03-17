@@ -197,8 +197,12 @@ export class HttpApi {
               {
                 status  : 429,
                 headers : {
-                  'content-type' : 'application/json',
-                  'retry-after'  : String(retryAfterSec),
+                  'content-type'                  : 'application/json',
+                  'retry-after'                   : String(retryAfterSec),
+                  'access-control-allow-origin'   : '*',
+                  'access-control-allow-methods'  : 'GET, POST, OPTIONS',
+                  'access-control-allow-headers'  : '*',
+                  'access-control-expose-headers' : 'dwn-response',
                 },
               },
             );

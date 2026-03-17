@@ -977,7 +977,7 @@ describe('AdminApi — per-IP rate limiting', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('should return 429 when IP rate limit is exceeded', async () => {
+  it('should return 429 with CORS headers when IP rate limit is exceeded', async () => {
     // Exhaust the rate limit.
     await fetch(`http://localhost:${port}/health`);
     await fetch(`http://localhost:${port}/health`);
@@ -988,6 +988,11 @@ describe('AdminApi — per-IP rate limiting', () => {
     expect(response.headers.get('retry-after')).toBeDefined();
     const body = await response.json();
     expect(body.error).toBe('Rate limit exceeded');
+
+    // CORS headers must be present on 429 responses so browsers can read
+    // the rate-limit error instead of treating it as a CORS failure.
+    expect(response.headers.get('access-control-allow-origin')).toBe('*');
+    expect(response.headers.get('access-control-allow-methods')).toBe('GET, POST, OPTIONS');
   });
 });
 
