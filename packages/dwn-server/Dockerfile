@@ -18,8 +18,11 @@ COPY build/ ./build/
 # Copy all packages (since dwn-server depends on other packages in the monorepo)
 COPY packages/ ./packages/
 
-# Install all dependencies
-RUN bun install --frozen-lockfile
+# Copy apps workspace package.json files for bun workspace resolution
+COPY apps/docs/package.json ./apps/docs/
+
+# Install all dependencies (--ignore-scripts to skip fumadocs-mdx postinstall)
+RUN bun install --frozen-lockfile --ignore-scripts
 
 # Build only packages needed by dwn-server (others have src/ excluded via .dockerignore)
 RUN bun run --filter '@enbox/common' --filter '@enbox/crypto' --filter '@enbox/dids' \
