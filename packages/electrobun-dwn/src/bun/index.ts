@@ -96,6 +96,16 @@ function createDwnServerConfig(port: number): Partial<DwnServerConfig> {
   };
 }
 
+// TODO: Consolidate all persistent storage under ~/.enbox so a single
+// `rm -rf ~/.enbox` cleanly resets the app.  Currently the DWN server
+// stores its LevelDB data under ~/.enbox, but the WKWebView persists
+// localStorage, IndexedDB, and cookies under ~/Library/WebKit/<app-id>/
+// (macOS) which is controlled by the native WebKit data store.  Electrobun
+// does not yet expose a way to configure the WKWebsiteDataStore path.
+// Options: (1) upstream Electrobun feature to set the data store directory,
+// (2) symlink ~/Library/WebKit/org.enbox.electrobun-dwn → ~/.enbox/webview,
+// (3) clear webview storage programmatically on startup when ~/.enbox is
+// missing (detect orphaned browser state).
 function resolveLevelStoreRoot(storeUrl: string | undefined): string | undefined {
   if (!storeUrl) {
     return undefined;
