@@ -30,6 +30,57 @@ export type SyncEngineLevelParams = {
 const MAX_DIFF_DEPTH = 16;
 
 /**
+ * Maximum number of concurrent remote HTTP requests during a tree diff.
+ * The binary tree walk fans out in parallel — without a limit, depth N
+ * produces 2^N concurrent requests, which can exhaust server rate limits.
+ */
+const REMOTE_CONCURRENCY = 4;
+
+/**
+ * Counting semaphore for bounding concurrent async operations.
+ * Used by the tree walk to limit in-flight remote HTTP requests.
+ */
+class Semaphore {
+  private _permits: number;
+  private readonly _waiting: (() => void)[] = [];
+
+  constructor(permits: number) {
+    this._permits = permits;
+  }
+
+  /** Wait until a permit is available, then consume one. */
+  async acquire(): Promise<void> {
+    if (this._permits > 0) {
+      this._permits--;
+      return;
+    }
+    return new Promise<void>((resolve) => {
+      this._waiting.push(resolve);
+    });
+  }
+
+  /** Release a permit, waking the next waiter if any. */
+  release(): void {
+    const next = this._waiting.shift();
+    if (next) {
+      next();
+    } else {
+      this._permits++;
+    }
+  }
+
+  /** Acquire a permit, run the task, then release regardless of outcome. */
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    await this.acquire();
+    try {
+      return await fn();
+    } finally {
+      this.release();
+    }
+  }
+}
+
+/**
  * Key for the subscription cursor sublevel. Cursors are keyed by
  * `{did}^{dwnUrl}[^{protocol}]` and store an opaque EventLog cursor string.
  */
@@ -834,11 +885,17 @@ export class SyncEngineLevel implements SyncEngine {
     // Hoist permission grant lookup — resolved once and reused for all subtree/leaf requests.
     const permissionGrantId = await this.getSyncPermissionGrantId(did, delegateDid, protocol);
 
+    // Gate remote HTTP requests through a semaphore so the binary tree walk
+    // doesn't produce an exponential burst of concurrent requests.  Local
+    // DWN requests (in-process) are not gated.
+    const remoteSemaphore = new Semaphore(REMOTE_CONCURRENCY);
+
     const walk = async (prefix: string): Promise<void> => {
       // Get subtree hashes for this prefix from local and remote.
+      // Only the remote request is gated by the semaphore.
       const [localHash, remoteHash] = await Promise.all([
         this.getLocalSubtreeHash(did, prefix, delegateDid, protocol, permissionGrantId),
-        this.getRemoteSubtreeHash(did, dwnUrl, prefix, delegateDid, protocol, permissionGrantId),
+        remoteSemaphore.run(() => this.getRemoteSubtreeHash(did, dwnUrl, prefix, delegateDid, protocol, permissionGrantId)),
       ]);
 
       // If hashes match, this subtree is identical — skip.
@@ -857,7 +914,9 @@ export class SyncEngineLevel implements SyncEngine {
         return;
       }
       if (localHash === emptyHash && remoteHash !== emptyHash) {
-        const remoteLeaves = await this.getRemoteLeaves(did, dwnUrl, prefix, delegateDid, protocol, permissionGrantId);
+        const remoteLeaves = await remoteSemaphore.run(
+          () => this.getRemoteLeaves(did, dwnUrl, prefix, delegateDid, protocol, permissionGrantId),
+        );
         onlyRemote.push(...remoteLeaves);
         return;
       }
@@ -866,7 +925,7 @@ export class SyncEngineLevel implements SyncEngine {
       if (prefix.length >= MAX_DIFF_DEPTH) {
         const [localLeaves, remoteLeaves] = await Promise.all([
           this.getLocalLeaves(did, prefix, delegateDid, protocol, permissionGrantId),
-          this.getRemoteLeaves(did, dwnUrl, prefix, delegateDid, protocol, permissionGrantId),
+          remoteSemaphore.run(() => this.getRemoteLeaves(did, dwnUrl, prefix, delegateDid, protocol, permissionGrantId)),
         ]);
 
         const localSet = new Set(localLeaves);
