@@ -1,8 +1,9 @@
 import 'reflect-metadata';
 
 import type { DwnServerConfig } from '@enbox/dwn-server';
-import { existsSync, rmSync } from 'node:fs';
+
 import { resolve } from 'node:path';
+import { existsSync, rmSync } from 'node:fs';
 
 import {
   buildDwnDiscoveryRedirectUrl,
@@ -95,6 +96,16 @@ function createDwnServerConfig(port: number): Partial<DwnServerConfig> {
   };
 }
 
+// TODO: Consolidate all persistent storage under ~/.enbox so a single
+// `rm -rf ~/.enbox` cleanly resets the app.  Currently the DWN server
+// stores its LevelDB data under ~/.enbox, but the WKWebView persists
+// localStorage, IndexedDB, and cookies under ~/Library/WebKit/<app-id>/
+// (macOS) which is controlled by the native WebKit data store.  Electrobun
+// does not yet expose a way to configure the WKWebsiteDataStore path.
+// Options: (1) upstream Electrobun feature to set the data store directory,
+// (2) symlink ~/Library/WebKit/org.enbox.electrobun-dwn → ~/.enbox/webview,
+// (3) clear webview storage programmatically on startup when ~/.enbox is
+// missing (detect orphaned browser state).
 function resolveLevelStoreRoot(storeUrl: string | undefined): string | undefined {
   if (!storeUrl) {
     return undefined;
@@ -259,8 +270,8 @@ const mainviewLoadMaxAttempts = 6;
 
 ApplicationMenu.setApplicationMenu([
   {
-    label: 'electrobun-dwn',
-    submenu: [
+    label   : 'electrobun-dwn',
+    submenu : [
       { role: 'about' },
       { type: 'divider' },
       { role: 'hide' },
@@ -271,8 +282,8 @@ ApplicationMenu.setApplicationMenu([
     ],
   },
   {
-    label: 'Edit',
-    submenu: [
+    label   : 'Edit',
+    submenu : [
       { role: 'undo' },
       { role: 'redo' },
       { type: 'divider' },
@@ -284,8 +295,8 @@ ApplicationMenu.setApplicationMenu([
     ],
   },
   {
-    label: 'Window',
-    submenu: [
+    label   : 'Window',
+    submenu : [
       { role: 'minimize' },
       { role: 'zoom' },
       { role: 'close' },
@@ -299,14 +310,14 @@ function createMainWindow(): BrowserWindow {
   // causes a "file not found" error.  The mainview discovers the server
   // endpoint by probing well-known ports via fetch('/info').
   const window = new BrowserWindow({
-    title : 'Enbox DWN Server',
+    title           : 'Enbox DWN Server',
     // Delay the initial `views://` navigation until the webview exists.
     // Creating the window with the URL inline can race the native views
     // registration and intermittently yield an empty response for index.html.
-    url   : null,
+    url             : null,
     // Work around Electrobun 1.15.1's macOS resize bug for default titled windows.
     ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const } : {}),
-    navigationRules: [
+    navigationRules : [
       '^*',
       'views://*',
       'about:*',
@@ -317,7 +328,7 @@ function createMainWindow(): BrowserWindow {
       // Allow did:web resolution against arbitrary public HTTPS hosts.
       'https://*/*',
     ],
-    frame : {
+    frame: {
       width  : 1200,
       height : 1000,
       x      : 200,
@@ -344,7 +355,7 @@ function loadMainviewWhenReady(window: BrowserWindow): void {
     hasDomReady = true;
   });
 
-  const attemptLoad = () => {
+  const attemptLoad = (): void => {
     if (hasDomReady) {
       return;
     }

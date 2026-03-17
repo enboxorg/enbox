@@ -1,9 +1,15 @@
-import { AuthManager } from '../../../auth/dist/esm/auth-manager.js';
-import { TypedEnbox, repository } from '@enbox/api';
+import type { DidResolutionLike } from './utils/identity-helpers.js';
+import type { ProfileSchemaMap } from '@enbox/protocols';
+import type { Repository } from '@enbox/api';
+import type { AuthState, IdentityInfo, PortableIdentity } from '@enbox/auth';
+
+import { AuthManager } from '@enbox/auth';
 import { DwnApi } from '@enbox/api/advanced';
 import { ProfileDefinition, ProfileProtocol, SocialGraphDefinition } from '@enbox/protocols';
+import { repository, TypedEnbox } from '@enbox/api';
+
 import { getAppStore } from './state/app-store.js';
-import type { AuthState, IdentityInfo, PortableIdentity } from '@enbox/auth';
+import { createResolutionErrorResult, errorMessage, normalizeEndpointList, normalizeOptionalString } from './utils/identity-helpers.js';
 
 const defaultDwnEndpoint = 'https://enbox-dwn.fly.dev';
 const localEndpointCacheMs = 5_000;
@@ -30,12 +36,6 @@ export type IdentityWalletSnapshot = {
   localDwnEndpoint?: string;
   lastError?: string;
   lastUpdatedAt: string;
-};
-
-type DidResolutionLike = {
-  didDocument: Record<string, unknown> | null;
-  didDocumentMetadata: Record<string, unknown>;
-  didResolutionMetadata: Record<string, unknown>;
 };
 
 export type IdentityDetails = {
@@ -279,9 +279,9 @@ class IdentityRuntimeController implements IdentityRuntime {
 
     const dwnEndpoints = await this._resolvePreferredDwnEndpoints(options.dwnEndpoints);
     const identity = await auth.agent.identity.create({
-      didMethod : 'dht',
-      metadata  : { name: options.name?.trim() || 'Identity' },
-      didOptions: {
+      didMethod  : 'dht',
+      metadata   : { name: options.name?.trim() || 'Identity' },
+      didOptions : {
         services: [
           {
             id              : 'dwn',
@@ -413,10 +413,10 @@ class IdentityRuntimeController implements IdentityRuntime {
     const identity = identities.find(({ didUri: managedDidUri }) => managedDidUri === didUri.trim());
 
     return {
-      didUri: didUri.trim(),
-      name: identity?.name ?? 'Identity',
-      portableIdentity: exported,
-      json: JSON.stringify(exported, null, 2),
+      didUri           : didUri.trim(),
+      name             : identity?.name ?? 'Identity',
+      portableIdentity : exported,
+      json             : JSON.stringify(exported, null, 2),
     };
   }
 
@@ -476,7 +476,7 @@ class IdentityRuntimeController implements IdentityRuntime {
     }
 
     await auth.agent.identity.setDwnEndpoints({
-      didUri    : options.didUri.trim(),
+      didUri: options.didUri.trim(),
       endpoints,
     });
 
@@ -657,18 +657,18 @@ class IdentityRuntimeController implements IdentityRuntime {
         website     : normalizeOptionalString(profileData.website),
         pronouns    : normalizeOptionalString(profileData.pronouns),
       },
-      avatar : avatarRecord
+      avatar: avatarRecord
         ? {
-          recordId    : avatarRecord.id,
-          blob        : await avatarRecord.data.blob(),
-          dataFormat  : avatarRecord.dataFormat,
+          recordId   : avatarRecord.id,
+          blob       : await avatarRecord.data.blob(),
+          dataFormat : avatarRecord.dataFormat,
         }
         : undefined,
       hero: heroRecord
         ? {
-          recordId    : heroRecord.id,
-          blob        : await heroRecord.data.blob(),
-          dataFormat  : heroRecord.dataFormat,
+          recordId   : heroRecord.id,
+          blob       : await heroRecord.data.blob(),
+          dataFormat : heroRecord.dataFormat,
         }
         : undefined,
       links,
@@ -682,7 +682,7 @@ class IdentityRuntimeController implements IdentityRuntime {
     }
 
     const profileData = {
-      displayName : input.profile.displayName.trim(),
+      displayName: input.profile.displayName.trim(),
       ...(normalizeOptionalString(input.profile.bio) ? { bio: normalizeOptionalString(input.profile.bio) } : {}),
       ...(normalizeOptionalString(input.profile.tagline) ? { tagline: normalizeOptionalString(input.profile.tagline) } : {}),
       ...(normalizeOptionalString(input.profile.location) ? { location: normalizeOptionalString(input.profile.location) } : {}),
@@ -717,20 +717,20 @@ class IdentityRuntimeController implements IdentityRuntime {
     const existingHero = heroRecords[0];
 
     await this._saveProfileImageRecord({
-      action        : input.avatar?.mode ?? 'keep',
-      file          : input.avatar?.file,
-      existingRecord: existingAvatar,
+      action          : input.avatar?.mode ?? 'keep',
+      file            : input.avatar?.file,
+      existingRecord  : existingAvatar,
       parentContextId : profileContextId,
       typed,
-      path          : 'profile/avatar',
+      path            : 'profile/avatar',
     });
     await this._saveProfileImageRecord({
-      action        : input.hero?.mode ?? 'keep',
-      file          : input.hero?.file,
-      existingRecord: existingHero,
+      action          : input.hero?.mode ?? 'keep',
+      file            : input.hero?.file,
+      existingRecord  : existingHero,
       parentContextId : profileContextId,
       typed,
-      path          : 'profile/hero',
+      path            : 'profile/hero',
     });
 
     const { records: existingLinks } = await typed.records.query('profile/link', {
@@ -893,39 +893,39 @@ class IdentityRuntimeController implements IdentityRuntime {
 
     const localDwnEndpoint = await this._readLocalDwnEndpointForSnapshot();
     return {
-      authState: auth.state,
-      isConnected: auth.isConnected,
-      isLocked: auth.isLocked,
-      isConnecting: auth.isConnecting,
-      activeDid: activeSession?.did,
-      delegateDid: activeSession?.delegateDid,
-      activeManagedDidUri: activeManagedIdentity?.didUri,
-      identities: mappedIdentities,
-      latestRecoveryPhrase: this._latestRecoveryPhrase,
+      authState            : auth.state,
+      isConnected          : auth.isConnected,
+      isLocked             : auth.isLocked,
+      isConnecting         : auth.isConnecting,
+      activeDid            : activeSession?.did,
+      delegateDid          : activeSession?.delegateDid,
+      activeManagedDidUri  : activeManagedIdentity?.didUri,
+      identities           : mappedIdentities,
+      latestRecoveryPhrase : this._latestRecoveryPhrase,
       localDwnEndpoint,
-      lastError: this._lastError,
-      lastUpdatedAt: new Date().toISOString(),
+      lastError            : this._lastError,
+      lastUpdatedAt        : new Date().toISOString(),
     };
   }
 
   private async _buildFallbackSnapshot(auth: AuthManager): Promise<IdentityWalletSnapshot> {
     const localDwnEndpoint = await this._readLocalDwnEndpointForSnapshot();
     return {
-      authState: auth.state,
-      isConnected: auth.isConnected,
-      isLocked: auth.isLocked,
-      isConnecting: auth.isConnecting,
-      activeDid: auth.session?.did,
-      delegateDid: auth.session?.delegateDid,
-      activeManagedDidUri: undefined,
-      identities: this._cachedIdentities.map((identity) => ({
+      authState           : auth.state,
+      isConnected         : auth.isConnected,
+      isLocked            : auth.isLocked,
+      isConnecting        : auth.isConnecting,
+      activeDid           : auth.session?.did,
+      delegateDid         : auth.session?.delegateDid,
+      activeManagedDidUri : undefined,
+      identities          : this._cachedIdentities.map((identity) => ({
         ...identity,
         active: false,
       })),
-      latestRecoveryPhrase: this._latestRecoveryPhrase,
+      latestRecoveryPhrase : this._latestRecoveryPhrase,
       localDwnEndpoint,
-      lastError: this._lastError,
-      lastUpdatedAt: new Date().toISOString(),
+      lastError            : this._lastError,
+      lastUpdatedAt        : new Date().toISOString(),
     };
   }
 
@@ -950,7 +950,7 @@ class IdentityRuntimeController implements IdentityRuntime {
 
     if (!this._localEndpointProbePromise) {
       this._localEndpointFetchedAt = now;
-      this._localEndpointProbePromise = (async () => {
+      this._localEndpointProbePromise = (async (): Promise<void> => {
         try {
           const auth = await this._getAuth();
           this._localEndpoint = auth.localDwnEndpoint;
@@ -1058,7 +1058,7 @@ class IdentityRuntimeController implements IdentityRuntime {
     }
   }
 
-  private _createProfileRepository(dwn: DwnApi) {
+  private _createProfileRepository(dwn: DwnApi): Repository<typeof ProfileDefinition, ProfileSchemaMap> {
     return repository(new TypedEnbox(dwn, ProfileProtocol));
   }
 
@@ -1113,7 +1113,7 @@ class IdentityRuntimeController implements IdentityRuntime {
     }
 
     const createResult = await typed.records.create(path, {
-      data            : normalizedFile,
+      data: normalizedFile,
       parentContextId,
       dataFormat,
     });
@@ -1227,6 +1227,14 @@ class IdentityRuntimeController implements IdentityRuntime {
     this._persistRecoveryPhrase(normalizedRecoveryPhrase);
   }
 
+  /**
+   * Persists the recovery phrase to localStorage so it survives page reloads
+   * during the initial setup flow (e.g. the user copies it before confirming).
+   * This is intentional for the desktop Electrobun context where localStorage
+   * is not shared with other origins. The phrase is cleared explicitly via
+   * `clearRecoveryPhrase()` once the user has acknowledged it, or on
+   * `disconnect({ clearStorage: true })`.
+   */
   private _persistRecoveryPhrase(recoveryPhrase?: string): void {
     if (typeof globalThis.localStorage === 'undefined') {
       return;
@@ -1320,41 +1328,3 @@ export function ensureIdentityRuntime(runtimeWindow: IdentityRuntimeHostWindow):
   return runtimeWindow[identityRuntimeWindowKey]!;
 }
 
-function normalizeEndpointList(endpoints?: string[]): string[] {
-  if (!Array.isArray(endpoints)) {
-    return [];
-  }
-
-  return Array.from(
-    new Set(
-      endpoints
-        .map((endpoint) => endpoint.trim())
-        .filter((endpoint) => endpoint.length > 0),
-    ),
-  );
-}
-
-function createResolutionErrorResult(message: string): DidResolutionLike {
-  return {
-    didDocument: null,
-    didDocumentMetadata: {},
-    didResolutionMetadata: {
-      error: 'resolutionError',
-      message,
-    },
-  };
-}
-
-function normalizeOptionalString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim().length > 0
-    ? value.trim()
-    : undefined;
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return String(error);
-}

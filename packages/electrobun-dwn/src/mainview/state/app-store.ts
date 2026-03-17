@@ -1,5 +1,6 @@
-import { computed, signal } from '@lit-labs/signals';
 import type { IdentityWalletSnapshot } from '../identity-runtime.js';
+
+import { computed, signal } from '@lit-labs/signals';
 
 export type RouteId =
   | 'home'
@@ -66,6 +67,8 @@ const defaultConnectionSnapshot: ConnectionSnapshot = {
   serverUrl     : '',
 };
 
+// TODO: Remove placeholder app connections once real connection data is
+// populated from protocol grants / DWN permission records.
 const defaultAppConnections: AppConnection[] = [
   {
     id             : 'google-photos',

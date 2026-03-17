@@ -111,6 +111,11 @@ export class HttpDwnRpcClient implements DwnRpc {
     };
   }
 
+  /** Detects whether the current runtime is Bun (vs a browser). */
+  static isBunRuntime(): boolean {
+    return typeof (globalThis as Record<string, unknown>).Bun !== 'undefined';
+  }
+
   get transportProtocols(): string[] { return ['http:', 'https:']; }
 
   async sendDwnRequest(request: DwnRpcRequest): Promise<DwnRpcResponse> {
@@ -133,20 +138,22 @@ export class HttpDwnRpcClient implements DwnRpc {
       requestHeaders['content-type'] = 'application/octet-stream';
       let requestBody = request.data;
 
-      // Bun's fetch currently fails on some ReadableStream uploads in the sync push path.
-      // Buffering to a plain Blob keeps transport semantics the same and avoids the broken path.
       if (requestBody instanceof ReadableStream) {
-        const bodyBytes = await DataStream.toBytes(requestBody as ReadableStream<Uint8Array>);
-        requestBody = new Blob([bodyBytes as BlobPart], { type: 'application/octet-stream' });
+        // Bun's fetch currently fails on some ReadableStream uploads in the sync push path.
+        // Buffer to a Blob in Bun to avoid the broken path. In browsers, keep the stream
+        // and set `duplex: 'half'` which the Fetch spec requires for streaming request bodies.
+        // See: https://developer.chrome.com/docs/capabilities/web-apis/fetch-streaming-requests
+        if (HttpDwnRpcClient.isBunRuntime()) {
+          const bodyBytes = await DataStream.toBytes(requestBody as ReadableStream<Uint8Array>);
+          requestBody = new Blob([bodyBytes as BlobPart], { type: 'application/octet-stream' });
+        } else {
+          // Browsers require `duplex: 'half'` when the fetch body is a ReadableStream.
+          // TypeScript's built-in RequestInit does not include `duplex` yet.
+          (fetchOpts as Record<string, unknown>).duplex = 'half';
+        }
       }
 
       fetchOpts.body = requestBody;
-
-      if (requestBody instanceof ReadableStream) {
-        // Browsers require `duplex: 'half'` when the fetch body is a ReadableStream.
-        // TypeScript's built-in RequestInit does not include `duplex` yet.
-        (fetchOpts as Record<string, unknown>).duplex = 'half';
-      }
     }
 
     const resp = await this.fetchWithRetry(request.dwnUrl, fetchOpts);
