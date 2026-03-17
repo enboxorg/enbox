@@ -111,6 +111,11 @@ export class HttpDwnRpcClient implements DwnRpc {
     };
   }
 
+  /** Detects whether the current runtime is Bun (vs a browser). */
+  static isBunRuntime(): boolean {
+    return typeof (globalThis as Record<string, unknown>).Bun !== 'undefined';
+  }
+
   get transportProtocols(): string[] { return ['http:', 'https:']; }
 
   async sendDwnRequest(request: DwnRpcRequest): Promise<DwnRpcResponse> {
@@ -131,12 +136,24 @@ export class HttpDwnRpcClient implements DwnRpc {
 
     if (request.data) {
       requestHeaders['content-type'] = 'application/octet-stream';
-      fetchOpts.body = request.data;
+      let requestBody = request.data;
 
-      // Browsers require `duplex: 'half'` when the fetch body is a ReadableStream.
-      // The sync-push path sends record data as a raw stream (see sync-messages.ts).
-      // TypeScript's built-in RequestInit does not include `duplex` yet.
-      (fetchOpts as Record<string, unknown>).duplex = 'half';
+      if (requestBody instanceof ReadableStream) {
+        // Bun's fetch currently fails on some ReadableStream uploads in the sync push path.
+        // Buffer to a Blob in Bun to avoid the broken path. In browsers, keep the stream
+        // and set `duplex: 'half'` which the Fetch spec requires for streaming request bodies.
+        // See: https://developer.chrome.com/docs/capabilities/web-apis/fetch-streaming-requests
+        if (HttpDwnRpcClient.isBunRuntime()) {
+          const bodyBytes = await DataStream.toBytes(requestBody as ReadableStream<Uint8Array>);
+          requestBody = new Blob([bodyBytes as BlobPart], { type: 'application/octet-stream' });
+        } else {
+          // Browsers require `duplex: 'half'` when the fetch body is a ReadableStream.
+          // TypeScript's built-in RequestInit does not include `duplex` yet.
+          (fetchOpts as Record<string, unknown>).duplex = 'half';
+        }
+      }
+
+      fetchOpts.body = requestBody;
     }
 
     const resp = await this.fetchWithRetry(request.dwnUrl, fetchOpts);

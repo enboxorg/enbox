@@ -1183,8 +1183,24 @@ export class AgentDwnApi {
       };
 
     } else {
-      // Otherwise, use the author's DID to determine the signing method.
+      // Prefer a locally-stored BearerDid when the agent controls this DID.
+      // This avoids an unnecessary DID resolution round-trip during signing,
+      // which can fail if the resolver path encounters malformed cached data.
       try {
+        const localDid = await this.agent.did.get({ didUri: author });
+        if (localDid) {
+          const signer = await localDid.getSigner();
+
+          return {
+            algorithm : signer.algorithm,
+            keyId     : signer.keyId,
+            sign      : async (data: Uint8Array): Promise<Uint8Array> => {
+              return await signer.sign({ data });
+            }
+          };
+        }
+
+        // Otherwise, use the author's DID to determine the signing method.
         const signingMethod = await this.agent.did.getSigningMethod({ didUri: author });
 
         if (!signingMethod.publicKeyJwk) {

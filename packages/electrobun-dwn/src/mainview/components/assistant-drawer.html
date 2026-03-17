@@ -1,0 +1,95 @@
+<!-- #region Assistant Drawer -->
+
+<style>
+  wa-drawer#assistant-drawer {
+    --size: 50ch;
+    --spacing: var(--wa-space-xl);
+
+    &::part(body) {
+      /* Move padding to sticky footer with solid background */
+      padding-block-end: 0;
+    }
+
+    &::part(footer) {
+      padding-block-start: var(--wa-space-m);
+    }
+  }
+</style>
+
+<wa-drawer id="assistant-drawer" light-dismiss>
+  <div slot="label">
+    <div class="wa-cluster">
+      <wa-icon name="comment-question" variant="regular"></wa-icon>
+      Assistant
+    </div>
+  </div>
+
+  <div slot="header-actions" class="wa-cluster wa-gap-xs">
+    <wa-dropdown>
+      <wa-tooltip for="assistant-drawer-more-button" without-arrow>Options</wa-tooltip>
+      <wa-button id="assistant-drawer-more-button" slot="trigger" appearance="plain">
+        <wa-icon name="ellipsis" label="Options"></wa-icon>
+      </wa-button>
+
+      <wa-dropdown-item value="help-center">
+        <wa-icon slot="icon" name="headset" variant="regular"></wa-icon>
+        Help Center
+      </wa-dropdown-item>
+
+      <wa-dropdown-item value="developer-docs">
+        <wa-icon slot="icon" name="code" variant="regular"></wa-icon>
+        Developer Docs
+      </wa-dropdown-item>
+
+      <wa-divider></wa-divider>
+
+      <wa-dropdown-item value="restart-conversation" variant="danger">
+        <wa-icon slot="icon" name="arrow-rotate-left" variant="regular"></wa-icon>
+        Restart Conversation
+      </wa-dropdown-item>
+    </wa-dropdown>
+  </div>
+
+  <div class="wa-stack">
+    Let's get you some answers! Select a topic or type your question below.
+
+    <div class="wa-cluster wa-justify-content-end wa-gap-xs">
+      <wa-button variant="brand" appearance="outlined" size="small">Where is my 1099 tax form?</wa-button>
+      <wa-button variant="brand" appearance="outlined" size="small">Verification status</wa-button>
+      <wa-button variant="brand" appearance="outlined" size="small">My payout is missing</wa-button>
+      <wa-button variant="brand" appearance="outlined" size="small">Update my bank account</wa-button>
+      <wa-button variant="brand" appearance="outlined" size="small">My customer's payment is failing</wa-button>
+    </div>
+
+    <div class="wa-flank wa-gap-xl">
+      <div></div>
+      <wa-callout appearance="accent">My customer's payment is failing</wa-callout>
+    </div>
+
+    <div class="wa-flank:end wa-gap-xl">
+      <wa-callout variant="neutral">
+        Payment failures can happen for several reasons, such as insufficient funds, incorrect card details, expired
+        cards, or restrictions from the card issuer. To help you resolve this, could you share more details? For
+        example, do you have the payment ID, the customer's email, or any error message you've seen? This will help me
+        look up the specific payment and provide targeted guidance.
+      </wa-callout>
+      <div></div>
+    </div>
+  </div>
+
+  <div slot="footer" class="wa-stack" style="flex: auto">
+    <wa-textarea placeholder="Ask anything..." aria-label="Ask anything"></wa-textarea>
+    <wa-button variant="brand">
+      Send
+      <wa-icon slot="end" name="paper-plane" variant="regular"></wa-icon>
+    </wa-button>
+  </div>
+</wa-drawer>
+
+<script type="module">
+  if (window.location.hash === '#assistant-drawer') {
+    document.getElementById('assistant-drawer')?.setAttribute('open', '');
+  }
+</script>
+
+<!-- #endregion Assistant Drawer -->

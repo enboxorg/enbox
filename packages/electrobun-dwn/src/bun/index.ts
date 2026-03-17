@@ -2,6 +2,9 @@ import 'reflect-metadata';
 
 import type { DwnServerConfig } from '@enbox/dwn-server';
 
+import { resolve } from 'node:path';
+import { existsSync, rmSync } from 'node:fs';
+
 import {
   buildDwnDiscoveryRedirectUrl,
   DwnDiscoveryFile,
@@ -17,7 +20,7 @@ import {
  * selection list is maintained here as a local constant.
  */
 const localDwnPortCandidates = [3000, 55500, 55501, 55502, 55503, 55504, 55505, 55506, 55507, 55508, 55509] as const;
-import Electrobun, { BrowserWindow, Utils } from 'electrobun/bun';
+import Electrobun, { ApplicationMenu, BrowserWindow, Tray, Utils } from 'electrobun/bun';
 
 function selectPortCandidates(): number[] {
   const envPort = Bun.env['DS_PORT'];
@@ -93,6 +96,87 @@ function createDwnServerConfig(port: number): Partial<DwnServerConfig> {
   };
 }
 
+// TODO: Consolidate all persistent storage under ~/.enbox so a single
+// `rm -rf ~/.enbox` cleanly resets the app.  Currently the DWN server
+// stores its LevelDB data under ~/.enbox, but the WKWebView persists
+// localStorage, IndexedDB, and cookies under ~/Library/WebKit/<app-id>/
+// (macOS) which is controlled by the native WebKit data store.  Electrobun
+// does not yet expose a way to configure the WKWebsiteDataStore path.
+// Options: (1) upstream Electrobun feature to set the data store directory,
+// (2) symlink ~/Library/WebKit/org.enbox.electrobun-dwn → ~/.enbox/webview,
+// (3) clear webview storage programmatically on startup when ~/.enbox is
+// missing (detect orphaned browser state).
+function resolveLevelStoreRoot(storeUrl: string | undefined): string | undefined {
+  if (!storeUrl) {
+    return undefined;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(storeUrl);
+  } catch {
+    return undefined;
+  }
+
+  if (parsed.protocol !== 'level:') {
+    return undefined;
+  }
+
+  const levelPath = `${parsed.host}${parsed.pathname}`;
+  if (!levelPath) {
+    return undefined;
+  }
+
+  // `level://foo` is relative; `level:///foo` is absolute.
+  return levelPath.startsWith('/')
+    ? levelPath
+    : resolve(process.cwd(), levelPath);
+}
+
+function isSafeResetPath(path: string): boolean {
+  if (!path) {
+    return false;
+  }
+
+  if (path === '/' || path === '/Users' || path === process.env.HOME) {
+    return false;
+  }
+
+  return true;
+}
+
+function resetDwnStorageIfRequested(portCandidates: number[]): void {
+  if (process.env.DWN_RESET_ON_START !== 'true') {
+    return;
+  }
+
+  const config = createDwnServerConfig(portCandidates[0] ?? 3000);
+  const candidateRoots = new Set<string>();
+  const storageTargets = [
+    config.messageStore,
+    config.dataStore,
+    config.stateIndex,
+    config.resumableTaskStore,
+    config.registrationStoreUrl,
+  ];
+
+  for (const storeUrl of storageTargets) {
+    const storeRoot = resolveLevelStoreRoot(storeUrl);
+    if (storeRoot) {
+      candidateRoots.add(storeRoot);
+    }
+  }
+
+  for (const targetPath of candidateRoots) {
+    if (!isSafeResetPath(targetPath) || !existsSync(targetPath)) {
+      continue;
+    }
+
+    rmSync(targetPath, { recursive: true, force: true });
+    console.log(`[electrobun-dwn] Reset storage path: ${targetPath}`);
+  }
+}
+
 // ─── Discovery file ──────────────────────────────────────────────
 //
 // Write ~/.enbox/dwn.json on startup so CLI/native apps can discover
@@ -129,6 +213,7 @@ function isAddressInUseError(error: unknown): boolean {
 
 const { DwnServer } = await import('@enbox/dwn-server');
 const portCandidates = selectPortCandidates();
+resetDwnStorageIfRequested(portCandidates);
 
 let selectedPort: number | undefined;
 let dwnServer: InstanceType<typeof DwnServer> | undefined;
@@ -177,19 +262,181 @@ const capabilities = webSocketSupport ? ['http', 'ws'] : ['http'];
 await discoveryFile.write({ endpoint: serverEndpoint, pid: process.pid, capabilities });
 console.log(`[electrobun-dwn] Discovery file written: ${discoveryFile.path}`);
 
-// Note: electrobun's views:// protocol handler does not strip query
-// parameters before resolving the file path, so passing ?endpoint=...
-// causes a "file not found" error.  The mainview discovers the server
-// endpoint by probing well-known ports via fetch('/info').
-const mainWindow = new BrowserWindow({
-  title : 'Enbox DWN Server',
-  url   : 'views://mainview/index.html',
-  frame : {
-    width  : 860,
-    height : 620,
-    x      : 200,
-    y      : 120,
+let mainWindow: BrowserWindow | undefined;
+const mainviewUrl = 'views://mainview/index.html';
+const mainviewInitialLoadDelayMs = 120;
+const mainviewLoadRetryDelayMs = 350;
+const mainviewLoadMaxAttempts = 6;
+
+ApplicationMenu.setApplicationMenu([
+  {
+    label   : 'electrobun-dwn',
+    submenu : [
+      { role: 'about' },
+      { type: 'divider' },
+      { role: 'hide' },
+      { role: 'hideOthers' },
+      { role: 'showAll' },
+      { type: 'divider' },
+      { role: 'quit' },
+    ],
   },
+  {
+    label   : 'Edit',
+    submenu : [
+      { role: 'undo' },
+      { role: 'redo' },
+      { type: 'divider' },
+      { role: 'cut' },
+      { role: 'copy' },
+      { role: 'paste' },
+      { role: 'pasteAndMatchStyle' },
+      { role: 'selectAll' },
+    ],
+  },
+  {
+    label   : 'Window',
+    submenu : [
+      { role: 'minimize' },
+      { role: 'zoom' },
+      { role: 'close' },
+    ],
+  },
+]);
+
+function createMainWindow(): BrowserWindow {
+  // Note: electrobun's views:// protocol handler does not strip query
+  // parameters before resolving the file path, so passing ?endpoint=...
+  // causes a "file not found" error.  The mainview discovers the server
+  // endpoint by probing well-known ports via fetch('/info').
+  const window = new BrowserWindow({
+    title           : 'Enbox DWN Server',
+    // Delay the initial `views://` navigation until the webview exists.
+    // Creating the window with the URL inline can race the native views
+    // registration and intermittently yield an empty response for index.html.
+    url             : null,
+    // Work around Electrobun 1.15.1's macOS resize bug for default titled windows.
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const } : {}),
+    navigationRules : [
+      '^*',
+      'views://*',
+      'about:*',
+      'data:*',
+      'blob:*',
+      'http://127.0.0.1:*/*',
+      'http://localhost:*/*',
+      // Allow did:web resolution against arbitrary public HTTPS hosts.
+      'https://*/*',
+    ],
+    frame: {
+      width  : 1200,
+      height : 1000,
+      x      : 200,
+      y      : 120,
+    },
+  });
+
+  loadMainviewWhenReady(window);
+
+  window.on('close', () => {
+    if (mainWindow?.id === window.id) {
+      mainWindow = undefined;
+    }
+  });
+
+  return window;
+}
+
+function loadMainviewWhenReady(window: BrowserWindow): void {
+  let hasDomReady = false;
+  let loadAttempts = 0;
+
+  window.webview.on('dom-ready', () => {
+    hasDomReady = true;
+  });
+
+  const attemptLoad = (): void => {
+    if (hasDomReady) {
+      return;
+    }
+
+    const liveWindow = BrowserWindow.getById(window.id);
+    if (!liveWindow) {
+      return;
+    }
+
+    const webview = liveWindow.webview;
+    if (!webview) {
+      return;
+    }
+
+    loadAttempts += 1;
+
+    try {
+      console.log(
+        `[electrobun-dwn] Loading mainview ${loadAttempts}/${mainviewLoadMaxAttempts}: ${mainviewUrl}`,
+      );
+      webview.loadURL(mainviewUrl);
+    } catch (error) {
+      console.warn(
+        `[electrobun-dwn] Failed to issue mainview load attempt ${loadAttempts}`,
+        error,
+      );
+    }
+
+    if (loadAttempts >= mainviewLoadMaxAttempts) {
+      console.error(
+        `[electrobun-dwn] Mainview did not reach dom-ready after ${loadAttempts} load attempts`,
+      );
+      return;
+    }
+
+    setTimeout(() => {
+      if (!hasDomReady) {
+        attemptLoad();
+      }
+    }, mainviewLoadRetryDelayMs);
+  };
+
+  setTimeout(attemptLoad, mainviewInitialLoadDelayMs);
+}
+
+function showMainWindow(): void {
+  if (!mainWindow || !BrowserWindow.getById(mainWindow.id)) {
+    mainWindow = createMainWindow();
+    return;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.unminimize();
+  }
+
+  mainWindow.show();
+}
+
+mainWindow = createMainWindow();
+
+const tray = new Tray({
+  image    : 'views://mainview/assets/logo.svg',
+  template : true,
+  width    : 20,
+  height   : 16,
+});
+tray.setMenu([
+  { type: 'normal', label: 'Open Dashboard', action: 'open-main-window' },
+  { type: 'divider' },
+  { type: 'normal', label: 'Shutdown', action: 'quit-app' },
+]);
+
+tray.on('tray-clicked', (event: { data: { action?: string } }) => {
+  const action = event.data.action;
+  if (action === 'quit-app') {
+    void shutdown({ quitApp: true });
+    return;
+  }
+
+  // Default tray click + explicit "open-main-window" both raise the UI.
+  showMainWindow();
 });
 
 // ─── dwn:// protocol handler ────────────────────────────────────
@@ -213,9 +460,15 @@ Electrobun.events.on('open-url', (e: { data: { url: string } }) => {
 
 let isShuttingDown = false;
 
-async function shutdown(): Promise<void> {
+async function shutdown(options: { quitApp?: boolean } = {}): Promise<void> {
   if (isShuttingDown) { return; }
   isShuttingDown = true;
+
+  try {
+    tray.remove();
+  } catch {
+    // Best-effort cleanup — tray may not exist on this platform.
+  }
 
   // Remove the discovery file before stopping the server.
   try {
@@ -231,13 +484,22 @@ async function shutdown(): Promise<void> {
     console.error('[electrobun-dwn] Failed to stop DWN server cleanly', error);
   }
 
-  Utils.quit();
+  if (options.quitApp) {
+    Utils.quit();
+  }
 }
 
-mainWindow.on('close', () => {
-  void shutdown();
+Electrobun.events.on('before-quit', (event: { response: { allow: boolean } }) => {
+  // Cancel the first quit attempt so we can remove discovery metadata and
+  // stop the DWN server cleanly before requesting the final process exit.
+  if (isShuttingDown) {
+    return;
+  }
+
+  event.response = { allow: false };
+  void shutdown({ quitApp: true });
 });
 
 // Clean up the discovery file on signal-based termination (e.g. `kill`).
-process.on('SIGTERM', () => { void shutdown(); });
-process.on('SIGINT', () => { void shutdown(); });
+process.on('SIGTERM', () => { void shutdown({ quitApp: true }); });
+process.on('SIGINT', () => { void shutdown({ quitApp: true }); });

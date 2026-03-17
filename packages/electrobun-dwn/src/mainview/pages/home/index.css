@@ -1,0 +1,34 @@
+.server-url {
+  color: var(--wa-color-text-link);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.84rem;
+}
+
+.server-url:hover {
+  text-decoration: underline;
+}
+
+.status-grid {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.8rem;
+}
+
+.status-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
+.status-row strong {
+  color: var(--wa-color-text-normal);
+  font-weight: 600;
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}

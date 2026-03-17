@@ -1,0 +1,672 @@
+
+
+:root {
+  overflow-y: scroll;
+}
+
+/* See also: https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Media_queries/Using */
+@media screen and (max-width: calc(768px - 1px)) {
+  .app-desktop-only {
+    display: none;
+  }
+}
+
+@media screen and (min-width: 768px) {
+  .app-mobile-only {
+    display: none;
+  }
+}
+
+/* #endregion */
+
+body {
+  /* Recommended minimum for accessibility */
+  min-width: 320px;
+  /* Maintain mobile Safari font size on orientation change */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* See also: https://webawesome.com/docs/components/page#css-parts */
+wa-page {
+  /* Center the page */
+  margin: 0 auto;
+  /* See also: https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Values/env#safe-area-inset-top */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  max-inline-size: 1920px;
+
+  &::part(drawer__body) {
+    padding-top: 0;
+  }
+
+  &::part(main-header),
+  header[slot='navigation-header'] {
+    position: sticky;
+    top: 0;
+    /* Fix content overlap */
+    z-index: 1;
+  }
+
+  main {
+    /* Override default padding */
+    padding: var(--wa-space-m) var(--wa-space-xl) var(--wa-space-xl);
+  }
+
+  header[slot='main-header'] {
+    /* Override default padding */
+    padding: var(--wa-space-m) var(--wa-space-xl);
+  }
+
+  wa-button[data-toggle-nav] {
+    /* Visually align button label with main content */
+    margin-inline-start: calc(var(--wa-form-control-padding-inline) * -1);
+  }
+
+  &[view='desktop'] {
+    &::part(menu) {
+      height: auto;
+      /* Scrollbar appears inset to avoid main content jank */
+      width: 20rem;
+      max-width: 20rem;
+    }
+
+    &::part(main-header),
+    &::part(main-content) {
+      border-left: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+    }
+
+    main {
+      /* Override default padding */
+      padding: var(--wa-space-xl) var(--wa-space-4xl) var(--wa-space-4xl);
+    }
+
+    header[slot='main-header'] {
+      /* Override default padding */
+      padding: var(--wa-space-m) var(--wa-space-4xl);
+    }
+  }
+}
+
+/* Dashboard Layout + Surfaces */
+:root {
+  --app-bg: radial-gradient(circle at 12% 0%, #17233d 0%, #121b31 40%, #0a1020 100%);
+  --panel-border: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+  --panel-shadow: 0 16px 40px rgba(0, 0, 0, 0.36);
+  --muted: var(--wa-color-text-quiet);
+  --content-max: 1320px;
+  --app-titlebar-inset-top: 0px;
+  --app-titlebar-controls-clearance: 0px;
+}
+
+html.platform-macos {
+  --app-titlebar-inset-top: 1.5rem;
+  --app-titlebar-controls-clearance: -0.3rem;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  min-height: 100%;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  color: var(--wa-color-text-normal);
+}
+
+/*
+ * Web Awesome's native layer sets descendants to `box-sizing: inherit`.
+ * Lock the app tree to `border-box` so custom elements and WA hosts
+ * don't fall back to `content-box` when a host changes the inheritance chain.
+ */
+:where(app-shell, app-shell *, app-shell *::before, app-shell *::after) {
+  box-sizing: border-box;
+}
+
+.app-window-drag-region {
+  display: none;
+}
+
+wa-page {
+  --navigation-width: 20rem;
+  box-sizing: border-box;
+  min-height: 100%;
+  background: transparent;
+}
+
+notification-drawer,
+toast-region {
+  /* These are overlay hosts, not layout content. Keep them from adding body height. */
+  display: contents;
+}
+
+wa-toast-item::part(content) {
+  display: block;
+  min-inline-size: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+wa-dialog::part(footer) {
+  padding-block-start: var(--wa-space-l);
+  border-block-start: 1px solid rgb(255 255 255 / 10%);
+}
+
+.main-shell {
+  position: relative;
+  z-index: 0;
+  max-width: var(--content-max);
+  margin-inline: auto;
+}
+
+header[slot='main-header'].main-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: var(--wa-space-s);
+  min-width: 0;
+}
+
+html.platform-macos wa-page header[slot='navigation-header'] {
+  padding:
+    calc(var(--wa-space-m) + var(--app-titlebar-inset-top))
+    var(--wa-space-xl)
+    var(--wa-space-m)
+    calc(var(--wa-space-xl) + var(--app-titlebar-controls-clearance));
+}
+
+html.platform-macos .app-window-drag-region {
+  position: fixed;
+  inset: 0 0 auto var(--app-titlebar-controls-clearance);
+  display: block;
+  height: var(--app-titlebar-inset-top);
+  z-index: 10;
+}
+
+html.platform-macos wa-page header[slot='main-header'] {
+  padding-top: calc(var(--wa-space-m) + var(--app-titlebar-inset-top));
+}
+
+html.platform-macos wa-page[view='mobile'] header[slot='main-header'] {
+  padding-left: calc(var(--wa-space-xl) + var(--app-titlebar-controls-clearance));
+}
+
+html.platform-macos wa-page[view='desktop'] header[slot='main-header'] {
+  padding-top: calc(var(--wa-space-m) + var(--app-titlebar-inset-top));
+}
+
+.main-header-status,
+.main-header-actions {
+  flex: 0 0 auto;
+}
+
+.main-header-search {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.main-header-search wa-input {
+  display: block;
+  inline-size: 100%;
+  max-inline-size: none;
+}
+
+#global-search-input::part(input) {
+  text-transform: none;
+}
+
+.main-header-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  height: var(--wa-form-control-height);
+}
+
+identity-switcher {
+  display: inline-flex;
+  align-items: center;
+}
+
+.main-header-identity-trigger::part(base) {
+  min-inline-size: var(--wa-form-control-height);
+}
+
+.main-header-identity-avatar {
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+}
+
+#main-header-identity-popover {
+  --arrow-size: 8px;
+}
+
+.identity-switcher-popover-body {
+  min-inline-size: min(19rem, 78vw);
+  display: grid;
+  gap: var(--wa-space-s);
+}
+
+.identity-switcher-active-card {
+  display: grid;
+  justify-items: center;
+  gap: var(--wa-space-2xs);
+  padding: var(--wa-space-xs) 0;
+  text-align: center;
+}
+
+.identity-switcher-active-avatar {
+  inline-size: 3.25rem;
+  block-size: 3.25rem;
+  border-radius: 999px;
+  border: 2px solid #4a8dff;
+  padding: 2px;
+}
+
+.identity-switcher-active-name {
+  max-inline-size: 100%;
+  font-size: 0.94rem;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.identity-switcher-active-status {
+  font-size: 0.75rem;
+  color: #4a8dff;
+}
+
+.identity-switcher-popover-subtitle {
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--wa-color-text-quiet);
+}
+
+.identity-switcher-popover-list {
+  display: grid;
+  margin-bottom: 0.8rem;
+  gap: var(--wa-space-2xs);
+}
+
+.identity-switcher-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--wa-space-s);
+  border: var(--wa-border-width-s) var(--wa-border-style) transparent;
+  border-radius: var(--wa-border-radius-m);
+  background: transparent;
+  padding: var(--wa-space-2xs);
+  color: inherit;
+  text-align: start;
+  font: inherit;
+  cursor: pointer;
+}
+
+.identity-switcher-option:hover {
+  background: color-mix(in oklab, var(--wa-color-surface-lowered), #ffffff 8%);
+}
+
+.identity-switcher-option:focus-visible {
+  outline: none;
+  border-color: var(--wa-color-brand-fill-loud);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--wa-color-brand-fill-loud), transparent 72%);
+}
+
+.identity-switcher-option:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.identity-switcher-option-avatar {
+  inline-size: 2rem;
+  block-size: 2rem;
+}
+
+.identity-switcher-option-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.identity-switcher-option-name {
+  font-size: 0.92rem;
+  line-height: 1.3;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.identity-switcher-view-button {
+  inline-size: 100%;
+}
+
+.identity-switcher-view-button::part(base) {
+  inline-size: 100%;
+  justify-content: space-between;
+}
+
+.page-view {
+  position: relative;
+  min-height: min(64vh, 48rem);
+}
+
+.page-view.is-loading::after {
+  content: "Loading section...";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: color-mix(in oklab, var(--wa-color-surface-default), transparent 18%);
+  border: var(--panel-border);
+  border-radius: var(--wa-border-radius-l);
+  color: var(--wa-color-text-quiet);
+  letter-spacing: 0.01em;
+  backdrop-filter: blur(4px);
+}
+
+.page-tabs {
+  display: block;
+}
+
+.page-tabs > wa-tab[slot='nav'] {
+  display: none;
+}
+
+.page-tabs::part(nav) {
+  display: none;
+}
+
+.page-tabs::part(body) {
+  padding: 0;
+  background: transparent;
+}
+
+.app-page-panel {
+  padding: 0;
+  background: transparent;
+}
+
+.app-page-panel::part(base) {
+  padding: 0;
+  background: transparent;
+}
+
+.app-page-panel.is-entering {
+  animation: page-panel-enter 300ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.page-panel-shell {
+  display: block;
+  min-height: min(64vh, 48rem);
+}
+
+@keyframes page-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.994);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.app-logo {
+  width: 2rem;
+  height: 2rem;
+  display: block;
+  object-fit: contain;
+  filter: invert(1);
+}
+
+.dashboard {
+  padding: 0.4rem;
+}
+
+.page-block {
+  padding-top: 0.25rem;
+}
+
+.metric-card,
+.grid-card {
+  border: var(--panel-border);
+  box-shadow: var(--panel-shadow);
+  background: var(--wa-color-surface-raised);
+  min-height: 12.5rem;
+}
+
+.metric-value {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.05;
+  margin-top: 0.4rem;
+}
+
+.metric-note {
+  margin-top: 0.6rem;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+/* Navigation Header */
+wa-button#account-dropdown-button {
+  inline-size: 100%;
+
+  &::part(base) {
+    justify-content: start;
+  }
+
+  &::part(caret) {
+    flex: auto;
+    justify-content: end;
+  }
+}
+
+/* Navigation */
+wa-page {
+  [slot='navigation'] {
+    min-width: 0;
+    overflow-x: hidden;
+
+    .wa-stack,
+    .nav-links,
+    .nav-link {
+      min-width: 0;
+      width: 100%;
+      max-width: 100%;
+    }
+
+    .nav-link {
+      &::part(base) {
+        width: 100%;
+        max-width: 100%;
+        justify-content: start;
+      }
+    }
+
+    .nav-link.is-active {
+      &::part(base) {
+        background: color-mix(
+          in oklab,
+          var(--wa-color-fill-brand-quiet, var(--wa-color-fill-quiet, var(--wa-color-neutral-fill-quiet))),
+          var(--wa-color-fill-brand, var(--wa-color-fill-loud, #fff)) 22%
+        );
+        color: var(--wa-color-on-normal);
+      }
+    }
+
+    wa-button {
+      &::part(base) {
+        width: 100%;
+        max-width: 100%;
+        justify-content: start;
+      }
+    }
+
+    wa-details {
+      &::part(header) {
+        padding: 0 var(--wa-form-control-padding-inline);
+        color: var(--wa-color-on-quiet, var(--wa-color-neutral-on-quiet));
+        font-weight: var(--wa-font-weight-action);
+        line-height: calc(var(--wa-form-control-height) - var(--border-width) * 2);
+        height: var(--wa-form-control-height);
+        border-radius: var(--wa-form-control-border-radius);
+      }
+
+      &::part(header):hover {
+        color: var(--wa-color-on-quiet, var(--wa-color-neutral-on-quiet));
+        background-color: var(--wa-color-fill-quiet, var(--wa-color-neutral-fill-quiet));
+      }
+
+      &::part(header):active {
+        color: var(--wa-color-on-quiet, var(--wa-color-neutral-on-quiet));
+        background-color: color-mix(
+          in oklab,
+          var(--wa-color-fill-quiet, var(--wa-color-neutral-fill-quiet)),
+          var(--wa-color-mix-active)
+        );
+      }
+
+      &::part(icon) {
+        font-size: var(--wa-font-size-s);
+      }
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-page-panel.is-entering {
+    animation: none;
+  }
+}
+
+/* Notifications Drawer */
+wa-drawer#notifications-drawer {
+  --size: clamp(24rem, 44vw, 36rem);
+  --spacing: var(--wa-space-l);
+}
+
+wa-drawer#notifications-drawer::part(body) {
+  padding-block: 0 var(--wa-space-s);
+}
+
+wa-drawer#notifications-drawer::part(footer) {
+  padding-block-start: var(--wa-space-m);
+  border-top: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+  background: color-mix(in oklab, var(--wa-color-surface-default), var(--wa-color-surface-raised) 34%);
+}
+
+.notifications-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wa-space-2xs);
+}
+
+.notifications-close-button::part(base) {
+  color: var(--wa-color-text-quiet);
+}
+
+.notifications-list {
+  gap: 0;
+  padding-top: var(--wa-space-2xs);
+}
+
+.notification-item {
+  padding-block: var(--wa-space-m);
+}
+
+.notification-item:first-child {
+  padding-top: var(--wa-space-xs);
+}
+
+.notification-item:last-child {
+  padding-bottom: var(--wa-space-xs);
+}
+
+.notification-item > wa-divider {
+  margin-top: var(--wa-space-m);
+}
+
+.notification-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--wa-space-s);
+  min-width: 0;
+}
+
+.notification-avatar {
+  flex: 0 0 auto;
+}
+
+.notification-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.notification-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--wa-space-xs);
+  min-width: 0;
+}
+
+.notification-text {
+  min-width: 0;
+  line-height: 1.38;
+}
+
+.notification-item.is-unread .notification-text {
+  font-weight: 520;
+}
+
+.notification-text a {
+  color: var(--wa-color-brand-fill-loud);
+}
+
+.notification-dot {
+  flex: 0 0 auto;
+  font-size: 0.55rem;
+  color: var(--wa-color-fill-success);
+  margin-top: 0.33rem;
+}
+
+.notification-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wa-space-xs);
+  color: var(--wa-color-text-quiet);
+}
+
+.notification-message::part(base) {
+  width: 100%;
+}
+
+.notification-actions {
+  margin-top: var(--wa-space-2xs);
+}
+
+.notifications-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wa-space-s);
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  wa-drawer#notifications-drawer {
+    --size: min(100vw, 34rem);
+    --spacing: var(--wa-space-m);
+  }
+
+  .notification-topline {
+    flex-wrap: wrap;
+  }
+
+  .notifications-footer {
+    flex-wrap: wrap;
+  }
+}

@@ -113,6 +113,112 @@ describe('HttpDwnRpcClient', () => {
       expect(readResponse.entry?.recordsWrite?.recordId).toBe(writeMessage.recordId);
     });
 
+    it('should buffer ReadableStream to Blob in Bun (no duplex)', async () => {
+      // In Bun, ReadableStream bodies are buffered to a Blob because Bun's
+      // fetch can fail on stream uploads. The Blob path does not need `duplex`.
+      const streamBytes = new TextEncoder().encode('streamed-payload');
+      const dataStream = new ReadableStream<Uint8Array>({
+        start(controller): void {
+          controller.enqueue(streamBytes);
+          controller.close();
+        },
+      });
+
+      const jsonRpcResponse = {
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { reply: { status: { code: 202, detail: 'Accepted' } } },
+      };
+
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves({
+        status  : 200,
+        headers : new Headers(),
+        text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
+      } as any);
+
+      const { message: writeMessage } = await TestDataGenerator.generateRecordsWrite({
+        author : alice,
+        schema : 'foo/bar',
+      });
+
+      await client.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message   : writeMessage,
+        data      : dataStream,
+      });
+
+      expect(fetchStub.calledOnce).toBe(true);
+
+      const fetchCallArgs = fetchStub.firstCall.args;
+      const fetchOpts = fetchCallArgs[1] as Record<string, unknown>;
+
+      // In Bun, body should have been buffered to a Blob.
+      expect(fetchOpts.body instanceof ReadableStream).toBe(false);
+      expect(fetchOpts.body instanceof Blob).toBe(true);
+
+      // `duplex` must NOT be set since the body is a Blob, not a stream.
+      expect(fetchOpts.duplex).toBeUndefined();
+
+      // Verify the Blob contains the original stream bytes.
+      const sentBlob = fetchOpts.body as Blob;
+      const sentBytes = new Uint8Array(await sentBlob.arrayBuffer());
+      expect(sentBytes).toEqual(streamBytes);
+    });
+
+    it('should set duplex half on ReadableStream body in non-Bun environments', async () => {
+      // Browsers require `duplex: 'half'` when a fetch body is a ReadableStream.
+      // Simulate a non-Bun (browser) environment by stubbing isBunRuntime.
+      const bunStub = sinon.stub(HttpDwnRpcClient, 'isBunRuntime').returns(false);
+
+      try {
+        const streamBytes = new TextEncoder().encode('browser-payload');
+        const dataStream = new ReadableStream<Uint8Array>({
+          start(controller): void {
+            controller.enqueue(streamBytes);
+            controller.close();
+          },
+        });
+
+        const jsonRpcResponse = {
+          id      : 'test',
+          jsonrpc : '2.0',
+          result  : { reply: { status: { code: 202, detail: 'Accepted' } } },
+        };
+
+        const fetchStub = sinon.stub(globalThis, 'fetch').resolves({
+          status  : 200,
+          headers : new Headers(),
+          text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
+        } as any);
+
+        const { message: writeMessage } = await TestDataGenerator.generateRecordsWrite({
+          author : alice,
+          schema : 'foo/bar',
+        });
+
+        await client.sendDwnRequest({
+          dwnUrl    : testDwnUrl,
+          targetDid : alice.did,
+          message   : writeMessage,
+          data      : dataStream,
+        });
+
+        expect(fetchStub.calledOnce).toBe(true);
+
+        const fetchCallArgs = fetchStub.firstCall.args;
+        const fetchOpts = fetchCallArgs[1] as Record<string, unknown>;
+
+        // In browsers, body stays as a ReadableStream.
+        expect(fetchOpts.body instanceof ReadableStream).toBe(true);
+
+        // `duplex: 'half'` must be set for streaming request bodies.
+        expect(fetchOpts.duplex).toBe('half');
+      } finally {
+        bunStub.restore();
+      }
+    });
+
     it('sends RecordsRead and populates reply.entry.data when dwn-response header is present', async () => {
       // Simulate a server response where the JSON-RPC envelope is in the
       // dwn-response header and the body is raw data (reply.entry branch).
