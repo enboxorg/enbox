@@ -39,8 +39,9 @@ COPY packages/browser/package.json           packages/browser/
 COPY packages/electrobun-dwn/package.json    packages/electrobun-dwn/
 COPY packages/protocols/package.json         packages/protocols/
 COPY packages/protocol-codegen/package.json  packages/protocol-codegen/
+COPY apps/docs/package.json                  apps/docs/
 
-RUN bun install --frozen-lockfile
+RUN bun install --frozen-lockfile --ignore-scripts
 
 # ---------------------------------------------------------------------------
 # Stage 2: build — compile only the packages dwn-server needs
