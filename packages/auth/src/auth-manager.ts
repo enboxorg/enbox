@@ -15,7 +15,9 @@ import type {
   AuthEventHandler,
   AuthManagerOptions,
   AuthState,
+  ConnectOptions,
   DisconnectOptions,
+  DWebConnectOptions,
   HeadlessConnectOptions,
   IdentityInfo,
   ImportFromPhraseOptions,
@@ -27,6 +29,7 @@ import type {
   StorageAdapter,
   SyncOption,
   WalletConnectOptions,
+  WalletOption,
 } from './types.js';
 
 import { EnboxUserAgent } from '@enbox/agent';
@@ -35,6 +38,7 @@ import { AuthEventEmitter } from './events.js';
 import { AuthSession } from './identity-session.js';
 import { createDefaultStorage } from './storage/storage.js';
 import { discoverLocalDwn } from './discovery.js';
+import { dwebConnect } from './connect/dweb.js';
 import { localConnect } from './connect/local.js';
 import { restoreSession } from './connect/restore.js';
 import { STORAGE_KEYS } from './types.js';
@@ -90,6 +94,7 @@ export class AuthManager {
   private _defaultSync?: SyncOption;
   private _defaultDwnEndpoints?: string[];
   private _registration?: RegistrationOptions;
+  private _wallets?: WalletOption[];
 
   /**
    * The local DWN server endpoint discovered during `create()`, if any.
@@ -109,6 +114,7 @@ export class AuthManager {
     defaultDwnEndpoints?: string[];
     registration?: RegistrationOptions;
     localDwnEndpoint?: string;
+    wallets?: WalletOption[];
   }) {
     this._userAgent = params.userAgent;
     this._emitter = params.emitter;
@@ -119,6 +125,7 @@ export class AuthManager {
     this._defaultDwnEndpoints = params.defaultDwnEndpoints;
     this._registration = params.registration;
     this._localDwnEndpoint = params.localDwnEndpoint;
+    this._wallets = params.wallets;
   }
 
   /**
@@ -168,6 +175,7 @@ export class AuthManager {
       defaultDwnEndpoints : options.dwnEndpoints,
       registration        : options.registration,
       localDwnEndpoint,
+      wallets             : options.wallets,
     });
 
     // Determine initial state.
@@ -183,23 +191,68 @@ export class AuthManager {
   // ─── Connection flows ──────────────────────────────────────────
 
   /**
-   * Create or reconnect a local identity.
+   * Connect to a wallet or create a local session.
    *
-   * On first use, this creates a new vault and agent DID. By default,
-   * **no user identity is created** — the session uses the agent DID.
-   * Pass `{ createIdentity: true }` to also create a default identity
-   * during vault setup (useful when vault init and identity creation
-   * are combined into a single step, e.g. Electrobun's create wizard).
+   * This is the primary entry point for dapps. It auto-detects the
+   * appropriate flow based on the options and environment:
    *
-   * On subsequent uses, it unlocks the vault and reconnects to the
-   * existing identity (or agent DID if no identities exist).
+   * **DWeb Connect (browser dapps):** Opens a wallet popup for user
+   * approval. Triggered when `protocols` or `walletUrl` is provided,
+   * or when called with no options in a browser environment.
    *
-   * @param options - Optional overrides for password, sync, DWN endpoints,
-   *   and identity creation behaviour.
+   * **Local connect (wallets / CLI):** Creates or unlocks a local vault.
+   * Triggered when `password`, `createIdentity`, or `recoveryPhrase`
+   * is provided, or when called in a non-browser environment.
+   *
+   * In both cases, `connect()` first attempts to restore a previous
+   * session. If a valid session exists, it is returned immediately
+   * without any user interaction.
+   *
+   * @example Dapp (browser)
+   * ```ts
+   * const session = await auth.connect({
+   *   protocols: [NotesProtocol],
+   * });
+   * ```
+   *
+   * @example Wallet / CLI
+   * ```ts
+   * const session = await auth.connect({
+   *   password: userPin,
+   *   createIdentity: true,
+   * });
+   * ```
+   *
+   * @param options - Connection options. The shape determines the flow.
    * @returns An active AuthSession.
    * @throws If a connection attempt is already in progress.
    */
-  async connect(options?: LocalConnectOptions): Promise<AuthSession> {
+  async connect(options?: ConnectOptions): Promise<AuthSession> {
+    return this._withConnect(async () => {
+      // 1. Try to restore a previous session first.
+      const restored = await restoreSession(this._flowContext());
+      if (restored) {return restored;}
+
+      // 2. Route to the appropriate flow.
+      if (this._isLocalConnect(options)) {
+        return localConnect(this._flowContext(), options as LocalConnectOptions);
+      }
+
+      return dwebConnect(this._flowContext(), options as DWebConnectOptions);
+    });
+  }
+
+  /**
+   * Create or reconnect a local identity (explicit local connect).
+   *
+   * Use this when you explicitly want the local vault flow, bypassing
+   * auto-detection. This is the preferred method for wallet apps.
+   *
+   * @param options - Local connect options.
+   * @returns An active AuthSession.
+   * @throws If a connection attempt is already in progress.
+   */
+  async connectLocal(options?: LocalConnectOptions): Promise<AuthSession> {
     return this._withConnect(() => localConnect(this._flowContext(), options));
   }
 
@@ -699,6 +752,38 @@ export class AuthManager {
   // ─── Private helpers ───────────────────────────────────────────
 
   /**
+   * Determine whether the given options indicate a local connect flow.
+   *
+   * Local connect is indicated by the presence of `password`,
+   * `createIdentity`, or `recoveryPhrase` — signals that the caller
+   * is managing its own vault/identity lifecycle. In non-browser
+   * environments, local connect is the fallback.
+   */
+  private _isLocalConnect(options?: ConnectOptions): boolean {
+    const o = (options ?? {}) as Record<string, unknown>;
+
+    // If any local-connect-specific keys are present, it's definitely local.
+    const hasLocalSignals = (
+      o.password !== undefined ||
+      o.createIdentity !== undefined ||
+      o.recoveryPhrase !== undefined ||
+      o.dwnEndpoints !== undefined ||
+      o.metadata !== undefined
+    );
+    if (hasLocalSignals) {return true;}
+
+    // If any DWeb Connect signals are present, it's definitely DWeb Connect.
+    const hasDwebSignals = (
+      o.protocols !== undefined ||
+      o.walletUrl !== undefined
+    );
+    if (hasDwebSignals) {return false;}
+
+    // No explicit signals: browser → DWeb Connect, non-browser → local.
+    return typeof globalThis.window === 'undefined';
+  }
+
+  /**
    * Build a `FlowContext` from the manager's current state.
    *
    * Replaces the 5 manual inline context constructions that were
@@ -715,6 +800,7 @@ export class AuthManager {
       defaultSync         : this._defaultSync,
       defaultDwnEndpoints : this._defaultDwnEndpoints,
       registration        : this._registration,
+      wallets             : this._wallets,
     };
   }
 

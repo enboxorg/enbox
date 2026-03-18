@@ -47,10 +47,12 @@ export type { PasswordContext } from './password-provider.js';
 // without a direct @enbox/agent dependency.
 export { EnboxUserAgent, HdIdentityVault } from '@enbox/agent';
 
-// Wallet-connect helpers
+// Connect helpers
 export { processConnectedGrants } from './connect/wallet.js';
+export { DWebConnect } from './dweb-connect-client.js';
 export { WalletConnect } from './wallet-connect-client.js';
-export type { Permission, ProtocolPermissionOptions, WalletConnectClientOptions } from './wallet-connect-client.js';
+export type { DWebConnectClientOptions, DWebConnectResult } from './dweb-connect-client.js';
+export type { ProtocolPermissionOptions, WalletConnectClientOptions } from './wallet-connect-client.js';
 
 // Registration token storage helpers
 export { loadTokensFromStorage, saveTokensToStorage } from './registration.js';
@@ -77,7 +79,9 @@ export type {
   AuthManagerOptions,
   AuthSessionInfo,
   AuthState,
+  ConnectOptions,
   ConnectPermissionRequest,
+  DWebConnectOptions,
   DisconnectOptions,
   HeadlessConnectOptions,
   IdentityInfo,
@@ -86,7 +90,9 @@ export type {
   ImportFromPortableOptions,
   LocalConnectOptions,
   LocalDwnStrategy,
+  Permission,
   PortableIdentity,
+  ProtocolRequest,
   ProviderAuthParams,
   ProviderAuthResult,
   RegistrationOptions,
@@ -96,4 +102,5 @@ export type {
   StorageAdapter,
   SyncOption,
   WalletConnectOptions,
+  WalletOption,
 } from './types.js';

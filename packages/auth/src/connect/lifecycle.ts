@@ -18,7 +18,7 @@ import type { BearerIdentity, EnboxUserAgent } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
-import type { IdentityInfo, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
+import type { IdentityInfo, RegistrationOptions, StorageAdapter, SyncOption, WalletOption } from '../types.js';
 
 import { AuthSession } from '../identity-session.js';
 import { DEFAULT_DWN_ENDPOINTS, INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../types.js';
@@ -44,6 +44,7 @@ export interface FlowContext {
   defaultSync?: SyncOption;
   defaultDwnEndpoints?: string[];
   registration?: RegistrationOptions;
+  wallets?: WalletOption[];
 }
 
 // ─── resolvePassword ─────────────────────────────────────────────

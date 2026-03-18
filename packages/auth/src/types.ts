@@ -3,7 +3,7 @@
  * Public types for the authentication and identity management SDK.
  */
 
-import type { ConnectPermissionRequest, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
+import type { ConnectPermissionRequest, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
 import type { PasswordProvider } from './password-provider.js';
 
@@ -210,6 +210,25 @@ export interface RegistrationOptions {
   persistTokens?: boolean;
 }
 
+// ─── Wallet Selector ────────────────────────────────────────────
+
+/** A wallet entry shown in the wallet selector modal. */
+export interface WalletOption {
+  /** Display name (e.g. "Enbox Wallet"). */
+  name: string;
+
+  /** Base URL of the wallet app (e.g. "https://wallet.enbox.org"). */
+  url: string;
+
+  /** Optional icon URL. If omitted, the wallet's favicon is used. */
+  icon?: string;
+}
+
+/** Default wallets shown in the selector when no overrides are provided. */
+export const DEFAULT_WALLETS: WalletOption[] = [
+  { name: 'Enbox Wallet', url: 'https://wallet.enbox.org' },
+];
+
 /** Options for {@link AuthManager.create}. */
 export interface AuthManagerOptions {
   /**
@@ -298,6 +317,24 @@ export interface AuthManagerOptions {
 
   /** DWN registration configuration. */
   registration?: RegistrationOptions;
+
+  /**
+   * Known wallets shown in the wallet selector modal during DWeb Connect.
+   *
+   * When `connect()` is called without a `walletUrl`, a modal is displayed
+   * allowing the user to pick a wallet. This list controls which wallets
+   * appear. If omitted, {@link DEFAULT_WALLETS} is used.
+   *
+   * @example
+   * ```ts
+   * const auth = await AuthManager.create({
+   *   wallets: [
+   *     { name: 'My Wallet', url: 'https://my-wallet.example.com' },
+   *   ],
+   * });
+   * ```
+   */
+  wallets?: WalletOption[];
 }
 
 /** Options for {@link AuthManager.connect}. */
@@ -335,6 +372,80 @@ export interface LocalConnectOptions {
    */
   createIdentity?: boolean;
 }
+
+// ─── DWeb Connect ────────────────────────────────────────────────
+
+/**
+ * A protocol permission request in simplified form.
+ *
+ * Dapp developers can pass just a protocol definition (default permissions:
+ * `['read', 'write', 'query', 'subscribe']`), or an object with explicit
+ * permissions.
+ */
+export type ProtocolRequest =
+  | DwnProtocolDefinition
+  | { definition: DwnProtocolDefinition; permissions: Permission[] };
+
+/** Shorthand permission names for DWN protocol scopes. */
+export type Permission = 'write' | 'read' | 'delete' | 'query' | 'subscribe' | 'configure';
+
+/** Default permissions granted when only a protocol definition is provided. */
+export const DEFAULT_PERMISSIONS: Permission[] = ['read', 'write', 'query', 'subscribe'];
+
+/** Options for the DWeb Connect (popup/postMessage) flow. */
+export interface DWebConnectOptions {
+  /** Wallet URL to connect to. If omitted, shows the wallet selector modal. */
+  walletUrl?: string;
+
+  /**
+   * Protocols to request access to.
+   *
+   * Each entry can be either a protocol definition (uses default permissions)
+   * or an object with `{ definition, permissions }` for explicit control.
+   *
+   * @example
+   * ```ts
+   * // Default permissions (read, write, query, subscribe)
+   * protocols: [NotesProtocol]
+   *
+   * // Explicit permissions
+   * protocols: [
+   *   { definition: NotesProtocol, permissions: ['read', 'write'] },
+   *   { definition: PhotosProtocol, permissions: ['read'] },
+   * ]
+   * ```
+   */
+  protocols?: ProtocolRequest[];
+
+  /** Override manager default sync interval. */
+  sync?: SyncOption;
+
+  /**
+   * Timeout in milliseconds for the wallet popup flow.
+   * The popup is closed and an error thrown if the user doesn't respond
+   * within this time. Default: 5 minutes (300_000).
+   */
+  timeout?: number;
+}
+
+/**
+ * Unified options for {@link AuthManager.connect}.
+ *
+ * `connect()` auto-detects the appropriate flow:
+ *
+ * - **DWeb Connect** (browser dapps): triggered when `protocols` or
+ *   `walletUrl` is provided, or when called with no options in a browser.
+ *   Opens a wallet popup for user approval.
+ *
+ * - **Local connect** (wallets / CLI): triggered when `password`,
+ *   `createIdentity`, or `recoveryPhrase` is provided, or when called
+ *   in a non-browser environment.
+ *
+ * In both cases, `connect()` first attempts to restore a previous session
+ * from storage. If a valid session exists, it is returned immediately
+ * without any user interaction.
+ */
+export type ConnectOptions = DWebConnectOptions | LocalConnectOptions;
 
 /** Options for {@link AuthManager.walletConnect}. */
 export interface WalletConnectOptions {
