@@ -197,8 +197,10 @@ async function initClient({
 /**
  * Creates a set of Dwn Permission Scopes to request for a given protocol.
  *
- * If no permissions are provided, the default is to request all relevant record permissions (write, read, delete, query, subscribe).
- * 'configure' is not included by default, as this gives the application a lot of control over the protocol.
+ * If no permissions are provided, the default permissions from
+ * {@link DEFAULT_PERMISSIONS} are used (read, write, query, subscribe, configure).
+ * The 'configure' permission is included because dapps using the TypedEnbox API
+ * need it to auto-install the protocol on their local DWN via _autoConfigureOnce().
  */
 function createPermissionRequestForProtocol({ definition, permissions }: ProtocolPermissionOptions): ConnectPermissionRequest {
   const requests: DwnPermissionScope[] = [];
