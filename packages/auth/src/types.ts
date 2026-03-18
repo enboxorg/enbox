@@ -316,6 +316,24 @@ export interface LocalConnectOptions {
 
   /** Identity metadata. */
   metadata?: { name?: string };
+
+  /**
+   * Whether to create a default identity if none exist.
+   *
+   * - `false` (default) — Skip automatic identity creation. The session is
+   *   returned with the **agent DID** as the connected DID and no identity
+   *   metadata. Use this when the app manages identity creation separately
+   *   (e.g. a web wallet with an explicit "Create Identity" flow after
+   *   vault setup).
+   *
+   * - `true` — If no identities exist after vault initialisation, a new
+   *   `did:dht` identity is created automatically. Use this when vault
+   *   setup and identity creation are combined into a single step (e.g.
+   *   Electrobun's create wizard).
+   *
+   * @default false
+   */
+  createIdentity?: boolean;
 }
 
 /** Options for {@link AuthManager.walletConnect}. */
