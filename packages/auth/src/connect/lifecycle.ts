@@ -19,7 +19,7 @@ import type { BearerIdentity, DwnDataEncodedRecordsWriteMessage, DwnMessagesPerm
 
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
-import type { IdentityInfo, RegistrationOptions, StorageAdapter, SyncOption, WalletOption } from '../types.js';
+import type { IdentityInfo, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
 
 import { Convert } from '@enbox/common';
 import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
@@ -48,7 +48,6 @@ export interface FlowContext {
   defaultSync?: SyncOption;
   defaultDwnEndpoints?: string[];
   registration?: RegistrationOptions;
-  wallets?: WalletOption[];
 }
 
 // ─── resolvePassword ─────────────────────────────────────────────

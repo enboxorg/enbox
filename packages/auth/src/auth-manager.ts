@@ -15,9 +15,10 @@ import type {
   AuthEventHandler,
   AuthManagerOptions,
   AuthState,
+  ConnectHandler,
   ConnectOptions,
   DisconnectOptions,
-  DWebConnectOptions,
+  HandlerConnectOptions,
   HeadlessConnectOptions,
   IdentityInfo,
   ImportFromPhraseOptions,
@@ -29,7 +30,6 @@ import type {
   StorageAdapter,
   SyncOption,
   WalletConnectOptions,
-  WalletOption,
 } from './types.js';
 
 import { EnboxUserAgent } from '@enbox/agent';
@@ -38,12 +38,12 @@ import { AuthEventEmitter } from './events.js';
 import { AuthSession } from './identity-session.js';
 import { createDefaultStorage } from './storage/storage.js';
 import { discoverLocalDwn } from './discovery.js';
-import { dwebConnect } from './connect/dweb.js';
 import { localConnect } from './connect/local.js';
+import { normalizeProtocolRequests } from './permissions.js';
 import { restoreSession } from './connect/restore.js';
 import { STORAGE_KEYS } from './types.js';
 import { walletConnect } from './connect/wallet.js';
-import { ensureVaultReady, resolveIdentityDids, startSyncIfEnabled } from './connect/lifecycle.js';
+import { ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './connect/lifecycle.js';
 import { importFromPhrase, importFromPortable } from './connect/import.js';
 
 /**
@@ -94,7 +94,7 @@ export class AuthManager {
   private _defaultSync?: SyncOption;
   private _defaultDwnEndpoints?: string[];
   private _registration?: RegistrationOptions;
-  private _wallets?: WalletOption[];
+  private _connectHandler?: ConnectHandler;
 
   /**
    * The local DWN server endpoint discovered during `create()`, if any.
@@ -114,7 +114,7 @@ export class AuthManager {
     defaultDwnEndpoints?: string[];
     registration?: RegistrationOptions;
     localDwnEndpoint?: string;
-    wallets?: WalletOption[];
+    connectHandler?: ConnectHandler;
   }) {
     this._userAgent = params.userAgent;
     this._emitter = params.emitter;
@@ -125,7 +125,7 @@ export class AuthManager {
     this._defaultDwnEndpoints = params.defaultDwnEndpoints;
     this._registration = params.registration;
     this._localDwnEndpoint = params.localDwnEndpoint;
-    this._wallets = params.wallets;
+    this._connectHandler = params.connectHandler;
   }
 
   /**
@@ -175,7 +175,7 @@ export class AuthManager {
       defaultDwnEndpoints : options.dwnEndpoints,
       registration        : options.registration,
       localDwnEndpoint,
-      wallets             : options.wallets,
+      connectHandler      : options.connectHandler,
     });
 
     // Determine initial state.
@@ -193,16 +193,16 @@ export class AuthManager {
   /**
    * Connect to a wallet or create a local session.
    *
-   * This is the primary entry point for dapps. It auto-detects the
-   * appropriate flow based on the options and environment:
+   * This is the primary entry point for dapps. It routes to the
+   * appropriate flow based on the options:
    *
-   * **DWeb Connect (browser dapps):** Opens a wallet popup for user
-   * approval. Triggered when `protocols` or `walletUrl` is provided,
-   * or when called with no options in a browser environment.
+   * **Handler-based connect** (dapps): Delegates credential acquisition
+   * to a {@link ConnectHandler}. Triggered when `protocols` or
+   * `connectHandler` is provided.
    *
-   * **Local connect (wallets / CLI):** Creates or unlocks a local vault.
+   * **Local connect** (wallets / CLI): Creates or unlocks a local vault.
    * Triggered when `password`, `createIdentity`, or `recoveryPhrase`
-   * is provided, or when called in a non-browser environment.
+   * is provided.
    *
    * In both cases, `connect()` first attempts to restore a previous
    * session. If a valid session exists, it is returned immediately
@@ -210,6 +210,11 @@ export class AuthManager {
    *
    * @example Dapp (browser)
    * ```ts
+   * import { BrowserConnectHandler } from '@enbox/browser';
+   *
+   * const auth = await AuthManager.create({
+   *   connectHandler: BrowserConnectHandler(),
+   * });
    * const session = await auth.connect({
    *   protocols: [NotesProtocol],
    * });
@@ -226,19 +231,20 @@ export class AuthManager {
    * @param options - Connection options. The shape determines the flow.
    * @returns An active AuthSession.
    * @throws If a connection attempt is already in progress.
+   * @throws If handler-based connect is attempted without a handler.
    */
   async connect(options?: ConnectOptions): Promise<AuthSession> {
     return this._withConnect(async () => {
       // 1. Try to restore a previous session first.
       const restored = await restoreSession(this._flowContext());
-      if (restored) {return restored;}
+      if (restored) { return restored; }
 
       // 2. Route to the appropriate flow.
       if (this._isLocalConnect(options)) {
         return localConnect(this._flowContext(), options as LocalConnectOptions);
       }
 
-      return dwebConnect(this._flowContext(), options as DWebConnectOptions);
+      return this._handlerConnect(options as HandlerConnectOptions | undefined);
     });
   }
 
@@ -770,17 +776,80 @@ export class AuthManager {
       o.dwnEndpoints !== undefined ||
       o.metadata !== undefined
     );
-    if (hasLocalSignals) {return true;}
+    if (hasLocalSignals) { return true; }
 
-    // If any DWeb Connect signals are present, it's definitely DWeb Connect.
-    const hasDwebSignals = (
+    // If any handler-connect signals are present, use the handler flow.
+    const hasHandlerSignals = (
       o.protocols !== undefined ||
-      o.walletUrl !== undefined
+      o.connectHandler !== undefined
     );
-    if (hasDwebSignals) {return false;}
+    if (hasHandlerSignals) { return false; }
 
-    // No explicit signals: browser → DWeb Connect, non-browser → local.
-    return typeof globalThis.window === 'undefined';
+    // No explicit signals → default to local connect.
+    // Callers that want handler-based connect must provide protocols
+    // or a connectHandler.
+    return true;
+  }
+
+  /**
+   * Run a handler-based (delegated) connect flow.
+   *
+   * 1. Initialize the vault (agent-only, no identity).
+   * 2. Normalize protocol permission requests.
+   * 3. Delegate to the connect handler for credential acquisition.
+   * 4. Import the delegate DID, process grants, set up sync.
+   * 5. Finalize and return the AuthSession.
+   */
+  private async _handlerConnect(
+    options?: HandlerConnectOptions,
+  ): Promise<AuthSession> {
+    const ctx = this._flowContext();
+    const { userAgent, emitter, storage } = ctx;
+    const sync = options?.sync ?? ctx.defaultSync;
+
+    if (sync === 'off') {
+      throw new Error(
+        '[@enbox/auth] Sync must be enabled for delegated connect. ' +
+        'Remove sync: "off" or set an interval like "15s".'
+      );
+    }
+
+    // 1. Initialize vault (agent-only, no identity).
+    const isFirstLaunch = await userAgent.firstLaunch();
+    const password = await resolvePassword(ctx, undefined, isFirstLaunch);
+    await ensureVaultReady({ userAgent, emitter, password, isFirstLaunch });
+
+    // 2. Normalize protocol requests.
+    const permissionRequests = normalizeProtocolRequests(options?.protocols);
+
+    // 3. Resolve the handler.
+    const handler = options?.connectHandler ?? this._connectHandler;
+    if (!handler) {
+      throw new Error(
+        '[@enbox/auth] No connect handler provided. ' +
+        'Install @enbox/browser and pass BrowserConnectHandler(), ' +
+        'or provide a custom ConnectHandler.'
+      );
+    }
+
+    // 4. Delegate to the handler.
+    const result = await handler.requestAccess({ permissionRequests });
+    if (!result) {
+      throw new Error('[@enbox/auth] Connect was denied or cancelled by the user.');
+    }
+
+    // 5. Import delegate DID, process grants, set up sync.
+    const { delegatePortableDid, connectedDid, delegateGrants } = result;
+    const identity = await importDelegateAndSetupSync({
+      userAgent, delegatePortableDid, connectedDid, delegateGrants,
+      flowName: 'Connect',
+    });
+
+    // 6. Finalize session.
+    return finalizeDelegateSession({
+      userAgent, emitter, storage, identity,
+      connectedDid, delegateDid: delegatePortableDid.uri, sync,
+    });
   }
 
   /**
@@ -800,7 +869,6 @@ export class AuthManager {
       defaultSync         : this._defaultSync,
       defaultDwnEndpoints : this._defaultDwnEndpoints,
       registration        : this._registration,
-      wallets             : this._wallets,
     };
   }
 

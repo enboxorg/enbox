@@ -7,7 +7,7 @@
  * @module
  */
 
-import type { WalletOption } from '../types.js';
+import type { WalletOption } from '../browser-connect-handler.js';
 
 /** Shows the wallet selector modal and resolves with the chosen wallet URL. */
 export function showWalletSelector(wallets: WalletOption[]): Promise<string> {

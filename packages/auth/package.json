@@ -13,7 +13,7 @@
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "test:node": "bun test --timeout 10000 .spec.ts",
-    "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .spec.ts; node scripts/strip-browser-coverage.js"
+    "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .spec.ts"
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/auth#readme",
   "bugs": "https://github.com/enboxorg/enbox/issues",

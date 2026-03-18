@@ -3,7 +3,8 @@
  * Public types for the authentication and identity management SDK.
  */
 
-import type { ConnectPermissionRequest, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
+import type { PortableDid } from '@enbox/dids';
+import type { ConnectPermissionRequest, DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
 import type { PasswordProvider } from './password-provider.js';
 
@@ -210,24 +211,54 @@ export interface RegistrationOptions {
   persistTokens?: boolean;
 }
 
-// ─── Wallet Selector ────────────────────────────────────────────
+// ─── Connect Handler ─────────────────────────────────────────────
 
-/** A wallet entry shown in the wallet selector modal. */
-export interface WalletOption {
-  /** Display name (e.g. "Enbox Wallet"). */
-  name: string;
+/**
+ * Result of a successful connect handler invocation.
+ *
+ * Contains the delegated credentials returned by the wallet.
+ * All connect handlers (browser popup, relay, CLI, etc.) must
+ * return this shape on success.
+ */
+export interface ConnectResult {
+  /** The portable delegate DID (includes private keys). */
+  delegatePortableDid: PortableDid;
 
-  /** Base URL of the wallet app (e.g. "https://wallet.enbox.org"). */
-  url: string;
+  /** Permission grants for the requested protocols. */
+  delegateGrants: DwnDataEncodedRecordsWriteMessage[];
 
-  /** Optional icon URL. If omitted, the wallet's favicon is used. */
-  icon?: string;
+  /** The DID of the identity the user approved (the wallet owner's DID). */
+  connectedDid: string;
 }
 
-/** Default wallets shown in the selector when no overrides are provided. */
-export const DEFAULT_WALLETS: WalletOption[] = [
-  { name: 'Enbox Wallet', url: 'https://wallet.enbox.org' },
-];
+/**
+ * A connect handler obtains delegated credentials from a wallet.
+ *
+ * Different environments provide different implementations:
+ * - **Browser**: popup + postMessage (`BrowserConnectHandler` from `@enbox/browser`)
+ * - **Relay**: QR/PIN relay flow (`WalletConnect.initClient` from `@enbox/auth`)
+ * - **CLI**: terminal QR/URL + polling (custom handler)
+ * - **Desktop**: native window management (custom handler)
+ *
+ * @example
+ * ```ts
+ * import { BrowserConnectHandler } from '@enbox/browser';
+ * const auth = await AuthManager.create({
+ *   connectHandler: BrowserConnectHandler(),
+ * });
+ * ```
+ */
+export interface ConnectHandler {
+  /**
+   * Obtain delegated credentials from a wallet.
+   *
+   * @param params.permissionRequests - Agent-level permission requests.
+   * @returns The delegate credentials, or `undefined` if the user denied.
+   */
+  requestAccess(params: {
+    permissionRequests: ConnectPermissionRequest[];
+  }): Promise<ConnectResult | undefined>;
+}
 
 /** Options for {@link AuthManager.create}. */
 export interface AuthManagerOptions {
@@ -319,22 +350,24 @@ export interface AuthManagerOptions {
   registration?: RegistrationOptions;
 
   /**
-   * Known wallets shown in the wallet selector modal during DWeb Connect.
+   * Default connect handler for delegated connect flows.
    *
-   * When `connect()` is called without a `walletUrl`, a modal is displayed
-   * allowing the user to pick a wallet. This list controls which wallets
-   * appear. If omitted, {@link DEFAULT_WALLETS} is used.
+   * Used by `connect()` when the caller provides `protocols` (or other
+   * non-local-connect options) but does not pass a per-call handler.
    *
    * @example
    * ```ts
+   * import { BrowserConnectHandler } from '@enbox/browser';
+   *
    * const auth = await AuthManager.create({
-   *   wallets: [
-   *     { name: 'My Wallet', url: 'https://my-wallet.example.com' },
-   *   ],
+   *   connectHandler: BrowserConnectHandler(),
    * });
+   *
+   * // Later — uses the default handler automatically
+   * const session = await auth.connect({ protocols: [NotesProtocol] });
    * ```
    */
-  wallets?: WalletOption[];
+  connectHandler?: ConnectHandler;
 }
 
 /** Options for {@link AuthManager.connect}. */
@@ -392,11 +425,14 @@ export type Permission = 'write' | 'read' | 'delete' | 'query' | 'subscribe' | '
 /** Default permissions granted when only a protocol definition is provided. */
 export const DEFAULT_PERMISSIONS: Permission[] = ['read', 'write', 'query', 'subscribe'];
 
-/** Options for the DWeb Connect (popup/postMessage) flow. */
-export interface DWebConnectOptions {
-  /** Wallet URL to connect to. If omitted, shows the wallet selector modal. */
-  walletUrl?: string;
-
+/**
+ * Options for a handler-based (delegated) connect flow.
+ *
+ * Used when `connect()` delegates credential acquisition to a
+ * {@link ConnectHandler}. The handler is responsible for the
+ * environment-specific transport (popup, relay, CLI, etc.).
+ */
+export interface HandlerConnectOptions {
   /**
    * Protocols to request access to.
    *
@@ -417,35 +453,33 @@ export interface DWebConnectOptions {
    */
   protocols?: ProtocolRequest[];
 
+  /**
+   * Connect handler for this call. Overrides the default handler set
+   * on `AuthManager.create()`.
+   */
+  connectHandler?: ConnectHandler;
+
   /** Override manager default sync interval. */
   sync?: SyncOption;
-
-  /**
-   * Timeout in milliseconds for the wallet popup flow.
-   * The popup is closed and an error thrown if the user doesn't respond
-   * within this time. Default: 5 minutes (300_000).
-   */
-  timeout?: number;
 }
 
 /**
  * Unified options for {@link AuthManager.connect}.
  *
- * `connect()` auto-detects the appropriate flow:
+ * `connect()` routes to the appropriate flow based on the options:
  *
- * - **DWeb Connect** (browser dapps): triggered when `protocols` or
- *   `walletUrl` is provided, or when called with no options in a browser.
- *   Opens a wallet popup for user approval.
+ * - **Handler-based connect** (dapps): triggered when `protocols` or
+ *   `connectHandler` is provided. Delegates to the connect handler
+ *   for credential acquisition.
  *
  * - **Local connect** (wallets / CLI): triggered when `password`,
- *   `createIdentity`, or `recoveryPhrase` is provided, or when called
- *   in a non-browser environment.
+ *   `createIdentity`, or `recoveryPhrase` is provided.
  *
  * In both cases, `connect()` first attempts to restore a previous session
  * from storage. If a valid session exists, it is returned immediately
  * without any user interaction.
  */
-export type ConnectOptions = DWebConnectOptions | LocalConnectOptions;
+export type ConnectOptions = HandlerConnectOptions | LocalConnectOptions;
 
 /** Options for {@link AuthManager.walletConnect}. */
 export interface WalletConnectOptions {

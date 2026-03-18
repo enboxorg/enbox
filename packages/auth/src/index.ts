@@ -5,30 +5,23 @@
  * in both browser and CLI environments. Depends only on `@enbox/agent`
  * and can be used standalone or consumed by `@enbox/api`.
  *
- * @example Standalone auth
+ * @example Standalone auth (wallet app)
  * ```ts
  * import { AuthManager } from '@enbox/auth';
  *
  * const auth = await AuthManager.create({ sync: '15s' });
- * const session = await auth.restoreSession() ?? await auth.connect();
- *
- * // session.agent — the authenticated Enbox agent
- * // session.did   — the connected DID URI
+ * const session = await auth.connectLocal({ password: userPin });
  * ```
  *
- * @example With @enbox/api
+ * @example Dapp with browser connect handler
  * ```ts
  * import { AuthManager } from '@enbox/auth';
- * import { Enbox } from '@enbox/api';
+ * import { BrowserConnectHandler } from '@enbox/browser';
  *
- * const auth = await AuthManager.create({ sync: '15s' });
- * const session = await auth.connect();
- *
- * const enbox = Enbox.connect({
- *   agent: session.agent,
- *   connectedDid: session.did,
- *   delegateDid: session.delegateDid,
+ * const auth = await AuthManager.create({
+ *   connectHandler: BrowserConnectHandler(),
  * });
+ * const session = await auth.connect({ protocols: [NotesProtocol] });
  * ```
  *
  * @packageDocumentation
@@ -49,9 +42,8 @@ export { EnboxUserAgent, HdIdentityVault } from '@enbox/agent';
 
 // Connect helpers
 export { processConnectedGrants } from './connect/wallet.js';
-export { DWebConnect } from './dweb-connect-client.js';
+export { normalizeProtocolRequests } from './permissions.js';
 export { WalletConnect } from './wallet-connect-client.js';
-export type { DWebConnectClientOptions, DWebConnectResult } from './dweb-connect-client.js';
 export type { ProtocolPermissionOptions, WalletConnectClientOptions } from './wallet-connect-client.js';
 
 // Registration token storage helpers
@@ -79,10 +71,12 @@ export type {
   AuthManagerOptions,
   AuthSessionInfo,
   AuthState,
+  ConnectHandler,
   ConnectOptions,
   ConnectPermissionRequest,
-  DWebConnectOptions,
+  ConnectResult,
   DisconnectOptions,
+  HandlerConnectOptions,
   HeadlessConnectOptions,
   IdentityInfo,
   IdentityVaultBackup,
@@ -102,5 +96,4 @@ export type {
   StorageAdapter,
   SyncOption,
   WalletConnectOptions,
-  WalletOption,
 } from './types.js';

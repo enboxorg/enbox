@@ -8,6 +8,7 @@
  * @module
  */
 
+import type { ConnectResult } from '@enbox/auth';
 import type { PortableDid } from '@enbox/dids';
 import type { ConnectPermissionRequest, DwnDataEncodedRecordsWriteMessage } from '@enbox/agent';
 
@@ -33,18 +34,6 @@ export interface DWebConnectClientOptions {
   timeout?: number;
 }
 
-/** Result returned from a successful DWeb Connect flow. */
-export interface DWebConnectResult {
-  /** The portable delegate DID (includes private keys). */
-  delegatePortableDid: PortableDid;
-
-  /** Permission grants for the requested protocols. */
-  delegateGrants: DwnDataEncodedRecordsWriteMessage[];
-
-  /** The DID of the identity the user approved (the wallet owner's DID). */
-  connectedDid: string;
-}
-
 /**
  * Open a wallet popup and run the DWeb Connect postMessage flow.
  *
@@ -59,7 +48,7 @@ export interface DWebConnectResult {
  * @returns The delegate credentials, or `undefined` if the user denied.
  * @throws If the popup is blocked, times out, or the wallet returns an error.
  */
-async function initClient(options: DWebConnectClientOptions): Promise<DWebConnectResult | undefined> {
+async function initClient(options: DWebConnectClientOptions): Promise<ConnectResult | undefined> {
   const {
     walletUrl,
     did,
@@ -87,7 +76,7 @@ async function initClient(options: DWebConnectClientOptions): Promise<DWebConnec
     );
   }
 
-  return new Promise<DWebConnectResult | undefined>((resolve, reject) => {
+  return new Promise<ConnectResult | undefined>((resolve, reject) => {
     let settled = false;
 
     const cleanup = (): void => {

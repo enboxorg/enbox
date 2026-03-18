@@ -55,6 +55,8 @@
     "access": "public"
   },
   "dependencies": {
+    "@enbox/agent": "workspace:*",
+    "@enbox/auth": "workspace:*",
     "@enbox/dids": "workspace:*"
   },
   "devDependencies": {

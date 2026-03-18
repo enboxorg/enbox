@@ -3,29 +3,21 @@ import { describe, expect, test } from 'bun:test';
 import { AuthManager } from '../src/auth-manager.js';
 
 describe('connect() routing logic', () => {
-  // We test the private _isLocalConnect method indirectly via the AuthManager class.
-  // Since we can't easily mock the browser environment in bun:test, we test
-  // the routing heuristics by checking the type-level behavior.
-
   test('AuthManager exposes connect() and connectLocal()', () => {
-    // Verify the public API shape.
     expect(typeof AuthManager.prototype.connect).toBe('function');
     expect(typeof AuthManager.prototype.connectLocal).toBe('function');
   });
 
   test('connect() is a separate method from connectLocal()', () => {
-    // They should be different functions.
     expect(AuthManager.prototype.connect).not.toBe(AuthManager.prototype.connectLocal);
   });
 });
 
 describe('_isLocalConnect heuristic (tested via reflection)', () => {
-  // We access the private method via prototype to test the routing logic.
-  // This is intentionally testing internals for correctness.
   const isLocalConnect = (AuthManager.prototype as any)._isLocalConnect;
 
-  test('no options in non-browser → local connect', () => {
-    // In bun test runner, globalThis.window is undefined.
+  test('no options → defaults to local connect', () => {
+    // Without explicit handler signals, defaults to local.
     expect(isLocalConnect(undefined)).toBe(true);
     expect(isLocalConnect({})).toBe(true);
   });
@@ -50,17 +42,16 @@ describe('_isLocalConnect heuristic (tested via reflection)', () => {
     expect(isLocalConnect({ metadata: { name: 'Alice' } })).toBe(true);
   });
 
-  test('protocols option → NOT local connect (DWeb Connect)', () => {
-    // protocols is a DWeb Connect signal, not a local connect signal.
+  test('protocols option → handler connect', () => {
     expect(isLocalConnect({ protocols: [] })).toBe(false);
   });
 
-  test('walletUrl option → NOT local connect (DWeb Connect)', () => {
-    expect(isLocalConnect({ walletUrl: 'https://wallet.example.com' })).toBe(false);
+  test('connectHandler option → handler connect', () => {
+    const handler = { requestAccess: async (): Promise<undefined> => undefined };
+    expect(isLocalConnect({ connectHandler: handler })).toBe(false);
   });
 
-  test('sync-only option in non-browser → falls back to local connect', () => {
-    // sync is shared between flows. In non-browser (bun test), falls back to local.
+  test('sync-only option → defaults to local connect', () => {
     expect(isLocalConnect({ sync: '15s' })).toBe(true);
   });
 });
