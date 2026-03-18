@@ -130,6 +130,8 @@
       "name": "@enbox/browser",
       "version": "0.1.3",
       "dependencies": {
+        "@enbox/agent": "workspace:*",
+        "@enbox/auth": "workspace:*",
         "@enbox/dids": "workspace:*",
       },
       "devDependencies": {

@@ -3,7 +3,8 @@
  * Public types for the authentication and identity management SDK.
  */
 
-import type { ConnectPermissionRequest, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
+import type { PortableDid } from '@enbox/dids';
+import type { ConnectPermissionRequest, DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
 import type { PasswordProvider } from './password-provider.js';
 
@@ -210,6 +211,55 @@ export interface RegistrationOptions {
   persistTokens?: boolean;
 }
 
+// ─── Connect Handler ─────────────────────────────────────────────
+
+/**
+ * Result of a successful connect handler invocation.
+ *
+ * Contains the delegated credentials returned by the wallet.
+ * All connect handlers (browser popup, relay, CLI, etc.) must
+ * return this shape on success.
+ */
+export interface ConnectResult {
+  /** The portable delegate DID (includes private keys). */
+  delegatePortableDid: PortableDid;
+
+  /** Permission grants for the requested protocols. */
+  delegateGrants: DwnDataEncodedRecordsWriteMessage[];
+
+  /** The DID of the identity the user approved (the wallet owner's DID). */
+  connectedDid: string;
+}
+
+/**
+ * A connect handler obtains delegated credentials from a wallet.
+ *
+ * Different environments provide different implementations:
+ * - **Browser**: popup + postMessage (`BrowserConnectHandler` from `@enbox/browser`)
+ * - **Relay**: QR/PIN relay flow (`WalletConnect.initClient` from `@enbox/auth`)
+ * - **CLI**: terminal QR/URL + polling (custom handler)
+ * - **Desktop**: native window management (custom handler)
+ *
+ * @example
+ * ```ts
+ * import { BrowserConnectHandler } from '@enbox/browser';
+ * const auth = await AuthManager.create({
+ *   connectHandler: BrowserConnectHandler(),
+ * });
+ * ```
+ */
+export interface ConnectHandler {
+  /**
+   * Obtain delegated credentials from a wallet.
+   *
+   * @param params.permissionRequests - Agent-level permission requests.
+   * @returns The delegate credentials, or `undefined` if the user denied.
+   */
+  requestAccess(params: {
+    permissionRequests: ConnectPermissionRequest[];
+  }): Promise<ConnectResult | undefined>;
+}
+
 /** Options for {@link AuthManager.create}. */
 export interface AuthManagerOptions {
   /**
@@ -298,6 +348,26 @@ export interface AuthManagerOptions {
 
   /** DWN registration configuration. */
   registration?: RegistrationOptions;
+
+  /**
+   * Default connect handler for delegated connect flows.
+   *
+   * Used by `connect()` when the caller provides `protocols` (or other
+   * non-local-connect options) but does not pass a per-call handler.
+   *
+   * @example
+   * ```ts
+   * import { BrowserConnectHandler } from '@enbox/browser';
+   *
+   * const auth = await AuthManager.create({
+   *   connectHandler: BrowserConnectHandler(),
+   * });
+   *
+   * // Later — uses the default handler automatically
+   * const session = await auth.connect({ protocols: [NotesProtocol] });
+   * ```
+   */
+  connectHandler?: ConnectHandler;
 }
 
 /** Options for {@link AuthManager.connect}. */
@@ -335,6 +405,81 @@ export interface LocalConnectOptions {
    */
   createIdentity?: boolean;
 }
+
+// ─── DWeb Connect ────────────────────────────────────────────────
+
+/**
+ * A protocol permission request in simplified form.
+ *
+ * Dapp developers can pass just a protocol definition (default permissions:
+ * `['read', 'write', 'query', 'subscribe']`), or an object with explicit
+ * permissions.
+ */
+export type ProtocolRequest =
+  | DwnProtocolDefinition
+  | { definition: DwnProtocolDefinition; permissions: Permission[] };
+
+/** Shorthand permission names for DWN protocol scopes. */
+export type Permission = 'write' | 'read' | 'delete' | 'query' | 'subscribe' | 'configure';
+
+/** Default permissions granted when only a protocol definition is provided. */
+export const DEFAULT_PERMISSIONS: Permission[] = ['read', 'write', 'query', 'subscribe'];
+
+/**
+ * Options for a handler-based (delegated) connect flow.
+ *
+ * Used when `connect()` delegates credential acquisition to a
+ * {@link ConnectHandler}. The handler is responsible for the
+ * environment-specific transport (popup, relay, CLI, etc.).
+ */
+export interface HandlerConnectOptions {
+  /**
+   * Protocols to request access to.
+   *
+   * Each entry can be either a protocol definition (uses default permissions)
+   * or an object with `{ definition, permissions }` for explicit control.
+   *
+   * @example
+   * ```ts
+   * // Default permissions (read, write, query, subscribe)
+   * protocols: [NotesProtocol]
+   *
+   * // Explicit permissions
+   * protocols: [
+   *   { definition: NotesProtocol, permissions: ['read', 'write'] },
+   *   { definition: PhotosProtocol, permissions: ['read'] },
+   * ]
+   * ```
+   */
+  protocols?: ProtocolRequest[];
+
+  /**
+   * Connect handler for this call. Overrides the default handler set
+   * on `AuthManager.create()`.
+   */
+  connectHandler?: ConnectHandler;
+
+  /** Override manager default sync interval. */
+  sync?: SyncOption;
+}
+
+/**
+ * Unified options for {@link AuthManager.connect}.
+ *
+ * `connect()` routes to the appropriate flow based on the options:
+ *
+ * - **Handler-based connect** (dapps): triggered when `protocols` or
+ *   `connectHandler` is provided. Delegates to the connect handler
+ *   for credential acquisition.
+ *
+ * - **Local connect** (wallets / CLI): triggered when `password`,
+ *   `createIdentity`, or `recoveryPhrase` is provided.
+ *
+ * In both cases, `connect()` first attempts to restore a previous session
+ * from storage. If a valid session exists, it is returned immediately
+ * without any user interaction.
+ */
+export type ConnectOptions = HandlerConnectOptions | LocalConnectOptions;
 
 /** Options for {@link AuthManager.walletConnect}. */
 export interface WalletConnectOptions {

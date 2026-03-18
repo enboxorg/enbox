@@ -14,11 +14,15 @@
  * @internal
  */
 
-import type { BearerIdentity, EnboxUserAgent } from '@enbox/agent';
+import type { PortableDid } from '@enbox/dids';
+import type { BearerIdentity, DwnDataEncodedRecordsWriteMessage, DwnMessagesPermissionScope, DwnRecordsPermissionScope, EnboxUserAgent } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
 import type { IdentityInfo, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
+
+import { Convert } from '@enbox/common';
+import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
 import { AuthSession } from '../identity-session.js';
 import { DEFAULT_DWN_ENDPOINTS, INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../types.js';
@@ -237,6 +241,166 @@ export function resolveIdentityDids(
     ? identity.did.uri
     : (storedDelegateDid ?? undefined);
   return { connectedDid, delegateDid };
+}
+
+// ─── processConnectedGrants ─────────────────────────────────────
+
+/**
+ * Process connected grants by storing them in the local DWN as the owner.
+ *
+ * This is the agent-level equivalent of `Enbox.processConnectedGrants()`.
+ * It stores each grant, signed as owner, and returns the deduplicated
+ * list of protocol URIs represented by the grants.
+ *
+ * @internal
+ */
+export async function processConnectedGrants(params: {
+  agent: EnboxUserAgent;
+  delegateDid: string;
+  grants: DwnDataEncodedRecordsWriteMessage[];
+}): Promise<string[]> {
+  const { agent, delegateDid, grants } = params;
+  const connectedProtocols = new Set<string>();
+
+  for (const grantMessage of grants) {
+    const grant = DwnPermissionGrant.parse(grantMessage);
+
+    // Store the grant as the owner of the DWN so the delegateDid
+    // can use it when impersonating the connectedDid.
+    const { encodedData, ...rawMessage } = grantMessage;
+    const dataStream = new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart]);
+
+    const { reply } = await agent.processDwnRequest({
+      store       : true,
+      author      : delegateDid,
+      target      : delegateDid,
+      messageType : DwnInterface.RecordsWrite,
+      signAsOwner : true,
+      rawMessage,
+      dataStream,
+    });
+
+    if (reply.status.code !== 202) {
+      throw new Error(
+        `[@enbox/auth] Failed to process connected grant: ${reply.status.detail}`
+      );
+    }
+
+    const protocol = (grant.scope as DwnMessagesPermissionScope | DwnRecordsPermissionScope).protocol;
+    if (protocol) {
+      connectedProtocols.add(protocol);
+    }
+  }
+
+  return [...connectedProtocols];
+}
+
+// ─── importDelegateAndSetupSync ─────────────────────────────────
+
+/**
+ * Import a delegated DID, process its grants, register sync, and pull.
+ *
+ * This is the shared post-connect lifecycle used by both the DWeb Connect
+ * and relay WalletConnect flows. On failure, the imported identity is
+ * cleaned up before re-throwing.
+ *
+ * @internal
+ */
+export async function importDelegateAndSetupSync(params: {
+  userAgent: EnboxUserAgent;
+  delegatePortableDid: PortableDid;
+  connectedDid: string;
+  delegateGrants: DwnDataEncodedRecordsWriteMessage[];
+  flowName: string;
+}): Promise<BearerIdentity> {
+  const { userAgent, delegatePortableDid, connectedDid, delegateGrants, flowName } = params;
+
+  let identity: BearerIdentity | undefined;
+  try {
+    identity = await userAgent.identity.import({
+      portableIdentity: {
+        portableDid : delegatePortableDid,
+        metadata    : {
+          connectedDid,
+          name   : 'Default',
+          uri    : delegatePortableDid.uri,
+          tenant : userAgent.agentDid.uri,
+        },
+      },
+    });
+
+    const connectedProtocols = await processConnectedGrants({
+      agent       : userAgent,
+      delegateDid : delegatePortableDid.uri,
+      grants      : delegateGrants,
+    });
+
+    await userAgent.sync.registerIdentity({
+      did     : connectedDid,
+      options : {
+        delegateDid : delegatePortableDid.uri,
+        protocols   : connectedProtocols,
+      },
+    });
+
+    await userAgent.sync.sync('pull');
+
+    return identity;
+  } catch (error: unknown) {
+    if (identity) {
+      try {
+        await userAgent.did.delete({
+          didUri    : identity.did.uri,
+          tenant    : identity.metadata.tenant,
+          deleteKey : true,
+        });
+      } catch { /* best effort */ }
+
+      try {
+        await userAgent.identity.delete({ didUri: identity.did.uri });
+      } catch { /* best effort */ }
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[@enbox/auth] ${flowName} failed: ${message}`);
+  }
+}
+
+// ─── finalizeDelegateSession ────────────────────────────────────
+
+/**
+ * Build an `AuthSession` for a delegated connect flow (DWeb Connect or
+ * relay WalletConnect). Starts sync and persists delegate/connected DID
+ * markers.
+ *
+ * @internal
+ */
+export async function finalizeDelegateSession(params: {
+  userAgent: EnboxUserAgent;
+  emitter: AuthEventEmitter;
+  storage: StorageAdapter;
+  identity: BearerIdentity;
+  connectedDid: string;
+  delegateDid: string;
+  sync: SyncOption | undefined;
+}): Promise<AuthSession> {
+  const { userAgent, emitter, storage, identity, connectedDid, delegateDid, sync } = params;
+
+  startSyncIfEnabled(userAgent, sync);
+
+  return finalizeSession({
+    userAgent,
+    emitter,
+    storage,
+    connectedDid,
+    delegateDid,
+    identityName         : identity.metadata.name,
+    identityConnectedDid : identity.metadata.connectedDid,
+    extraStorageKeys     : {
+      [STORAGE_KEYS.DELEGATE_DID]  : delegateDid,
+      [STORAGE_KEYS.CONNECTED_DID] : connectedDid,
+    },
+  });
 }
 
 // ─── finalizeSession ────────────────────────────────────────────

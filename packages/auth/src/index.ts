@@ -5,30 +5,23 @@
  * in both browser and CLI environments. Depends only on `@enbox/agent`
  * and can be used standalone or consumed by `@enbox/api`.
  *
- * @example Standalone auth
+ * @example Standalone auth (wallet app)
  * ```ts
  * import { AuthManager } from '@enbox/auth';
  *
  * const auth = await AuthManager.create({ sync: '15s' });
- * const session = await auth.restoreSession() ?? await auth.connect();
- *
- * // session.agent — the authenticated Enbox agent
- * // session.did   — the connected DID URI
+ * const session = await auth.connectLocal({ password: userPin });
  * ```
  *
- * @example With @enbox/api
+ * @example Dapp with browser connect handler
  * ```ts
  * import { AuthManager } from '@enbox/auth';
- * import { Enbox } from '@enbox/api';
+ * import { BrowserConnectHandler } from '@enbox/browser';
  *
- * const auth = await AuthManager.create({ sync: '15s' });
- * const session = await auth.connect();
- *
- * const enbox = Enbox.connect({
- *   agent: session.agent,
- *   connectedDid: session.did,
- *   delegateDid: session.delegateDid,
+ * const auth = await AuthManager.create({
+ *   connectHandler: BrowserConnectHandler(),
  * });
+ * const session = await auth.connect({ protocols: [NotesProtocol] });
  * ```
  *
  * @packageDocumentation
@@ -47,10 +40,11 @@ export type { PasswordContext } from './password-provider.js';
 // without a direct @enbox/agent dependency.
 export { EnboxUserAgent, HdIdentityVault } from '@enbox/agent';
 
-// Wallet-connect helpers
+// Connect helpers
 export { processConnectedGrants } from './connect/wallet.js';
+export { normalizeProtocolRequests } from './permissions.js';
 export { WalletConnect } from './wallet-connect-client.js';
-export type { Permission, ProtocolPermissionOptions, WalletConnectClientOptions } from './wallet-connect-client.js';
+export type { ProtocolPermissionOptions, WalletConnectClientOptions } from './wallet-connect-client.js';
 
 // Registration token storage helpers
 export { loadTokensFromStorage, saveTokensToStorage } from './registration.js';
@@ -77,8 +71,12 @@ export type {
   AuthManagerOptions,
   AuthSessionInfo,
   AuthState,
+  ConnectHandler,
+  ConnectOptions,
   ConnectPermissionRequest,
+  ConnectResult,
   DisconnectOptions,
+  HandlerConnectOptions,
   HeadlessConnectOptions,
   IdentityInfo,
   IdentityVaultBackup,
@@ -86,7 +84,9 @@ export type {
   ImportFromPortableOptions,
   LocalConnectOptions,
   LocalDwnStrategy,
+  Permission,
   PortableIdentity,
+  ProtocolRequest,
   ProviderAuthParams,
   ProviderAuthResult,
   RegistrationOptions,
