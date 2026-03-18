@@ -267,7 +267,7 @@ export async function finalizeSession(params: {
   connectedDid: string;
   delegateDid?: string;
   recoveryPhrase?: string;
-  identityName: string;
+  identityName?: string;
   identityConnectedDid?: string;
   emitIdentityAdded?: boolean;
   extraStorageKeys?: Record<string, string>;
@@ -295,9 +295,11 @@ export async function finalizeSession(params: {
     }
   }
 
+  // When identityName is undefined, no user identity exists (agent-only session).
+  // Build an IdentityInfo with the agent DID as a fallback.
   const identityInfo: IdentityInfo = {
     didUri       : connectedDid,
-    name         : identityName,
+    name         : identityName ?? 'Agent',
     connectedDid : identityConnectedDid,
   };
 
@@ -309,7 +311,7 @@ export async function finalizeSession(params: {
     identity : identityInfo,
   });
 
-  if (emitIdentityAdded) {
+  if (emitIdentityAdded && identityName !== undefined) {
     emitter.emit('identity-added', { identity: identityInfo });
   }
 

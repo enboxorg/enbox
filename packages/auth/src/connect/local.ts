@@ -18,8 +18,13 @@ import { createDefaultIdentity, ensureVaultReady, finalizeSession, resolveIdenti
 /**
  * Execute the local connect flow.
  *
- * - On first launch: initializes the vault, creates a new DID, returns recovery phrase.
+ * - On first launch: initializes the vault. Identity creation is opt-in via
+ *   `options.createIdentity: true`.
  * - On subsequent launches: unlocks the vault and reconnects to the existing identity.
+ *
+ * When no identities exist and `createIdentity` is not `true`, the session
+ * is returned with the **agent DID** as the connected DID. This allows apps to
+ * manage identity creation separately from vault setup.
  */
 export async function localConnect(
   ctx: FlowContext,
@@ -33,6 +38,7 @@ export async function localConnect(
 
   const sync = options.sync ?? ctx.defaultSync;
   const dwnEndpoints = options.dwnEndpoints ?? ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
+  const shouldCreateIdentity = options.createIdentity === true;
 
   // Initialize vault on first launch and start the agent.
   const recoveryPhrase = await ensureVaultReady({
@@ -55,12 +61,21 @@ export async function localConnect(
   let identity = identities[0];
   let isNewIdentity = false;
 
-  if (!identity) {
+  if (!identity && shouldCreateIdentity) {
     isNewIdentity = true;
     identity = await createDefaultIdentity(userAgent, dwnEndpoints, options.metadata?.name ?? 'Default');
   }
 
-  const { connectedDid, delegateDid } = resolveIdentityDids(identity);
+  // When no identity exists (createIdentity: false on first launch), use the
+  // agent DID as the session's connected DID. The session is still valid but
+  // operates in the agent's context rather than a user identity's context.
+  const connectedDid = identity
+    ? resolveIdentityDids(identity).connectedDid
+    : userAgent.agentDid.uri;
+
+  const delegateDid = identity
+    ? resolveIdentityDids(identity).delegateDid
+    : undefined;
 
   // Register with DWN endpoints (if registration options are provided).
   if (ctx.registration) {
@@ -95,7 +110,7 @@ export async function localConnect(
     connectedDid,
     delegateDid,
     recoveryPhrase,
-    identityName         : identity.metadata.name,
-    identityConnectedDid : identity.metadata.connectedDid,
+    identityName         : identity?.metadata.name,
+    identityConnectedDid : identity?.metadata.connectedDid,
   });
 }

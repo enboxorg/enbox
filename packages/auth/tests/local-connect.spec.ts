@@ -7,7 +7,7 @@ import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 import { INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../src/types.js';
 
 describe('localConnect', () => {
-  test('first launch: initializes vault, creates identity, returns recovery phrase', async () => {
+  test('first launch: initializes vault, creates identity when createIdentity is true', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const initCalls: any[] = [];
@@ -23,7 +23,7 @@ describe('localConnect', () => {
 
     const session = await localConnect(
       { userAgent: agent, emitter, storage },
-      { password: 'test-pass' },
+      { password: 'test-pass', createIdentity: true },
     );
 
     // Vault was initialized with the password
@@ -138,7 +138,7 @@ describe('localConnect', () => {
 
     await localConnect(
       { userAgent: agent, emitter, storage, defaultSync: '15s' },
-      {},
+      { createIdentity: true },
     );
 
     expect(syncCalls).toHaveLength(1);
@@ -161,7 +161,7 @@ describe('localConnect', () => {
 
     await localConnect(
       { userAgent: agent, emitter, storage, defaultSync: 'off' },
-      {},
+      { createIdentity: true },
     );
 
     expect(syncCalls).toHaveLength(0);
@@ -181,7 +181,7 @@ describe('localConnect', () => {
 
     await localConnect(
       { userAgent: agent, emitter, storage },
-      { dwnEndpoints: ['https://custom-dwn.example.com'] },
+      { createIdentity: true, dwnEndpoints: ['https://custom-dwn.example.com'] },
     );
 
     expect(initCalls[0].dwnEndpoints).toEqual(['https://custom-dwn.example.com']);
@@ -239,7 +239,7 @@ describe('localConnect', () => {
 
     await localConnect(
       { userAgent: agent, emitter, storage },
-      { metadata: { name: 'My Custom Name' } },
+      { createIdentity: true, metadata: { name: 'My Custom Name' } },
     );
 
     expect(createCalls[0].metadata.name).toBe('My Custom Name');
@@ -295,5 +295,104 @@ describe('localConnect', () => {
     );
 
     expect(registrationSucceeded).toBe(true);
+  });
+
+  test('createIdentity: false skips identity creation and uses agent DID', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const createCalls: any[] = [];
+
+    const agent = createMockAgent({
+      firstLaunch    : async () => true,
+      initialize     : async () => 'recovery phrase words',
+      identityList   : async () => [],
+      identityCreate : async (params) => { createCalls.push(params); return createMockIdentity(); },
+    });
+
+    const session = await localConnect(
+      { userAgent: agent, emitter, storage },
+      { password: 'test-pass', createIdentity: false },
+    );
+
+    // Identity was NOT created
+    expect(createCalls).toHaveLength(0);
+
+    // Session uses the agent DID instead
+    expect(session.did).toBe('did:dht:testagent');
+    expect(session.agent).toBe(agent);
+    expect(session.recoveryPhrase).toBe('recovery phrase words');
+
+    // Session identity info uses the agent DID with fallback name
+    expect(session.identity.didUri).toBe('did:dht:testagent');
+    expect(session.identity.name).toBe('Agent');
+
+    // Storage was updated with agent DID
+    expect(await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY)).toBe('did:dht:testagent');
+  });
+
+  test('createIdentity: false with existing identities uses the existing identity', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const identity = createMockIdentity();
+
+    const agent = createMockAgent({
+      firstLaunch  : async () => false,
+      identityList : async () => [identity],
+    });
+
+    const session = await localConnect(
+      { userAgent: agent, emitter, storage },
+      { password: 'test-pass', createIdentity: false },
+    );
+
+    // Existing identity is used, not the agent DID
+    expect(session.did).toBe('did:dht:testuser123');
+    expect(session.identity.name).toBe('Default');
+  });
+
+  test('createIdentity: false does not emit identity-added event', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const events: string[] = [];
+
+    emitter.on('vault-unlocked', () => { events.push('vault-unlocked'); });
+    emitter.on('identity-added', () => { events.push('identity-added'); });
+    emitter.on('session-start', () => { events.push('session-start'); });
+
+    const agent = createMockAgent({
+      firstLaunch  : async () => true,
+      initialize   : async () => 'phrase',
+      identityList : async () => [],
+    });
+
+    await localConnect(
+      { userAgent: agent, emitter, storage },
+      { createIdentity: false },
+    );
+
+    // identity-added should NOT be emitted since no identity was created
+    expect(events).toEqual(['vault-unlocked', 'session-start']);
+  });
+
+  test('default (no createIdentity) skips identity creation', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const createCalls: any[] = [];
+
+    const agent = createMockAgent({
+      firstLaunch    : async () => true,
+      initialize     : async () => 'phrase',
+      identityList   : async () => [],
+      identityCreate : async (params) => { createCalls.push(params); return createMockIdentity(); },
+    });
+
+    const session = await localConnect(
+      { userAgent: agent, emitter, storage },
+      { password: 'test-pass' },
+    );
+
+    // Identity was NOT created (default is false)
+    expect(createCalls).toHaveLength(0);
+    expect(session.did).toBe('did:dht:testagent');
   });
 });

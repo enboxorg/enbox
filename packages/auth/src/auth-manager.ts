@@ -185,10 +185,17 @@ export class AuthManager {
   /**
    * Create or reconnect a local identity.
    *
-   * On first use, this creates a new vault, agent DID, and user identity.
-   * On subsequent uses, it unlocks the vault and reconnects.
+   * On first use, this creates a new vault and agent DID. By default,
+   * **no user identity is created** — the session uses the agent DID.
+   * Pass `{ createIdentity: true }` to also create a default identity
+   * during vault setup (useful when vault init and identity creation
+   * are combined into a single step, e.g. Electrobun's create wizard).
    *
-   * @param options - Optional overrides for password, sync, DWN endpoints.
+   * On subsequent uses, it unlocks the vault and reconnects to the
+   * existing identity (or agent DID if no identities exist).
+   *
+   * @param options - Optional overrides for password, sync, DWN endpoints,
+   *   and identity creation behaviour.
    * @returns An active AuthSession.
    * @throws If a connection attempt is already in progress.
    */

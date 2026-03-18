@@ -86,21 +86,37 @@ export async function restoreSession(
     }
   }
 
+  // Start sync.
+  startSyncIfEnabled(userAgent, ctx.defaultSync);
+
   if (!identity) {
-    // No identity found — clean up stale session data.
-    await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
-    await storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY);
-    await storage.remove(STORAGE_KEYS.DELEGATE_DID);
-    await storage.remove(STORAGE_KEYS.CONNECTED_DID);
-    return undefined;
+    // No identity found — this is valid for agent-only sessions created
+    // with `createIdentity: false`. Restore a session using the agent DID.
+    // If the active identity stored was the agent DID, this is an
+    // intentional agent-only session rather than stale data.
+    const isAgentOnlySession = activeIdentityDid === userAgent.agentDid.uri;
+
+    if (!isAgentOnlySession) {
+      // Truly stale session data — clean up and bail.
+      await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
+      await storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY);
+      await storage.remove(STORAGE_KEYS.DELEGATE_DID);
+      await storage.remove(STORAGE_KEYS.CONNECTED_DID);
+      return undefined;
+    }
+
+    return finalizeSession({
+      userAgent,
+      emitter,
+      storage,
+      connectedDid      : userAgent.agentDid.uri,
+      emitIdentityAdded : false,
+    });
   }
 
   const { connectedDid, delegateDid } = resolveIdentityDids(
     identity, storedDelegateDid ?? undefined,
   );
-
-  // Start sync.
-  startSyncIfEnabled(userAgent, ctx.defaultSync);
 
   // Persist session info, build AuthSession, and emit lifecycle events.
   // Session restore does not emit `identity-added` (identity was already added in the original flow).

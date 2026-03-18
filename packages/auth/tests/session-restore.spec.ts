@@ -30,7 +30,7 @@ describe('restoreSession', () => {
     expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
   });
 
-  test('returns undefined when no identity found', async () => {
+  test('returns undefined when no identity found and not an agent-only session', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
@@ -50,6 +50,25 @@ describe('restoreSession', () => {
     expect(await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY)).toBeNull();
     expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBeNull();
     expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBeNull();
+  });
+
+  test('restores agent-only session when active identity is the agent DID', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, 'did:dht:testagent');
+
+    const agent = createMockAgent({
+      firstLaunch               : async () => false,
+      identityConnectedIdentity : async () => undefined,
+      identityGet               : async () => undefined,
+      identityList              : async () => [],
+    });
+
+    const session = await restoreSession({ userAgent: agent, emitter, storage });
+    expect(session).toBeDefined();
+    expect(session!.did).toBe('did:dht:testagent');
+    expect(session!.identity.name).toBe('Agent');
   });
 
   test('restores session from connected identity', async () => {
