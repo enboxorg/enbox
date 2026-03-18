@@ -639,7 +639,9 @@ export class TypedEnbox<
 
     // Not installed or definition has changed — configure the new version.
     // Auto-enable encryption if any type in the definition requires it.
-    const needsEncryption = Object.values(this._definition.types)
+    // Skip encryption key derivation when operating as a delegate — the
+    // wallet already configured the protocol with encryption keys.
+    const needsEncryption = !this._dwn.isDelegate && Object.values(this._definition.types)
       .some((type) => (type as ProtocolType)?.encryptionRequired === true);
 
     const result = await this._dwn.protocols.configure({
@@ -730,7 +732,10 @@ export class TypedEnbox<
 
     // Not installed — configure it now.
     // Auto-enable encryption if any type in the definition requires it.
-    const needsEncryption = Object.values(this._definition.types)
+    // Skip encryption key derivation when operating as a delegate — the
+    // wallet already configured the protocol with encryption keys. The
+    // delegate can't derive the owner's keys.
+    const needsEncryption = !this._dwn.isDelegate && Object.values(this._definition.types)
       .some((type) => (type as ProtocolType)?.encryptionRequired === true);
 
     const result = await this._dwn.protocols.configure({
