@@ -2,13 +2,18 @@
 "@enbox/api": patch
 ---
 
-fix(api): skip encryption key derivation for delegates in TypedEnbox configure
+fix(api): skip auto-encryption for delegates in all TypedEnbox operations
 
-When operating as a delegate, `TypedEnbox.configure()` and
-`_autoConfigureOnce()` no longer attempt to derive encryption keys
-from the connected DID. The delegate doesn't have the owner's private
-keys, so encryption key derivation fails with "Key not found".
+Delegates don't have the wallet owner's private keys, so they can't
+derive encryption keys locally. When operating as a delegate, TypedEnbox
+now skips `encryption: true` for all operations:
 
-The wallet already configures the protocol with encryption keys during
-the connect flow — the delegate only needs the protocol definition
-installed locally without re-deriving keys.
+- `configure()` / `_autoConfigureOnce()` — skip encryption key derivation
+- `records.create()` — skip client-side encryption
+- `records.query()` — skip client-side decryption
+- `records.read()` — skip client-side decryption
+
+The wallet already configured the protocol with encryption keys during
+connect. Encrypted record operations are handled by the owner's DWN.
+
+Also adds `DwnApi.isDelegate` getter for clean delegate detection.
