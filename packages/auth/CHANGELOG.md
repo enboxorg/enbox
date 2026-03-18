@@ -1,5 +1,17 @@
 # @enbox/auth
 
+## 0.6.2
+
+### Patch Changes
+
+- [#728](https://github.com/enboxorg/enbox/pull/728) [`ef5dc9b`](https://github.com/enboxorg/enbox/commit/ef5dc9b28527538205c0e08032017649ba20964d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(auth): add 'configure' to DEFAULT_PERMISSIONS
+
+  Include `ProtocolsConfigure` in the default permission set requested
+  during `connect()`. Without this, dapps using the standard `TypedEnbox`
+  API fail with "No permissions found for ProtocolsConfigure" because
+  `_autoConfigureOnce()` needs a configure grant to install the protocol
+  on the delegate's local DWN.
+
 ## 0.6.1
 
 ### Patch Changes
