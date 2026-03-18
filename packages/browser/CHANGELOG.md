@@ -1,5 +1,15 @@
 # @enbox/browser
 
+## 0.1.5
+
+### Patch Changes
+
+- [#726](https://github.com/enboxorg/enbox/pull/726) [`7b2003e`](https://github.com/enboxorg/enbox/commit/7b2003e46a894a0e12275ea3af1c77e6bc44f279) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(browser): read connectedDid from wallet response in DWeb Connect
+
+  The dapp client was falling back to `delegateDid.uri` (a `did:jwk` with no DWN endpoints) as the `connectedDid` when the wallet didn't explicitly send one. This caused "Failed to dereference `did:jwk:...#dwn`: notFound" errors during identity import after a successful wallet approval.
+
+  Now reads `connectedDid` from the wallet's authorization response, which contains the actual wallet owner's identity DID (e.g., `did:dht:...`).
+
 ## 0.1.4
 
 ### Patch Changes

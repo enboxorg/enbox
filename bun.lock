@@ -128,7 +128,7 @@
     },
     "packages/browser": {
       "name": "@enbox/browser",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "dependencies": {
         "@enbox/agent": "workspace:*",
         "@enbox/auth": "workspace:*",
