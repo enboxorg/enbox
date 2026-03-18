@@ -1,5 +1,19 @@
 # @enbox/api
 
+## 0.5.3
+
+### Patch Changes
+
+- [#730](https://github.com/enboxorg/enbox/pull/730) [`219dbe8`](https://github.com/enboxorg/enbox/commit/219dbe8d0bda309f465e88857deef7aad32469de) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(api): auto-enable encryption in TypedEnbox when protocol types require it
+
+  When a protocol type has `encryptionRequired: true`, TypedEnbox now
+  automatically passes `encryption: true` to the underlying DWN API for
+  `create()`, `query()`, `read()`, `configure()`, and `_autoConfigureOnce()`.
+
+  This eliminates the need for dapp developers to manually pass
+  `encryption: true` on every record operation — the protocol definition
+  is the single source of truth.
+
 ## 0.5.2
 
 ### Patch Changes
