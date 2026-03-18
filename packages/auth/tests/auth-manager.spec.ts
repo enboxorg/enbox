@@ -173,6 +173,118 @@ describe('AuthManager', () => {
     });
   });
 
+  describe('connect() with handler', () => {
+    test('uses provided connectHandler for handler-based connect', async () => {
+      const delegateIdentity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate123' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner456' },
+      });
+
+      const agent = createMockAgent({
+        firstLaunch    : async () => false,
+        identityList   : async () => [],
+        identityImport : async () => delegateIdentity,
+        syncSync       : async () => {},
+      });
+
+      const mockHandler = {
+        requestAccess: async (): Promise<any> => ({
+          delegatePortableDid : { uri: 'did:jwk:delegate123', document: {}, privateKeys: [] },
+          delegateGrants      : [],
+          connectedDid        : 'did:dht:owner456',
+        }),
+      };
+
+      const manager = createTestManager(agent);
+      (manager as any)._connectHandler = mockHandler;
+
+      const session = await manager.connect({ protocols: [] });
+
+      expect(session.did).toBe('did:dht:owner456');
+      expect(manager.isConnected).toBe(true);
+    });
+
+    test('per-call connectHandler overrides default handler', async () => {
+      const delegateIdentity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate789' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner999' },
+      });
+
+      const agent = createMockAgent({
+        firstLaunch    : async () => false,
+        identityList   : async () => [],
+        identityImport : async () => delegateIdentity,
+        syncSync       : async () => {},
+      });
+
+      const perCallHandler = {
+        requestAccess: async (): Promise<any> => ({
+          delegatePortableDid : { uri: 'did:jwk:delegate789', document: {}, privateKeys: [] },
+          delegateGrants      : [],
+          connectedDid        : 'did:dht:owner999',
+        }),
+      };
+
+      const manager = createTestManager(agent);
+
+      const session = await manager.connect({
+        protocols      : [],
+        connectHandler : perCallHandler,
+      });
+
+      expect(session.did).toBe('did:dht:owner999');
+    });
+
+    test('throws when no handler is provided', async () => {
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [],
+      });
+
+      const manager = createTestManager(agent);
+
+      await expect(
+        manager.connect({ protocols: [] })
+      ).rejects.toThrow('No connect handler provided');
+    });
+
+    test('throws when handler returns undefined (user denied)', async () => {
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [],
+      });
+
+      const mockHandler = {
+        requestAccess: async (): Promise<undefined> => undefined,
+      };
+
+      const manager = createTestManager(agent);
+      (manager as any)._connectHandler = mockHandler;
+
+      await expect(
+        manager.connect({ protocols: [] })
+      ).rejects.toThrow('denied or cancelled');
+    });
+
+    test('throws when sync is off for handler connect', async () => {
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [],
+      });
+
+      const mockHandler = {
+        requestAccess: async (): Promise<undefined> => undefined,
+      };
+
+      const manager = createTestManager(agent);
+      (manager as any)._connectHandler = mockHandler;
+
+      await expect(
+        manager.connect({ protocols: [], sync: 'off' as any })
+      ).rejects.toThrow('Sync must be enabled');
+    });
+  });
+
   describe('concurrency guard', () => {
     test('throws when connect is called concurrently', async () => {
       const agent = createMockAgent({
