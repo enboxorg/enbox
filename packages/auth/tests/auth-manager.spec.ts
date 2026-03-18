@@ -144,6 +144,35 @@ describe('AuthManager', () => {
     });
   });
 
+  describe('connectLocal()', () => {
+    test('calls localConnect directly and sets state to connected', async () => {
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+      });
+      const manager = createTestManager(agent);
+
+      const session = await manager.connectLocal({ password: 'test' });
+
+      expect(session.did).toBe('did:dht:testuser123');
+      expect(manager.state).toBe('connected');
+      expect(manager.session).toBe(session);
+    });
+
+    test('works without any options', async () => {
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+      });
+      const manager = createTestManager(agent);
+
+      const session = await manager.connectLocal();
+
+      expect(session.did).toBe('did:dht:testuser123');
+      expect(manager.isConnected).toBe(true);
+    });
+  });
+
   describe('concurrency guard', () => {
     test('throws when connect is called concurrently', async () => {
       const agent = createMockAgent({
