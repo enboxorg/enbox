@@ -66,10 +66,7 @@ export type WalletConnectClientOptions = {
   validatePin: () => Promise<string>;
 };
 
-/**
- * Shorthand for the types of permissions that can be requested.
- */
-export type Permission = 'write' | 'read' | 'delete' | 'query' | 'subscribe' | 'configure';
+import type { Permission } from './types.js';
 
 /**
  * The options for creating a permission request for a given protocol.

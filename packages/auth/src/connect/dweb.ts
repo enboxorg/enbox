@@ -15,20 +15,19 @@ import type { FlowContext } from './lifecycle.js';
 import type { ConnectPermissionRequest, DWebConnectOptions, ProtocolRequest, WalletOption } from '../types.js';
 
 import { DWebConnect } from '../dweb-connect-client.js';
-import { processConnectedGrants } from './wallet.js';
 import { showWalletSelector } from '../ui/wallet-selector.js';
 import { WalletConnect } from '../wallet-connect-client.js';
-import { DEFAULT_PERMISSIONS, DEFAULT_WALLETS, STORAGE_KEYS } from '../types.js';
-import { ensureVaultReady, finalizeSession, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
+import { DEFAULT_PERMISSIONS, DEFAULT_WALLETS } from '../types.js';
+import { ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolvePassword } from './lifecycle.js';
 
 /**
  * Normalize a simplified `ProtocolRequest` into the agent-level
  * `ConnectPermissionRequest` format expected by the wallet.
  */
-function normalizeProtocolRequests(
+export function normalizeProtocolRequests(
   protocols: ProtocolRequest[] | undefined,
 ): ConnectPermissionRequest[] {
-  if (!protocols || protocols.length === 0) {return [];}
+  if (!protocols || protocols.length === 0) { return []; }
 
   return protocols.map((entry) => {
     let definition: DwnProtocolDefinition;
@@ -59,8 +58,8 @@ function normalizeProtocolRequests(
  * 2. Normalizes protocol permission requests.
  * 3. Shows the wallet selector modal (or uses provided walletUrl).
  * 4. Opens the wallet popup and runs the postMessage flow.
- * 5. Imports the delegate DID and processes grants.
- * 6. Starts sync and returns an AuthSession.
+ * 5. Imports the delegate DID, processes grants, and sets up sync.
+ * 6. Returns an AuthSession.
  */
 export async function dwebConnect(
   ctx: FlowContext,
@@ -79,20 +78,13 @@ export async function dwebConnect(
   // 1. Ensure the vault is initialized (agent-only, no identity).
   const isFirstLaunch = await userAgent.firstLaunch();
   const password = await resolvePassword(ctx, undefined, isFirstLaunch);
-
-  await ensureVaultReady({
-    userAgent,
-    emitter,
-    password,
-    isFirstLaunch,
-  });
+  await ensureVaultReady({ userAgent, emitter, password, isFirstLaunch });
 
   // 2. Normalize protocol requests.
   const permissionRequests = normalizeProtocolRequests(options.protocols);
 
   // 3. Determine wallet URL.
   let walletUrl = options.walletUrl;
-
   if (!walletUrl) {
     const wallets: WalletOption[] = ctx.wallets ?? DEFAULT_WALLETS;
     walletUrl = await showWalletSelector(wallets);
@@ -109,78 +101,16 @@ export async function dwebConnect(
     throw new Error('[@enbox/auth] DWeb Connect was denied or cancelled by the user.');
   }
 
+  // 5. Import delegate DID, process grants, and set up sync.
   const { delegatePortableDid, connectedDid, delegateGrants } = result;
+  const identity = await importDelegateAndSetupSync({
+    userAgent, delegatePortableDid, connectedDid, delegateGrants,
+    flowName: 'DWeb Connect',
+  });
 
-  // 5. Import the delegate DID as a BearerIdentity.
-  let identity;
-  try {
-    identity = await userAgent.identity.import({
-      portableIdentity: {
-        portableDid : delegatePortableDid,
-        metadata    : {
-          connectedDid,
-          name   : 'Default',
-          uri    : delegatePortableDid.uri,
-          tenant : userAgent.agentDid.uri,
-        },
-      },
-    });
-
-    // 6. Process the delegated grants.
-    const connectedProtocols = await processConnectedGrants({
-      agent       : userAgent,
-      delegateDid : delegatePortableDid.uri,
-      grants      : delegateGrants,
-    });
-
-    // 7. Register sync for the connected identity.
-    await userAgent.sync.registerIdentity({
-      did     : connectedDid,
-      options : {
-        delegateDid : delegatePortableDid.uri,
-        protocols   : connectedProtocols,
-      },
-    });
-
-    // 8. Pull existing messages from the connected DID's DWN.
-    await userAgent.sync.sync('pull');
-  } catch (error: unknown) {
-    // Clean up the imported identity on failure.
-    if (identity) {
-      try {
-        await userAgent.did.delete({
-          didUri    : identity.did.uri,
-          tenant    : identity.metadata.tenant,
-          deleteKey : true,
-        });
-      } catch { /* best effort */ }
-
-      try {
-        await userAgent.identity.delete({ didUri: identity.did.uri });
-      } catch { /* best effort */ }
-    }
-
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`[@enbox/auth] DWeb Connect failed: ${message}`);
-  }
-
-  const delegateDid = delegatePortableDid.uri;
-
-  // 9. Start sync.
-  startSyncIfEnabled(userAgent, sync);
-
-  // 10. Persist session info and return AuthSession.
-  return finalizeSession({
-    userAgent,
-    emitter,
-    storage,
-    connectedDid,
-    delegateDid,
-    identityName         : identity.metadata.name,
-    identityConnectedDid : identity.metadata.connectedDid,
-    extraStorageKeys     : {
-      [STORAGE_KEYS.DELEGATE_DID]  : delegateDid,
-      [STORAGE_KEYS.CONNECTED_DID] : connectedDid,
-    },
+  // 6. Finalize session.
+  return finalizeDelegateSession({
+    userAgent, emitter, storage, identity,
+    connectedDid, delegateDid: delegatePortableDid.uri, sync,
   });
 }

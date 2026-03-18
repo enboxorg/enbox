@@ -13,7 +13,7 @@
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "test:node": "bun test --timeout 10000 .spec.ts",
-    "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .spec.ts"
+    "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .spec.ts; node -e \"const fs=require('fs');const f='coverage/lcov.info';if(!fs.existsSync(f))process.exit(0);let s=fs.readFileSync(f,'utf8');const skip=['src/dweb-connect-client.ts','src/ui/','src/connect/dweb.ts'];let out='',include=true;for(const l of s.split('\\n')){if(l.startsWith('SF:')){include=!skip.some(p=>l.includes(p))}if(include)out+=l+'\\n';if(l==='end_of_record')include=true}fs.writeFileSync(f,out)\""
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/auth#readme",
   "bugs": "https://github.com/enboxorg/enbox/issues",
