@@ -259,6 +259,11 @@ export class DwnApi {
     this.permissionsApi = new AgentPermissionsApi({ agent: this.agent });
   }
 
+  /** Whether this DWN API instance is operating as a delegate. */
+  get isDelegate(): boolean {
+    return this.delegateDid !== undefined;
+  }
+
   /**
    * API to interact with Grants
    *
