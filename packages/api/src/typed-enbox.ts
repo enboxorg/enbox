@@ -638,9 +638,13 @@ export class TypedEnbox<
     }
 
     // Not installed or definition has changed — configure the new version.
+    // Auto-enable encryption if any type in the definition requires it.
+    const needsEncryption = Object.values(this._definition.types)
+      .some((type) => (type as ProtocolType)?.encryptionRequired === true);
+
     const result = await this._dwn.protocols.configure({
       definition : this._definition,
-      encryption : options?.encryption,
+      encryption : options?.encryption ?? (needsEncryption || undefined),
     });
 
     if (result.status.code === 202) {
@@ -725,8 +729,13 @@ export class TypedEnbox<
     }
 
     // Not installed — configure it now.
+    // Auto-enable encryption if any type in the definition requires it.
+    const needsEncryption = Object.values(this._definition.types)
+      .some((type) => (type as ProtocolType)?.encryptionRequired === true);
+
     const result = await this._dwn.protocols.configure({
-      definition: this._definition,
+      definition : this._definition,
+      encryption : needsEncryption || undefined,
     });
 
     if (result.status.code === 202) {
@@ -823,7 +832,7 @@ export class TypedEnbox<
         const { status, record } = await this._dwn.records.write({
           data            : request.data,
           store           : request.store,
-          encryption      : request.encryption,
+          encryption      : request.encryption ?? (typeEntry?.encryptionRequired === true ? true : undefined),
           parentContextId : request.parentContextId,
           published       : request.published,
           datePublished   : request.datePublished,
@@ -890,7 +899,7 @@ export class TypedEnbox<
 
         const { status, records, cursor } = await this._dwn.records.query({
           from       : request?.from,
-          encryption : request?.encryption,
+          encryption : request?.encryption ?? (typeEntry?.encryptionRequired === true ? true : undefined),
           filter     : {
             ...queryFilter,
             protocol     : this._definition.protocol,
@@ -944,7 +953,7 @@ export class TypedEnbox<
 
         const { status, record } = await this._dwn.records.read({
           from       : request.from,
-          encryption : request.encryption,
+          encryption : request.encryption ?? (typeEntry?.encryptionRequired === true ? true : undefined),
           protocol   : this._definition.protocol,
           filter     : {
             ...readFilter,
