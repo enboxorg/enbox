@@ -620,11 +620,11 @@ describe('walletConnect', () => {
     expect(syncCalls[0].interval).toBe('45s');
   });
 
-  test('calls sync.sync pull after registering identity', async () => {
+  test('does not call sync.sync pull after registering identity (deferred to startSync)', async () => {
     await load();
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    const syncPulls: string[] = [];
+    const syncCalls: string[] = [];
     const identity = createMockIdentity({
       did      : { uri: 'did:dht:delegate123' },
       metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected456' },
@@ -633,7 +633,7 @@ describe('walletConnect', () => {
     const agent = createMockAgent({
       firstLaunch    : async () => false,
       identityImport : async () => identity,
-      syncSync       : async (dir: string) => { syncPulls.push(dir); },
+      syncSync       : async (dir: string) => { syncCalls.push(dir); },
     });
 
     mockInitClient.mockImplementationOnce((): any => Promise.resolve({
@@ -653,7 +653,9 @@ describe('walletConnect', () => {
       },
     );
 
-    expect(syncPulls).toContain('pull');
+    // sync('pull') is no longer called in importDelegateAndSetupSync —
+    // startSyncIfEnabled() handles the initial sync cycle instead.
+    expect(syncCalls).not.toContain('pull');
   });
 
   test('calls registration when registration options are provided', async () => {
