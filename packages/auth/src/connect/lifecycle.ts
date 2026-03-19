@@ -343,7 +343,10 @@ export async function importDelegateAndSetupSync(params: {
       },
     });
 
-    await userAgent.sync.sync('pull');
+    // No explicit sync('pull') here — startSyncIfEnabled() in the caller
+    // runs an immediate sync cycle (both pull and push) when it starts.
+    // Doing a manual pull first would double the startup burst and can
+    // trigger rate limits on the remote DWN.
 
     return identity;
   } catch (error: unknown) {
