@@ -1,5 +1,16 @@
 # @enbox/auth
 
+## 0.6.3
+
+### Patch Changes
+
+- [#736](https://github.com/enboxorg/enbox/pull/736) [`4c7c71e`](https://github.com/enboxorg/enbox/commit/4c7c71efa25a1eee115ef30424bc6c97189aa8f3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(auth): remove redundant sync pull from importDelegateAndSetupSync
+
+  The manual `sync('pull')` call was immediately followed by
+  `startSyncIfEnabled()` which runs its own immediate sync cycle.
+  This doubled the startup burst and could trigger 429 rate limits
+  on the remote DWN server.
+
 ## 0.6.2
 
 ### Patch Changes
