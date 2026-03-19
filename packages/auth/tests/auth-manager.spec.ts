@@ -266,22 +266,33 @@ describe('AuthManager', () => {
       ).rejects.toThrow('denied or cancelled');
     });
 
-    test('throws when sync is off for handler connect', async () => {
+    test('allows sync off for handler connect without throwing', async () => {
+      const delegateIdentity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate123' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner456' },
+      });
+
       const agent = createMockAgent({
-        firstLaunch  : async () => false,
-        identityList : async () => [],
+        firstLaunch    : async () => false,
+        identityList   : async () => [],
+        identityImport : async () => delegateIdentity,
+        syncSync       : async () => {},
       });
 
       const mockHandler = {
-        requestAccess: async (): Promise<undefined> => undefined,
+        requestAccess: async (): Promise<any> => ({
+          delegatePortableDid : { uri: 'did:jwk:delegate123', document: {}, privateKeys: [] },
+          delegateGrants      : [],
+          connectedDid        : 'did:dht:owner456',
+        }),
       };
 
       const manager = createTestManager(agent);
       (manager as any)._connectHandler = mockHandler;
+      (manager as any)._defaultSync = 'off';
 
-      await expect(
-        manager.connect({ protocols: [], sync: 'off' as any })
-      ).rejects.toThrow('Sync must be enabled');
+      const session = await manager.connect({ protocols: [] });
+      expect(session.did).toBe('did:dht:owner456');
     });
   });
 

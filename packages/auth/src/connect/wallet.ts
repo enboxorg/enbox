@@ -33,13 +33,6 @@ export async function walletConnect(
   const { userAgent, emitter, storage } = ctx;
   const sync = options.sync ?? ctx.defaultSync;
 
-  if (sync === 'off') {
-    throw new Error(
-      '[@enbox/auth] Sync must be enabled when using wallet connect. ' +
-      'Remove sync: "off" or set an interval like "15s".'
-    );
-  }
-
   // Ensure the agent is initialized and started before the relay flow.
   const isFirstLaunch = await userAgent.firstLaunch();
   const password = await resolvePassword(ctx, undefined, isFirstLaunch);

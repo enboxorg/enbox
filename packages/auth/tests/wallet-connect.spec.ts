@@ -180,24 +180,39 @@ describe('processConnectedGrants', () => {
 });
 
 describe('walletConnect', () => {
-  test('throws when sync is off', async () => {
+  test('allows sync off without throwing', async () => {
     await load();
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    const agent = createMockAgent();
+    const identity = createMockIdentity({
+      did      : { uri: 'did:dht:delegate123' },
+      metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected456' },
+    });
 
-    await expect(
-      _walletConnect(
-        { userAgent: agent, emitter, storage, defaultSync: 'off' },
-        {
-          displayName        : 'Test App',
-          connectServerUrl   : 'https://relay.example.com',
-          permissionRequests : [],
-          onWalletUriReady   : () => {},
-          validatePin        : async () => '1234',
-        },
-      )
-    ).rejects.toThrow('Sync must be enabled when using wallet connect');
+    const agent = createMockAgent({
+      firstLaunch    : async () => false,
+      identityImport : async () => identity,
+    });
+
+    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
+      delegatePortableDid : { uri: 'did:dht:delegate123' },
+      connectedDid        : 'did:dht:connected456',
+      delegateGrants      : [],
+    }));
+
+    // Should not throw — sync: 'off' is now allowed.
+    const session = await _walletConnect(
+      { userAgent: agent, emitter, storage, defaultSync: 'off' },
+      {
+        displayName        : 'Test App',
+        connectServerUrl   : 'https://relay.example.com',
+        permissionRequests : [],
+        onWalletUriReady   : () => {},
+        validatePin        : async () => '1234',
+      },
+    );
+
+    expect(session.did).toBe('did:dht:connected456');
   });
 
   test('throws when initClient returns undefined/null', async () => {
