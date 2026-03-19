@@ -834,10 +834,16 @@ export class TypedEnbox<
         const typeName = lastSegment(normalizedPath);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
+        // Auto-enable encryption when the type requires it, but skip for
+        // delegates — they don't have the owner's keys to derive encryption
+        // keys. The owner's DWN handles encryption on the remote side.
+        const autoEncryption = !this._dwn.isDelegate && typeEntry?.encryptionRequired === true
+          ? true : undefined;
+
         const { status, record } = await this._dwn.records.write({
           data            : request.data,
           store           : request.store,
-          encryption      : request.encryption ?? (typeEntry?.encryptionRequired === true ? true : undefined),
+          encryption      : request.encryption ?? autoEncryption,
           parentContextId : request.parentContextId,
           published       : request.published,
           datePublished   : request.datePublished,
@@ -901,10 +907,12 @@ export class TypedEnbox<
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
         const queryFilter = mapParentContextId(request?.filter);
+        const autoEncryption = !this._dwn.isDelegate && typeEntry?.encryptionRequired === true
+          ? true : undefined;
 
         const { status, records, cursor } = await this._dwn.records.query({
           from       : request?.from,
-          encryption : request?.encryption ?? (typeEntry?.encryptionRequired === true ? true : undefined),
+          encryption : request?.encryption ?? autoEncryption,
           filter     : {
             ...queryFilter,
             protocol     : this._definition.protocol,
@@ -955,10 +963,12 @@ export class TypedEnbox<
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
         const readFilter = mapParentContextId(request.filter);
+        const autoEncryption = !this._dwn.isDelegate && typeEntry?.encryptionRequired === true
+          ? true : undefined;
 
         const { status, record } = await this._dwn.records.read({
           from       : request.from,
-          encryption : request.encryption ?? (typeEntry?.encryptionRequired === true ? true : undefined),
+          encryption : request.encryption ?? autoEncryption,
           protocol   : this._definition.protocol,
           filter     : {
             ...readFilter,
