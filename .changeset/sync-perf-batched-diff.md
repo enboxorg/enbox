@@ -1,6 +1,6 @@
 ---
-"@enbox/dwn-sdk-js": minor
-"@enbox/agent": minor
+"@enbox/dwn-sdk-js": patch
+"@enbox/agent": patch
 ---
 
 feat(sync): batched diff protocol and direct StateIndex access
