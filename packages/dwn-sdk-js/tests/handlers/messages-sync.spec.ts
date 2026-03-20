@@ -681,6 +681,174 @@ export function testMessagesSyncHandler(): void {
       });
     });
 
+    describe('diff action', () => {
+      it('returns empty diff when client hashes match server hashes', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        // write a record
+        const { message: recordMessage, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        const writeReply = await dwn.processMessage(alice.did, recordMessage, { dataStream });
+        expect(writeReply.status.code).toBe(202);
+
+        // get the server's subtree hashes at depth 2 via individual subtree requests
+        const serverHashes: Record<string, string> = {};
+        for (const prefix of ['00', '01', '10', '11']) {
+          const { message: subtreeMsg } = await MessagesSync.create({
+            signer : Jws.createSigner(alice),
+            action : 'subtree',
+            prefix,
+          });
+          const subtreeReply = await dwn.processMessage(alice.did, subtreeMsg);
+          if (subtreeReply.hash) {
+            serverHashes[prefix] = subtreeReply.hash!;
+          }
+        }
+
+        // send diff with matching hashes — should get empty diff
+        const { message: diffMsg } = await MessagesSync.create({
+          signer : Jws.createSigner(alice),
+          action : 'diff',
+          hashes : serverHashes,
+          depth  : 2,
+        });
+        const reply = await dwn.processMessage(alice.did, diffMsg);
+        expect(reply.status.code).toBe(200);
+        expect(reply.onlyRemote).toEqual([]);
+        expect(reply.onlyLocal).toEqual([]);
+      });
+
+      it('returns onlyRemote entries when client sends empty hashes', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        // write a record
+        const { message: recordMessage, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        const writeReply = await dwn.processMessage(alice.did, recordMessage, { dataStream });
+        expect(writeReply.status.code).toBe(202);
+
+        // send diff with empty hashes — everything on the server is onlyRemote
+        const { message: diffMsg } = await MessagesSync.create({
+          signer : Jws.createSigner(alice),
+          action : 'diff',
+          hashes : {},
+          depth  : 2,
+        });
+        const reply = await dwn.processMessage(alice.did, diffMsg);
+        expect(reply.status.code).toBe(200);
+        expect(reply.onlyRemote!.length).toBeGreaterThan(0);
+        // each entry should have a messageCid and message
+        for (const entry of reply.onlyRemote!) {
+          expect(typeof entry.messageCid).toBe('string');
+          expect(entry.message).toBeDefined();
+        }
+      });
+
+      it('returns onlyLocal prefixes when server has empty subtrees', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // send diff with non-empty client hashes against an empty server
+        const { message: diffMsg } = await MessagesSync.create({
+          signer : Jws.createSigner(alice),
+          action : 'diff',
+          hashes : { '00': 'aabbccdd', '01': '11223344' },
+          depth  : 2,
+        });
+        const reply = await dwn.processMessage(alice.did, diffMsg);
+        expect(reply.status.code).toBe(200);
+        expect(reply.onlyRemote).toEqual([]);
+        expect(reply.onlyLocal!).toContain('00');
+        expect(reply.onlyLocal!).toContain('01');
+      });
+
+      it('inlines small data payloads as encodedData in onlyRemote entries', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        // write a small record
+        const { message: recordMessage, dataStream } = await TestDataGenerator.generateRecordsWrite({
+          author     : alice,
+          data       : new TextEncoder().encode('small payload'),
+          dataFormat : 'text/plain',
+        });
+        const writeReply = await dwn.processMessage(alice.did, recordMessage, { dataStream });
+        expect(writeReply.status.code).toBe(202);
+
+        // diff with empty client — server should inline the data
+        const { message: diffMsg } = await MessagesSync.create({
+          signer : Jws.createSigner(alice),
+          action : 'diff',
+          hashes : {},
+          depth  : 2,
+        });
+        const reply = await dwn.processMessage(alice.did, diffMsg);
+        expect(reply.status.code).toBe(200);
+
+        // find the RecordsWrite entry
+        const recordEntry = reply.onlyRemote!.find(
+          (e) => e.message?.descriptor.interface === 'Records' && e.message?.descriptor.method === 'Write'
+        );
+        expect(recordEntry).toBeDefined();
+        expect(recordEntry!.encodedData).toBeDefined();
+        expect(typeof recordEntry!.encodedData).toBe('string');
+      });
+
+      it('returns 400 when hashes or depth are missing', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // create a valid diff message then strip required fields
+        const { message } = await MessagesSync.create({
+          signer : Jws.createSigner(alice),
+          action : 'diff',
+          hashes : {},
+          depth  : 2,
+        });
+
+        // stub parse to skip schema validation
+        const parseStub = sinon.stub(MessagesSync, 'parse').resolves({
+          author           : alice.did,
+          message,
+          signaturePayload : { descriptorCid: 'test' },
+        } as any);
+
+        try {
+          // remove hashes to trigger the guard
+          delete (message.descriptor as any).hashes;
+          const handler = new MessagesSyncHandler({ didResolver, messageStore, stateIndex, dataStore });
+          const reply = await handler.handle({ tenant: alice.did, message });
+          expect(reply.status.code).toBe(400);
+          expect(reply.status.detail).toContain('diff action requires hashes and depth');
+        } finally {
+          parseStub.restore();
+        }
+      });
+
+      it('handles protocol-scoped diff', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        // write a record using the default test protocol
+        const { message: recordMessage, dataStream } = await TestDataGenerator.generateRecordsWrite({
+          author: alice,
+        });
+        const writeReply = await dwn.processMessage(alice.did, recordMessage, { dataStream });
+        expect(writeReply.status.code).toBe(202);
+
+        // diff scoped to the default test protocol
+        const protocol = recordMessage.descriptor.protocol!;
+        const { message: diffMsg } = await MessagesSync.create({
+          signer : Jws.createSigner(alice),
+          action : 'diff',
+          hashes : {},
+          depth  : 2,
+          protocol,
+        });
+        const reply = await dwn.processMessage(alice.did, diffMsg);
+        expect(reply.status.code).toBe(200);
+        expect(reply.onlyRemote!.length).toBeGreaterThan(0);
+      });
+    });
+
     describe('error handling', () => {
       it('returns 500 when stateIndex throws an unexpected error', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();

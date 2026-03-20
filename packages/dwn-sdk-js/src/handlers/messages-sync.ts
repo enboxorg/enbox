@@ -121,11 +121,20 @@ export class MessagesSyncHandler implements MethodHandler {
     const onlyRemoteCids: string[] = [];
     const onlyLocalPrefixes: string[] = [];
 
+    // Get the default (empty subtree) hash at the given depth so we can
+    // filter out client entries that represent empty subtrees.
+    const defaultHashHex = await this.getDefaultHashHex(depth);
+
     // Build the set of all prefixes at the given depth that either side has.
-    // We need to check every prefix the client sent, plus discover any
-    // server-side prefixes the client omitted (which means the client has
-    // an empty subtree there — the default hash was omitted).
-    const allPrefixes = new Set<string>(Object.keys(clientHashes));
+    // Filter out client prefixes whose hash equals the default (empty subtree)
+    // hash — these represent empty subtrees and should be treated the same as
+    // omitted prefixes.
+    const allPrefixes = new Set<string>();
+    for (const [pfx, hash] of Object.entries(clientHashes)) {
+      if (hash !== defaultHashHex) {
+        allPrefixes.add(pfx);
+      }
+    }
 
     // Enumerate server-side non-empty prefixes by walking the server's
     // tree to the given depth and collecting leaf prefixes.
