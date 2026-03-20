@@ -1,5 +1,5 @@
 import type { AbstractLevel } from 'abstract-level';
-import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncReply, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncDiffEntry, MessagesSyncReply, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import ms from 'ms';
 
@@ -23,11 +23,19 @@ export type SyncEngineLevelParams = {
 };
 
 /**
- * Maximum bit prefix depth before falling back to leaf enumeration.
- * At depth 16, each subtree covers ~1/65536 of the key space, which is a good
- * balance between round-trip count and leaf-set size.
+ * Maximum bit prefix depth for the per-node tree walk (legacy fallback).
+ * At depth 16, each subtree covers ~1/65536 of the key space.
  */
 const MAX_DIFF_DEPTH = 16;
+
+/**
+ * Bit depth for the batched diff protocol.
+ * Lower than MAX_DIFF_DEPTH because the batched diff sends all subtree hashes
+ * in a single request — fine granularity comes from the server-side leaf
+ * enumeration, not from deeper prefixes. Depth 8 = 256 buckets, which is
+ * a good balance between hash map size and leaf-set resolution.
+ */
+const BATCHED_DIFF_DEPTH = 8;
 
 /**
  * Maximum number of concurrent remote HTTP requests during a tree diff.
@@ -289,15 +297,48 @@ export class SyncEngineLevel implements SyncEngine {
             continue;
           }
 
-          // Phase 2: Walk the tree to find differing subtrees.
-          const diff = await this.walkTreeDiff({
+          // Phase 2: Compute the diff in a single round-trip using the
+          // batched 'diff' action.  This replaces the per-node tree walk
+          // that previously required dozens of HTTP requests.
+          const diff = await this.diffWithRemote({
             did, dwnUrl, delegateDid, protocol,
           });
 
           // Phase 3: Pull missing messages (remote has, local doesn't).
+          // The diff response may include inline message data — use it
+          // directly instead of re-fetching via individual MessagesRead calls.
           if (!direction || direction === 'pull') {
             if (diff.onlyRemote.length > 0) {
-              await this.pullMessages({ did, dwnUrl, delegateDid, protocol, messageCids: diff.onlyRemote });
+              // Separate entries into three categories:
+              // 1. Fully prefetched: have message + inline data (or no data needed)
+              // 2. Need data fetch: have message but missing data for RecordsWrite
+              // 3. Need full fetch: no message at all
+              const prefetched: (MessagesSyncDiffEntry & { message: GenericMessage })[] = [];
+              const needsFetchCids: string[] = [];
+
+              for (const entry of diff.onlyRemote) {
+                if (!entry.message) {
+                  // No message at all — need full fetch.
+                  needsFetchCids.push(entry.messageCid);
+                } else if (
+                  entry.message.descriptor.interface === 'Records' &&
+                  entry.message.descriptor.method === 'Write' &&
+                  (entry.message.descriptor as any).dataCid &&
+                  !entry.encodedData
+                ) {
+                  // RecordsWrite with data but data wasn't inlined (too large).
+                  // Need to fetch individually to get the data stream.
+                  needsFetchCids.push(entry.messageCid);
+                } else {
+                  // Fully prefetched (message + data or no data needed).
+                  prefetched.push(entry as MessagesSyncDiffEntry & { message: GenericMessage });
+                }
+              }
+              await this.pullMessages({
+                did, dwnUrl, delegateDid, protocol,
+                messageCids: needsFetchCids,
+                prefetched,
+              });
             }
           }
 
@@ -807,17 +848,55 @@ export class SyncEngineLevel implements SyncEngine {
     return this._defaultHashHex.get(depth) ?? '';
   }
 
+  /**
+   * Parse a bit prefix string (e.g. "0110101") into a boolean array
+   * for the StateIndex API. Each '1' maps to `true` (right child),
+   * each '0' maps to `false` (left child).
+   */
+  private static parseBitPrefix(prefix: string): boolean[] {
+    return Array.from(prefix, (ch): boolean => ch === '1');
+  }
+
   // ---------------------------------------------------------------------------
   // SMT Root Comparison
   // ---------------------------------------------------------------------------
 
   /**
-   * Get the SMT root hash from the local DWN via a MessagesSync 'root' action.
+   * Access the local DWN's StateIndex directly, bypassing the `processMessage`
+   * pipeline. The sync engine runs in the same process as the local DWN, so
+   * there is no need for message signing, schema validation, or authentication
+   * when querying our own state.
+   *
+   * Returns `undefined` in remote mode (no in-process DWN). The local methods
+   * fall back to `processRequest` in that case, routing through RPC to the
+   * local DWN server.
+   */
+  private get stateIndex(): StateIndex | undefined {
+    if (this.agent.dwn.isRemoteMode) {
+      return undefined;
+    }
+    return this.agent.dwn.node.storage.stateIndex;
+  }
+
+  /**
+   * Get the SMT root hash from the local DWN.
+   *
+   * In local mode: queries the StateIndex directly (fast, no processMessage overhead).
+   * In remote mode: constructs a signed MessagesSync message and routes through RPC.
+   *
    * Returns a hex-encoded root hash string.
    */
   private async getLocalRoot(did: string, delegateDid?: string, protocol?: string): Promise<string> {
-    const permissionGrantId = await this.getSyncPermissionGrantId(did, delegateDid, protocol);
+    const si = this.stateIndex;
+    if (si) {
+      const rootHash = protocol !== undefined
+        ? await si.getProtocolRoot(did, protocol)
+        : await si.getRoot(did);
+      return hashToHex(rootHash);
+    }
 
+    // Remote mode fallback: go through processRequest → RPC.
+    const permissionGrantId = await this.getSyncPermissionGrantId(did, delegateDid, protocol);
     const response = await this.agent.dwn.processRequest({
       author        : did,
       target        : did,
@@ -829,7 +908,6 @@ export class SyncEngineLevel implements SyncEngine {
         permissionGrantId
       }
     });
-
     const reply = response.reply as MessagesSyncReply;
     return reply.root ?? '';
   }
@@ -955,9 +1033,146 @@ export class SyncEngineLevel implements SyncEngine {
     return { onlyLocal, onlyRemote };
   }
 
+  // ---------------------------------------------------------------------------
+  // Batched Diff — single round-trip set reconciliation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Compute the diff between local and remote in a single HTTP round-trip.
+   *
+   * 1. Walk the local SMT directly (no processMessage) to collect subtree
+   *    hashes at `MAX_DIFF_DEPTH`.
+   * 2. Send a single `MessagesSync action:'diff'` to the remote with all
+   *    non-empty subtree hashes.
+   * 3. The remote compares and returns `onlyRemote` (with inline messages)
+   *    and `onlyLocal` prefixes.
+   * 4. Enumerate local leaves for the `onlyLocal` prefixes directly.
+   *
+   * This replaces `walkTreeDiff()` which required one HTTP call per tree node.
+   */
+  private async diffWithRemote({ did, dwnUrl, delegateDid, protocol }: {
+    did: string;
+    dwnUrl: string;
+    delegateDid?: string;
+    protocol?: string;
+  }): Promise<{ onlyRemote: MessagesSyncDiffEntry[]; onlyLocal: string[] }> {
+    // Step 1: Collect local subtree hashes at BATCHED_DIFF_DEPTH directly from StateIndex.
+    const localHashes = await this.collectLocalSubtreeHashes(did, protocol, BATCHED_DIFF_DEPTH);
+
+    // Step 2: Send a single 'diff' request to the remote with our hashes.
+    const permissionGrantId = await this.getSyncPermissionGrantId(did, delegateDid, protocol);
+
+    const syncMessage = await this.agent.dwn.processRequest({
+      store         : false,
+      author        : did,
+      target        : did,
+      messageType   : DwnInterface.MessagesSync,
+      granteeDid    : delegateDid,
+      messageParams : {
+        action : 'diff',
+        protocol,
+        hashes : localHashes,
+        depth  : BATCHED_DIFF_DEPTH,
+        permissionGrantId,
+      }
+    });
+
+    const reply = await this.agent.rpc.sendDwnRequest({
+      dwnUrl,
+      targetDid : did,
+      message   : syncMessage.message,
+    }) as MessagesSyncReply;
+
+    if (reply.status.code !== 200) {
+      throw new Error(`SyncEngineLevel: diff failed with ${reply.status.code}: ${reply.status.detail}`);
+    }
+
+    // Step 3: Enumerate local leaves for prefixes the remote reported as onlyLocal.
+    const permissionGrantIdForLeaves = await this.getSyncPermissionGrantId(did, delegateDid, protocol);
+    const onlyLocalCids: string[] = [];
+    for (const prefix of reply.onlyLocal ?? []) {
+      const leaves = await this.getLocalLeaves(did, prefix, delegateDid, protocol, permissionGrantIdForLeaves);
+      onlyLocalCids.push(...leaves);
+    }
+
+    return {
+      onlyRemote : reply.onlyRemote ?? [],
+      onlyLocal  : onlyLocalCids,
+    };
+  }
+
+  /**
+   * Walk the local SMT to a given depth and collect non-empty subtree hashes.
+   * Returns a `{ prefix: hexHash }` map. Empty subtrees (matching the default
+   * hash) are omitted.
+   *
+   * Uses direct StateIndex access in local mode. In remote mode, falls back
+   * to `getLocalSubtreeHash` which routes through RPC.
+   */
+  private async collectLocalSubtreeHashes(
+    did: string,
+    protocol: string | undefined,
+    depth: number,
+  ): Promise<Record<string, string>> {
+    const result: Record<string, string> = {};
+    const defaultHash = await this.getDefaultHashHex(depth);
+    const si = this.stateIndex;
+
+    const walk = async (prefix: string, currentDepth: number): Promise<void> => {
+      let hexHash: string;
+
+      if (si) {
+        // Fast path: direct StateIndex access (local mode).
+        const bitPath = SyncEngineLevel.parseBitPrefix(prefix);
+        const hash = protocol !== undefined
+          ? await si.getProtocolSubtreeHash(did, protocol, bitPath)
+          : await si.getSubtreeHash(did, bitPath);
+        hexHash = hashToHex(hash);
+      } else {
+        // Remote mode fallback.
+        hexHash = await this.getLocalSubtreeHash(did, prefix, undefined, protocol);
+      }
+
+      if (hexHash === defaultHash) {
+        // Empty subtree — omit from the map.
+        return;
+      }
+
+      if (currentDepth >= depth) {
+        result[prefix] = hexHash;
+        return;
+      }
+
+      // Recurse into children.
+      await Promise.all([
+        walk(prefix + '0', currentDepth + 1),
+        walk(prefix + '1', currentDepth + 1),
+      ]);
+    };
+
+    await walk('', 0);
+    return result;
+  }
+
+  /**
+   * Get the subtree hash at a given bit prefix from the local DWN.
+   *
+   * In local mode: queries the StateIndex directly.
+   * In remote mode: constructs a signed MessagesSync message and routes through RPC.
+   */
   private async getLocalSubtreeHash(
     did: string, prefix: string, delegateDid?: string, protocol?: string, permissionGrantId?: string
   ): Promise<string> {
+    const si = this.stateIndex;
+    if (si) {
+      const bitPath = SyncEngineLevel.parseBitPrefix(prefix);
+      const hash = protocol !== undefined
+        ? await si.getProtocolSubtreeHash(did, protocol, bitPath)
+        : await si.getSubtreeHash(did, bitPath);
+      return hashToHex(hash);
+    }
+
+    // Remote mode fallback.
     const response = await this.agent.dwn.processRequest({
       author        : did,
       target        : did,
@@ -970,7 +1185,6 @@ export class SyncEngineLevel implements SyncEngine {
         permissionGrantId
       }
     });
-
     const reply = response.reply as MessagesSyncReply;
     return reply.hash ?? '';
   }
@@ -1001,9 +1215,24 @@ export class SyncEngineLevel implements SyncEngine {
     return reply.hash ?? '';
   }
 
+  /**
+   * Get all leaf messageCids under a given prefix from the local DWN.
+   *
+   * In local mode: queries the StateIndex directly.
+   * In remote mode: constructs a signed MessagesSync message and routes through RPC.
+   */
   private async getLocalLeaves(
     did: string, prefix: string, delegateDid?: string, protocol?: string, permissionGrantId?: string
   ): Promise<string[]> {
+    const si = this.stateIndex;
+    if (si) {
+      const bitPath = SyncEngineLevel.parseBitPrefix(prefix);
+      return protocol !== undefined
+        ? await si.getProtocolLeaves(did, protocol, bitPath)
+        : await si.getLeaves(did, bitPath);
+    }
+
+    // Remote mode fallback.
     const response = await this.agent.dwn.processRequest({
       author        : did,
       target        : did,
@@ -1016,7 +1245,6 @@ export class SyncEngineLevel implements SyncEngine {
         permissionGrantId
       }
     });
-
     const reply = response.reply as MessagesSyncReply;
     return reply.entries ?? [];
   }
@@ -1054,16 +1282,21 @@ export class SyncEngineLevel implements SyncEngine {
   /**
    * Fetches missing messages from the remote DWN and processes them locally
    * in dependency order (topological sort).
+   *
+   * When prefetched entries are provided (from the batched diff response),
+   * they are processed directly without additional HTTP round-trips.
+   * Only `messageCids` that were NOT prefetched are fetched individually.
    */
-  private async pullMessages({ did, dwnUrl, delegateDid, protocol, messageCids }: {
+  private async pullMessages({ did, dwnUrl, delegateDid, protocol, messageCids, prefetched }: {
     did: string;
     dwnUrl: string;
     delegateDid?: string;
     protocol?: string;
     messageCids: string[];
+    prefetched?: MessagesSyncDiffEntry[];
   }): Promise<void> {
     return pullMessages({
-      did, dwnUrl, delegateDid, protocol, messageCids,
+      did, dwnUrl, delegateDid, protocol, messageCids, prefetched,
       agent          : this.agent,
       permissionsApi : this._permissionsApi,
     });

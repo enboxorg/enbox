@@ -533,11 +533,12 @@ describe('SyncEngineLevel', () => {
         expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error fetching MessagesSync permission grant for delegate DID');
       });
 
-      it('logs an error if could not fetch MessagesRead permission needed for a sync', async () => {
-        // create new identity to not conflict the previous tests's remote records
+      it('succeeds with only a MessagesSync grant when messages are inlined in the diff response', async () => {
+        // The batched diff protocol bundles small messages directly in the diff response,
+        // so a MessagesRead grant is only needed for large payloads that can't be inlined.
+        // This test verifies that sync works with ONLY a MessagesSync grant.
         const aliceSync = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
 
-        // create 3 local protocols
         const protocolFoo: ProtocolDefinition = {
           published : true,
           protocol  : 'https://protocol.xyz/foo',
@@ -563,8 +564,7 @@ describe('SyncEngineLevel', () => {
         });
         expect(protocolsFoo.reply.status.code).toBe(202);
 
-
-        // create a record that will be read as a part of sync
+        // create a record that will be synced
         const record1 = await testHarness.agent.sendDwnRequest({
           author        : aliceSync.did.uri,
           target        : aliceSync.did.uri,
@@ -579,14 +579,13 @@ describe('SyncEngineLevel', () => {
         });
         expect(record1.reply.status.code).toBe(202);
 
-
         const delegateDid = await testHarness.agent.identity.create({
           store     : true,
           didMethod : 'jwk',
           metadata  : { name: 'Alice Delegate', connectedDid: aliceSync.did.uri }
         });
 
-        // write a MessagesSync permission grant for the delegate DID
+        // write ONLY a MessagesSync permission grant — no MessagesRead grant
         const messagesSyncGrant = await testHarness.agent.permissions.createGrant({
           store       : true,
           author      : aliceSync.did.uri,
@@ -629,12 +628,19 @@ describe('SyncEngineLevel', () => {
           }
         });
 
-        // spy on console.error to check if the error message is logged
-        const consoleErrorSpy = sinon.stub(console, 'error').resolves();
-
+        // With the batched diff, sync should succeed without a MessagesRead grant.
+        // Small messages are bundled in the diff response.
         await syncEngine.sync('pull');
-        expect(consoleErrorSpy.called).toBe(true);
-        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: pull - Error fetching MessagesRead permission grant for delegate DID');
+
+        // Verify the record was synced to the local DWN.
+        const queryResponse = await testHarness.agent.dwn.processRequest({
+          author        : aliceSync.did.uri,
+          target        : aliceSync.did.uri,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : { filter: { protocol: 'https://protocol.xyz/foo' } }
+        });
+        expect(queryResponse.reply.status.code).toBe(200);
+        expect(queryResponse.reply.entries!.length).toBeGreaterThanOrEqual(1);
       });
 
       it('synchronizes records for 1 identity from remote DWN to local DWN', async () => {
@@ -1003,11 +1009,11 @@ describe('SyncEngineLevel', () => {
         expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error fetching MessagesSync permission grant for delegate DID');
       });
 
-      it('logs an error if could not fetch MessagesRead permission needed for a sync', async () => {
-        // create new identity to not conflict the previous tests's remote records
+      it('logs an error when push fails due to missing permissions on the remote DWN', async () => {
+        // The batched diff sends a MessagesSync 'diff' request to the remote DWN.
+        // Without the proper grant on the remote, the diff (and therefore push) will fail.
         const aliceSync = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
 
-        // create 3 local protocols
         const protocolFoo: ProtocolDefinition = {
           published : true,
           protocol  : 'https://protocol.xyz/foo',
@@ -1033,8 +1039,7 @@ describe('SyncEngineLevel', () => {
         });
         expect(protocolsFoo.reply.status.code).toBe(202);
 
-
-        // create a record that will be read as a part of sync
+        // create a record locally
         const record1 = await testHarness.agent.processDwnRequest({
           author        : aliceSync.did.uri,
           target        : aliceSync.did.uri,
@@ -1049,14 +1054,13 @@ describe('SyncEngineLevel', () => {
         });
         expect(record1.reply.status.code).toBe(202);
 
-
         const delegateDid = await testHarness.agent.identity.create({
           store     : true,
           didMethod : 'jwk',
           metadata  : { name: 'Alice Delegate', connectedDid: aliceSync.did.uri }
         });
 
-        // write a MessagesSync permission grant for the delegate DID
+        // write a MessagesSync permission grant — store locally only (NOT on remote)
         const messagesSyncGrant = await testHarness.agent.permissions.createGrant({
           store       : true,
           author      : aliceSync.did.uri,
@@ -1069,7 +1073,6 @@ describe('SyncEngineLevel', () => {
           }
         });
 
-        // store it as the delegate DID so that it can be fetched during sync
         const { encodedData: messagesSyncGrantData, ...messagesSyncGrantMessage } = messagesSyncGrant.message;
         const processGrant = await testHarness.agent.processDwnRequest({
           author      : delegateDid.did.uri,
@@ -1093,8 +1096,9 @@ describe('SyncEngineLevel', () => {
         const consoleErrorSpy = sinon.stub(console, 'error').resolves();
 
         await syncEngine.sync('push');
+        // The sync should log an error because the diff or push to the remote DWN failed.
         expect(consoleErrorSpy.called).toBe(true);
-        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: push - Error fetching MessagesRead permission grant for delegate DID');
+        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error syncing');
       });
 
       it('synchronizes records for 1 identity from local DWN to remote DWN', async () => {
@@ -1673,8 +1677,8 @@ describe('SyncEngineLevel', () => {
         //
         // The setTimeout is created before startSync, so at t=1500 it fires
         // before the interval callback — this avoids timer-ordering races.
-        const walkTreeDiffStub = sinon.stub(SyncEngineLevel.prototype as any, 'walkTreeDiff');
-        walkTreeDiffStub.returns(new Promise<{ onlyLocal: string[]; onlyRemote: string[] }>((resolve) => {
+        const diffWithRemoteStub = sinon.stub(SyncEngineLevel.prototype as any, 'diffWithRemote');
+        diffWithRemoteStub.returns(new Promise<{ onlyLocal: string[]; onlyRemote: unknown[] }>((resolve) => {
           clock.setTimeout(() => {
             resolve({ onlyLocal: [], onlyRemote: [] });
           }, 1_500);
@@ -1709,7 +1713,7 @@ describe('SyncEngineLevel', () => {
         expect(syncSpy.callCount).toBe(3);
 
         syncSpy.restore();
-        walkTreeDiffStub.restore();
+        diffWithRemoteStub.restore();
         getSyncTargetsStub.restore();
         getLocalRootStub.restore();
         getRemoteRootStub.restore();

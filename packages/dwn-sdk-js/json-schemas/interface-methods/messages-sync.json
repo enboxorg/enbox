@@ -33,7 +33,7 @@
           "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
         },
         "action": {
-          "enum": ["root", "subtree", "leaves"],
+          "enum": ["root", "subtree", "leaves", "diff"],
           "type": "string"
         },
         "protocol": {
@@ -45,6 +45,19 @@
         },
         "permissionGrantId": {
           "type": "string"
+        },
+        "hashes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Map of { bitPrefix: hexHash } for the 'diff' action."
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256,
+          "description": "Bit depth at which the client computed its subtree hashes."
         }
       },
       "allOf": [
@@ -62,6 +75,14 @@
           },
           "then": {
             "required": ["prefix"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "diff" } }
+          },
+          "then": {
+            "required": ["hashes", "depth"]
           }
         }
       ]

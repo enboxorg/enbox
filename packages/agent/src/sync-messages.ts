@@ -1,15 +1,23 @@
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
-import type { GenericMessage, MessagesReadReply, UnionMessageReply } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessagesReadReply, MessagesSyncDiffEntry, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
-import { DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
 import { topologicalSort } from './sync-topological-sort.js';
 
-/** Entry type for fetched messages with optional data stream. */
-export type SyncMessageEntry = { message: GenericMessage; dataStream?: ReadableStream<Uint8Array> };
+/** Maximum data size (in bytes) to buffer in memory for retry. Larger payloads are re-fetched. */
+const MAX_BUFFER_SIZE = 1_048_576; // 1 MB
+
+/** Entry type for fetched messages with optional data stream and retry buffer. */
+export type SyncMessageEntry = {
+  message: GenericMessage;
+  dataStream?: ReadableStream<Uint8Array>;
+  /** Buffered data bytes for retry — avoids re-fetching from remote when stream is consumed. */
+  bufferedData?: Uint8Array;
+};
 
 /**
  * 202: message was successfully written to the remote DWN
@@ -43,52 +51,162 @@ export async function getMessageCid(message: GenericMessage): Promise<string> {
  * Fetches missing messages from the remote DWN and processes them on the local DWN
  * in dependency order (topological sort).
  *
- * Messages that fail processing are re-fetched from the remote before each retry
- * pass rather than buffered in memory. ReadableStream is single-use, so a failed
- * message's data stream is consumed on the first attempt. Re-fetching provides a
- * fresh stream without holding all record data in memory simultaneously.
+ * Small data payloads (≤ 1 MB) are buffered during the initial fetch so that
+ * retries can replay the data from memory instead of re-fetching from remote.
+ * Large payloads are re-fetched on retry since buffering them would consume
+ * too much memory.
  */
-export async function pullMessages({ did, dwnUrl, delegateDid, protocol, messageCids, agent, permissionsApi }: {
+export async function pullMessages({ did, dwnUrl, delegateDid, protocol, messageCids, prefetched, agent, permissionsApi }: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
   protocol?: string;
   messageCids: string[];
+  /** Pre-fetched message entries from the batched diff response (already have message + data). */
+  prefetched?: MessagesSyncDiffEntry[];
   agent: EnboxPlatformAgent;
   permissionsApi: PermissionsApi;
 }): Promise<void> {
-  // Step 1: Fetch all missing messages from the remote in parallel.
-  const fetched = await fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, messageCids, agent, permissionsApi });
+  // Convert prefetched diff entries into SyncMessageEntry format.
+  const prefetchedEntries: SyncMessageEntry[] = [];
+  if (prefetched) {
+    for (const entry of prefetched) {
+      if (!entry.message) { continue; }
+      const syncEntry: SyncMessageEntry = { message: entry.message };
+      if (entry.encodedData) {
+        // Convert base64url-encoded data to a ReadableStream.
+        const bytes = Encoder.base64UrlToBytes(entry.encodedData);
+        syncEntry.bufferedData = bytes;
+        syncEntry.dataStream = new ReadableStream<Uint8Array>({
+          start(controller): void {
+            controller.enqueue(bytes);
+            controller.close();
+          }
+        });
+      }
+      prefetchedEntries.push(syncEntry);
+    }
+  }
+
+  // Step 1: Fetch remaining messages (not prefetched) from the remote.
+  const fetched = messageCids.length > 0
+    ? await fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, messageCids, agent, permissionsApi })
+    : [];
+
+  // Merge prefetched entries with remotely fetched ones.
+  const allFetched = [...prefetchedEntries, ...fetched];
 
   // Step 2: Build dependency graph and topological sort.
-  const sorted = topologicalSort(fetched);
+  const sorted = topologicalSort(allFetched);
 
-  // Step 3: Process messages in dependency order with multi-pass retry.
-  // Retry up to MAX_RETRY_PASSES times for messages that fail due to
-  // dependency ordering issues (e.g., a RecordsWrite whose ProtocolsConfigure
-  // hasn't committed yet). Failed messages are re-fetched from the remote
-  // to obtain a fresh data stream, since ReadableStream is single-use.
+  // Step 3: Buffer small data streams so they can be replayed on retry.
+  await bufferSmallStreams(sorted);
+
+  // Step 4: Process messages in dependency order with multi-pass retry.
   const MAX_RETRY_PASSES = 3;
   let pending = sorted;
 
   for (let pass = 0; pass <= MAX_RETRY_PASSES && pending.length > 0; pass++) {
-    const failedCids: string[] = [];
+    const failed: SyncMessageEntry[] = [];
 
     for (const entry of pending) {
-      const pullReply = await agent.dwn.processRawMessage(did, entry.message, { dataStream: entry.dataStream });
+      // Create a fresh ReadableStream from the buffer if available (stream is single-use).
+      const dataStream = entry.bufferedData
+        ? new ReadableStream<Uint8Array>({ start(c): void { c.enqueue(entry.bufferedData!); c.close(); } })
+        : entry.dataStream;
+
+      const pullReply = await agent.dwn.processRawMessage(did, entry.message, { dataStream });
+
       if (!syncMessageReplyIsSuccessful(pullReply)) {
-        const cid = await getMessageCid(entry.message);
-        failedCids.push(cid);
+        failed.push(entry);
       }
     }
 
-    // Re-fetch failed messages from the remote to get fresh data streams.
-    if (failedCids.length > 0) {
-      const reFetched = await fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, messageCids: failedCids, agent, permissionsApi });
-      pending = topologicalSort(reFetched);
+    if (failed.length > 0) {
+      // Separate entries that have a buffer (can retry locally) from those
+      // that need a fresh fetch (large payloads whose stream was consumed).
+      const needsRefetch: string[] = [];
+      const canRetry: SyncMessageEntry[] = [];
+
+      for (const entry of failed) {
+        if (entry.bufferedData || !entry.dataStream) {
+          // Has a buffer or has no data — can retry without re-fetching.
+          canRetry.push(entry);
+        } else {
+          // Large payload whose stream was consumed — must re-fetch.
+          const cid = await getMessageCid(entry.message);
+          needsRefetch.push(cid);
+        }
+      }
+
+      // Re-fetch only the large-payload messages that we couldn't buffer.
+      if (needsRefetch.length > 0) {
+        const reFetched = await fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, messageCids: needsRefetch, agent, permissionsApi });
+        canRetry.push(...reFetched);
+      }
+
+      pending = topologicalSort(canRetry);
     } else {
       pending = [];
     }
+  }
+}
+
+/**
+ * Buffers small data streams into `Uint8Array` so they can be replayed on retry.
+ * Streams larger than `MAX_BUFFER_SIZE` are left as-is (will be re-fetched on retry).
+ */
+async function bufferSmallStreams(entries: SyncMessageEntry[]): Promise<void> {
+  for (const entry of entries) {
+    if (!entry.dataStream) {
+      continue;
+    }
+
+    // Read the stream into memory. If it exceeds the threshold, stop and
+    // leave the entry without a buffer (it will be re-fetched on retry).
+    const chunks: Uint8Array[] = [];
+    let totalSize = 0;
+    let exceededThreshold = false;
+    const reader = entry.dataStream.getReader();
+
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) { break; }
+        totalSize += value.byteLength;
+        if (totalSize > MAX_BUFFER_SIZE) {
+          exceededThreshold = true;
+          break;
+        }
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    if (exceededThreshold) {
+      // Stream exceeded the buffer threshold. Leave dataStream consumed —
+      // the retry path will re-fetch from remote.
+      entry.dataStream = undefined;
+      continue;
+    }
+
+    // Combine chunks into a single Uint8Array buffer.
+    const buffer = new Uint8Array(totalSize);
+    let offset = 0;
+    for (const chunk of chunks) {
+      buffer.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+
+    entry.bufferedData = buffer;
+    // Create a fresh ReadableStream from the buffer for the first processing attempt.
+    entry.dataStream = new ReadableStream<Uint8Array>({
+      start(controller): void {
+        controller.enqueue(buffer);
+        controller.close();
+      }
+    });
   }
 }
 

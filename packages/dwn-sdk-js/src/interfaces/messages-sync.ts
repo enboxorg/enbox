@@ -15,6 +15,10 @@ export type MessagesSyncOptions = {
   prefix? : string;
   messageTimestamp? : string;
   permissionGrantId? : string;
+  /** For `action: 'diff'`: client's subtree hashes at `depth`. */
+  hashes? : Record<string, string>;
+  /** For `action: 'diff'`: bit depth at which hashes were computed. */
+  depth? : number;
 };
 
 export class MessagesSync extends AbstractMessage<MessagesSyncMessage> {
@@ -39,6 +43,8 @@ export class MessagesSync extends AbstractMessage<MessagesSyncMessage> {
       protocol          : options.protocol,
       prefix            : options.prefix,
       permissionGrantId : options.permissionGrantId,
+      hashes            : options.hashes,
+      depth             : options.depth,
     };
 
     removeUndefinedProperties(descriptor);
