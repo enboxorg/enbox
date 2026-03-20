@@ -36,7 +36,7 @@ export type MessagesReadReply = GenericMessageReply & {
   entry?: MessagesReadReplyEntry;
 };
 
-export type MessagesSyncAction = 'root' | 'subtree' | 'leaves';
+export type MessagesSyncAction = 'root' | 'subtree' | 'leaves' | 'diff';
 
 export type MessagesSyncDescriptor = {
   interface : DwnInterfaceName.Messages;
@@ -46,6 +46,20 @@ export type MessagesSyncDescriptor = {
   protocol? : string; // optional protocol scope
   prefix? : string; // bit path for subtree/leaves (e.g. "0110101...")
   permissionGrantId? : string;
+  /**
+   * For `action: 'diff'`: a map of `{ bitPrefix: hexHash }` representing the client's
+   * subtree hashes at `depth`. The server compares each hash against its own tree
+   * and returns the set difference in a single round-trip.
+   *
+   * Only non-default (non-empty) subtree hashes need to be included — prefixes
+   * whose hash equals the default empty-subtree hash may be omitted.
+   */
+  hashes? : Record<string, string>;
+  /**
+   * For `action: 'diff'`: the bit depth at which the client computed its subtree
+   * hashes. Required when `action` is `'diff'`.
+   */
+  depth? : number;
 };
 
 export type MessagesSyncMessage = GenericMessage & {
@@ -53,10 +67,26 @@ export type MessagesSyncMessage = GenericMessage & {
   descriptor : MessagesSyncDescriptor;
 };
 
+/**
+ * Entry in a diff response representing a message the server has that the
+ * client does not (or vice versa). Optionally includes the full message
+ * and inline data for small payloads.
+ */
+export type MessagesSyncDiffEntry = {
+  messageCid : string;
+  message? : GenericMessage;
+  /** Base64url-encoded data for small RecordsWrite payloads (≤ maxInlineDataSize). */
+  encodedData? : string;
+};
+
 export type MessagesSyncReply = GenericMessageReply & {
   root? : string; // hex-encoded root hash (for 'root' action)
   hash? : string; // hex-encoded subtree hash (for 'subtree' action)
   entries? : string[]; // messageCid[] (for 'leaves' action)
+  /** For 'diff' action: messageCids (or full messages) that the server has but the client doesn't. */
+  onlyRemote? : MessagesSyncDiffEntry[];
+  /** For 'diff' action: bit prefixes where the client has entries the server doesn't. */
+  onlyLocal? : string[];
 };
 
 export type MessagesSubscribeMessageOptions = {

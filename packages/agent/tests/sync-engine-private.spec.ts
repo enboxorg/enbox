@@ -313,11 +313,11 @@ describe('SyncEngineLevel — private methods', () => {
       ]);
       sinon.stub(engine as any, 'getLocalRoot').resolves('aabbcc');
       sinon.stub(engine as any, 'getRemoteRoot').resolves('aabbcc');
-      const walkStub = sinon.stub(engine as any, 'walkTreeDiff');
+      const diffStub = sinon.stub(engine as any, 'diffWithRemote');
 
       await engine.sync();
 
-      expect(walkStub.called).toBe(false);
+      expect(diffStub.called).toBe(false);
     });
 
     it('should walk tree diff and pull/push when roots differ', async () => {
@@ -329,9 +329,9 @@ describe('SyncEngineLevel — private methods', () => {
       ]);
       sinon.stub(engine as any, 'getLocalRoot').resolves('aabbcc');
       sinon.stub(engine as any, 'getRemoteRoot').resolves('ddeeff');
-      sinon.stub(engine as any, 'walkTreeDiff').resolves({
+      sinon.stub(engine as any, 'diffWithRemote').resolves({
         onlyLocal  : ['cid-local-1'],
-        onlyRemote : ['cid-remote-1'],
+        onlyRemote : [{ messageCid: 'cid-remote-1' }],
       });
       const pullStub = sinon.stub(engine as any, 'pullMessages').resolves();
       const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
@@ -351,9 +351,9 @@ describe('SyncEngineLevel — private methods', () => {
       ]);
       sinon.stub(engine as any, 'getLocalRoot').resolves('aabbcc');
       sinon.stub(engine as any, 'getRemoteRoot').resolves('ddeeff');
-      sinon.stub(engine as any, 'walkTreeDiff').resolves({
+      sinon.stub(engine as any, 'diffWithRemote').resolves({
         onlyLocal  : ['cid-local-1'],
-        onlyRemote : ['cid-remote-1'],
+        onlyRemote : [{ messageCid: 'cid-remote-1' }],
       });
       const pullStub = sinon.stub(engine as any, 'pullMessages').resolves();
       const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
@@ -373,9 +373,9 @@ describe('SyncEngineLevel — private methods', () => {
       ]);
       sinon.stub(engine as any, 'getLocalRoot').resolves('aabbcc');
       sinon.stub(engine as any, 'getRemoteRoot').resolves('ddeeff');
-      sinon.stub(engine as any, 'walkTreeDiff').resolves({
+      sinon.stub(engine as any, 'diffWithRemote').resolves({
         onlyLocal  : ['cid-local-1'],
-        onlyRemote : ['cid-remote-1'],
+        onlyRemote : [{ messageCid: 'cid-remote-1' }],
       });
       const pullStub = sinon.stub(engine as any, 'pullMessages').resolves();
       const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
@@ -395,7 +395,7 @@ describe('SyncEngineLevel — private methods', () => {
       ]);
       sinon.stub(engine as any, 'getLocalRoot').resolves('aabbcc');
       sinon.stub(engine as any, 'getRemoteRoot').resolves('ddeeff');
-      sinon.stub(engine as any, 'walkTreeDiff').resolves({
+      sinon.stub(engine as any, 'diffWithRemote').resolves({
         onlyLocal  : [],
         onlyRemote : [],
       });
@@ -978,38 +978,45 @@ describe('SyncEngineLevel — private methods', () => {
   // ---------------------------------------------------------------------------
 
   describe('getLocalRoot / getRemoteRoot', () => {
-    it('getLocalRoot should call processRequest with root action', async () => {
-      const processRequestStub = sinon.stub().resolves({
-        reply: { status: { code: 200 }, root: 'aabbccdd' },
-      });
+    it('getLocalRoot should query StateIndex directly for the root hash', async () => {
+      // The local root method now accesses the StateIndex directly (no processMessage).
+      const fakeHash = new Uint8Array(32);
+      fakeHash[0] = 0xaa; fakeHash[1] = 0xbb;
+      const mockStateIndex = {
+        getRoot         : sinon.stub().resolves(fakeHash),
+        getProtocolRoot : sinon.stub().resolves(fakeHash),
+      };
       const mockAgent = {
         agentDid : 'did:example:agent',
-        dwn      : { processRequest: processRequestStub },
+        dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
       const root = await (engine as any).getLocalRoot('did:example:alice');
 
-      expect(root).toBe('aabbccdd');
-      const callArgs = processRequestStub.firstCall.args[0];
-      expect(callArgs.messageParams.action).toBe('root');
+      expect(root).toBeTruthy();
+      expect(mockStateIndex.getRoot.calledOnce).toBe(true);
+      expect(mockStateIndex.getRoot.firstCall.args[0]).toBe('did:example:alice');
     });
 
-    it('getLocalRoot should return empty string when reply has no root', async () => {
+    it('getLocalRoot should use getProtocolRoot when protocol is specified', async () => {
+      const fakeHash = new Uint8Array(32);
+      const mockStateIndex = {
+        getRoot         : sinon.stub().resolves(fakeHash),
+        getProtocolRoot : sinon.stub().resolves(fakeHash),
+      };
       const mockAgent = {
         agentDid : 'did:example:agent',
-        dwn      : {
-          processRequest: sinon.stub().resolves({
-            reply: { status: { code: 200 } },
-          }),
-        },
+        dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
-      const root = await (engine as any).getLocalRoot('did:example:alice');
-      expect(root).toBe('');
+      await (engine as any).getLocalRoot('did:example:alice', undefined, 'https://proto.example.com');
+
+      expect(mockStateIndex.getProtocolRoot.calledOnce).toBe(true);
+      expect(mockStateIndex.getProtocolRoot.firstCall.args[1]).toBe('https://proto.example.com');
     });
 
     it('getRemoteRoot should send to remote and return root hash', async () => {
@@ -1041,34 +1048,40 @@ describe('SyncEngineLevel — private methods', () => {
   // ---------------------------------------------------------------------------
 
   describe('subtree hash and leaf methods', () => {
-    it('getLocalSubtreeHash should return hash from processRequest', async () => {
+    it('getLocalSubtreeHash should query StateIndex directly', async () => {
+      const fakeHash = new Uint8Array(32);
+      fakeHash[0] = 0xab;
+      const mockStateIndex = {
+        getSubtreeHash         : sinon.stub().resolves(fakeHash),
+        getProtocolSubtreeHash : sinon.stub().resolves(fakeHash),
+      };
       const mockAgent = {
         agentDid : 'did:example:agent',
-        dwn      : {
-          processRequest: sinon.stub().resolves({
-            reply: { status: { code: 200 }, hash: 'subtree-hash-local' },
-          }),
-        },
+        dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
 
       const hash = await (engine as any).getLocalSubtreeHash('did:example:alice', '01');
-      expect(hash).toBe('subtree-hash-local');
+      expect(hash).toBeTruthy();
+      expect(mockStateIndex.getSubtreeHash.calledOnce).toBe(true);
     });
 
-    it('getLocalSubtreeHash should return empty string when no hash', async () => {
+    it('getLocalSubtreeHash should return default hash hex for empty subtree', async () => {
+      // Empty subtrees return the default hash (all zeros at the leaf level)
+      const emptyHash = new Uint8Array(32); // all zeros
+      const mockStateIndex = {
+        getSubtreeHash         : sinon.stub().resolves(emptyHash),
+        getProtocolSubtreeHash : sinon.stub().resolves(emptyHash),
+      };
       const mockAgent = {
         agentDid : 'did:example:agent',
-        dwn      : {
-          processRequest: sinon.stub().resolves({
-            reply: { status: { code: 200 } },
-          }),
-        },
+        dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
 
       const hash = await (engine as any).getLocalSubtreeHash('did:example:alice', '01');
-      expect(hash).toBe('');
+      // The hash should be a hex string (even if it's the default/empty hash)
+      expect(typeof hash).toBe('string');
     });
 
     it('getRemoteSubtreeHash should return hash from remote DWN', async () => {
@@ -1095,29 +1108,30 @@ describe('SyncEngineLevel — private methods', () => {
       expect(hash).toBe('subtree-hash-remote');
     });
 
-    it('getLocalLeaves should return entries array', async () => {
+    it('getLocalLeaves should query StateIndex directly and return CIDs', async () => {
+      const mockStateIndex = {
+        getLeaves         : sinon.stub().resolves(['cid-a', 'cid-b']),
+        getProtocolLeaves : sinon.stub().resolves(['cid-a', 'cid-b']),
+      };
       const mockAgent = {
         agentDid : 'did:example:agent',
-        dwn      : {
-          processRequest: sinon.stub().resolves({
-            reply: { status: { code: 200 }, entries: ['cid-a', 'cid-b'] },
-          }),
-        },
+        dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
 
       const leaves = await (engine as any).getLocalLeaves('did:example:alice', '01');
       expect(leaves).toEqual(['cid-a', 'cid-b']);
+      expect(mockStateIndex.getLeaves.calledOnce).toBe(true);
     });
 
     it('getLocalLeaves should return empty array when no entries', async () => {
+      const mockStateIndex = {
+        getLeaves         : sinon.stub().resolves([]),
+        getProtocolLeaves : sinon.stub().resolves([]),
+      };
       const mockAgent = {
         agentDid : 'did:example:agent',
-        dwn      : {
-          processRequest: sinon.stub().resolves({
-            reply: { status: { code: 200 } },
-          }),
-        },
+        dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
 
