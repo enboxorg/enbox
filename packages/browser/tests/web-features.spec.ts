@@ -384,9 +384,12 @@ describe('web features', () => {
         bubbles    : true,
         cancelable : true,
       }));
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      expect((img as any).__src__).toBeUndefined();
+      // Wait for the rAF-based cleanup to complete.  WebKit's headless rAF
+      // scheduling can be slower than Chromium/Firefox, so we poll instead
+      // of using a fixed timeout to avoid intermittent CI failures.
+      await vi.waitFor(() => {
+        expect((img as any).__src__).toBeUndefined();
+      }, { timeout: 2000, interval: 50 });
       img.remove();
     });
 

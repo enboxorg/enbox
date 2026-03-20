@@ -867,9 +867,33 @@ jobs:
         # the final step to fail the job if tests actually broke.
         continue-on-error: true
         run: |
+          # Firefox's ESM loader can transiently crash with "error loading
+          # dynamically imported module" (affects ~14% of runs, random test
+          # file each time).  Vitest's test-level retry cannot recover from
+          # file-level import failures, so we retry the entire vitest
+          # invocation once per package when running Firefox.
+          max_attempts=1
+          if [ "${{ matrix.browser }}" = "firefox" ]; then
+            max_attempts=2
+          fi
+
           exit_code=0
           for pkg in ${{ matrix.shard.packages }}; do
-            bun run --filter "$pkg" test:browser:coverage || exit_code=$?
+            attempt=1
+            pkg_passed=false
+            while [ $attempt -le $max_attempts ]; do
+              if bun run --filter "$pkg" test:browser:coverage; then
+                pkg_passed=true
+                break
+              fi
+              if [ $attempt -lt $max_attempts ]; then
+                echo "::warning::Browser tests for $pkg failed on attempt $attempt — retrying…"
+              fi
+              attempt=$((attempt + 1))
+            done
+            if [ "$pkg_passed" = false ]; then
+              exit_code=1
+            fi
           done
           exit $exit_code
 
