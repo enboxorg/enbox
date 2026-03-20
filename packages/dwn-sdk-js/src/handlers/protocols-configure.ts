@@ -54,6 +54,16 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     };
     const { messages: existingMessages } = await this.deps.messageStore.query(tenant, [ query ]);
 
+    // If the exact same message already exists, return 409 immediately.
+    // This prevents duplicate key violations in the MessageStore and StateIndex
+    // when sync pushes a message that the remote already has.
+    const incomingCid = await Message.getCid(message);
+    for (const existing of existingMessages) {
+      if (await Message.getCid(existing) === incomingCid) {
+        return { status: { code: 409, detail: 'Conflict' } };
+      }
+    }
+
     // find newest message, and if the incoming message is the newest
     let newestMessage = await Message.getNewestMessage(existingMessages);
     let incomingMessageIsNewest = false;
