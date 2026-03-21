@@ -654,7 +654,10 @@ describe('DwnApi', () => {
           protocol  : protocolUri
         }]);
 
-        await processConnectedGrants({ grants, connectedDid: aliceDid.uri, delegateDid: delegateDid.uri, agent: delegateHarness.agent as EnboxUserAgent });
+        await processConnectedGrants({
+          grants, connectedDid : aliceDid.uri, delegateDid  : delegateDid.uri,
+          agent        : delegateHarness.agent as EnboxUserAgent,
+        });
 
         // now try again after processing the connected grant
         const { status, protocol } = await delegateDwn.protocols.configure({
@@ -702,7 +705,10 @@ describe('DwnApi', () => {
           method    : DwnMethodName.Query,
           protocol  : nonPublicProtocol.protocol
         }]);
-        await processConnectedGrants({ grants, connectedDid: aliceDid.uri, delegateDid: delegateDid.uri, agent: delegateHarness.agent as EnboxUserAgent });
+        await processConnectedGrants({
+          grants, connectedDid : aliceDid.uri, delegateDid  : delegateDid.uri,
+          agent        : delegateHarness.agent as EnboxUserAgent,
+        });
 
         // now query for the non-public protocol, should return the protocol
         const { status: nonPublicQueryStatus2, protocols: nonPublicProtocols2 } = await delegateDwn.protocols.query({
