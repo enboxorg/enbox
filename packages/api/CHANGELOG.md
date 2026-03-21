@@ -1,5 +1,16 @@
 # @enbox/api
 
+## 0.6.0
+
+### Minor Changes
+
+- [#750](https://github.com/enboxorg/enbox/pull/750) [`efd0116`](https://github.com/enboxorg/enbox/commit/efd011676082e098d17a26de82f15c3669ff43ae) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat(api): add protocol-wide subscribe() to TypedEnbox
+
+  TypedEnbox now exposes a `subscribe()` method that listens for record
+  changes across the entire protocol, regardless of protocolPath. Unlike
+  `records.subscribe(path)` which scopes to a single level, this catches
+  creates, updates, and deletes at every level of the protocol hierarchy.
+
 ## 0.5.11
 
 ### Patch Changes
