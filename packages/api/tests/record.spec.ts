@@ -216,7 +216,7 @@ describe('Record', () => {
 
       // Process the connected grants (stores them in the delegate agent's DWN).
       const connectedProtocols = await processConnectedGrants({
-        grants, delegateDid: delegateDid.uri, agent: delegateHarness.agent as EnboxUserAgent,
+        grants, connectedDid: aliceDid.uri, delegateDid: delegateDid.uri, agent: delegateHarness.agent as EnboxUserAgent,
       });
 
       // Register sync for Alice's DID and pull the protocol configuration.
