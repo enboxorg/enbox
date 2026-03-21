@@ -22,6 +22,9 @@ import type { PasswordProvider } from '../password-provider.js';
 import type { IdentityInfo, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
 
 import { Convert } from '@enbox/common';
+import type { GenericMessage } from '@enbox/dwn-sdk-js';
+
+import { DataStream } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
 import { AuthSession } from '../identity-session.js';
@@ -287,19 +290,20 @@ export async function processConnectedGrants(params: {
       );
     }
 
-    // Also store the grant in the connectedDid's partition.  When the
-    // sync engine (or any delegate-authorized operation) processes a
-    // request against the connectedDid's tenant, the DWN needs to find
+    // Also store the grant in the connectedDid's local DWN partition.
+    // When the sync engine (or any delegate-authorized operation) processes
+    // a request against the connectedDid's tenant, the DWN needs to find
     // the grant record there to authorize the delegate.
-    const { reply: connectedReply } = await agent.processDwnRequest({
-      store       : true,
-      author      : connectedDid,
-      target      : connectedDid,
-      messageType : DwnInterface.RecordsWrite,
-      signAsOwner : true,
-      rawMessage,
-      dataStream  : new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart]),
-    });
+    //
+    // We use processRawMessage because the delegate agent does not hold the
+    // connectedDid's private keys — we cannot re-sign the message.  The
+    // rawMessage already carries valid authorization from the connectedDid
+    // (the wallet signed it), so we pass it directly to the local DWN.
+    const connectedReply = await agent.dwn.processRawMessage(
+      connectedDid,
+      rawMessage as GenericMessage,
+      { dataStream: DataStream.fromBytes(Convert.base64Url(encodedData).toUint8Array()) },
+    );
 
     if (connectedReply.status.code !== 202 && connectedReply.status.code !== 409) {
       throw new Error(

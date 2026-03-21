@@ -112,21 +112,17 @@ describe('processConnectedGrants', () => {
     });
 
     expect(result).toEqual(['https://proto.example/chat', 'https://proto.example/notes']);
-    // 3 grants × 2 partitions (delegate + connected) = 6 calls
-    expect(processCalls).toHaveLength(6);
+    // 3 grants stored in delegate partition via processDwnRequest
+    expect(processCalls).toHaveLength(3);
 
-    // First call: grant stored in delegate partition
+    // Verify processDwnRequest called with delegate partition params
     expect(processCalls[0].author).toBe('did:dht:delegate');
     expect(processCalls[0].target).toBe('did:dht:delegate');
     expect(processCalls[0].messageType).toBe('RecordsWrite');
     expect(processCalls[0].signAsOwner).toBe(true);
     expect(processCalls[0].store).toBe(true);
-
-    // Second call: same grant stored in connected partition
-    expect(processCalls[1].author).toBe('did:dht:connected');
-    expect(processCalls[1].target).toBe('did:dht:connected');
-    expect(processCalls[1].messageType).toBe('RecordsWrite');
-    expect(processCalls[1].signAsOwner).toBe(true);
+    // The connected partition writes go through dwn.processRawMessage
+    // (not processDwnRequest), so they don't appear in processCalls.
   });
 
   test('deduplicates protocol URIs', async () => {
@@ -495,8 +491,9 @@ describe('walletConnect', () => {
     );
 
     expect(session.did).toBe('did:dht:connected456');
-    // 1 grant × 2 partitions (delegate + connected) = 2 calls
-    expect(processCalls).toHaveLength(2);
+    // 1 grant stored in delegate partition via processDwnRequest
+    // (connected partition goes through dwn.processRawMessage)
+    expect(processCalls).toHaveLength(1);
   });
 
   test('cleans up on identity import failure', async () => {
