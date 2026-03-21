@@ -683,4 +683,38 @@ describe('repository()', () => {
       expect(nonExistent).toBeUndefined();
     });
   });
+
+  describe('protocol-wide subscribe', () => {
+    it('should catch events from all protocol paths via typed.subscribe()', async () => {
+      const typed = new TypedEnbox(dwnAlice, TodoProtocol);
+      const repo = repository(typed);
+      await repo.configure();
+
+      const liveQuery = await typed.subscribe();
+      expect(liveQuery).toBeDefined();
+
+      const changes: string[] = [];
+      liveQuery!.on('change', () => {
+        changes.push('change');
+      });
+
+      // Create a root record (list) — should fire an event.
+      const { record: listRecord } = await repo.list.create({
+        data: { name: 'Groceries' },
+      });
+
+      // Create a nested record (task) — should also fire an event.
+      await repo.list.task.create(listRecord.contextId, {
+        data: { title: 'Buy milk', completed: false },
+      });
+
+      // Give the event loop time to deliver events.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Both the root and nested record events should have been captured.
+      expect(changes.length).toBeGreaterThanOrEqual(2);
+
+      await liveQuery!.close();
+    });
+  });
 });
