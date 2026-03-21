@@ -63,8 +63,9 @@ describe('processConnectedGrants', () => {
     const agent = createMockAgent();
     const result = await _processConnectedGrants({
       agent,
-      delegateDid : 'did:dht:delegate',
-      grants      : [],
+      connectedDid : 'did:dht:connected',
+      delegateDid  : 'did:dht:delegate',
+      grants       : [],
     });
     expect(result).toEqual([]);
   });
@@ -105,19 +106,27 @@ describe('processConnectedGrants', () => {
 
     const result = await _processConnectedGrants({
       agent,
-      delegateDid: 'did:dht:delegate',
+      connectedDid : 'did:dht:connected',
+      delegateDid  : 'did:dht:delegate',
       grants,
     });
 
     expect(result).toEqual(['https://proto.example/chat', 'https://proto.example/notes']);
-    expect(processCalls).toHaveLength(3);
+    // 3 grants × 2 partitions (delegate + connected) = 6 calls
+    expect(processCalls).toHaveLength(6);
 
-    // Verify processDwnRequest called with correct params
+    // First call: grant stored in delegate partition
     expect(processCalls[0].author).toBe('did:dht:delegate');
     expect(processCalls[0].target).toBe('did:dht:delegate');
     expect(processCalls[0].messageType).toBe('RecordsWrite');
     expect(processCalls[0].signAsOwner).toBe(true);
     expect(processCalls[0].store).toBe(true);
+
+    // Second call: same grant stored in connected partition
+    expect(processCalls[1].author).toBe('did:dht:connected');
+    expect(processCalls[1].target).toBe('did:dht:connected');
+    expect(processCalls[1].messageType).toBe('RecordsWrite');
+    expect(processCalls[1].signAsOwner).toBe(true);
   });
 
   test('deduplicates protocol URIs', async () => {
@@ -145,7 +154,8 @@ describe('processConnectedGrants', () => {
 
     const result = await _processConnectedGrants({
       agent,
-      delegateDid: 'did:dht:delegate',
+      connectedDid : 'did:dht:connected',
+      delegateDid  : 'did:dht:delegate',
       grants,
     });
 
@@ -172,10 +182,11 @@ describe('processConnectedGrants', () => {
     await expect(
       _processConnectedGrants({
         agent,
-        delegateDid: 'did:dht:delegate',
+        connectedDid : 'did:dht:connected',
+        delegateDid  : 'did:dht:delegate',
         grants,
       })
-    ).rejects.toThrow('Failed to process connected grant: Unauthorized');
+    ).rejects.toThrow('Failed to store grant in delegate partition: Unauthorized');
   });
 });
 
@@ -484,7 +495,8 @@ describe('walletConnect', () => {
     );
 
     expect(session.did).toBe('did:dht:connected456');
-    expect(processCalls).toHaveLength(1);
+    // 1 grant × 2 partitions (delegate + connected) = 2 calls
+    expect(processCalls).toHaveLength(2);
   });
 
   test('cleans up on identity import failure', async () => {
