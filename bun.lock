@@ -82,7 +82,7 @@
     },
     "packages/api": {
       "name": "@enbox/api",
-      "version": "0.5.11",
+      "version": "0.6.0",
       "dependencies": {
         "@enbox/agent": "workspace:*",
         "@enbox/auth": "workspace:*",
@@ -382,7 +382,7 @@
     },
     "packages/electrobun-dwn": {
       "name": "@enbox/electrobun-dwn",
-      "version": "0.0.17",
+      "version": "0.0.18",
       "dependencies": {
         "@digitalbazaar/did-io": "^2.1.0",
         "@enbox/agent": "workspace:*",
@@ -426,7 +426,7 @@
     },
     "packages/protocols": {
       "name": "@enbox/protocols",
-      "version": "0.2.26",
+      "version": "0.2.27",
       "dependencies": {
         "@enbox/api": "workspace:*",
         "@enbox/dwn-sdk-js": "workspace:*",
