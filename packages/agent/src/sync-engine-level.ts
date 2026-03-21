@@ -583,19 +583,14 @@ export class SyncEngineLevel implements SyncEngine {
         permissionGrantId = grant.grant.id;
       } catch {
         // Fall back to trying MessagesRead which is a unified scope.
-        try {
-          const grant = await this._permissionsApi.getPermissionForRequest({
-            connectedDid : did,
-            messageType  : DwnInterface.MessagesRead,
-            delegateDid,
-            protocol,
-            cached       : true
-          });
-          permissionGrantId = grant.grant.id;
-        } catch (error: any) {
-          console.error('SyncEngineLevel: Could not find permission grant for live pull subscription', error);
-          return;
-        }
+        const grant = await this._permissionsApi.getPermissionForRequest({
+          connectedDid : did,
+          messageType  : DwnInterface.MessagesRead,
+          delegateDid,
+          protocol,
+          cached       : true
+        });
+        permissionGrantId = grant.grant.id;
       }
     }
 
@@ -673,19 +668,14 @@ export class SyncEngineLevel implements SyncEngine {
     // Look up permission grant for local subscription.
     let permissionGrantId: string | undefined;
     if (delegateDid) {
-      try {
-        const grant = await this._permissionsApi.getPermissionForRequest({
-          connectedDid : did,
-          messageType  : DwnInterface.MessagesRead,
-          delegateDid,
-          protocol,
-          cached       : true,
-        });
-        permissionGrantId = grant.grant.id;
-      } catch {
-        // No grant available — skip push-on-write for this target.
-        return;
-      }
+      const grant = await this._permissionsApi.getPermissionForRequest({
+        connectedDid : did,
+        messageType  : DwnInterface.MessagesRead,
+        delegateDid,
+        protocol,
+        cached       : true,
+      });
+      permissionGrantId = grant.grant.id;
     }
 
     // Subscribe to the local DWN's EventLog.
