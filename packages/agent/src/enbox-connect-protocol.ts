@@ -13,7 +13,7 @@
  * and ECDH (Ed25519 → X25519 + HKDF) for key agreement.
  */
 
-import type { EnboxAgent } from './types/agent.js';
+import type { EnboxPlatformAgent } from './types/agent.js';
 import type { RequireOnly } from '@enbox/common';
 import type { DidDocument, PortableDid } from '@enbox/dids';
 import type { DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnProtocolDefinition } from './types/dwn.js';
@@ -528,7 +528,7 @@ function shouldUseDelegatePermission(scope: DwnPermissionScope): boolean {
 async function createPermissionGrants(
   selectedDid: string,
   delegateBearerDid: BearerDid,
-  agent: EnboxAgent,
+  agent: EnboxPlatformAgent,
   scopes: DwnPermissionScope[],
 ): Promise<DwnDataEncodedRecordsWriteMessage[]> {
   const permissionsApi = new AgentPermissionsApi({ agent });
@@ -548,21 +548,42 @@ async function createPermissionGrants(
     })
   );
 
-  logger.log(`Sending ${permissionGrants.length} permission grants to remote DWN...`);
+  // Resolve all DWN endpoints for the selected DID.  `sendDwnRequest` only
+  // sends to the first reachable endpoint, but the sync engine may connect
+  // to a different one and needs the grant to authenticate.  We send each
+  // grant to every endpoint so that sync works regardless of which DWN the
+  // agent contacts first.
+  const dwnEndpointUrls = await agent.dwn.getDwnEndpointUrlsForTarget(selectedDid);
+  logger.log(`Sending ${permissionGrants.length} permission grants to ${dwnEndpointUrls.length} DWN endpoint(s)...`);
+
   const messagePromises = permissionGrants.map(async (grant) => {
     const { encodedData, ...rawMessage } = grant.message;
     const data = Convert.base64Url(encodedData).toUint8Array();
-    const { reply } = await agent.sendDwnRequest({
-      author      : selectedDid,
-      target      : selectedDid,
-      messageType : DwnInterface.RecordsWrite,
-      dataStream  : new Blob([data as BlobPart]),
-      rawMessage,
-    });
 
-    if (reply.status.code !== 202 && reply.status.code !== 409) {
-      logger.error(`Error sending RecordsWrite: ${reply.status.detail}`);
-      throw new Error(`Could not send permission grant. Error: ${reply.status.detail}`);
+    // The rawMessage is already signed by createGrant(), so we send it
+    // directly to each endpoint without re-constructing.
+    let atLeastOneSuccess = false;
+    for (const dwnUrl of dwnEndpointUrls) {
+      try {
+        const reply = await agent.rpc.sendDwnRequest({
+          dwnUrl,
+          targetDid : selectedDid,
+          message   : rawMessage,
+          data      : new Blob([data as BlobPart]),
+        });
+
+        if (reply.status.code === 202 || reply.status.code === 409) {
+          atLeastOneSuccess = true;
+        } else {
+          logger.error(`Grant send to ${dwnUrl} returned ${reply.status.code}: ${reply.status.detail}`);
+        }
+      } catch (error: any) {
+        logger.error(`Grant send to ${dwnUrl} failed: ${error.message}`);
+      }
+    }
+
+    if (!atLeastOneSuccess) {
+      throw new Error('Could not send permission grant to any DWN endpoint.');
     }
 
     return grant.message;
@@ -586,7 +607,7 @@ async function createPermissionGrants(
  */
 async function prepareProtocol(
   selectedDid: string,
-  agent: EnboxAgent,
+  agent: EnboxPlatformAgent,
   protocolDefinition: DwnProtocolDefinition
 ): Promise<void> {
   const queryMessage = await agent.processDwnRequest({
@@ -656,7 +677,7 @@ async function submitConnectResponse(
   selectedDid: string,
   connectRequest: EnboxConnectRequest,
   pin: string | undefined,
-  agent: EnboxAgent
+  agent: EnboxPlatformAgent
 ): Promise<void> {
   const delegateBearerDid = await DidJwk.create();
   const delegatePortableDid = await delegateBearerDid.export();
