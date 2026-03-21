@@ -38,6 +38,7 @@
  */
 
 import type { DwnApi } from './dwn-api.js';
+import type { LiveQuery } from './live-query.js';
 import type { Protocol } from './protocol.js';
 
 import type { DateSort, ProtocolDefinition, ProtocolType, RecordsFilter } from '@enbox/dwn-sdk-js';
@@ -664,6 +665,40 @@ export class TypedEnbox<
    */
   public get isConfigured(): boolean {
     return this._configured;
+  }
+
+  /**
+   * Subscribe to **all** record changes across the entire protocol,
+   * regardless of protocolPath.
+   *
+   * Unlike `records.subscribe(path)` which scopes to a single path
+   * (e.g. `'notebook'`), this method catches creates, updates, and
+   * deletes at every level of the protocol hierarchy — ideal for a
+   * "refresh everything" strategy when any record changes.
+   *
+   * Returns a {@link LiveQuery} (untyped, since events span multiple
+   * paths/types) or `undefined` if the subscription could not be created.
+   * Call `liveQuery.close()` to stop listening.
+   *
+   * @example
+   * ```ts
+   * const typed = enbox.using(NotebookProtocol);
+   * const liveQuery = await typed.subscribe();
+   *
+   * liveQuery?.on('change', () => {
+   *   // A record somewhere in the protocol changed — re-query as needed.
+   * });
+   * ```
+   */
+  public async subscribe(request?: { from?: string }): Promise<LiveQuery | undefined> {
+    await this._autoConfigureOnce();
+
+    const { liveQuery } = await this._dwn.records.subscribe({
+      from   : request?.from,
+      filter : { protocol: this._definition.protocol },
+    });
+
+    return liveQuery;
   }
 
   /**
