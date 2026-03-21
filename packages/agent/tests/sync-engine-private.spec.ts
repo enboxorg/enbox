@@ -787,7 +787,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._liveSubscriptions = [];
     });
 
-    it('should return early when both permission grant lookups fail', async () => {
+    it('should throw when both permission grant lookups fail', async () => {
       const permStub = sinon.stub().rejects(new Error('no grant'));
       const sendRequestStub = sinon.stub();
       const mockAgent = {
@@ -800,15 +800,16 @@ describe('SyncEngineLevel — private methods', () => {
         clear                   : sinon.stub(),
       };
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
-      sinon.stub(console, 'error');
 
-      await (engine as any).openLivePullSubscription({
-        did         : 'did:example:alice',
-        dwnUrl      : 'https://dwn.example.com',
-        delegateDid : 'did:example:delegate',
-      });
+      await expect(
+        (engine as any).openLivePullSubscription({
+          did         : 'did:example:alice',
+          dwnUrl      : 'https://dwn.example.com',
+          delegateDid : 'did:example:delegate',
+        })
+      ).rejects.toThrow('no grant');
 
-      // sendRequest should not have been called since we returned early
+      // sendRequest should not have been called since we threw
       expect(sendRequestStub.called).toBe(false);
     });
   });
@@ -865,7 +866,7 @@ describe('SyncEngineLevel — private methods', () => {
       expect((engine as any)._localSubscriptions.length).toBe(0);
     });
 
-    it('should return early when delegate permission lookup fails', async () => {
+    it('should throw when delegate permission lookup fails', async () => {
       const permStub = sinon.stub().rejects(new Error('no grant'));
       const processRequestStub = sinon.stub();
       const mockAgent = {
@@ -878,11 +879,13 @@ describe('SyncEngineLevel — private methods', () => {
         clear                   : sinon.stub(),
       };
 
-      await (engine as any).openLocalPushSubscription({
-        did         : 'did:example:alice',
-        dwnUrl      : 'https://dwn.example.com',
-        delegateDid : 'did:example:delegate',
-      });
+      await expect(
+        (engine as any).openLocalPushSubscription({
+          did         : 'did:example:alice',
+          dwnUrl      : 'https://dwn.example.com',
+          delegateDid : 'did:example:delegate',
+        })
+      ).rejects.toThrow('no grant');
 
       expect(processRequestStub.called).toBe(false);
     });
