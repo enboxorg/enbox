@@ -226,19 +226,14 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, 
 
   let permissionGrantId: string | undefined;
   if (delegateDid) {
-    try {
-      const messagesReadGrant = await permissionsApi.getPermissionForRequest({
-        connectedDid : did,
-        messageType  : DwnInterface.MessagesRead,
-        delegateDid,
-        protocol,
-        cached       : true
-      });
-      permissionGrantId = messagesReadGrant.grant.id;
-    } catch (error: any) {
-      console.error('SyncEngineLevel: pull - Error fetching MessagesRead permission grant for delegate DID', error);
-      return results;
-    }
+    const messagesReadGrant = await permissionsApi.getPermissionForRequest({
+      connectedDid : did,
+      messageType  : DwnInterface.MessagesRead,
+      delegateDid,
+      protocol,
+      cached       : true
+    });
+    permissionGrantId = messagesReadGrant.grant.id;
   }
 
   // Fetch messages in parallel with bounded concurrency.  Keep this low
@@ -358,19 +353,14 @@ export async function getLocalMessage({ author, delegateDid, protocol, messageCi
 }): Promise<SyncMessageEntry | undefined> {
   let permissionGrantId: string | undefined;
   if (delegateDid) {
-    try {
-      const messagesReadGrant = await permissionsApi.getPermissionForRequest({
-        connectedDid : author,
-        messageType  : DwnInterface.MessagesRead,
-        delegateDid,
-        protocol,
-        cached       : true
-      });
-      permissionGrantId = messagesReadGrant.grant.id;
-    } catch (error: any) {
-      console.error('SyncEngineLevel: push - Error fetching MessagesRead permission grant for delegate DID', error);
-      return;
-    }
+    const messagesReadGrant = await permissionsApi.getPermissionForRequest({
+      connectedDid : author,
+      messageType  : DwnInterface.MessagesRead,
+      delegateDid,
+      protocol,
+      cached       : true
+    });
+    permissionGrantId = messagesReadGrant.grant.id;
   }
 
   const { reply } = await agent.dwn.processRequest({

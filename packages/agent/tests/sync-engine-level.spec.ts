@@ -507,7 +507,7 @@ describe('SyncEngineLevel', () => {
         sendDwnRequestSpy.restore();
       });
 
-      it('logs an error if could not fetch MessagesSync permission needed for a pull sync', async () => {
+      it('should propagate the error when delegate permission grant is missing during pull', async () => {
         // create new identity to not conflict the previous tests's remote records
         const aliceSync = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
 
@@ -525,12 +525,13 @@ describe('SyncEngineLevel', () => {
           }
         });
 
-        // spy on console.error to check if the error message is logged
+        // The missing grant causes an error that propagates to the sync()
+        // catch block which logs it via console.error.
         const consoleErrorSpy = sinon.stub(console, 'error').resolves();
 
         await syncEngine.sync('pull');
         expect(consoleErrorSpy.called).toBe(true);
-        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error fetching MessagesSync permission grant for delegate DID');
+        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error syncing');
       });
 
       it('succeeds with only a MessagesSync grant when messages are inlined in the diff response', async () => {
@@ -983,7 +984,7 @@ describe('SyncEngineLevel', () => {
         processRequestSpy.restore();
       });
 
-      it('logs an error if could not fetch MessagesSync permission needed for a sync', async () => {
+      it('should propagate the error when delegate permission grant is missing during push', async () => {
         // create new identity to not conflict the previous tests's remote records
         const aliceSync = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
 
@@ -1001,12 +1002,13 @@ describe('SyncEngineLevel', () => {
           }
         });
 
-        // spy on console.error to check if the error message is logged
+        // The missing grant causes an error that propagates to the sync()
+        // catch block which logs it via console.error.
         const consoleErrorSpy = sinon.stub(console, 'error').resolves();
 
         await syncEngine.sync('push');
         expect(consoleErrorSpy.called).toBe(true);
-        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error fetching MessagesSync permission grant for delegate DID');
+        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error syncing');
       });
 
       it('logs an error when push fails due to missing permissions on the remote DWN', async () => {
