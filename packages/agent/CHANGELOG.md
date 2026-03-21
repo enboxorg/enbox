@@ -1,5 +1,11 @@
 # @enbox/agent
 
+## 0.5.4
+
+### Patch Changes
+
+- [#746](https://github.com/enboxorg/enbox/pull/746) [`d6b643d`](https://github.com/enboxorg/enbox/commit/d6b643ddab34bf8d82226c368727a3566ae84d48) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(agent): send permission grants to all DWN endpoints during connect
+
 ## 0.5.3
 
 ### Patch Changes
