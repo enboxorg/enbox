@@ -1,5 +1,18 @@
 # @enbox/dwn-sdk-js
 
+## 0.2.2
+
+### Patch Changes
+
+- [#743](https://github.com/enboxorg/enbox/pull/743) [`0a17914`](https://github.com/enboxorg/enbox/commit/0a17914b84e030ccdfbc44f2d9edd8e4730b46e3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(dwn-sdk-js): return 409 for duplicate ProtocolsConfigure messages
+
+  ProtocolsConfigureHandler now checks if the incoming message CID already
+  exists before attempting storage. Previously, re-processing the same
+  ProtocolsConfigure (e.g. when the batched-diff sync pushes a message the
+  remote already has) would attempt a second INSERT into the MessageStore,
+  violating the unique constraint on (tenant, messageCid) in PostgreSQL and
+  returning a -32603 internal error to the client.
+
 ## 0.2.1
 
 ### Patch Changes
