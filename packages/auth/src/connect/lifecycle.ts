@@ -22,6 +22,9 @@ import type { PasswordProvider } from '../password-provider.js';
 import type { IdentityInfo, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
 
 import { Convert } from '@enbox/common';
+import type { GenericMessage } from '@enbox/dwn-sdk-js';
+
+import { DataStream } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
 import { AuthSession } from '../identity-session.js';
@@ -256,21 +259,22 @@ export function resolveIdentityDids(
  */
 export async function processConnectedGrants(params: {
   agent: EnboxUserAgent;
+  connectedDid: string;
   delegateDid: string;
   grants: DwnDataEncodedRecordsWriteMessage[];
 }): Promise<string[]> {
-  const { agent, delegateDid, grants } = params;
+  const { agent, connectedDid, delegateDid, grants } = params;
   const connectedProtocols = new Set<string>();
 
   for (const grantMessage of grants) {
     const grant = DwnPermissionGrant.parse(grantMessage);
 
-    // Store the grant as the owner of the DWN so the delegateDid
-    // can use it when impersonating the connectedDid.
     const { encodedData, ...rawMessage } = grantMessage;
     const dataStream = new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart]);
 
-    const { reply } = await agent.processDwnRequest({
+    // Store the grant in the delegateDid's partition so the permissions
+    // API can look it up when building delegate-signed requests.
+    const { reply: delegateReply } = await agent.processDwnRequest({
       store       : true,
       author      : delegateDid,
       target      : delegateDid,
@@ -280,9 +284,30 @@ export async function processConnectedGrants(params: {
       dataStream,
     });
 
-    if (reply.status.code !== 202) {
+    if (delegateReply.status.code !== 202) {
       throw new Error(
-        `[@enbox/auth] Failed to process connected grant: ${reply.status.detail}`
+        `[@enbox/auth] Failed to store grant in delegate partition: ${delegateReply.status.detail}`
+      );
+    }
+
+    // Also store the grant in the connectedDid's local DWN partition.
+    // When the sync engine (or any delegate-authorized operation) processes
+    // a request against the connectedDid's tenant, the DWN needs to find
+    // the grant record there to authorize the delegate.
+    //
+    // We use processRawMessage because the delegate agent does not hold the
+    // connectedDid's private keys — we cannot re-sign the message.  The
+    // rawMessage already carries valid authorization from the connectedDid
+    // (the wallet signed it), so we pass it directly to the local DWN.
+    const connectedReply = await agent.dwn.processRawMessage(
+      connectedDid,
+      rawMessage as GenericMessage,
+      { dataStream: DataStream.fromBytes(Convert.base64Url(encodedData).toUint8Array()) },
+    );
+
+    if (connectedReply.status.code !== 202 && connectedReply.status.code !== 409) {
+      throw new Error(
+        `[@enbox/auth] Failed to store grant in connected partition: ${connectedReply.status.detail}`
       );
     }
 
@@ -331,6 +356,7 @@ export async function importDelegateAndSetupSync(params: {
 
     const connectedProtocols = await processConnectedGrants({
       agent       : userAgent,
+      connectedDid,
       delegateDid : delegatePortableDid.uri,
       grants      : delegateGrants,
     });

@@ -63,8 +63,9 @@ describe('processConnectedGrants', () => {
     const agent = createMockAgent();
     const result = await _processConnectedGrants({
       agent,
-      delegateDid : 'did:dht:delegate',
-      grants      : [],
+      connectedDid : 'did:dht:connected',
+      delegateDid  : 'did:dht:delegate',
+      grants       : [],
     });
     expect(result).toEqual([]);
   });
@@ -105,19 +106,23 @@ describe('processConnectedGrants', () => {
 
     const result = await _processConnectedGrants({
       agent,
-      delegateDid: 'did:dht:delegate',
+      connectedDid : 'did:dht:connected',
+      delegateDid  : 'did:dht:delegate',
       grants,
     });
 
     expect(result).toEqual(['https://proto.example/chat', 'https://proto.example/notes']);
+    // 3 grants stored in delegate partition via processDwnRequest
     expect(processCalls).toHaveLength(3);
 
-    // Verify processDwnRequest called with correct params
+    // Verify processDwnRequest called with delegate partition params
     expect(processCalls[0].author).toBe('did:dht:delegate');
     expect(processCalls[0].target).toBe('did:dht:delegate');
     expect(processCalls[0].messageType).toBe('RecordsWrite');
     expect(processCalls[0].signAsOwner).toBe(true);
     expect(processCalls[0].store).toBe(true);
+    // The connected partition writes go through dwn.processRawMessage
+    // (not processDwnRequest), so they don't appear in processCalls.
   });
 
   test('deduplicates protocol URIs', async () => {
@@ -145,7 +150,8 @@ describe('processConnectedGrants', () => {
 
     const result = await _processConnectedGrants({
       agent,
-      delegateDid: 'did:dht:delegate',
+      connectedDid : 'did:dht:connected',
+      delegateDid  : 'did:dht:delegate',
       grants,
     });
 
@@ -172,10 +178,11 @@ describe('processConnectedGrants', () => {
     await expect(
       _processConnectedGrants({
         agent,
-        delegateDid: 'did:dht:delegate',
+        connectedDid : 'did:dht:connected',
+        delegateDid  : 'did:dht:delegate',
         grants,
       })
-    ).rejects.toThrow('Failed to process connected grant: Unauthorized');
+    ).rejects.toThrow('Failed to store grant in delegate partition: Unauthorized');
   });
 });
 
@@ -484,6 +491,8 @@ describe('walletConnect', () => {
     );
 
     expect(session.did).toBe('did:dht:connected456');
+    // 1 grant stored in delegate partition via processDwnRequest
+    // (connected partition goes through dwn.processRawMessage)
     expect(processCalls).toHaveLength(1);
   });
 

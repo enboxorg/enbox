@@ -1383,18 +1383,13 @@ export class SyncEngineLevel implements SyncEngine {
       return undefined;
     }
 
-    try {
-      const messagesSyncGrant = await this._permissionsApi.getPermissionForRequest({
-        connectedDid : did,
-        messageType  : DwnInterface.MessagesSync,
-        delegateDid,
-        protocol,
-        cached       : true
-      });
-      return messagesSyncGrant.grant.id;
-    } catch (error: any) {
-      console.error('SyncEngineLevel: Error fetching MessagesSync permission grant for delegate DID', error);
-      return undefined;
-    }
+    const messagesSyncGrant = await this._permissionsApi.getPermissionForRequest({
+      connectedDid : did,
+      messageType  : DwnInterface.MessagesSync,
+      delegateDid,
+      protocol,
+      cached       : true
+    });
+    return messagesSyncGrant.grant.id;
   }
 }

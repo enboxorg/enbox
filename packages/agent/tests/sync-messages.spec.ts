@@ -246,24 +246,21 @@ describe('sync-messages', () => {
       expect(permStub.calledOnce).toBe(true);
     });
 
-    it('should return empty results when delegate permission lookup fails', async () => {
-      sinon.stub(console, 'error');
+    it('should throw when delegate permission lookup fails', async () => {
       const permStub = sinon.stub().rejects(new Error('no grant'));
       const mockAgent = {
         processDwnRequest : sinon.stub(),
         rpc               : { sendDwnRequest: sinon.stub() },
       } as any;
 
-      const result = await fetchRemoteMessages({
+      await expect(fetchRemoteMessages({
         did            : 'did:example:alice',
         dwnUrl         : 'https://dwn.example.com',
         delegateDid    : 'did:example:delegate',
         messageCids    : ['cid-1'],
         agent          : mockAgent,
         permissionsApi : { getPermissionForRequest: permStub } as any,
-      });
-
-      expect(result).toHaveLength(0);
+      })).rejects.toThrow('no grant');
     });
 
     it('should process messages in batches of 10', async () => {
@@ -647,22 +644,19 @@ describe('sync-messages', () => {
       expect(permStub.calledOnce).toBe(true);
     });
 
-    it('should return undefined when delegate permission lookup fails', async () => {
-      sinon.stub(console, 'error');
+    it('should throw when delegate permission lookup fails', async () => {
       const permStub = sinon.stub().rejects(new Error('no grant'));
       const mockAgent = {
         dwn: { processRequest: sinon.stub() },
       } as any;
 
-      const result = await getLocalMessage({
+      await expect(getLocalMessage({
         author         : 'did:example:alice',
         delegateDid    : 'did:example:delegate',
         messageCid     : 'cid-1',
         agent          : mockAgent,
         permissionsApi : { getPermissionForRequest: permStub } as any,
-      });
-
-      expect(result).toBeUndefined();
+      })).rejects.toThrow('no grant');
     });
 
     it('should pass permissionGrantId in messageParams when delegate has grant', async () => {

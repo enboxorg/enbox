@@ -166,7 +166,7 @@ describe('SyncEngineLevel — private methods', () => {
       expect(result).toBeUndefined();
     });
 
-    it('should return undefined and log error when permission fetch fails', async () => {
+    it('should throw when permission fetch fails for a delegate DID', async () => {
       const mockAgent = { agentDid: 'did:example:agent' } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
 
@@ -175,10 +175,9 @@ describe('SyncEngineLevel — private methods', () => {
         clear                   : sinon.stub(),
       };
 
-      const consoleStub = sinon.stub(console, 'error');
-      const result = await (engine as any).getSyncPermissionGrantId('did:example:alice', 'did:example:delegate');
-      expect(result).toBeUndefined();
-      expect(consoleStub.called).toBe(true);
+      await expect(
+        (engine as any).getSyncPermissionGrantId('did:example:alice', 'did:example:delegate')
+      ).rejects.toThrow('not found');
     });
 
     it('should return grant ID when delegate permission is found', async () => {
