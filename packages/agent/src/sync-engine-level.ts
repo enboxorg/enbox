@@ -1,4 +1,6 @@
 import type { AbstractLevel } from 'abstract-level';
+
+import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
 import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncDiffEntry, MessagesSyncReply, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import ms from 'ms';
@@ -618,21 +620,52 @@ export class SyncEngineLevel implements SyncEngine {
       }
     };
 
-    // Send the subscription request through the agent's DWN API.
-    const response = await this.agent.dwn.sendRequest({
+    // Construct the subscribe message and send it directly to the specific
+    // dwnUrl via WebSocket.  We do NOT use agent.dwn.sendRequest() because
+    // that resolves endpoints from the DID document and picks the first one
+    // — which may be a different server than the one this sync target needs.
+    const subscribeRequest = {
+      store         : false as const,
       author        : did,
       target        : did,
-      messageType   : DwnInterface.MessagesSubscribe,
+      messageType   : DwnInterface.MessagesSubscribe as const,
       granteeDid    : delegateDid,
-      messageParams : {
-        filters,
-        cursor,
-        permissionGrantId,
-      },
-      subscriptionHandler: subscriptionHandler as any,
-    });
+      messageParams : { filters, cursor, permissionGrantId },
+    };
 
-    const reply = response.reply as MessagesSubscribeReply;
+    const { message } = await this.agent.dwn.processRequest(subscribeRequest);
+    if (!message) {
+      throw new Error(`SyncEngineLevel: Failed to construct MessagesSubscribe for ${dwnUrl}`);
+    }
+
+    // Build a resubscribe factory so the WebSocket client can resume with
+    // a fresh cursor-stamped message after reconnection.
+    const resubscribeFactory: ResubscribeFactory = async (resumeCursor?: string) => {
+      const resumeRequest = {
+        ...subscribeRequest,
+        messageParams: { ...subscribeRequest.messageParams, cursor: resumeCursor ?? cursor },
+      };
+      const { message: resumeMsg } = await this.agent.dwn.processRequest(resumeRequest);
+      if (!resumeMsg) {
+        throw new Error(`SyncEngineLevel: Failed to construct resume MessagesSubscribe for ${dwnUrl}`);
+      }
+      return resumeMsg;
+    };
+
+    // Convert http(s) URL to ws(s) for WebSocket transport.
+    const parsedUrl = new URL(dwnUrl);
+    parsedUrl.protocol = parsedUrl.protocol === 'http:' ? 'ws:' : 'wss:';
+    const wsUrl = parsedUrl.toString();
+
+    const reply = await this.agent.rpc.sendDwnRequest({
+      dwnUrl       : wsUrl,
+      targetDid    : did,
+      message,
+      subscription : {
+        handler: subscriptionHandler as DwnSubscriptionHandler,
+        resubscribeFactory,
+      },
+    }) as MessagesSubscribeReply;
     if (reply.status.code !== 200 || !reply.subscription) {
       console.error(`SyncEngineLevel: MessagesSubscribe failed for ${did} -> ${dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
       return;

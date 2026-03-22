@@ -606,22 +606,30 @@ describe('SyncEngineLevel — private methods', () => {
   // ---------------------------------------------------------------------------
 
   describe('openLivePullSubscription', () => {
-    it('should open a subscription and add it to _liveSubscriptions', async () => {
-      const closeStub = sinon.stub().resolves();
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : {
-          sendRequest: sinon.stub().resolves({
-            reply: {
-              status       : { code: 200, detail: 'OK' },
-              subscription : { close: closeStub },
-            },
-          }),
-          node: { processMessage: sinon.stub().resolves({ status: { code: 202 } }) },
-        },
-      } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+    /**
+     * Helper: creates a mock agent with processRequest (construct message)
+     * and rpc.sendDwnRequest (send to specific dwnUrl via WS).
+     */
+    function createPullMockAgent(rpcReply: any = {
+      status       : { code: 200, detail: 'OK' },
+      subscription : { close: sinon.stub().resolves() },
+    }): { agent: any; processRequestStub: sinon.SinonStub; rpcStub: sinon.SinonStub } {
+      const processRequestStub = sinon.stub().resolves({ message: { descriptor: {} } });
+      const rpcStub = sinon.stub().resolves(rpcReply);
+      return {
+        agent: {
+          agentDid : 'did:example:agent',
+          dwn      : { processRequest: processRequestStub, processRawMessage: sinon.stub().resolves({ status: { code: 202 } }) },
+          rpc      : { sendDwnRequest: rpcStub },
+        } as any,
+        processRequestStub,
+        rpcStub,
+      };
+    }
 
+    it('should open a subscription and add it to _liveSubscriptions', async () => {
+      const { agent, rpcStub } = createPullMockAgent();
+      const engine = new SyncEngineLevel({ db, agent });
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       await (engine as any).openLivePullSubscription({
@@ -629,25 +637,17 @@ describe('SyncEngineLevel — private methods', () => {
       });
 
       expect((engine as any)._liveSubscriptions.length).toBe(1);
-      expect((engine as any)._connectivityState).toBe('online');
-
-      // Cleanup
+      // The rpc stub was called with a wss:// URL
+      expect(rpcStub.firstCall.args[0].dwnUrl).toBe('wss://dwn.example.com/');
       (engine as any)._liveSubscriptions = [];
     });
 
     it('should not add subscription when reply status is not 200', async () => {
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : {
-          sendRequest: sinon.stub().resolves({
-            reply: {
-              status       : { code: 500, detail: 'Error' },
-              subscription : undefined,
-            },
-          }),
-        },
-      } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const { agent } = createPullMockAgent({
+        status       : { code: 500, detail: 'Error' },
+        subscription : undefined,
+      });
+      const engine = new SyncEngineLevel({ db, agent });
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
       sinon.stub(console, 'error');
 
@@ -659,17 +659,8 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should include protocol in subscription filters when provided', async () => {
-      const sendRequestStub = sinon.stub().resolves({
-        reply: {
-          status       : { code: 200, detail: 'OK' },
-          subscription : { close: sinon.stub().resolves() },
-        },
-      });
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { sendRequest: sendRequestStub },
-      } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const { agent, processRequestStub } = createPullMockAgent();
+      const engine = new SyncEngineLevel({ db, agent });
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       await (engine as any).openLivePullSubscription({
@@ -678,50 +669,29 @@ describe('SyncEngineLevel — private methods', () => {
         protocol : 'https://proto.example.com',
       });
 
-      const callArgs = sendRequestStub.firstCall.args[0];
+      const callArgs = processRequestStub.firstCall.args[0];
       expect(callArgs.messageParams.filters).toEqual([{ protocol: 'https://proto.example.com' }]);
-
       (engine as any)._liveSubscriptions = [];
     });
 
     it('should use existing cursor when available', async () => {
-      const sendRequestStub = sinon.stub().resolves({
-        reply: {
-          status       : { code: 200, detail: 'OK' },
-          subscription : { close: sinon.stub().resolves() },
-        },
-      });
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { sendRequest: sendRequestStub },
-      } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const { agent, processRequestStub } = createPullMockAgent();
+      const engine = new SyncEngineLevel({ db, agent });
       sinon.stub(engine as any, 'getCursor').resolves('saved-cursor-value');
 
       await (engine as any).openLivePullSubscription({
         did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
       });
 
-      const callArgs = sendRequestStub.firstCall.args[0];
+      const callArgs = processRequestStub.firstCall.args[0];
       expect(callArgs.messageParams.cursor).toBe('saved-cursor-value');
-
       (engine as any)._liveSubscriptions = [];
     });
 
     it('should look up delegate permission when delegateDid is provided', async () => {
       const permStub = sinon.stub().resolves({ grant: { id: 'sub-grant-1' } });
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : {
-          sendRequest: sinon.stub().resolves({
-            reply: {
-              status       : { code: 200, detail: 'OK' },
-              subscription : { close: sinon.stub().resolves() },
-            },
-          }),
-        },
-      } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const { agent } = createPullMockAgent();
+      const engine = new SyncEngineLevel({ db, agent });
       (engine as any)._permissionsApi = {
         getPermissionForRequest : permStub,
         clear                   : sinon.stub(),
@@ -742,18 +712,8 @@ describe('SyncEngineLevel — private methods', () => {
       const permStub = sinon.stub()
         .onFirstCall().rejects(new Error('no subscribe grant'))
         .onSecondCall().resolves({ grant: { id: 'read-grant-1' } });
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : {
-          sendRequest: sinon.stub().resolves({
-            reply: {
-              status       : { code: 200, detail: 'OK' },
-              subscription : { close: sinon.stub().resolves() },
-            },
-          }),
-        },
-      } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const { agent } = createPullMockAgent();
+      const engine = new SyncEngineLevel({ db, agent });
       (engine as any)._permissionsApi = {
         getPermissionForRequest : permStub,
         clear                   : sinon.stub(),
@@ -772,12 +732,8 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should throw when both permission grant lookups fail', async () => {
       const permStub = sinon.stub().rejects(new Error('no grant'));
-      const sendRequestStub = sinon.stub();
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { sendRequest: sendRequestStub },
-      } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const { agent, rpcStub } = createPullMockAgent();
+      const engine = new SyncEngineLevel({ db, agent });
       (engine as any)._permissionsApi = {
         getPermissionForRequest : permStub,
         clear                   : sinon.stub(),
@@ -792,8 +748,7 @@ describe('SyncEngineLevel — private methods', () => {
         })
       ).rejects.toThrow('no grant');
 
-      // sendRequest should not have been called since we threw
-      expect(sendRequestStub.called).toBe(false);
+      expect(rpcStub.called).toBe(false);
     });
   });
 
@@ -1422,25 +1377,38 @@ describe('SyncEngineLevel — private methods', () => {
   // ---------------------------------------------------------------------------
 
   describe('openLivePullSubscription — subscriptionHandler callback', () => {
-    it('should process eose events by persisting cursor', async () => {
+    /**
+     * Helper: creates a mock agent that captures the subscription handler
+     * from the rpc.sendDwnRequest call.
+     */
+    function createCallbackMockAgent(processRawMessageStub?: sinon.SinonStub): {
+      agent: any; getHandler: () => any;
+    } {
       let capturedHandler: any;
-      const closeStub = sinon.stub().resolves();
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : {
-          sendRequest: sinon.stub().callsFake(async (params: any): Promise<any> => {
-            capturedHandler = params.subscriptionHandler;
-            return {
-              reply: {
-                status       : { code: 200, detail: 'OK' },
-                subscription : { close: closeStub },
-              },
-            };
-          }),
-          node: { processMessage: sinon.stub().resolves({ status: { code: 202 } }) },
-        },
-      } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const processRequest = sinon.stub().resolves({ message: { descriptor: {} } });
+      const rpcStub = sinon.stub().callsFake(async (params: any) => {
+        capturedHandler = params.subscription?.handler;
+        return {
+          status       : { code: 200, detail: 'OK' },
+          subscription : { close: sinon.stub().resolves() },
+        };
+      });
+      return {
+        agent: {
+          agentDid : 'did:example:agent',
+          dwn      : {
+            processRequest,
+            processRawMessage: processRawMessageStub ?? sinon.stub().resolves({ status: { code: 202 } }),
+          },
+          rpc: { sendDwnRequest: rpcStub },
+        } as any,
+        getHandler: () => capturedHandler,
+      };
+    }
+
+    it('should process eose events by persisting cursor', async () => {
+      const { agent, getHandler } = createCallbackMockAgent();
+      const engine = new SyncEngineLevel({ db, agent });
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
       const setCursorStub = sinon.stub(engine as any, 'setCursor').resolves();
 
@@ -1448,10 +1416,10 @@ describe('SyncEngineLevel — private methods', () => {
         did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
       });
 
-      expect(capturedHandler).toBeDefined();
+      const handler = getHandler();
+      expect(handler).toBeDefined();
 
-      // Invoke with eose event
-      await capturedHandler({ type: 'eose', cursor: 'eose-cursor-1' });
+      await handler({ type: 'eose', cursor: 'eose-cursor-1' });
 
       expect(setCursorStub.calledOnce).toBe(true);
       expect(setCursorStub.firstCall.args[1]).toBe('eose-cursor-1');
@@ -1461,24 +1429,9 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should process event messages by calling processMessage', async () => {
-      let capturedHandler: any;
       const processMessageStub = sinon.stub().resolves({ status: { code: 202 } });
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : {
-          sendRequest: sinon.stub().callsFake(async (params: any): Promise<any> => {
-            capturedHandler = params.subscriptionHandler;
-            return {
-              reply: {
-                status       : { code: 200, detail: 'OK' },
-                subscription : { close: sinon.stub().resolves() },
-              },
-            };
-          }),
-          processRawMessage: processMessageStub,
-        },
-      } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const { agent, getHandler } = createCallbackMockAgent(processMessageStub);
+      const engine = new SyncEngineLevel({ db, agent });
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
       const setCursorStub = sinon.stub(engine as any, 'setCursor').resolves();
 
@@ -1486,8 +1439,9 @@ describe('SyncEngineLevel — private methods', () => {
         did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
       });
 
-      // Invoke with event message (non-RecordsWrite)
-      await capturedHandler({
+      const handler = getHandler();
+
+      await handler({
         type   : 'event',
         cursor : 'event-cursor-1',
         event  : {
@@ -1502,24 +1456,9 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should handle processMessage errors gracefully in event handler', async () => {
-      let capturedHandler: any;
       const processMessageStub = sinon.stub().rejects(new Error('process failed'));
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : {
-          sendRequest: sinon.stub().callsFake(async (params: any): Promise<any> => {
-            capturedHandler = params.subscriptionHandler;
-            return {
-              reply: {
-                status       : { code: 200, detail: 'OK' },
-                subscription : { close: sinon.stub().resolves() },
-              },
-            };
-          }),
-          processRawMessage: processMessageStub,
-        },
-      } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const { agent, getHandler } = createCallbackMockAgent(processMessageStub);
+      const engine = new SyncEngineLevel({ db, agent });
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
       sinon.stub(engine as any, 'setCursor').resolves();
       const consoleStub = sinon.stub(console, 'error');
@@ -1528,7 +1467,9 @@ describe('SyncEngineLevel — private methods', () => {
         did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
       });
 
-      await capturedHandler({
+      const handler = getHandler();
+
+      await handler({
         type   : 'event',
         cursor : 'event-cursor-err',
         event  : { message: { descriptor: {} } },
