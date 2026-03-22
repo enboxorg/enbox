@@ -103,23 +103,6 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // tryGetCidSync
-  // ---------------------------------------------------------------------------
-
-  describe('tryGetCidSync', () => {
-    it('should return messageCid from message as synchronous fallback', () => {
-      const message = { messageCid: 'cid-123', descriptor: {} };
-      const result = (syncEngine as any).tryGetCidSync(message);
-      expect(result).toBe('cid-123');
-    });
-
-    it('should return undefined when no messageCid and async not resolved', () => {
-      const message = { descriptor: {} };
-      const result = (syncEngine as any).tryGetCidSync(message);
-      expect(result).toBeUndefined();
-    });
-  });
-
   // ---------------------------------------------------------------------------
   // getDefaultHashHex
   // ---------------------------------------------------------------------------
@@ -1585,10 +1568,10 @@ describe('SyncEngineLevel — private methods', () => {
 
       expect(capturedHandler).toBeDefined();
 
-      // Invoke handler with an event that has a messageCid
-      capturedHandler({
+      // Invoke handler with an event — handler is now async
+      await capturedHandler({
         type  : 'event',
-        event : { message: { messageCid: 'cid-push-1', descriptor: {} } },
+        event : { message: { descriptor: { interface: 'Records', method: 'Write' } } },
       });
 
       // Check that CID was accumulated in pending pushes
@@ -1692,17 +1675,17 @@ describe('SyncEngineLevel — private methods', () => {
         did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
       });
 
-      // Send first event
-      capturedHandler({
+      // Send first event — handler is now async
+      await capturedHandler({
         type  : 'event',
-        event : { message: { messageCid: 'cid-a', descriptor: {} } },
+        event : { message: { descriptor: { interface: 'Records', method: 'Write', messageTimestamp: '2026-01-01T00:00:00.000000Z' } } },
       });
       const _firstTimer = (engine as any)._pushDebounceTimer;
 
       // Send second event — should reset timer
-      capturedHandler({
+      await capturedHandler({
         type  : 'event',
-        event : { message: { messageCid: 'cid-b', descriptor: {} } },
+        event : { message: { descriptor: { interface: 'Records', method: 'Read', messageTimestamp: '2026-01-02T00:00:00.000000Z' } } },
       });
 
       // Timer reference may have changed (cleared and reset)

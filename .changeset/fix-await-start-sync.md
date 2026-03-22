@@ -1,11 +1,18 @@
 ---
 "@enbox/auth": patch
+"@enbox/agent": patch
 ---
 
-fix(auth): await startSyncIfEnabled so subscriptions are fully opened before connect returns
+fix(auth): await startSyncIfEnabled so sync is fully initialized before connect returns
 
-startSyncIfEnabled was called as fire-and-forget (not awaited) at all 6
-call sites. This caused a race condition where startLiveSync would run
-before the identity and grants were fully persisted, resulting in 0 live
-subscriptions and no sync activity. Now awaited so the sync engine is
-fully initialized before the connect/restore flow returns.
+fix(agent): replace broken tryGetCidSync with async Message.getCid in local push handler
+
+Two fixes for live and poll sync:
+
+1. startSyncIfEnabled was fire-and-forget at all 6 call sites, causing a
+   race where sync started before grants were persisted. Now awaited.
+
+2. tryGetCidSync attempted to compute a SHA-256 CID synchronously via a
+   fire-and-forget microtask — the CID was always undefined, causing every
+   local write event to be silently dropped. Replaced with an async handler
+   that awaits Message.getCid() directly.
