@@ -91,9 +91,32 @@ export class RecordsWriteHandler implements MethodHandler {
     }
 
     if (!incomingMessageIsNewest) {
-      return {
-        status: { code: 409, detail: 'Conflict' }
-      };
+      // Allow re-processing when the existing record was stored as an
+      // initial write without data (isLatestBaseState = false, status 204)
+      // and the incoming message now supplies data.  This happens during
+      // sync when a live pull initially stores the message without data
+      // and a subsequent poll or retry delivers the same message with data.
+      //
+      // We detect the incomplete state by checking whether the existing
+      // message is an initial write that lacks both inline encodedData and
+      // DataStore data — indicating it was stored without data.
+      let existingLacksData = false;
+      if (newestExistingMessage !== undefined && dataStream !== undefined) {
+        const isInitial = await RecordsWrite.isInitialWrite(newestExistingMessage);
+        if (isInitial) {
+          const hasInlineData = !!(newestExistingMessage as any).encodedData;
+          const hasStoredData = this.deps.dataStore
+            ? !!(await this.deps.dataStore.get(tenant, recordsWrite.message.recordId, message.descriptor.dataCid!))
+            : false;
+          existingLacksData = !hasInlineData && !hasStoredData;
+        }
+      }
+
+      if (!existingLacksData) {
+        return {
+          status: { code: 409, detail: 'Conflict' }
+        };
+      }
     }
 
     // Look up the core protocol (if any) for the incoming message so that lifecycle hooks
@@ -147,8 +170,13 @@ export class RecordsWriteHandler implements MethodHandler {
       // NOTE: We only emit a `RecordsWrite` when the message is the latest base state.
       // Because we allow a `RecordsWrite` which is not the latest state to be written, but not queried, we shouldn't emit it either.
       // It will be emitted as a part of a subsequent next write, if it is the latest base state.
+      //
+      // We emit `messageWithOptionalEncodedData` (not the raw `message`) so
+      // that WebSocket subscribers receive inline `encodedData` for small
+      // records (<= 30 KB).  This allows live sync to store the record
+      // immediately without a separate MessagesRead round-trip.
       if (this.deps.eventLog !== undefined && isLatestBaseState) {
-        await this.deps.eventLog.emit(tenant, { message, initialWrite }, indexes);
+        await this.deps.eventLog.emit(tenant, { message: messageWithOptionalEncodedData, initialWrite }, indexes);
       }
     } catch (error) {
       if (error instanceof DwnError) {

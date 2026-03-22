@@ -6,7 +6,7 @@ import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSync
 import ms from 'ms';
 
 import { Level } from 'level';
-import { hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-js';
+import { Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-js';
 
 import type { PermissionsApi } from './types/permissions.js';
 import type { EnboxAgent, EnboxPlatformAgent } from './types/agent.js';
@@ -16,7 +16,7 @@ import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
 import { topologicalSort } from './sync-topological-sort.js';
-import { pullMessages, pushMessages } from './sync-messages.js';
+import { fetchRemoteMessages, pullMessages, pushMessages } from './sync-messages.js';
 
 export type SyncEngineLevelParams = {
   agent?: EnboxPlatformAgent;
@@ -608,8 +608,24 @@ export class SyncEngineLevel implements SyncEngine {
       if (subMessage.type === 'event') {
         const event: MessageEvent = subMessage.event;
         try {
-          // Process the message locally.
-          const dataStream = this.extractDataStream(event);
+          // Extract inline data from the event (available for records <= 30 KB).
+          let dataStream = this.extractDataStream(event);
+
+          // For large RecordsWrite messages (no inline data), fetch the data
+          // from the remote DWN via MessagesRead before storing locally.
+          if (!dataStream && isRecordsWrite(event) && (event.message.descriptor as any).dataCid) {
+            const messageCid = await Message.getCid(event.message);
+            const fetched = await fetchRemoteMessages({
+              did, dwnUrl, delegateDid, protocol,
+              messageCids    : [messageCid],
+              agent          : this.agent,
+              permissionsApi : this._permissionsApi,
+            });
+            if (fetched.length > 0 && fetched[0].dataStream) {
+              dataStream = fetched[0].dataStream;
+            }
+          }
+
           await this.agent.dwn.processRawMessage(did, event.message, { dataStream });
         } catch (error: any) {
           console.error(`SyncEngineLevel: Error processing live-pull event for ${did}`, error);
@@ -825,23 +841,36 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   /**
-   * Extracts a ReadableStream from a MessageEvent if it contains a RecordsWrite with data.
+   * Extracts a ReadableStream from a MessageEvent if it contains a
+   * RecordsWrite with data — either as an inline `encodedData` field
+   * (for records <= 30 KB) or as a pre-existing data stream.
    */
   private extractDataStream(event: MessageEvent): ReadableStream<Uint8Array> | undefined {
-    if (isRecordsWrite(event) && (event as any).data) {
+    if (!isRecordsWrite(event)) {
+      return undefined;
+    }
+
+    // Check for inline base64url-encoded data (small records from EventLog).
+    const encodedData = (event.message as any).encodedData as string | undefined;
+    if (encodedData) {
+      const bytes = Encoder.base64UrlToBytes(encodedData);
+      return new ReadableStream<Uint8Array>({
+        start(controller): void {
+          controller.enqueue(bytes);
+          controller.close();
+        }
+      });
+    }
+
+    // Check for a pre-existing data stream (e.g. from a direct message read).
+    if ((event as any).data) {
       return (event as any).data;
     }
+
     return undefined;
   }
 
-  /**
-   * Synchronously attempts to get a message CID. Returns undefined on failure.
-   * This is used in the synchronous EventLog callback; the actual CID computation
-   * is fast for already-constructed messages.
-   */
-  // tryGetCidSync was removed — it tried to return a CID synchronously
-  // from an async SHA-256 computation, which always returned undefined.
-  // The local push handler now awaits Message.getCid() directly.
+
 
   // ---------------------------------------------------------------------------
   // Default Hash Cache
