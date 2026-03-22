@@ -631,7 +631,7 @@ describe('AuthManager', () => {
       expect(events[0].didUri).toBe('did:dht:testuser123');
     });
 
-    test('handles DID delete failure gracefully', async () => {
+    test('throws when DID deletion fails to prevent orphaned keys', async () => {
       const identity = createMockIdentity();
       const agent = createMockAgent({
         identityGet : async () => identity,
@@ -639,8 +639,11 @@ describe('AuthManager', () => {
       });
       const manager = createTestManager(agent);
 
-      // Should not throw — DID deletion failure is logged, not rethrown
-      await manager.deleteIdentity('did:dht:testuser123');
+      // DID deletion failure must propagate — otherwise the identity
+      // record is deleted while cryptographic keys remain as orphans.
+      await expect(
+        manager.deleteIdentity('did:dht:testuser123')
+      ).rejects.toThrow('DID delete failed');
     });
   });
 
