@@ -80,8 +80,12 @@ export async function resolvePassword(
       password = await ctx.passwordProvider.getPassword({
         reason: isFirstLaunch ? 'create' : 'unlock',
       });
-    } catch {
-      // Provider failed — fall through to insecure default.
+    } catch (error: unknown) {
+      // Log the provider error so developers can distinguish "provider
+      // threw" from "no provider configured".  We still fall through to
+      // the insecure default because the vault must be unlockable for the
+      // session to proceed — but the warning below will fire.
+      console.error('[@enbox/auth] Password provider threw an error:', error);
     }
   }
 

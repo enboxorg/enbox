@@ -1299,9 +1299,16 @@ export class AgentDwnApi {
       // cache uses a different key prefix, so we use a dedicated call.
       try {
         return await this.fetchRemoteProtocolDefinition(tenantDid, protocolUri);
-      } catch {
-        // Protocol not found — return undefined (consistent with local mode).
-        return undefined;
+      } catch (error: unknown) {
+        // Only treat "not found" responses as missing protocols.  Transient
+        // errors (network timeouts, auth failures) are rethrown so the
+        // caller does not silently skip encryption or other protocol-
+        // required behaviours.
+        const msg = error instanceof Error ? error.message : '';
+        if (msg.includes('not found') || msg.includes('404') || msg.includes('No protocol')) {
+          return undefined;
+        }
+        throw error;
       }
     }
     return getProtocolDefinitionFn(

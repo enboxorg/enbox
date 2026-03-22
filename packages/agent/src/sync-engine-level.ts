@@ -1339,7 +1339,8 @@ export class SyncEngineLevel implements SyncEngine {
       let parsed: SyncIdentityOptions;
       try {
         parsed = JSON.parse(options) as SyncIdentityOptions;
-      } catch {
+      } catch (error: unknown) {
+        console.warn(`SyncEngineLevel: Corrupt sync options for ${did}, falling back to global sync:`, error);
         parsed = { protocols: [] };
       }
       const { protocols, delegateDid } = parsed;

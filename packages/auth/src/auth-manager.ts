@@ -623,14 +623,18 @@ export class AuthManager {
     // Register the identity for sync and restart sync.
     const sync = this._defaultSync;
     if (sync !== 'off') {
-      // Register the identity for sync (idempotent — ignores "already registered" errors).
+      // Register the identity for sync.  The method throws if the identity
+      // is already registered, which is expected during session restore.
       try {
         await this._userAgent.sync.registerIdentity({
           did     : connectedDid,
           options : { delegateDid, protocols: [] },
         });
-      } catch {
-        // Already registered — safe to ignore.
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : '';
+        if (!msg.includes('already registered')) {
+          throw error;
+        }
       }
 
       startSyncIfEnabled(this._userAgent, sync);
@@ -670,16 +674,14 @@ export class AuthManager {
       throw new Error(`[@enbox/auth] Identity not found: ${didUri}`);
     }
 
-    // Delete the DID and keys.
-    try {
-      await this._userAgent.did.delete({
-        didUri    : identity.did.uri,
-        tenant    : identity.metadata.tenant,
-        deleteKey : true,
-      });
-    } catch (err: unknown) {
-      console.error(`[@enbox/auth] Failed to delete DID ${didUri}:`, err);
-    }
+    // Delete the DID and keys.  If this fails, do NOT proceed to delete the
+    // identity record — that would leave orphaned cryptographic key material
+    // with no identity metadata pointing to it.
+    await this._userAgent.did.delete({
+      didUri    : identity.did.uri,
+      tenant    : identity.metadata.tenant,
+      deleteKey : true,
+    });
 
     // Delete the identity record.
     await this._userAgent.identity.delete({ didUri });
