@@ -1,5 +1,40 @@
 # @enbox/agent
 
+## 0.5.6
+
+### Patch Changes
+
+- [#752](https://github.com/enboxorg/enbox/pull/752) [`682fb85`](https://github.com/enboxorg/enbox/commit/682fb858343319e3a4da54b08017382596896d6a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(agent): propagate permission errors in live sync subscription setup
+
+  openLivePullSubscription and openLocalPushSubscription were silently
+  returning when the delegate permission grant lookup failed, causing live
+  WebSocket sync to silently do nothing. Errors now propagate to the
+  startLiveSync catch block so they are visible in the console.
+
+- [#754](https://github.com/enboxorg/enbox/pull/754) [`c8360c3`](https://github.com/enboxorg/enbox/commit/c8360c3856eebec89d717003fe3e0e21a9f182fe) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: eliminate silent error swallowing anti-patterns across agent and auth
+
+  Comprehensive audit of all try/catch blocks that silently swallow errors.
+  Five fixes:
+
+  1. **Security**: Password provider errors now log the error before falling
+     through to the insecure default, so developers can distinguish "provider
+     threw" from "no provider configured".
+
+  2. **Correctness**: Remote protocol definition fetch now only treats
+     "not found" responses as missing protocols. Transient errors (network,
+     auth) are rethrown so the caller does not silently skip encryption.
+
+  3. **Data integrity**: Identity deletion now propagates DID/key deletion
+     errors instead of deleting the identity record anyway, which would
+     leave orphaned cryptographic key material.
+
+  4. **Debuggability**: Corrupt sync identity options in LevelDB now log a
+     warning before falling back to global sync.
+
+  5. **Correctness**: `registerIdentity` during session restore now only
+     catches "already registered" errors; other errors (LevelDB failures)
+     are rethrown.
+
 ## 0.5.5
 
 ### Patch Changes
