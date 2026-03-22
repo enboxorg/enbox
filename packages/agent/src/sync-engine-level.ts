@@ -679,14 +679,14 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     // Subscribe to the local DWN's EventLog.
-    const subscriptionHandler = (subMessage: SubscriptionMessage): void => {
+    const subscriptionHandler = async (subMessage: SubscriptionMessage): Promise<void> => {
       if (subMessage.type !== 'event') {
         return;
       }
 
       // Accumulate the message CID for a debounced push.
       const targetKey = this.buildCursorKey(did, dwnUrl, protocol);
-      const cid = this.tryGetCidSync(subMessage.event.message);
+      const cid = await Message.getCid(subMessage.event.message);
       if (cid === undefined) {
         return;
       }
@@ -806,16 +806,9 @@ export class SyncEngineLevel implements SyncEngine {
    * This is used in the synchronous EventLog callback; the actual CID computation
    * is fast for already-constructed messages.
    */
-  private tryGetCidSync(message: GenericMessage): string | undefined {
-    // Message.getCid is async but very fast (SHA-256 of the descriptor).
-    // We fire-and-forget into a microtask and store the result.
-    // For the debounced push, the CID will be resolved by the time we flush.
-    let cid: string | undefined;
-    void Message.getCid(message).then((result): void => { cid = result; });
-    // Since this is a microtask, it may not resolve immediately.
-    // Use the descriptor's CID field if available as a synchronous fallback.
-    return cid ?? (message as any).messageCid ?? undefined;
-  }
+  // tryGetCidSync was removed — it tried to return a CID synchronously
+  // from an async SHA-256 computation, which always returned undefined.
+  // The local push handler now awaits Message.getCid() directly.
 
   // ---------------------------------------------------------------------------
   // Default Hash Cache

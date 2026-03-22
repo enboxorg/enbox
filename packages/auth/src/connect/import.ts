@@ -76,7 +76,7 @@ export async function importFromPhrase(
   }
 
   // Start sync.
-  startSyncIfEnabled(userAgent, sync);
+  await startSyncIfEnabled(userAgent, sync);
 
   // Persist session info, build AuthSession, and emit lifecycle events.
   return finalizeSession({
@@ -133,7 +133,7 @@ export async function importFromPortable(
     });
   }
 
-  startSyncIfEnabled(userAgent, sync);
+  await startSyncIfEnabled(userAgent, sync);
 
   // Persist session info, build AuthSession, and emit lifecycle events.
   return finalizeSession({

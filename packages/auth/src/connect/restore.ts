@@ -87,7 +87,7 @@ export async function restoreSession(
   }
 
   // Start sync.
-  startSyncIfEnabled(userAgent, ctx.defaultSync);
+  await startSyncIfEnabled(userAgent, ctx.defaultSync);
 
   if (!identity) {
     // No identity found — this is valid for agent-only sessions created

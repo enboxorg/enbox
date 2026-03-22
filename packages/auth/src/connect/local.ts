@@ -100,7 +100,7 @@ export async function localConnect(
   }
 
   // Start sync.
-  startSyncIfEnabled(userAgent, sync);
+  await startSyncIfEnabled(userAgent, sync);
 
   // Persist session info, build AuthSession, and emit lifecycle events.
   return finalizeSession({
