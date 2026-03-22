@@ -637,7 +637,7 @@ export class AuthManager {
         }
       }
 
-      startSyncIfEnabled(this._userAgent, sync);
+      await startSyncIfEnabled(this._userAgent, sync);
     }
 
     this._session = new AuthSession({

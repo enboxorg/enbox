@@ -158,10 +158,10 @@ export async function ensureVaultReady(params: {
  *
  * @internal
  */
-export function startSyncIfEnabled(
+export async function startSyncIfEnabled(
   userAgent: EnboxUserAgent,
   sync: SyncOption | undefined,
-): void {
+): Promise<void> {
   if (sync === 'off') {
     return;
   }
@@ -169,10 +169,7 @@ export function startSyncIfEnabled(
   const syncMode = sync === undefined ? 'live' : 'poll';
   const syncInterval = sync ?? (syncMode === 'live' ? '5m' : '2m');
 
-  userAgent.sync.startSync({ mode: syncMode, interval: syncInterval })
-    .catch((err: unknown) => {
-      console.error('[@enbox/auth] Sync failed:', err);
-    });
+  await userAgent.sync.startSync({ mode: syncMode, interval: syncInterval });
 }
 
 // ─── createDefaultIdentity ──────────────────────────────────────
@@ -419,7 +416,7 @@ export async function finalizeDelegateSession(params: {
 }): Promise<AuthSession> {
   const { userAgent, emitter, storage, identity, connectedDid, delegateDid, sync } = params;
 
-  startSyncIfEnabled(userAgent, sync);
+  await startSyncIfEnabled(userAgent, sync);
 
   return finalizeSession({
     userAgent,
