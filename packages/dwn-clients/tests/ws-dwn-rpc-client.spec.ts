@@ -1,5 +1,5 @@
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage, ResubscribeFactory } from '../src/dwn-rpc-types.js';
-import type { GenericMessage, Persona, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, Persona, ProgressToken, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -448,7 +448,9 @@ describe('WebSocketDwnRpcClient', () => {
         // the lastCursor should be set from the received event
         const tracked = trackedSubs[0];
         expect(tracked.lastCursor).toBeDefined();
-        expect(typeof tracked.lastCursor).toBe('string');
+        expect(typeof tracked.lastCursor).toBe('object');
+        expect(tracked.lastCursor.streamId).toBeDefined();
+        expect(tracked.lastCursor.position).toBeDefined();
 
         await subscribeResponse.subscription!.close();
       });
@@ -740,10 +742,12 @@ describe('WebSocketDwnRpcClient', () => {
         const mockMessage = { descriptor: { interface: 'Records', method: 'Subscribe' } } as any;
         const factoryMessage = { descriptor: { interface: 'Records', method: 'Subscribe', cursor: 'c1' } } as any;
 
-        const resubscribeFactory: ResubscribeFactory = async (cursor?: string): Promise<GenericMessage> => {
+        const resubscribeFactory: ResubscribeFactory = async (cursor?: ProgressToken): Promise<GenericMessage> => {
           return { ...factoryMessage, cursor } as any;
         };
         const factorySpy = sinon.spy(resubscribeFactory as any);
+
+        const lastToken = { streamId: 's1', epoch: 'e1', position: '123', messageCid: 'cid-123' };
 
         // Set up a tracked subscription
         subscriptions.set('sub-1', {
@@ -752,7 +756,7 @@ describe('WebSocketDwnRpcClient', () => {
           message            : mockMessage,
           handler,
           resubscribeFactory : factorySpy,
-          lastCursor         : 'cursor-123',
+          lastCursor         : lastToken,
         });
 
         // Mock subscriptionRequest to succeed

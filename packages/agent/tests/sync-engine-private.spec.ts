@@ -60,10 +60,19 @@ describe('SyncEngineLevel — private methods', () => {
       expect(cursor).toBeUndefined();
     });
 
-    it('should persist and retrieve a cursor', async () => {
-      await (syncEngine as any).setCursor('test-key', 'cursor-value-123');
+    it('should persist and retrieve a ProgressToken', async () => {
+      const token = { streamId: 's1', epoch: 'e1', position: '99', messageCid: 'cid-99' };
+      await (syncEngine as any).setCursor('test-key', token);
       const cursor = await (syncEngine as any).getCursor('test-key');
-      expect(cursor).toBe('cursor-value-123');
+      expect(cursor).toEqual(token);
+    });
+
+    it('should return undefined for legacy string cursors (migration fallback)', async () => {
+      // Simulate an old-format string cursor stored before the ProgressToken migration.
+      const cursors = db.sublevel('syncCursors');
+      await cursors.put('legacy-key', 'old-string-cursor-42');
+      const cursor = await (syncEngine as any).getCursor('legacy-key');
+      expect(cursor).toBeUndefined();
     });
 
     it('should rethrow non-LEVEL_NOT_FOUND errors from getCursor', async () => {

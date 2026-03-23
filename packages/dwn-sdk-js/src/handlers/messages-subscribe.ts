@@ -61,6 +61,13 @@ export class MessagesSubscribeHandler implements MethodHandler {
         subscription,
       };
     } catch (error) {
+      if (error instanceof DwnError && error.code === DwnErrorCode.EventLogProgressGap) {
+        const gapInfo = (error as any).gapInfo;
+        return {
+          status: { code: 410, detail: 'Progress token gap' },
+          ...(gapInfo !== undefined ? { error: { code: 'ProgressGap', ...gapInfo } } : {}),
+        } as MessagesSubscribeReply;
+      }
       return messageReplyFromError(error, 500);
     }
   }

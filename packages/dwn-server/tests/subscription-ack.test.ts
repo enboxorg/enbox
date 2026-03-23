@@ -207,7 +207,7 @@ describe('handleSubscriptionAck', () => {
       jsonrpc      : '2.0',
       id           : uuidv4(),
       method       : 'rpc.ack',
-      params       : { cursor: 'valid-cursor-value' },
+      params       : { cursor: { streamId: 's1', epoch: 'e1', position: '42', messageCid: 'cid-42' } },
       subscription : { id: 'sub-123' },
     };
 

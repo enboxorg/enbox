@@ -28,6 +28,29 @@ export type ProgressToken = {
 };
 
 /**
+ * Reason code for a {@link ProgressGapInfo} — explains why the cursor
+ * cannot be resumed.
+ */
+export type ProgressGapReason = 'token_too_old' | 'epoch_mismatch' | 'stream_mismatch';
+
+/**
+ * Metadata attached to a `DwnError(DwnErrorCode.EventLogProgressGap, ...)`
+ * when an EventLog implementation cannot resume from a given cursor.
+ *
+ * Subscribe handlers translate this into a 410 response.
+ */
+export type ProgressGapInfo = {
+  /** The cursor the consumer requested. */
+  requested : ProgressToken;
+  /** The oldest token still available for replay. */
+  oldestAvailable : ProgressToken;
+  /** The latest token available. */
+  latestAvailable : ProgressToken;
+  /** Why the cursor is no longer valid. */
+  reason : ProgressGapReason;
+};
+
+/**
  * Internal listener type used by {@link EventLog.emit} to notify in-process
  * subscribers. Not intended for direct consumer use — consumers should use
  * {@link SubscriptionListener} via {@link EventLog.subscribe}.

@@ -1,8 +1,10 @@
 import type { NatsConnection } from '@nats-io/transport-node';
 import type { ConsumerMessages, JetStreamClient, JetStreamManager } from '@nats-io/jetstream';
-import type { EventLog, EventLogEntry, EventLogReadOptions, EventLogReadResult, EventLogSubscribeOptions, EventSubscription, Filter, KeyValues, MessageEvent, ProgressToken, SubscriptionListener } from '@enbox/dwn-sdk-js';
+import type { EventLog, EventLogEntry, EventLogReadOptions, EventLogReadResult, EventLogSubscribeOptions, EventSubscription, Filter, KeyValues, MessageEvent, ProgressGapInfo, ProgressGapReason, ProgressToken, SubscriptionListener } from '@enbox/dwn-sdk-js';
 
 import log from 'loglevel';
+
+import { DwnError, DwnErrorCode } from '@enbox/dwn-sdk-js';
 
 import { connect } from '@nats-io/transport-node';
 import { AckPolicy, DeliverPolicy, jetstream, jetstreamManager } from '@nats-io/jetstream';
@@ -238,6 +240,50 @@ export default class NatsEventLog implements EventLog {
     };
   }
 
+  /**
+   * Validates a cursor against the current NatsEventLog state.
+   * Throws `DwnError(EventLogProgressGap)` if the cursor cannot be resumed.
+   */
+  async #validateCursor(tenant: string, cursor: ProgressToken): Promise<void> {
+    const expectedStreamId = await this.#getStreamId(tenant);
+
+    let reason: ProgressGapReason;
+    if (cursor.streamId !== expectedStreamId) {
+      reason = 'stream_mismatch';
+    } else if (cursor.epoch !== this.#epoch) {
+      reason = 'epoch_mismatch';
+    } else {
+      // Check if position is within replay bounds.
+      const bounds = await this.getReplayBounds(tenant);
+      if (bounds !== undefined) {
+        const cursorSeq = Number(cursor.position);
+        const oldestSeq = Number(bounds.oldest.position);
+        if (cursorSeq < oldestSeq - 1) {
+          reason = 'token_too_old';
+        } else {
+          return; // Valid.
+        }
+      } else {
+        return; // No events — vacuously valid.
+      }
+    }
+
+    const bounds = await this.getReplayBounds(tenant);
+    const gapInfo: ProgressGapInfo = {
+      requested       : cursor,
+      oldestAvailable : bounds?.oldest ?? cursor,
+      latestAvailable : bounds?.latest ?? cursor,
+      reason,
+    };
+
+    const error = new DwnError(
+      DwnErrorCode.EventLogProgressGap,
+      `progress token gap: ${reason}`
+    );
+    (error as any).gapInfo = gapInfo;
+    throw error;
+  }
+
   // ---- emit ----------------------------------------------------------------
 
   public async emit(tenant: string, event: MessageEvent, indexes: KeyValues, messageCid: string): Promise<ProgressToken | undefined> {
@@ -255,6 +301,9 @@ export default class NatsEventLog implements EventLog {
     this.#assertOpen();
 
     const { cursor, limit, filters } = options;
+    if (cursor !== undefined) {
+      await this.#validateCursor(tenant, cursor);
+    }
     const subject = this.#tenantSubject(tenant);
 
     // Create a one-shot ordered consumer for the read.
@@ -337,6 +386,11 @@ export default class NatsEventLog implements EventLog {
 
     const subject = this.#tenantSubject(tenant);
     const { cursor, filters } = options ?? {};
+
+    // Validate cursor before subscribing.
+    if (cursor !== undefined) {
+      await this.#validateCursor(tenant, cursor);
+    }
 
     // Build the consumer config.
     const consumerName = `sub-${id}`;

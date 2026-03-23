@@ -21,6 +21,7 @@ export enum DwnErrorCode {
   ComputeCidMultihashNotSupported = 'ComputeCidMultihashNotSupported',
   Ed25519InvalidJwk = 'Ed25519InvalidJwk',
   EventLogNotOpenError = 'EventLogNotOpenError',
+  EventLogProgressGap = 'EventLogProgressGap',
   MessagesGrantAuthorizationMismatchedProtocol = 'EventsGrantAuthorizationMismatchedProtocol',
   MessagesSubscribeAuthorizationFailed = 'MessagesSubscribeAuthorizationFailed',
   MessagesSubscribeEventLogUnimplemented = 'MessagesSubscribeEventLogUnimplemented',

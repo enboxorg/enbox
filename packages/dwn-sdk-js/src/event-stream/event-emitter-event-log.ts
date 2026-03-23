@@ -7,6 +7,8 @@ import type {
   EventLogSubscribeOptions,
   EventSubscription,
   MessageEvent,
+  ProgressGapInfo,
+  ProgressGapReason,
   ProgressToken,
   SubscriptionListener,
 } from '../types/subscriptions.js';
@@ -118,6 +120,53 @@ export class EventEmitterEventLog implements EventLog {
     };
   }
 
+  /**
+   * Validates a cursor against the current EventLog state. Throws
+   * `DwnError(EventLogProgressGap)` with {@link ProgressGapInfo} metadata
+   * if the cursor cannot be resumed.
+   */
+  private async validateCursor(tenant: string, cursor: ProgressToken): Promise<void> {
+    const expectedStreamId = await this.getStreamId(tenant);
+
+    let reason: ProgressGapReason;
+    if (cursor.streamId !== expectedStreamId) {
+      reason = 'stream_mismatch';
+    } else if (cursor.epoch !== this.epoch) {
+      reason = 'epoch_mismatch';
+    } else {
+      // Check if position is still within replay bounds.
+      const log = this.tenantLogs.get(tenant);
+      if (log !== undefined && log.size > 0) {
+        const firstSeq = log.keys().next().value as number;
+        const cursorSeq = EventEmitterEventLog.parsePosition(cursor.position);
+        if (cursorSeq < firstSeq - 1) {
+          // Cursor position has been evicted — events between cursor and firstSeq are lost.
+          reason = 'token_too_old';
+        } else {
+          return; // Cursor is valid.
+        }
+      } else {
+        return; // No events for tenant — cursor is vacuously valid (will get empty catch-up + EOSE).
+      }
+    }
+
+    // Build gap metadata.
+    const bounds = await this.getReplayBounds(tenant);
+    const gapInfo: ProgressGapInfo = {
+      requested       : cursor,
+      oldestAvailable : bounds?.oldest ?? cursor,
+      latestAvailable : bounds?.latest ?? cursor,
+      reason,
+    };
+
+    const error = new DwnError(
+      DwnErrorCode.EventLogProgressGap,
+      `progress token gap: ${reason}`
+    );
+    (error as any).gapInfo = gapInfo;
+    throw error;
+  }
+
   public async open(): Promise<void> {
     this.isOpen = true;
   }
@@ -171,6 +220,12 @@ export class EventEmitterEventLog implements EventLog {
 
   public async read(tenant: string, options: EventLogReadOptions = {}): Promise<EventLogReadResult> {
     const { cursor, limit, filters } = options;
+
+    // Validate cursor before attempting to read.
+    if (cursor !== undefined) {
+      await this.validateCursor(tenant, cursor);
+    }
+
     const cursorSeq = cursor !== undefined ? EventEmitterEventLog.parsePosition(cursor.position) : undefined;
     const log = this.tenantLogs.get(tenant);
 
@@ -239,6 +294,9 @@ export class EventEmitterEventLog implements EventLog {
 
     if (cursor !== undefined) {
       // ---- Cursor mode: catch-up from stored events, then EOSE, then live ----
+      // Validate cursor before subscribing — throws DwnError(EventLogProgressGap) on gap.
+      await this.validateCursor(tenant, cursor);
+
       const cursorSeq = EventEmitterEventLog.parsePosition(cursor.position);
 
       // Buffer live events that arrive during catch-up to avoid losing them.

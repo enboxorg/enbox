@@ -411,6 +411,107 @@ describe('EventEmitterEventLog', () => {
     });
   });
 
+  describe('ProgressGap detection', () => {
+    it('should throw EventLogProgressGap with reason epoch_mismatch when epoch differs', async () => {
+      const tenant = 'did:example:alice';
+      const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
+
+      const token = await eventLog.emit(tenant, event, {}, cid(1));
+
+      // Create a token with a different epoch.
+      const staleToken = { ...token!, epoch: 'stale-epoch-from-previous-process' };
+
+      await expect(eventLog.read(tenant, { cursor: staleToken }))
+        .rejects.toThrow('epoch_mismatch');
+    });
+
+    it('should throw EventLogProgressGap with reason stream_mismatch when streamId differs', async () => {
+      const tenant = 'did:example:alice';
+      const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
+
+      const token = await eventLog.emit(tenant, event, {}, cid(1));
+
+      // Create a token with a wrong streamId.
+      const badToken = { ...token!, streamId: 'wrong-stream-id' };
+
+      await expect(eventLog.read(tenant, { cursor: badToken }))
+        .rejects.toThrow('stream_mismatch');
+    });
+
+    it('should throw EventLogProgressGap with reason token_too_old when position is evicted', async () => {
+      const smallLog = new EventEmitterEventLog({ maxEventsPerTenant: 2 });
+      await smallLog.open();
+
+      const tenant = 'did:example:alice';
+      const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
+
+      // Emit 4 events with maxEventsPerTenant=2 — seqs 1 and 2 evicted, only [3,4] remain.
+      const firstToken = await smallLog.emit(tenant, event, {}, cid(1));
+      await smallLog.emit(tenant, event, {}, cid(2));
+      await smallLog.emit(tenant, event, {}, cid(3));
+      await smallLog.emit(tenant, event, {}, cid(4));
+
+      // firstToken has position='1', oldest is now seq=3.
+      // Cursor 1 means "give me events after seq 1" — but seq 2 is gone. That's a gap.
+      await expect(smallLog.read(tenant, { cursor: firstToken! }))
+        .rejects.toThrow('token_too_old');
+
+      await smallLog.close();
+    });
+
+    it('should include ProgressGapInfo metadata on the thrown error', async () => {
+      const smallLog = new EventEmitterEventLog({ maxEventsPerTenant: 2 });
+      await smallLog.open();
+
+      const tenant = 'did:example:alice';
+      const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
+
+      const firstToken = await smallLog.emit(tenant, event, {}, cid(1));
+      await smallLog.emit(tenant, event, {}, cid(2));
+      await smallLog.emit(tenant, event, {}, cid(3));
+      await smallLog.emit(tenant, event, {}, cid(4)); // now only [3,4] remain
+
+      try {
+        await smallLog.read(tenant, { cursor: firstToken! });
+        throw new Error('expected error');
+      } catch (error: any) {
+        expect(error.code).toBe('EventLogProgressGap');
+        expect(error.gapInfo).toBeDefined();
+        expect(error.gapInfo.requested).toEqual(firstToken);
+        expect(error.gapInfo.oldestAvailable.position).toBe('3');
+        expect(error.gapInfo.latestAvailable.position).toBe('4');
+        expect(error.gapInfo.reason).toBe('token_too_old');
+      }
+
+      await smallLog.close();
+    });
+
+    it('should throw on subscribe() with stale cursor', async () => {
+      const tenant = 'did:example:alice';
+      const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
+
+      const token = await eventLog.emit(tenant, event, {}, cid(1));
+      const staleToken = { ...token!, epoch: 'old-epoch' };
+
+      await expect(
+        eventLog.subscribe(tenant, 'sub-1', () => {}, { cursor: staleToken })
+      ).rejects.toThrow('epoch_mismatch');
+    });
+
+    it('should accept a valid cursor without throwing', async () => {
+      const tenant = 'did:example:alice';
+      const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
+
+      const token1 = await eventLog.emit(tenant, event, {}, cid(1));
+      await eventLog.emit(tenant, event, {}, cid(2));
+
+      // Read with a valid cursor — should succeed without throwing.
+      const result = await eventLog.read(tenant, { cursor: token1! });
+      expect(result.events.length).toBe(1);
+      expect(result.cursor!.position).toBe('2');
+    });
+  });
+
   describe('trim()', () => {
     it('should trim events by sequence number', async () => {
       const tenant = 'did:example:alice';
