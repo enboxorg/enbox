@@ -1,3 +1,5 @@
+import type { ProgressToken } from '@enbox/dwn-sdk-js';
+
 import type { EnboxPlatformAgent } from './agent.js';
 
 /**
@@ -24,6 +26,174 @@ export type SyncConnectivityState = 'online' | 'offline' | 'unknown';
  * `'live'` for `MessagesSubscribe`-based real-time sync with SMT fallback.
  */
 export type SyncMode = 'poll' | 'live';
+
+// ---------------------------------------------------------------------------
+// Sync scope and scope identity
+// ---------------------------------------------------------------------------
+
+/**
+ * Describes what a replication link syncs. Currently whole-tenant only
+ * (`kind: 'full'`). Scoped subset sync (`kind: 'protocol'` with
+ * `protocolPathPrefixes` / `contextIdPrefixes`) is deferred to Phase 3.
+ */
+export type SyncScope = {
+  /** Scope kind. Only `'full'` is implemented in Phase 1. */
+  kind: 'full';
+} | {
+  /**
+   * Protocol-scoped sync. Deferred to Phase 3 — included here for type
+   * forward-compatibility only.
+   */
+  kind: 'protocol';
+  protocol: string;
+  protocolPathPrefixes?: string[];
+  contextIdPrefixes?: string[];
+};
+
+/**
+ * Computes a deterministic, collision-resistant identifier for a {@link SyncScope}.
+ *
+ * The ID is `base64url(SHA-256(canonicalJSON))` where `canonicalJSON` is the
+ * scope object with keys sorted alphabetically and array values sorted
+ * lexicographically.
+ *
+ * Used as part of the LevelDB key for the replication ledger:
+ * `{tenantDid}^{remoteEndpoint}^{scopeId}`.
+ */
+export async function computeScopeId(scope: SyncScope): Promise<string> {
+  const canonical: Record<string, unknown> = { kind: scope.kind };
+  if (scope.kind === 'protocol') {
+    canonical.protocol = scope.protocol;
+    if (scope.protocolPathPrefixes !== undefined) {
+      canonical.protocolPathPrefixes = [...new Set(scope.protocolPathPrefixes)].sort();
+    }
+    if (scope.contextIdPrefixes !== undefined) {
+      canonical.contextIdPrefixes = [...new Set(scope.contextIdPrefixes)].sort();
+    }
+  }
+
+  // Stable JSON: keys sorted by construction order (kind < protocol < protocolPathPrefixes).
+  const json = JSON.stringify(canonical);
+  const bytes = new TextEncoder().encode(json);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
+  const hashArray = new Uint8Array(hashBuffer);
+
+  // base64url encode (no padding).
+  let base64 = '';
+  for (const b of hashArray) {
+    base64 += String.fromCharCode(b);
+  }
+  return btoa(base64).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// ---------------------------------------------------------------------------
+// Replication checkpoint types
+// ---------------------------------------------------------------------------
+
+/**
+ * Maximum number of in-flight deliveries (runtime ordinals) a link may
+ * accumulate before transitioning to `repairing`. This is the overflow
+ * threshold for the engine's in-memory delivery tracker, not for durable
+ * checkpoint state. Normative per the sync redesign RFC.
+ */
+export const MAX_PENDING_TOKENS = 100;
+
+/**
+ * Tracks directional (pull or push) replay progression for a single
+ * replication link. All tokens belong to the same `(streamId, epoch)`.
+ *
+ * This is the **durable** replication checkpoint persisted to the ledger.
+ * In-memory delivery-order tracking (ordinals, in-flight commits) is owned
+ * by the sync engine and is not persisted — on crash recovery, replay
+ * restarts from `contiguousAppliedToken` and idempotent apply handles
+ * any re-delivered events.
+ */
+export type DirectionCheckpoint = {
+  /**
+   * The latest token received from the source (pull) or confirmed by the
+   * remote (push). May be ahead of `contiguousAppliedToken` when events
+   * arrive out of order. Used for observability.
+   */
+  receivedToken?: ProgressToken;
+
+  /**
+   * The highest token such that all earlier delivered tokens for this link
+   * have been durably applied. This is the resume point after crash/reconnect.
+   *
+   * Advancement is controlled by the engine's delivery-order tracking,
+   * not by position arithmetic. Positions may be sparse (filtered streams).
+   */
+  contiguousAppliedToken?: ProgressToken;
+};
+
+/**
+ * Status of a replication link.
+ *
+ * - `initializing` — link created, no subscriptions open yet.
+ * - `live` — actively receiving events via subscription.
+ * - `repairing` — gap detected or pending overflow; running SMT reconciliation.
+ * - `degraded_poll` — subscription failed; polling at reduced frequency.
+ * - `paused` — explicitly paused by the application.
+ */
+export type LinkStatus = 'initializing' | 'live' | 'repairing' | 'degraded_poll' | 'paused';
+
+/**
+ * Durable state of a single replication link. Persisted to LevelDB and
+ * loaded on startup. Each link is identified by the tuple
+ * `(tenantDid, remoteEndpoint, scopeId)`.
+ */
+export type ReplicationLinkState = {
+  /** The tenant DID this link syncs for. */
+  tenantDid: string;
+
+  /** The remote DWN endpoint URL. */
+  remoteEndpoint: string;
+
+  /** Deterministic hash of the {@link SyncScope}. See {@link computeScopeId}. */
+  scopeId: string;
+
+  /** The scope definition this link covers. */
+  scope: SyncScope;
+
+  /** Current link status. */
+  status: LinkStatus;
+
+  /** Pull-direction replication checkpoint (remote → local). */
+  pull: DirectionCheckpoint;
+
+  /** Push-direction replication checkpoint (local → remote). */
+  push: DirectionCheckpoint;
+
+  /** Delegate DID used to sign sync messages, if any. */
+  delegateDid?: string;
+
+  /**
+   * Protocol filter for this link, if any. Duplicates the protocol in `scope`
+   * for operational convenience — used by permission lookups and cursor key
+   * building. The scope is the source of truth for what to sync; this field
+   * is the source of truth for how to authenticate. To be consolidated in
+   * Phase 3 when scope resolution is more complex.
+   */
+  protocol?: string;
+
+  /** ISO-8601 timestamp of last successful sync activity. */
+  lastActivityAt?: string;
+};
+
+// ---------------------------------------------------------------------------
+// Push result (per-CID outcome tracking)
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of a batch push operation. Replaces the previous throw-on-first-failure
+ * pattern so callers can advance the push replication checkpoint incrementally.
+ */
+export type PushResult = {
+  /** messageCids that were accepted (202/204/409 — idempotent success). */
+  succeeded: string[];
+  /** messageCids that failed (retryable or hard error). */
+  failed: string[];
+};
 
 /**
  * Parameters for {@link SyncEngine.startSync}.

@@ -10,7 +10,10 @@ import { Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-j
 
 import type { PermissionsApi } from './types/permissions.js';
 import type { EnboxAgent, EnboxPlatformAgent } from './types/agent.js';
-import type { StartSyncParams, SyncConnectivityState, SyncEngine, SyncIdentityOptions, SyncMode } from './types/sync.js';
+import type { PushResult, ReplicationLinkState, StartSyncParams, SyncConnectivityState, SyncEngine, SyncIdentityOptions, SyncMode } from './types/sync.js';
+
+import { MAX_PENDING_TOKENS } from './types/sync.js';
+import { ReplicationLedger } from './sync-replication-ledger.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnInterface } from './types/dwn.js';
@@ -70,6 +73,38 @@ type LocalSubscription = {
   close: () => Promise<void>;
 };
 
+// ---------------------------------------------------------------------------
+// Per-link in-memory delivery-order tracking (not persisted to ledger)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tracks an in-flight delivery that has been started but may not yet be
+ * durably committed. Used by the pull path to handle async completion
+ * reordering — subscription callbacks are fire-and-forget, so event B
+ * can complete before event A even though A was delivered first.
+ */
+type InFlightCommit = {
+  /** Monotonic delivery ordinal for this link. */
+  ordinal: number;
+  /** The token associated with this delivery. */
+  token: ProgressToken;
+  /** Whether processRawMessage has completed successfully. */
+  committed: boolean;
+};
+
+/**
+ * Per-link runtime state held in memory. Not persisted — on crash,
+ * replay restarts from `contiguousAppliedToken` (idempotent apply).
+ */
+type LinkRuntimeState = {
+  /** Next ordinal to assign when a pull event is delivered. */
+  nextDeliveryOrdinal: number;
+  /** Next ordinal to check when draining committed entries. */
+  nextCommitOrdinal: number;
+  /** In-flight deliveries keyed by ordinal. */
+  inflight: Map<number, InFlightCommit>;
+};
+
 export class SyncEngineLevel implements SyncEngine {
   /**
    * Holds the instance of a `EnboxPlatformAgent` that represents the current execution context for
@@ -87,6 +122,29 @@ export class SyncEngineLevel implements SyncEngine {
   private _db: AbstractLevel<string | Buffer | Uint8Array>;
   private _syncIntervalId?: ReturnType<typeof setInterval>;
   private _syncLock = false;
+
+  /**
+   * Durable replication ledger — persists per-link checkpoint state.
+   * Used by live sync to track pull/push progression independently per link.
+   * Poll-mode sync still uses the legacy `getCursor`/`setCursor` path.
+   * Lazily initialized on first use to avoid sublevel() calls on mock dbs.
+   */
+  private _ledger?: ReplicationLedger;
+
+  /**
+   * In-memory cache of active links, keyed by `{did}^{dwnUrl}^{protocol}`.
+   * Populated from the ledger on `startLiveSync`, used by subscription handlers
+   * to avoid async ledger lookups on every event.
+   */
+  private _activeLinks: Map<string, ReplicationLinkState> = new Map();
+
+  /**
+   * Per-link in-memory delivery-order tracking for the pull path. Keyed by
+   * the same link key as `_activeLinks`. Not persisted — on crash, replay
+   * restarts from `contiguousAppliedToken` and idempotent apply handles
+   * re-delivered events.
+   */
+  private _linkRuntimes: Map<string, LinkRuntimeState> = new Map();
 
   /**
    * Hex-encoded default hashes for empty subtrees at each depth, keyed by depth.
@@ -114,8 +172,25 @@ export class SyncEngineLevel implements SyncEngine {
   /** Debounce timer for batched push-on-write. */
   private _pushDebounceTimer?: ReturnType<typeof setTimeout>;
 
-  /** Pending message CIDs to push, accumulated during the debounce window. */
-  private _pendingPushCids: Map<string, { did: string; dwnUrl: string; delegateDid?: string; protocol?: string; cids: string[] }> = new Map();
+  /** Entry in the pending push queue — a message CID with its local EventLog token. */
+  private _pendingPushCids: Map<string, {
+    did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
+    entries: { cid: string; localToken?: ProgressToken }[];
+  }> = new Map();
+
+  /**
+   * CIDs recently received via pull subscription, keyed by `cid|dwnUrl` to
+   * scope suppression per remote endpoint. A message pulled from Provider A
+   * is only suppressed for push back to Provider A — it still fans out to
+   * Provider B and C. TTL: 60 seconds. Cap: 10,000 entries.
+   */
+  private _recentlyPulledCids: Map<string, number> = new Map();
+
+  /** TTL for echo-loop suppression entries (60 seconds). */
+  private static readonly ECHO_SUPPRESS_TTL_MS = 60_000;
+
+  /** Maximum entries in the echo-loop suppression cache. */
+  private static readonly ECHO_SUPPRESS_MAX_ENTRIES = 10_000;
 
   /** Count of consecutive SMT sync failures (for backoff in poll mode). */
   private _consecutiveFailures = 0;
@@ -130,6 +205,14 @@ export class SyncEngineLevel implements SyncEngine {
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent: agent as EnboxAgent });
     this._db = (db) ? db : new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
+  }
+
+  /** Lazy accessor for the replication ledger. */
+  private get ledger(): ReplicationLedger {
+    if (!this._ledger) {
+      this._ledger = new ReplicationLedger(this._db);
+    }
+    return this._ledger;
   }
 
   /**
@@ -440,14 +523,55 @@ export class SyncEngineLevel implements SyncEngine {
       console.error('SyncEngineLevel: Error during initial live-sync catch-up', error);
     }
 
-    // Step 2: Open live subscriptions for each sync target.
+    // Step 2: Initialize replication links and open live subscriptions.
     const syncTargets = await this.getSyncTargets();
     for (const target of syncTargets) {
       try {
+        // Get or create the link in the durable ledger.
+        const link = await this.ledger.getOrCreateLink({
+          tenantDid      : target.did,
+          remoteEndpoint : target.dwnUrl,
+          scope          : { kind: 'full' },
+          delegateDid    : target.delegateDid,
+          protocol       : target.protocol,
+        });
+
+        // Cache the link for fast access by subscription handlers.
+        const linkKey = this.buildCursorKey(target.did, target.dwnUrl, target.protocol);
+        this._activeLinks.set(linkKey, link);
+
+        // Open subscriptions — only transition to live if both succeed.
+        // If pull succeeds but push fails, close the pull subscription to
+        // avoid a resource leak with inconsistent state.
         await this.openLivePullSubscription(target);
-        await this.openLocalPushSubscription(target);
+        try {
+          await this.openLocalPushSubscription(target);
+        } catch (pushError) {
+          // Close the already-opened pull subscription.
+          const pullSub = this._liveSubscriptions.find(
+            s => s.did === target.did && s.dwnUrl === target.dwnUrl && s.protocol === target.protocol
+          );
+          if (pullSub) {
+            try { await pullSub.close(); } catch { /* best effort */ }
+            this._liveSubscriptions = this._liveSubscriptions.filter(s => s !== pullSub);
+          }
+          throw pushError;
+        }
+
+        await this.ledger.setStatus(link, 'live');
       } catch (error: any) {
         console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
+
+        // Clean up in-memory state for the failed link so it doesn't appear
+        // active to later code. The durable link remains at 'initializing'.
+        const linkKey = this.buildCursorKey(target.did, target.dwnUrl, target.protocol);
+        this._activeLinks.delete(linkKey);
+        this._linkRuntimes.delete(linkKey);
+
+        // Recompute connectivity — if no live subscriptions remain, reset to unknown.
+        if (this._liveSubscriptions.length === 0) {
+          this._connectivityState = 'unknown';
+        }
       }
     }
 
@@ -465,6 +589,44 @@ export class SyncEngineLevel implements SyncEngine {
     };
 
     this._syncIntervalId = setInterval(integrityCheck, intervalMilliseconds);
+  }
+
+  /**
+   * Get or create the runtime state for a link.
+   */
+  private getOrCreateRuntime(linkKey: string): LinkRuntimeState {
+    let rt = this._linkRuntimes.get(linkKey);
+    if (!rt) {
+      rt = { nextDeliveryOrdinal: 0, nextCommitOrdinal: 0, inflight: new Map() };
+      this._linkRuntimes.set(linkKey, rt);
+    }
+    return rt;
+  }
+
+  /**
+   * Drain contiguously committed ordinals from the runtime state, advancing
+    * the link's pull checkpoint for each drained entry. Returns the number of
+   * entries drained (0 if the next ordinal is not yet committed).
+   */
+  private drainCommittedPull(linkKey: string): number {
+    const rt = this._linkRuntimes.get(linkKey);
+    const link = this._activeLinks.get(linkKey);
+    if (!rt || !link) { return 0; }
+
+    let drained = 0;
+    while (true) {
+      const entry = rt.inflight.get(rt.nextCommitOrdinal);
+      if (!entry || !entry.committed) { break; }
+
+      // This ordinal is committed — advance the durable checkpoint.
+      ReplicationLedger.commitContiguousToken(link.pull, entry.token);
+      ReplicationLedger.setReceivedToken(link.pull, entry.token);
+      rt.inflight.delete(rt.nextCommitOrdinal);
+      rt.nextCommitOrdinal++;
+      drained++;
+    }
+
+    return drained;
   }
 
   /**
@@ -499,6 +661,10 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
     this._localSubscriptions = [];
+
+    // Clear the in-memory link and runtime state.
+    this._activeLinks.clear();
+    this._linkRuntimes.clear();
   }
 
   // ---------------------------------------------------------------------------
@@ -514,9 +680,10 @@ export class SyncEngineLevel implements SyncEngine {
   }): Promise<void> {
     const { did, delegateDid, dwnUrl, protocol } = target;
 
-    // Resolve the cursor from the last session (if any).
+    // Resolve the cursor from the link's pull checkpoint (preferred) or legacy storage.
     const cursorKey = this.buildCursorKey(did, dwnUrl, protocol);
-    const cursor = await this.getCursor(cursorKey);
+    const link = this._activeLinks.get(cursorKey);
+    const cursor = link?.pull.contiguousAppliedToken ?? await this.getCursor(cursorKey);
 
     // Build the MessagesSubscribe filters.
     const filters = protocol ? [{ protocol }] : [];
@@ -538,16 +705,55 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     // Define the subscription handler that processes incoming events.
+    // NOTE: The WebSocket client fires handlers without awaiting (fire-and-forget),
+    // so multiple handlers can be in-flight concurrently. The ordinal tracker
+    // ensures the checkpoint advances only when all earlier deliveries are committed.
     const subscriptionHandler = async (subMessage: SubscriptionMessage): Promise<void> => {
       if (subMessage.type === 'eose') {
-        // End-of-stored-events — catch-up complete, persist cursor.
-        await this.setCursor(cursorKey, subMessage.cursor);
+        // End-of-stored-events — catch-up complete.
+        if (link) {
+          if (!ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {
+            console.warn(`SyncEngineLevel: Token domain mismatch on EOSE for ${did} -> ${dwnUrl}, transitioning to repairing`);
+            await this.ledger.setStatus(link, 'repairing');
+            // Do not set connectivity to online — replication is unhealthy.
+            return;
+          }
+          ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
+          // Drain committed entries. Do NOT unconditionally advance to the
+          // EOSE cursor — earlier stored events may still be in-flight
+          // (handlers are fire-and-forget). The checkpoint advances only as
+          // far as the contiguous drain reaches.
+          this.drainCommittedPull(cursorKey);
+          await this.ledger.saveLink(link);
+        } else {
+          await this.setCursor(cursorKey, subMessage.cursor);
+        }
+        // Transport is reachable — set connectivity to online.
         this._connectivityState = 'online';
         return;
       }
 
       if (subMessage.type === 'event') {
         const event: MessageEvent = subMessage.event;
+
+        // Domain validation: reject tokens from a different stream/epoch.
+        if (link && !ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {
+          console.warn(`SyncEngineLevel: Token domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`);
+          ReplicationLedger.resetCheckpoint(link.pull);
+          const rt = this._linkRuntimes.get(cursorKey);
+          if (rt) { rt.inflight.clear(); rt.nextCommitOrdinal = rt.nextDeliveryOrdinal; }
+          await this.ledger.setStatus(link, 'repairing');
+          return;
+        }
+
+        // Assign a delivery ordinal BEFORE async processing begins.
+        // This captures the delivery order even if processing completes out of order.
+        const rt = link ? this.getOrCreateRuntime(cursorKey) : undefined;
+        const ordinal = rt ? rt.nextDeliveryOrdinal++ : -1;
+        if (rt) {
+          rt.inflight.set(ordinal, { ordinal, token: subMessage.cursor, committed: false });
+        }
+
         try {
           // Extract inline data from the event (available for records <= 30 KB).
           let dataStream = this.extractDataStream(event);
@@ -569,12 +775,42 @@ export class SyncEngineLevel implements SyncEngine {
 
           await this.agent.dwn.processRawMessage(did, event.message, { dataStream });
 
-          // Only advance the cursor after successful processing.
-          // If processing fails, the event will be re-delivered on
-          // reconnection (cursor-based resume from the last good point).
-          await this.setCursor(cursorKey, subMessage.cursor);
+          // Track this CID for echo-loop suppression, scoped to the source endpoint.
+          const pulledCid = await Message.getCid(event.message);
+          this._recentlyPulledCids.set(`${pulledCid}|${dwnUrl}`, Date.now() + SyncEngineLevel.ECHO_SUPPRESS_TTL_MS);
+          this.evictExpiredEchoEntries();
+
+          // Mark this ordinal as committed and drain the checkpoint.
+          if (link && rt) {
+            const entry = rt.inflight.get(ordinal);
+            if (entry) { entry.committed = true; }
+
+            ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
+            const drained = this.drainCommittedPull(cursorKey);
+            if (drained > 0) {
+              await this.ledger.saveLink(link);
+            }
+
+            // Overflow: too many in-flight ordinals without draining.
+            if (rt.inflight.size > MAX_PENDING_TOKENS) {
+              console.warn(`SyncEngineLevel: Pull in-flight overflow for ${did} -> ${dwnUrl}, transitioning to repairing`);
+              await this.ledger.setStatus(link, 'repairing');
+            }
+          } else {
+            // Legacy path: no link available, use simple cursor persistence.
+            await this.setCursor(cursorKey, subMessage.cursor);
+          }
         } catch (error: any) {
           console.error(`SyncEngineLevel: Error processing live-pull event for ${did}`, error);
+          // A failed processRawMessage means local state is incomplete.
+          // Transition to repairing immediately — do NOT advance the checkpoint
+          // past this failure or let later ordinals commit past it. SMT
+          // reconciliation will discover and fill the gap.
+          if (link && rt) {
+            rt.inflight.clear();
+            rt.nextCommitOrdinal = rt.nextDeliveryOrdinal;
+            await this.ledger.setStatus(link, 'repairing');
+          }
         }
       }
     };
@@ -600,9 +836,11 @@ export class SyncEngineLevel implements SyncEngine {
     // Build a resubscribe factory so the WebSocket client can resume with
     // a fresh cursor-stamped message after reconnection.
     const resubscribeFactory: ResubscribeFactory = async (resumeCursor?: ProgressToken) => {
+      // On reconnect, use the latest durable checkpoint position if available.
+      const effectiveCursor = resumeCursor ?? link?.pull.contiguousAppliedToken ?? cursor;
       const resumeRequest = {
         ...subscribeRequest,
-        messageParams: { ...subscribeRequest.messageParams, cursor: resumeCursor ?? cursor },
+        messageParams: { ...subscribeRequest.messageParams, cursor: effectiveCursor },
       };
       const { message: resumeMsg } = await this.agent.dwn.processRequest(resumeRequest);
       if (!resumeMsg) {
@@ -626,8 +864,7 @@ export class SyncEngineLevel implements SyncEngine {
       },
     }) as MessagesSubscribeReply;
     if (reply.status.code !== 200 || !reply.subscription) {
-      console.error(`SyncEngineLevel: MessagesSubscribe failed for ${did} -> ${dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
-      return;
+      throw new Error(`SyncEngineLevel: MessagesSubscribe failed for ${did} -> ${dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
     }
 
     this._liveSubscriptions.push({
@@ -683,12 +920,19 @@ export class SyncEngineLevel implements SyncEngine {
         return;
       }
 
+      // Echo-loop suppression: skip CIDs that were recently pulled from this
+      // specific remote. A message pulled from Provider A is only suppressed
+      // for push to A — it still fans out to Provider B and C.
+      if (this.isRecentlyPulled(cid, dwnUrl)) {
+        return;
+      }
+
       let pending = this._pendingPushCids.get(targetKey);
       if (!pending) {
-        pending = { did, dwnUrl, delegateDid, protocol, cids: [] };
+        pending = { did, dwnUrl, delegateDid, protocol, entries: [] };
         this._pendingPushCids.set(targetKey, pending);
       }
-      pending.cids.push(cid);
+      pending.entries.push({ cid, localToken: subMessage.cursor });
 
       // Debounce the push.
       if (this._pushDebounceTimer) {
@@ -711,8 +955,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     const reply = response.reply as MessagesSubscribeReply;
     if (reply.status.code !== 200 || !reply.subscription) {
-      console.error(`SyncEngineLevel: Local MessagesSubscribe failed for ${did}: ${reply.status.code} ${reply.status.detail}`);
-      return;
+      throw new Error(`SyncEngineLevel: Local MessagesSubscribe failed for ${did}: ${reply.status.code} ${reply.status.detail}`);
     }
 
     this._localSubscriptions.push({
@@ -730,41 +973,89 @@ export class SyncEngineLevel implements SyncEngine {
   private async flushPendingPushes(): Promise<void> {
     this._pushDebounceTimer = undefined;
 
-    const entries = [...this._pendingPushCids.entries()];
+    const batches = [...this._pendingPushCids.entries()];
     this._pendingPushCids.clear();
 
     // Push to all endpoints in parallel — each target is independent.
-    await Promise.all(entries.map(async ([, pending]) => {
-      const { did, dwnUrl, delegateDid, protocol, cids } = pending;
-      if (cids.length === 0) {
+    await Promise.all(batches.map(async ([targetKey, pending]) => {
+      const { did, dwnUrl, delegateDid, protocol, entries: pushEntries } = pending;
+      if (pushEntries.length === 0) {
         return;
       }
 
+      const cids = pushEntries.map(e => e.cid);
+
       try {
-        await pushMessages({
+        const result = await pushMessages({
           did, dwnUrl, delegateDid, protocol,
           messageCids    : cids,
           agent          : this.agent,
           permissionsApi : this._permissionsApi,
         });
-      } catch (error: any) {
-        console.error(`SyncEngineLevel: Push-on-write failed for ${did} -> ${dwnUrl}`, error);
 
-        // Re-queue the failed CIDs so they are retried on the next
-        // debounce cycle (or picked up by the SMT integrity check).
-        const targetKey = this.buildCursorKey(did, dwnUrl, protocol);
+        // Advance the push checkpoint for successfully pushed entries.
+        // Push is sequential (single batch, in-order processing) so we can
+        // commit directly without ordinal tracking — there's no concurrent
+        // completion to reorder.
+        const link = this._activeLinks.get(targetKey);
+        if (link) {
+          const succeededSet = new Set(result.succeeded);
+          // Track highest contiguous success: if a CID fails, we stop advancing.
+          let hitFailure = false;
+          for (const entry of pushEntries) {
+            if (hitFailure) { break; }
+            if (succeededSet.has(entry.cid) && entry.localToken) {
+              if (!ReplicationLedger.validateTokenDomain(link.push, entry.localToken)) {
+                console.warn(`SyncEngineLevel: Push checkpoint domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`);
+                ReplicationLedger.resetCheckpoint(link.push);
+                await this.ledger.setStatus(link, 'repairing');
+                break;
+              }
+              ReplicationLedger.setReceivedToken(link.push, entry.localToken);
+              ReplicationLedger.commitContiguousToken(link.push, entry.localToken);
+            } else {
+              // This CID failed or had no token — stop advancing.
+              hitFailure = true;
+            }
+          }
+          await this.ledger.saveLink(link);
+        }
+
+        // Re-queue failed entries so they are retried on the next debounce
+        // cycle (or picked up by the SMT integrity check).
+        if (result.failed.length > 0) {
+          console.error(`SyncEngineLevel: Push-on-write failed for ${did} -> ${dwnUrl}: ${result.failed.length} of ${cids.length} messages failed`);
+          const failedSet = new Set(result.failed);
+          const failedEntries = pushEntries.filter(e => failedSet.has(e.cid));
+          let requeued = this._pendingPushCids.get(targetKey);
+          if (!requeued) {
+            requeued = { did, dwnUrl, delegateDid, protocol, entries: [] };
+            this._pendingPushCids.set(targetKey, requeued);
+          }
+          requeued.entries.push(...failedEntries);
+
+          // Schedule a retry after a short delay.
+          if (!this._pushDebounceTimer) {
+            this._pushDebounceTimer = setTimeout((): void => {
+              void this.flushPendingPushes();
+            }, PUSH_DEBOUNCE_MS * 4); // Back off: 1 second instead of 250ms.
+          }
+        }
+      } catch (error: any) {
+        // Truly unexpected error (not per-message failure). Re-queue entire
+        // batch so entries aren't silently dropped from the debounce queue.
+        console.error(`SyncEngineLevel: Push-on-write failed for ${did} -> ${dwnUrl}`, error);
         let requeued = this._pendingPushCids.get(targetKey);
         if (!requeued) {
-          requeued = { did, dwnUrl, delegateDid, protocol, cids: [] };
+          requeued = { did, dwnUrl, delegateDid, protocol, entries: [] };
           this._pendingPushCids.set(targetKey, requeued);
         }
-        requeued.cids.push(...cids);
+        requeued.entries.push(...pushEntries);
 
-        // Schedule a retry after a short delay.
         if (!this._pushDebounceTimer) {
           this._pushDebounceTimer = setTimeout((): void => {
             void this.flushPendingPushes();
-          }, PUSH_DEBOUNCE_MS * 4); // Back off: 1 second instead of 250ms.
+          }, PUSH_DEBOUNCE_MS * 4);
         }
       }
     }));
@@ -1183,6 +1474,52 @@ export class SyncEngineLevel implements SyncEngine {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Echo-loop suppression
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Evicts expired entries from the echo-loop suppression cache.
+   * Also enforces the size cap by evicting oldest entries first.
+   */
+  private evictExpiredEchoEntries(): void {
+    const now = Date.now();
+
+    // Evict expired entries.
+    for (const [cid, expiry] of this._recentlyPulledCids) {
+      if (now >= expiry) {
+        this._recentlyPulledCids.delete(cid);
+      }
+    }
+
+    // Enforce size cap by evicting oldest entries.
+    if (this._recentlyPulledCids.size > SyncEngineLevel.ECHO_SUPPRESS_MAX_ENTRIES) {
+      const excess = this._recentlyPulledCids.size - SyncEngineLevel.ECHO_SUPPRESS_MAX_ENTRIES;
+      let evicted = 0;
+      for (const key of this._recentlyPulledCids.keys()) {
+        if (evicted >= excess) { break; }
+        this._recentlyPulledCids.delete(key);
+        evicted++;
+      }
+    }
+  }
+
+  /**
+   * Checks whether a CID was recently pulled from a specific remote endpoint
+   * and should not be pushed back to that same endpoint (echo-loop suppression).
+   * Does not suppress pushes to other endpoints — multi-provider fan-out works.
+   */
+  private isRecentlyPulled(cid: string, dwnUrl: string): boolean {
+    const key = `${cid}|${dwnUrl}`;
+    const expiry = this._recentlyPulledCids.get(key);
+    if (expiry === undefined) { return false; }
+    if (Date.now() >= expiry) {
+      this._recentlyPulledCids.delete(key);
+      return false;
+    }
+    return true;
+  }
+
   /**
    * Reads missing messages from the local DWN and pushes them to the remote DWN
    * in dependency order (topological sort).
@@ -1193,7 +1530,7 @@ export class SyncEngineLevel implements SyncEngine {
     delegateDid?: string;
     protocol?: string;
     messageCids: string[];
-  }): Promise<void> {
+  }): Promise<PushResult> {
     return pushMessages({
       did, dwnUrl, delegateDid, protocol, messageCids,
       agent          : this.agent,

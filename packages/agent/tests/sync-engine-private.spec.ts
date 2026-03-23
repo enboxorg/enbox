@@ -651,18 +651,19 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._liveSubscriptions = [];
     });
 
-    it('should not add subscription when reply status is not 200', async () => {
+    it('should throw when reply status is not 200', async () => {
       const { agent } = createPullMockAgent({
         status       : { code: 500, detail: 'Error' },
         subscription : undefined,
       });
       const engine = new SyncEngineLevel({ db, agent });
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
-      sinon.stub(console, 'error');
 
-      await (engine as any).openLivePullSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
-      });
+      await expect(
+        (engine as any).openLivePullSubscription({
+          did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
+        })
+      ).rejects.toThrow('MessagesSubscribe failed');
 
       expect((engine as any)._liveSubscriptions.length).toBe(0);
     });
@@ -769,7 +770,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._localSubscriptions = [];
     });
 
-    it('should not add subscription when reply status is not 200', async () => {
+    it('should throw when reply status is not 200', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
@@ -782,11 +783,12 @@ describe('SyncEngineLevel — private methods', () => {
         },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
-      sinon.stub(console, 'error');
 
-      await (engine as any).openLocalPushSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
-      });
+      await expect(
+        (engine as any).openLocalPushSubscription({
+          did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
+        })
+      ).rejects.toThrow('Local MessagesSubscribe failed');
 
       expect((engine as any)._localSubscriptions.length).toBe(0);
     });
@@ -846,10 +848,10 @@ describe('SyncEngineLevel — private methods', () => {
   // ---------------------------------------------------------------------------
 
   describe('flushPendingPushes', () => {
-    it('should clear pending push CIDs after flushing', async () => {
+    it('should clear pending push entries after flushing', async () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._pendingPushCids.set('key1', {
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', cids: [],
+        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', entries: [],
       });
 
       await (engine as any).flushPendingPushes();
@@ -858,13 +860,13 @@ describe('SyncEngineLevel — private methods', () => {
       expect((engine as any)._pushDebounceTimer).toBeUndefined();
     });
 
-    it('should skip entries with empty cids array', async () => {
+    it('should skip targets with empty entries array', async () => {
       const mockAgent = { agentDid: 'did:example:agent' } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
       (engine as any)._pendingPushCids.set('key1', {
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', cids: [],
+        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', entries: [],
       });
 
       // Should not throw or call pushMessages
@@ -889,7 +891,9 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
       (engine as any)._pendingPushCids.set('key1', {
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', cids: ['cid-1'],
+        did     : 'did:example:alice',
+        dwnUrl  : 'https://dwn.example.com',
+        entries : [{ cid: 'cid-1' }],
       });
 
       const consoleStub = sinon.stub(console, 'error');
@@ -1197,6 +1201,88 @@ describe('SyncEngineLevel — private methods', () => {
       expect(syncStub.calledOnce).toBe(true);
 
       (engine as any)._syncLock = false;
+      await engine.stopSync();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // startLiveSync — partial setup failure cleanup
+  // ---------------------------------------------------------------------------
+
+  describe('startLiveSync — partial setup failure cleanup', () => {
+    it('should clean up in-memory state when push subscription fails', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      // Stub sync() to no-op (initial catch-up).
+      sinon.stub(engine, 'sync').resolves();
+
+      // Return one sync target.
+      sinon.stub(engine as any, 'getSyncTargets').resolves([
+        { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com' },
+      ]);
+
+      // Pull subscription succeeds (sets connectivity to online).
+      sinon.stub(engine as any, 'openLivePullSubscription').callsFake(async (): Promise<void> => {
+        (engine as any)._liveSubscriptions.push({
+          did    : 'did:example:alice', dwnUrl : 'https://dwn.example.com',
+          close  : sinon.stub().resolves(),
+        });
+        (engine as any)._connectivityState = 'online';
+      });
+
+      // Push subscription fails.
+      sinon.stub(engine as any, 'openLocalPushSubscription').rejects(new Error('push open failed'));
+
+      sinon.stub(console, 'error');
+
+      await engine.startSync({ mode: 'live', interval: '10s' });
+
+      // _activeLinks should not contain the failed link.
+      const linkKey = (engine as any).buildCursorKey('did:example:alice', 'https://dwn.example.com', undefined);
+      expect((engine as any)._activeLinks.has(linkKey)).toBe(false);
+      expect((engine as any)._linkRuntimes.has(linkKey)).toBe(false);
+
+      // Pull subscription should have been closed (the openLivePullSubscription
+      // stub added it, and the catch path in startLiveSync should have closed it
+      // via the inner try/catch around push). Since we stubbed openLivePullSubscription
+      // directly, the inner try/catch won't fire — but _activeLinks cleanup still runs.
+
+      // Connectivity should be reset since no live subscriptions remain after cleanup.
+      // The pull sub was added by our stub but startLiveSync's catch-path inner try/catch
+      // for the push won't close it because openLivePullSubscription was stubbed.
+      // However the outer catch does clean up _activeLinks and resets connectivity
+      // if no _liveSubscriptions remain. Our stub added one, so connectivity stays online.
+      // This is correct — the pull subscription was opened by the stub and is still in
+      // _liveSubscriptions. In the real code path (non-stubbed), the inner try/catch
+      // would close it.
+
+      await engine.stopSync();
+    });
+
+    it('should reset connectivity to unknown when no subscriptions remain after failure', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      sinon.stub(engine, 'sync').resolves();
+      sinon.stub(engine as any, 'getSyncTargets').resolves([
+        { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com' },
+      ]);
+
+      // Pull subscription fails immediately (no subscriptions added).
+      sinon.stub(engine as any, 'openLivePullSubscription').rejects(new Error('pull open failed'));
+
+      sinon.stub(console, 'error');
+
+      await engine.startSync({ mode: 'live', interval: '10s' });
+
+      // No subscriptions opened at all — connectivity should be unknown.
+      expect((engine as any)._connectivityState).toBe('unknown');
+      expect((engine as any)._liveSubscriptions.length).toBe(0);
+
+      const linkKey = (engine as any).buildCursorKey('did:example:alice', 'https://dwn.example.com', undefined);
+      expect((engine as any)._activeLinks.has(linkKey)).toBe(false);
+
       await engine.stopSync();
     });
   });
@@ -1528,6 +1614,178 @@ describe('SyncEngineLevel — private methods', () => {
       });
 
       expect(mockAgent.rpc.sendDwnRequest.called).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Echo-loop suppression
+  // ---------------------------------------------------------------------------
+
+  describe('echo-loop suppression', () => {
+    const providerA = 'https://provider-a.example.com';
+    const providerB = 'https://provider-b.example.com';
+
+    it('should return false for unknown CIDs', () => {
+      const result = (syncEngine as any).isRecentlyPulled('unknown-cid', providerA);
+      expect(result).toBe(false);
+    });
+
+    it('should return true for a CID recently pulled from the same endpoint', () => {
+      const map = (syncEngine as any)._recentlyPulledCids as Map<string, number>;
+      map.set(`cid-1|${providerA}`, Date.now() + 60_000);
+
+      expect((syncEngine as any).isRecentlyPulled('cid-1', providerA)).toBe(true);
+    });
+
+    it('should return false for the same CID when checking a different endpoint', () => {
+      const map = (syncEngine as any)._recentlyPulledCids as Map<string, number>;
+      map.set(`cid-1|${providerA}`, Date.now() + 60_000);
+
+      // Same CID, different provider — should NOT be suppressed (fan-out).
+      expect((syncEngine as any).isRecentlyPulled('cid-1', providerB)).toBe(false);
+    });
+
+    it('should return false and evict expired entries', () => {
+      const map = (syncEngine as any)._recentlyPulledCids as Map<string, number>;
+      map.set(`cid-expired|${providerA}`, Date.now() - 1); // already expired
+
+      expect((syncEngine as any).isRecentlyPulled('cid-expired', providerA)).toBe(false);
+      expect(map.has(`cid-expired|${providerA}`)).toBe(false);
+    });
+
+    it('should evict entries beyond the max cap', () => {
+      const map = (syncEngine as any)._recentlyPulledCids as Map<string, number>;
+      map.clear();
+
+      // Fill beyond the cap (10,000).
+      const cap = (SyncEngineLevel as any).ECHO_SUPPRESS_MAX_ENTRIES;
+      for (let i = 0; i < cap + 50; i++) {
+        map.set(`cid-${i}|${providerA}`, Date.now() + 60_000);
+      }
+
+      expect(map.size).toBe(cap + 50);
+
+      // Eviction should trim to cap.
+      (syncEngine as any).evictExpiredEchoEntries();
+      expect(map.size).toBe(cap);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Pull delivery-order tracking (ordinal-based replication checkpoint)
+  // ---------------------------------------------------------------------------
+
+  describe('pull delivery-order tracking', () => {
+    /** Helper to build a ProgressToken. */
+    function token(pos: number): any {
+      return { streamId: 'stream-1', epoch: 'epoch-1', position: String(pos), messageCid: `cid-${pos}` };
+    }
+
+    it('should advance checkpoint only when all earlier ordinals are committed', () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      // Set up link and runtime state.
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
+        pull           : {}, push           : {},
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      const rt = (engine as any).getOrCreateRuntime(linkKey);
+
+      // Deliver ordinal 0 (token 1) and ordinal 1 (token 5).
+      rt.inflight.set(0, { ordinal: 0, token: token(1), committed: false });
+      rt.nextDeliveryOrdinal = 1;
+      rt.inflight.set(1, { ordinal: 1, token: token(5), committed: false });
+      rt.nextDeliveryOrdinal = 2;
+
+      // Ordinal 1 (token 5) completes first.
+      rt.inflight.get(1).committed = true;
+      const drained1 = (engine as any).drainCommittedPull(linkKey);
+
+      // Checkpoint must NOT advance — ordinal 0 is still uncommitted.
+      expect(drained1).toBe(0);
+      expect(link.pull.contiguousAppliedToken).toBeUndefined();
+
+      // Now ordinal 0 (token 1) completes.
+      rt.inflight.get(0).committed = true;
+      const drained2 = (engine as any).drainCommittedPull(linkKey);
+
+      // Checkpoint should advance through both: 0 → token 1, then 1 → token 5.
+      expect(drained2).toBe(2);
+      expect(link.pull.contiguousAppliedToken).toEqual(token(5));
+    });
+
+    it('should advance checkpoint through sparse positions from filtered streams', () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
+        pull           : {}, push           : {},
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      const rt = (engine as any).getOrCreateRuntime(linkKey);
+
+      // Deliver sparse positions 1, 5, 9 in order.
+      for (let i = 0; i < 3; i++) {
+        const pos = [1, 5, 9][i];
+        rt.inflight.set(i, { ordinal: i, token: token(pos), committed: true });
+        rt.nextDeliveryOrdinal = i + 1;
+      }
+
+      const drained = (engine as any).drainCommittedPull(linkKey);
+
+      // All three should drain — sparse positions are fine.
+      expect(drained).toBe(3);
+      expect(link.pull.contiguousAppliedToken).toEqual(token(9));
+    });
+
+    it('should NOT advance checkpoint past a failed event (failure blocks progression)', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
+        pull           : {}, push           : {},
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      const rt = (engine as any).getOrCreateRuntime(linkKey);
+
+      // Simulate: ordinal 0 (token 1) succeeds, ordinal 1 (token 5) fails,
+      // ordinal 2 (token 9) succeeds.
+
+      // Ordinal 0 commits.
+      rt.inflight.set(0, { ordinal: 0, token: token(1), committed: true });
+      rt.nextDeliveryOrdinal = 1;
+      (engine as any).drainCommittedPull(linkKey);
+      expect(link.pull.contiguousAppliedToken).toEqual(token(1));
+
+      // Ordinal 1 delivered, ordinal 2 delivered.
+      rt.inflight.set(1, { ordinal: 1, token: token(5), committed: false });
+      rt.nextDeliveryOrdinal = 2;
+      rt.inflight.set(2, { ordinal: 2, token: token(9), committed: false });
+      rt.nextDeliveryOrdinal = 3;
+
+      // Ordinal 2 (token 9) succeeds.
+      rt.inflight.get(2).committed = true;
+      (engine as any).drainCommittedPull(linkKey);
+
+      // Checkpoint must still be at token 1 — ordinal 1 is blocking.
+      expect(link.pull.contiguousAppliedToken).toEqual(token(1));
+
+      // Ordinal 1 fails — simulating what the catch block does.
+      // The catch block clears inflight and sets repairing.
+      rt.inflight.clear();
+      rt.nextCommitOrdinal = rt.nextDeliveryOrdinal;
+      link.status = 'repairing';
+
+      // Checkpoint must still be at token 1 — the failed event was never committed.
+      expect(link.pull.contiguousAppliedToken).toEqual(token(1));
+      expect(link.status).toBe('repairing');
     });
   });
 });
