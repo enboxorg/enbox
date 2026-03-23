@@ -118,10 +118,10 @@ export class SyncEngineLevel implements SyncEngine {
   private _pendingPushCids: Map<string, { did: string; dwnUrl: string; delegateDid?: string; protocol?: string; cids: string[] }> = new Map();
 
   /**
-   * CIDs recently received via pull subscription, with expiry timestamps.
-   * Checked before queuing a CID for push to suppress echo loops where a
-   * message pulled from remote is immediately pushed back. TTL: 60 seconds.
-   * Cap: 10,000 entries (oldest evicted on overflow).
+   * CIDs recently received via pull subscription, keyed by `cid|dwnUrl` to
+   * scope suppression per remote endpoint. A message pulled from Provider A
+   * is only suppressed for push back to Provider A — it still fans out to
+   * Provider B and C. TTL: 60 seconds. Cap: 10,000 entries.
    */
   private _recentlyPulledCids: Map<string, number> = new Map();
 
@@ -583,10 +583,11 @@ export class SyncEngineLevel implements SyncEngine {
 
           await this.agent.dwn.processRawMessage(did, event.message, { dataStream });
 
-          // Track this CID for echo-loop suppression — prevents the push-on-write
-          // handler from re-pushing a message that was just pulled from remote.
+          // Track this CID for echo-loop suppression, scoped to the source endpoint.
+          // Prevents pushing a message back to the same remote it was pulled from,
+          // while still allowing fan-out to other providers.
           const pulledCid = await Message.getCid(event.message);
-          this._recentlyPulledCids.set(pulledCid, Date.now() + SyncEngineLevel.ECHO_SUPPRESS_TTL_MS);
+          this._recentlyPulledCids.set(`${pulledCid}|${dwnUrl}`, Date.now() + SyncEngineLevel.ECHO_SUPPRESS_TTL_MS);
           this.evictExpiredEchoEntries();
 
           // Only advance the cursor after successful processing.
@@ -703,9 +704,10 @@ export class SyncEngineLevel implements SyncEngine {
         return;
       }
 
-      // Echo-loop suppression: skip CIDs that were recently pulled from remote.
-      // This prevents pushing back a message that was just received via pull.
-      if (this.isRecentlyPulled(cid)) {
+      // Echo-loop suppression: skip CIDs that were recently pulled from this
+      // specific remote. A message pulled from Provider A is only suppressed
+      // for push to A — it still fans out to Provider B and C.
+      if (this.isRecentlyPulled(cid, dwnUrl)) {
         return;
       }
 
@@ -1244,14 +1246,16 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /**
-   * Checks whether a CID was recently pulled from a remote and should not
-   * be pushed back (echo-loop suppression).
+   * Checks whether a CID was recently pulled from a specific remote endpoint
+   * and should not be pushed back to that same endpoint (echo-loop suppression).
+   * Does not suppress pushes to other endpoints — multi-provider fan-out works.
    */
-  private isRecentlyPulled(cid: string): boolean {
-    const expiry = this._recentlyPulledCids.get(cid);
+  private isRecentlyPulled(cid: string, dwnUrl: string): boolean {
+    const key = `${cid}|${dwnUrl}`;
+    const expiry = this._recentlyPulledCids.get(key);
     if (expiry === undefined) { return false; }
     if (Date.now() >= expiry) {
-      this._recentlyPulledCids.delete(cid);
+      this._recentlyPulledCids.delete(key);
       return false;
     }
     return true;

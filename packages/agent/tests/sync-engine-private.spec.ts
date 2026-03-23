@@ -1536,24 +1536,35 @@ describe('SyncEngineLevel — private methods', () => {
   // ---------------------------------------------------------------------------
 
   describe('echo-loop suppression', () => {
+    const providerA = 'https://provider-a.example.com';
+    const providerB = 'https://provider-b.example.com';
+
     it('should return false for unknown CIDs', () => {
-      const result = (syncEngine as any).isRecentlyPulled('unknown-cid');
+      const result = (syncEngine as any).isRecentlyPulled('unknown-cid', providerA);
       expect(result).toBe(false);
     });
 
-    it('should return true for recently added CIDs', () => {
+    it('should return true for a CID recently pulled from the same endpoint', () => {
       const map = (syncEngine as any)._recentlyPulledCids as Map<string, number>;
-      map.set('cid-1', Date.now() + 60_000);
+      map.set(`cid-1|${providerA}`, Date.now() + 60_000);
 
-      expect((syncEngine as any).isRecentlyPulled('cid-1')).toBe(true);
+      expect((syncEngine as any).isRecentlyPulled('cid-1', providerA)).toBe(true);
     });
 
-    it('should return false and evict expired CIDs', () => {
+    it('should return false for the same CID when checking a different endpoint', () => {
       const map = (syncEngine as any)._recentlyPulledCids as Map<string, number>;
-      map.set('cid-expired', Date.now() - 1); // already expired
+      map.set(`cid-1|${providerA}`, Date.now() + 60_000);
 
-      expect((syncEngine as any).isRecentlyPulled('cid-expired')).toBe(false);
-      expect(map.has('cid-expired')).toBe(false);
+      // Same CID, different provider — should NOT be suppressed (fan-out).
+      expect((syncEngine as any).isRecentlyPulled('cid-1', providerB)).toBe(false);
+    });
+
+    it('should return false and evict expired entries', () => {
+      const map = (syncEngine as any)._recentlyPulledCids as Map<string, number>;
+      map.set(`cid-expired|${providerA}`, Date.now() - 1); // already expired
+
+      expect((syncEngine as any).isRecentlyPulled('cid-expired', providerA)).toBe(false);
+      expect(map.has(`cid-expired|${providerA}`)).toBe(false);
     });
 
     it('should evict entries beyond the max cap', () => {
@@ -1563,7 +1574,7 @@ describe('SyncEngineLevel — private methods', () => {
       // Fill beyond the cap (10,000).
       const cap = (SyncEngineLevel as any).ECHO_SUPPRESS_MAX_ENTRIES;
       for (let i = 0; i < cap + 50; i++) {
-        map.set(`cid-${i}`, Date.now() + 60_000);
+        map.set(`cid-${i}|${providerA}`, Date.now() + 60_000);
       }
 
       expect(map.size).toBe(cap + 50);
