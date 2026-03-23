@@ -70,6 +70,12 @@ function createIndexes(overrides: Record<string, string | number | boolean> = {}
   };
 }
 
+/** Auto-incrementing message CID generator for tests. */
+let cidCounter = 0;
+function cid(): string {
+  return `bafy-nats-test-${++cidCounter}`;
+}
+
 /**
  * Collect subscription messages into an array, returning a promise that
  * resolves when `count` messages have been received (or times out).
@@ -210,27 +216,29 @@ describe('NatsEventLog', () => {
       const log = new NatsEventLog();
       process.env.NATS_STREAM_NAME = origStream;
 
-      await expect(log.emit('did:test:tenant', createEvent(), createIndexes())).rejects.toThrow('not open');
+      await expect(log.emit('did:test:tenant', createEvent(), createIndexes(), cid())).rejects.toThrow('not open');
     });
   });
 
   // ---- emit ----------------------------------------------------------------
 
   describe('emit', () => {
-    natsIt('should emit an event and return a cursor string', async () => {
-      const cursor = await eventLog.emit('did:test:alice', createEvent(), createIndexes());
-      expect(cursor).toBeDefined();
-      expect(typeof cursor).toBe('string');
-      expect(Number(cursor)).toBeGreaterThan(0);
+    natsIt('should emit an event and return a ProgressToken', async () => {
+      const token = await eventLog.emit('did:test:alice', createEvent(), createIndexes(), cid());
+      expect(token).toBeDefined();
+      expect(typeof token).toBe('object');
+      expect(token!.streamId).toBeDefined();
+      expect(token!.epoch).toBeDefined();
+      expect(Number(token!.position)).toBeGreaterThan(0);
     });
 
-    natsIt('should return monotonically increasing cursors', async () => {
-      const c1 = await eventLog.emit('did:test:alice', createEvent(), createIndexes());
-      const c2 = await eventLog.emit('did:test:alice', createEvent(), createIndexes());
-      const c3 = await eventLog.emit('did:test:alice', createEvent(), createIndexes());
+    natsIt('should return monotonically increasing positions', async () => {
+      const c1 = await eventLog.emit('did:test:alice', createEvent(), createIndexes(), cid());
+      const c2 = await eventLog.emit('did:test:alice', createEvent(), createIndexes(), cid());
+      const c3 = await eventLog.emit('did:test:alice', createEvent(), createIndexes(), cid());
 
-      expect(Number(c1)).toBeLessThan(Number(c2));
-      expect(Number(c2)).toBeLessThan(Number(c3));
+      expect(Number(c1!.position)).toBeLessThan(Number(c2!.position));
+      expect(Number(c2!.position)).toBeLessThan(Number(c3!.position));
     });
   });
 
@@ -245,9 +253,9 @@ describe('NatsEventLog', () => {
 
     natsIt('should return all events for a tenant', async () => {
       const tenant = 'did:test:reader';
-      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
-      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
-      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes(), cid());
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes(), cid());
 
       const result = await eventLog.read(tenant);
       expect(result.events).toHaveLength(3);
@@ -256,23 +264,23 @@ describe('NatsEventLog', () => {
 
     natsIt('should resume from a cursor (exclusive)', async () => {
       const tenant = 'did:test:cursor';
-      const c1 = await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
-      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
-      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes());
+      const c1 = await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes(), cid());
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes(), cid());
 
       const result = await eventLog.read(tenant, { cursor: c1 });
       expect(result.events).toHaveLength(2);
       // Verify events are after c1.
       for (const entry of result.events) {
-        expect(entry.seq).toBeGreaterThan(Number(c1));
+        expect(entry.seq).toBeGreaterThan(Number(c1!.position));
       }
     });
 
     natsIt('should respect the limit parameter', async () => {
       const tenant = 'did:test:limit';
-      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
-      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
-      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes(), cid());
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes(), cid());
 
       const result = await eventLog.read(tenant, { limit: 2 });
       expect(result.events).toHaveLength(2);
@@ -280,9 +288,9 @@ describe('NatsEventLog', () => {
 
     natsIt('should filter events (OR semantics across filters)', async () => {
       const tenant = 'did:test:filter';
-      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ method: 'Write' }));
-      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes({ method: 'Delete' }));
-      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes({ method: 'Query' }));
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ method: 'Write' }), cid());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes({ method: 'Delete' }), cid());
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes({ method: 'Query' }), cid());
 
       const result = await eventLog.read(tenant, {
         filters: [{ method: 'Delete' }, { method: 'Query' }],
@@ -292,7 +300,7 @@ describe('NatsEventLog', () => {
 
     natsIt('should return input cursor when no new events exist', async () => {
       const tenant = 'did:test:no-new';
-      const c1 = await eventLog.emit(tenant, createEvent(), createIndexes());
+      const c1 = await eventLog.emit(tenant, createEvent(), createIndexes(), cid());
 
       const result = await eventLog.read(tenant, { cursor: c1 });
       expect(result.events).toHaveLength(0);
@@ -310,9 +318,9 @@ describe('NatsEventLog', () => {
       const subscription = await eventLog.subscribe(tenant, 'sub-live', listener);
 
       // Emit events after subscribing.
-      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
-      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
-      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes(), cid());
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes(), cid());
 
       const msgs = await promise;
       expect(msgs).toHaveLength(3);
@@ -327,9 +335,9 @@ describe('NatsEventLog', () => {
       const tenant = 'did:test:catchup';
 
       // Emit events before subscribing.
-      const c1 = await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
-      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
-      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes());
+      const c1 = await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes(), cid());
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes(), cid());
 
       // Subscribe from cursor c1 — should get events 2, 3 then EOSE.
       // That's 2 events + 1 EOSE = 3 messages.
@@ -349,7 +357,7 @@ describe('NatsEventLog', () => {
 
     natsIt('should deliver EOSE when no stored events exist after cursor', async () => {
       const tenant = 'did:test:eose-empty';
-      const c1 = await eventLog.emit(tenant, createEvent(), createIndexes());
+      const c1 = await eventLog.emit(tenant, createEvent(), createIndexes(), cid());
 
       // Subscribe from the last cursor — nothing new to catch up on.
       const messages: SubscriptionMessage[] = [];
@@ -385,9 +393,9 @@ describe('NatsEventLog', () => {
       );
 
       // Emit events — only the Delete one should be delivered.
-      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ method: 'Write' }));
-      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes({ method: 'Delete' }));
-      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes({ method: 'Query' }));
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ method: 'Write' }), cid());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes({ method: 'Delete' }), cid());
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes({ method: 'Query' }), cid());
 
       await waitUntil((): boolean => messages.length >= 1);
 
@@ -411,13 +419,13 @@ describe('NatsEventLog', () => {
         },
       );
 
-      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
       await waitUntil((): boolean => messages.length >= 1);
 
       await subscription.close();
       const countAfterClose = messages.length;
 
-      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes(), cid());
       // Wait briefly to confirm no new messages arrive.
       await new Promise((r) => setTimeout(r, 300));
 
@@ -430,24 +438,24 @@ describe('NatsEventLog', () => {
   describe('trim', () => {
     natsIt('should trim events by sequence number', async () => {
       const tenant = 'did:test:trim-seq';
-      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
-      const c2 = await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
-      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
+      const c2 = await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes(), cid());
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes(), cid());
 
       // Trim events with seq < c2 (should remove event 1).
-      await eventLog.trim(tenant, Number(c2));
+      await eventLog.trim(tenant, Number(c2!.position));
 
       const result = await eventLog.read(tenant);
       // After purging seq < c2, only events at seq >= c2 remain.
       for (const entry of result.events) {
-        expect(entry.seq).toBeGreaterThanOrEqual(Number(c2));
+        expect(entry.seq).toBeGreaterThanOrEqual(Number(c2!.position));
       }
     });
 
     natsIt('should trim events by timestamp (full purge fallback)', async () => {
       const tenant = 'did:test:trim-ts';
-      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
-      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes(), cid());
 
       // Timestamp-based trim does a full purge of the tenant subject.
       await eventLog.trim(tenant, new Date().toISOString());
@@ -464,9 +472,9 @@ describe('NatsEventLog', () => {
       const alice = 'did:test:alice-iso';
       const bob = 'did:test:bob-iso';
 
-      await eventLog.emit(alice, createEvent({ id: 'a1' }), createIndexes());
-      await eventLog.emit(alice, createEvent({ id: 'a2' }), createIndexes());
-      await eventLog.emit(bob, createEvent({ id: 'b1' }), createIndexes());
+      await eventLog.emit(alice, createEvent({ id: 'a1' }), createIndexes(), cid());
+      await eventLog.emit(alice, createEvent({ id: 'a2' }), createIndexes(), cid());
+      await eventLog.emit(bob, createEvent({ id: 'b1' }), createIndexes(), cid());
 
       const aliceResult = await eventLog.read(alice);
       const bobResult = await eventLog.read(bob);
@@ -489,8 +497,8 @@ describe('NatsEventLog', () => {
       );
 
       // Emit to both tenants — alice's subscription should only get alice's event.
-      await eventLog.emit(alice, createEvent({ id: 'a1' }), createIndexes());
-      await eventLog.emit(bob, createEvent({ id: 'b1' }), createIndexes());
+      await eventLog.emit(alice, createEvent({ id: 'a1' }), createIndexes(), cid());
+      await eventLog.emit(bob, createEvent({ id: 'b1' }), createIndexes(), cid());
 
       await waitUntil((): boolean => aliceMessages.length >= 1);
       await new Promise((r) => setTimeout(r, 200));
@@ -507,8 +515,8 @@ describe('NatsEventLog', () => {
   describe('filter matching', () => {
     natsIt('should match with EqualFilter', async () => {
       const tenant = 'did:test:filter-eq';
-      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ protocol: 'http://proto.xyz' }));
-      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes({ protocol: 'http://other.xyz' }));
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ protocol: 'http://proto.xyz' }), cid());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes({ protocol: 'http://other.xyz' }), cid());
 
       const result = await eventLog.read(tenant, {
         filters: [{ protocol: 'http://proto.xyz' }],
@@ -518,9 +526,9 @@ describe('NatsEventLog', () => {
 
     natsIt('should match with OneOfFilter (array)', async () => {
       const tenant = 'did:test:filter-oneof';
-      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ method: 'Write' }));
-      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes({ method: 'Delete' }));
-      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes({ method: 'Query' }));
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ method: 'Write' }), cid());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes({ method: 'Delete' }), cid());
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes({ method: 'Query' }), cid());
 
       const result = await eventLog.read(tenant, {
         filters: [{ method: ['Write', 'Query'] }],
@@ -530,9 +538,9 @@ describe('NatsEventLog', () => {
 
     natsIt('should match with RangeFilter', async () => {
       const tenant = 'did:test:filter-range';
-      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ dateCreated: '2024-01-01' }));
-      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes({ dateCreated: '2024-06-15' }));
-      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes({ dateCreated: '2025-01-01' }));
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ dateCreated: '2024-01-01' }), cid());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes({ dateCreated: '2024-06-15' }), cid());
+      await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes({ dateCreated: '2025-01-01' }), cid());
 
       const result = await eventLog.read(tenant, {
         filters: [{ dateCreated: { gte: '2024-06-01', lt: '2025-01-01' } }],
@@ -542,8 +550,8 @@ describe('NatsEventLog', () => {
 
     natsIt('should return all events when no filters are provided', async () => {
       const tenant = 'did:test:filter-none';
-      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes());
-      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes());
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes(), cid());
 
       const result = await eventLog.read(tenant);
       expect(result.events).toHaveLength(2);
@@ -556,7 +564,7 @@ describe('NatsEventLog', () => {
     natsIt('should handle DIDs with dots correctly', async () => {
       // did:dht contains dots in the method-specific identifier.
       const tenant = 'did:dht:abc123.def456';
-      const cursor = await eventLog.emit(tenant, createEvent(), createIndexes());
+      const cursor = await eventLog.emit(tenant, createEvent(), createIndexes(), cid());
       expect(cursor).toBeDefined();
 
       const result = await eventLog.read(tenant);

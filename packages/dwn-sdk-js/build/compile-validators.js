@@ -32,6 +32,7 @@ import MessagesSubscribe from '../json-schemas/interface-methods/messages-subscr
 import MessagesSync from '../json-schemas/interface-methods/messages-sync.json' with { type: 'json' };
 import NumberRangeFilter from '../json-schemas/interface-methods/number-range-filter.json' with { type: 'json' };
 import PaginationCursor from '../json-schemas/interface-methods/pagination-cursor.json' with { type: 'json' };
+import ProgressToken from '../json-schemas/interface-methods/progress-token.json' with { type: 'json' };
 import PermissionGrantData from '../json-schemas/permissions/permission-grant-data.json' with { type: 'json' };
 import PermissionRequestData from '../json-schemas/permissions/permission-request-data.json' with { type: 'json' };
 import PermissionRevocationData from '../json-schemas/permissions/permission-revocation-data.json' with { type: 'json' };
@@ -75,6 +76,7 @@ const schemas = {
   MessagesSync,
   NumberRangeFilter,
   PaginationCursor,
+  ProgressToken,
   PermissionGrantData,
   PermissionRequestData,
   PermissionRevocationData,

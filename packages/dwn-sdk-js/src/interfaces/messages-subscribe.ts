@@ -1,5 +1,6 @@
 import type { MessagesFilter } from '../types/messages-types.js';
 import type { MessageSigner } from '../types/signer.js';
+import type { ProgressToken } from '../types/subscriptions.js';
 import type { MessagesSubscribeDescriptor, MessagesSubscribeMessage } from '../types/messages-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
@@ -16,10 +17,10 @@ export type MessagesSubscribeOptions = {
   filters?: MessagesFilter[];
   permissionGrantId?: string;
   /**
-   * Opaque EventLog cursor string to resume from. When provided, catch-up events are
-   * replayed from the EventLog and an EOSE marker is delivered before live events.
+   * Progress token to resume from. When provided, catch-up events are replayed
+   * from the EventLog and an EOSE marker is delivered before live events.
    */
-  cursor?: string;
+  cursor?: ProgressToken;
 };
 
 export class MessagesSubscribe extends AbstractMessage<MessagesSubscribeMessage> {

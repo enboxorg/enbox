@@ -1,5 +1,5 @@
 import type { DwnRpc, DwnRpcRequest, DwnRpcResponse, DwnSubscriptionHandler, ResubscribeFactory } from './dwn-rpc-types.js';
-import type { GenericMessage, MessageSubscription, SubscriptionMessage, UnionMessageReply } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageSubscription, ProgressToken, SubscriptionMessage, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
 import { CryptoUtils } from '@enbox/crypto';
 import { JsonRpcSocket } from './json-rpc-socket.js';
@@ -28,8 +28,8 @@ interface TrackedSubscription {
    */
   resubscribeFactory?: ResubscribeFactory;
 
-  /** The cursor from the most recently received subscription event. */
-  lastCursor?: string;
+  /** The progress token from the most recently received subscription event. */
+  lastCursor?: ProgressToken;
 }
 
 interface SocketConnection {

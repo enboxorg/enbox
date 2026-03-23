@@ -1,5 +1,5 @@
-import type { SubscriptionMessage } from '@enbox/dwn-sdk-js';
 import type { JsonRpcId, JsonRpcSuccessResponse } from '@enbox/dwn-clients';
+import type { ProgressToken, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import log from 'loglevel';
 
@@ -22,8 +22,8 @@ export const MAX_BUFFER_SIZE = 1000;
  * memory growth.
  */
 export class FlowController {
-  /** Ordered list of cursors for events that have been sent but not yet acknowledged. */
-  private unacked: string[] = [];
+  /** Ordered list of progress tokens for events that have been sent but not yet acknowledged. */
+  private unacked: ProgressToken[] = [];
 
   /** Buffer of events waiting to be sent once the window opens. */
   private buffer: SubscriptionMessage[] = [];
@@ -70,19 +70,36 @@ export class FlowController {
    * to and including the given cursor, then flushes buffered events into the
    * newly opened window slots.
    */
-  public ack(cursor: string): void {
+  public ack(cursor: ProgressToken): void {
     if (this.closed) {
       return;
     }
 
-    const idx = this.unacked.lastIndexOf(cursor);
+    // Reject tokens from a different stream/epoch — these indicate a client
+    // bug or a stale reconnection with an old token domain.
+    if (this.unacked.length > 0) {
+      const expected = this.unacked[0];
+      if (cursor.streamId !== expected.streamId || cursor.epoch !== expected.epoch) {
+        log.debug(
+          `FlowController: rejected ack with mismatched token domain for subscription ${String(this.subscriptionId)}: ` +
+          `expected streamId=${expected.streamId} epoch=${expected.epoch}, ` +
+          `got streamId=${cursor.streamId} epoch=${cursor.epoch}`
+        );
+        return;
+      }
+    }
+
+    // Find the matching token by position + messageCid.
+    const idx = this.unacked.findIndex(
+      (t) => t.position === cursor.position && t.messageCid === cursor.messageCid
+    );
     if (idx === -1) {
-      // Unknown cursor — could be a stale or duplicate ack. Ignore silently.
-      log.debug(`FlowController: unknown cursor in ack for subscription ${String(this.subscriptionId)}: ${cursor}`);
+      // Unknown token — could be a stale or duplicate ack. Ignore silently.
+      log.debug(`FlowController: unknown cursor in ack for subscription ${String(this.subscriptionId)}: position=${cursor.position}`);
       return;
     }
 
-    // Remove all entries up to and including the acked cursor.
+    // Remove all entries up to and including the acked token.
     this.unacked.splice(0, idx + 1);
 
     // Flush buffered messages into the freed window slots.

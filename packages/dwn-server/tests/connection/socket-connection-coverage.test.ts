@@ -1,6 +1,6 @@
 import type { ServerWebSocket } from 'bun';
 import type { WsData } from '../../src/http-api.js';
-import type { Dwn, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { Dwn, ProgressToken, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
@@ -105,10 +105,13 @@ describe('SocketConnection — overflow callback coverage', () => {
 
     // Now push enough events to trigger overflow.
     // First event fills the window (maxInFlight = 1).
-    const makeEvent = (cursor: string): SubscriptionMessage => ({
-      type  : 'event',
-      cursor,
-      event : { message: { descriptor: { interface: 'Records', method: 'Write' } } as any },
+    const makeToken = (pos: string): ProgressToken => ({
+      streamId: 's1', epoch: 'e1', position: pos, messageCid: `cid-${pos}`,
+    });
+    const makeEvent = (pos: string): SubscriptionMessage => ({
+      type   : 'event',
+      cursor : makeToken(pos),
+      event  : { message: { descriptor: { interface: 'Records', method: 'Write' } } as any },
     });
 
     fc.push(makeEvent('1'));
@@ -155,16 +158,19 @@ describe('SocketConnection — overflow callback coverage', () => {
 
     (connection as any).flowControllers.set(subId, fc);
 
-    const makeEvent = (cursor: string): SubscriptionMessage => ({
-      type  : 'event',
-      cursor,
-      event : { message: { descriptor: { interface: 'Records', method: 'Write' } } as any },
+    const makeToken2 = (pos: string): ProgressToken => ({
+      streamId: 's1', epoch: 'e1', position: pos, messageCid: `cid-${pos}`,
+    });
+    const makeEvent2 = (pos: string): SubscriptionMessage => ({
+      type   : 'event',
+      cursor : makeToken2(pos),
+      event  : { message: { descriptor: { interface: 'Records', method: 'Write' } } as any },
     });
 
-    fc.push(makeEvent('1'));
+    fc.push(makeEvent2('1'));
 
     for (let i = 0; i <= MAX_BUFFER_SIZE; i++) {
-      fc.push(makeEvent(String(i + 2)));
+      fc.push(makeEvent2(String(i + 2)));
     }
 
     await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 100));
@@ -197,21 +203,24 @@ describe('SocketConnection — overflow callback coverage', () => {
       );
       (connection as any).flowControllers.set(subId, fc);
 
-      const makeEvent = (cursor: string): SubscriptionMessage => ({
-        type  : 'event',
-        cursor,
-        event : { message: { descriptor: { interface: 'Records', method: 'Write' } } as any },
+      const makeToken = (pos: string): any => ({
+        streamId: 's1', epoch: 'e1', position: pos, messageCid: `cid-${pos}`,
+      });
+      const makeEvent = (pos: string): SubscriptionMessage => ({
+        type   : 'event',
+        cursor : makeToken(pos),
+        event  : { message: { descriptor: { interface: 'Records', method: 'Write' } } as any },
       });
 
-      fc.push(makeEvent('a'));
-      fc.push(makeEvent('b'));
-      fc.push(makeEvent('c')); // buffered
+      fc.push(makeEvent('1'));
+      fc.push(makeEvent('2'));
+      fc.push(makeEvent('3')); // buffered
 
       expect(fc.inFlightCount).toBe(2);
       expect(fc.bufferCount).toBe(1);
 
       // Ack via the connection.
-      connection.ackSubscription(subId, 'b');
+      connection.ackSubscription(subId, makeToken('2'));
 
       expect(fc.inFlightCount).toBe(1); // 'c' flushed
       expect(fc.bufferCount).toBe(0);
@@ -224,7 +233,7 @@ describe('SocketConnection — overflow callback coverage', () => {
       const connection = new SocketConnection(socket, dwn);
 
       // Should not throw.
-      connection.ackSubscription('nonexistent', 'some-cursor');
+      connection.ackSubscription('nonexistent', { streamId: 's1', epoch: 'e1', position: '1', messageCid: 'cid-1' });
 
       await connection.close();
     });

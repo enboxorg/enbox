@@ -158,7 +158,7 @@ export async function upgradeExternalRootRecord(
 
   // Notify real-time subscribers (mirrors handler behavior)
   if (eventLog !== undefined) {
-    await eventLog.emit(tenantDid, { message: upgradedMessage }, upgradedIndexes);
+    await eventLog.emit(tenantDid, { message: upgradedMessage }, upgradedIndexes, upgradedCid);
   }
 
   // Cache context key info for subsequent writes in this context

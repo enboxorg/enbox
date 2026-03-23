@@ -75,7 +75,7 @@ export class StorageController {
 
     // only emit if the event log is set
     if (this.eventLog !== undefined) {
-      await this.eventLog.emit(tenant, { message, initialWrite }, indexes);
+      await this.eventLog.emit(tenant, { message, initialWrite }, indexes, messageCid);
     }
 
     if (message.descriptor.prune) {

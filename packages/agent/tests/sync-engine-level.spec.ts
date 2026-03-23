@@ -1099,8 +1099,15 @@ describe('SyncEngineLevel', () => {
 
         await syncEngine.sync('push');
         // The sync should log an error because the diff or push to the remote DWN failed.
+        // The error may come from the SMT sync path ("Error syncing") or the push-on-write
+        // path ("Push-on-write failed") depending on timing and cursor state.
         expect(consoleErrorSpy.called).toBe(true);
-        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error syncing');
+        const errorMsg = consoleErrorSpy.args[0][0] as string;
+        expect(
+          errorMsg.includes('SyncEngineLevel: Error syncing') ||
+          errorMsg.includes('SyncEngineLevel: Push-on-write failed') ||
+          errorMsg.includes('SyncEngineLevel: push failed')
+        ).toBe(true);
       });
 
       it('synchronizes records for 1 identity from local DWN to remote DWN', async () => {

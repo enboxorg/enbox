@@ -1,4 +1,4 @@
-import type { GenericMessage, RecordsReadReply, SubscriptionMessage, UnionMessageReply } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, ProgressToken, RecordsReadReply, SubscriptionMessage, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
 export interface SerializableDwnMessage {
   toJSON(): string;
@@ -54,7 +54,7 @@ export type DwnSubscriptionHandler = (message: DwnSubscriptionMessage) => void;
  * @param cursor - The last received EventLog cursor, or `undefined` for a fresh subscription.
  * @returns A newly constructed and signed DWN subscribe message.
  */
-export type ResubscribeFactory = (cursor?: string) => Promise<GenericMessage>;
+export type ResubscribeFactory = (cursor?: ProgressToken) => Promise<GenericMessage>;
 
 /**
  * Interface for communicating with {@link https://github.com/enboxorg/enbox | DWN Servers}

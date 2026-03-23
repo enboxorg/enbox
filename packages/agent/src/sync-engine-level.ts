@@ -1,7 +1,7 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncDiffEntry, MessagesSyncReply, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import ms from 'ms';
 
@@ -599,7 +599,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Build a resubscribe factory so the WebSocket client can resume with
     // a fresh cursor-stamped message after reconnection.
-    const resubscribeFactory: ResubscribeFactory = async (resumeCursor?: string) => {
+    const resubscribeFactory: ResubscribeFactory = async (resumeCursor?: ProgressToken) => {
       const resumeRequest = {
         ...subscribeRequest,
         messageParams: { ...subscribeRequest.messageParams, cursor: resumeCursor ?? cursor },
@@ -779,10 +779,29 @@ export class SyncEngineLevel implements SyncEngine {
     return protocol ? `${base}${CURSOR_SEPARATOR}${protocol}` : base;
   }
 
-  private async getCursor(key: string): Promise<string | undefined> {
+  /**
+   * Retrieves a stored progress token. Handles migration from old string cursors:
+   * if the stored value is a bare string (pre-ProgressToken format), it is treated
+   * as absent — the sync engine will do a full SMT reconciliation on first startup
+   * after upgrade, which is correct and safe.
+   */
+  private async getCursor(key: string): Promise<ProgressToken | undefined> {
     const cursors = this._db.sublevel('syncCursors');
     try {
-      return await cursors.get(key);
+      const raw = await cursors.get(key);
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' &&
+            typeof parsed.streamId === 'string' &&
+            typeof parsed.epoch === 'string' &&
+            typeof parsed.position === 'string' &&
+            typeof parsed.messageCid === 'string') {
+          return parsed as ProgressToken;
+        }
+      } catch {
+        // Not valid JSON (old string cursor) — treat as absent.
+      }
+      return undefined;
     } catch (error) {
       const e = error as { code: string };
       if (e.code === 'LEVEL_NOT_FOUND') {
@@ -792,9 +811,9 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private async setCursor(key: string, cursor: string): Promise<void> {
+  private async setCursor(key: string, cursor: ProgressToken): Promise<void> {
     const cursors = this._db.sublevel('syncCursors');
-    await cursors.put(key, cursor);
+    await cursors.put(key, JSON.stringify(cursor));
   }
 
   // ---------------------------------------------------------------------------

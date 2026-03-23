@@ -1,3 +1,5 @@
+import type { ProgressToken } from '@enbox/dwn-sdk-js';
+
 import { v4 as uuidv4 } from 'uuid';
 
 import type { JsonRpcId } from '@enbox/dwn-clients';
@@ -9,15 +11,29 @@ import type {
 import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 
 /**
+ * Validates that a value is a well-formed {@link ProgressToken}.
+ */
+function isProgressToken(value: unknown): value is ProgressToken {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const obj = value as Record<string, unknown>;
+  return typeof obj.streamId === 'string' && obj.streamId !== '' &&
+    typeof obj.epoch === 'string' && obj.epoch !== '' &&
+    typeof obj.position === 'string' && obj.position !== '' &&
+    typeof obj.messageCid === 'string' && obj.messageCid !== '';
+}
+
+/**
  * Handles `rpc.ack` — acknowledges receipt of subscription events up to the
- * given cursor, advancing the per-subscription flow-control window.
+ * given progress token, advancing the per-subscription flow-control window.
  *
  * Request shape:
  * ```json
  * {
  *   "jsonrpc": "2.0",
  *   "method": "rpc.ack",
- *   "params": { "cursor": "<opaque-cursor>" },
+ *   "params": { "cursor": { "streamId": "...", "epoch": "...", "position": "...", "messageCid": "..." } },
  *   "subscription": { "id": "<subscription-id>" }
  * }
  * ```
@@ -46,11 +62,12 @@ export const handleSubscriptionAck: JsonRpcHandler = async (
   }
 
   const { id: subscriptionId } = jsonRpcRequest.subscription as { id: JsonRpcId };
-  const { cursor } = (jsonRpcRequest.params ?? {}) as { cursor?: string };
+  const { cursor } = (jsonRpcRequest.params ?? {}) as { cursor?: unknown };
 
-  if (cursor === undefined || typeof cursor !== 'string' || cursor === '') {
+  if (!isProgressToken(cursor)) {
     const jsonRpcResponse = createJsonRpcErrorResponse(
-      requestId, JsonRpcErrorCodes.InvalidParams, 'params.cursor is required and must be a non-empty string'
+      requestId, JsonRpcErrorCodes.InvalidParams,
+      'params.cursor is required and must be a ProgressToken object with streamId, epoch, position, and messageCid'
     );
     return { jsonRpcResponse };
   }

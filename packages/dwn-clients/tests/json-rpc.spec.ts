@@ -101,20 +101,22 @@ describe('json-rpc', () => {
   });
 
   describe('createJsonRpcAck', () => {
-    it('creates an ack notification with method rpc.ack, cursor in params, and subscription id', () => {
-      const ack = createJsonRpcAck('sub-1', 'cursor-abc');
+    it('creates an ack notification with method rpc.ack, ProgressToken in params, and subscription id', () => {
+      const token = { streamId: 's1', epoch: 'e1', position: '42', messageCid: 'cid-42' };
+      const ack = createJsonRpcAck('sub-1', token);
       expect(ack.jsonrpc).toBe('2.0');
       expect(ack.method).toBe('rpc.ack');
-      expect(ack.params).toEqual({ cursor: 'cursor-abc' });
+      expect(ack.params).toEqual({ cursor: token });
       expect(ack.subscription).toEqual({ id: 'sub-1' });
       // ack is a notification — no `id` field
       expect(ack.id).toBeUndefined();
     });
 
     it('works with null subscription id', () => {
-      const ack = createJsonRpcAck(null, 'cursor-xyz');
+      const token = { streamId: 's1', epoch: 'e1', position: '99', messageCid: 'cid-99' };
+      const ack = createJsonRpcAck(null, token);
       expect(ack.subscription!.id).toBeNull();
-      expect(ack.params.cursor).toBe('cursor-xyz');
+      expect(ack.params.cursor).toEqual(token);
     });
   });
 
