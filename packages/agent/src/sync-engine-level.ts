@@ -40,56 +40,6 @@ const MAX_DIFF_DEPTH = 16;
 const BATCHED_DIFF_DEPTH = 8;
 
 /**
- * Maximum number of concurrent remote HTTP requests during a tree diff.
- * The binary tree walk fans out in parallel — without a limit, depth N
- * produces 2^N concurrent requests, which can exhaust server rate limits.
- */
-const REMOTE_CONCURRENCY = 4;
-
-/**
- * Counting semaphore for bounding concurrent async operations.
- * Used by the tree walk to limit in-flight remote HTTP requests.
- */
-class Semaphore {
-  private _permits: number;
-  private readonly _waiting: (() => void)[] = [];
-
-  constructor(permits: number) {
-    this._permits = permits;
-  }
-
-  /** Wait until a permit is available, then consume one. */
-  async acquire(): Promise<void> {
-    if (this._permits > 0) {
-      this._permits--;
-      return;
-    }
-    return new Promise<void>((resolve) => {
-      this._waiting.push(resolve);
-    });
-  }
-
-  /** Release a permit, waking the next waiter if any. */
-  release(): void {
-    const next = this._waiting.shift();
-    if (next) {
-      next();
-    } else {
-      this._permits++;
-    }
-  }
-
-  /** Acquire a permit, run the task, then release regardless of outcome. */
-  async run<T>(fn: () => Promise<T>): Promise<T> {
-    await this.acquire();
-    try {
-      return await fn();
-    } finally {
-      this.release();
-    }
-  }
-}
-
 /**
  * Key for the subscription cursor sublevel. Cursors are keyed by
  * `{did}^{dwnUrl}[^{protocol}]` and store an opaque EventLog cursor string.
@@ -572,28 +522,19 @@ export class SyncEngineLevel implements SyncEngine {
     const filters = protocol ? [{ protocol }] : [];
 
     // Look up permission grant for MessagesSubscribe if using a delegate.
+    // The unified scope matching in AgentPermissionsApi accepts a
+    // Messages.Read grant for MessagesSubscribe requests, so a single
+    // lookup is sufficient.
     let permissionGrantId: string | undefined;
     if (delegateDid) {
-      try {
-        const grant = await this._permissionsApi.getPermissionForRequest({
-          connectedDid : did,
-          messageType  : DwnInterface.MessagesSubscribe,
-          delegateDid,
-          protocol,
-          cached       : true
-        });
-        permissionGrantId = grant.grant.id;
-      } catch {
-        // Fall back to trying MessagesRead which is a unified scope.
-        const grant = await this._permissionsApi.getPermissionForRequest({
-          connectedDid : did,
-          messageType  : DwnInterface.MessagesRead,
-          delegateDid,
-          protocol,
-          cached       : true
-        });
-        permissionGrantId = grant.grant.id;
-      }
+      const grant = await this._permissionsApi.getPermissionForRequest({
+        connectedDid : did,
+        messageType  : DwnInterface.MessagesSubscribe,
+        delegateDid,
+        protocol,
+        cached       : true
+      });
+      permissionGrantId = grant.grant.id;
     }
 
     // Define the subscription handler that processes incoming events.
@@ -627,12 +568,14 @@ export class SyncEngineLevel implements SyncEngine {
           }
 
           await this.agent.dwn.processRawMessage(did, event.message, { dataStream });
+
+          // Only advance the cursor after successful processing.
+          // If processing fails, the event will be re-delivered on
+          // reconnection (cursor-based resume from the last good point).
+          await this.setCursor(cursorKey, subMessage.cursor);
         } catch (error: any) {
           console.error(`SyncEngineLevel: Error processing live-pull event for ${did}`, error);
         }
-
-        // Persist cursor for resume on reconnect.
-        await this.setCursor(cursorKey, subMessage.cursor);
       }
     };
 
@@ -719,7 +662,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (delegateDid) {
       const grant = await this._permissionsApi.getPermissionForRequest({
         connectedDid : did,
-        messageType  : DwnInterface.MessagesRead,
+        messageType  : DwnInterface.MessagesSubscribe,
         delegateDid,
         protocol,
         cached       : true,
@@ -790,10 +733,11 @@ export class SyncEngineLevel implements SyncEngine {
     const entries = [...this._pendingPushCids.entries()];
     this._pendingPushCids.clear();
 
-    for (const [, pending] of entries) {
+    // Push to all endpoints in parallel — each target is independent.
+    await Promise.all(entries.map(async ([, pending]) => {
       const { did, dwnUrl, delegateDid, protocol, cids } = pending;
       if (cids.length === 0) {
-        continue;
+        return;
       }
 
       try {
@@ -805,8 +749,25 @@ export class SyncEngineLevel implements SyncEngine {
         });
       } catch (error: any) {
         console.error(`SyncEngineLevel: Push-on-write failed for ${did} -> ${dwnUrl}`, error);
+
+        // Re-queue the failed CIDs so they are retried on the next
+        // debounce cycle (or picked up by the SMT integrity check).
+        const targetKey = this.buildCursorKey(did, dwnUrl, protocol);
+        let requeued = this._pendingPushCids.get(targetKey);
+        if (!requeued) {
+          requeued = { did, dwnUrl, delegateDid, protocol, cids: [] };
+          this._pendingPushCids.set(targetKey, requeued);
+        }
+        requeued.cids.push(...cids);
+
+        // Schedule a retry after a short delay.
+        if (!this._pushDebounceTimer) {
+          this._pushDebounceTimer = setTimeout((): void => {
+            void this.flushPendingPushes();
+          }, PUSH_DEBOUNCE_MS * 4); // Back off: 1 second instead of 250ms.
+        }
       }
-    }
+    }));
   }
 
   // ---------------------------------------------------------------------------
@@ -869,8 +830,6 @@ export class SyncEngineLevel implements SyncEngine {
 
     return undefined;
   }
-
-
 
   // ---------------------------------------------------------------------------
   // Default Hash Cache
@@ -987,97 +946,6 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   // ---------------------------------------------------------------------------
-  // Tree Diff — walk the SMT to find divergent leaf sets
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Walks the local and remote SMTs in parallel, recursing into subtrees whose
-   * hashes differ, until reaching `MAX_DIFF_DEPTH` where leaves are enumerated.
-   *
-   * Returns the sets of messageCids that exist only locally or only remotely.
-   */
-  private async walkTreeDiff({ did, dwnUrl, delegateDid, protocol }: {
-    did: string;
-    dwnUrl: string;
-    delegateDid?: string;
-    protocol?: string;
-  }): Promise<{ onlyLocal: string[]; onlyRemote: string[] }> {
-    const onlyLocal: string[] = [];
-    const onlyRemote: string[] = [];
-
-    // Hoist permission grant lookup — resolved once and reused for all subtree/leaf requests.
-    const permissionGrantId = await this.getSyncPermissionGrantId(did, delegateDid, protocol);
-
-    // Gate remote HTTP requests through a semaphore so the binary tree walk
-    // doesn't produce an exponential burst of concurrent requests.  Local
-    // DWN requests (in-process) are not gated.
-    const remoteSemaphore = new Semaphore(REMOTE_CONCURRENCY);
-
-    const walk = async (prefix: string): Promise<void> => {
-      // Get subtree hashes for this prefix from local and remote.
-      // Only the remote request is gated by the semaphore.
-      const [localHash, remoteHash] = await Promise.all([
-        this.getLocalSubtreeHash(did, prefix, delegateDid, protocol, permissionGrantId),
-        remoteSemaphore.run(() => this.getRemoteSubtreeHash(did, dwnUrl, prefix, delegateDid, protocol, permissionGrantId)),
-      ]);
-
-      // If hashes match, this subtree is identical — skip.
-      if (localHash === remoteHash) {
-        return;
-      }
-
-      // Short-circuit: if one side is the default (empty-subtree) hash, all entries
-      // on the other side are unique.  Enumerate leaves directly instead of recursing
-      // further into the tree — this avoids an exponential walk when one DWN has
-      // entries that the other lacks entirely in this subtree.
-      const emptyHash = await this.getDefaultHashHex(prefix.length);
-      if (remoteHash === emptyHash && localHash !== emptyHash) {
-        const localLeaves = await this.getLocalLeaves(did, prefix, delegateDid, protocol, permissionGrantId);
-        onlyLocal.push(...localLeaves);
-        return;
-      }
-      if (localHash === emptyHash && remoteHash !== emptyHash) {
-        const remoteLeaves = await remoteSemaphore.run(
-          () => this.getRemoteLeaves(did, dwnUrl, prefix, delegateDid, protocol, permissionGrantId),
-        );
-        onlyRemote.push(...remoteLeaves);
-        return;
-      }
-
-      // If we've reached the maximum diff depth, enumerate leaves.
-      if (prefix.length >= MAX_DIFF_DEPTH) {
-        const [localLeaves, remoteLeaves] = await Promise.all([
-          this.getLocalLeaves(did, prefix, delegateDid, protocol, permissionGrantId),
-          remoteSemaphore.run(() => this.getRemoteLeaves(did, dwnUrl, prefix, delegateDid, protocol, permissionGrantId)),
-        ]);
-
-        const localSet = new Set(localLeaves);
-        const remoteSet = new Set(remoteLeaves);
-
-        for (const cid of localLeaves) {
-          if (!remoteSet.has(cid)) {
-            onlyLocal.push(cid);
-          }
-        }
-        for (const cid of remoteLeaves) {
-          if (!localSet.has(cid)) {
-            onlyRemote.push(cid);
-          }
-        }
-        return;
-      }
-
-      // Recurse into left (0) and right (1) children in parallel.
-      await Promise.all([
-        walk(prefix + '0'),
-        walk(prefix + '1'),
-      ]);
-    };
-
-    await walk('');
-    return { onlyLocal, onlyRemote };
-  }
-
   // ---------------------------------------------------------------------------
   // Batched Diff — single round-trip set reconciliation
   // ---------------------------------------------------------------------------
@@ -1133,7 +1001,8 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     // Step 3: Enumerate local leaves for prefixes the remote reported as onlyLocal.
-    const permissionGrantIdForLeaves = await this.getSyncPermissionGrantId(did, delegateDid, protocol);
+    // Reuse the same grant ID from step 2 (avoids redundant lookup).
+    const permissionGrantIdForLeaves = permissionGrantId;
     const onlyLocalCids: string[] = [];
     for (const prefix of reply.onlyLocal ?? []) {
       const leaves = await this.getLocalLeaves(did, prefix, delegateDid, protocol, permissionGrantIdForLeaves);
@@ -1234,32 +1103,6 @@ export class SyncEngineLevel implements SyncEngine {
     return reply.hash ?? '';
   }
 
-  private async getRemoteSubtreeHash(
-    did: string, dwnUrl: string, prefix: string, delegateDid?: string, protocol?: string, permissionGrantId?: string
-  ): Promise<string> {
-    const syncMessage = await this.agent.dwn.processRequest({
-      store         : false,
-      author        : did,
-      target        : did,
-      messageType   : DwnInterface.MessagesSync,
-      granteeDid    : delegateDid,
-      messageParams : {
-        action: 'subtree',
-        prefix,
-        protocol,
-        permissionGrantId
-      }
-    });
-
-    const reply = await this.agent.rpc.sendDwnRequest({
-      dwnUrl,
-      targetDid : did,
-      message   : syncMessage.message,
-    }) as MessagesSyncReply;
-
-    return reply.hash ?? '';
-  }
-
   /**
    * Get all leaf messageCids under a given prefix from the local DWN.
    *
@@ -1291,32 +1134,6 @@ export class SyncEngineLevel implements SyncEngine {
       }
     });
     const reply = response.reply as MessagesSyncReply;
-    return reply.entries ?? [];
-  }
-
-  private async getRemoteLeaves(
-    did: string, dwnUrl: string, prefix: string, delegateDid?: string, protocol?: string, permissionGrantId?: string
-  ): Promise<string[]> {
-    const syncMessage = await this.agent.dwn.processRequest({
-      store         : false,
-      author        : did,
-      target        : did,
-      messageType   : DwnInterface.MessagesSync,
-      granteeDid    : delegateDid,
-      messageParams : {
-        action: 'leaves',
-        prefix,
-        protocol,
-        permissionGrantId
-      }
-    });
-
-    const reply = await this.agent.rpc.sendDwnRequest({
-      dwnUrl,
-      targetDid : did,
-      message   : syncMessage.message,
-    }) as MessagesSyncReply;
-
     return reply.entries ?? [];
   }
 

@@ -708,29 +708,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._liveSubscriptions = [];
     });
 
-    it('should fall back to MessagesRead grant when MessagesSubscribe grant not found', async () => {
-      const permStub = sinon.stub()
-        .onFirstCall().rejects(new Error('no subscribe grant'))
-        .onSecondCall().resolves({ grant: { id: 'read-grant-1' } });
-      const { agent } = createPullMockAgent();
-      const engine = new SyncEngineLevel({ db, agent });
-      (engine as any)._permissionsApi = {
-        getPermissionForRequest : permStub,
-        clear                   : sinon.stub(),
-      };
-      sinon.stub(engine as any, 'getCursor').resolves(undefined);
-
-      await (engine as any).openLivePullSubscription({
-        did         : 'did:example:alice',
-        dwnUrl      : 'https://dwn.example.com',
-        delegateDid : 'did:example:delegate',
-      });
-
-      expect(permStub.callCount).toBe(2);
-      (engine as any)._liveSubscriptions = [];
-    });
-
-    it('should throw when both permission grant lookups fail', async () => {
+    it('should throw when permission grant lookup fails', async () => {
       const permStub = sinon.stub().rejects(new Error('no grant'));
       const { agent, rpcStub } = createPullMockAgent();
       const engine = new SyncEngineLevel({ db, agent });
@@ -1024,30 +1002,6 @@ describe('SyncEngineLevel — private methods', () => {
       expect(typeof hash).toBe('string');
     });
 
-    it('getRemoteSubtreeHash should return hash from remote DWN', async () => {
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : {
-          processRequest: sinon.stub().resolves({
-            message : {},
-            reply   : { status: { code: 200 } },
-          }),
-        },
-        rpc: {
-          sendDwnRequest: sinon.stub().resolves({
-            status : { code: 200 },
-            hash   : 'subtree-hash-remote',
-          }),
-        },
-      } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
-
-      const hash = await (engine as any).getRemoteSubtreeHash(
-        'did:example:alice', 'https://dwn.example.com', '01',
-      );
-      expect(hash).toBe('subtree-hash-remote');
-    });
-
     it('getLocalLeaves should query StateIndex directly and return CIDs', async () => {
       const mockStateIndex = {
         getLeaves         : sinon.stub().resolves(['cid-a', 'cid-b']),
@@ -1079,140 +1033,6 @@ describe('SyncEngineLevel — private methods', () => {
       expect(leaves).toEqual([]);
     });
 
-    it('getRemoteLeaves should return entries from remote DWN', async () => {
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : {
-          processRequest: sinon.stub().resolves({
-            message : {},
-            reply   : { status: { code: 200 } },
-          }),
-        },
-        rpc: {
-          sendDwnRequest: sinon.stub().resolves({
-            status  : { code: 200 },
-            entries : ['cid-x', 'cid-y'],
-          }),
-        },
-      } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
-
-      const leaves = await (engine as any).getRemoteLeaves(
-        'did:example:alice', 'https://dwn.example.com', '01',
-      );
-      expect(leaves).toEqual(['cid-x', 'cid-y']);
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // walkTreeDiff
-  // ---------------------------------------------------------------------------
-
-  describe('walkTreeDiff', () => {
-    it('should return empty diff when all subtrees match', async () => {
-      const mockAgent = { agentDid: 'did:example:agent' } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
-      (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
-
-      // All subtrees match
-      sinon.stub(engine as any, 'getLocalSubtreeHash').resolves('same-hash');
-      sinon.stub(engine as any, 'getRemoteSubtreeHash').resolves('same-hash');
-      sinon.stub(engine as any, 'getSyncPermissionGrantId').resolves(undefined);
-
-      const diff = await (engine as any).walkTreeDiff({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
-      });
-
-      expect(diff.onlyLocal).toEqual([]);
-      expect(diff.onlyRemote).toEqual([]);
-    });
-
-    it('should enumerate leaves when reaching MAX_DIFF_DEPTH', async () => {
-      const mockAgent = { agentDid: 'did:example:agent' } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
-      (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
-
-      // Root level differs, all intermediate levels differ, leaf level has different CIDs
-      const localSubtreeStub = sinon.stub(engine as any, 'getLocalSubtreeHash');
-      const remoteSubtreeStub = sinon.stub(engine as any, 'getRemoteSubtreeHash');
-      const localLeavesStub = sinon.stub(engine as any, 'getLocalLeaves');
-      const remoteLeavesStub = sinon.stub(engine as any, 'getRemoteLeaves');
-      sinon.stub(engine as any, 'getSyncPermissionGrantId').resolves(undefined);
-
-      // For all prefixes shorter than 16, return different hashes and non-default hashes
-      localSubtreeStub.callsFake(async (_did: string, prefix: string): Promise<string> => {
-        if (prefix.length >= 16) { return 'local-leaf-hash'; }
-        // Only the leftmost child (all zeros) differs
-        if (prefix === '' || prefix.split('').every((c: string): boolean => c === '0')) {
-          return 'local-' + prefix;
-        }
-        return 'matching-' + prefix;
-      });
-      remoteSubtreeStub.callsFake(async (_did: string, _url: string, prefix: string): Promise<string> => {
-        if (prefix.length >= 16) { return 'remote-leaf-hash'; }
-        if (prefix === '' || prefix.split('').every((c: string): boolean => c === '0')) {
-          return 'remote-' + prefix;
-        }
-        return 'matching-' + prefix;
-      });
-
-      // Override getDefaultHashHex to return a unique value that won't match
-      sinon.stub(engine as any, 'getDefaultHashHex').resolves('default-empty');
-
-      // At leaf level (prefix of length 16), return different CID sets
-      localLeavesStub.resolves(['cid-local-only', 'cid-shared']);
-      remoteLeavesStub.resolves(['cid-remote-only', 'cid-shared']);
-
-      const diff = await (engine as any).walkTreeDiff({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
-      });
-
-      expect(diff.onlyLocal).toContain('cid-local-only');
-      expect(diff.onlyRemote).toContain('cid-remote-only');
-      // The shared CID should not appear in either
-      expect(diff.onlyLocal).not.toContain('cid-shared');
-      expect(diff.onlyRemote).not.toContain('cid-shared');
-    });
-
-    it('should short-circuit when remote is empty subtree', async () => {
-      const mockAgent = { agentDid: 'did:example:agent' } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
-      (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
-      sinon.stub(engine as any, 'getSyncPermissionGrantId').resolves(undefined);
-
-      // Remote returns default (empty) hash, local has data
-      sinon.stub(engine as any, 'getLocalSubtreeHash').resolves('local-has-data');
-      sinon.stub(engine as any, 'getRemoteSubtreeHash').resolves('default-empty');
-      sinon.stub(engine as any, 'getDefaultHashHex').resolves('default-empty');
-      sinon.stub(engine as any, 'getLocalLeaves').resolves(['cid-1', 'cid-2']);
-
-      const diff = await (engine as any).walkTreeDiff({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
-      });
-
-      expect(diff.onlyLocal).toEqual(['cid-1', 'cid-2']);
-      expect(diff.onlyRemote).toEqual([]);
-    });
-
-    it('should short-circuit when local is empty subtree', async () => {
-      const mockAgent = { agentDid: 'did:example:agent' } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
-      (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
-      sinon.stub(engine as any, 'getSyncPermissionGrantId').resolves(undefined);
-
-      // Local returns default (empty) hash, remote has data
-      sinon.stub(engine as any, 'getLocalSubtreeHash').resolves('default-empty');
-      sinon.stub(engine as any, 'getRemoteSubtreeHash').resolves('remote-has-data');
-      sinon.stub(engine as any, 'getDefaultHashHex').resolves('default-empty');
-      sinon.stub(engine as any, 'getRemoteLeaves').resolves(['cid-r1', 'cid-r2']);
-
-      const diff = await (engine as any).walkTreeDiff({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
-      });
-
-      expect(diff.onlyLocal).toEqual([]);
-      expect(diff.onlyRemote).toEqual(['cid-r1', 'cid-r2']);
-    });
   });
 
   // ---------------------------------------------------------------------------
