@@ -3,7 +3,7 @@ import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
 import type { DirectionFrontier, LinkStatus, ReplicationLinkState, SyncScope } from './types/sync.js';
 
-import { computeScopeId, MAX_PENDING_TOKENS } from './types/sync.js';
+import { computeScopeId } from './types/sync.js';
 
 /** Separator used in compound LevelDB keys. */
 const KEY_SEP = '^';
@@ -76,8 +76,8 @@ export class ReplicationLedger {
       scopeId,
       scope          : params.scope,
       status         : 'initializing',
-      pull           : { pendingTokens: [] },
-      push           : { pendingTokens: [] },
+      pull           : {},
+      push           : {},
       delegateDid    : params.delegateDid,
       protocol       : params.protocol,
     };
@@ -131,7 +131,7 @@ export class ReplicationLedger {
   }
 
   // ---------------------------------------------------------------------------
-  // Frontier progression
+  // Minimal frontier helpers (durable state only — no progression logic)
   // ---------------------------------------------------------------------------
 
   /**
@@ -147,99 +147,45 @@ export class ReplicationLedger {
   }
 
   /**
-   * Advance a frontier after successfully applying a token.
-   *
-   * **Sparse-position aware:** EventLog positions come from the source's
-   * global sequence, not from the filtered result set. A subscription with
-   * protocol filters may deliver positions 1, 5, 9 (skipping non-matching
-   * events). The frontier tracks delivery order, not position arithmetic —
-   * any token with a higher position than the current baseline is a valid
-   * forward progression.
-   *
-   * Out-of-order detection uses delivery sequence, not position gaps.
-   * `pendingTokens` accumulates tokens that arrived before earlier-position
-   * tokens were applied (true reordering). When pendingTokens exceeds
-   * {@link MAX_PENDING_TOKENS}, returns `'overflow'` to signal the caller
-   * should transition the link to `repairing`.
-   *
-   * Returns `'domain_mismatch'` if the token's `streamId` or `epoch` does
-   * not match the frontier's existing baseline.
+   * Check whether a token belongs to the same domain (streamId + epoch) as
+   * the frontier's current baseline. Returns `true` if domains match or if
+   * the frontier has no baseline yet.
    */
-  public static advanceFrontier(
-    frontier: DirectionFrontier,
-    appliedToken: ProgressToken,
-  ): 'ok' | 'overflow' | 'domain_mismatch' {
-    // Validate token domain against the frontier baseline.
-    if (frontier.contiguousAppliedToken !== undefined) {
-      if (appliedToken.streamId !== frontier.contiguousAppliedToken.streamId ||
-          appliedToken.epoch !== frontier.contiguousAppliedToken.epoch) {
-        return 'domain_mismatch';
-      }
-    }
+  public static validateTokenDomain(frontier: DirectionFrontier, token: ProgressToken): boolean {
+    if (frontier.contiguousAppliedToken === undefined) { return true; }
+    return token.streamId === frontier.contiguousAppliedToken.streamId &&
+           token.epoch === frontier.contiguousAppliedToken.epoch;
+  }
 
-    // Update receivedToken to the highest seen.
+  /**
+   * Update `receivedToken` to the highest seen token (for observability).
+   * Does NOT advance `contiguousAppliedToken` — that is owned by the engine's
+   * delivery-order tracking.
+   */
+  public static setReceivedToken(frontier: DirectionFrontier, token: ProgressToken): void {
     if (
       frontier.receivedToken === undefined ||
-      ReplicationLedger.comparePosition(appliedToken, frontier.receivedToken) > 0
+      ReplicationLedger.comparePosition(token, frontier.receivedToken) > 0
     ) {
-      frontier.receivedToken = appliedToken;
+      frontier.receivedToken = token;
     }
-
-    const appliedPos = BigInt(appliedToken.position);
-
-    if (frontier.contiguousAppliedToken === undefined) {
-      // First token ever — set it as the baseline.
-      frontier.contiguousAppliedToken = appliedToken;
-    } else {
-      const baselinePos = BigInt(frontier.contiguousAppliedToken.position);
-
-      if (appliedPos > baselinePos) {
-        // Forward progression — advance the baseline.
-        // In a filtered stream, positions are sparse (e.g. 1 -> 5 -> 9).
-        // Any higher position is valid advancement, not a gap.
-        frontier.contiguousAppliedToken = appliedToken;
-      }
-      // appliedPos <= baselinePos — already applied or duplicate, ignore.
-    }
-
-    // Drain any pendingTokens that are now behind or equal to the baseline.
-    ReplicationLedger.drainAppliedPending(frontier);
-
-    // Check overflow.
-    if (frontier.pendingTokens.length > MAX_PENDING_TOKENS) {
-      return 'overflow';
-    }
-
-    return 'ok';
   }
 
   /**
-   * Remove pending tokens that are at or behind the current baseline
-   * (they have been implicitly applied by the baseline advancing past them).
+   * Commit a token as the new contiguous applied baseline. The caller (engine)
+   * must have already verified that all earlier delivered tokens for this link
+   * are durably committed before calling this.
    */
-  private static drainAppliedPending(frontier: DirectionFrontier): void {
-    if (frontier.contiguousAppliedToken === undefined) { return; }
-
-    const baseline = BigInt(frontier.contiguousAppliedToken.position);
-
-    // pendingTokens is sorted ascending — remove from the front while <= baseline.
-    while (frontier.pendingTokens.length > 0) {
-      const nextPos = BigInt(frontier.pendingTokens[0].position);
-      if (nextPos <= baseline) {
-        frontier.pendingTokens.shift();
-      } else {
-        break;
-      }
-    }
+  public static commitContiguousToken(frontier: DirectionFrontier, token: ProgressToken): void {
+    frontier.contiguousAppliedToken = token;
   }
 
   /**
-   * Reset a frontier (e.g., after repair). Sets the contiguous token and
-   * clears pending.
+   * Reset a frontier (e.g., after repair or domain change). Clears all state.
    */
   public static resetFrontier(frontier: DirectionFrontier, token?: ProgressToken): void {
     frontier.contiguousAppliedToken = token;
     frontier.receivedToken = token;
-    frontier.pendingTokens = [];
   }
 }
+

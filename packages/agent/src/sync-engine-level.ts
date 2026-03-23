@@ -12,6 +12,7 @@ import type { PermissionsApi } from './types/permissions.js';
 import type { EnboxAgent, EnboxPlatformAgent } from './types/agent.js';
 import type { PushResult, ReplicationLinkState, StartSyncParams, SyncConnectivityState, SyncEngine, SyncIdentityOptions, SyncMode } from './types/sync.js';
 
+import { MAX_PENDING_TOKENS } from './types/sync.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
@@ -72,6 +73,38 @@ type LocalSubscription = {
   close: () => Promise<void>;
 };
 
+// ---------------------------------------------------------------------------
+// Per-link in-memory delivery-order tracking (not persisted to ledger)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tracks an in-flight delivery that has been started but may not yet be
+ * durably committed. Used by the pull path to handle async completion
+ * reordering — subscription callbacks are fire-and-forget, so event B
+ * can complete before event A even though A was delivered first.
+ */
+type InFlightCommit = {
+  /** Monotonic delivery ordinal for this link. */
+  ordinal: number;
+  /** The token associated with this delivery. */
+  token: ProgressToken;
+  /** Whether processRawMessage has completed successfully. */
+  committed: boolean;
+};
+
+/**
+ * Per-link runtime state held in memory. Not persisted — on crash,
+ * replay restarts from `contiguousAppliedToken` (idempotent apply).
+ */
+type LinkRuntimeState = {
+  /** Next ordinal to assign when a pull event is delivered. */
+  nextDeliveryOrdinal: number;
+  /** Next ordinal to check when draining committed entries. */
+  nextCommitOrdinal: number;
+  /** In-flight deliveries keyed by ordinal. */
+  inflight: Map<number, InFlightCommit>;
+};
+
 export class SyncEngineLevel implements SyncEngine {
   /**
    * Holds the instance of a `EnboxPlatformAgent` that represents the current execution context for
@@ -103,6 +136,14 @@ export class SyncEngineLevel implements SyncEngine {
    * to avoid async ledger lookups on every event.
    */
   private _activeLinks: Map<string, ReplicationLinkState> = new Map();
+
+  /**
+   * Per-link in-memory delivery-order tracking for the pull path. Keyed by
+   * the same link key as `_activeLinks`. Not persisted — on crash, replay
+   * restarts from `contiguousAppliedToken` and idempotent apply handles
+   * re-delivered events.
+   */
+  private _linkRuntimes: Map<string, LinkRuntimeState> = new Map();
 
   /**
    * Hex-encoded default hashes for empty subtrees at each depth, keyed by depth.
@@ -518,6 +559,44 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /**
+   * Get or create the runtime state for a link.
+   */
+  private getOrCreateRuntime(linkKey: string): LinkRuntimeState {
+    let rt = this._linkRuntimes.get(linkKey);
+    if (!rt) {
+      rt = { nextDeliveryOrdinal: 0, nextCommitOrdinal: 0, inflight: new Map() };
+      this._linkRuntimes.set(linkKey, rt);
+    }
+    return rt;
+  }
+
+  /**
+   * Drain contiguously committed ordinals from the runtime state, advancing
+   * the link's pull frontier for each drained entry. Returns the number of
+   * entries drained (0 if the next ordinal is not yet committed).
+   */
+  private drainCommittedPull(linkKey: string): number {
+    const rt = this._linkRuntimes.get(linkKey);
+    const link = this._activeLinks.get(linkKey);
+    if (!rt || !link) { return 0; }
+
+    let drained = 0;
+    while (true) {
+      const entry = rt.inflight.get(rt.nextCommitOrdinal);
+      if (!entry || !entry.committed) { break; }
+
+      // This ordinal is committed — advance the durable frontier.
+      ReplicationLedger.commitContiguousToken(link.pull, entry.token);
+      ReplicationLedger.setReceivedToken(link.pull, entry.token);
+      rt.inflight.delete(rt.nextCommitOrdinal);
+      rt.nextCommitOrdinal++;
+      drained++;
+    }
+
+    return drained;
+  }
+
+  /**
    * Tears down all live subscriptions and push listeners.
    */
   private async teardownLiveSync(): Promise<void> {
@@ -550,8 +629,9 @@ export class SyncEngineLevel implements SyncEngine {
     }
     this._localSubscriptions = [];
 
-    // Clear the in-memory link cache.
+    // Clear the in-memory link and runtime state.
     this._activeLinks.clear();
+    this._linkRuntimes.clear();
   }
 
   // ---------------------------------------------------------------------------
@@ -592,17 +672,23 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     // Define the subscription handler that processes incoming events.
+    // NOTE: The WebSocket client fires handlers without awaiting (fire-and-forget),
+    // so multiple handlers can be in-flight concurrently. The ordinal tracker
+    // ensures the frontier advances only when all earlier deliveries are committed.
     const subscriptionHandler = async (subMessage: SubscriptionMessage): Promise<void> => {
       if (subMessage.type === 'eose') {
         // End-of-stored-events — catch-up complete.
         if (link) {
-          // Advance frontier to the EOSE cursor (represents the end of stored events).
-          const eoseResult = ReplicationLedger.advanceFrontier(link.pull, subMessage.cursor);
-          if (eoseResult === 'domain_mismatch') {
-            console.warn(`SyncEngineLevel: Token domain mismatch on EOSE for ${did} -> ${dwnUrl}, resetting frontier`);
-            ReplicationLedger.resetFrontier(link.pull, subMessage.cursor);
+          if (!ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {
+            console.warn(`SyncEngineLevel: Token domain mismatch on EOSE for ${did} -> ${dwnUrl}, transitioning to repairing`);
+            await this._ledger.setStatus(link, 'repairing');
+          } else {
+            ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
+            // Drain any pending commits before setting EOSE baseline.
+            this.drainCommittedPull(cursorKey);
+            ReplicationLedger.commitContiguousToken(link.pull, subMessage.cursor);
+            await this._ledger.saveLink(link);
           }
-          await this._ledger.saveLink(link);
         } else {
           await this.setCursor(cursorKey, subMessage.cursor);
         }
@@ -612,6 +698,25 @@ export class SyncEngineLevel implements SyncEngine {
 
       if (subMessage.type === 'event') {
         const event: MessageEvent = subMessage.event;
+
+        // Domain validation: reject tokens from a different stream/epoch.
+        if (link && !ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {
+          console.warn(`SyncEngineLevel: Token domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`);
+          ReplicationLedger.resetFrontier(link.pull);
+          const rt = this._linkRuntimes.get(cursorKey);
+          if (rt) { rt.inflight.clear(); rt.nextCommitOrdinal = rt.nextDeliveryOrdinal; }
+          await this._ledger.setStatus(link, 'repairing');
+          return;
+        }
+
+        // Assign a delivery ordinal BEFORE async processing begins.
+        // This captures the delivery order even if processing completes out of order.
+        const rt = link ? this.getOrCreateRuntime(cursorKey) : undefined;
+        const ordinal = rt ? rt.nextDeliveryOrdinal++ : -1;
+        if (rt) {
+          rt.inflight.set(ordinal, { ordinal, token: subMessage.cursor, committed: false });
+        }
+
         try {
           // Extract inline data from the event (available for records <= 30 KB).
           let dataStream = this.extractDataStream(event);
@@ -638,19 +743,21 @@ export class SyncEngineLevel implements SyncEngine {
           this._recentlyPulledCids.set(`${pulledCid}|${dwnUrl}`, Date.now() + SyncEngineLevel.ECHO_SUPPRESS_TTL_MS);
           this.evictExpiredEchoEntries();
 
-          // Advance the pull frontier after successful processing.
-          if (link) {
-            const result = ReplicationLedger.advanceFrontier(link.pull, subMessage.cursor);
+          // Mark this ordinal as committed and drain the frontier.
+          if (link && rt) {
+            const entry = rt.inflight.get(ordinal);
+            if (entry) { entry.committed = true; }
 
-            if (result === 'domain_mismatch') {
-              console.warn(`SyncEngineLevel: Token domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`);
-              ReplicationLedger.resetFrontier(link.pull);
-              await this._ledger.setStatus(link, 'repairing');
-            } else if (result === 'overflow') {
-              console.warn(`SyncEngineLevel: Pull frontier overflow for ${did} -> ${dwnUrl}, transitioning to repairing`);
-              await this._ledger.setStatus(link, 'repairing');
-            } else {
+            ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
+            const drained = this.drainCommittedPull(cursorKey);
+            if (drained > 0) {
               await this._ledger.saveLink(link);
+            }
+
+            // Overflow: too many in-flight ordinals without draining.
+            if (rt.inflight.size > MAX_PENDING_TOKENS) {
+              console.warn(`SyncEngineLevel: Pull in-flight overflow for ${did} -> ${dwnUrl}, transitioning to repairing`);
+              await this._ledger.setStatus(link, 'repairing');
             }
           } else {
             // Legacy path: no link available, use simple cursor persistence.
@@ -658,6 +765,15 @@ export class SyncEngineLevel implements SyncEngine {
           }
         } catch (error: any) {
           console.error(`SyncEngineLevel: Error processing live-pull event for ${did}`, error);
+          // Mark this ordinal as committed even on failure — we don't retry
+          // individual events, the subscription will re-deliver on reconnect
+          // from contiguousAppliedToken. This prevents blocking the drain.
+          if (rt) {
+            const entry = rt.inflight.get(ordinal);
+            if (entry) { entry.committed = true; }
+            // Drain but don't advance frontier past the failed token — remove it.
+            rt.inflight.delete(ordinal);
+          }
         }
       }
     };
@@ -843,16 +959,28 @@ export class SyncEngineLevel implements SyncEngine {
         });
 
         // Advance the push frontier for successfully pushed entries.
+        // Push is sequential (single batch, in-order processing) so we can
+        // commit directly without ordinal tracking — there's no concurrent
+        // completion to reorder.
         const link = this._activeLinks.get(targetKey);
         if (link) {
           const succeededSet = new Set(result.succeeded);
+          // Track highest contiguous success: if a CID fails, we stop advancing.
+          let hitFailure = false;
           for (const entry of pushEntries) {
+            if (hitFailure) { break; }
             if (succeededSet.has(entry.cid) && entry.localToken) {
-              const pushResult = ReplicationLedger.advanceFrontier(link.push, entry.localToken);
-              if (pushResult === 'domain_mismatch') {
-                console.warn(`SyncEngineLevel: Push frontier domain mismatch for ${did} -> ${dwnUrl}, resetting`);
-                ReplicationLedger.resetFrontier(link.push, entry.localToken);
+              if (!ReplicationLedger.validateTokenDomain(link.push, entry.localToken)) {
+                console.warn(`SyncEngineLevel: Push frontier domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`);
+                ReplicationLedger.resetFrontier(link.push);
+                await this._ledger.setStatus(link, 'repairing');
+                break;
               }
+              ReplicationLedger.setReceivedToken(link.push, entry.localToken);
+              ReplicationLedger.commitContiguousToken(link.push, entry.localToken);
+            } else {
+              // This CID failed or had no token — stop advancing.
+              hitFailure = true;
             }
           }
           await this._ledger.saveLink(link);

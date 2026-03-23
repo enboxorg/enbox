@@ -99,29 +99,29 @@ export const MAX_PENDING_TOKENS = 100;
 /**
  * Tracks directional (pull or push) replay progression for a single
  * replication link. All tokens belong to the same `(streamId, epoch)`.
+ *
+ * This is the **durable** frontier state persisted to the ledger.
+ * In-memory delivery-order tracking (ordinals, in-flight commits) is owned
+ * by the sync engine and is not persisted — on crash recovery, replay
+ * restarts from `contiguousAppliedToken` and idempotent apply handles
+ * any re-delivered events.
  */
 export type DirectionFrontier = {
   /**
    * The latest token received from the source (pull) or confirmed by the
    * remote (push). May be ahead of `contiguousAppliedToken` when events
-   * arrive out of order.
+   * arrive out of order. Used for observability.
    */
   receivedToken?: ProgressToken;
 
   /**
-   * The highest token where all prior positions have been durably applied.
-   * This is the resume point after crash/reconnect. Only advances when
-   * contiguous progression holds.
+   * The highest token such that all earlier delivered tokens for this link
+   * have been durably applied. This is the resume point after crash/reconnect.
+   *
+   * Advancement is controlled by the engine's delivery-order tracking,
+   * not by position arithmetic. Positions may be sparse (filtered streams).
    */
   contiguousAppliedToken?: ProgressToken;
-
-  /**
-   * Tokens received out of order that have been applied but are not yet
-   * contiguous with `contiguousAppliedToken`. Ordered ascending by position.
-   * When this set exceeds {@link MAX_PENDING_TOKENS}, the link transitions
-   * to `repairing`.
-   */
-  pendingTokens: ProgressToken[];
 };
 
 /**

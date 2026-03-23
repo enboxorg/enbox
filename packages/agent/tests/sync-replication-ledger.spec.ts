@@ -4,7 +4,6 @@ import type { ProgressToken } from '@enbox/dwn-sdk-js';
 import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
-import { MAX_PENDING_TOKENS } from '../src/types/sync.js';
 import { ReplicationLedger } from '../src/sync-replication-ledger.js';
 
 /** Helper to build a ProgressToken at a given position. */
@@ -45,8 +44,6 @@ describe('ReplicationLedger', () => {
       expect(link.remoteEndpoint).toBe('https://dwn.example.com');
       expect(link.scopeId.length).toBeGreaterThan(0);
       expect(link.status).toBe('initializing');
-      expect(link.pull.pendingTokens).toEqual([]);
-      expect(link.push.pendingTokens).toEqual([]);
       expect(link.pull.contiguousAppliedToken).toBeUndefined();
       expect(link.push.contiguousAppliedToken).toBeUndefined();
     });
@@ -58,11 +55,9 @@ describe('ReplicationLedger', () => {
         scope          : { kind: 'full' },
       });
 
-      // Modify and save.
       link1.status = 'live';
       await ledger.saveLink(link1);
 
-      // Second call should return the saved version.
       const link2 = await ledger.getOrCreateLink({
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
@@ -74,18 +69,13 @@ describe('ReplicationLedger', () => {
 
     it('should create separate links for different endpoints', async () => {
       const linkA = await ledger.getOrCreateLink({
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://a.example.com',
-        scope          : { kind: 'full' },
+        tenantDid: 'did:example:alice', remoteEndpoint: 'https://a.example.com', scope: { kind: 'full' },
       });
-
       const linkB = await ledger.getOrCreateLink({
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://b.example.com',
-        scope          : { kind: 'full' },
+        tenantDid: 'did:example:alice', remoteEndpoint: 'https://b.example.com', scope: { kind: 'full' },
       });
 
-      expect(linkA.scopeId).toBe(linkB.scopeId); // same scope
+      expect(linkA.scopeId).toBe(linkB.scopeId);
       expect(linkA.remoteEndpoint).not.toBe(linkB.remoteEndpoint);
     });
 
@@ -114,7 +104,6 @@ describe('ReplicationLedger', () => {
       link.pull.contiguousAppliedToken = token(42);
       await ledger.saveLink(link);
 
-      // Re-read.
       const reloaded = await ledger.getOrCreateLink({
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
@@ -136,7 +125,6 @@ describe('ReplicationLedger', () => {
 
       await ledger.deleteLink(link.tenantDid, link.remoteEndpoint, link.scopeId);
 
-      // Should create a fresh link on next call.
       const fresh = await ledger.getOrCreateLink({
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
@@ -190,7 +178,6 @@ describe('ReplicationLedger', () => {
       await ledger.setStatus(link, 'live');
       expect(link.status).toBe('live');
 
-      // Verify persisted.
       const reloaded = await ledger.getOrCreateLink({
         tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scope: { kind: 'full' },
       });
@@ -199,7 +186,7 @@ describe('ReplicationLedger', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Frontier progression
+  // Minimal frontier helpers
   // ---------------------------------------------------------------------------
 
   describe('comparePosition', () => {
@@ -216,151 +203,81 @@ describe('ReplicationLedger', () => {
     });
 
     it('should handle large BigInt values safely', () => {
-      const big1 = { ...token(0), position: '9007199254740993' }; // > MAX_SAFE_INTEGER
+      const big1 = { ...token(0), position: '9007199254740993' };
       const big2 = { ...token(0), position: '9007199254740994' };
       expect(ReplicationLedger.comparePosition(big1, big2)).toBeLessThan(0);
     });
   });
 
-  describe('advanceFrontier', () => {
-    it('should set contiguousAppliedToken on first token', () => {
-      const frontier: DirectionFrontier = { pendingTokens: [] };
-
-      const result = ReplicationLedger.advanceFrontier(frontier, token(1));
-
-      expect(result).toBe('ok');
-      expect(frontier.contiguousAppliedToken).toEqual(token(1));
-      expect(frontier.receivedToken).toEqual(token(1));
-      expect(frontier.pendingTokens).toEqual([]);
+  describe('validateTokenDomain', () => {
+    it('should return true when frontier has no baseline', () => {
+      const frontier: DirectionFrontier = {};
+      expect(ReplicationLedger.validateTokenDomain(frontier, token(1))).toBe(true);
     });
 
-    it('should advance contiguously for sequential tokens', () => {
-      const frontier: DirectionFrontier = { pendingTokens: [] };
-
-      ReplicationLedger.advanceFrontier(frontier, token(1));
-      ReplicationLedger.advanceFrontier(frontier, token(2));
-      ReplicationLedger.advanceFrontier(frontier, token(3));
-
-      expect(frontier.contiguousAppliedToken).toEqual(token(3));
-      expect(frontier.pendingTokens).toEqual([]);
+    it('should return true for matching streamId and epoch', () => {
+      const frontier: DirectionFrontier = { contiguousAppliedToken: token(1) };
+      expect(ReplicationLedger.validateTokenDomain(frontier, token(5))).toBe(true);
     });
 
-    it('should handle sparse positions from filtered streams (1 -> 5 -> 9)', () => {
-      const frontier: DirectionFrontier = { pendingTokens: [] };
-
-      ReplicationLedger.advanceFrontier(frontier, token(1));
-      ReplicationLedger.advanceFrontier(frontier, token(5));
-      ReplicationLedger.advanceFrontier(frontier, token(9));
-
-      // Sparse positions are valid forward progression — no pending accumulation.
-      expect(frontier.contiguousAppliedToken).toEqual(token(9));
-      expect(frontier.pendingTokens).toEqual([]);
+    it('should return false for mismatched streamId', () => {
+      const frontier: DirectionFrontier = { contiguousAppliedToken: token(1) };
+      const foreign = { streamId: 'other-stream', epoch: 'epoch-1', position: '2', messageCid: 'cid-2' };
+      expect(ReplicationLedger.validateTokenDomain(frontier, foreign)).toBe(false);
     });
 
-    it('should ignore duplicate tokens', () => {
-      const frontier: DirectionFrontier = { pendingTokens: [] };
-
-      ReplicationLedger.advanceFrontier(frontier, token(1));
-      ReplicationLedger.advanceFrontier(frontier, token(1)); // duplicate
-
-      expect(frontier.contiguousAppliedToken).toEqual(token(1));
-      expect(frontier.pendingTokens).toEqual([]);
+    it('should return false for mismatched epoch', () => {
+      const frontier: DirectionFrontier = { contiguousAppliedToken: token(1) };
+      const stale = { streamId: 'stream-1', epoch: 'old-epoch', position: '2', messageCid: 'cid-2' };
+      expect(ReplicationLedger.validateTokenDomain(frontier, stale)).toBe(false);
     });
+  });
 
-    it('should ignore tokens at or behind the contiguous position', () => {
-      const frontier: DirectionFrontier = { pendingTokens: [] };
+  describe('setReceivedToken', () => {
+    it('should set receivedToken to the highest seen', () => {
+      const frontier: DirectionFrontier = {};
+      ReplicationLedger.setReceivedToken(frontier, token(5));
+      expect(frontier.receivedToken).toEqual(token(5));
 
-      ReplicationLedger.advanceFrontier(frontier, token(1));
-      ReplicationLedger.advanceFrontier(frontier, token(2));
-      ReplicationLedger.advanceFrontier(frontier, token(3));
+      ReplicationLedger.setReceivedToken(frontier, token(3));
+      expect(frontier.receivedToken).toEqual(token(5)); // did not regress
 
-      // Replay an old token.
-      ReplicationLedger.advanceFrontier(frontier, token(1));
-
-      expect(frontier.contiguousAppliedToken).toEqual(token(3));
-      expect(frontier.pendingTokens).toEqual([]);
+      ReplicationLedger.setReceivedToken(frontier, token(10));
+      expect(frontier.receivedToken).toEqual(token(10));
     });
+  });
 
-    it('should return overflow when pendingTokens exceeds MAX_PENDING_TOKENS', () => {
-      // In Phase 2 with concurrent processing, pending tokens can accumulate
-      // when completion order differs from delivery order. Overflow detection
-      // triggers when the pending set exceeds the cap.
-      const frontier: DirectionFrontier = {
-        contiguousAppliedToken : token(100),
-        pendingTokens          : [],
-      };
-
-      // Manually fill pending beyond the cap (simulates concurrent Phase 2 state).
-      for (let i = 0; i <= MAX_PENDING_TOKENS; i++) {
-        frontier.pendingTokens.push(token(200 + i));
-      }
-
-      // Advance with a token below pending range — won't drain them.
-      const result = ReplicationLedger.advanceFrontier(frontier, token(105));
-      expect(result).toBe('overflow');
-    });
-
-    it('should return domain_mismatch for mismatched streamId', () => {
-      const frontier: DirectionFrontier = { pendingTokens: [] };
-      ReplicationLedger.advanceFrontier(frontier, token(1));
-
-      const foreignToken = { streamId: 'other-stream', epoch: 'epoch-1', position: '2', messageCid: 'cid-2' };
-      const result = ReplicationLedger.advanceFrontier(frontier, foreignToken);
-      expect(result).toBe('domain_mismatch');
-      // Baseline should not change.
-      expect(frontier.contiguousAppliedToken).toEqual(token(1));
-    });
-
-    it('should return domain_mismatch for mismatched epoch', () => {
-      const frontier: DirectionFrontier = { pendingTokens: [] };
-      ReplicationLedger.advanceFrontier(frontier, token(1));
-
-      const staleToken = { streamId: 'stream-1', epoch: 'old-epoch', position: '2', messageCid: 'cid-2' };
-      const result = ReplicationLedger.advanceFrontier(frontier, staleToken);
-      expect(result).toBe('domain_mismatch');
-    });
-
-    it('should drain pending tokens that are at or behind the baseline', () => {
-      const frontier: DirectionFrontier = {
-        contiguousAppliedToken : token(5),
-        pendingTokens          : [token(3), token(4), token(6)],
-      };
-
-      // Advance past position 6 — tokens 3 and 4 should be drained (behind baseline 10).
-      ReplicationLedger.advanceFrontier(frontier, token(10));
-
-      expect(frontier.contiguousAppliedToken).toEqual(token(10));
-      expect(frontier.pendingTokens).toEqual([]);
+  describe('commitContiguousToken', () => {
+    it('should set contiguousAppliedToken', () => {
+      const frontier: DirectionFrontier = {};
+      ReplicationLedger.commitContiguousToken(frontier, token(42));
+      expect(frontier.contiguousAppliedToken).toEqual(token(42));
     });
   });
 
   describe('resetFrontier', () => {
-    it('should clear pending and set the token', () => {
+    it('should clear all state and set the token', () => {
       const frontier: DirectionFrontier = {
         receivedToken          : token(10),
         contiguousAppliedToken : token(5),
-        pendingTokens          : [token(7), token(8), token(9)],
       };
 
       ReplicationLedger.resetFrontier(frontier, token(10));
 
       expect(frontier.contiguousAppliedToken).toEqual(token(10));
       expect(frontier.receivedToken).toEqual(token(10));
-      expect(frontier.pendingTokens).toEqual([]);
     });
 
     it('should clear to undefined when no token is provided', () => {
       const frontier: DirectionFrontier = {
         receivedToken          : token(10),
         contiguousAppliedToken : token(5),
-        pendingTokens          : [token(7)],
       };
 
       ReplicationLedger.resetFrontier(frontier);
 
       expect(frontier.contiguousAppliedToken).toBeUndefined();
       expect(frontier.receivedToken).toBeUndefined();
-      expect(frontier.pendingTokens).toEqual([]);
     });
   });
 });
