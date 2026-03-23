@@ -526,9 +526,10 @@ export class SyncEngineLevel implements SyncEngine {
     // Step 2: Initialize replication links and open live subscriptions.
     const syncTargets = await this.getSyncTargets();
     for (const target of syncTargets) {
+      let link: ReplicationLinkState | undefined;
       try {
         // Get or create the link in the durable ledger.
-        const link = await this.ledger.getOrCreateLink({
+        link = await this.ledger.getOrCreateLink({
           tenantDid      : target.did,
           remoteEndpoint : target.dwnUrl,
           scope          : { kind: 'full' },
@@ -558,13 +559,23 @@ export class SyncEngineLevel implements SyncEngine {
           throw pushError;
         }
 
-        await this.ledger.setStatus(link, 'live');
+        await this.ledger.setStatus(link!, 'live');
       } catch (error: any) {
+        const linkKey = this.buildCursorKey(target.did, target.dwnUrl, target.protocol);
+
+        // Detect ProgressGap (410) — the cursor is stale, link needs SMT repair.
+        if ((error as any).isProgressGap && link) {
+          console.warn(`SyncEngineLevel: ProgressGap detected for ${target.did} -> ${target.dwnUrl}, initiating repair`);
+          await this.ledger.setStatus(link, 'repairing');
+          // Kick off repair asynchronously — don't block other targets.
+          void this.repairLink(linkKey);
+          continue;
+        }
+
         console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
 
         // Clean up in-memory state for the failed link so it doesn't appear
         // active to later code. The durable link remains at 'initializing'.
-        const linkKey = this.buildCursorKey(target.did, target.dwnUrl, target.protocol);
         this._activeLinks.delete(linkKey);
         this._linkRuntimes.delete(linkKey);
 
@@ -629,6 +640,178 @@ export class SyncEngineLevel implements SyncEngine {
     return drained;
   }
 
+  // ---------------------------------------------------------------------------
+  // Per-link repair and degraded-poll orchestration (Phase 2)
+  // ---------------------------------------------------------------------------
+
+  /** Maximum consecutive repair attempts before falling back to degraded_poll. */
+  private static readonly MAX_REPAIR_ATTEMPTS = 3;
+
+  /** Per-link degraded-poll interval timers. */
+  private _degradedPollTimers: Map<string, ReturnType<typeof setInterval>> = new Map();
+
+  /** Per-link repair attempt counters. */
+  private _repairAttempts: Map<string, number> = new Map();
+
+  /**
+   * Repair a single link using SMT set reconciliation, then attempt to
+   * re-establish live subscriptions. If repair succeeds and subscriptions
+   * reopen, the link transitions back to `live`. If repair fails
+   * {@link MAX_REPAIR_ATTEMPTS} times, the link enters `degraded_poll`.
+   */
+  private async repairLink(linkKey: string): Promise<void> {
+    const link = this._activeLinks.get(linkKey);
+    if (!link) { return; }
+
+    const { tenantDid: did, remoteEndpoint: dwnUrl, delegateDid, protocol } = link;
+    const attempts = (this._repairAttempts.get(linkKey) ?? 0) + 1;
+    this._repairAttempts.set(linkKey, attempts);
+
+    try {
+      // Step 1: Run SMT reconciliation for this link (same logic as sync() but single-target).
+      const localRoot = await this.getLocalRoot(did, delegateDid, protocol);
+      const remoteRoot = await this.getRemoteRoot(did, dwnUrl, delegateDid, protocol);
+
+      if (localRoot !== remoteRoot) {
+        const diff = await this.diffWithRemote({ did, dwnUrl, delegateDid, protocol });
+
+        if (diff.onlyRemote.length > 0) {
+          const prefetched: (MessagesSyncDiffEntry & { message: GenericMessage })[] = [];
+          const needsFetchCids: string[] = [];
+          for (const entry of diff.onlyRemote) {
+            if (!entry.message || (entry.message.descriptor.interface === 'Records' &&
+                entry.message.descriptor.method === 'Write' &&
+                (entry.message.descriptor as any).dataCid && !entry.encodedData)) {
+              needsFetchCids.push(entry.messageCid);
+            } else {
+              prefetched.push(entry as MessagesSyncDiffEntry & { message: GenericMessage });
+            }
+          }
+          await this.pullMessages({ did, dwnUrl, delegateDid, protocol, messageCids: needsFetchCids, prefetched });
+        }
+
+        if (diff.onlyLocal.length > 0) {
+          await this.pushMessages({ did, dwnUrl, delegateDid, protocol, messageCids: diff.onlyLocal });
+        }
+      }
+
+      // Step 2: Close existing subscriptions for this link.
+      await this.closeLinkSubscriptions(link);
+
+      // Step 3: Reopen subscriptions with the repaired checkpoint.
+      const target = { did, dwnUrl, delegateDid, protocol };
+      await this.openLivePullSubscription(target);
+      try {
+        await this.openLocalPushSubscription(target);
+      } catch (pushError) {
+        // Close pull if push fails.
+        const pullSub = this._liveSubscriptions.find(
+          s => s.did === did && s.dwnUrl === dwnUrl && s.protocol === protocol
+        );
+        if (pullSub) {
+          try { await pullSub.close(); } catch { /* best effort */ }
+          this._liveSubscriptions = this._liveSubscriptions.filter(s => s !== pullSub);
+        }
+        throw pushError;
+      }
+
+      // Step 4: Reset runtime state and transition to live.
+      const rt = this.getOrCreateRuntime(linkKey);
+      rt.inflight.clear();
+      rt.nextDeliveryOrdinal = 0;
+      rt.nextCommitOrdinal = 0;
+      this._repairAttempts.delete(linkKey);
+      await this.ledger.setStatus(link, 'live');
+      this._connectivityState = 'online';
+
+    } catch (error: any) {
+      console.error(`SyncEngineLevel: Repair failed for ${did} -> ${dwnUrl} (attempt ${attempts})`, error);
+
+      if (attempts >= SyncEngineLevel.MAX_REPAIR_ATTEMPTS) {
+        console.warn(`SyncEngineLevel: Max repair attempts reached for ${did} -> ${dwnUrl}, entering degraded_poll`);
+        await this.enterDegradedPoll(linkKey);
+      }
+      // Otherwise, link stays in 'repairing' — next integrity check or explicit
+      // call will retry.
+    }
+  }
+
+  /**
+   * Close pull and push subscriptions for a specific link.
+   */
+  private async closeLinkSubscriptions(link: ReplicationLinkState): Promise<void> {
+    const { tenantDid: did, remoteEndpoint: dwnUrl, protocol } = link;
+
+    // Close pull subscription.
+    const pullSub = this._liveSubscriptions.find(
+      s => s.did === did && s.dwnUrl === dwnUrl && s.protocol === protocol
+    );
+    if (pullSub) {
+      try { await pullSub.close(); } catch { /* best effort */ }
+      this._liveSubscriptions = this._liveSubscriptions.filter(s => s !== pullSub);
+    }
+
+    // Close local push subscription.
+    const pushSub = this._localSubscriptions.find(
+      s => s.did === did && s.dwnUrl === dwnUrl && s.protocol === protocol
+    );
+    if (pushSub) {
+      try { await pushSub.close(); } catch { /* best effort */ }
+      this._localSubscriptions = this._localSubscriptions.filter(s => s !== pushSub);
+    }
+  }
+
+  /**
+   * Transition a link to `degraded_poll` and start a per-link polling timer.
+   * The timer runs SMT reconciliation at a reduced frequency (30s with jitter)
+   * and attempts to re-establish live subscriptions after each successful repair.
+   */
+  private async enterDegradedPoll(linkKey: string): Promise<void> {
+    const link = this._activeLinks.get(linkKey);
+    if (!link) { return; }
+
+    await this.ledger.setStatus(link, 'degraded_poll');
+    this._repairAttempts.delete(linkKey);
+
+    // Clear any existing timer for this link.
+    const existing = this._degradedPollTimers.get(linkKey);
+    if (existing) { clearInterval(existing); }
+
+    // Schedule per-link polling with jitter (15-30 seconds).
+    const baseInterval = 15_000;
+    const jitter = Math.floor(Math.random() * 15_000);
+    const interval = baseInterval + jitter;
+
+    const timer = setInterval(async (): Promise<void> => {
+      if (link.status !== 'degraded_poll') {
+        // Link was transitioned by something else — stop polling.
+        clearInterval(timer);
+        this._degradedPollTimers.delete(linkKey);
+        return;
+      }
+
+      try {
+        // Attempt repair — if successful, repairLink transitions to live
+        // and we stop polling on the next interval check.
+        await this.ledger.setStatus(link, 'repairing');
+        this._repairAttempts.set(linkKey, 0); // Reset attempts for degraded poll retries.
+        await this.repairLink(linkKey);
+
+        // If repairLink succeeded, link is now 'live' — stop polling.
+        if ((link.status as string) === 'live') {
+          clearInterval(timer);
+          this._degradedPollTimers.delete(linkKey);
+        }
+      } catch (error: any) {
+        // Stay in degraded_poll — will retry on next interval.
+        await this.ledger.setStatus(link, 'degraded_poll');
+        console.error(`SyncEngineLevel: degraded_poll repair failed for ${link.tenantDid} -> ${link.remoteEndpoint}`, error);
+      }
+    }, interval);
+
+    this._degradedPollTimers.set(linkKey, timer);
+  }
+
   /**
    * Tears down all live subscriptions and push listeners.
    */
@@ -661,6 +844,13 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
     this._localSubscriptions = [];
+
+    // Clear degraded-poll timers.
+    for (const timer of this._degradedPollTimers.values()) {
+      clearInterval(timer);
+    }
+    this._degradedPollTimers.clear();
+    this._repairAttempts.clear();
 
     // Clear the in-memory link and runtime state.
     this._activeLinks.clear();
@@ -712,10 +902,16 @@ export class SyncEngineLevel implements SyncEngine {
       if (subMessage.type === 'eose') {
         // End-of-stored-events — catch-up complete.
         if (link) {
+          // Guard: if the link transitioned to repairing while catch-up events
+          // were being processed, skip all mutations — repair owns the state now.
+          if (link.status !== 'live' && link.status !== 'initializing') {
+            return;
+          }
+
           if (!ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {
             console.warn(`SyncEngineLevel: Token domain mismatch on EOSE for ${did} -> ${dwnUrl}, transitioning to repairing`);
             await this.ledger.setStatus(link, 'repairing');
-            // Do not set connectivity to online — replication is unhealthy.
+            void this.repairLink(cursorKey);
             return;
           }
           ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
@@ -743,6 +939,7 @@ export class SyncEngineLevel implements SyncEngine {
           const rt = this._linkRuntimes.get(cursorKey);
           if (rt) { rt.inflight.clear(); rt.nextCommitOrdinal = rt.nextDeliveryOrdinal; }
           await this.ledger.setStatus(link, 'repairing');
+          void this.repairLink(cursorKey);
           return;
         }
 
@@ -781,7 +978,10 @@ export class SyncEngineLevel implements SyncEngine {
           this.evictExpiredEchoEntries();
 
           // Mark this ordinal as committed and drain the checkpoint.
-          if (link && rt) {
+          // Guard: if the link transitioned to repairing while this handler was
+          // in-flight (e.g., an earlier ordinal's handler failed concurrently),
+          // skip all state mutations — the repair process owns progression now.
+          if (link && rt && link.status === 'live') {
             const entry = rt.inflight.get(ordinal);
             if (entry) { entry.committed = true; }
 
@@ -795,8 +995,9 @@ export class SyncEngineLevel implements SyncEngine {
             if (rt.inflight.size > MAX_PENDING_TOKENS) {
               console.warn(`SyncEngineLevel: Pull in-flight overflow for ${did} -> ${dwnUrl}, transitioning to repairing`);
               await this.ledger.setStatus(link, 'repairing');
+              void this.repairLink(cursorKey);
             }
-          } else {
+          } else if (!link) {
             // Legacy path: no link available, use simple cursor persistence.
             await this.setCursor(cursorKey, subMessage.cursor);
           }
@@ -810,6 +1011,7 @@ export class SyncEngineLevel implements SyncEngine {
             rt.inflight.clear();
             rt.nextCommitOrdinal = rt.nextDeliveryOrdinal;
             await this.ledger.setStatus(link, 'repairing');
+            void this.repairLink(cursorKey);
           }
         }
       }
@@ -863,6 +1065,13 @@ export class SyncEngineLevel implements SyncEngine {
         resubscribeFactory,
       },
     }) as MessagesSubscribeReply;
+    if (reply.status.code === 410) {
+      // ProgressGap — the cursor is no longer replayable. The link needs repair.
+      const gapError = new Error(`SyncEngineLevel: ProgressGap for ${did} -> ${dwnUrl}: ${reply.status.detail}`);
+      (gapError as any).isProgressGap = true;
+      (gapError as any).gapInfo = reply.error;
+      throw gapError;
+    }
     if (reply.status.code !== 200 || !reply.subscription) {
       throw new Error(`SyncEngineLevel: MessagesSubscribe failed for ${did} -> ${dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
     }
