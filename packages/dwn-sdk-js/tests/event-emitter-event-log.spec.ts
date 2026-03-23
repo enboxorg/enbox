@@ -1,4 +1,4 @@
-import type { ProgressToken, SubscriptionMessage } from '../src/types/subscriptions.js';
+import type { SubscriptionMessage } from '../src/types/subscriptions.js';
 
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 

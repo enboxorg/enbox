@@ -18,11 +18,11 @@ import type { GenericMessage, GenericMessageReply, MessageSubscription } from '.
  */
 export type ProgressToken = {
   /** Stable identity of the source event stream domain. */
-  streamId   : string;
+  streamId : string;
   /** Stream generation/version; changes on non-compatible reset. */
-  epoch      : string;
+  epoch : string;
   /** Monotonic decimal string within `(streamId, epoch)`. Compared numerically. */
-  position   : string;
+  position : string;
   /** The CID of the message associated with this event. */
   messageCid : string;
 };

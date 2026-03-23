@@ -34,8 +34,8 @@ type EmitterEvents = Record<string, EmitterPayload>;
  * Internal storage entry — the event plus its indexes and message CID.
  */
 type StoredEntry = {
-  event      : MessageEvent;
-  indexes    : KeyValues;
+  event : MessageEvent;
+  indexes : KeyValues;
   messageCid : string;
 };
 
@@ -111,9 +111,9 @@ export class EventEmitterEventLog implements EventLog {
    */
   private async buildToken(tenant: string, seq: number, messageCid: string): Promise<ProgressToken> {
     return {
-      streamId   : await this.getStreamId(tenant),
-      epoch      : this.epoch,
-      position   : String(seq),
+      streamId : await this.getStreamId(tenant),
+      epoch    : this.epoch,
+      position : String(seq),
       messageCid,
     };
   }

@@ -1,9 +1,9 @@
 import type { GeneralJws } from './jws-types.js';
 import type { JweEncryption } from '../utils/encryption.js';
-import type { ProgressToken, SubscriptionListener } from './subscriptions.js';
 import type { AuthorizationModel, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSubscription, Pagination } from './message-types.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import type { PaginationCursor, RangeCriterion, RangeFilter, StartsWithFilter } from './query-types.js';
+import type { ProgressToken, SubscriptionListener } from './subscriptions.js';
 
 export enum DateSort {
   CreatedAscending = 'createdAscending',
